@@ -17,6 +17,9 @@ Single SQLite file. 16 tools. Zero LLM dependency.
 
 ---
 
+> **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
+> If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, use the version in [cloto-mcp-servers](https://github.com/Cloto-dev/cloto-mcp-servers/tree/main/servers/cpersona) instead.
+
 ## The Problem
 
 Claude forgets everything between sessions. Every conversation starts from zero — no context about your project, your preferences, or what you discussed yesterday.
