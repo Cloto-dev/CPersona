@@ -5,7 +5,7 @@
 ### MCP Memory Server
 
 Give Claude persistent memory across sessions.
-Single SQLite file. 16 tools. Zero LLM dependency.
+Single SQLite file. 21 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)]()
@@ -113,7 +113,10 @@ That's it. Claude now has persistent memory. Ask it to `store` something and `re
 - JSONL export/import — full memory portability between environments
 - Agent-to-agent memory merge — atomic copy/move with deduplication
 - Auto-calibration — statistical threshold tuning via null distribution z-score (no labels needed)
-- Health check — 15 automated detections with auto-repair (contamination, duplicates, FTS desync, invalid data, stale tasks)
+- Health check — 16 automated detections with auto-repair (contamination, duplicates, FTS desync, invalid data, stale tasks, empty content, invalid sources)
+- Deep check — semantic data quality analysis (anonymous source recovery, short content, stale profiles, orphaned episodes)
+- Memory protection — lock/unlock to prevent accidental deletion or editing
+- Recent recall penalty — suppresses echo chamber effect for frequently recalled memories
 - stdio + Streamable HTTP transport
 - Single-file SQLite — no external database required
 
@@ -191,7 +194,12 @@ jina-v5-nano achieves +47% improvement over the MiniLM baseline.
 | `import_memories` | Import from JSONL (idempotent via msg_id dedup) |
 | `merge_memories` | Merge one agent's data into another (atomic, with dedup) |
 | `get_queue_status` | Background task queue status |
-| `check_health` | 15-point database health check with auto-repair |
+| `recall_with_context` | Recall with external conversation context (auto-dedup) |
+| `update_memory` | Update memory content (rejects if locked) |
+| `lock_memory` | Lock memory to prevent deletion/editing |
+| `unlock_memory` | Unlock memory to allow deletion/editing |
+| `check_health` | 16-point database health check with auto-repair |
+| `deep_check` | Deep semantic data quality analysis with auto-repair |
 
 ## Configuration
 
@@ -208,12 +216,14 @@ All settings via environment variables with sensible defaults:
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `false` | Enable background task queue |
+| `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | Penalty for recently recalled memories |
+| `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | Window (minutes) for recent recall penalty |
 
 ## Stats
 
-- **~3,000 LOC** Python (single file, `server.py`)
+- **~3,500 LOC** Python (single file, `server.py`)
 - **117 tests** across 12 test modules
-- **Schema v7** (auto-migrating)
+- **Schema v8** (auto-migrating)
 - **MIT License**
 
 ## Works With
