@@ -30,6 +30,8 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 
 **Prerequisites:** Python 3.10+, Git
 
+### 1. Install cpersona
+
 ```bash
 git clone https://github.com/Cloto-dev/cpersona.git
 cd cpersona
@@ -42,6 +44,20 @@ python -m venv .venv
 
 pip install .
 ```
+
+### 2. Set up Embedding Server (Recommended)
+
+cpersona's hybrid search works best with an embedding server for vector similarity. We recommend using [cloto-mcp-servers/embedding](https://github.com/Cloto-dev/cloto-mcp-servers/tree/main/servers/embedding) with the jina-v5-nano model (33M params, 768d, runs locally on CPU):
+
+```bash
+git clone https://github.com/Cloto-dev/cloto-mcp-servers.git
+cd cloto-mcp-servers/servers
+pip install ./embedding
+```
+
+> Without an embedding server, cpersona falls back to FTS5 + keyword search only. Vector search (the strongest retrieval layer) will be disabled.
+
+### 3. Configure your MCP client
 
 **Claude Desktop** — add to `claude_desktop_config.json`:
 
@@ -165,7 +181,7 @@ Query → ┌── Vector search (cosine similarity)  ──┐
 
 ## Benchmarks
 
-Tested on LMEB (Long-term Memory Evaluation Benchmark, [results](../../lmeb_results/)) — 22 evaluation tasks measuring memory retrieval quality:
+Tested on LMEB (Long-term Memory Evaluation Benchmark, [results](https://github.com/Cloto-dev/cloto-mcp-servers/tree/main/lmeb_results)) — 22 evaluation tasks measuring memory retrieval quality:
 
 | Embedding Model | Params | Dimensions | Mean NDCG@10 |
 |----------------|--------|------------|--------------|
