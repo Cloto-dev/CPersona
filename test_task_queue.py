@@ -17,15 +17,19 @@ os.environ["CPERSONA_TASK_MAX_RETRIES"] = "3"
 os.environ["CPERSONA_TASK_RETRY_DELAY"] = "1"  # fast retry for tests
 os.environ["CPERSONA_LLM_PROXY_URL"] = "http://127.0.0.1:1/noop"  # will fail → triggers fallback
 
-import server  # noqa: E402
+import admin_handlers  # noqa: E402
+import memory_handlers  # noqa: E402
+import server  # noqa: E402,F401  (imports trigger registry init for transitive coverage)
+import tasks  # noqa: E402
+from database import get_db  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     """Initialize a fresh DB for each test."""
     # Reset task queue (but keep DB connection alive across tests)
-    server._task_queue = None
-    db = await server.get_db()
+    tasks._task_queue = None
+    db = await get_db()
     # Clean tables
     await db.execute("DELETE FROM memories")
     await db.execute("DELETE FROM profiles")
@@ -43,7 +47,7 @@ async def setup_db():
 @pytest.mark.asyncio
 async def test_pending_memory_tasks_table_exists():
     """pending_memory_tasks table should be created by schema init."""
-    db = await server.get_db()
+    db = await get_db()
     rows = await db.execute_fetchall(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='pending_memory_tasks'"
     )
@@ -54,7 +58,7 @@ async def test_pending_memory_tasks_table_exists():
 @pytest.mark.asyncio
 async def test_schema_version_is_2():
     """Schema version should be 2 after Phase 5 migration."""
-    db = await server.get_db()
+    db = await get_db()
     rows = await db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     assert len(rows) == 1
     assert rows[0][0] == 2
@@ -68,12 +72,12 @@ async def test_schema_version_is_2():
 @pytest.mark.asyncio
 async def test_enqueue_creates_row():
     """Enqueue should INSERT a row into pending_memory_tasks."""
-    queue = server.MemoryTaskQueue()
+    queue = tasks.MemoryTaskQueue()
     task_id = await queue.enqueue("update_profile", "agent-1", [{"content": "hello"}])
     assert task_id is not None
     assert task_id > 0
 
-    db = await server.get_db()
+    db = await get_db()
     rows = await db.execute_fetchall(
         "SELECT id, task_type, agent_id, payload, retries FROM pending_memory_tasks WHERE id = ?",
         (task_id,),
@@ -91,12 +95,12 @@ async def test_enqueue_creates_row():
 @pytest.mark.asyncio
 async def test_enqueue_multiple_tasks():
     """Multiple tasks should be enqueued in order."""
-    queue = server.MemoryTaskQueue()
+    queue = tasks.MemoryTaskQueue()
     id1 = await queue.enqueue("archive_episode", "agent-1", [{"content": "a"}])
     id2 = await queue.enqueue("update_profile", "agent-1", [{"content": "b"}])
     assert id2 > id1
 
-    db = await server.get_db()
+    db = await get_db()
     rows = await db.execute_fetchall("SELECT id, task_type FROM pending_memory_tasks ORDER BY id ASC")
     assert len(rows) == 2
     assert rows[0][1] == "archive_episode"
@@ -111,7 +115,7 @@ async def test_enqueue_multiple_tasks():
 @pytest.mark.asyncio
 async def test_get_status_empty():
     """Queue status should show 0 pending when empty."""
-    queue = server.MemoryTaskQueue()
+    queue = tasks.MemoryTaskQueue()
     status = await queue.get_status()
     assert status["enabled"] is True
     assert status["pending"] == 0
@@ -120,7 +124,7 @@ async def test_get_status_empty():
 @pytest.mark.asyncio
 async def test_get_status_with_tasks():
     """Queue status should reflect pending task count."""
-    queue = server.MemoryTaskQueue()
+    queue = tasks.MemoryTaskQueue()
     await queue.enqueue("update_profile", "agent-1", [{"content": "x"}])
     await queue.enqueue("archive_episode", "agent-2", [{"content": "y"}])
     status = await queue.get_status()
@@ -145,7 +149,7 @@ async def _wait_queue_drained(db, timeout: float = 15.0) -> bool:
 @pytest.mark.asyncio
 async def test_queue_processes_update_profile():
     """Queue should process update_profile task and create a profile entry."""
-    queue = server.MemoryTaskQueue()
+    queue = tasks.MemoryTaskQueue()
     await queue.start()
 
     history = [
@@ -154,7 +158,7 @@ async def test_queue_processes_update_profile():
     ]
     await queue.enqueue("update_profile", "agent-test", history)
 
-    db = await server.get_db()
+    db = await get_db()
     assert await _wait_queue_drained(db), "Queue did not drain in time"
 
     rows = await db.execute_fetchall("SELECT content FROM profiles WHERE agent_id = 'agent-test'")
@@ -167,7 +171,7 @@ async def test_queue_processes_update_profile():
 @pytest.mark.asyncio
 async def test_queue_processes_archive_episode():
     """Queue should process archive_episode task and create an episode entry."""
-    queue = server.MemoryTaskQueue()
+    queue = tasks.MemoryTaskQueue()
     await queue.start()
 
     history = [
@@ -176,7 +180,7 @@ async def test_queue_processes_archive_episode():
     ]
     await queue.enqueue("archive_episode", "agent-test", history)
 
-    db = await server.get_db()
+    db = await get_db()
     assert await _wait_queue_drained(db), "Queue did not drain in time"
 
     rows = await db.execute_fetchall("SELECT summary, keywords FROM episodes WHERE agent_id = 'agent-test'")
@@ -190,7 +194,7 @@ async def test_queue_processes_archive_episode():
 async def test_crash_recovery():
     """Tasks persisted before 'crash' should be processed on restart."""
     # Simulate: enqueue without starting the loop
-    queue1 = server.MemoryTaskQueue()
+    queue1 = tasks.MemoryTaskQueue()
     await queue1.enqueue(
         "update_profile",
         "agent-crash",
@@ -200,12 +204,12 @@ async def test_crash_recovery():
     )
 
     # Verify task is in DB
-    db = await server.get_db()
+    db = await get_db()
     pending = await db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks")
     assert pending[0][0] == 1
 
     # "Restart": new queue instance picks up the pending task
-    queue2 = server.MemoryTaskQueue()
+    queue2 = tasks.MemoryTaskQueue()
     await queue2.start()
 
     assert await _wait_queue_drained(db), "Queue did not drain in time"
@@ -221,8 +225,8 @@ async def test_crash_recovery():
 async def test_fifo_ordering():
     """Tasks should be processed in FIFO order (id ASC)."""
     processed = []
-    original_update = server.do_update_profile
-    original_archive = server.do_archive_episode
+    original_update = admin_handlers.do_update_profile
+    original_archive = memory_handlers.do_archive_episode
 
     async def mock_update_profile(agent_id, history):
         processed.append(("update_profile", agent_id))
@@ -232,11 +236,11 @@ async def test_fifo_ordering():
         processed.append(("archive_episode", agent_id))
         return {"ok": True, "episode_id": None}
 
-    server.do_update_profile = mock_update_profile
-    server.do_archive_episode = mock_archive_episode
+    admin_handlers.do_update_profile = mock_update_profile
+    memory_handlers.do_archive_episode = mock_archive_episode
 
     try:
-        queue = server.MemoryTaskQueue()
+        queue = tasks.MemoryTaskQueue()
         await queue.enqueue("archive_episode", "agent-A", [])
         await queue.enqueue("update_profile", "agent-B", [])
         await queue.enqueue("archive_episode", "agent-C", [])
@@ -250,8 +254,8 @@ async def test_fifo_ordering():
         assert processed[1] == ("update_profile", "agent-B")
         assert processed[2] == ("archive_episode", "agent-C")
     finally:
-        server.do_update_profile = original_update
-        server.do_archive_episode = original_archive
+        admin_handlers.do_update_profile = original_update
+        memory_handlers.do_archive_episode = original_archive
 
 
 # ============================================================
@@ -262,13 +266,13 @@ async def test_fifo_ordering():
 @pytest.mark.asyncio
 async def test_tool_update_profile_queues():
     """update_profile tool should enqueue when task queue is active."""
-    server._task_queue = server.MemoryTaskQueue()
-    result = await server.do_update_profile_or_queue("agent-q", [{"content": "test", "source": {"User": "u"}}])
+    tasks._task_queue = tasks.MemoryTaskQueue()
+    result = await admin_handlers.do_update_profile_or_queue("agent-q", [{"content": "test", "source": {"User": "u"}}])
     assert result["ok"] is True
     assert result["queued"] is True
     assert "task_id" in result
 
-    db = await server.get_db()
+    db = await get_db()
     rows = await db.execute_fetchall(
         "SELECT task_type, agent_id FROM pending_memory_tasks WHERE id = ?",
         (result["task_id"],),
@@ -281,12 +285,12 @@ async def test_tool_update_profile_queues():
 @pytest.mark.asyncio
 async def test_tool_archive_episode_queues():
     """archive_episode tool should enqueue when task queue is active."""
-    server._task_queue = server.MemoryTaskQueue()
-    result = await server.do_archive_episode_or_queue("agent-q", [{"content": "conversation data"}])
+    tasks._task_queue = tasks.MemoryTaskQueue()
+    result = await memory_handlers.do_archive_episode_or_queue("agent-q", [{"content": "conversation data"}])
     assert result["ok"] is True
     assert result["queued"] is True
 
-    db = await server.get_db()
+    db = await get_db()
     rows = await db.execute_fetchall("SELECT task_type FROM pending_memory_tasks")
     assert len(rows) == 1
     assert rows[0][0] == "archive_episode"
@@ -295,15 +299,15 @@ async def test_tool_archive_episode_queues():
 @pytest.mark.asyncio
 async def test_tool_sync_when_queue_disabled():
     """Tools should run synchronously when task queue is not available."""
-    server._task_queue = None
-    result = await server.do_update_profile_or_queue(
+    tasks._task_queue = None
+    result = await admin_handlers.do_update_profile_or_queue(
         "agent-sync", [{"content": "I like Python", "source": {"User": "u"}}]
     )
     # Should return sync result (not queued)
     assert result["ok"] is True
     assert "queued" not in result
 
-    db = await server.get_db()
+    db = await get_db()
     pending = await db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks")
     assert pending[0][0] == 0
 
@@ -312,12 +316,12 @@ async def test_tool_sync_when_queue_disabled():
 async def test_get_queue_status_tool():
     """get_queue_status tool should return correct status."""
     # With queue
-    server._task_queue = server.MemoryTaskQueue()
-    status = await server.do_get_queue_status()
+    tasks._task_queue = tasks.MemoryTaskQueue()
+    status = await admin_handlers.do_get_queue_status()
     assert status["enabled"] is True
     assert status["pending"] == 0
 
     # Without queue
-    server._task_queue = None
-    status = await server.do_get_queue_status()
+    tasks._task_queue = None
+    status = await admin_handlers.do_get_queue_status()
     assert status["enabled"] is False
