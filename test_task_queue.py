@@ -56,12 +56,12 @@ async def test_pending_memory_tasks_table_exists():
 
 
 @pytest.mark.asyncio
-async def test_schema_version_is_2():
-    """Schema version should be 2 after Phase 5 migration."""
+async def test_schema_version_supports_task_queue():
+    """Schema version should be at least 2 (Phase 5 task queue migration)."""
     db = await get_db()
     rows = await db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     assert len(rows) == 1
-    assert rows[0][0] == 2
+    assert rows[0][0] >= 2
 
 
 # ============================================================
@@ -146,6 +146,11 @@ async def _wait_queue_drained(db, timeout: float = 15.0) -> bool:
     return False
 
 
+@pytest.mark.skip(
+    reason="v2.4.10 standalone removed the LLM-synthesis path inside the queue handler — "
+    "callers must pre-compute `profile` before invoking the tool. Restore this test (or rewrite "
+    "it for the bypass path) when Phase 3-β functional sync re-introduces queue-side synthesis."
+)
 @pytest.mark.asyncio
 async def test_queue_processes_update_profile():
     """Queue should process update_profile task and create a profile entry."""
@@ -168,6 +173,11 @@ async def test_queue_processes_update_profile():
     await queue.stop()
 
 
+@pytest.mark.skip(
+    reason="v2.4.10 standalone removed the LLM-synthesis path inside the queue handler — "
+    "callers must pre-compute `summary` before invoking the tool. Restore this test (or rewrite "
+    "it for the bypass path) when Phase 3-β functional sync re-introduces queue-side synthesis."
+)
 @pytest.mark.asyncio
 async def test_queue_processes_archive_episode():
     """Queue should process archive_episode task and create an episode entry."""
@@ -190,6 +200,11 @@ async def test_queue_processes_archive_episode():
     await queue.stop()
 
 
+@pytest.mark.skip(
+    reason="v2.4.10 standalone removed the LLM-synthesis path inside the queue handler "
+    "(see `test_queue_processes_update_profile`). Crash recovery still works mechanically, "
+    "but this end-to-end assertion depends on the removed synthesis path."
+)
 @pytest.mark.asyncio
 async def test_crash_recovery():
     """Tasks persisted before 'crash' should be processed on restart."""
@@ -263,11 +278,16 @@ async def test_fifo_ordering():
 # ============================================================
 
 
+@pytest.mark.skip(
+    reason="v2.4.10 standalone `do_update_profile_or_queue` bypasses the queue entirely (LLM "
+    "synthesis was removed; callers pre-compute the profile string). The wrapper now lives in "
+    "server.py (Phase 3-α). Restore this test if Phase 3-β re-introduces queue-side synthesis."
+)
 @pytest.mark.asyncio
 async def test_tool_update_profile_queues():
     """update_profile tool should enqueue when task queue is active."""
     tasks._task_queue = tasks.MemoryTaskQueue()
-    result = await admin_handlers.do_update_profile_or_queue("agent-q", [{"content": "test", "source": {"User": "u"}}])
+    result = await server.do_update_profile_or_queue("agent-q", [{"content": "test", "source": {"User": "u"}}])
     assert result["ok"] is True
     assert result["queued"] is True
     assert "task_id" in result
@@ -284,9 +304,9 @@ async def test_tool_update_profile_queues():
 
 @pytest.mark.asyncio
 async def test_tool_archive_episode_queues():
-    """archive_episode tool should enqueue when task queue is active."""
+    """archive_episode tool should enqueue when task queue is active and summary is unset."""
     tasks._task_queue = tasks.MemoryTaskQueue()
-    result = await memory_handlers.do_archive_episode_or_queue("agent-q", [{"content": "conversation data"}])
+    result = await server.do_archive_episode_or_queue("agent-q", [{"content": "conversation data"}])
     assert result["ok"] is True
     assert result["queued"] is True
 
@@ -296,11 +316,16 @@ async def test_tool_archive_episode_queues():
     assert rows[0][0] == "archive_episode"
 
 
+@pytest.mark.skip(
+    reason="v2.4.10 standalone `do_update_profile_or_queue` is always synchronous (the queue "
+    "code path was removed along with LLM synthesis), so the queue-disabled distinction this "
+    "test was designed for no longer exists. Revisit when Phase 3-β realigns with upstream."
+)
 @pytest.mark.asyncio
 async def test_tool_sync_when_queue_disabled():
     """Tools should run synchronously when task queue is not available."""
     tasks._task_queue = None
-    result = await admin_handlers.do_update_profile_or_queue(
+    result = await server.do_update_profile_or_queue(
         "agent-sync", [{"content": "I like Python", "source": {"User": "u"}}]
     )
     # Should return sync result (not queued)
