@@ -22,21 +22,14 @@ This shell:
 import asyncio
 import logging
 import os
-import sys
 
 from mcp.server.stdio import stdio_server
 from mcp.types import ToolAnnotations
+from mcp_common.mcp_utils import ToolRegistry
 
-# Allow `from common.mcp_utils import ToolRegistry` resolution against
-# cloto-mcp-servers/servers/common/ at runtime (mirrors v2.4.10 behavior;
-# Phase 3-0 will switch to `from mcp_common.mcp_utils` via mgp-py dep).
-sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")))
-
-from common.mcp_utils import ToolRegistry  # noqa: E402
-
-import tasks  # noqa: E402
-import vector  # noqa: E402
-from admin_handlers import (  # noqa: E402
+import tasks
+import vector
+from admin_handlers import (
     do_calibrate_threshold,
     do_delete_agent_data,
     do_delete_episode,
@@ -53,7 +46,7 @@ from admin_handlers import (  # noqa: E402
     do_update_memory,
     do_update_profile,
 )
-from config import (  # noqa: E402
+from config import (
     EMBEDDING_API_KEY,
     EMBEDDING_API_URL,
     EMBEDDING_MODE,
@@ -61,15 +54,15 @@ from config import (  # noqa: E402
     EMBEDDING_URL,
     TASK_QUEUE_ENABLED,
 )
-from database import close_db, get_db  # noqa: E402
-from maintenance_handlers import do_check_health, do_deep_check  # noqa: E402
-from memory_handlers import (  # noqa: E402
+from database import close_db, get_db
+from maintenance_handlers import do_check_health, do_deep_check
+from memory_handlers import (
     do_archive_episode,
     do_recall,
     do_recall_with_context,
     do_store,
 )
-from vector import EmbeddingClient  # noqa: E402
+from vector import EmbeddingClient
 
 logger = logging.getLogger(__name__)
 
