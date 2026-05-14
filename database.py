@@ -9,8 +9,14 @@ from config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
+# v2.4.17: project_id is a second isolation axis layered on top of agent_id,
+# giving agent_id × project_id two-tier γ semantics.
+#   - write: omitted → stored as '' (= global pool)
+#   - read:  project_id='X' matches the union of 'X' and '' (global pool)
+# Existing rows get project_id='' via the v9 migration, so the change is
+# backward compatible (legacy data behaves as the shared global pool).
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version    INTEGER PRIMARY KEY,
@@ -20,6 +26,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS memories (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id   TEXT NOT NULL,
+    project_id TEXT NOT NULL DEFAULT '',
     msg_id     TEXT NOT NULL DEFAULT '',
     content    TEXT NOT NULL,
     source     TEXT NOT NULL DEFAULT '{}',
@@ -42,6 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_msg_id
 CREATE TABLE IF NOT EXISTS profiles (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id   TEXT NOT NULL,
+    project_id TEXT NOT NULL DEFAULT '',
     user_id    TEXT NOT NULL DEFAULT '',
     content    TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -51,6 +59,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS episodes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id   TEXT NOT NULL,
+    project_id TEXT NOT NULL DEFAULT '',
     summary    TEXT NOT NULL,
     keywords   TEXT NOT NULL DEFAULT '',
     embedding  BLOB,
@@ -67,10 +76,23 @@ CREATE TABLE IF NOT EXISTS pending_memory_tasks (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     task_type  TEXT NOT NULL,
     agent_id   TEXT NOT NULL,
+    project_id TEXT NOT NULL DEFAULT '',
     payload    TEXT NOT NULL,
     retries    INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+"""
+
+# v2.4.17: the project_id isolation index depends on a column that CREATE
+# TABLE IF NOT EXISTS will not add to an existing table. It is kept out of
+# SCHEMA_SQL so a v8 DB does not fail on "no such column" at boot, and is
+# run after the v9 ALTER TABLE migration instead. CREATE INDEX IF NOT
+# EXISTS makes it idempotent for fresh DBs and v9+ boots alike.
+ISOLATION_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_memories_isolation
+    ON memories(agent_id, project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_episodes_isolation
+    ON episodes(agent_id, project_id, created_at DESC);
 """
 
 FTS_SQL = """
@@ -200,6 +222,32 @@ async def get_db() -> aiosqlite.Connection:
             await _db.execute("ALTER TABLE memories ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass
+
+    # v2.4.17: add the project_id γ-semantics axis to all four data tables.
+    # CREATE TABLE IF NOT EXISTS does not add columns to an existing table,
+    # so ALTER TABLE backfills them. The PRAGMA existence check keeps this
+    # idempotent — a DB with v9 partially applied can be re-run without error.
+    if current < 9:
+        for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
+            cols = await _db.execute_fetchall(f"PRAGMA table_info({table})")
+            existing = {c[1] for c in cols}
+            if "project_id" not in existing:
+                try:
+                    await _db.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT ''")
+                except Exception as e:
+                    logger.warning(
+                        "v9 migration: ALTER TABLE %s ADD COLUMN project_id failed: %s",
+                        table,
+                        e,
+                    )
+
+    # The isolation index depends on the v2.4.17 project_id column. Run it
+    # unconditionally after the migration so v8 boots get the index once the
+    # columns exist; CREATE INDEX IF NOT EXISTS keeps it idempotent.
+    try:
+        await _db.executescript(ISOLATION_INDEX_SQL)
+    except Exception as e:
+        logger.warning("v9 isolation index creation failed (non-fatal): %s", e)
 
     if current < SCHEMA_VERSION:
         await _db.execute(
