@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import aiosqlite
 import httpx
+from mcp_common.embedding_client import EmbeddingClient
 
 import vector
 from config import (
@@ -45,7 +46,7 @@ from utils import (
     _sanitize_content,
     _try_parse_json,
 )
-from vector import EmbeddingClient, _search_vector
+from vector import _search_vector
 
 logger = logging.getLogger(__name__)
 
