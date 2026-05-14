@@ -81,7 +81,12 @@ async def do_update_profile_or_queue(agent_id: str, profile: str = "") -> dict:
 
 
 async def do_archive_episode_or_queue(
-    agent_id: str, history: list, summary: str = "", keywords: str = "", resolved: bool | None = None
+    agent_id: str,
+    history: list,
+    summary: str = "",
+    keywords: str = "",
+    resolved: bool | None = None,
+    project_id: str = "",
 ) -> dict:
     """Enqueue episode archival if task queue is enabled, otherwise run synchronously.
 
@@ -89,8 +94,13 @@ async def do_archive_episode_or_queue(
     (no LLM call needed, so queuing for retry is unnecessary).
     """
     if summary:
-        return await do_archive_episode(agent_id, history, summary=summary, keywords=keywords, resolved=resolved)
+        return await do_archive_episode(
+            agent_id, history, summary=summary, keywords=keywords, resolved=resolved, project_id=project_id
+        )
     if tasks._task_queue and TASK_QUEUE_ENABLED:
+        # NOTE: the queue path does not yet propagate project_id — the
+        # LLM-driven branch is not expected from project-tagged callers
+        # (which always pre-compute summary). Tracked for follow-up if needed.
         task_id = await tasks._task_queue.enqueue("archive_episode", agent_id, history)
         return {"ok": True, "queued": True, "task_id": task_id}
     return await do_archive_episode(agent_id, history)
@@ -117,11 +127,19 @@ registry.auto_tool(
                 "type": "string",
                 "description": "Memory channel for context separation (e.g. 'chat', 'discord'). Default: '' (shared).",
             },
+            "project_id": {
+                "type": "string",
+                "description": (
+                    "v2.4.17 isolation axis. Optional — omit or pass '' to "
+                    "store in the global pool. Reads via γ semantics: a "
+                    "recall with project_id='X' returns 'X' rows + global pool."
+                ),
+            },
         },
         "required": ["agent_id", "message"],
     },
     do_store,
-    [("agent_id", str), ("message", dict), ("channel", str, "")],
+    [("agent_id", str), ("message", dict), ("channel", str, ""), ("project_id", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
@@ -149,6 +167,14 @@ registry.auto_tool(
                 "description": "Normalized content strings to exclude from results (starts-with match). "
                 "Used to prevent duplication with conversation context already known to the caller.",
             },
+            "project_id": {
+                "type": "string",
+                "description": (
+                    "v2.4.17 γ filter. Omit → no filter (all projects). "
+                    "'' → global pool only. 'X' → 'X' bucket ∪ global pool. "
+                    "Threaded through cascade / RRF / vector / FTS / keyword paths."
+                ),
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -160,6 +186,7 @@ registry.auto_tool(
         ("deep", bool, False),
         ("channel", str, ""),
         ("exclude_contents", list, []),
+        ("project_id", str, None),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -182,6 +209,10 @@ registry.auto_tool(
             "limit": {"type": "integer", "description": "Max recalled memories", "default": 10},
             "channel": {"type": "string", "description": "Memory channel filter"},
             "deep": {"type": "boolean", "description": "Disable time decay", "default": False},
+            "project_id": {
+                "type": "string",
+                "description": "v2.4.17 γ filter — passed through to recall. Same semantics as in `recall`.",
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -193,6 +224,7 @@ registry.auto_tool(
         ("limit", int, 10),
         ("channel", str, ""),
         ("deep", bool, False),
+        ("project_id", str, None),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -256,11 +288,22 @@ registry.auto_tool(
                 "type": "boolean",
                 "description": "Whether the topic was completed/concluded",
             },
+            "project_id": {
+                "type": "string",
+                "description": "v2.4.17 isolation axis. Omit or pass '' for the global pool.",
+            },
         },
         "required": ["agent_id", "summary"],
     },
     do_archive_episode_or_queue,
-    [("agent_id", str), ("history", list, []), ("summary", str, ""), ("keywords", str, ""), ("resolved", bool, None)],
+    [
+        ("agent_id", str),
+        ("history", list, []),
+        ("summary", str, ""),
+        ("keywords", str, ""),
+        ("resolved", bool, None),
+        ("project_id", str, ""),
+    ],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
@@ -272,11 +315,15 @@ registry.auto_tool(
         "properties": {
             "agent_id": {"type": "string", "description": "Agent identifier (empty for all agents)"},
             "limit": {"type": "integer", "description": "Max memories to return", "default": 100},
+            "project_id": {
+                "type": "string",
+                "description": "v2.4.17 γ filter. Omit → no filter; '' → global pool only; 'X' → 'X' ∪ global pool.",
+            },
         },
         "required": [],
     },
     do_list_memories,
-    [("agent_id", str), ("limit", int, 100)],
+    [("agent_id", str), ("limit", int, 100), ("project_id", str, None)],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
 
@@ -288,11 +335,15 @@ registry.auto_tool(
         "properties": {
             "agent_id": {"type": "string", "description": "Agent identifier (empty for all agents)"},
             "limit": {"type": "integer", "description": "Max episodes to return", "default": 50},
+            "project_id": {
+                "type": "string",
+                "description": "v2.4.17 γ filter. Same semantics as list_memories.",
+            },
         },
         "required": [],
     },
     do_list_episodes,
-    [("agent_id", str), ("limit", int, 50)],
+    [("agent_id", str), ("limit", int, 50), ("project_id", str, None)],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
 
