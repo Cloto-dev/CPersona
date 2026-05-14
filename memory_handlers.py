@@ -199,7 +199,7 @@ async def _recall_rrf(
     rrf_scores: dict[tuple, float] = {}
     _excl = exclude_set or set()
 
-    rrf_min_sim = config.VECTOR_MIN_SIMILARITY * RRF_THRESHOLD_FACTOR
+    rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         vector_results = await _search_vector(db, agent_id, query, limit, min_similarity=rrf_min_sim, channel=channel)
         for rank, row in enumerate(vector_results):
