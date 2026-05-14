@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 
 _embedding_client: EmbeddingClient | None = None
 
+# Per-agent vector-similarity threshold overrides (v2.4.15).
+# Populated by do_calibrate_threshold / startup auto-calibration; agents with
+# no calibration data fall back to the global config.VECTOR_MIN_SIMILARITY.
+_agent_thresholds: dict[str, float] = {}
+
+
+def _get_vector_threshold(agent_id: str) -> float:
+    """Return the per-agent threshold when available, otherwise the global default."""
+    return _agent_thresholds.get(agent_id, config.VECTOR_MIN_SIMILARITY)
+
 
 async def _search_vector(
     db: aiosqlite.Connection,
@@ -40,7 +50,7 @@ async def _search_vector(
                     "namespace": f"cpersona:{agent_id}",
                     "query": query,
                     "limit": limit,
-                    "min_similarity": config.VECTOR_MIN_SIMILARITY,
+                    "min_similarity": _get_vector_threshold(agent_id),
                 },
             )
             resp.raise_for_status()
@@ -102,7 +112,7 @@ async def _search_vector(
         return []
     query_vec = np.array(embeddings[0], dtype=np.float32)
     query_dim = len(query_vec)
-    effective_min_sim = min_similarity if min_similarity is not None else config.VECTOR_MIN_SIMILARITY
+    effective_min_sim = min_similarity if min_similarity is not None else _get_vector_threshold(agent_id)
 
     candidates: list[tuple[float, dict]] = []
     scan_limit = min(MAX_MEMORIES, max(limit * 10, 100))

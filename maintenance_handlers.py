@@ -1,6 +1,6 @@
 """Maintenance and deep-check handlers for CPersona.
 
-Tools: do_check_health (16 checks + auto-repair), do_deep_check (semantic
+Tools: do_check_health (17 checks + auto-repair), do_deep_check (semantic
 heuristic analysis).
 
 Accesses `vector._embedding_client` for embedding dimension verification
@@ -100,7 +100,7 @@ async def do_check_health(agent_id: str = "", fix: bool = False) -> dict:
             test_emb = await vector._embedding_client.embed(["test"])
             if test_emb and test_emb[0]:
                 expected_bytes = len(test_emb[0]) * 4
-                mismatched = (
+                mismatched_mem = (
                     await db.execute_fetchall(
                         f"""SELECT COUNT(*) FROM memories
                         WHERE embedding IS NOT NULL AND length(embedding) != ?
@@ -108,17 +108,45 @@ async def do_check_health(agent_id: str = "", fix: bool = False) -> dict:
                         (expected_bytes, *agent_params),
                     )
                 )[0][0]
+                mismatched_ep = (
+                    await db.execute_fetchall(
+                        f"""SELECT COUNT(*) FROM episodes
+                        WHERE embedding IS NOT NULL AND length(embedding) != ?
+                        {agent_clause}""",
+                        (expected_bytes, *agent_params),
+                    )
+                )[0][0]
+                mismatched = mismatched_mem + mismatched_ep
                 if mismatched > 0:
                     issues.append(
                         {
                             "type": "embedding_dimension_mismatch",
                             "count": mismatched,
+                            "memories": mismatched_mem,
+                            "episodes": mismatched_ep,
                             "expected_dim": len(test_emb[0]),
                         }
                     )
+                    if fix:
+                        # NULL out mismatched BLOBs so the null_embedding fixer re-embeds them
+                        if mismatched_mem > 0:
+                            await db.execute(
+                                f"""UPDATE memories SET embedding = NULL
+                                WHERE embedding IS NOT NULL AND length(embedding) != ?
+                                {agent_clause}""",
+                                (expected_bytes, *agent_params),
+                            )
+                        if mismatched_ep > 0:
+                            await db.execute(
+                                f"""UPDATE episodes SET embedding = NULL
+                                WHERE embedding IS NOT NULL AND length(embedding) != ?
+                                {agent_clause}""",
+                                (expected_bytes, *agent_params),
+                            )
         except Exception as e:
             logger.warning("Embedding dimension check failed: %s", e)
 
+    # Null embeddings (memories)
     null_count = (
         await db.execute_fetchall(
             f"SELECT COUNT(*) FROM memories WHERE embedding IS NULL {agent_clause}",
@@ -128,9 +156,10 @@ async def do_check_health(agent_id: str = "", fix: bool = False) -> dict:
     if null_count > 0:
         issues.append({"type": "null_embedding", "count": null_count})
 
+    # Null embedding auto-repair for memories (batch limit: 500)
     if null_count > 0 and fix and vector._embedding_client:
         rows = await db.execute_fetchall(
-            f"SELECT id, content FROM memories WHERE embedding IS NULL {agent_clause} LIMIT 50",
+            f"SELECT id, content FROM memories WHERE embedding IS NULL {agent_clause} LIMIT 500",
             agent_params,
         )
         re_embedded = 0
@@ -147,6 +176,37 @@ async def do_check_health(agent_id: str = "", fix: bool = False) -> dict:
             for issue in issues:
                 if issue["type"] == "null_embedding":
                     issue["re_embedded"] = re_embedded
+                    break
+
+    # Null embeddings (episodes) — auto-repair with the same batch limit
+    null_ep_count = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM episodes WHERE embedding IS NULL {agent_clause}",
+            agent_params,
+        )
+    )[0][0]
+    if null_ep_count > 0:
+        issues.append({"type": "null_episode_embedding", "count": null_ep_count})
+
+    if null_ep_count > 0 and fix and vector._embedding_client:
+        ep_rows = await db.execute_fetchall(
+            f"SELECT id, summary FROM episodes WHERE embedding IS NULL {agent_clause} LIMIT 500",
+            agent_params,
+        )
+        ep_re_embedded = 0
+        for row_id, summary in ep_rows:
+            try:
+                emb = await vector._embedding_client.embed([summary])
+                if emb and emb[0]:
+                    blob = vector._embedding_client.pack_embedding(emb[0])
+                    await db.execute("UPDATE episodes SET embedding = ? WHERE id = ?", (blob, row_id))
+                    ep_re_embedded += 1
+            except Exception:
+                pass
+        if ep_re_embedded > 0:
+            for issue in issues:
+                if issue["type"] == "null_episode_embedding":
+                    issue["re_embedded"] = ep_re_embedded
                     break
 
     try:

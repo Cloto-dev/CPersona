@@ -48,6 +48,7 @@ from admin_handlers import (
     do_update_profile,
 )
 from config import (
+    AUTO_CALIBRATE,
     EMBEDDING_API_KEY,
     EMBEDDING_API_URL,
     EMBEDDING_CACHE_SIZE,
@@ -704,6 +705,32 @@ async def main():
         logger.info("Embedding disabled (mode=none), using FTS5 + keyword only")
 
     await get_db()
+
+    # Auto-calibrate the vector-similarity threshold on startup if enabled (v2.4.15).
+    if AUTO_CALIBRATE and EMBEDDING_MODE != "none":
+        db = await get_db()
+        # Phase 1: global threshold from the all-agents corpus
+        global_result = await do_calibrate_threshold(agent_id="")
+        if global_result.get("ok"):
+            logger.info(
+                "Auto-calibrate global: %.4f → %.4f",
+                global_result["old_threshold"],
+                global_result["new_threshold"],
+            )
+        # Phase 2: per-agent thresholds for each agent with sufficient embeddings
+        agent_rows = await db.execute_fetchall(
+            "SELECT DISTINCT agent_id FROM memories WHERE embedding IS NOT NULL"
+        )
+        for (aid,) in agent_rows:
+            result = await do_calibrate_threshold(agent_id=aid)
+            if result.get("ok"):
+                logger.info(
+                    "Auto-calibrate %s: %.4f → %.4f",
+                    aid,
+                    result["old_threshold"],
+                    result["new_threshold"],
+                )
+            # agents with < 10 embeddings are silently skipped (result["ok"] is False)
 
     if TASK_QUEUE_ENABLED:
         tasks._task_queue = tasks.MemoryTaskQueue()
