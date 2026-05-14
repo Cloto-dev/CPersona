@@ -6,7 +6,7 @@ Thin orchestration shell. Tool implementations live in module siblings:
   - utils.py              — stateless helpers
   - database.py           — connection, schema, migrations
   - tasks.py              — MemoryTaskQueue + _task_queue singleton
-  - vector.py             — EmbeddingClient + _embedding_client singleton + _search_vector
+  - vector.py             — _embedding_client singleton + _search_vector (EmbeddingClient from mcp_common)
   - memory_handlers.py    — store / recall / recall_with_context / archive_episode
   - admin_handlers.py     — profile / list / delete / update / lock / agent_data / threshold / export / import / merge / queue_status
   - maintenance_handlers.py — check_health / deep_check
@@ -25,6 +25,7 @@ import os
 
 from mcp.server.stdio import stdio_server
 from mcp.types import ToolAnnotations
+from mcp_common.embedding_client import EmbeddingClient
 from mcp_common.mcp_utils import ToolRegistry
 
 import tasks
@@ -49,6 +50,8 @@ from admin_handlers import (
 from config import (
     EMBEDDING_API_KEY,
     EMBEDDING_API_URL,
+    EMBEDDING_CACHE_SIZE,
+    EMBEDDING_CACHE_TTL,
     EMBEDDING_MODE,
     EMBEDDING_MODEL,
     EMBEDDING_URL,
@@ -62,7 +65,6 @@ from memory_handlers import (
     do_recall_with_context,
     do_store,
 )
-from vector import EmbeddingClient
 
 logger = logging.getLogger(__name__)
 
@@ -682,12 +684,19 @@ async def main():
     )
 
     if EMBEDDING_MODE != "none":
+        # mcp_common.EmbeddingClient takes env-derived config via constructor
+        # args (it does no env reading of its own), so cache size / TTL /
+        # timeout are passed explicitly here to preserve CPERSONA_EMBEDDING_*
+        # override behavior.
         vector._embedding_client = EmbeddingClient(
             mode=EMBEDDING_MODE,
             http_url=EMBEDDING_URL,
             api_key=EMBEDDING_API_KEY,
             api_url=EMBEDDING_API_URL,
             model=EMBEDDING_MODEL,
+            cache_size=EMBEDDING_CACHE_SIZE,
+            cache_ttl=EMBEDDING_CACHE_TTL,
+            timeout=int(os.environ.get("CPERSONA_EMBEDDING_TIMEOUT_SECS", "30")),
         )
         await vector._embedding_client.initialize()
         logger.info("Embedding client ready (mode=%s)", EMBEDDING_MODE)
