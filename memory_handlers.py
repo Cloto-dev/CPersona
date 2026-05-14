@@ -21,12 +21,17 @@ import httpx
 import vector
 from config import (
     AUTOCUT_ENABLED,
+    AUTOCUT_MIN_GAP_RATIO,
     CONFIDENCE_ENABLED,
+    EPISODE_DECAY_FLOOR,
+    EPISODE_DECAY_RATE,
+    EPISODE_PENALTY_ENABLED,
     FTS_ENABLED,
     MAX_CONTENT_LENGTH,
     MAX_MEMORIES,
     RECALL_MODE,
     RRF_K,
+    RRF_MAX_SCALE,
     RRF_THRESHOLD_FACTOR,
     STORE_BLOB,
     VECTOR_SEARCH_MODE,
@@ -247,13 +252,23 @@ async def _recall_rrf(
 
 
 def _autocut(results: list[dict]) -> list[dict]:
-    """Detect the largest score gap in results and cut below it (Weaviate autocut)."""
+    """Detect the largest score gap in results and cut below it (Weaviate autocut).
+
+    v2.4.13: Uses relative gap ratio (gap / max_score) instead of absolute gap
+    to work correctly across both RRF (~0-0.05) and cosine (0-1.0) score scales.
+    Gaps below AUTOCUT_MIN_GAP_RATIO of the top score are treated as uniform
+    noise and ignored to prevent over-truncation on evenly-distributed results.
+    """
     if len(results) < 2:
         return results
     scores = [r.get("_rrf_score") or r.get("_cosine") or 0 for r in results]
-    gaps = [scores[i] - scores[i + 1] for i in range(len(scores) - 1)]
-    if not gaps or max(gaps) <= 0:
+    max_score = scores[0]
+    if max_score <= 0:
         return results
+    gaps = [scores[i] - scores[i + 1] for i in range(len(scores) - 1)]
+    max_gap = max(gaps)
+    if max_gap / max_score < AUTOCUT_MIN_GAP_RATIO:
+        return results  # no meaningful breakpoint
     cut_idx = max(range(len(gaps)), key=lambda i: gaps[i]) + 1
     return results[:cut_idx]
 
@@ -271,27 +286,121 @@ def _apply_quality_gate(
     min_score: float,
     memory_count: int,
 ) -> list[dict]:
-    """Adaptive quality gate — removes results below dynamic threshold."""
+    """Adaptive quality gate — remove results below a dynamic threshold.
+
+    Score priority (v2.4.12):
+    1. ``_confidence_score`` — 0–1, normalized by ``_compute_confidence``
+    2. ``_cosine`` — 0–1, raw cosine similarity from vector search
+    3. ``_rrf_score`` — ~0–0.05 scale; threshold is scaled by ``RRF_MAX_SCALE``
+       to align with the cosine-scale ``min_score``
+    4. Unscored (no score at all) → volume rule (``memory_count >= 100``)
+
+    Rules:
+    1. Scored results excluded if score < ``min_score``
+       (RRF uses the scaled threshold ``min_score * RRF_MAX_SCALE``)
+    2. Profile injection (``id == -1``): skip if ``memory_count < 50``
+    3. Unscored results kept only if ``memory_count >= 100``
+
+    v2.4.12 fix: previously ``_rrf_score`` was selected via falsy-chain before
+    ``_cosine``, causing the RRF-scale value (0.01–0.05) to be compared against
+    the cosine-scale ``min_score`` (0.2–1.0) → every RRF-mode result rejected.
+    Cascade mode (no ``_rrf_score`` on rows) is unaffected.
+    """
     if not results:
         return results
 
     filtered = []
+    stats = {"confidence": 0, "cosine": 0, "rrf": 0, "unscored": 0, "profile": 0, "blocked": 0}
+
     for r in results:
-        if r.get("id") == -1:
+        # Profile — gate by memory count (unchanged)
+        if r.get("id") == -1:  # profile sentinel
             if memory_count >= 50:
                 filtered.append(r)
+                stats["profile"] += 1
+            else:
+                stats["blocked"] += 1
             continue
 
-        score = r.get("_confidence_score") or r.get("_rrf_score") or r.get("_cosine")
+        confidence = r.get("_confidence_score")
+        cosine = r.get("_cosine")
+        rrf = r.get("_rrf_score")
 
-        if score is not None:
-            if score >= min_score:
+        if confidence is not None:
+            if confidence >= min_score:
                 filtered.append(r)
+                stats["confidence"] += 1
+            else:
+                stats["blocked"] += 1
+        elif cosine is not None:
+            if cosine >= min_score:
+                filtered.append(r)
+                stats["cosine"] += 1
+            else:
+                stats["blocked"] += 1
+        elif rrf is not None:
+            # RRF scale (~0–0.05) does not match cosine-scale min_score; rescale.
+            if rrf >= min_score * RRF_MAX_SCALE:
+                filtered.append(r)
+                stats["rrf"] += 1
+            else:
+                stats["blocked"] += 1
         else:
+            # Unscored (cascade FTS/keyword without confidence) — volume rule
             if memory_count >= 100:
                 filtered.append(r)
+                stats["unscored"] += 1
+            else:
+                stats["blocked"] += 1
+
+    logger.debug(
+        "quality_gate: in=%d out=%d (conf=%d cos=%d rrf=%d uns=%d prof=%d) min_score=%.3f count=%d",
+        len(results),
+        len(filtered),
+        stats["confidence"],
+        stats["cosine"],
+        stats["rrf"],
+        stats["unscored"],
+        stats["profile"],
+        min_score,
+        memory_count,
+    )
 
     return filtered
+
+
+def _episode_boundary_factor(
+    memory_ts_str: str | None,
+    episode_boundary_ts: datetime | None,
+) -> float:
+    """Multiplicative decay for memories preceding the latest episode boundary.
+
+    Returns 1.0 for memories within or after the boundary (current session).
+    Returns exponential decay in [EPISODE_DECAY_FLOOR, 1.0) for older memories,
+    so cross-session noise is weakened relative to current-session memories.
+    """
+    if not memory_ts_str or episode_boundary_ts is None:
+        return 1.0
+    mem_dt = _parse_timestamp_utc(memory_ts_str)
+    if mem_dt is None or mem_dt >= episode_boundary_ts:
+        return 1.0
+    hours_before = (episode_boundary_ts - mem_dt).total_seconds() / 3600
+    return max(EPISODE_DECAY_FLOOR, math.exp(-EPISODE_DECAY_RATE * hours_before))
+
+
+async def _get_episode_boundary_ts(db: aiosqlite.Connection, agent_id: str) -> datetime | None:
+    """Return the latest episode's created_at as the current-session boundary.
+
+    Used by the episode boundary penalty to distinguish current-session
+    memories (no penalty) from prior-session memories (decayed score).
+    """
+    rows = await db.execute_fetchall(
+        "SELECT created_at FROM episodes WHERE agent_id=? ORDER BY created_at DESC LIMIT 1",
+        (agent_id,),
+    )
+    if not rows or not rows[0][0]:
+        return None
+    return _parse_timestamp_utc(rows[0][0])
 
 
 async def do_recall(
@@ -335,6 +444,19 @@ async def do_recall(
                 mem_ids,
             )
             recall_counts = {r[0]: (r[1], r[2] or "") for r in rc_rows}
+
+    # v2.4.14: Episode boundary soft penalty (L3) — weaken cross-session memories
+    # before quality gate so current-session signals take precedence.
+    if EPISODE_PENALTY_ENABLED and results:
+        episode_boundary_ts = await _get_episode_boundary_ts(db, agent_id)
+        if episode_boundary_ts is not None:
+            for r in results:
+                factor = _episode_boundary_factor(r.get("timestamp"), episode_boundary_ts)
+                if factor < 1.0:
+                    if "_cosine" in r:
+                        r["_cosine"] = r["_cosine"] * factor
+                    if "_rrf_score" in r:
+                        r["_rrf_score"] = r["_rrf_score"] * factor
 
     if CONFIDENCE_ENABLED:
         for r in results:

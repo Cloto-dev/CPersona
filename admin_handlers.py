@@ -132,10 +132,12 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
     When agent_id is provided (non-empty), enforces ownership.
     """
     db = await get_db()
-    row = await db.execute_fetchone("SELECT locked FROM memories WHERE id = ?", (memory_id,))
-    if row is None:
+    # aiosqlite 0.22 has execute_fetchall but no execute_fetchone — using the
+    # former avoids a silent AttributeError that previously broke every delete.
+    rows = await db.execute_fetchall("SELECT locked FROM memories WHERE id = ?", (memory_id,))
+    if not rows:
         return {"error": f"Memory {memory_id} not found"}
-    if row[0]:
+    if rows[0][0]:
         return {"error": f"Memory {memory_id} is locked and cannot be deleted"}
 
     if agent_id:
@@ -169,9 +171,10 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
         return {"error": "Content cannot be empty"}
 
     db = await get_db()
-    row = await db.execute_fetchone("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
-    if row is None:
+    rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
+    if not rows:
         return {"error": f"Memory {memory_id} not found"}
+    row = rows[0]
     if row[0]:
         return {"error": f"Memory {memory_id} is locked and cannot be edited"}
     if agent_id and row[1] != agent_id:
@@ -193,10 +196,10 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
 async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
     """Lock a memory to prevent deletion and editing."""
     db = await get_db()
-    row = await db.execute_fetchone("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
-    if row is None:
+    rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
+    if not rows:
         return {"error": f"Memory {memory_id} not found"}
-    if agent_id and row[0] != agent_id:
+    if agent_id and rows[0][0] != agent_id:
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
     await db.execute("UPDATE memories SET locked = 1 WHERE id = ?", (memory_id,))
@@ -207,10 +210,10 @@ async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
 async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
     """Unlock a memory to allow deletion and editing."""
     db = await get_db()
-    row = await db.execute_fetchone("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
-    if row is None:
+    rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
+    if not rows:
         return {"error": f"Memory {memory_id} not found"}
-    if agent_id and row[0] != agent_id:
+    if agent_id and rows[0][0] != agent_id:
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
     await db.execute("UPDATE memories SET locked = 0 WHERE id = ?", (memory_id,))
