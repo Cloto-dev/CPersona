@@ -260,10 +260,12 @@ async def do_delete_agent_data(agent_id: str) -> dict:
 
 
 async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: float = 0) -> dict:
-    """Auto-calibrate VECTOR_MIN_SIMILARITY based on embedding distribution.
+    """Auto-calibrate the vector-similarity threshold from the embedding distribution.
 
-    Uses null distribution of pairwise cosine similarities (mostly unrelated pairs).
-    Mutates `config.VECTOR_MIN_SIMILARITY` in-place.
+    Uses the null distribution of pairwise cosine similarities (mostly unrelated
+    pairs). When *agent_id* is provided, writes a per-agent override into
+    ``vector._agent_thresholds``; when empty, calibrates the global
+    ``config.VECTOR_MIN_SIMILARITY`` from the all-agents corpus (v2.4.15).
     """
     import numpy as np
 
@@ -271,10 +273,17 @@ async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: 
     sample_n = sample_size or CALIBRATE_SAMPLE_SIZE
     z = z_factor or CALIBRATE_Z_FACTOR
 
-    rows = await db.execute_fetchall(
-        "SELECT embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",
-        (agent_id, sample_n),
-    )
+    # Sample embeddings: per-agent when agent_id provided, all-agents when empty
+    if agent_id:
+        rows = await db.execute_fetchall(
+            "SELECT embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",
+            (agent_id, sample_n),
+        )
+    else:
+        rows = await db.execute_fetchall(
+            "SELECT embedding FROM memories WHERE embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",
+            (sample_n,),
+        )
 
     if len(rows) < 10:
         return {"ok": False, "error": f"Need at least 10 embeddings, found {len(rows)}"}
@@ -292,19 +301,24 @@ async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: 
     pairwise_sims = sim_matrix[triu_indices]
 
     num_pairs = len(pairwise_sims)
-    old_threshold = config.VECTOR_MIN_SIMILARITY
+    old_threshold = vector._get_vector_threshold(agent_id)
 
     sim_mean = float(np.mean(pairwise_sims))
     sim_std = float(np.std(pairwise_sims))
     sim_median = float(np.median(pairwise_sims))
 
     z_threshold = sim_mean - z * sim_std
-    new_threshold = max(z_threshold, CALIBRATE_FLOOR)
+    new_threshold = round(max(z_threshold, CALIBRATE_FLOOR), 4)
 
-    config.VECTOR_MIN_SIMILARITY = round(new_threshold, 4)
+    # Apply: per-agent dict when agent_id provided, global fallback when empty
+    if agent_id:
+        vector._agent_thresholds[agent_id] = new_threshold
+    else:
+        config.VECTOR_MIN_SIMILARITY = new_threshold
 
     result = {
         "ok": True,
+        "scope": "per_agent" if agent_id else "global",
         "agent_id": agent_id,
         "sampled_embeddings": n,
         "num_pairs": num_pairs,
@@ -315,12 +329,13 @@ async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: 
             "median": round(sim_median, 4),
         },
         "old_threshold": old_threshold,
-        "new_threshold": config.VECTOR_MIN_SIMILARITY,
+        "new_threshold": new_threshold,
     }
     logger.info(
-        "Calibrated VECTOR_MIN_SIMILARITY: %.4f → %.4f (z=%.1f of %d pairs, mean=%.4f, std=%.4f)",
+        "Calibrated threshold [%s]: %.4f → %.4f (z=%.1f of %d pairs, mean=%.4f, std=%.4f)",
+        agent_id or "global",
         old_threshold,
-        config.VECTOR_MIN_SIMILARITY,
+        new_threshold,
         z,
         num_pairs,
         sim_mean,
