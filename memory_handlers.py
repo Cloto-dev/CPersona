@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import aiosqlite
 import httpx
 from mcp_common.embedding_client import EmbeddingClient
+from mcp_common.isolation import coerce_for_write, gamma_clause
 
 import vector
 from config import (
@@ -51,8 +52,13 @@ from vector import _search_vector
 logger = logging.getLogger(__name__)
 
 
-async def do_store(agent_id: str, message: dict, channel: str = "") -> dict:
-    """Store a message in agent memory."""
+async def do_store(agent_id: str, message: dict, channel: str = "", project_id: str = "") -> dict:
+    """Store a message in agent memory.
+
+    project_id (v2.4.17): isolation axis. Defaults to '' (= global pool).
+    Dedup is project-scoped so the same msg_id under different projects can
+    coexist; reads use γ semantics (see mcp_common.isolation.gamma_clause).
+    """
     db = await get_db()
 
     msg_id = message.get("id", "")
@@ -60,6 +66,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "") -> dict:
     source = json.dumps(message.get("source", {}))
     timestamp = message.get("timestamp", datetime.now(timezone.utc).isoformat())
     metadata = json.dumps(message.get("metadata", {}))
+    project_id = coerce_for_write(project_id)
 
     if not raw_content:
         return {"ok": True, "skipped": True, "reason": "empty content"}
@@ -70,17 +77,20 @@ async def do_store(agent_id: str, message: dict, channel: str = "") -> dict:
     if not content:
         return {"ok": True, "skipped": True, "reason": "empty after sanitization"}
 
+    # Deduplicate by msg_id if provided (project-scoped — the same msg_id can
+    # legitimately appear in different projects).
     if msg_id:
         row = await db.execute_fetchall(
-            "SELECT id FROM memories WHERE agent_id = ? AND msg_id = ? LIMIT 1",
-            (agent_id, msg_id),
+            "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
+            (agent_id, project_id, msg_id),
         )
         if row:
             return {"ok": True, "skipped": True, "reason": "duplicate msg_id"}
 
+    # Deduplicate by exact content match (project-scoped).
     existing = await db.execute_fetchall(
-        "SELECT id FROM memories WHERE agent_id = ? AND channel = ? AND content = ? LIMIT 1",
-        (agent_id, channel, content),
+        "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+        (agent_id, project_id, channel, content),
     )
     if existing:
         return {"ok": True, "skipped": True, "reason": "duplicate content"}
@@ -95,9 +105,9 @@ async def do_store(agent_id: str, message: dict, channel: str = "") -> dict:
             logger.warning("Embedding failed during store: %s", e)
 
     await db.execute(
-        """INSERT INTO memories (agent_id, msg_id, content, source, timestamp, metadata, embedding, channel)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (agent_id, msg_id, content, source, timestamp, metadata, embedding_blob, channel),
+        """INSERT INTO memories (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, channel)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, channel),
     )
     await db.commit()
 
@@ -134,6 +144,7 @@ async def _recall_cascade(
     deep: bool,
     channel: str = "",
     exclude_set: set[str] | None = None,
+    project_id: str | None = None,
 ) -> list[dict]:
     """Original cascading recall: stages fill remaining slots sequentially."""
     results: list[dict] = []
@@ -141,7 +152,9 @@ async def _recall_cascade(
     _excl = exclude_set or set()
 
     if vector._embedding_client and query.strip():
-        vector_results = await _search_vector(db, agent_id, query, limit, channel=channel)
+        vector_results = await _search_vector(
+            db, agent_id, query, limit, channel=channel, project_id=project_id
+        )
         for row in vector_results:
             rid = row.get("_rid", row["id"])
             if rid not in seen_ids and not _content_excluded(row["content"], _excl):
@@ -149,13 +162,15 @@ async def _recall_cascade(
                 seen_ids.add(rid)
 
     if FTS_ENABLED and query.strip():
-        fts_results = await _search_episodes_fts(db, agent_id, query, limit)
+        fts_results = await _search_episodes_fts(db, agent_id, query, limit, project_id=project_id)
         for row in fts_results:
             rid = ("ep", row["id"])
             if rid not in seen_ids:
                 results.append(row)
                 seen_ids.add(rid)
 
+    # Profiles are not project-tagged in v2.4.17 (the UNIQUE constraint stays
+    # agent_id × user_id), so profile injection is global per agent.
     profile_rows = await db.execute_fetchall(
         "SELECT content FROM profiles WHERE agent_id = ? AND user_id = '' ORDER BY updated_at DESC LIMIT 3",
         (agent_id,),
@@ -172,7 +187,9 @@ async def _recall_cascade(
 
     remaining = max(0, limit - len(results))
     if remaining > 0:
-        memory_rows = await _search_memories_keyword(db, agent_id, query, remaining, channel=channel)
+        memory_rows = await _search_memories_keyword(
+            db, agent_id, query, remaining, channel=channel, project_id=project_id
+        )
         for row in memory_rows:
             rid = ("mem", row["id"])
             if rid not in seen_ids and not _content_excluded(row["content"], _excl):
@@ -190,6 +207,7 @@ async def _recall_rrf(
     deep: bool,
     channel: str = "",
     exclude_set: set[str] | None = None,
+    project_id: str | None = None,
 ) -> list[dict]:
     """v2.4 RRF recall: run vector and FTS5 independently, merge with
     Reciprocal Rank Fusion. Avoids cascade's positional bias.
@@ -201,7 +219,9 @@ async def _recall_rrf(
 
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
-        vector_results = await _search_vector(db, agent_id, query, limit, min_similarity=rrf_min_sim, channel=channel)
+        vector_results = await _search_vector(
+            db, agent_id, query, limit, min_similarity=rrf_min_sim, channel=channel, project_id=project_id
+        )
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -211,7 +231,7 @@ async def _recall_rrf(
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
 
     if FTS_ENABLED:
-        fts_ep_results = await _search_episodes_fts(db, agent_id, query, limit)
+        fts_ep_results = await _search_episodes_fts(db, agent_id, query, limit, project_id=project_id)
         for rank, row in enumerate(fts_ep_results):
             rid = ("ep", row["id"])
             if rid not in doc_map:
@@ -219,7 +239,9 @@ async def _recall_rrf(
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
 
     if FTS_ENABLED:
-        fts_mem_results = await _search_memories_keyword(db, agent_id, query, limit, channel=channel)
+        fts_mem_results = await _search_memories_keyword(
+            db, agent_id, query, limit, channel=channel, project_id=project_id
+        )
         for rank, row in enumerate(fts_mem_results):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -411,8 +433,16 @@ async def do_recall(
     deep: bool = False,
     channel: str = "",
     exclude_contents: list | None = None,
+    project_id: str | None = None,
 ) -> dict:
-    """Recall relevant memories using multi-strategy search."""
+    """Recall relevant memories using multi-strategy search.
+
+    project_id (v2.4.17): γ filter — None = no project filter, '' = global
+    pool only, 'X' = bucket 'X' ∪ global pool. Threaded through the cascade /
+    RRF / vector / FTS / keyword paths. The vector top-K is post-filtered, so
+    a tightly-tagged query may receive fewer than `limit` results — namespace
+    partitioning is a follow-up.
+    """
     db = await get_db()
 
     exclude_set: set[str] = set()
@@ -420,9 +450,13 @@ async def do_recall(
         exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
 
     if RECALL_MODE == "rrf" and query.strip():
-        results = await _recall_rrf(db, agent_id, query, limit, deep, channel, exclude_set)
+        results = await _recall_rrf(
+            db, agent_id, query, limit, deep, channel, exclude_set, project_id=project_id
+        )
     else:
-        results = await _recall_cascade(db, agent_id, query, limit, deep, channel, exclude_set)
+        results = await _recall_cascade(
+            db, agent_id, query, limit, deep, channel, exclude_set, project_id=project_id
+        )
 
     time_range_hours = 0.0
     recall_counts: dict[int, tuple[int, str]] = {}
@@ -539,13 +573,25 @@ async def do_recall_with_context(
     limit: int = 10,
     channel: str = "",
     deep: bool = False,
+    project_id: str | None = None,
 ) -> dict:
-    """Recall memories and merge with external conversation context."""
+    """Recall memories and merge with external conversation context.
+
+    project_id (v2.4.17): γ filter — passed through to do_recall.
+    """
     ctx = external_context or []
 
     exclude_list = [e["content"].strip().lower() for e in ctx if e.get("content", "").strip()]
 
-    recall_result = await do_recall(agent_id, query, limit, deep=deep, channel=channel, exclude_contents=exclude_list)
+    recall_result = await do_recall(
+        agent_id,
+        query,
+        limit,
+        deep=deep,
+        channel=channel,
+        exclude_contents=exclude_list,
+        project_id=project_id,
+    )
     messages = recall_result.get("messages", [])
 
     for entry in ctx:
@@ -581,24 +627,32 @@ async def do_recall_with_context(
     return {"messages": messages}
 
 
-async def _search_episodes_fts(db: aiosqlite.Connection, agent_id: str, query: str, limit: int) -> list[dict]:
-    """Search episodes using FTS5."""
+async def _search_episodes_fts(
+    db: aiosqlite.Connection,
+    agent_id: str,
+    query: str,
+    limit: int,
+    project_id: str | None = None,
+) -> list[dict]:
+    """Search episodes using FTS5. project_id (v2.4.17) applies the γ filter."""
     sanitized = re.sub(r"[^\w\s]", "", query, flags=re.UNICODE)
     words = sanitized.split()
     if not words:
         return []
 
     fts_query = " ".join(f'"{w}"' for w in words)
+    proj_frag, proj_params = gamma_clause("e.project_id", project_id)
+    proj_extra = (" AND " + proj_frag) if proj_frag else ""
 
     rows = await db.execute_fetchall(
-        """SELECT e.id, e.summary, e.start_time, e.resolved
+        f"""SELECT e.id, e.summary, e.start_time, e.resolved
            FROM episodes_fts f
            JOIN episodes e ON f.rowid = e.id
            WHERE episodes_fts MATCH ?
-           AND e.agent_id = ?
+           AND e.agent_id = ?{proj_extra}
            ORDER BY rank
            LIMIT ?""",
-        (fts_query, agent_id, limit),
+        (fts_query, agent_id, *proj_params, limit),
     )
 
     return [
@@ -614,20 +668,32 @@ async def _search_episodes_fts(db: aiosqlite.Connection, agent_id: str, query: s
 
 
 async def _search_memories_keyword(
-    db: aiosqlite.Connection, agent_id: str, query: str, limit: int, channel: str = ""
+    db: aiosqlite.Connection,
+    agent_id: str,
+    query: str,
+    limit: int,
+    channel: str = "",
+    project_id: str | None = None,
 ) -> list[dict]:
-    """Search memories using FTS5 (preferred) or LIKE fallback."""
+    """Search memories using FTS5 (preferred) or LIKE fallback.
+
+    project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
+    """
     channel_clause = " AND channel = ?" if channel else ""
     channel_params = (channel,) if channel else ()
+    proj_frag_bare, proj_params_bare = gamma_clause("project_id", project_id)
+    proj_extra_bare = (" AND " + proj_frag_bare) if proj_frag_bare else ""
+    proj_frag_m, proj_params_m = gamma_clause("m.project_id", project_id)
+    proj_extra_m = (" AND " + proj_frag_m) if proj_frag_m else ""
 
     if not query.strip():
         rows = await db.execute_fetchall(
             f"""SELECT id, msg_id, content, source, timestamp
                FROM memories
-               WHERE agent_id = ?{channel_clause}
+               WHERE agent_id = ?{channel_clause}{proj_extra_bare}
                ORDER BY created_at DESC
                LIMIT ?""",
-            (agent_id, *channel_params, limit),
+            (agent_id, *channel_params, *proj_params_bare, limit),
         )
         return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4]} for r in rows]
 
@@ -641,10 +707,10 @@ async def _search_memories_keyword(
                    FROM memories_fts f
                    JOIN memories m ON f.rowid = m.id
                    WHERE memories_fts MATCH ?
-                   AND m.agent_id = ?{channel_clause.replace("channel", "m.channel")}
+                   AND m.agent_id = ?{channel_clause.replace("channel", "m.channel")}{proj_extra_m}
                    ORDER BY rank
                    LIMIT ?""",
-                (fts_query, agent_id, *channel_params, limit),
+                (fts_query, agent_id, *channel_params, *proj_params_m, limit),
             )
             if rows:
                 return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4]} for r in rows]
@@ -653,11 +719,11 @@ async def _search_memories_keyword(
     rows = await db.execute_fetchall(
         f"""SELECT id, msg_id, content, source, timestamp
            FROM memories
-           WHERE agent_id = ?{channel_clause}
+           WHERE agent_id = ?{channel_clause}{proj_extra_bare}
            AND content LIKE ?
            ORDER BY created_at DESC
            LIMIT ?""",
-        (agent_id, *channel_params, f"%{query}%", scan_limit),
+        (agent_id, *channel_params, *proj_params_bare, f"%{query}%", scan_limit),
     )
     return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4]} for r in rows[:limit]]
 
@@ -668,14 +734,19 @@ async def do_archive_episode(
     summary: str = "",
     keywords: str = "",
     resolved: bool | None = None,
+    project_id: str = "",
 ) -> dict:
-    """Archive a conversation episode with pre-computed summary, keywords, and resolved status."""
+    """Archive a conversation episode with pre-computed summary, keywords, and resolved status.
+
+    project_id (v2.4.17): isolation axis. Defaults to '' (= global pool).
+    """
     db = await get_db()
 
     if not summary:
         return {"ok": True, "episode_id": None}
 
     resolved = bool(resolved)
+    project_id = coerce_for_write(project_id)
 
     timestamps = [msg.get("timestamp", "") for msg in history if msg.get("timestamp")]
     start_time = min(timestamps) if timestamps else None
@@ -691,9 +762,9 @@ async def do_archive_episode(
             logger.warning("Embedding failed for episode: %s", e)
 
     cursor = await db.execute(
-        """INSERT INTO episodes (agent_id, summary, keywords, start_time, end_time, embedding, resolved)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (agent_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved)),
+        """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved)),
     )
     await db.commit()
     return {"ok": True, "episode_id": cursor.lastrowid}

@@ -8,6 +8,7 @@ import logging
 
 import aiosqlite
 from mcp_common.embedding_client import EmbeddingClient
+from mcp_common.isolation import gamma_clause
 
 import config
 from config import (
@@ -38,8 +39,18 @@ async def _search_vector(
     limit: int,
     min_similarity: float | None = None,
     channel: str = "",
+    project_id: str | None = None,
 ) -> list[dict]:
-    """Search memories and episodes using vector cosine similarity."""
+    """Search memories and episodes using vector cosine similarity.
+
+    project_id (v2.4.17): γ filter applied to the row-fetch SQL after the
+    cosine ranking. The remote vector namespace is still f'cpersona:{agent_id}'
+    — top-K candidates are post-filtered by project, so a tightly-tagged query
+    may receive fewer than `limit` results. Namespace partitioning is a
+    follow-up (out of v2.4.17 scope).
+    """
+    proj_frag, proj_params = gamma_clause("project_id", project_id)
+    proj_extra = (" AND " + proj_frag) if proj_frag else ""
 
     if VECTOR_SEARCH_MODE == "remote" and _embedding_client and _embedding_client._http_url:
         try:
@@ -63,13 +74,14 @@ async def _search_vector(
                     mem_id = int(raw_id[4:])
                     if channel:
                         row = await db.execute_fetchall(
-                            "SELECT msg_id, content, source, timestamp FROM memories WHERE id = ? AND channel = ?",
-                            (mem_id, channel),
+                            f"SELECT msg_id, content, source, timestamp FROM memories "
+                            f"WHERE id = ? AND channel = ?{proj_extra}",
+                            (mem_id, channel, *proj_params),
                         )
                     else:
                         row = await db.execute_fetchall(
-                            "SELECT msg_id, content, source, timestamp FROM memories WHERE id = ?",
-                            (mem_id,),
+                            f"SELECT msg_id, content, source, timestamp FROM memories WHERE id = ?{proj_extra}",
+                            (mem_id, *proj_params),
                         )
                     if row:
                         results.append(
@@ -86,8 +98,8 @@ async def _search_vector(
                 elif raw_id.startswith("ep:"):
                     ep_id = int(raw_id[3:])
                     row = await db.execute_fetchall(
-                        "SELECT summary, start_time, resolved FROM episodes WHERE id = ?",
-                        (ep_id,),
+                        f"SELECT summary, start_time, resolved FROM episodes WHERE id = ?{proj_extra}",
+                        (ep_id, *proj_params),
                     )
                     if row:
                         results.append(
@@ -119,21 +131,21 @@ async def _search_vector(
 
     if channel:
         rows = await db.execute_fetchall(
-            """SELECT id, msg_id, content, source, timestamp, embedding
+            f"""SELECT id, msg_id, content, source, timestamp, embedding
                FROM memories
-               WHERE agent_id = ? AND channel = ? AND embedding IS NOT NULL
+               WHERE agent_id = ? AND channel = ? AND embedding IS NOT NULL{proj_extra}
                ORDER BY created_at DESC
                LIMIT ?""",
-            (agent_id, channel, scan_limit),
+            (agent_id, channel, *proj_params, scan_limit),
         )
     else:
         rows = await db.execute_fetchall(
-            """SELECT id, msg_id, content, source, timestamp, embedding
+            f"""SELECT id, msg_id, content, source, timestamp, embedding
                FROM memories
-               WHERE agent_id = ? AND embedding IS NOT NULL
+               WHERE agent_id = ? AND embedding IS NOT NULL{proj_extra}
                ORDER BY created_at DESC
                LIMIT ?""",
-            (agent_id, scan_limit),
+            (agent_id, *proj_params, scan_limit),
         )
 
     if rows:
@@ -169,12 +181,12 @@ async def _search_vector(
                     )
 
     ep_rows = await db.execute_fetchall(
-        """SELECT id, summary, start_time, embedding, resolved
+        f"""SELECT id, summary, start_time, embedding, resolved
            FROM episodes
-           WHERE agent_id = ? AND embedding IS NOT NULL
+           WHERE agent_id = ? AND embedding IS NOT NULL{proj_extra}
            ORDER BY created_at DESC
            LIMIT ?""",
-        (agent_id, scan_limit),
+        (agent_id, *proj_params, scan_limit),
     )
 
     if ep_rows:

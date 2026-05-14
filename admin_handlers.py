@@ -13,6 +13,8 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from mcp_common.isolation import gamma_clause
+
 import config
 import tasks
 import vector
@@ -59,68 +61,80 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
     return {"ok": True, "profiles_updated": 1}
 
 
-async def do_list_memories(agent_id: str, limit: int) -> dict:
-    """List recent memories for dashboard display."""
+async def do_list_memories(agent_id: str, limit: int, project_id: str | None = None) -> dict:
+    """List recent memories for dashboard display.
+
+    project_id (v2.4.17): γ filter — None = no filter, '' = global pool only,
+    'X' = bucket 'X' ∪ global pool.
+    """
     db = await get_db()
+    clauses: list[str] = []
+    params: list = []
     if agent_id:
-        rows = await db.execute_fetchall(
-            "SELECT id, agent_id, msg_id, content, source, timestamp, created_at, locked "
-            "FROM memories WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
-            (agent_id, _clamp_limit(limit, 500)),
-        )
-    else:
-        rows = await db.execute_fetchall(
-            "SELECT id, agent_id, msg_id, content, source, timestamp, created_at, locked "
-            "FROM memories ORDER BY created_at DESC LIMIT ?",
-            (_clamp_limit(limit, 500),),
-        )
+        clauses.append("agent_id = ?")
+        params.append(agent_id)
+    frag, p = gamma_clause("project_id", project_id)
+    if frag:
+        clauses.append(frag)
+        params.extend(p)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = await db.execute_fetchall(
+        f"SELECT id, agent_id, project_id, msg_id, content, source, timestamp, created_at, locked "
+        f"FROM memories {where} ORDER BY created_at DESC LIMIT ?",
+        (*params, _clamp_limit(limit, 500)),
+    )
     memories = []
     for row in rows:
         source = {}
         try:
-            source = json.loads(row[4]) if row[4] else {}
+            source = json.loads(row[5]) if row[5] else {}
         except (json.JSONDecodeError, TypeError):
             pass
         memories.append(
             {
                 "id": row[0],
                 "agent_id": row[1],
-                "content": row[3],
+                "project_id": row[2],
+                "content": row[4],
                 "source": source,
-                "timestamp": row[5],
-                "created_at": row[6],
-                "locked": bool(row[7]),
+                "timestamp": row[6],
+                "created_at": row[7],
+                "locked": bool(row[8]),
             }
         )
     return {"memories": memories, "count": len(memories)}
 
 
-async def do_list_episodes(agent_id: str, limit: int) -> dict:
-    """List archived episodes for dashboard display."""
+async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = None) -> dict:
+    """List archived episodes for dashboard display. Same γ semantics as do_list_memories."""
     db = await get_db()
+    clauses: list[str] = []
+    params: list = []
     if agent_id:
-        rows = await db.execute_fetchall(
-            "SELECT id, agent_id, summary, keywords, start_time, end_time, created_at "
-            "FROM episodes WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
-            (agent_id, _clamp_limit(limit, 200)),
-        )
-    else:
-        rows = await db.execute_fetchall(
-            "SELECT id, agent_id, summary, keywords, start_time, end_time, created_at "
-            "FROM episodes ORDER BY created_at DESC LIMIT ?",
-            (_clamp_limit(limit, 200),),
-        )
+        clauses.append("agent_id = ?")
+        params.append(agent_id)
+    frag, p = gamma_clause("project_id", project_id)
+    if frag:
+        clauses.append(frag)
+        params.extend(p)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = await db.execute_fetchall(
+        f"SELECT id, agent_id, project_id, summary, keywords, start_time, end_time, created_at "
+        f"FROM episodes {where} ORDER BY created_at DESC LIMIT ?",
+        (*params, _clamp_limit(limit, 200)),
+    )
     episodes = []
     for row in rows:
         episodes.append(
             {
                 "id": row[0],
                 "agent_id": row[1],
-                "summary": row[2],
-                "keywords": row[3],
-                "start_time": row[4],
-                "end_time": row[5],
-                "created_at": row[6],
+                "project_id": row[2],
+                "summary": row[3],
+                "keywords": row[4],
+                "start_time": row[5],
+                "end_time": row[6],
+                "created_at": row[7],
             }
         )
     return {"episodes": episodes, "count": len(episodes)}
