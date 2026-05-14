@@ -11,6 +11,8 @@ import json
 import logging
 import re
 
+from mcp_common import no_persist
+
 import vector
 from config import MAX_CONTENT_LENGTH
 from database import SCHEMA_VERSION, get_db
@@ -26,6 +28,11 @@ _STALE_PROFILE_DAYS = 30
 
 async def do_check_health(agent_id: str = "", fix: bool = False) -> dict:
     """Check and optionally fix memory database health issues."""
+    # Under no-persist, downgrade fix=True to fix=False so the diagnostic
+    # still runs but no rows are mutated. Clear no-persist and re-run to repair.
+    repairs_skipped = bool(fix and no_persist.is_paused())
+    if repairs_skipped:
+        fix = False
     db = await get_db()
     issues = []
 
@@ -388,17 +395,24 @@ async def do_check_health(agent_id: str = "", fix: bool = False) -> dict:
             await db.execute_fetchall("SELECT COUNT(*) FROM episodes WHERE agent_id = ?", (agent_id,))
         )[0][0]
 
-    return {
+    result = {
         "total_memories": total,
         "issues": issues,
         "healthy": len(issues) == 0,
         "fixed": fix,
         "stats": stats,
     }
+    if repairs_skipped:
+        result["repairs_skipped"] = True
+        result["repairs_skip_reason"] = "no-persist mode active — fix downgraded to fix=False"
+    return result
 
 
 async def do_deep_check(agent_id: str, fix: bool = False, checks: list | None = None) -> dict:
     """Deep semantic analysis of memory data quality for a specific agent."""
+    repairs_skipped = bool(fix and no_persist.is_paused())
+    if repairs_skipped:
+        fix = False
     db = await get_db()
     selected = checks if checks else _DEEP_CHECK_ALL
     results: dict[str, dict] = {}
@@ -488,9 +502,13 @@ async def do_deep_check(agent_id: str, fix: bool = False, checks: list | None = 
     if fix:
         await db.commit()
 
-    return {
+    out = {
         "agent_id": agent_id,
         "checks_run": selected,
         "results": results,
         "fixed": fix,
     }
+    if repairs_skipped:
+        out["repairs_skipped"] = True
+        out["repairs_skip_reason"] = "no-persist mode active — fix downgraded to fix=False"
+    return out
