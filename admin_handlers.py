@@ -13,6 +13,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from mcp_common import no_persist
 from mcp_common.isolation import gamma_clause
 
 import config
@@ -44,6 +45,8 @@ async def do_get_profile(agent_id: str) -> dict:
 
 async def do_update_profile(agent_id: str, profile: str = "") -> dict:
     """Update agent profile with pre-computed content."""
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response({"ok": True, "profiles_updated": 0}, "update_profile")
     db = await get_db()
 
     if not profile:
@@ -145,6 +148,8 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
 
     When agent_id is provided (non-empty), enforces ownership.
     """
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response({"ok": True, "deleted_id": memory_id}, "delete_memory")
     db = await get_db()
     # aiosqlite 0.22 has execute_fetchall but no execute_fetchone — using the
     # former avoids a silent AttributeError that previously broke every delete.
@@ -181,6 +186,8 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
 
 async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> dict:
     """Update memory content by ID. Rejects if memory is locked."""
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response({"ok": True, "updated_id": memory_id}, "update_memory")
     if not content or not content.strip():
         return {"error": "Content cannot be empty"}
 
@@ -209,6 +216,8 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
 
 async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
     """Lock a memory to prevent deletion and editing."""
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response({"ok": True, "locked_id": memory_id}, "lock_memory")
     db = await get_db()
     rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
@@ -223,6 +232,8 @@ async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
 
 async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
     """Unlock a memory to allow deletion and editing."""
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response({"ok": True, "unlocked_id": memory_id}, "unlock_memory")
     db = await get_db()
     rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
@@ -237,6 +248,17 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
 
 async def do_delete_agent_data(agent_id: str) -> dict:
     """Delete ALL data for a specific agent (memories, profiles, episodes)."""
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {
+                "ok": True,
+                "agent_id": agent_id,
+                "deleted_memories": 0,
+                "deleted_profiles": 0,
+                "deleted_episodes": 0,
+            },
+            "delete_agent_data",
+        )
     if not agent_id:
         return {"error": "agent_id is required for bulk deletion"}
 
@@ -281,6 +303,11 @@ async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: 
     ``vector._agent_thresholds``; when empty, calibrates the global
     ``config.VECTOR_MIN_SIMILARITY`` from the all-agents corpus (v2.4.15).
     """
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {"ok": True, "old_threshold": None, "new_threshold": None, "sample_size": 0},
+            "calibrate_threshold",
+        )
     import numpy as np
 
     db = await get_db()
@@ -360,6 +387,8 @@ async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: 
 
 async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
     """Delete a single episode by ID (FTS5 triggers handle index cleanup)."""
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response({"ok": True, "deleted_id": episode_id}, "delete_episode")
     db = await get_db()
     if agent_id:
         cursor = await db.execute(
@@ -475,6 +504,19 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
 
 async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run: bool = False) -> dict:
     """Import memories, episodes, and profiles from a JSONL file."""
+    # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {
+                "ok": True,
+                "dry_run": dry_run,
+                "imported_memories": 0,
+                "skipped_memories": 0,
+                "imported_episodes": 0,
+                "profile_updated": False,
+            },
+            "import_memories",
+        )
     if not os.path.exists(input_path):
         return {"error": f"File not found: {input_path}"}
 
@@ -608,6 +650,21 @@ async def do_merge_memories(
     dry_run: bool = False,
 ) -> dict:
     """Merge memories, episodes, and profiles from one agent into another."""
+    # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {
+                "ok": True,
+                "dry_run": dry_run,
+                "merged_memories": 0,
+                "skipped_memories": 0,
+                "merged_episodes": 0,
+                "skipped_episodes": 0,
+                "profile_copied": False,
+                "skipped_profile": False,
+            },
+            "merge_memories",
+        )
     if not source_agent_id:
         return {"error": "source_agent_id is required"}
     if not target_agent_id:

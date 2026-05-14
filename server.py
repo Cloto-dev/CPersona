@@ -14,7 +14,7 @@ Thin orchestration shell. Tool implementations live in module siblings:
 This shell:
   1. Imports do_* handlers
   2. Defines orchestration wrappers (do_update_profile_or_queue / do_archive_episode_or_queue)
-  3. Registers 21 MCP tools
+  3. Registers 24 MCP tools
   4. Wires HTTP/stdio transport
   5. main() initializes singletons (vector._embedding_client, tasks._task_queue) and runs the server
 """
@@ -25,6 +25,7 @@ import os
 
 from mcp.server.stdio import stdio_server
 from mcp.types import ToolAnnotations
+from mcp_common import no_persist
 from mcp_common.embedding_client import EmbeddingClient
 from mcp_common.mcp_utils import ToolRegistry
 
@@ -93,6 +94,14 @@ async def do_archive_episode_or_queue(
     When summary/keywords are pre-computed, bypass the queue and store directly
     (no LLM call needed, so queuing for retry is unnecessary).
     """
+    # Gate the wrapper too: enqueue() itself writes to pending_memory_tasks,
+    # so guarding only the synchronous do_archive_episode would still let the
+    # queue path leak rows into SQLite.
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {"ok": True, "queued": False, "task_id": None, "episode_id": None, "id": 0},
+            "archive_episode",
+        )
     if summary:
         return await do_archive_episode(
             agent_id, history, summary=summary, keywords=keywords, resolved=resolved, project_id=project_id
@@ -107,10 +116,77 @@ async def do_archive_episode_or_queue(
 
 
 # =============================================================================
-# MCP Tool Registry — 21 tools
+# MCP Tool Registry — 24 tools
 # =============================================================================
 
 registry = ToolRegistry("cloto-mcp-cpersona")
+
+
+# Session no-persist controls — registered first for discoverability.
+async def do_pause_persistence(ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS) -> dict:
+    """Pause persistence for this MCP server process for a TTL window."""
+    try:
+        return no_persist.pause(ttl_seconds=ttl_seconds)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+async def do_resume_persistence() -> dict:
+    """Re-enable persistence immediately, clearing any active TTL."""
+    return no_persist.resume()
+
+
+async def do_persistence_status() -> dict:
+    """Report whether write tools are currently being skipped, and the TTL remaining."""
+    return no_persist.status()
+
+
+registry.auto_tool(
+    "pause_persistence",
+    "Pause write operations on this MCP server for an opt-in TTL window. While "
+    "paused, all write tools (store, archive_episode, update/delete/lock/unlock_memory, "
+    "update_profile, import_memories, merge_memories, calibrate_threshold) return "
+    'no-op responses with `persisted: false` and `id: "no-persist"` instead of '
+    "writing to the database. Read tools (recall, list_*, get_profile, etc.) are "
+    "unaffected. **This affects only this MCP server (cpersona). Call cscheduler's "
+    "pause_persistence too if you want both paused.** Use for benchmarking, AB "
+    "testing, or ephemeral exploration where memory contamination must be avoided. "
+    "Default TTL: 1800 seconds (30 minutes); upper bound: 86400 seconds (1 day).",
+    {
+        "type": "object",
+        "properties": {
+            "ttl_seconds": {
+                "type": "integer",
+                "description": "TTL until automatic resume. Min 1, max 86400 (clamped). Default 1800.",
+                "default": no_persist.DEFAULT_TTL_SECONDS,
+                "minimum": 1,
+                "maximum": no_persist.MAX_TTL_SECONDS,
+            },
+        },
+    },
+    do_pause_persistence,
+    [("ttl_seconds", int, no_persist.DEFAULT_TTL_SECONDS)],
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+)
+
+registry.auto_tool(
+    "resume_persistence",
+    "Re-enable persistence immediately, clearing any active no-persist TTL. "
+    "Returns was_active=true if persistence was paused before this call.",
+    {"type": "object", "properties": {}},
+    do_resume_persistence,
+    [],
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+)
+
+registry.auto_tool(
+    "persistence_status",
+    "Report whether persistence is currently paused and the TTL remaining (in seconds).",
+    {"type": "object", "properties": {}},
+    do_persistence_status,
+    [],
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
 
 registry.auto_tool(
     "store",

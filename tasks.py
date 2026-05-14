@@ -9,6 +9,8 @@ import asyncio
 import json
 import logging
 
+from mcp_common import no_persist
+
 from config import TASK_MAX_RETRIES, TASK_RETRY_DELAY
 from database import get_db
 
@@ -91,6 +93,17 @@ class MemoryTaskQueue:
                     break
 
                 task_id, task_type, agent_id, payload, retries = task
+                # If the session re-enters no-persist after this task was
+                # enqueued, drop it instead of writing late — the user's
+                # ephemeral intent overrides queued work that pre-dates it.
+                if no_persist.is_paused():
+                    logger.info(
+                        "MemoryTaskQueue: skipping task %d (%s) under no-persist mode",
+                        task_id,
+                        task_type,
+                    )
+                    await self._delete_task(task_id)
+                    continue
                 logger.info(
                     "MemoryTaskQueue: processing %s (task_id=%d, agent=%s, retry=%d/%d)",
                     task_type,
