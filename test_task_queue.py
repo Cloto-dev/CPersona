@@ -147,9 +147,13 @@ async def _wait_queue_drained(db, timeout: float = 15.0) -> bool:
 
 
 @pytest.mark.skip(
-    reason="v2.4.10 standalone removed the LLM-synthesis path inside the queue handler — "
-    "callers must pre-compute `profile` before invoking the tool. Restore this test (or rewrite "
-    "it for the bypass path) when Phase 3-β functional sync re-introduces queue-side synthesis."
+    reason="Upstream-wide stale test (not a standalone-specific divergence). The queue-side "
+    "LLM-synthesis path was removed upstream prior to v2.4.10 — `do_update_profile` now takes a "
+    "pre-computed `profile` string, and `do_update_profile_or_queue` bypasses the queue entirely. "
+    "Standalone v2.4.19 carries the same wrapper byte-identical to upstream cloto-mcp-servers "
+    "v2.4.19; standalone differs only in formally marking these obsolete tests with @pytest.mark.skip "
+    "(upstream leaves them un-skipped). Restore (or rewrite for the bypass path) only if a future "
+    "release re-introduces queue-side synthesis from history."
 )
 @pytest.mark.asyncio
 async def test_queue_processes_update_profile():
@@ -174,9 +178,14 @@ async def test_queue_processes_update_profile():
 
 
 @pytest.mark.skip(
-    reason="v2.4.10 standalone removed the LLM-synthesis path inside the queue handler — "
-    "callers must pre-compute `summary` before invoking the tool. Restore this test (or rewrite "
-    "it for the bypass path) when Phase 3-β functional sync re-introduces queue-side synthesis."
+    reason="Upstream-wide stale test (not a standalone-specific divergence). When `summary` is "
+    "pre-computed, `do_archive_episode_or_queue` bypasses the queue and calls `do_archive_episode` "
+    "directly; when omitted, the queue path enqueues but its handler no longer synthesises a summary "
+    "from history (synthesis was removed upstream prior to v2.4.10). This end-to-end assertion that "
+    "an empty-summary enqueue results in a stored episode therefore cannot pass against either "
+    "upstream cloto-mcp-servers v2.4.19 or standalone v2.4.19. Standalone differs only in formally "
+    "marking it skipped (upstream leaves it un-skipped). Restore (or rewrite) if a future release "
+    "re-introduces queue-side synthesis."
 )
 @pytest.mark.asyncio
 async def test_queue_processes_archive_episode():
@@ -201,9 +210,12 @@ async def test_queue_processes_archive_episode():
 
 
 @pytest.mark.skip(
-    reason="v2.4.10 standalone removed the LLM-synthesis path inside the queue handler "
-    "(see `test_queue_processes_update_profile`). Crash recovery still works mechanically, "
-    "but this end-to-end assertion depends on the removed synthesis path."
+    reason="Upstream-wide stale test (not a standalone-specific divergence). Crash recovery itself "
+    "still works mechanically — the queue persists tasks to `pending_memory_tasks` and a fresh "
+    "worker dequeues them on restart — but this end-to-end assertion depends on the removed "
+    "queue-side synthesis path (see `test_queue_processes_update_profile`). Both upstream "
+    "cloto-mcp-servers v2.4.19 and standalone v2.4.19 share the same wrapper byte-identical; "
+    "standalone differs only in the @pytest.mark.skip annotation."
 )
 @pytest.mark.asyncio
 async def test_crash_recovery():
@@ -279,9 +291,13 @@ async def test_fifo_ordering():
 
 
 @pytest.mark.skip(
-    reason="v2.4.10 standalone `do_update_profile_or_queue` bypasses the queue entirely (LLM "
-    "synthesis was removed; callers pre-compute the profile string). The wrapper now lives in "
-    "server.py (Phase 3-α). Restore this test if Phase 3-β re-introduces queue-side synthesis."
+    reason="Upstream-wide stale test (not a standalone-specific divergence). "
+    "`do_update_profile_or_queue(agent_id, profile='')` is a thin synchronous passthrough to "
+    "`do_update_profile` in both upstream cloto-mcp-servers v2.4.19 (server.py L2879) and standalone "
+    "v2.4.19 (server.py wrapper) — it never enqueues, so the {queued: True, task_id: …} response "
+    "shape this test asserts cannot occur. Standalone's only divergence is the @pytest.mark.skip "
+    "annotation; upstream leaves the test un-skipped. Restore only if queue-side profile synthesis "
+    "is re-introduced."
 )
 @pytest.mark.asyncio
 async def test_tool_update_profile_queues():
@@ -317,9 +333,12 @@ async def test_tool_archive_episode_queues():
 
 
 @pytest.mark.skip(
-    reason="v2.4.10 standalone `do_update_profile_or_queue` is always synchronous (the queue "
-    "code path was removed along with LLM synthesis), so the queue-disabled distinction this "
-    "test was designed for no longer exists. Revisit when Phase 3-β realigns with upstream."
+    reason="Upstream-wide stale test (not a standalone-specific divergence). "
+    "`do_update_profile_or_queue` is unconditionally synchronous in both upstream cloto-mcp-servers "
+    "v2.4.19 and standalone v2.4.19 (the queue-vs-sync branch was collapsed along with the LLM "
+    "synthesis path), so the queue-disabled-vs-enabled distinction this test was designed for no "
+    "longer exists in either codebase. Standalone differs only in the @pytest.mark.skip annotation. "
+    "Revisit only if a future release re-introduces the conditional queue path."
 )
 @pytest.mark.asyncio
 async def test_tool_sync_when_queue_disabled():
