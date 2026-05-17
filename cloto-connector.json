@@ -1,0 +1,68 @@
+{
+  "spec_version": 1,
+  "connector_type": "mgp_server",
+  "id": "cpersona",
+  "name": "CPersona",
+  "description": "Persistent character persona memory with FTS5 + vector hybrid search, anti-contamination, and a 24-tool surface. Single SQLite file, zero LLM dependency at the storage layer.",
+  "version": "2.4.19",
+  "category": "memory",
+  "trust_level": "core",
+  "magic_seal": "sha256:d262dcb60024b2826dd42d29a7c2bad92eb5cfb24113269058d34526d495dac2",
+  "install": {
+    "source": {
+      "type": "git",
+      "url": "https://github.com/Cloto-dev/cpersona",
+      "reference": "",
+      "subdir": null
+    },
+    "package_manager": "uv",
+    "runtime": "python",
+    "directory": "",
+    "dependencies": [],
+    "bin_name": null
+  },
+  "icon": "brain",
+  "tags": ["memory", "persona", "embedding", "search"],
+  "host_compatibility": [
+    "clotocore",
+    "claude-code",
+    "claude-desktop",
+    "cursor",
+    "project-airi"
+  ],
+  "env_vars": [],
+  "optional_env_vars": [
+    {
+      "name": "CPERSONA_DB_PATH",
+      "default": "./cpersona.db",
+      "description": "SQLite database path. Defaults to a relative path; set to an absolute path in production."
+    },
+    {
+      "name": "EMBEDDING_MODE",
+      "default": "none",
+      "description": "Embedding mode (none | http | api). Generic key shared with other Cloto MCP servers. Falls back to CPERSONA_EMBEDDING_MODE for backward compatibility."
+    },
+    {
+      "name": "EMBEDDING_HTTP_URL",
+      "default": "http://127.0.0.1:8401/embed",
+      "description": "HTTP-mode embedding endpoint. Required when EMBEDDING_MODE=http. Falls back to CPERSONA_EMBEDDING_URL."
+    },
+    {
+      "name": "CPERSONA_RECALL_MODE",
+      "default": "rrf",
+      "description": "Recall strategy: 'rrf' (Reciprocal Rank Fusion across FTS / vector / keyword) or 'cascade' (sequential fallback)."
+    },
+    {
+      "name": "CPERSONA_CONFIDENCE_ENABLED",
+      "default": "false",
+      "description": "Include confidence metadata in recall results."
+    },
+    {
+      "name": "CPERSONA_AUTO_CALIBRATE",
+      "default": "false",
+      "description": "Auto-calibrate vector similarity threshold on startup using the null-distribution z-score method."
+    }
+  ],
+  "auto_restart": true,
+  "changelog": "v2.4.19: Session no-persist mode. Adds three tools (pause_persistence / resume_persistence / persistence_status) that turn this server's write tools into no-ops for an opt-in TTL window (default 30 min, max 1 day). While paused, store / archive_episode / update_* / delete_* / lock_* / unlock_memory / update_profile / import_memories / merge_memories / calibrate_threshold return responses with `persisted: false`, `dry_run: true`, and `id: \"no-persist\"` instead of writing. The MemoryTaskQueue worker drops queued archive_episode / update_profile tasks under no-persist. check_health(fix=true) and deep_check(fix=true) downgrade to fix=False during no-persist and report `repairs_skipped: true`. Read tools (recall, list_*, get_profile, etc.) are unaffected. Module-level state per process; server restart loses the flag. Symmetric with cscheduler 0.2.6 — clients should call pause_persistence on both servers if they want both paused. Tool count: 21 → 24.\nv2.4.18: Internal refactor — γ-semantics SQL builder and project_id coercer moved to common/isolation.py (shared with cscheduler 0.2.4). No behavior, schema, or tool-surface change.\nv2.4.17: agent_id × project_id two-tier isolation (γ semantics). SCHEMA_VERSION 8→9 adds project_id (TEXT NOT NULL DEFAULT '') to memories / episodes / profiles / pending_memory_tasks via ALTER TABLE backfill — existing DBs are upgraded in place. Writes accept project_id (defaults to '' = global pool when omitted). Reads apply γ filter (None = no filter, '' = global pool only, 'X' = 'X' ∪ global pool). store dedup (msg_id / content) is now project-scoped."
+}
