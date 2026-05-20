@@ -251,6 +251,17 @@ registry.auto_tool(
                     "Threaded through cascade / RRF / vector / FTS / keyword paths."
                 ),
             },
+            "source_id": {
+                "type": "string",
+                "description": (
+                    "v2.4.20 per-user source filter. Empty (default) = no filter. "
+                    "Non-empty = prefix match against json_extract(source, '$.id'), "
+                    "e.g. 'discord:12345' to restrict to one Discord user, or "
+                    "'discord:' to scope to all Discord-sourced memories. "
+                    "Episodes are skipped when set (no per-user source tagging)."
+                ),
+                "default": "",
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -263,6 +274,7 @@ registry.auto_tool(
         ("channel", str, ""),
         ("exclude_contents", list, []),
         ("project_id", str, None),
+        ("source_id", str, ""),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -289,6 +301,11 @@ registry.auto_tool(
                 "type": "string",
                 "description": "v2.4.17 γ filter — passed through to recall. Same semantics as in `recall`.",
             },
+            "source_id": {
+                "type": "string",
+                "description": "v2.4.20 per-user source filter — passed through to recall. Same semantics as in `recall`.",
+                "default": "",
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -301,6 +318,7 @@ registry.auto_tool(
         ("channel", str, ""),
         ("deep", bool, False),
         ("project_id", str, None),
+        ("source_id", str, ""),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
