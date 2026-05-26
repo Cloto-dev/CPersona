@@ -21,7 +21,7 @@ import admin_handlers  # noqa: E402
 import config  # noqa: E402
 import vector  # noqa: E402
 from database import get_db  # noqa: E402
-from mcp_common.embedding_client import EmbeddingClient  # noqa: E402
+from _vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)

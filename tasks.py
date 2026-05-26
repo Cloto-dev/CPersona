@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 
-from mcp_common import no_persist
+from _vendored_mcp_common import no_persist
 
 from config import TASK_MAX_RETRIES, TASK_RETRY_DELAY
 from database import get_db

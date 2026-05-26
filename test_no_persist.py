@@ -3,7 +3,7 @@
 Covers upstream cloto-mcp-servers/servers/cpersona patch v2.4.19 (23cea89):
 the three control tools, write-tool no-op guards, read tools staying live,
 the or_queue wrapper not enqueueing under pause, and the check_health /
-deep_check fix downgrade. Uses mcp_common.no_persist (module-level state),
+deep_check fix downgrade. Uses _vendored_mcp_common.no_persist (module-level state),
 so the fixture force-resumes before and after every test.
 """
 
@@ -12,7 +12,7 @@ import tempfile
 
 import pytest
 import pytest_asyncio
-from mcp_common import no_persist
+from _vendored_mcp_common import no_persist
 
 # Override DB path BEFORE importing server modules
 _tmpdir = tempfile.mkdtemp()
