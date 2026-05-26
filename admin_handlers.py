@@ -13,8 +13,8 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from mcp_common import no_persist
-from mcp_common.isolation import gamma_clause
+from _vendored_mcp_common import no_persist
+from _vendored_mcp_common.isolation import gamma_clause
 
 import config
 import tasks

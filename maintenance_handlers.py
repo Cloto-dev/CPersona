@@ -11,7 +11,7 @@ import json
 import logging
 import re
 
-from mcp_common import no_persist
+from _vendored_mcp_common import no_persist
 
 import vector
 from config import MAX_CONTENT_LENGTH

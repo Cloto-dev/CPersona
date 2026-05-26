@@ -2,7 +2,7 @@
 
 Covers the read/write half of upstream cloto-mcp-servers/servers/cpersona
 v2.4.17 (e8a1b44) — write paths tag project_id, read paths apply the γ
-filter via mcp_common.isolation. γ semantics:
+filter via _vendored_mcp_common.isolation. γ semantics:
   - write: omitted → '' (global pool)
   - read:  None = no filter, '' = global pool only, 'X' = 'X' ∪ global pool
 """

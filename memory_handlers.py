@@ -17,9 +17,9 @@ from datetime import datetime, timezone
 
 import aiosqlite
 import httpx
-from mcp_common import no_persist
-from mcp_common.embedding_client import EmbeddingClient
-from mcp_common.isolation import coerce_for_write, gamma_clause
+from _vendored_mcp_common import no_persist
+from _vendored_mcp_common.embedding_client import EmbeddingClient
+from _vendored_mcp_common.isolation import coerce_for_write, gamma_clause
 
 import vector
 from config import (
@@ -58,7 +58,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
 
     project_id (v2.4.17): isolation axis. Defaults to '' (= global pool).
     Dedup is project-scoped so the same msg_id under different projects can
-    coexist; reads use γ semantics (see mcp_common.isolation.gamma_clause).
+    coexist; reads use γ semantics (see _vendored_mcp_common.isolation.gamma_clause).
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "id": 0}, "store")

@@ -7,8 +7,8 @@ import heapq
 import logging
 
 import aiosqlite
-from mcp_common.embedding_client import EmbeddingClient
-from mcp_common.isolation import gamma_clause
+from _vendored_mcp_common.embedding_client import EmbeddingClient
+from _vendored_mcp_common.isolation import gamma_clause
 
 import config
 from config import (
