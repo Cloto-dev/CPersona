@@ -18,7 +18,7 @@ Single SQLite file. 21 tools. Zero LLM dependency.
 ---
 
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
-> If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, use the version in [cloto-mcp-servers](https://github.com/Cloto-dev/cloto-mcp-servers/tree/main/servers/cpersona) instead.
+> If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
 ## The Problem
 
