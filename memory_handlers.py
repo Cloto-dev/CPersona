@@ -176,10 +176,15 @@ async def _recall_cascade(
                 results.append(row)
                 seen_ids.add(rid)
 
-    # Episodes are agent-level aggregates without per-user source tagging,
-    # so they are not filtered by source_id (would lose all episode recall).
-    if FTS_ENABLED and query.strip() and not source_id:
-        fts_results = await _search_episodes_fts(db, agent_id, query, limit, project_id=project_id)
+    # Episodes are agent-level aggregates without per-user source tagging, so
+    # a per-user source_id filter normally suppresses them. A channel filter
+    # (v2.4.22) scopes episodes to one conversation channel — the session-start
+    # grounding path — so channel-scoped episode recall is allowed even with
+    # source_id set.
+    if FTS_ENABLED and query.strip() and (not source_id or channel):
+        fts_results = await _search_episodes_fts(
+            db, agent_id, query, limit, channel=channel, project_id=project_id
+        )
         for row in fts_results:
             rid = ("ep", row["id"])
             if rid not in seen_ids:
@@ -249,9 +254,13 @@ async def _recall_rrf(
                 doc_map[rid] = row
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
 
-    # Episodes skipped when source_id is set — episodes lack per-user source tagging.
-    if FTS_ENABLED and not source_id:
-        fts_ep_results = await _search_episodes_fts(db, agent_id, query, limit, project_id=project_id)
+    # Episodes lack per-user source tagging, so a per-user source_id filter
+    # normally suppresses them; a channel filter (v2.4.22) scopes episodes to
+    # one channel and is allowed even with source_id set (grounding path).
+    if FTS_ENABLED and (not source_id or channel):
+        fts_ep_results = await _search_episodes_fts(
+            db, agent_id, query, limit, channel=channel, project_id=project_id
+        )
         for rank, row in enumerate(fts_ep_results):
             rid = ("ep", row["id"])
             if rid not in doc_map:
@@ -470,7 +479,9 @@ async def do_recall(
     ``source_id="discord:12345"`` to restrict to one user, or
     ``source_id="discord:"`` to scope to all Discord-sourced memories.
     Episodes are not source-tagged, so episode recall is skipped when
-    ``source_id`` is non-empty.
+    ``source_id`` is non-empty — unless a ``channel`` filter (v2.4.22) is also
+    set, in which case channel-scoped episodes are still recalled (the
+    session-start grounding path).
     """
     db = await get_db()
 
@@ -666,15 +677,23 @@ async def _search_episodes_fts(
     agent_id: str,
     query: str,
     limit: int,
+    channel: str = "",
     project_id: str | None = None,
 ) -> list[dict]:
-    """Search episodes using FTS5. project_id (v2.4.17) applies the γ filter."""
+    """Search episodes using FTS5.
+
+    project_id (v2.4.17) applies the γ filter. channel (v2.4.22) applies an
+    exact-match filter on the episode's channel — empty means no channel
+    filter (all channels), mirroring the memory search paths.
+    """
     sanitized = re.sub(r"[^\w\s]", "", query, flags=re.UNICODE)
     words = sanitized.split()
     if not words:
         return []
 
     fts_query = " ".join(f'"{w}"' for w in words)
+    channel_clause = " AND e.channel = ?" if channel else ""
+    channel_params = (channel,) if channel else ()
     proj_frag, proj_params = gamma_clause("e.project_id", project_id)
     proj_extra = (" AND " + proj_frag) if proj_frag else ""
 
@@ -683,10 +702,10 @@ async def _search_episodes_fts(
            FROM episodes_fts f
            JOIN episodes e ON f.rowid = e.id
            WHERE episodes_fts MATCH ?
-           AND e.agent_id = ?{proj_extra}
+           AND e.agent_id = ?{channel_clause}{proj_extra}
            ORDER BY rank
            LIMIT ?""",
-        (fts_query, agent_id, *proj_params, limit),
+        (fts_query, agent_id, *channel_params, *proj_params, limit),
     )
 
     return [
@@ -777,10 +796,14 @@ async def do_archive_episode(
     keywords: str = "",
     resolved: bool | None = None,
     project_id: str = "",
+    channel: str = "",
 ) -> dict:
     """Archive a conversation episode with pre-computed summary, keywords, and resolved status.
 
     project_id (v2.4.17): isolation axis. Defaults to '' (= global pool).
+    channel (v2.4.22): conversation-channel tag for the episodic loop. Defaults
+    to '' (= unscoped / shared). A channel-scoped recall returns episodes whose
+    channel matches; unfiltered recall returns all of them.
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response(
@@ -808,9 +831,9 @@ async def do_archive_episode(
             logger.warning("Embedding failed for episode: %s", e)
 
     cursor = await db.execute(
-        """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved)),
+        """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved, channel)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved), channel),
     )
     await db.commit()
     return {"ok": True, "episode_id": cursor.lastrowid}

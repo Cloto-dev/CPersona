@@ -88,6 +88,7 @@ async def do_archive_episode_or_queue(
     keywords: str = "",
     resolved: bool | None = None,
     project_id: str = "",
+    channel: str = "",
 ) -> dict:
     """Enqueue episode archival if task queue is enabled, otherwise run synchronously.
 
@@ -104,12 +105,18 @@ async def do_archive_episode_or_queue(
         )
     if summary:
         return await do_archive_episode(
-            agent_id, history, summary=summary, keywords=keywords, resolved=resolved, project_id=project_id
+            agent_id,
+            history,
+            summary=summary,
+            keywords=keywords,
+            resolved=resolved,
+            project_id=project_id,
+            channel=channel,
         )
     if tasks._task_queue and TASK_QUEUE_ENABLED:
-        # NOTE: the queue path does not yet propagate project_id — the
-        # LLM-driven branch is not expected from project-tagged callers
-        # (which always pre-compute summary). Tracked for follow-up if needed.
+        # NOTE: the queue path does not yet propagate project_id or channel —
+        # the LLM-driven branch is not expected from project/channel-tagged
+        # callers (which always pre-compute summary). Tracked for follow-up.
         task_id = await tasks._task_queue.enqueue("archive_episode", agent_id, history)
         return {"ok": True, "queued": True, "task_id": task_id}
     return await do_archive_episode(agent_id, history)
@@ -386,6 +393,14 @@ registry.auto_tool(
                 "type": "string",
                 "description": "v2.4.17 isolation axis. Omit or pass '' for the global pool.",
             },
+            "channel": {
+                "type": "string",
+                "description": (
+                    "v2.4.22 conversation-channel tag (e.g. a Discord channel id). "
+                    "Default '' (= unscoped). Channel-scoped recall returns episodes "
+                    "whose channel matches; this powers the per-channel episodic loop."
+                ),
+            },
         },
         "required": ["agent_id", "summary"],
     },
@@ -397,6 +412,7 @@ registry.auto_tool(
         ("keywords", str, ""),
         ("resolved", bool, None),
         ("project_id", str, ""),
+        ("channel", str, ""),
     ],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )

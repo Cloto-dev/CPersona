@@ -251,7 +251,7 @@ All settings via environment variables with sensible defaults:
 
 - **~3,500 LOC** Python (single file, `server.py`)
 - **117 tests** across 12 test modules
-- **Schema v8** (auto-migrating)
+- **Schema v10** (auto-migrating)
 - **MIT License**
 
 ## Works With
