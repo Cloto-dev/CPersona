@@ -1,0 +1,31 @@
+{
+  "$schema": "qa/issue-registry.schema.md",
+  "version": "1.0",
+  "description": "Mechanical verification registry for documented cpersona issues. Source of truth for bug-existence proof; checked by scripts/verify-issues.sh (mirrors the ClotoCore infrastructure).",
+  "issues": [
+    {
+      "id": "bug-001",
+      "summary": "(Bug A) Embedding env vars are read with the CPERSONA_ prefix only, but the marketplace catalog declares the generic EMBEDDING_MODE / EMBEDDING_HTTP_URL keys; an installed cpersona therefore runs with embeddings silently off and recall degrades to FTS-only",
+      "severity": "HIGH",
+      "discovered": "2026-06-14T00:00:00Z",
+      "version": "2.4.22",
+      "commit": "77c9d34",
+      "file": "config.py",
+      "pattern": "EMBEDDING_MODE = os\\.environ\\.get\\(\"CPERSONA_EMBEDDING_MODE\"",
+      "expected": "present",
+      "status": "open"
+    },
+    {
+      "id": "bug-002",
+      "summary": "(Bug B) FTS keyword search builds the MATCH expression with query.split(); space-less scripts (Japanese/Chinese) collapse into a single phrase the trigram index never matches, so the keyword retriever is dead for Japanese and RRF loses its discriminating channel (recall-contamination precondition). Fix must pair a trigram query builder with a bm25-magnitude-aware merge (see ClotoCore/docs/RECALL_CONTAMINATION_AB_2026-06-14.md sec 10).",
+      "severity": "HIGH",
+      "discovered": "2026-06-14T00:00:00Z",
+      "version": "2.4.22",
+      "commit": "77c9d34",
+      "file": "memory_handlers.py",
+      "pattern": "fts_query = \" \"\\.join",
+      "expected": "present",
+      "status": "open"
+    }
+  ]
+}
