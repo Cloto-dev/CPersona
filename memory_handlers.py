@@ -303,6 +303,117 @@ async def _recall_rrf(
     return results
 
 
+def _minmax_norm(raw: dict) -> dict:
+    """Min-max normalize a channel's raw scores to [0, 1] (higher = better).
+
+    All-None (e.g. the LIKE fallback, which has no bm25) → uniform 1.0, so an
+    exact substring match still casts a full keyword vote. Degenerate input
+    (single row or all-equal) → 1.0 each. Mixed None gets the 0.0 floor.
+    """
+    vals = {rid: s for rid, s in raw.items() if s is not None}
+    if not vals:
+        return {rid: 1.0 for rid in raw}
+    lo, hi = min(vals.values()), max(vals.values())
+    if hi <= lo:
+        return {rid: 1.0 for rid in raw}
+    out = {rid: (s - lo) / (hi - lo) for rid, s in vals.items()}
+    for rid in raw:
+        out.setdefault(rid, 0.0)
+    return out
+
+
+async def _recall_rsf(
+    db,
+    agent_id: str,
+    query: str,
+    limit: int,
+    deep: bool,
+    channel: str = "",
+    exclude_set: set[str] | None = None,
+    project_id: str | None = None,
+    source_id: str = "",
+) -> list[dict]:
+    """Relative-Score-Fusion recall: like RRF but fuse the per-query min-max
+    normalized *raw* score of each channel (cosine for vector, -bm25 for FTS)
+    instead of rank.
+
+    RRF's rank-only fusion crushes large score margins — a rank-1 vs rank-4
+    bm25 gap collapses to ~5% at K=60 — so a near-tie vector channel can
+    reintroduce a topically distinct contaminant the keyword channel had
+    correctly down-ranked. RSF keeps the margin, letting the keyword channel
+    separate them. The fused score is divided by the number of active channels
+    so it stays on the cosine [0, 1] scale (and rewards multi-channel agreement)
+    for the quality gate. See ClotoCore/docs/RECALL_CONTAMINATION_AB_2026-06-14.md.
+    """
+    doc_map: dict[tuple, dict] = {}
+    vec_raw: dict[tuple, float | None] = {}
+    ep_raw: dict[tuple, float | None] = {}
+    mem_raw: dict[tuple, float | None] = {}
+    _excl = exclude_set or set()
+
+    rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
+    if vector._embedding_client:
+        for row in await _search_vector(
+            db, agent_id, query, limit, min_similarity=rsf_min_sim,
+            channel=channel, project_id=project_id, source_id=source_id,
+        ):
+            if _content_excluded(row.get("content", ""), _excl):
+                continue
+            rid = row.get("_rid", ("mem", row["id"]))
+            doc_map.setdefault(rid, row)
+            vec_raw[rid] = row.get("_cosine", 0.0)
+
+    # Episodes lack per-user source tagging (mirrors _recall_rrf gating).
+    if FTS_ENABLED and (not source_id or channel):
+        for row in await _search_episodes_fts(
+            db, agent_id, query, limit, channel=channel, project_id=project_id
+        ):
+            rid = ("ep", row["id"])
+            doc_map.setdefault(rid, row)
+            bm = row.get("_bm25")
+            ep_raw[rid] = -bm if bm is not None else None
+
+    if FTS_ENABLED:
+        for row in await _search_memories_keyword(
+            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+        ):
+            if _content_excluded(row.get("content", ""), _excl):
+                continue
+            rid = ("mem", row["id"])
+            doc_map.setdefault(rid, row)
+            bm = row.get("_bm25")
+            mem_raw[rid] = -bm if bm is not None else None
+
+    active = [ch for ch in (vec_raw, ep_raw, mem_raw) if ch]
+    n_active = len(active) or 1
+    fused: dict[tuple, float] = {}
+    for ch in active:
+        for rid, w in _minmax_norm(ch).items():
+            fused[rid] = fused.get(rid, 0.0) + w
+
+    results = []
+    for rid in sorted(fused, key=fused.get, reverse=True):
+        row = doc_map[rid]
+        row["_rsf_score"] = fused[rid] / n_active
+        results.append(row)
+
+    profile_rows = await db.execute_fetchall(
+        "SELECT content FROM profiles WHERE agent_id = ? AND user_id = '' ORDER BY updated_at DESC LIMIT 3",
+        (agent_id,),
+    )
+    for (profile_content,) in profile_rows:
+        results.append(
+            {
+                "id": -1,
+                "content": f"[Profile] {profile_content}",
+                "source": {"System": "profile"},
+                "timestamp": "",
+            }
+        )
+
+    return results
+
+
 def _autocut(results: list[dict]) -> list[dict]:
     """Detect the largest score gap in results and cut below it (Weaviate autocut).
 
@@ -313,7 +424,7 @@ def _autocut(results: list[dict]) -> list[dict]:
     """
     if len(results) < 2:
         return results
-    scores = [r.get("_rrf_score") or r.get("_cosine") or 0 for r in results]
+    scores = [r.get("_rsf_score") or r.get("_rrf_score") or r.get("_cosine") or 0 for r in results]
     max_score = scores[0]
     if max_score <= 0:
         return results
@@ -362,7 +473,7 @@ def _apply_quality_gate(
         return results
 
     filtered = []
-    stats = {"confidence": 0, "cosine": 0, "rrf": 0, "unscored": 0, "profile": 0, "blocked": 0}
+    stats = {"confidence": 0, "rsf": 0, "cosine": 0, "rrf": 0, "unscored": 0, "profile": 0, "blocked": 0}
 
     for r in results:
         # Profile — gate by memory count (unchanged)
@@ -375,6 +486,7 @@ def _apply_quality_gate(
             continue
 
         confidence = r.get("_confidence_score")
+        rsf = r.get("_rsf_score")
         cosine = r.get("_cosine")
         rrf = r.get("_rrf_score")
 
@@ -382,6 +494,13 @@ def _apply_quality_gate(
             if confidence >= min_score:
                 filtered.append(r)
                 stats["confidence"] += 1
+            else:
+                stats["blocked"] += 1
+        elif rsf is not None:
+            # RSF fused score is already on the cosine [0, 1] scale.
+            if rsf >= min_score:
+                filtered.append(r)
+                stats["rsf"] += 1
             else:
                 stats["blocked"] += 1
         elif cosine is not None:
@@ -406,10 +525,11 @@ def _apply_quality_gate(
                 stats["blocked"] += 1
 
     logger.debug(
-        "quality_gate: in=%d out=%d (conf=%d cos=%d rrf=%d uns=%d prof=%d) min_score=%.3f count=%d",
+        "quality_gate: in=%d out=%d (conf=%d rsf=%d cos=%d rrf=%d uns=%d prof=%d) min_score=%.3f count=%d",
         len(results),
         len(filtered),
         stats["confidence"],
+        stats["rsf"],
         stats["cosine"],
         stats["rrf"],
         stats["unscored"],
@@ -494,6 +614,11 @@ async def do_recall(
             db, agent_id, query, limit, deep, channel, exclude_set,
             project_id=project_id, source_id=source_id,
         )
+    elif RECALL_MODE == "rsf" and query.strip():
+        results = await _recall_rsf(
+            db, agent_id, query, limit, deep, channel, exclude_set,
+            project_id=project_id, source_id=source_id,
+        )
     else:
         results = await _recall_cascade(
             db, agent_id, query, limit, deep, channel, exclude_set,
@@ -534,6 +659,8 @@ async def do_recall(
                         r["_cosine"] = r["_cosine"] * factor
                     if "_rrf_score" in r:
                         r["_rrf_score"] = r["_rrf_score"] * factor
+                    if "_rsf_score" in r:
+                        r["_rsf_score"] = r["_rsf_score"] * factor
 
     if CONFIDENCE_ENABLED:
         for r in results:
@@ -672,6 +799,45 @@ async def do_recall_with_context(
     return {"messages": messages}
 
 
+# CJK codepoint ranges: hiragana, katakana, CJK unified + ext-A, halfwidth katakana.
+# Scripts written without inter-word spaces ("scriptio continua") need trigram
+# decomposition rather than whitespace tokenisation.
+_CJK_CLASS = r"぀-ヿ㐀-䶿一-鿿ｦ-ﾟ"
+_CJK_RE = re.compile(f"[{_CJK_CLASS}]")
+_TOKEN_RE = re.compile(f"[{_CJK_CLASS}]+|[^\\s{_CJK_CLASS}]+")
+
+
+def _build_fts_query(query: str) -> str:
+    """Build an FTS5 MATCH expression for a (possibly CJK) query.
+
+    Both FTS tables are trigram-tokenised. Whitespace tokenisation
+    (``query.split()``) breaks for Japanese/Chinese, which have no inter-word
+    spaces: the whole sentence collapses into one phrase that no document
+    contains verbatim, so the keyword retriever returns nothing and recall
+    falls back to vector-only (the recall-contamination root cause).
+
+    Since the index is trigram-tokenised, we decompose each CJK run into its
+    overlapping 3-grams and OR every term together, so a document is retrieved
+    whenever it shares any 3-gram with the query (e.g. 'のパン'). ASCII runs are
+    kept whole. Terms shorter than 3 codepoints can never match a trigram index,
+    so they are dropped here and left to the caller's LIKE fallback. Returns ""
+    when no usable term can be formed.
+    """
+    sanitized = re.sub(r"[^\w\s]", "", query, flags=re.UNICODE)
+    terms: list[str] = []
+    for tok in _TOKEN_RE.findall(sanitized):
+        if _CJK_RE.match(tok):
+            if len(tok) >= 3:
+                terms.extend(tok[i : i + 3] for i in range(len(tok) - 2))
+            # shorter CJK runs (e.g. 'パン') can't match a trigram index -> LIKE
+        elif len(tok) >= 3:
+            terms.append(tok)
+        # ASCII tokens < 3 chars also can't match a trigram index -> dropped
+    if not terms:
+        return ""
+    return " OR ".join(f'"{t}"' for t in dict.fromkeys(terms))
+
+
 async def _search_episodes_fts(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -686,19 +852,16 @@ async def _search_episodes_fts(
     exact-match filter on the episode's channel — empty means no channel
     filter (all channels), mirroring the memory search paths.
     """
-    sanitized = re.sub(r"[^\w\s]", "", query, flags=re.UNICODE)
-    words = sanitized.split()
-    if not words:
+    fts_query = _build_fts_query(query)
+    if not fts_query:
         return []
-
-    fts_query = " ".join(f'"{w}"' for w in words)
     channel_clause = " AND e.channel = ?" if channel else ""
     channel_params = (channel,) if channel else ()
     proj_frag, proj_params = gamma_clause("e.project_id", project_id)
     proj_extra = (" AND " + proj_frag) if proj_frag else ""
 
     rows = await db.execute_fetchall(
-        f"""SELECT e.id, e.summary, e.start_time, e.resolved
+        f"""SELECT e.id, e.summary, e.start_time, e.resolved, bm25(episodes_fts)
            FROM episodes_fts f
            JOIN episodes e ON f.rowid = e.id
            WHERE episodes_fts MATCH ?
@@ -715,6 +878,7 @@ async def _search_episodes_fts(
             "source": {"System": "episode"},
             "timestamp": row[2] or "",
             "_resolved": bool(row[3]),
+            "_bm25": row[4],
         }
         for row in rows
     ]
@@ -756,15 +920,13 @@ async def _search_memories_keyword(
                LIMIT ?""",
             (agent_id, *channel_params, *proj_params_bare, *src_params_bare, limit),
         )
-        return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4]} for r in rows]
+        return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows]
 
     if FTS_ENABLED:
-        sanitized = re.sub(r"[^\w\s]", "", query, flags=re.UNICODE)
-        words = sanitized.split()
-        if words:
-            fts_query = " ".join(f'"{w}"' for w in words)
+        fts_query = _build_fts_query(query)
+        if fts_query:
             rows = await db.execute_fetchall(
-                f"""SELECT m.id, m.msg_id, m.content, m.source, m.timestamp
+                f"""SELECT m.id, m.msg_id, m.content, m.source, m.timestamp, bm25(memories_fts)
                    FROM memories_fts f
                    JOIN memories m ON f.rowid = m.id
                    WHERE memories_fts MATCH ?
@@ -774,7 +936,7 @@ async def _search_memories_keyword(
                 (fts_query, agent_id, *channel_params, *proj_params_m, *src_params_m, limit),
             )
             if rows:
-                return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4]} for r in rows]
+                return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": r[5]} for r in rows]
 
     scan_limit = min(MAX_MEMORIES, max(limit * 5, 50))
     rows = await db.execute_fetchall(
@@ -786,7 +948,7 @@ async def _search_memories_keyword(
            LIMIT ?""",
         (agent_id, *channel_params, *proj_params_bare, *src_params_bare, f"%{query}%", scan_limit),
     )
-    return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4]} for r in rows[:limit]]
+    return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows[:limit]]
 
 
 async def do_archive_episode(

@@ -24,8 +24,9 @@
       "commit": "77c9d34",
       "file": "memory_handlers.py",
       "pattern": "fts_query = \" \"\\.join",
-      "expected": "present",
-      "status": "open"
+      "expected": "absent",
+      "status": "fixed",
+      "fix_note": "Replaced query.split() with _build_fts_query() (CJK trigram-OR decomposition) so the trigram FTS index is exercised for space-less scripts. Paired with the RSF merge (RECALL_MODE=rsf) which keeps the keyword channel's bm25 magnitude. Pending version bump."
     }
   ]
 }
