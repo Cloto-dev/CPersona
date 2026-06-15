@@ -11,9 +11,10 @@
       "version": "2.4.22",
       "commit": "77c9d34",
       "file": "config.py",
-      "pattern": "EMBEDDING_MODE = os\\.environ\\.get\\(\"CPERSONA_EMBEDDING_MODE\"",
-      "expected": "present",
-      "status": "open"
+      "pattern": "CPERSONA_EMBEDDING_MODE\", \"none\"",
+      "expected": "absent",
+      "status": "fixed",
+      "fix_note": "config.py now reads the generic EMBEDDING_MODE / EMBEDDING_HTTP_URL keys with a CPERSONA_* override (specific > generic, matching the CScheduler convention and the marketplace catalog), so a catalog-installed cpersona enables embeddings instead of silently running FTS-only. Pending version bump."
     },
     {
       "id": "bug-002",
