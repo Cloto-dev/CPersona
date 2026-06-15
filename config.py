@@ -7,11 +7,16 @@ MAX_MEMORIES = int(os.environ.get("CPERSONA_MAX_MEMORIES", "500"))
 MAX_CONTENT_LENGTH = int(os.environ.get("CPERSONA_MAX_CONTENT_LENGTH", "2000"))
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 
-EMBEDDING_MODE = os.environ.get("CPERSONA_EMBEDDING_MODE", "none")
-EMBEDDING_URL = os.environ.get("CPERSONA_EMBEDDING_URL", "")
-EMBEDDING_API_KEY = os.environ.get("CPERSONA_EMBEDDING_API_KEY", "")
-EMBEDDING_API_URL = os.environ.get("CPERSONA_EMBEDDING_API_URL", "https://api.openai.com/v1/embeddings")
-EMBEDDING_MODEL = os.environ.get("CPERSONA_EMBEDDING_MODEL", "text-embedding-3-small")
+# Embedding env: the server-specific CPERSONA_* key takes precedence, then the
+# generic key shared across Cloto MCP servers (matches the CScheduler convention
+# and the marketplace catalog, which sets EMBEDDING_MODE / EMBEDDING_HTTP_URL).
+# Without the generic fallback a catalog-installed cpersona ran with embeddings
+# silently off (recall degraded to FTS-only) — bug-001.
+EMBEDDING_MODE = os.environ.get("CPERSONA_EMBEDDING_MODE") or os.environ.get("EMBEDDING_MODE", "none")
+EMBEDDING_URL = os.environ.get("CPERSONA_EMBEDDING_URL") or os.environ.get("EMBEDDING_HTTP_URL", "")
+EMBEDDING_API_KEY = os.environ.get("CPERSONA_EMBEDDING_API_KEY") or os.environ.get("EMBEDDING_API_KEY", "")
+EMBEDDING_API_URL = os.environ.get("CPERSONA_EMBEDDING_API_URL") or os.environ.get("EMBEDDING_API_URL", "https://api.openai.com/v1/embeddings")
+EMBEDDING_MODEL = os.environ.get("CPERSONA_EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 
 VECTOR_MIN_SIMILARITY = float(os.environ.get("CPERSONA_VECTOR_MIN_SIMILARITY", "0.3"))
 
