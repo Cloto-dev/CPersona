@@ -21,7 +21,10 @@ import tasks
 import vector
 from config import (
     CALIBRATE_FLOOR,
+    CALIBRATE_METHOD,
+    CALIBRATE_PERCENTILE,
     CALIBRATE_SAMPLE_SIZE,
+    CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
     FTS_ENABLED,
     TASK_QUEUE_ENABLED,
@@ -295,13 +298,226 @@ async def do_delete_agent_data(agent_id: str) -> dict:
     return result
 
 
-async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: float = 0) -> dict:
+def _separation_threshold(null_sims, pos_sims, floor: float) -> tuple:
+    """Two-population threshold: the point that best separates null from positives.
+
+    Sweeps candidate thresholds and returns the one maximizing Youden's J
+    (``TPR - FPR``) where positives are a label-free proxy for related pairs (the
+    per-memory nearest-neighbour similarity) and the null is the random-pair
+    distribution. Unlike the percentile method, the operating point is derived from
+    the corpus's actual separability rather than a fixed quantile.
+
+    Returns ``(threshold, youden_j)``.
+    """
+    import numpy as np
+
+    null = np.asarray(null_sims, dtype=np.float64)
+    pos = np.asarray(pos_sims, dtype=np.float64)
+    lo = min(float(null.min()), float(pos.min()))
+    hi = max(float(null.max()), float(pos.max()))
+    if hi <= lo:
+        return float(max(lo, floor)), 0.0
+    candidates = np.linspace(lo, hi, 256)
+    tpr = (pos[None, :] >= candidates[:, None]).mean(axis=1)
+    fpr = (null[None, :] >= candidates[:, None]).mean(axis=1)
+    j = tpr - fpr
+    best = int(np.argmax(j))
+    return float(max(candidates[best], floor)), float(j[best])
+
+
+def _parse_ts_seconds(ts):
+    """Parse an ISO-8601 timestamp to epoch seconds, or None when unparseable."""
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        return None
+
+
+def _adjacency_sims_core(times_seconds, vecs, window_sec: float):
+    """Cosine similarities of memories stored within ``window_sec`` of each other.
+
+    Memories sorted by time; consecutive pairs whose gap is within the window are a
+    representative (non-extreme) proxy for related pairs — same-session content. Unlike
+    the nearest-neighbour max, this samples the body of the related distribution rather
+    than its extreme tail, which is what makes the two-population operating point useful.
+    """
+    import numpy as np
+
+    t = np.asarray(times_seconds, dtype=np.float64)
+    v = np.asarray(vecs, dtype=np.float64)
+    if len(t) < 2:
+        return np.array([])
+    order = np.argsort(t)
+    t, v = t[order], v[order]
+    norms = np.linalg.norm(v, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    vn = v / norms
+    mask = np.diff(t) <= window_sec
+    if not mask.any():
+        return np.array([])
+    return np.sum(vn[:-1][mask] * vn[1:][mask], axis=1)
+
+
+async def _temporal_adjacency_sims(db, agent_id: str, limit: int, window_min: float):
+    """Fetch (timestamp, embedding) ordered by time and build same-session pair sims."""
+    import numpy as np
+
+    if agent_id:
+        rows = await db.execute_fetchall(
+            "SELECT timestamp, embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL "
+            "AND timestamp IS NOT NULL ORDER BY timestamp DESC LIMIT ?",
+            (agent_id, limit),
+        )
+    else:
+        rows = await db.execute_fetchall(
+            "SELECT timestamp, embedding FROM memories WHERE embedding IS NOT NULL "
+            "AND timestamp IS NOT NULL ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        )
+    times, vecs = [], []
+    for ts, blob in rows:
+        sec = _parse_ts_seconds(ts)
+        if sec is None:
+            continue
+        times.append(sec)
+        vecs.append(np.frombuffer(blob, dtype=np.float32))
+    if len(times) < 2:
+        return np.array([])
+    return _adjacency_sims_core(times, np.array(vecs), window_min * 60.0)
+
+
+def _threshold_from_sims(
+    pairwise_sims,
+    *,
+    method: str,
+    z_factor: float,
+    percentile: float,
+    floor: float,
+    pos_sims=None,
+) -> dict:
+    """Derive a vector-similarity threshold from a null (random-pair) distribution.
+
+    The threshold is placed ABOVE the mean of the random-pair similarities so that
+    unrelated pairs are rejected:
+
+    - ``percentile``: the given quantile of the null distribution. Distribution-free
+      and robust to the narrow, high-mean cosine geometry of anisotropic models such
+      as bge-m3 (mean random-pair similarity ~0.51, small spread).
+    - ``zscore``: ``mean + z*std`` — rejects pairs within +z standard deviations of
+      the random baseline.
+    - ``separation``: the operating point that best separates the null from a
+      label-free positive proxy (``pos_sims``, the per-memory nearest-neighbour
+      similarity), via Youden's J. Removes the fixed-quantile choice — the point is
+      learned from the corpus's own separability. Requires ``pos_sims``.
+
+    The pre-2.4.24 formula used ``mean - z*std``, which placed the floor BELOW the
+    null mean and admitted the majority of unrelated pairs (topic-drift contamination).
+
+    Returns the threshold plus distribution statistics for observability, including
+    ``null_admit_rate`` (fraction of random pairs admitted — a lower value is stricter).
+    """
+    import numpy as np
+
+    sims = np.asarray(pairwise_sims, dtype=np.float64)
+    sim_mean = float(np.mean(sims))
+    sim_std = float(np.std(sims))
+    sim_median = float(np.median(sims))
+
+    youden_j = None
+    if method == "zscore":
+        raw = sim_mean + z_factor * sim_std
+    elif method == "separation":
+        if pos_sims is None:
+            raise ValueError("separation method requires pos_sims")
+        raw, youden_j = _separation_threshold(sims, pos_sims, floor)
+    else:  # "percentile" (default)
+        raw = float(np.quantile(sims, percentile))
+
+    threshold = round(max(raw, floor), 4)
+    result = {
+        "threshold": threshold,
+        "mean": round(sim_mean, 4),
+        "std": round(sim_std, 4),
+        "median": round(sim_median, 4),
+        "p95": round(float(np.quantile(sims, 0.95)), 4),
+        "null_admit_rate": round(float(np.mean(sims >= threshold)), 4),
+    }
+    if pos_sims is not None:
+        pos = np.asarray(pos_sims, dtype=np.float64)
+        result["pos_mean"] = round(float(np.mean(pos)), 4)
+        result["pos_admit_rate"] = round(float(np.mean(pos >= threshold)), 4)
+    if youden_j is not None:
+        result["youden_j"] = round(youden_j, 4)
+    return result
+
+
+def _calibration_sidecar_path() -> str:
+    """Path of the JSON sidecar that persists calibration state next to the DB."""
+    return config.DB_PATH + ".calibration.json"
+
+
+def _save_calibration_state(
+    embedding_dim: int,
+    embedding_model: str,
+    global_threshold: float | None,
+    agent_thresholds: dict,
+) -> None:
+    """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
+
+    Persistence lets thresholds survive a restart without recomputation, and lets the
+    startup guard detect an embedding-model (dimension) change.
+    """
+    payload = {
+        "embedding_dim": embedding_dim,
+        "embedding_model": embedding_model,
+        "global_threshold": global_threshold,
+        "agent_thresholds": agent_thresholds,
+        "calibrated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        with open(_calibration_sidecar_path(), "w") as fh:
+            json.dump(payload, fh)
+    except OSError as exc:
+        logger.warning("Could not persist calibration sidecar: %s", exc)
+
+
+def _load_calibration_state() -> dict | None:
+    """Load the calibration sidecar, or None when absent/unreadable."""
+    try:
+        with open(_calibration_sidecar_path()) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+async def _corpus_embedding_dim() -> int | None:
+    """Return the float32 dimension of one stored embedding, or None when empty."""
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT embedding FROM memories WHERE embedding IS NOT NULL LIMIT 1"
+    )
+    if not rows or rows[0][0] is None:
+        return None
+    return len(rows[0][0]) // 4  # 4 bytes per float32
+
+
+async def do_calibrate_threshold(
+    agent_id: str,
+    sample_size: int = 0,
+    z_factor: float = 0,
+    method: str = "",
+    percentile: float = 0,
+) -> dict:
     """Auto-calibrate the vector-similarity threshold from the embedding distribution.
 
     Uses the null distribution of pairwise cosine similarities (mostly unrelated
     pairs). When *agent_id* is provided, writes a per-agent override into
     ``vector._agent_thresholds``; when empty, calibrates the global
     ``config.VECTOR_MIN_SIMILARITY`` from the all-agents corpus (v2.4.15).
+
+    v2.4.24: the threshold is placed ABOVE the null mean (see ``_threshold_from_sims``);
+    ``method`` defaults to ``percentile``. The result is persisted to a sidecar keyed by
+    embedding dimension so a later embedding-model swap triggers recalibration at startup.
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response(
@@ -313,6 +529,8 @@ async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: 
     db = await get_db()
     sample_n = sample_size or CALIBRATE_SAMPLE_SIZE
     z = z_factor or CALIBRATE_Z_FACTOR
+    cal_method = method or CALIBRATE_METHOD
+    cal_percentile = percentile or CALIBRATE_PERCENTILE
 
     # Sample embeddings: per-agent when agent_id provided, all-agents when empty
     if agent_id:
@@ -344,12 +562,34 @@ async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: 
     num_pairs = len(pairwise_sims)
     old_threshold = vector._get_vector_threshold(agent_id)
 
-    sim_mean = float(np.mean(pairwise_sims))
-    sim_std = float(np.std(pairwise_sims))
-    sim_median = float(np.median(pairwise_sims))
+    # Positive proxy for the separation method (label-free). Preferred: temporal
+    # adjacency (same-session memories ≈ related — a representative sample of the
+    # related distribution). Fallback: nearest-neighbour max, used only when too few
+    # temporally-adjacent pairs exist (it overestimates relatedness — extreme tail —
+    # so the threshold trends high and recall suffers).
+    pos_sims = None
+    proxy_source = None
+    if cal_method == "separation":
+        pos_sims = await _temporal_adjacency_sims(
+            db, agent_id, sample_n, CALIBRATE_TEMPORAL_WINDOW_MIN
+        )
+        proxy_source = "temporal"
+        if pos_sims is None or len(pos_sims) < 10:
+            nn = sim_matrix.copy()
+            np.fill_diagonal(nn, -np.inf)
+            pos_sims = nn.max(axis=1)
+            proxy_source = "nn_fallback"
 
-    z_threshold = sim_mean - z * sim_std
-    new_threshold = round(max(z_threshold, CALIBRATE_FLOOR), 4)
+    stats = _threshold_from_sims(
+        pairwise_sims,
+        method=cal_method,
+        z_factor=z,
+        percentile=cal_percentile,
+        floor=CALIBRATE_FLOOR,
+        pos_sims=pos_sims,
+    )
+    new_threshold = stats["threshold"]
+    embedding_dim = int(vecs.shape[1])
 
     # Apply: per-agent dict when agent_id provided, global fallback when empty
     if agent_id:
@@ -357,32 +597,115 @@ async def do_calibrate_threshold(agent_id: str, sample_size: int = 0, z_factor: 
     else:
         config.VECTOR_MIN_SIMILARITY = new_threshold
 
+    # Persist for restart survival + embedding-change detection (Tier 4).
+    _save_calibration_state(
+        embedding_dim,
+        config.EMBEDDING_MODEL,
+        config.VECTOR_MIN_SIMILARITY,
+        dict(vector._agent_thresholds),
+    )
+
     result = {
         "ok": True,
         "scope": "per_agent" if agent_id else "global",
         "agent_id": agent_id,
         "sampled_embeddings": n,
         "num_pairs": num_pairs,
+        "method": cal_method,
         "z_factor": z,
+        "percentile": cal_percentile,
+        "embedding_dim": embedding_dim,
+        "embedding_model": config.EMBEDDING_MODEL,
         "distribution": {
-            "mean": round(sim_mean, 4),
-            "std": round(sim_std, 4),
-            "median": round(sim_median, 4),
+            "mean": stats["mean"],
+            "std": stats["std"],
+            "median": stats["median"],
+            "p95": stats["p95"],
         },
+        "null_admit_rate": stats["null_admit_rate"],
         "old_threshold": old_threshold,
         "new_threshold": new_threshold,
     }
+    if proxy_source is not None:
+        result["proxy_source"] = proxy_source
+    if "youden_j" in stats:
+        result["youden_j"] = stats["youden_j"]
+    if "pos_admit_rate" in stats:
+        result["pos_admit_rate"] = stats["pos_admit_rate"]
+        result["pos_mean"] = stats["pos_mean"]
     logger.info(
-        "Calibrated threshold [%s]: %.4f → %.4f (z=%.1f of %d pairs, mean=%.4f, std=%.4f)",
+        "Calibrated threshold [%s]: %.4f -> %.4f (method=%s z=%.1f pct=%.2f of %d pairs, "
+        "mean=%.4f std=%.4f admit=%.3f dim=%d)",
         agent_id or "global",
         old_threshold,
         new_threshold,
+        cal_method,
         z,
+        cal_percentile,
         num_pairs,
-        sim_mean,
-        sim_std,
+        stats["mean"],
+        stats["std"],
+        stats["null_admit_rate"],
+        embedding_dim,
     )
     return result
+
+
+def _restore_calibration_state(state: dict) -> None:
+    """Load persisted thresholds from a sidecar payload into live config + dict."""
+    global_threshold = state.get("global_threshold")
+    if global_threshold is not None:
+        config.VECTOR_MIN_SIMILARITY = global_threshold
+    vector._agent_thresholds.update(state.get("agent_thresholds") or {})
+
+
+async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bool) -> dict:
+    """Startup guard for the vector-similarity threshold (Tier 4, v2.4.24).
+
+    Restores persisted thresholds when the embedding dimension is unchanged, and
+    (re)calibrates on first run or on an embedding-dimension change (e.g. a silent
+    jina 768d -> bge-m3 1024d swap), even when ``AUTO_CALIBRATE`` is off. A stale
+    threshold calibrated for a previous embedding model is a known cause of recall
+    contamination. Returns a small status dict for logging.
+    """
+    state = _load_calibration_state()
+    live_dim = await _corpus_embedding_dim()
+    dim_changed = (
+        state is not None and live_dim is not None and state.get("embedding_dim") != live_dim
+    )
+
+    if state and not dim_changed and not auto_calibrate:
+        _restore_calibration_state(state)
+        return {"action": "restored", "embedding_dim": state.get("embedding_dim")}
+
+    if not (auto_calibrate or (on_model_change and (state is None or dim_changed))):
+        return {"action": "noop"}
+
+    if dim_changed:
+        logger.warning(
+            "Embedding dimension changed (%s -> %s); recalibrating vector threshold. "
+            "A stale threshold from a previous embedding model causes recall contamination.",
+            state.get("embedding_dim"),
+            live_dim,
+        )
+
+    db = await get_db()
+    global_result = await do_calibrate_threshold(agent_id="")
+    agents = []
+    if global_result.get("ok"):
+        agent_rows = await db.execute_fetchall(
+            "SELECT DISTINCT agent_id FROM memories WHERE embedding IS NOT NULL"
+        )
+        for (aid,) in agent_rows:
+            r = await do_calibrate_threshold(agent_id=aid)
+            if r.get("ok"):
+                agents.append(aid)
+    return {
+        "action": "recalibrated" if dim_changed else ("auto" if auto_calibrate else "initial"),
+        "dim_changed": dim_changed,
+        "global_ok": bool(global_result.get("ok")),
+        "agents": agents,
+    }
 
 
 async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:

@@ -9,7 +9,7 @@ from config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # v2.4.17: project_id is a second isolation axis layered on top of agent_id,
 # giving agent_id × project_id two-tier γ semantics.
@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     start_time TEXT,
     end_time   TEXT,
     resolved   INTEGER NOT NULL DEFAULT 0,
+    channel    TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -240,6 +241,27 @@ async def get_db() -> aiosqlite.Connection:
                         table,
                         e,
                     )
+
+    # v2.4.22: per-channel episodic loop. Episodes gain a `channel` column so
+    # archived sessions can be scoped to one conversation channel (mirrors the
+    # `channel` axis memories already carry). Existing episodes default to ''
+    # (= unscoped / shared) and remain visible to unfiltered recall. The
+    # PRAGMA existence check keeps the migration idempotent.
+    if current < 10:
+        cols = await _db.execute_fetchall("PRAGMA table_info(episodes)")
+        existing = {c[1] for c in cols}
+        if "channel" not in existing:
+            try:
+                await _db.execute("ALTER TABLE episodes ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+            except Exception as e:
+                logger.warning(
+                    "v10 migration: ALTER TABLE episodes ADD COLUMN channel failed: %s",
+                    e,
+                )
+        await _db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodes_agent_channel "
+            "ON episodes(agent_id, channel, created_at DESC)"
+        )
 
     # The isolation index depends on the v2.4.17 project_id column. Run it
     # unconditionally after the migration so v8 boots get the index once the

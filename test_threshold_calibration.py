@@ -24,6 +24,13 @@ from database import get_db  # noqa: E402
 from _vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 
 
+def _remove_sidecar():
+    try:
+        os.remove(admin_handlers._calibration_sidecar_path())
+    except OSError:
+        pass
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     """Initialize a fresh DB and reset module-level threshold state for each test."""
@@ -33,9 +40,11 @@ async def setup_db():
     await db.commit()
     vector._agent_thresholds.clear()
     config.VECTOR_MIN_SIMILARITY = 0.3
+    _remove_sidecar()
     yield
     vector._agent_thresholds.clear()
     config.VECTOR_MIN_SIMILARITY = 0.3
+    _remove_sidecar()
 
 
 # ============================================================
@@ -151,3 +160,84 @@ async def test_check_health_detects_null_episode_embeddings():
     result = await do_check_health("agent-ep", fix=False)
     issue_types = {issue["type"] for issue in result.get("issues", [])}
     assert "null_episode_embedding" in issue_types
+
+
+# ============================================================
+# v2.4.24 — Tier 4: embedding-change guard + persistence
+#   (pure formula/comparison tests live in test_calibration_formula.py)
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_calibrate_records_dim_model_and_writes_sidecar():
+    """A calibration records embedding_dim / embedding_model and persists a sidecar."""
+    db = await get_db()
+    await _seed_embeddings(db, "agent-dim", 15, dim=8)
+
+    result = await admin_handlers.do_calibrate_threshold("agent-dim")
+    assert result["ok"] is True
+    assert result["embedding_dim"] == 8
+    assert result["method"] == config.CALIBRATE_METHOD
+    assert "embedding_model" in result
+
+    state = admin_handlers._load_calibration_state()
+    assert state is not None
+    assert state["embedding_dim"] == 8
+    assert state["agent_thresholds"]["agent-dim"] == result["new_threshold"]
+
+
+@pytest.mark.asyncio
+async def test_startup_guard_restores_when_dim_unchanged():
+    """Matching sidecar dim + AUTO_CALIBRATE off → restore, no recompute."""
+    db = await get_db()
+    await _seed_embeddings(db, "agent-keep", 15, dim=8)
+    admin_handlers._save_calibration_state(
+        embedding_dim=8,
+        embedding_model="bge-m3",
+        global_threshold=0.61,
+        agent_thresholds={"agent-keep": 0.58},
+    )
+
+    status = await admin_handlers.ensure_calibrated_on_startup(
+        auto_calibrate=False, on_model_change=True
+    )
+    assert status["action"] == "restored"
+    assert vector._get_vector_threshold("agent-keep") == 0.58
+    assert config.VECTOR_MIN_SIMILARITY == 0.61
+
+
+@pytest.mark.asyncio
+async def test_startup_guard_recalibrates_on_dim_change():
+    """A dimension change (e.g. jina 768 -> bge-m3 1024) forces recalibration."""
+    db = await get_db()
+    await _seed_embeddings(db, "agent-swap", 15, dim=8)
+    # Sidecar claims a previous embedding model with a different dimension.
+    admin_handlers._save_calibration_state(
+        embedding_dim=4,
+        embedding_model="old-model",
+        global_threshold=0.99,
+        agent_thresholds={"agent-swap": 0.99},
+    )
+
+    status = await admin_handlers.ensure_calibrated_on_startup(
+        auto_calibrate=False, on_model_change=True
+    )
+    assert status["action"] == "recalibrated"
+    assert status["dim_changed"] is True
+    # the stale 0.99 threshold was replaced by a freshly computed value
+    assert vector._get_vector_threshold("agent-swap") != 0.99
+    # the sidecar now records the live dimension
+    assert admin_handlers._load_calibration_state()["embedding_dim"] == 8
+
+
+@pytest.mark.asyncio
+async def test_startup_guard_noop_without_sidecar_when_disabled():
+    """No sidecar + AUTO_CALIBRATE off + on_model_change off → no calibration."""
+    db = await get_db()
+    await _seed_embeddings(db, "agent-none", 15, dim=8)
+
+    status = await admin_handlers.ensure_calibrated_on_startup(
+        auto_calibrate=False, on_model_change=False
+    )
+    assert status["action"] == "noop"
+    assert "agent-none" not in vector._agent_thresholds

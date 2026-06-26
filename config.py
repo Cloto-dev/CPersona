@@ -7,11 +7,16 @@ MAX_MEMORIES = int(os.environ.get("CPERSONA_MAX_MEMORIES", "500"))
 MAX_CONTENT_LENGTH = int(os.environ.get("CPERSONA_MAX_CONTENT_LENGTH", "2000"))
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 
-EMBEDDING_MODE = os.environ.get("CPERSONA_EMBEDDING_MODE", "none")
-EMBEDDING_URL = os.environ.get("CPERSONA_EMBEDDING_URL", "")
-EMBEDDING_API_KEY = os.environ.get("CPERSONA_EMBEDDING_API_KEY", "")
-EMBEDDING_API_URL = os.environ.get("CPERSONA_EMBEDDING_API_URL", "https://api.openai.com/v1/embeddings")
-EMBEDDING_MODEL = os.environ.get("CPERSONA_EMBEDDING_MODEL", "text-embedding-3-small")
+# Embedding env: the server-specific CPERSONA_* key takes precedence, then the
+# generic key shared across Cloto MCP servers (matches the CScheduler convention
+# and the marketplace catalog, which sets EMBEDDING_MODE / EMBEDDING_HTTP_URL).
+# Without the generic fallback a catalog-installed cpersona ran with embeddings
+# silently off (recall degraded to FTS-only) — bug-001.
+EMBEDDING_MODE = os.environ.get("CPERSONA_EMBEDDING_MODE") or os.environ.get("EMBEDDING_MODE", "none")
+EMBEDDING_URL = os.environ.get("CPERSONA_EMBEDDING_URL") or os.environ.get("EMBEDDING_HTTP_URL", "")
+EMBEDDING_API_KEY = os.environ.get("CPERSONA_EMBEDDING_API_KEY") or os.environ.get("EMBEDDING_API_KEY", "")
+EMBEDDING_API_URL = os.environ.get("CPERSONA_EMBEDDING_API_URL") or os.environ.get("EMBEDDING_API_URL", "https://api.openai.com/v1/embeddings")
+EMBEDDING_MODEL = os.environ.get("CPERSONA_EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 
 VECTOR_MIN_SIMILARITY = float(os.environ.get("CPERSONA_VECTOR_MIN_SIMILARITY", "0.3"))
 
@@ -43,6 +48,24 @@ AUTO_CALIBRATE = os.environ.get("CPERSONA_AUTO_CALIBRATE", "false").lower() == "
 CALIBRATE_SAMPLE_SIZE = int(os.environ.get("CPERSONA_CALIBRATE_SAMPLE_SIZE", "200"))
 CALIBRATE_Z_FACTOR = float(os.environ.get("CPERSONA_CALIBRATE_Z_FACTOR", "1.0"))
 CALIBRATE_FLOOR = float(os.environ.get("CPERSONA_CALIBRATE_FLOOR", "0.05"))
+# v2.4.24 — calibration method. "percentile" sets the threshold at a quantile of
+# the random-pair (null) similarity distribution; "zscore" uses mean + z*std.
+# Both place the floor ABOVE the null mean so unrelated pairs are rejected — the
+# pre-2.4.24 zscore formula subtracted (mean - z*std), placing the floor below
+# the null mean and admitting the majority of unrelated pairs (topic drift).
+CALIBRATE_METHOD = os.environ.get("CPERSONA_CALIBRATE_METHOD", "separation")
+CALIBRATE_PERCENTILE = float(os.environ.get("CPERSONA_CALIBRATE_PERCENTILE", "0.95"))
+# v2.4.24 — method="separation" positive proxy: memories stored within this window
+# (minutes) are treated as same-session ≈ related, a representative (non-extreme)
+# proxy for the two-population operating-point search. Falls back to nearest-neighbour
+# when too few temporally-adjacent pairs exist.
+CALIBRATE_TEMPORAL_WINDOW_MIN = float(os.environ.get("CPERSONA_CALIBRATE_TEMPORAL_WINDOW_MIN", "30"))
+# v2.4.24 — recalibrate on embedding-model change. The calibration is fingerprinted
+# by embedding dimension (robust to a missing/stale EMBEDDING_MODEL label); when the
+# live corpus dimension differs from the persisted one, the threshold is recomputed
+# at startup even if AUTO_CALIBRATE is off. Catches silent jina(768d)->bge-m3(1024d)
+# style swaps that would otherwise leave a stale, mis-scaled threshold in place.
+CALIBRATE_ON_MODEL_CHANGE = os.environ.get("CPERSONA_CALIBRATE_ON_MODEL_CHANGE", "true").lower() == "true"
 
 # Autocut (v2.4 / v2.4.13: relative gap ratio, enabled by default)
 AUTOCUT_ENABLED = os.environ.get("CPERSONA_AUTOCUT_ENABLED", "true").lower() == "true"
