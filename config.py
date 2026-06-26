@@ -70,6 +70,13 @@ CALIBRATE_ON_MODEL_CHANGE = os.environ.get("CPERSONA_CALIBRATE_ON_MODEL_CHANGE",
 # Autocut (v2.4 / v2.4.13: relative gap ratio, enabled by default)
 AUTOCUT_ENABLED = os.environ.get("CPERSONA_AUTOCUT_ENABLED", "true").lower() == "true"
 AUTOCUT_MIN_GAP_RATIO = float(os.environ.get("CPERSONA_AUTOCUT_MIN_GAP_RATIO", "0.15"))
+# v2.4.25: minimum result count before autocut engages. RSF min-max normalization
+# forces the lowest-scoring row to 0.0, so any small result set carries an
+# artificial full-scale gap that autocut would cut to a single row (the 2-item
+# over-cut that blocked making rsf the default). Below this floor, recall is too
+# small for a "gap" to be meaningful — keep every row. Hard floor of 2 keeps the
+# gap computation well-defined.
+AUTOCUT_MIN_RESULTS = max(2, int(os.environ.get("CPERSONA_AUTOCUT_MIN_RESULTS", "3")))
 
 # Episode boundary soft penalty (L3 — v2.4.14)
 # Memories created before the latest archived episode are penalised by a
