@@ -48,6 +48,24 @@ AUTO_CALIBRATE = os.environ.get("CPERSONA_AUTO_CALIBRATE", "false").lower() == "
 CALIBRATE_SAMPLE_SIZE = int(os.environ.get("CPERSONA_CALIBRATE_SAMPLE_SIZE", "200"))
 CALIBRATE_Z_FACTOR = float(os.environ.get("CPERSONA_CALIBRATE_Z_FACTOR", "1.0"))
 CALIBRATE_FLOOR = float(os.environ.get("CPERSONA_CALIBRATE_FLOOR", "0.05"))
+# v2.4.24 — calibration method. "percentile" sets the threshold at a quantile of
+# the random-pair (null) similarity distribution; "zscore" uses mean + z*std.
+# Both place the floor ABOVE the null mean so unrelated pairs are rejected — the
+# pre-2.4.24 zscore formula subtracted (mean - z*std), placing the floor below
+# the null mean and admitting the majority of unrelated pairs (topic drift).
+CALIBRATE_METHOD = os.environ.get("CPERSONA_CALIBRATE_METHOD", "separation")
+CALIBRATE_PERCENTILE = float(os.environ.get("CPERSONA_CALIBRATE_PERCENTILE", "0.95"))
+# v2.4.24 — method="separation" positive proxy: memories stored within this window
+# (minutes) are treated as same-session ≈ related, a representative (non-extreme)
+# proxy for the two-population operating-point search. Falls back to nearest-neighbour
+# when too few temporally-adjacent pairs exist.
+CALIBRATE_TEMPORAL_WINDOW_MIN = float(os.environ.get("CPERSONA_CALIBRATE_TEMPORAL_WINDOW_MIN", "30"))
+# v2.4.24 — recalibrate on embedding-model change. The calibration is fingerprinted
+# by embedding dimension (robust to a missing/stale EMBEDDING_MODEL label); when the
+# live corpus dimension differs from the persisted one, the threshold is recomputed
+# at startup even if AUTO_CALIBRATE is off. Catches silent jina(768d)->bge-m3(1024d)
+# style swaps that would otherwise leave a stale, mis-scaled threshold in place.
+CALIBRATE_ON_MODEL_CHANGE = os.environ.get("CPERSONA_CALIBRATE_ON_MODEL_CHANGE", "true").lower() == "true"
 
 # Autocut (v2.4 / v2.4.13: relative gap ratio, enabled by default)
 AUTOCUT_ENABLED = os.environ.get("CPERSONA_AUTOCUT_ENABLED", "true").lower() == "true"

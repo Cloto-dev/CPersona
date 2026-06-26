@@ -47,9 +47,11 @@ from admin_handlers import (
     do_unlock_memory,
     do_update_memory,
     do_update_profile,
+    ensure_calibrated_on_startup,
 )
 from config import (
     AUTO_CALIBRATE,
+    CALIBRATE_ON_MODEL_CHANGE,
     EMBEDDING_API_KEY,
     EMBEDDING_API_URL,
     EMBEDDING_CACHE_SIZE,
@@ -474,21 +476,31 @@ registry.auto_tool(
 
 registry.auto_tool(
     "calibrate_threshold",
-    "Auto-calibrate vector search threshold using null distribution z-score. "
-    "Samples random memory pairs, computes cosine distribution, sets threshold "
-    "at mean + z*std. No labels used, purely statistical. Adapts to both "
-    "embedding model and corpus characteristics.",
+    "Auto-calibrate the vector search threshold from the null (random-pair) cosine "
+    "distribution. Samples random memory pairs and places the threshold ABOVE the "
+    "null mean so unrelated pairs are rejected. method='percentile' (default) uses a "
+    "quantile of the null distribution (robust to anisotropic models such as bge-m3); "
+    "method='zscore' uses mean + z*std. No labels used, purely statistical. Adapts to "
+    "both embedding model and corpus characteristics.",
     {
         "type": "object",
         "properties": {
             "agent_id": {"type": "string", "description": "Agent ID whose memories to sample"},
             "sample_size": {"type": "integer", "description": "Number of embeddings to sample (default: 200)"},
-            "z_factor": {"type": "number", "description": "Z-score multiplier (default: 1.0, higher = stricter)"},
+            "z_factor": {"type": "number", "description": "Z-score multiplier for method='zscore' (default: 1.0, higher = stricter)"},
+            "method": {"type": "string", "description": "'percentile' (default), 'zscore', or 'separation' (two-population, learns the operating point from null vs nearest-neighbour positives)"},
+            "percentile": {"type": "number", "description": "Null-distribution quantile for method='percentile' (default: 0.95, higher = stricter)"},
         },
         "required": ["agent_id"],
     },
     do_calibrate_threshold,
-    [("agent_id", str), ("sample_size", int, 0), ("z_factor", float, 0)],
+    [
+        ("agent_id", str),
+        ("sample_size", int, 0),
+        ("z_factor", float, 0),
+        ("method", str, ""),
+        ("percentile", float, 0),
+    ],
 )
 
 registry.auto_tool(
@@ -867,31 +879,13 @@ async def main():
 
     await get_db()
 
-    # Auto-calibrate the vector-similarity threshold on startup if enabled (v2.4.15).
-    if AUTO_CALIBRATE and EMBEDDING_MODE != "none":
-        db = await get_db()
-        # Phase 1: global threshold from the all-agents corpus
-        global_result = await do_calibrate_threshold(agent_id="")
-        if global_result.get("ok"):
-            logger.info(
-                "Auto-calibrate global: %.4f → %.4f",
-                global_result["old_threshold"],
-                global_result["new_threshold"],
-            )
-        # Phase 2: per-agent thresholds for each agent with sufficient embeddings
-        agent_rows = await db.execute_fetchall(
-            "SELECT DISTINCT agent_id FROM memories WHERE embedding IS NOT NULL"
-        )
-        for (aid,) in agent_rows:
-            result = await do_calibrate_threshold(agent_id=aid)
-            if result.get("ok"):
-                logger.info(
-                    "Auto-calibrate %s: %.4f → %.4f",
-                    aid,
-                    result["old_threshold"],
-                    result["new_threshold"],
-                )
-            # agents with < 10 embeddings are silently skipped (result["ok"] is False)
+    # Vector-similarity threshold startup guard (v2.4.24): restore persisted
+    # thresholds, or (re)calibrate on first run / embedding-dimension change even when
+    # AUTO_CALIBRATE is off. A stale threshold from a prior embedding model (e.g. a
+    # silent jina 768d -> bge-m3 1024d swap) is a known recall-contamination cause.
+    if EMBEDDING_MODE != "none":
+        status = await ensure_calibrated_on_startup(AUTO_CALIBRATE, CALIBRATE_ON_MODEL_CHANGE)
+        logger.info("Vector threshold startup calibration: %s", status)
 
     if TASK_QUEUE_ENABLED:
         tasks._task_queue = tasks.MemoryTaskQueue()
