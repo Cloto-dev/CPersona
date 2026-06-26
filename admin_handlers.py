@@ -472,7 +472,7 @@ def _save_calibration_state(
     agent_thresholds: dict,
     global_fused_gate: float | None = None,
     agent_fused_gates: dict | None = None,
-    fused_gate_mode: str | None = None,
+    fused_gate_signal: str | None = None,
 ) -> None:
     """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
 
@@ -488,7 +488,7 @@ def _save_calibration_state(
         "agent_thresholds": agent_thresholds,
         "global_fused_gate": global_fused_gate,
         "agent_fused_gates": agent_fused_gates or {},
-        "fused_gate_mode": fused_gate_mode,
+        "fused_gate_signal": fused_gate_signal,
         "calibrated_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
@@ -526,37 +526,53 @@ async def _calibrate_fused_gate(
     beta: float,
     floor: float,
 ) -> dict | None:
-    """Simulate-query calibration of the post-fusion quality gate (Goal #132).
+    """Simulate-query calibration of the recall quality gate (Goal #132, v2.4.27).
 
-    The post-fusion gate operates on fused scores (``_rsf_score`` / ``_rrf_score``),
-    which — unlike pairwise cosine similarity — only exist relative to a query. The
-    null and positive fused-score distributions are therefore produced by *simulation*:
-    sample stored memories as pseudo-queries, run the live RECALL_MODE fusion pipeline,
-    and label each returned row against the pseudo-query by temporal adjacency — rows
-    stored within ``window_min`` (same-session ≈ related) are the positive proxy, the
-    rest are the null. Separation over the two fused-score populations gives the
-    operating point. Cost is at most ``sample_queries`` fusion recalls per calibration
-    (an offline / startup event), never per user recall.
+    The quality gate keys on a per-row score that — unlike pairwise cosine similarity —
+    only exists relative to a query: the confidence score when CONFIDENCE_ENABLED, else
+    the fused score (``_rsf_score`` / ``_rrf_score``). The null and positive distributions
+    are therefore produced by *simulation*: sample stored memories as pseudo-queries, run
+    the live recall pipeline AND the same post-recall scoring do_recall applies
+    (``_apply_recall_scoring`` — episode penalty + confidence), take each row's gate score
+    via ``_gate_score``, and label it against the pseudo-query by temporal adjacency —
+    rows stored within ``window_min`` (same-session ≈ related) are the positive proxy, the
+    rest the null. Separation over the two populations gives the operating point. Only the
+    rows whose gate signal matches the active one contribute, so the curve is built on the
+    exact value the runtime gate compares. Cost is at most ``sample_queries`` recalls per
+    calibration (an offline / startup event), never per user recall.
 
-    Returns a stats dict, or None when the mode is non-fusion, the embedding client is
-    absent, or too few samples were collected (the caller then keeps the heuristic
-    gate). The calibration runs ``_recall_*`` directly, so it reflects the fused score
-    before the episode-boundary penalty that ``do_recall`` applies at runtime — the gate
-    is therefore, if anything, marginally stricter in practice (defense in depth).
+    Returns a stats dict, or None when there is no fusion/confidence gate to calibrate
+    (cascade + confidence-off), the embedding client is absent, or too few samples were
+    collected (the caller then keeps the heuristic gate). The calibration applies the
+    same ``_apply_recall_scoring`` do_recall runs (episode penalty + confidence), so the
+    operating point matches the runtime gate score rather than the raw fused score.
     """
     import numpy as np
 
+    from memory_handlers import (
+        _apply_recall_scoring,
+        _gate_score,
+        _recall_cascade,
+        _recall_rrf,
+        _recall_rsf,
+    )
+
     mode = config.RECALL_MODE
     if mode == "rsf":
-        from memory_handlers import _recall_rsf as _recall_fn
-
-        score_key = "_rsf_score"
+        recall_fn = _recall_rsf
     elif mode == "rrf":
-        from memory_handlers import _recall_rrf as _recall_fn
-
-        score_key = "_rrf_score"
+        recall_fn = _recall_rrf
     else:
-        return None  # cascade has no fused gate; the cosine threshold drives precision
+        recall_fn = _recall_cascade
+    # The gate keys on confidence when enabled (it takes precedence in any mode), else on
+    # the fused score. Cascade with confidence off has no fusion gate — the cosine vector
+    # threshold owns precision there.
+    if config.CONFIDENCE_ENABLED:
+        signal = "confidence"
+    elif mode in ("rsf", "rrf"):
+        signal = mode
+    else:
+        return None
     if vector._embedding_client is None:
         return None
 
@@ -576,15 +592,18 @@ async def _calibrate_fused_gate(
         q_sec = _parse_ts_seconds(qts)
         if q_sec is None:
             continue
-        results = await _recall_fn(db, agent_id, qcontent, 20, False)
+        results = await recall_fn(db, agent_id, qcontent, 20, False)
+        # Apply the same penalty + confidence scoring do_recall runs, so _gate_score
+        # returns the exact value the runtime gate compares (confidence when enabled).
+        results = await _apply_recall_scoring(db, agent_id, results, False)
         queries_run += 1
         for r in results:
             rid = r.get("id")
             if not isinstance(rid, int) or rid <= 0 or rid == qid:
-                continue  # skip the pseudo-query itself, profiles (-1), and unscored
-            score = r.get(score_key)
-            if score is None:
-                continue
+                continue  # skip the pseudo-query itself and profiles (-1)
+            score, row_signal = _gate_score(r)
+            if score is None or row_signal != signal:
+                continue  # only the active gate signal contributes to the curve
             r_sec = _parse_ts_seconds(r.get("timestamp"))
             if r_sec is not None and abs(r_sec - q_sec) <= window_sec:
                 pos_scores.append(float(score))
@@ -599,7 +618,7 @@ async def _calibrate_fused_gate(
     pos = np.asarray(pos_scores, dtype=np.float64)
     return {
         "threshold": round(threshold, 4),
-        "mode": mode,
+        "signal": signal,
         "beta": beta,
         "youden_j": round(youden_j, 4),
         "queries_run": queries_run,
@@ -736,7 +755,7 @@ async def do_calibrate_threshold(
             fused_stats = None
         if fused_stats is not None:
             vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
-            vector._fused_gate_mode = fused_stats["mode"]
+            vector._fused_gate_signal = fused_stats["signal"]
 
     # Persist for restart survival + embedding-change detection (Tier 4).
     _save_calibration_state(
@@ -746,7 +765,7 @@ async def do_calibrate_threshold(
         dict(vector._agent_thresholds),
         global_fused_gate=vector._global_fused_gate,
         agent_fused_gates=dict(vector._agent_fused_gates),
-        fused_gate_mode=vector._fused_gate_mode,
+        fused_gate_signal=vector._fused_gate_signal,
     )
 
     result = {
@@ -811,9 +830,9 @@ def _restore_calibration_state(state: dict) -> None:
     if global_fused_gate is not None:
         vector._global_fused_gate = global_fused_gate
     vector._agent_fused_gates.update(state.get("agent_fused_gates") or {})
-    fused_gate_mode = state.get("fused_gate_mode")
-    if fused_gate_mode is not None:
-        vector._fused_gate_mode = fused_gate_mode
+    fused_gate_signal = state.get("fused_gate_signal")
+    if fused_gate_signal is not None:
+        vector._fused_gate_signal = fused_gate_signal
 
 
 async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bool) -> dict:
@@ -831,11 +850,21 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         state is not None and live_dim is not None and state.get("embedding_dim") != live_dim
     )
 
+    restored = False
     if state and not dim_changed and not auto_calibrate:
         _restore_calibration_state(state)
-        return {"action": "restored", "embedding_dim": state.get("embedding_dim")}
+        restored = True
+        # A pre-v2.4.27 sidecar (or one never gate-calibrated) restores the vector
+        # threshold but carries no recall gate. With FUSED_GATE_ENABLED, fall through to
+        # calibrate the gate so Goal #132 actually bites in production; otherwise the
+        # restore is sufficient. (This is what activates the gate on a v2.4.25 -> v2.4.27
+        # upgrade where the embedding dimension is unchanged, so no dim-change recalibrate
+        # would otherwise fire.)
+        if not (config.FUSED_GATE_ENABLED and vector._fused_gate_signal is None):
+            return {"action": "restored", "embedding_dim": state.get("embedding_dim")}
+        logger.info("Calibration sidecar has no recall-gate signal; calibrating the gate.")
 
-    if not (auto_calibrate or (on_model_change and (state is None or dim_changed))):
+    if not restored and not (auto_calibrate or (on_model_change and (state is None or dim_changed))):
         return {"action": "noop"}
 
     if dim_changed:
@@ -858,7 +887,12 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             if r.get("ok"):
                 agents.append(aid)
     return {
-        "action": "recalibrated" if dim_changed else ("auto" if auto_calibrate else "initial"),
+        "action": (
+            "gate_calibrated" if restored
+            else "recalibrated" if dim_changed
+            else "auto" if auto_calibrate
+            else "initial"
+        ),
         "dim_changed": dim_changed,
         "global_ok": bool(global_result.get("ok")),
         "agents": agents,

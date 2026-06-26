@@ -176,15 +176,15 @@ def test_quality_gate_profile_sentinel():
 
 
 # ============================================================
-# v2.4.26 (Goal #132) — calibrated post-fusion gate
+# v2.4.26/27 (Goal #132) — calibrated gate, signal-matched per branch
 # ============================================================
 
 
 def test_quality_gate_rsf_uses_calibrated_gate_over_heuristic():
-    """When fused_gate is supplied, RSF rows gate against it, not the heuristic min_score."""
+    """An rsf-signal gate gates RSF rows against the calibrated value, not min_score."""
     # Heuristic min_score=0.20 would admit both; the calibrated gate 0.50 rejects the low one.
     results = [{"id": 1, "_rsf_score": 0.55}, {"id": 2, "_rsf_score": 0.30}]
-    out = _apply_quality_gate(results, 0.20, 100, fused_gate=0.50)
+    out = _apply_quality_gate(results, 0.20, 100, gate=0.50, gate_signal="rsf")
     assert [r["id"] for r in out] == [1]
     # Without the calibrated gate, the lax heuristic admits both (the inert-gate bug class).
     out_heuristic = _apply_quality_gate(results, 0.20, 100)
@@ -195,24 +195,45 @@ def test_quality_gate_rrf_calibrated_gate_compares_raw_not_rescaled():
     """An RRF calibrated gate is on the raw _rrf_score scale — compared directly, no RRF_MAX_SCALE."""
     results = [{"id": 1, "_rrf_score": 0.040}, {"id": 2, "_rrf_score": 0.010}]
     # gate 0.030 is a raw rrf-scale value; the heuristic path would have rescaled by RRF_MAX_SCALE.
-    out = _apply_quality_gate(results, 0.20, 100, fused_gate=0.030)
+    out = _apply_quality_gate(results, 0.20, 100, gate=0.030, gate_signal="rrf")
     assert [r["id"] for r in out] == [1]
 
 
-def test_quality_gate_none_fused_gate_preserves_legacy():
-    """fused_gate=None reproduces the pre-v2.4.26 heuristic behaviour exactly."""
+def test_quality_gate_none_gate_preserves_legacy():
+    """gate=None reproduces the pre-v2.4.26 heuristic behaviour exactly."""
     results = [{"id": 1, "_rsf_score": 0.45}, {"id": 2, "_rsf_score": 0.15}]
     assert _apply_quality_gate(results, 0.30, 100) == _apply_quality_gate(
-        results, 0.30, 100, fused_gate=None
+        results, 0.30, 100, gate=None
     )
 
 
-def test_quality_gate_cosine_branch_ignores_fused_gate():
-    """The fused gate is fusion-only; cascade's cosine branch still uses min_score."""
+def test_quality_gate_confidence_uses_calibrated_gate():
+    """v2.4.27: a confidence-signal gate gates the confidence branch (active in
+    production where CONFIDENCE_ENABLED), so #132 bites despite confidence taking
+    precedence over the fused score."""
+    # Both rows carry a confidence score AND an rsf score; confidence wins (priority).
+    results = [
+        {"id": 1, "_confidence_score": 0.60, "_rsf_score": 0.01},
+        {"id": 2, "_confidence_score": 0.35, "_rsf_score": 0.99},
+    ]
+    # Calibrated confidence gate 0.50 rejects id 2 (and ignores the high rsf score).
+    out = _apply_quality_gate(results, 0.20, 100, gate=0.50, gate_signal="confidence")
+    assert [r["id"] for r in out] == [1]
+
+
+def test_quality_gate_signal_mismatch_falls_back_to_heuristic():
+    """A gate calibrated for a different branch (signal mismatch) is never applied — the
+    branch uses the heuristic, so a stale cross-config gate cannot mis-scale."""
+    # rsf rows, but the gate is tagged "confidence" → rsf branch uses min_score (0.20).
+    results = [{"id": 1, "_rsf_score": 0.55}, {"id": 2, "_rsf_score": 0.30}]
+    out = _apply_quality_gate(results, 0.20, 100, gate=0.50, gate_signal="confidence")
+    assert [r["id"] for r in out] == [1, 2]  # gate ignored; heuristic 0.20 admits both
+
+
+def test_quality_gate_cosine_branch_ignores_mismatched_gate():
+    """A non-cosine gate must not affect cosine-scored rows."""
     results = [{"id": 1, "_cosine": 0.45}, {"id": 2, "_cosine": 0.15}]
-    # A high fused_gate must not affect cosine-scored rows (cascade owns precision via the
-    # vector threshold upstream, not this gate).
-    out = _apply_quality_gate(results, 0.30, 100, fused_gate=0.99)
+    out = _apply_quality_gate(results, 0.30, 100, gate=0.99, gate_signal="rsf")
     assert [r["id"] for r in out] == [1]
 
 
