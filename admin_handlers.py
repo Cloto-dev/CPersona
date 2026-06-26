@@ -864,16 +864,34 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
         resolved_beta = config.FUSED_GATE_BETA
         resolved_precision = "default"
 
+    # Apply the override, then recalibrate so the change takes effect now (this also
+    # persists the sidecar, including agent_betas, via do_calibrate_threshold). Keep it
+    # atomic: if calibration cannot run (e.g. an agent with too few embeddings returns
+    # ok=False before the sidecar is saved), roll the in-memory override back so it never
+    # diverges from the unpersisted sidecar.
+    had_override = agent_id in vector._agent_betas
+    prev_beta = vector._agent_betas.get(agent_id)
     if clear:
         vector._agent_betas.pop(agent_id, None)
     else:
         vector._agent_betas[agent_id] = resolved_beta
 
-    # Recalibrate the agent's gate at the new beta so the change takes effect now. This
-    # also persists the sidecar (including the updated agent_betas) via do_calibrate_threshold.
     cal = await do_calibrate_threshold(agent_id=agent_id)
+    if not cal.get("ok"):
+        if had_override:
+            vector._agent_betas[agent_id] = prev_beta
+        else:
+            vector._agent_betas.pop(agent_id, None)
+        return {
+            "ok": False,
+            "agent_id": agent_id,
+            "precision": resolved_precision,
+            "beta": resolved_beta,
+            "cleared": clear,
+            "error": cal.get("error", "calibration failed"),
+        }
     return {
-        "ok": bool(cal.get("ok")),
+        "ok": True,
         "agent_id": agent_id,
         "precision": resolved_precision,
         "beta": resolved_beta,

@@ -152,6 +152,32 @@ async def test_missing_agent_id_errors(_stub_calibrate):
 
 
 @pytest.mark.asyncio
+async def test_failed_calibration_rolls_back_override(monkeypatch):
+    """If calibration can't run (ok=False), the in-memory override must not be left set —
+    otherwise it diverges from the sidecar, which do_calibrate_threshold never saved."""
+    async def _fail(agent_id="", **kw):
+        return {"ok": False, "error": "Need at least 10 embeddings, found 3"}
+    monkeypatch.setattr(admin_handlers, "do_calibrate_threshold", _fail)
+
+    res = await admin_handlers.do_set_recall_precision("tiny", "strict")
+    assert res["ok"] is False
+    assert "tiny" not in vector._agent_betas  # rolled back, no divergence
+
+
+@pytest.mark.asyncio
+async def test_failed_calibration_restores_prior_override(monkeypatch):
+    """A failed re-set restores the previous override rather than dropping it."""
+    vector._agent_betas["alice"] = 2.0
+    async def _fail(agent_id="", **kw):
+        return {"ok": False, "error": "boom"}
+    monkeypatch.setattr(admin_handlers, "do_calibrate_threshold", _fail)
+
+    res = await admin_handlers.do_set_recall_precision("alice", "lenient")
+    assert res["ok"] is False
+    assert vector._agent_betas["alice"] == 2.0  # prior value preserved
+
+
+@pytest.mark.asyncio
 async def test_no_persist_skips(_stub_calibrate, monkeypatch):
     monkeypatch.setattr(no_persist, "is_paused", lambda: True)
     res = await admin_handlers.do_set_recall_precision("alice", "strict")
