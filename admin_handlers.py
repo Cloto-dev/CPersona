@@ -298,16 +298,25 @@ async def do_delete_agent_data(agent_id: str) -> dict:
     return result
 
 
-def _separation_threshold(null_sims, pos_sims, floor: float) -> tuple:
+def _separation_threshold(null_sims, pos_sims, floor: float, beta: float = 1.0) -> tuple:
     """Two-population threshold: the point that best separates null from positives.
 
-    Sweeps candidate thresholds and returns the one maximizing Youden's J
-    (``TPR - FPR``) where positives are a label-free proxy for related pairs (the
-    per-memory nearest-neighbour similarity) and the null is the random-pair
-    distribution. Unlike the percentile method, the operating point is derived from
-    the corpus's actual separability rather than a fixed quantile.
+    Sweeps candidate thresholds and returns the one maximizing the weighted Youden
+    objective ``sensitivity + beta*specificity`` (``TPR + beta*(1 - FPR)``) where
+    positives are a label-free proxy for related pairs (e.g. same-session similarity
+    or, for the post-fusion gate, fused scores of temporally-adjacent rows) and the
+    null is the random-pair / unrelated-row distribution. Unlike the percentile
+    method, the operating point is derived from the corpus's actual separability
+    rather than a fixed quantile.
 
-    Returns ``(threshold, youden_j)``.
+    ``beta`` is the precision point — knob 3 (Goal #132). ``beta == 1`` reproduces the
+    balanced Youden's J point (``argmax TPR - FPR``); ``beta > 1`` favours specificity
+    (strict — fewer contaminants, more misses); ``beta < 1`` favours sensitivity
+    (lenient — fewer misses, more contaminants). The curve is calibrated from data;
+    beta is the single policy choice of where on it to sit.
+
+    Returns ``(threshold, youden_j)`` where ``youden_j`` is the true ``TPR - FPR`` at
+    the chosen point (for observability), independent of ``beta``.
     """
     import numpy as np
 
@@ -320,9 +329,9 @@ def _separation_threshold(null_sims, pos_sims, floor: float) -> tuple:
     candidates = np.linspace(lo, hi, 256)
     tpr = (pos[None, :] >= candidates[:, None]).mean(axis=1)
     fpr = (null[None, :] >= candidates[:, None]).mean(axis=1)
-    j = tpr - fpr
-    best = int(np.argmax(j))
-    return float(max(candidates[best], floor)), float(j[best])
+    objective = tpr + beta * (1.0 - fpr)
+    best = int(np.argmax(objective))
+    return float(max(candidates[best], floor)), float(tpr[best] - fpr[best])
 
 
 def _parse_ts_seconds(ts):
@@ -461,17 +470,25 @@ def _save_calibration_state(
     embedding_model: str,
     global_threshold: float | None,
     agent_thresholds: dict,
+    global_fused_gate: float | None = None,
+    agent_fused_gates: dict | None = None,
+    fused_gate_mode: str | None = None,
 ) -> None:
     """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
 
     Persistence lets thresholds survive a restart without recomputation, and lets the
-    startup guard detect an embedding-model (dimension) change.
+    startup guard detect an embedding-model (dimension) change. The post-fusion gate
+    (v2.4.26) is persisted alongside the vector threshold and keyed by the same
+    embedding fingerprint, plus the RECALL_MODE it was calibrated for.
     """
     payload = {
         "embedding_dim": embedding_dim,
         "embedding_model": embedding_model,
         "global_threshold": global_threshold,
         "agent_thresholds": agent_thresholds,
+        "global_fused_gate": global_fused_gate,
+        "agent_fused_gates": agent_fused_gates or {},
+        "fused_gate_mode": fused_gate_mode,
         "calibrated_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
@@ -499,6 +516,100 @@ async def _corpus_embedding_dim() -> int | None:
     if not rows or rows[0][0] is None:
         return None
     return len(rows[0][0]) // 4  # 4 bytes per float32
+
+
+async def _calibrate_fused_gate(
+    db,
+    agent_id: str,
+    sample_queries: int,
+    window_min: float,
+    beta: float,
+    floor: float,
+) -> dict | None:
+    """Simulate-query calibration of the post-fusion quality gate (Goal #132).
+
+    The post-fusion gate operates on fused scores (``_rsf_score`` / ``_rrf_score``),
+    which — unlike pairwise cosine similarity — only exist relative to a query. The
+    null and positive fused-score distributions are therefore produced by *simulation*:
+    sample stored memories as pseudo-queries, run the live RECALL_MODE fusion pipeline,
+    and label each returned row against the pseudo-query by temporal adjacency — rows
+    stored within ``window_min`` (same-session ≈ related) are the positive proxy, the
+    rest are the null. Separation over the two fused-score populations gives the
+    operating point. Cost is at most ``sample_queries`` fusion recalls per calibration
+    (an offline / startup event), never per user recall.
+
+    Returns a stats dict, or None when the mode is non-fusion, the embedding client is
+    absent, or too few samples were collected (the caller then keeps the heuristic
+    gate). The calibration runs ``_recall_*`` directly, so it reflects the fused score
+    before the episode-boundary penalty that ``do_recall`` applies at runtime — the gate
+    is therefore, if anything, marginally stricter in practice (defense in depth).
+    """
+    import numpy as np
+
+    mode = config.RECALL_MODE
+    if mode == "rsf":
+        from memory_handlers import _recall_rsf as _recall_fn
+
+        score_key = "_rsf_score"
+    elif mode == "rrf":
+        from memory_handlers import _recall_rrf as _recall_fn
+
+        score_key = "_rrf_score"
+    else:
+        return None  # cascade has no fused gate; the cosine threshold drives precision
+    if vector._embedding_client is None:
+        return None
+
+    rows = await db.execute_fetchall(
+        "SELECT id, content, timestamp FROM memories "
+        "WHERE agent_id = ? AND embedding IS NOT NULL AND content IS NOT NULL "
+        "AND timestamp IS NOT NULL ORDER BY RANDOM() LIMIT ?",
+        (agent_id, sample_queries),
+    )
+    window_sec = window_min * 60.0
+    null_scores: list[float] = []
+    pos_scores: list[float] = []
+    queries_run = 0
+    for qid, qcontent, qts in rows:
+        if not qcontent or not qcontent.strip():
+            continue
+        q_sec = _parse_ts_seconds(qts)
+        if q_sec is None:
+            continue
+        results = await _recall_fn(db, agent_id, qcontent, 20, False)
+        queries_run += 1
+        for r in results:
+            rid = r.get("id")
+            if not isinstance(rid, int) or rid <= 0 or rid == qid:
+                continue  # skip the pseudo-query itself, profiles (-1), and unscored
+            score = r.get(score_key)
+            if score is None:
+                continue
+            r_sec = _parse_ts_seconds(r.get("timestamp"))
+            if r_sec is not None and abs(r_sec - q_sec) <= window_sec:
+                pos_scores.append(float(score))
+            else:
+                null_scores.append(float(score))
+
+    if len(null_scores) < 10 or len(pos_scores) < 5:
+        return None  # insufficient separation data — keep the pool-size heuristic
+
+    threshold, youden_j = _separation_threshold(null_scores, pos_scores, floor, beta)
+    null = np.asarray(null_scores, dtype=np.float64)
+    pos = np.asarray(pos_scores, dtype=np.float64)
+    return {
+        "threshold": round(threshold, 4),
+        "mode": mode,
+        "beta": beta,
+        "youden_j": round(youden_j, 4),
+        "queries_run": queries_run,
+        "n_null": len(null_scores),
+        "n_pos": len(pos_scores),
+        "null_admit_rate": round(float((null >= threshold).mean()), 4),
+        "pos_admit_rate": round(float((pos >= threshold).mean()), 4),
+        "null_mean": round(float(null.mean()), 4),
+        "pos_mean": round(float(pos.mean()), 4),
+    }
 
 
 async def do_calibrate_threshold(
@@ -597,12 +708,34 @@ async def do_calibrate_threshold(
     else:
         config.VECTOR_MIN_SIMILARITY = new_threshold
 
+    # Post-fusion quality-gate calibration (v2.4.26, Goal #132). Per-agent and
+    # fusion-mode only: recall is per-agent, and the gate lives on the active mode's
+    # fused-score scale. Calibrating the curve here makes precision driven by data in
+    # every mode (cascade via the vector floor above, rsf/rrf via this gate) instead of
+    # the pool-size heuristic _adaptive_min_score.
+    fused_stats = None
+    if agent_id and config.FUSED_GATE_ENABLED:
+        fused_stats = await _calibrate_fused_gate(
+            db,
+            agent_id,
+            config.FUSED_GATE_SAMPLE_QUERIES,
+            CALIBRATE_TEMPORAL_WINDOW_MIN,
+            config.FUSED_GATE_BETA,
+            CALIBRATE_FLOOR,
+        )
+        if fused_stats is not None:
+            vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
+            vector._fused_gate_mode = fused_stats["mode"]
+
     # Persist for restart survival + embedding-change detection (Tier 4).
     _save_calibration_state(
         embedding_dim,
         config.EMBEDDING_MODEL,
         config.VECTOR_MIN_SIMILARITY,
         dict(vector._agent_thresholds),
+        global_fused_gate=vector._global_fused_gate,
+        agent_fused_gates=dict(vector._agent_fused_gates),
+        fused_gate_mode=vector._fused_gate_mode,
     )
 
     result = {
@@ -633,6 +766,8 @@ async def do_calibrate_threshold(
     if "pos_admit_rate" in stats:
         result["pos_admit_rate"] = stats["pos_admit_rate"]
         result["pos_mean"] = stats["pos_mean"]
+    if fused_stats is not None:
+        result["fused_gate"] = fused_stats
     logger.info(
         "Calibrated threshold [%s]: %.4f -> %.4f (method=%s z=%.1f pct=%.2f of %d pairs, "
         "mean=%.4f std=%.4f admit=%.3f dim=%d)",
@@ -652,11 +787,22 @@ async def do_calibrate_threshold(
 
 
 def _restore_calibration_state(state: dict) -> None:
-    """Load persisted thresholds from a sidecar payload into live config + dict."""
+    """Load persisted thresholds from a sidecar payload into live config + dict.
+
+    Backward compatible: a pre-v2.4.26 sidecar without the fused-gate keys restores the
+    vector threshold only, leaving the fused gate uncalibrated (heuristic fallback).
+    """
     global_threshold = state.get("global_threshold")
     if global_threshold is not None:
         config.VECTOR_MIN_SIMILARITY = global_threshold
     vector._agent_thresholds.update(state.get("agent_thresholds") or {})
+    global_fused_gate = state.get("global_fused_gate")
+    if global_fused_gate is not None:
+        vector._global_fused_gate = global_fused_gate
+    vector._agent_fused_gates.update(state.get("agent_fused_gates") or {})
+    fused_gate_mode = state.get("fused_gate_mode")
+    if fused_gate_mode is not None:
+        vector._fused_gate_mode = fused_gate_mode
 
 
 async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bool) -> dict:
