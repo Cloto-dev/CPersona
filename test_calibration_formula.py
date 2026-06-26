@@ -113,3 +113,45 @@ def test_tier2_temporal_beats_tier1_percentile_on_bge_like_corpus():
     # the percentile method starves recall on a poorly-separable corpus
     assert float(np.mean(gt_pos >= t1)) < 0.25
     assert float(np.mean(gt_pos >= t2)) > 0.35
+
+
+# ---- knob 3 : precision point (beta) -------------------------------------------
+
+
+def _overlapping_populations():
+    # Overlapping null/positive so the operating point is a genuine tradeoff that beta
+    # can move (well-separated populations collapse every beta onto the same gap).
+    rng = np.random.default_rng(7)
+    null = np.clip(rng.normal(0.50, 0.10, 4000), -1, 1)
+    pos = np.clip(rng.normal(0.65, 0.10, 1000), -1, 1)
+    return null, pos
+
+
+def test_separation_beta_default_is_backward_compatible():
+    """Omitting beta == beta=1.0, and returns the true Youden J at the chosen point."""
+    null, pos = _overlapping_populations()
+    thr_default, j_default = admin_handlers._separation_threshold(null, pos, floor=0.05)
+    thr_one, j_one = admin_handlers._separation_threshold(null, pos, floor=0.05, beta=1.0)
+    assert thr_default == thr_one
+    # the returned youden_j is the actual TPR - FPR at the operating point
+    expected_j = float(np.mean(pos >= thr_default)) - float(np.mean(null >= thr_default))
+    assert abs(j_default - expected_j) < 1e-9
+
+
+def test_separation_beta_strict_is_stricter_than_lenient():
+    """Higher beta favours specificity → a higher threshold admitting fewer null pairs;
+    lower beta favours sensitivity → a lower threshold. balanced sits between."""
+    null, pos = _overlapping_populations()
+
+    def thr(beta):
+        return admin_handlers._separation_threshold(null, pos, floor=0.05, beta=beta)[0]
+
+    t_strict, t_balanced, t_lenient = thr(2.0), thr(1.0), thr(0.5)
+    assert t_strict >= t_balanced >= t_lenient
+    assert t_strict > t_lenient  # the knob actually moves the point on an overlapping curve
+
+    def null_admit(t):
+        return float(np.mean(null >= t))
+
+    # stricter ⇒ fewer contaminants admitted (lower false-positive rate)
+    assert null_admit(t_strict) <= null_admit(t_balanced) <= null_admit(t_lenient)
