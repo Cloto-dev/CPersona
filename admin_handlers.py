@@ -715,14 +715,25 @@ async def do_calibrate_threshold(
     # the pool-size heuristic _adaptive_min_score.
     fused_stats = None
     if agent_id and config.FUSED_GATE_ENABLED:
-        fused_stats = await _calibrate_fused_gate(
-            db,
-            agent_id,
-            config.FUSED_GATE_SAMPLE_QUERIES,
-            CALIBRATE_TEMPORAL_WINDOW_MIN,
-            config.FUSED_GATE_BETA,
-            CALIBRATE_FLOOR,
-        )
+        # The simulate-query pass issues live fusion recalls; a flaky embedding backend
+        # must not abort calibration and lose the vector threshold computed above (which
+        # is persisted below). Degrade to the heuristic gate on any failure.
+        try:
+            fused_stats = await _calibrate_fused_gate(
+                db,
+                agent_id,
+                config.FUSED_GATE_SAMPLE_QUERIES,
+                CALIBRATE_TEMPORAL_WINDOW_MIN,
+                config.FUSED_GATE_BETA,
+                CALIBRATE_FLOOR,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Fused-gate calibration failed for [%s]; keeping the heuristic gate: %s",
+                agent_id or "global",
+                exc,
+            )
+            fused_stats = None
         if fused_stats is not None:
             vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
             vector._fused_gate_mode = fused_stats["mode"]

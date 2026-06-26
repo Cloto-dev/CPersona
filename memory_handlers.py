@@ -704,6 +704,9 @@ async def do_recall(
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26 (Goal #132): use the calibrated post-fusion gate when its calibration mode
     # matches the live RECALL_MODE (same fused-score scale); otherwise the heuristic.
+    # NOTE: when CONFIDENCE_ENABLED, _apply_quality_gate evaluates the confidence branch
+    # before the rsf/rrf branch, so the fused gate is bypassed — confidence is a separate
+    # precision mechanism and owns the gate there. Production default is confidence-off.
     fused_gate = None
     if config.FUSED_GATE_ENABLED and vector._fused_gate_mode == RECALL_MODE:
         fused_gate = vector._get_fused_gate(agent_id)
