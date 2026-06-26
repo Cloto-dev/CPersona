@@ -595,7 +595,7 @@ async def _calibrate_fused_gate(
         results = await recall_fn(db, agent_id, qcontent, 20, False)
         # Apply the same penalty + confidence scoring do_recall runs, so _gate_score
         # returns the exact value the runtime gate compares (confidence when enabled).
-        results = await _apply_recall_scoring(db, agent_id, results, False)
+        results, _, _ = await _apply_recall_scoring(db, agent_id, results, False)
         queries_run += 1
         for r in results:
             rid = r.get("id")
