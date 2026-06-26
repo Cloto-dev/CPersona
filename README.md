@@ -9,7 +9,7 @@ Single SQLite file. 21 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)]()
-[![Tests](https://img.shields.io/badge/tests-117%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-97-brightgreen)]()
 
 [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/clotodev/books/claude-memory-mcp-server)
 
