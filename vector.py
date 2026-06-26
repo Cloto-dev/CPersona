@@ -32,9 +32,11 @@ _agent_thresholds: dict[str, float] = {}
 # pool-size heuristic _adaptive_min_score in memory_handlers.
 _agent_fused_gates: dict[str, float] = {}
 _global_fused_gate: float | None = None
-# RECALL_MODE the fused gate was calibrated for ("rsf"/"rrf"). The gate lives on that
-# mode's score scale, so it is only applied when the live mode matches.
-_fused_gate_mode: str | None = None
+# The gate signal the fused gate was calibrated for (v2.4.27): "confidence" / "rsf" /
+# "rrf" / "cosine" — the quality-gate branch the value lives on. _apply_quality_gate
+# applies the gate only to the matching branch, so a gate from a different config (e.g.
+# calibrated under confidence-on, now confidence-off) is simply never used.
+_fused_gate_signal: str | None = None
 
 
 def _get_vector_threshold(agent_id: str) -> float:
@@ -46,7 +48,7 @@ def _get_fused_gate(agent_id: str) -> float | None:
     """Calibrated post-fusion gate for an agent, the global fallback, or None.
 
     None signals the caller to fall back to the pool-size heuristic. The companion
-    ``_fused_gate_mode`` records which RECALL_MODE the value was calibrated for.
+    ``_fused_gate_signal`` records which gate branch the value was calibrated for.
     """
     if agent_id in _agent_fused_gates:
         return _agent_fused_gates[agent_id]

@@ -451,11 +451,33 @@ def _adaptive_min_score(memory_count: int) -> float:
     return round(0.5 - t * 0.3, 4)
 
 
+def _gate_score(row: dict) -> tuple[float | None, str | None]:
+    """The (score, signal) the quality gate keys on, by the SAME branch precedence as
+    ``_apply_quality_gate``: confidence > rsf > cosine > rrf. Returns (None, None) for an
+    unscored row. Used by both the runtime gate and the gate calibration so the
+    calibrated operating point is computed on exactly the value the gate compares
+    (v2.4.27, Goal #132)."""
+    confidence = row.get("_confidence_score")
+    if confidence is not None:
+        return confidence, "confidence"
+    rsf = row.get("_rsf_score")
+    if rsf is not None:
+        return rsf, "rsf"
+    cosine = row.get("_cosine")
+    if cosine is not None:
+        return cosine, "cosine"
+    rrf = row.get("_rrf_score")
+    if rrf is not None:
+        return rrf, "rrf"
+    return None, None
+
+
 def _apply_quality_gate(
     results: list[dict],
     min_score: float,
     memory_count: int,
-    fused_gate: float | None = None,
+    gate: float | None = None,
+    gate_signal: str | None = None,
 ) -> list[dict]:
     """Adaptive quality gate — remove results below a dynamic threshold.
 
@@ -477,13 +499,16 @@ def _apply_quality_gate(
     the cosine-scale ``min_score`` (0.2–1.0) → every RRF-mode result rejected.
     Cascade mode (no ``_rrf_score`` on rows) is unaffected.
 
-    v2.4.26 (Goal #132): ``fused_gate`` is the calibrated post-fusion operating point.
-    When provided it replaces the pool-size heuristic ``min_score`` for the fused-score
-    branches (rsf compared directly, rrf compared directly since the gate was calibrated
-    on raw rrf scores — no ``RRF_MAX_SCALE`` rescale). The caller passes it only when the
-    gate's calibration mode matches the live RECALL_MODE, so the scales always agree.
-    None preserves the legacy heuristic. The cosine / confidence / unscored branches are
-    unaffected — cascade precision is owned by the vector threshold.
+    v2.4.26/27 (Goal #132): ``gate`` is the calibrated operating point and ``gate_signal``
+    is the branch it was calibrated for (confidence / rsf / cosine / rrf — see
+    ``_gate_score``). It replaces the pool-size heuristic ``min_score`` only in the
+    matching branch, so the scales always agree and a stale gate from a different config
+    (e.g. calibrated under confidence-on, now confidence-off) is simply never applied
+    because that branch isn't the active one. rrf is compared directly (the gate is
+    calibrated on raw rrf scores — no ``RRF_MAX_SCALE`` rescale). gate=None preserves the
+    legacy heuristic. v2.4.27 extends this to the confidence branch: when
+    CONFIDENCE_ENABLED, confidence is the active gate signal (it takes precedence over
+    rsf/rrf), so the calibrated gate must live there for #132 to bite in production.
     """
     if not results:
         return results
@@ -507,22 +532,25 @@ def _apply_quality_gate(
         rrf = r.get("_rrf_score")
 
         if confidence is not None:
-            if confidence >= min_score:
+            # Confidence is on the [0, 1] scale; use the calibrated gate when it was
+            # calibrated for this branch, else the pool-size heuristic.
+            conf_threshold = gate if (gate is not None and gate_signal == "confidence") else min_score
+            if confidence >= conf_threshold:
                 filtered.append(r)
                 stats["confidence"] += 1
             else:
                 stats["blocked"] += 1
         elif rsf is not None:
-            # RSF fused score is on the cosine [0, 1] scale. Prefer the calibrated
-            # gate (also cosine-scale) over the pool-size heuristic when present.
-            rsf_threshold = fused_gate if fused_gate is not None else min_score
+            # RSF fused score is on the cosine [0, 1] scale.
+            rsf_threshold = gate if (gate is not None and gate_signal == "rsf") else min_score
             if rsf >= rsf_threshold:
                 filtered.append(r)
                 stats["rsf"] += 1
             else:
                 stats["blocked"] += 1
         elif cosine is not None:
-            if cosine >= min_score:
+            cos_threshold = gate if (gate is not None and gate_signal == "cosine") else min_score
+            if cosine >= cos_threshold:
                 filtered.append(r)
                 stats["cosine"] += 1
             else:
@@ -530,7 +558,7 @@ def _apply_quality_gate(
         elif rrf is not None:
             # Calibrated gate is on the raw RRF scale (calibrated on raw _rrf_score), so
             # compare directly; otherwise rescale the cosine-scale heuristic min_score.
-            rrf_threshold = fused_gate if fused_gate is not None else min_score * RRF_MAX_SCALE
+            rrf_threshold = gate if (gate is not None and gate_signal == "rrf") else min_score * RRF_MAX_SCALE
             if rrf >= rrf_threshold:
                 filtered.append(r)
                 stats["rrf"] += 1
@@ -595,6 +623,79 @@ async def _get_episode_boundary_ts(db: aiosqlite.Connection, agent_id: str) -> d
     return _parse_timestamp_utc(rows[0][0])
 
 
+async def _apply_recall_scoring(
+    db, agent_id: str, results: list[dict], deep: bool
+) -> list[dict]:
+    """Post-recall scoring run before the quality gate: the episode-boundary penalty
+    (L3, v2.4.14) and, when CONFIDENCE_ENABLED, the confidence score (which also
+    re-sorts by it). Factored out of do_recall (v2.4.27) so the gate calibration
+    (Goal #132) computes the operating point on exactly the per-row score the runtime
+    gate keys on — including confidence, which takes precedence over the fused score and
+    so owns the gate in confidence-enabled deployments. Mutates and returns ``results``.
+
+    Order matters: the episode penalty scales ``_cosine`` before ``_compute_confidence``
+    reads it, so the confidence score reflects the penalised cosine (as in do_recall).
+    """
+    if not results:
+        return results
+
+    time_range_hours = 0.0
+    recall_counts: dict[int, tuple[int, str]] = {}
+    if CONFIDENCE_ENABLED:
+        range_row = await db.execute_fetchall(
+            "SELECT MIN(timestamp), MAX(timestamp) FROM memories WHERE agent_id = ?",
+            (agent_id,),
+        )
+        if range_row and range_row[0][0] and range_row[0][1]:
+            oldest = _parse_timestamp_utc(range_row[0][0])
+            newest = _parse_timestamp_utc(range_row[0][1])
+            if oldest and newest:
+                time_range_hours = max(0.0, (newest - oldest).total_seconds() / 3600)
+
+        mem_ids = [r["id"] for r in results if isinstance(r.get("id"), int) and r["id"] > 0]
+        if mem_ids:
+            placeholders = ",".join("?" * len(mem_ids))
+            rc_rows = await db.execute_fetchall(
+                f"SELECT id, recall_count, last_recalled_at FROM memories WHERE id IN ({placeholders})",
+                mem_ids,
+            )
+            recall_counts = {r[0]: (r[1], r[2] or "") for r in rc_rows}
+
+    # v2.4.14: Episode boundary soft penalty (L3) — weaken cross-session memories
+    # before quality gate so current-session signals take precedence.
+    if EPISODE_PENALTY_ENABLED:
+        episode_boundary_ts = await _get_episode_boundary_ts(db, agent_id)
+        if episode_boundary_ts is not None:
+            for r in results:
+                factor = _episode_boundary_factor(r.get("timestamp"), episode_boundary_ts)
+                if factor < 1.0:
+                    if "_cosine" in r:
+                        r["_cosine"] = r["_cosine"] * factor
+                    if "_rrf_score" in r:
+                        r["_rrf_score"] = r["_rrf_score"] * factor
+                    if "_rsf_score" in r:
+                        r["_rsf_score"] = r["_rsf_score"] * factor
+
+    if CONFIDENCE_ENABLED:
+        for r in results:
+            ts = r.get("timestamp", "")
+            raw_cos = r.get("_cosine")
+            is_resolved = r.get("_resolved", False)
+            rc_data = recall_counts.get(r.get("id", -1), (0, ""))
+            r["_confidence_score"] = _compute_confidence(
+                raw_cos,
+                ts,
+                resolved=is_resolved,
+                deep=deep,
+                time_range_hours=time_range_hours,
+                recall_count=rc_data[0],
+                last_recalled_at_str=rc_data[1],
+            )["score"]
+        results.sort(key=lambda r: r.get("_confidence_score", 0), reverse=True)
+
+    return results
+
+
 async def do_recall(
     agent_id: str,
     query: str,
@@ -645,74 +746,26 @@ async def do_recall(
             project_id=project_id, source_id=source_id,
         )
 
-    time_range_hours = 0.0
-    recall_counts: dict[int, tuple[int, str]] = {}
-    if CONFIDENCE_ENABLED and results:
-        range_row = await db.execute_fetchall(
-            "SELECT MIN(timestamp), MAX(timestamp) FROM memories WHERE agent_id = ?",
-            (agent_id,),
-        )
-        if range_row and range_row[0][0] and range_row[0][1]:
-            oldest = _parse_timestamp_utc(range_row[0][0])
-            newest = _parse_timestamp_utc(range_row[0][1])
-            if oldest and newest:
-                time_range_hours = max(0.0, (newest - oldest).total_seconds() / 3600)
-
-        mem_ids = [r["id"] for r in results if isinstance(r.get("id"), int) and r["id"] > 0]
-        if mem_ids:
-            placeholders = ",".join("?" * len(mem_ids))
-            rc_rows = await db.execute_fetchall(
-                f"SELECT id, recall_count, last_recalled_at FROM memories WHERE id IN ({placeholders})",
-                mem_ids,
-            )
-            recall_counts = {r[0]: (r[1], r[2] or "") for r in rc_rows}
-
-    # v2.4.14: Episode boundary soft penalty (L3) — weaken cross-session memories
-    # before quality gate so current-session signals take precedence.
-    if EPISODE_PENALTY_ENABLED and results:
-        episode_boundary_ts = await _get_episode_boundary_ts(db, agent_id)
-        if episode_boundary_ts is not None:
-            for r in results:
-                factor = _episode_boundary_factor(r.get("timestamp"), episode_boundary_ts)
-                if factor < 1.0:
-                    if "_cosine" in r:
-                        r["_cosine"] = r["_cosine"] * factor
-                    if "_rrf_score" in r:
-                        r["_rrf_score"] = r["_rrf_score"] * factor
-                    if "_rsf_score" in r:
-                        r["_rsf_score"] = r["_rsf_score"] * factor
-
-    if CONFIDENCE_ENABLED:
-        for r in results:
-            ts = r.get("timestamp", "")
-            raw_cos = r.get("_cosine")
-            is_resolved = r.get("_resolved", False)
-            rc_data = recall_counts.get(r.get("id", -1), (0, ""))
-            r["_confidence_score"] = _compute_confidence(
-                raw_cos,
-                ts,
-                resolved=is_resolved,
-                deep=deep,
-                time_range_hours=time_range_hours,
-                recall_count=rc_data[0],
-                last_recalled_at_str=rc_data[1],
-            )["score"]
-        results.sort(key=lambda r: r.get("_confidence_score", 0), reverse=True)
+    # Episode-boundary penalty + confidence scoring (factored so the gate calibration
+    # produces the exact same per-row gate score the runtime gate keys on — Goal #132).
+    results = await _apply_recall_scoring(db, agent_id, results, deep)
 
     memory_count = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent_id,)))[0][0]
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
-    # v2.4.26 (Goal #132): use the calibrated post-fusion gate when its calibration mode
-    # matches the live RECALL_MODE (same fused-score scale); otherwise the heuristic.
-    # NOTE: when CONFIDENCE_ENABLED, _apply_quality_gate evaluates the confidence branch
-    # before the rsf/rrf branch, so the fused gate is bypassed — confidence is a separate
-    # precision mechanism and owns the gate there. Production default is confidence-off.
-    fused_gate = None
-    if config.FUSED_GATE_ENABLED and vector._fused_gate_mode == RECALL_MODE:
-        fused_gate = vector._get_fused_gate(agent_id)
-        if fused_gate is not None and deep:
-            fused_gate = fused_gate * 0.5  # mirror the deep relaxation of min_score
-    results = _apply_quality_gate(results, effective_min, memory_count, fused_gate=fused_gate)
+    # v2.4.26/27 (Goal #132): use the calibrated gate for whichever branch is active.
+    # The gate carries the signal it was calibrated for; _apply_quality_gate applies it
+    # only to the matching branch, so a gate from a different config is inert (no scale
+    # mismatch). Under CONFIDENCE_ENABLED the active signal is "confidence".
+    gate = None
+    gate_signal = vector._fused_gate_signal
+    if config.FUSED_GATE_ENABLED:
+        gate = vector._get_fused_gate(agent_id)
+        if gate is not None and deep:
+            gate = gate * 0.5  # mirror the deep relaxation of min_score
+    results = _apply_quality_gate(
+        results, effective_min, memory_count, gate=gate, gate_signal=gate_signal
+    )
 
     if AUTOCUT_ENABLED:
         results = _autocut(results)
