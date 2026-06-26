@@ -60,6 +60,14 @@ def _patch(monkeypatch):
         return _FakeDB()
     monkeypatch.setattr(M, "get_db", fake_getdb)
     monkeypatch.setattr(M, "_recall_rsf", _fake_rsf)
+    # config.py reads the env once at import; memory_handlers binds CONFIDENCE_ENABLED /
+    # RECALL_MODE by value at that point, so the module-level env writes above only take
+    # effect when this file is imported before any other test imports config. Pin the two
+    # values here so the test is deterministic regardless of collection order (otherwise an
+    # alphabetically-earlier file that imports config first leaves CONFIDENCE off + mode rrf,
+    # the _recall_rsf patch goes unused, and do_recall returns no messages).
+    monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "RECALL_MODE", "rsf")
 
 
 @pytest.mark.asyncio
