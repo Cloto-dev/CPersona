@@ -47,13 +47,25 @@ pip install .
 
 ### 2. Set up Embedding Server (Recommended)
 
-cpersona's hybrid search works best with an embedding server for vector similarity. We recommend using [cloto-mcp-servers/embedding](https://github.com/Cloto-dev/cloto-mcp-servers/tree/main/servers/embedding) with the jina-v5-nano model (33M params, 768d, runs locally on CPU):
+cpersona's hybrid search works best with an embedding server for vector similarity. cpersona is embedding-server-agnostic: point `CPERSONA_EMBEDDING_URL` (see step 3) at any HTTP endpoint that implements the following minimal contract.
+
+```
+POST /embed
+Request:  { "texts": ["string", ...] }        # non-empty array, max 100 per batch
+Response: { "embeddings": [[float, ...], ...], "dimensions": <int> }
+```
+
+The reference server is [CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) — it runs jina-v5-nano on-device (CPU) and exposes exactly this endpoint:
 
 ```bash
-git clone https://github.com/Cloto-dev/cloto-mcp-servers.git
-cd cloto-mcp-servers/servers
-pip install ./embedding
+git clone https://github.com/Cloto-dev/CEmbedding.git && cd CEmbedding
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install ".[onnx]"
+python download_model.py --model jina-v5-nano
+EMBEDDING_PROVIDER=onnx_jina_v5_nano python server.py   # serves http://127.0.0.1:8401/embed
 ```
+
+cpersona was tuned and benchmarked against jina-v5-nano (33M params, 768d), so CEmbedding reproduces the numbers below. Any other server that satisfies the contract above works too.
 
 > Without an embedding server, cpersona falls back to FTS5 + keyword search only. Vector search (the strongest retrieval layer) will be disabled.
 
@@ -181,7 +193,7 @@ Query → ┌── Vector search (cosine similarity)  ──┐
 
 ## Benchmarks
 
-Tested on LMEB (Long-term Memory Evaluation Benchmark, [results](https://github.com/Cloto-dev/cloto-mcp-servers/tree/main/lmeb_results)) — 22 evaluation tasks measuring memory retrieval quality:
+Tested on LMEB (Long-term Memory Evaluation Benchmark) — 22 evaluation tasks measuring memory retrieval quality:
 
 | Embedding Model | Params | Dimensions | Mean NDCG@10 |
 |----------------|--------|------------|--------------|
