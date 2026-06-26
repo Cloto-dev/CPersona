@@ -44,6 +44,7 @@ from admin_handlers import (
     do_list_memories,
     do_lock_memory,
     do_merge_memories,
+    do_set_recall_precision,
     do_unlock_memory,
     do_update_memory,
     do_update_profile,
@@ -500,6 +501,43 @@ registry.auto_tool(
         ("z_factor", float, 0),
         ("method", str, ""),
         ("percentile", float, 0),
+    ],
+)
+
+registry.auto_tool(
+    "set_recall_precision",
+    "Set an agent's recall precision (knob 3) and recalibrate its quality gate. "
+    "precision = strict | balanced | lenient maps to a specificity weight beta of "
+    "2.0 / 1.0 / 0.5 in the gate separation objective (sensitivity + beta*specificity): "
+    "strict sits the gate higher (fewer contaminants, more misses), lenient lower "
+    "(fewer misses, more contaminants). A raw beta > 0 overrides the named level; an "
+    "empty precision with beta <= 0 clears the per-agent override and returns the agent "
+    "to the global CPERSONA_RECALL_PRECISION default. The gate is recalibrated at the new "
+    "beta immediately and persisted, so the change is live without a restart. Precision is "
+    "a per-agent setting, not a per-recall argument: the gate threshold is precomputed on "
+    "the separation curve at a fixed beta, so this tool recalibrates once instead.",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent whose precision to set"},
+            "precision": {
+                "type": "string",
+                "description": "strict / balanced / lenient. Empty (with beta <= 0) clears the override.",
+                "default": "",
+            },
+            "beta": {
+                "type": "number",
+                "description": "Raw specificity weight; overrides the named precision when > 0.",
+                "default": 0,
+            },
+        },
+        "required": ["agent_id"],
+    },
+    do_set_recall_precision,
+    [
+        ("agent_id", str),
+        ("precision", str, ""),
+        ("beta", float, 0),
     ],
 )
 

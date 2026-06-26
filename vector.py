@@ -38,10 +38,25 @@ _global_fused_gate: float | None = None
 # calibrated under confidence-on, now confidence-off) is simply never used.
 _fused_gate_signal: str | None = None
 
+# Per-agent precision weight beta (knob 3, v2.4.29, Goal #120). The specificity weight
+# the agent's fused gate is calibrated at: strict=2.0 (fewer contaminants, more misses) /
+# balanced=1.0 (Youden's J) / lenient=0.5 (fewer misses, more contaminants). Only agents
+# with an explicit override (set_recall_precision) are stored here; an absent agent uses
+# the global config.FUSED_GATE_BETA, so changing the env still moves un-configured agents
+# on their next calibration. Persisted in the calibration sidecar next to the gate it
+# produced — the gate threshold sits on the separation curve at this exact beta, so the
+# two must be restored together or they desync.
+_agent_betas: dict[str, float] = {}
+
 
 def _get_vector_threshold(agent_id: str) -> float:
     """Return the per-agent threshold when available, otherwise the global default."""
     return _agent_thresholds.get(agent_id, config.VECTOR_MIN_SIMILARITY)
+
+
+def _get_precision_beta(agent_id: str) -> float:
+    """Return the per-agent precision weight (beta) when set, else the global default."""
+    return _agent_betas.get(agent_id, config.FUSED_GATE_BETA)
 
 
 def _get_fused_gate(agent_id: str) -> float | None:
