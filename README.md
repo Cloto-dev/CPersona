@@ -47,13 +47,15 @@ pip install .
 
 ### 2. Set up Embedding Server (Recommended)
 
-cpersona's hybrid search works best with an embedding server for vector similarity. We recommend using [cloto-mcp-servers/embedding](https://github.com/Cloto-dev/cloto-mcp-servers/tree/main/servers/embedding) with the jina-v5-nano model (33M params, 768d, runs locally on CPU):
+cpersona's hybrid search works best with an embedding server for vector similarity. cpersona is embedding-server-agnostic: point `CPERSONA_EMBEDDING_URL` (see step 3) at any HTTP endpoint that implements the following minimal contract.
 
-```bash
-git clone https://github.com/Cloto-dev/cloto-mcp-servers.git
-cd cloto-mcp-servers/servers
-pip install ./embedding
 ```
+POST /embed
+Request:  { "texts": ["string", ...] }        # non-empty array, max 100 per batch
+Response: { "embeddings": [[float, ...], ...], "dimensions": <int> }
+```
+
+Run the embedding model locally (CPU is fine) or call a hosted provider behind such an endpoint. cpersona was tuned and benchmarked against the jina-v5-nano model (33M params, 768d), so a server exposing that model reproduces the numbers below — but any model that satisfies the contract works.
 
 > Without an embedding server, cpersona falls back to FTS5 + keyword search only. Vector search (the strongest retrieval layer) will be disabled.
 
@@ -181,7 +183,7 @@ Query → ┌── Vector search (cosine similarity)  ──┐
 
 ## Benchmarks
 
-Tested on LMEB (Long-term Memory Evaluation Benchmark, [results](https://github.com/Cloto-dev/cloto-mcp-servers/tree/main/lmeb_results)) — 22 evaluation tasks measuring memory retrieval quality:
+Tested on LMEB (Long-term Memory Evaluation Benchmark) — 22 evaluation tasks measuring memory retrieval quality:
 
 | Embedding Model | Params | Dimensions | Mean NDCG@10 |
 |----------------|--------|------------|--------------|
