@@ -1,0 +1,33 @@
+{
+  "$schema": "qa/issue-registry.schema.md",
+  "version": "1.0",
+  "description": "Mechanical verification registry for documented cpersona issues. Source of truth for bug-existence proof; checked by scripts/verify-issues.sh (mirrors the ClotoCore infrastructure).",
+  "issues": [
+    {
+      "id": "bug-001",
+      "summary": "(Bug A) Embedding env vars are read with the CPERSONA_ prefix only, but the marketplace catalog declares the generic EMBEDDING_MODE / EMBEDDING_HTTP_URL keys; an installed cpersona therefore runs with embeddings silently off and recall degrades to FTS-only",
+      "severity": "HIGH",
+      "discovered": "2026-06-14T00:00:00Z",
+      "version": "2.4.22",
+      "commit": "77c9d34",
+      "file": "config.py",
+      "pattern": "CPERSONA_EMBEDDING_MODE\", \"none\"",
+      "expected": "absent",
+      "status": "fixed",
+      "fix_note": "config.py now reads the generic EMBEDDING_MODE / EMBEDDING_HTTP_URL keys with a CPERSONA_* override (specific > generic, matching the CScheduler convention and the marketplace catalog), so a catalog-installed cpersona enables embeddings instead of silently running FTS-only. Pending version bump."
+    },
+    {
+      "id": "bug-002",
+      "summary": "(Bug B) FTS keyword search builds the MATCH expression with query.split(); space-less scripts (Japanese/Chinese) collapse into a single phrase the trigram index never matches, so the keyword retriever is dead for Japanese and RRF loses its discriminating channel (recall-contamination precondition). Fix must pair a trigram query builder with a bm25-magnitude-aware merge (see ClotoCore/docs/RECALL_CONTAMINATION_AB_2026-06-14.md sec 10).",
+      "severity": "HIGH",
+      "discovered": "2026-06-14T00:00:00Z",
+      "version": "2.4.22",
+      "commit": "77c9d34",
+      "file": "memory_handlers.py",
+      "pattern": "fts_query = \" \"\\.join",
+      "expected": "absent",
+      "status": "fixed",
+      "fix_note": "Replaced query.split() with _build_fts_query() (CJK trigram-OR decomposition) so the trigram FTS index is exercised for space-less scripts. Paired with the RSF merge (RECALL_MODE=rsf) which keeps the keyword channel's bm25 magnitude. Pending version bump."
+    }
+  ]
+}

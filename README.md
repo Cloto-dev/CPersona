@@ -9,7 +9,7 @@ Single SQLite file. 21 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)]()
-[![Tests](https://img.shields.io/badge/tests-117%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-97-brightgreen)]()
 
 [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/clotodev/books/claude-memory-mcp-server)
 
@@ -239,7 +239,7 @@ All settings via environment variables with sensible defaults:
 | `CPERSONA_EMBEDDING_MODE` | `http` | Embedding mode (`http` or `disabled`) |
 | `CPERSONA_EMBEDDING_URL` | `http://127.0.0.1:8401/embed` | Embedding server URL |
 | `CPERSONA_VECTOR_SEARCH_MODE` | `remote` | Vector search mode |
-| `CPERSONA_SEARCH_MODE` | `rrf` | Search strategy (`rrf` or `cascade`) |
+| `CPERSONA_RECALL_MODE` | `rrf` | Recall fusion strategy (`rrf`, `rsf`, or `cascade`) |
 | `CPERSONA_RRF_K` | `60` | RRF smoothing parameter |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |
@@ -247,11 +247,25 @@ All settings via environment variables with sensible defaults:
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | Penalty for recently recalled memories |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | Window (minutes) for recent recall penalty |
 
+### Recall fusion mode (`CPERSONA_RECALL_MODE`)
+
+- **`rrf`** (default) — Reciprocal Rank Fusion: merges the vector + FTS channels by
+  rank only. Robust and scale-free, but discards score magnitude.
+- **`rsf`** — Relative Score Fusion: per-query min-max-normalizes each channel's raw
+  score (cosine for vector, bm25 for keyword) and sums them, so the keyword channel's
+  bm25 magnitude survives the merge. **Recommended for topic-drift-prone or space-less
+  language (e.g. Japanese) contexts**, where that magnitude is the discriminating
+  signal `rrf` flattens away (≈ Weaviate's `relativeScoreFusion`; see the ClotoCore
+  `RECALL_CONTAMINATION_AB_2026-06-14` report §10–12). *Caveat:* min-max normalization
+  can over-cut small, closely-scored result sets when `autocut` is enabled — `rrf`
+  remains the default until that interaction is hardened.
+- **`cascade`** — Sequential channel fill (legacy).
+
 ## Stats
 
 - **~3,500 LOC** Python (single file, `server.py`)
 - **117 tests** across 12 test modules
-- **Schema v8** (auto-migrating)
+- **Schema v10** (auto-migrating)
 - **MIT License**
 
 ## Works With
