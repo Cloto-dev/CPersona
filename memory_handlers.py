@@ -625,22 +625,25 @@ async def _get_episode_boundary_ts(db: aiosqlite.Connection, agent_id: str) -> d
 
 async def _apply_recall_scoring(
     db, agent_id: str, results: list[dict], deep: bool
-) -> list[dict]:
+) -> tuple[list[dict], float, dict]:
     """Post-recall scoring run before the quality gate: the episode-boundary penalty
     (L3, v2.4.14) and, when CONFIDENCE_ENABLED, the confidence score (which also
     re-sorts by it). Factored out of do_recall (v2.4.27) so the gate calibration
     (Goal #132) computes the operating point on exactly the per-row score the runtime
     gate keys on — including confidence, which takes precedence over the fused score and
-    so owns the gate in confidence-enabled deployments. Mutates and returns ``results``.
+    so owns the gate in confidence-enabled deployments. Mutates ``results``.
 
-    Order matters: the episode penalty scales ``_cosine`` before ``_compute_confidence``
-    reads it, so the confidence score reflects the penalised cosine (as in do_recall).
+    Returns ``(results, time_range_hours, recall_counts)`` — do_recall reuses the latter
+    two for the response confidence metadata and the recall-count update, so they are
+    computed once here. Order matters: the episode penalty scales ``_cosine`` before
+    ``_compute_confidence`` reads it, so the confidence score reflects the penalised
+    cosine (as in do_recall).
     """
-    if not results:
-        return results
-
     time_range_hours = 0.0
     recall_counts: dict[int, tuple[int, str]] = {}
+    if not results:
+        return results, time_range_hours, recall_counts
+
     if CONFIDENCE_ENABLED:
         range_row = await db.execute_fetchall(
             "SELECT MIN(timestamp), MAX(timestamp) FROM memories WHERE agent_id = ?",
@@ -693,7 +696,7 @@ async def _apply_recall_scoring(
             )["score"]
         results.sort(key=lambda r: r.get("_confidence_score", 0), reverse=True)
 
-    return results
+    return results, time_range_hours, recall_counts
 
 
 async def do_recall(
@@ -748,7 +751,11 @@ async def do_recall(
 
     # Episode-boundary penalty + confidence scoring (factored so the gate calibration
     # produces the exact same per-row gate score the runtime gate keys on — Goal #132).
-    results = await _apply_recall_scoring(db, agent_id, results, deep)
+    # time_range_hours / recall_counts are reused below for the response metadata + the
+    # recall-count update, so they are returned rather than recomputed.
+    results, time_range_hours, recall_counts = await _apply_recall_scoring(
+        db, agent_id, results, deep
+    )
 
     memory_count = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent_id,)))[0][0]
     min_score = _adaptive_min_score(memory_count)
