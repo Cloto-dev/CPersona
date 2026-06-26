@@ -38,13 +38,23 @@ async def setup_db():
     await db.execute("DELETE FROM memories")
     await db.execute("DELETE FROM episodes")
     await db.commit()
-    vector._agent_thresholds.clear()
-    config.VECTOR_MIN_SIMILARITY = 0.3
+    _reset_module_state()
     _remove_sidecar()
     yield
+    _reset_module_state()
+    _remove_sidecar()
+
+
+def _reset_module_state():
+    """Reset every module-level calibration global so tests don't leak state into the
+    order-dependent startup-guard branches (the fused-gate signal in particular gates the
+    v2.4.27 gate-missing fallback, and the v2.4.29 per-agent betas the precision override)."""
     vector._agent_thresholds.clear()
     config.VECTOR_MIN_SIMILARITY = 0.3
-    _remove_sidecar()
+    vector._agent_fused_gates.clear()
+    vector._global_fused_gate = None
+    vector._fused_gate_signal = None
+    vector._agent_betas.clear()
 
 
 # ============================================================
@@ -188,7 +198,12 @@ async def test_calibrate_records_dim_model_and_writes_sidecar():
 
 @pytest.mark.asyncio
 async def test_startup_guard_restores_when_dim_unchanged():
-    """Matching sidecar dim + AUTO_CALIBRATE off → restore, no recompute."""
+    """Matching sidecar dim + AUTO_CALIBRATE off → restore, no recompute.
+
+    The sidecar carries a fused_gate_signal so it is a complete post-v2.4.27 record: a
+    signal-less sidecar would (correctly) trip the gate-missing fallback and recalibrate
+    the gate instead of restoring — that path is covered by the dim-change test below.
+    """
     db = await get_db()
     await _seed_embeddings(db, "agent-keep", 15, dim=8)
     admin_handlers._save_calibration_state(
@@ -196,6 +211,8 @@ async def test_startup_guard_restores_when_dim_unchanged():
         embedding_model="bge-m3",
         global_threshold=0.61,
         agent_thresholds={"agent-keep": 0.58},
+        global_fused_gate=0.45,
+        fused_gate_signal="confidence",
     )
 
     status = await admin_handlers.ensure_calibrated_on_startup(

@@ -473,13 +473,16 @@ def _save_calibration_state(
     global_fused_gate: float | None = None,
     agent_fused_gates: dict | None = None,
     fused_gate_signal: str | None = None,
+    agent_betas: dict | None = None,
 ) -> None:
     """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
 
     Persistence lets thresholds survive a restart without recomputation, and lets the
     startup guard detect an embedding-model (dimension) change. The post-fusion gate
     (v2.4.26) is persisted alongside the vector threshold and keyed by the same
-    embedding fingerprint, plus the RECALL_MODE it was calibrated for.
+    embedding fingerprint, plus the RECALL_MODE it was calibrated for. Per-agent precision
+    overrides (knob 3, v2.4.29) are persisted next to the gates they produced so a restore
+    keeps each agent's gate and the beta it sits on in sync.
     """
     payload = {
         "embedding_dim": embedding_dim,
@@ -489,6 +492,7 @@ def _save_calibration_state(
         "global_fused_gate": global_fused_gate,
         "agent_fused_gates": agent_fused_gates or {},
         "fused_gate_signal": fused_gate_signal,
+        "agent_betas": agent_betas or {},
         "calibrated_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
@@ -743,7 +747,7 @@ async def do_calibrate_threshold(
                 agent_id,
                 config.FUSED_GATE_SAMPLE_QUERIES,
                 CALIBRATE_TEMPORAL_WINDOW_MIN,
-                config.FUSED_GATE_BETA,
+                vector._get_precision_beta(agent_id),
                 CALIBRATE_FLOOR,
             )
         except Exception as exc:
@@ -766,6 +770,7 @@ async def do_calibrate_threshold(
         global_fused_gate=vector._global_fused_gate,
         agent_fused_gates=dict(vector._agent_fused_gates),
         fused_gate_signal=vector._fused_gate_signal,
+        agent_betas=dict(vector._agent_betas),
     )
 
     result = {
@@ -816,6 +821,86 @@ async def do_calibrate_threshold(
     return result
 
 
+async def do_set_recall_precision(agent_id: str, precision: str = "", beta: float = 0) -> dict:
+    """Set an agent's recall precision (knob 3, v2.4.29, Goal #120) and recalibrate its gate.
+
+    ``precision`` is one of ``strict`` / ``balanced`` / ``lenient``, mapped to a specificity
+    weight (beta) of 2.0 / 1.0 / 0.5 in the gate separation objective
+    (sensitivity + beta*specificity): higher beta sits the gate higher on the curve (fewer
+    contaminants, more misses), lower beta lower (fewer misses, more contaminants). A raw
+    ``beta`` > 0 overrides the named level. An empty ``precision`` with ``beta`` <= 0 clears
+    the per-agent override, returning the agent to the global CPERSONA_RECALL_PRECISION
+    default. The agent's post-fusion quality gate is recalibrated at the new beta
+    immediately (no restart needed) and the (beta, gate) pair is persisted to the
+    calibration sidecar. Unlike a recall argument, precision cannot be a per-call override:
+    the gate threshold is precomputed on the separation curve at a fixed beta, so changing
+    it requires recalibration, which this tool performs once rather than per recall.
+    """
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {"ok": True, "agent_id": agent_id, "beta": None, "precision": None},
+            "set_recall_precision",
+        )
+    if not agent_id:
+        return {"ok": False, "error": "agent_id is required"}
+
+    # Resolve the target beta. Raw beta wins; then the named level; then (empty + beta<=0)
+    # is the clear-override signal.
+    clear = False
+    if beta and beta > 0:
+        resolved_beta = float(beta)
+        resolved_precision = precision.lower() or "custom"
+    elif precision:
+        level = precision.lower()
+        if level not in config._PRECISION_BETA:
+            return {
+                "ok": False,
+                "error": f"Unknown precision '{precision}'; expected strict / balanced / lenient",
+            }
+        resolved_beta = config._PRECISION_BETA[level]
+        resolved_precision = level
+    else:
+        clear = True
+        resolved_beta = config.FUSED_GATE_BETA
+        resolved_precision = "default"
+
+    # Apply the override, then recalibrate so the change takes effect now (this also
+    # persists the sidecar, including agent_betas, via do_calibrate_threshold). Keep it
+    # atomic: if calibration cannot run (e.g. an agent with too few embeddings returns
+    # ok=False before the sidecar is saved), roll the in-memory override back so it never
+    # diverges from the unpersisted sidecar.
+    had_override = agent_id in vector._agent_betas
+    prev_beta = vector._agent_betas.get(agent_id)
+    if clear:
+        vector._agent_betas.pop(agent_id, None)
+    else:
+        vector._agent_betas[agent_id] = resolved_beta
+
+    cal = await do_calibrate_threshold(agent_id=agent_id)
+    if not cal.get("ok"):
+        if had_override:
+            vector._agent_betas[agent_id] = prev_beta
+        else:
+            vector._agent_betas.pop(agent_id, None)
+        return {
+            "ok": False,
+            "agent_id": agent_id,
+            "precision": resolved_precision,
+            "beta": resolved_beta,
+            "cleared": clear,
+            "error": cal.get("error", "calibration failed"),
+        }
+    return {
+        "ok": True,
+        "agent_id": agent_id,
+        "precision": resolved_precision,
+        "beta": resolved_beta,
+        "cleared": clear,
+        "fused_gate": cal.get("fused_gate"),
+        "calibrate": {k: cal.get(k) for k in ("ok", "scope", "new_threshold", "error") if k in cal},
+    }
+
+
 def _restore_calibration_state(state: dict) -> None:
     """Load persisted thresholds from a sidecar payload into live config + dict.
 
@@ -833,6 +918,9 @@ def _restore_calibration_state(state: dict) -> None:
     fused_gate_signal = state.get("fused_gate_signal")
     if fused_gate_signal is not None:
         vector._fused_gate_signal = fused_gate_signal
+    # Per-agent precision overrides (knob 3, v2.4.29). Backward compatible: a pre-v2.4.29
+    # sidecar has no key, leaving every agent on the global beta default.
+    vector._agent_betas.update(state.get("agent_betas") or {})
 
 
 async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bool) -> dict:
