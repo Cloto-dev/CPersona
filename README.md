@@ -55,7 +55,17 @@ Request:  { "texts": ["string", ...] }        # non-empty array, max 100 per bat
 Response: { "embeddings": [[float, ...], ...], "dimensions": <int> }
 ```
 
-Run the embedding model locally (CPU is fine) or call a hosted provider behind such an endpoint. cpersona was tuned and benchmarked against the jina-v5-nano model (33M params, 768d), so a server exposing that model reproduces the numbers below — but any model that satisfies the contract works.
+The reference server is [CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) — it runs jina-v5-nano on-device (CPU) and exposes exactly this endpoint:
+
+```bash
+git clone https://github.com/Cloto-dev/CEmbedding.git && cd CEmbedding
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install ".[onnx]"
+python download_model.py --model jina-v5-nano
+EMBEDDING_PROVIDER=onnx_jina_v5_nano python server.py   # serves http://127.0.0.1:8401/embed
+```
+
+cpersona was tuned and benchmarked against jina-v5-nano (33M params, 768d), so CEmbedding reproduces the numbers below. Any other server that satisfies the contract above works too.
 
 > Without an embedding server, cpersona falls back to FTS5 + keyword search only. Vector search (the strongest retrieval layer) will be disabled.
 
