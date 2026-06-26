@@ -176,6 +176,47 @@ def test_quality_gate_profile_sentinel():
 
 
 # ============================================================
+# v2.4.26 (Goal #132) — calibrated post-fusion gate
+# ============================================================
+
+
+def test_quality_gate_rsf_uses_calibrated_gate_over_heuristic():
+    """When fused_gate is supplied, RSF rows gate against it, not the heuristic min_score."""
+    # Heuristic min_score=0.20 would admit both; the calibrated gate 0.50 rejects the low one.
+    results = [{"id": 1, "_rsf_score": 0.55}, {"id": 2, "_rsf_score": 0.30}]
+    out = _apply_quality_gate(results, 0.20, 100, fused_gate=0.50)
+    assert [r["id"] for r in out] == [1]
+    # Without the calibrated gate, the lax heuristic admits both (the inert-gate bug class).
+    out_heuristic = _apply_quality_gate(results, 0.20, 100)
+    assert [r["id"] for r in out_heuristic] == [1, 2]
+
+
+def test_quality_gate_rrf_calibrated_gate_compares_raw_not_rescaled():
+    """An RRF calibrated gate is on the raw _rrf_score scale — compared directly, no RRF_MAX_SCALE."""
+    results = [{"id": 1, "_rrf_score": 0.040}, {"id": 2, "_rrf_score": 0.010}]
+    # gate 0.030 is a raw rrf-scale value; the heuristic path would have rescaled by RRF_MAX_SCALE.
+    out = _apply_quality_gate(results, 0.20, 100, fused_gate=0.030)
+    assert [r["id"] for r in out] == [1]
+
+
+def test_quality_gate_none_fused_gate_preserves_legacy():
+    """fused_gate=None reproduces the pre-v2.4.26 heuristic behaviour exactly."""
+    results = [{"id": 1, "_rsf_score": 0.45}, {"id": 2, "_rsf_score": 0.15}]
+    assert _apply_quality_gate(results, 0.30, 100) == _apply_quality_gate(
+        results, 0.30, 100, fused_gate=None
+    )
+
+
+def test_quality_gate_cosine_branch_ignores_fused_gate():
+    """The fused gate is fusion-only; cascade's cosine branch still uses min_score."""
+    results = [{"id": 1, "_cosine": 0.45}, {"id": 2, "_cosine": 0.15}]
+    # A high fused_gate must not affect cosine-scored rows (cascade owns precision via the
+    # vector threshold upstream, not this gate).
+    out = _apply_quality_gate(results, 0.30, 100, fused_gate=0.99)
+    assert [r["id"] for r in out] == [1]
+
+
+# ============================================================
 # v2.4.14 — episode boundary soft penalty
 # ============================================================
 

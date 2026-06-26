@@ -26,10 +26,31 @@ _embedding_client: EmbeddingClient | None = None
 # no calibration data fall back to the global config.VECTOR_MIN_SIMILARITY.
 _agent_thresholds: dict[str, float] = {}
 
+# Per-agent post-fusion quality-gate thresholds (v2.4.26, Goal #132). Calibrated by
+# simulate-query separation in admin_handlers over the fused-score distribution.
+# An absent agent falls back to the global gate; a None global falls back to the
+# pool-size heuristic _adaptive_min_score in memory_handlers.
+_agent_fused_gates: dict[str, float] = {}
+_global_fused_gate: float | None = None
+# RECALL_MODE the fused gate was calibrated for ("rsf"/"rrf"). The gate lives on that
+# mode's score scale, so it is only applied when the live mode matches.
+_fused_gate_mode: str | None = None
+
 
 def _get_vector_threshold(agent_id: str) -> float:
     """Return the per-agent threshold when available, otherwise the global default."""
     return _agent_thresholds.get(agent_id, config.VECTOR_MIN_SIMILARITY)
+
+
+def _get_fused_gate(agent_id: str) -> float | None:
+    """Calibrated post-fusion gate for an agent, the global fallback, or None.
+
+    None signals the caller to fall back to the pool-size heuristic. The companion
+    ``_fused_gate_mode`` records which RECALL_MODE the value was calibrated for.
+    """
+    if agent_id in _agent_fused_gates:
+        return _agent_fused_gates[agent_id]
+    return _global_fused_gate
 
 
 def _escape_like_prefix(s: str) -> str:

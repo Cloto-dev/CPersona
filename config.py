@@ -67,6 +67,30 @@ CALIBRATE_TEMPORAL_WINDOW_MIN = float(os.environ.get("CPERSONA_CALIBRATE_TEMPORA
 # style swaps that would otherwise leave a stale, mis-scaled threshold in place.
 CALIBRATE_ON_MODEL_CHANGE = os.environ.get("CPERSONA_CALIBRATE_ON_MODEL_CHANGE", "true").lower() == "true"
 
+# v2.4.26 — post-fusion quality-gate calibration (Goal #132). The fused-score
+# (RSF/RRF) quality gate is calibrated by simulate-query separation: sample stored
+# memories as pseudo-queries, run the active fusion pipeline, and separate the fused
+# scores of temporally-adjacent (same-session ≈ related) rows from unrelated rows.
+# This replaces the pool-size heuristic _adaptive_min_score, which never used the
+# calibrated distribution and so left rsf/rrf precision uncalibrated. Falls back to
+# the heuristic when disabled or when too few samples exist.
+FUSED_GATE_ENABLED = os.environ.get("CPERSONA_FUSED_GATE_ENABLED", "true").lower() == "true"
+# Number of pseudo-queries sampled at calibration time (each runs one fusion recall,
+# so this bounds calibration cost — an offline / startup event, not per-recall).
+FUSED_GATE_SAMPLE_QUERIES = max(1, int(os.environ.get("CPERSONA_FUSED_GATE_SAMPLE_QUERIES", "40")))
+# knob 3 — the precision point. The calibrated separation curve is data-derived; this
+# is the single policy choice of where to sit on it. strict / balanced / lenient map to
+# a specificity weight beta in _separation_threshold (maximise sensitivity +
+# beta*specificity): strict=2.0 (fewer contaminants, more misses), balanced=1.0
+# (Youden's J), lenient=0.5 (fewer misses, more contaminants). A raw
+# CPERSONA_FUSED_GATE_BETA overrides the named level.
+RECALL_PRECISION = os.environ.get("CPERSONA_RECALL_PRECISION", "balanced").lower()
+_PRECISION_BETA = {"strict": 2.0, "balanced": 1.0, "lenient": 0.5}
+FUSED_GATE_BETA = float(
+    os.environ.get("CPERSONA_FUSED_GATE_BETA")
+    or _PRECISION_BETA.get(RECALL_PRECISION, 1.0)
+)
+
 # Autocut (v2.4 / v2.4.13: relative gap ratio, enabled by default)
 AUTOCUT_ENABLED = os.environ.get("CPERSONA_AUTOCUT_ENABLED", "true").lower() == "true"
 AUTOCUT_MIN_GAP_RATIO = float(os.environ.get("CPERSONA_AUTOCUT_MIN_GAP_RATIO", "0.15"))

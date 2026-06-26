@@ -455,6 +455,7 @@ def _apply_quality_gate(
     results: list[dict],
     min_score: float,
     memory_count: int,
+    fused_gate: float | None = None,
 ) -> list[dict]:
     """Adaptive quality gate — remove results below a dynamic threshold.
 
@@ -475,6 +476,14 @@ def _apply_quality_gate(
     ``_cosine``, causing the RRF-scale value (0.01–0.05) to be compared against
     the cosine-scale ``min_score`` (0.2–1.0) → every RRF-mode result rejected.
     Cascade mode (no ``_rrf_score`` on rows) is unaffected.
+
+    v2.4.26 (Goal #132): ``fused_gate`` is the calibrated post-fusion operating point.
+    When provided it replaces the pool-size heuristic ``min_score`` for the fused-score
+    branches (rsf compared directly, rrf compared directly since the gate was calibrated
+    on raw rrf scores — no ``RRF_MAX_SCALE`` rescale). The caller passes it only when the
+    gate's calibration mode matches the live RECALL_MODE, so the scales always agree.
+    None preserves the legacy heuristic. The cosine / confidence / unscored branches are
+    unaffected — cascade precision is owned by the vector threshold.
     """
     if not results:
         return results
@@ -504,8 +513,10 @@ def _apply_quality_gate(
             else:
                 stats["blocked"] += 1
         elif rsf is not None:
-            # RSF fused score is already on the cosine [0, 1] scale.
-            if rsf >= min_score:
+            # RSF fused score is on the cosine [0, 1] scale. Prefer the calibrated
+            # gate (also cosine-scale) over the pool-size heuristic when present.
+            rsf_threshold = fused_gate if fused_gate is not None else min_score
+            if rsf >= rsf_threshold:
                 filtered.append(r)
                 stats["rsf"] += 1
             else:
@@ -517,8 +528,10 @@ def _apply_quality_gate(
             else:
                 stats["blocked"] += 1
         elif rrf is not None:
-            # RRF scale (~0–0.05) does not match cosine-scale min_score; rescale.
-            if rrf >= min_score * RRF_MAX_SCALE:
+            # Calibrated gate is on the raw RRF scale (calibrated on raw _rrf_score), so
+            # compare directly; otherwise rescale the cosine-scale heuristic min_score.
+            rrf_threshold = fused_gate if fused_gate is not None else min_score * RRF_MAX_SCALE
+            if rrf >= rrf_threshold:
                 filtered.append(r)
                 stats["rrf"] += 1
             else:
@@ -689,7 +702,17 @@ async def do_recall(
     memory_count = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent_id,)))[0][0]
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
-    results = _apply_quality_gate(results, effective_min, memory_count)
+    # v2.4.26 (Goal #132): use the calibrated post-fusion gate when its calibration mode
+    # matches the live RECALL_MODE (same fused-score scale); otherwise the heuristic.
+    # NOTE: when CONFIDENCE_ENABLED, _apply_quality_gate evaluates the confidence branch
+    # before the rsf/rrf branch, so the fused gate is bypassed — confidence is a separate
+    # precision mechanism and owns the gate there. Production default is confidence-off.
+    fused_gate = None
+    if config.FUSED_GATE_ENABLED and vector._fused_gate_mode == RECALL_MODE:
+        fused_gate = vector._get_fused_gate(agent_id)
+        if fused_gate is not None and deep:
+            fused_gate = fused_gate * 0.5  # mirror the deep relaxation of min_score
+    results = _apply_quality_gate(results, effective_min, memory_count, fused_gate=fused_gate)
 
     if AUTOCUT_ENABLED:
         results = _autocut(results)
