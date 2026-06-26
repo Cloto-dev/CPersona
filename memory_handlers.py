@@ -25,6 +25,7 @@ import vector
 from config import (
     AUTOCUT_ENABLED,
     AUTOCUT_MIN_GAP_RATIO,
+    AUTOCUT_MIN_RESULTS,
     CONFIDENCE_ENABLED,
     EPISODE_DECAY_FLOOR,
     EPISODE_DECAY_RATE,
@@ -421,8 +422,14 @@ def _autocut(results: list[dict]) -> list[dict]:
     to work correctly across both RRF (~0-0.05) and cosine (0-1.0) score scales.
     Gaps below AUTOCUT_MIN_GAP_RATIO of the top score are treated as uniform
     noise and ignored to prevent over-truncation on evenly-distributed results.
+
+    v2.4.25: a small result set (< AUTOCUT_MIN_RESULTS) is returned whole. Under
+    RSF, _minmax_norm pins the lowest row to 0.0, so a 2-item set always shows a
+    full-scale gap that this would otherwise cut to a single row — discarding a
+    still-relevant second hit. Below the floor there are too few rows for a gap to
+    be meaningful, so keep them all.
     """
-    if len(results) < 2:
+    if len(results) < AUTOCUT_MIN_RESULTS:
         return results
     scores = [r.get("_rsf_score") or r.get("_rrf_score") or r.get("_cosine") or 0 for r in results]
     max_score = scores[0]

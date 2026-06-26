@@ -93,6 +93,25 @@ def test_autocut_zero_top_score_returns_unchanged():
     assert _autocut(results) == results
 
 
+def test_autocut_preserves_small_result_set():
+    """v2.4.25: below AUTOCUT_MIN_RESULTS, keep every row.
+
+    RSF min-max pins the lowest row to 0.0, so a 2-item set shows a full-scale
+    gap (1.0 → 0.0) that would otherwise cut to a single row, dropping a
+    still-relevant second hit. The min-results floor (default 3) keeps both.
+    """
+    two = [{"_rsf_score": 1.0}, {"_rsf_score": 0.0}]
+    assert _autocut(two) == two
+    # Once the set is large enough, autocut still fires on a real gap.
+    four = [
+        {"_rsf_score": 1.0},
+        {"_rsf_score": 0.95},
+        {"_rsf_score": 0.10},  # 0.85 gap ≫ 0.15 * 1.0
+        {"_rsf_score": 0.0},
+    ]
+    assert _autocut(four) == four[:2]
+
+
 # ============================================================
 # v2.4.12 — scale-aware RRF quality gate
 # ============================================================
