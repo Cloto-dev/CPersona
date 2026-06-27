@@ -183,4 +183,61 @@ async def test_no_persist_skips(_stub_calibrate, monkeypatch):
     res = await admin_handlers.do_set_recall_precision("alice", "strict")
     assert res.get("persisted") is False
     assert "alice" not in vector._agent_betas  # no state change while paused
-    assert _stub_calibrate == []
+
+
+# ---- get_recall_precision: read-back -------------------------------------------
+
+
+def test_precision_label_inverts_named_betas():
+    assert admin_handlers._precision_label(2.0) == "strict"
+    assert admin_handlers._precision_label(1.0) == "balanced"
+    assert admin_handlers._precision_label(0.5) == "lenient"
+    assert admin_handlers._precision_label(1.5) == "custom"  # raw beta has no named level
+
+
+@pytest.mark.asyncio
+async def test_get_precision_reports_global_default_when_unset():
+    config.FUSED_GATE_BETA = 1.0
+    res = await admin_handlers.do_get_recall_precision("nobody")
+    assert res["ok"] is True
+    assert res["overridden"] is False
+    assert res["beta"] == 1.0
+    assert res["precision"] == "balanced"
+    assert res["global_precision"] == "balanced"
+    assert res["global_beta"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_get_precision_reports_per_agent_override():
+    config.FUSED_GATE_BETA = 1.0
+    vector._agent_betas["alice"] = 2.0
+    res = await admin_handlers.do_get_recall_precision("alice")
+    assert res["overridden"] is True
+    assert res["precision"] == "strict"
+    assert res["beta"] == 2.0
+    assert res["global_precision"] == "balanced"  # global still the default
+
+
+@pytest.mark.asyncio
+async def test_get_precision_labels_raw_beta_as_custom():
+    vector._agent_betas["alice"] = 1.5
+    res = await admin_handlers.do_get_recall_precision("alice")
+    assert res["overridden"] is True
+    assert res["precision"] == "custom"
+    assert res["beta"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_get_precision_missing_agent_id_errors():
+    res = await admin_handlers.do_get_recall_precision("")
+    assert res["ok"] is False
+    assert "agent_id" in res["error"]
+
+
+@pytest.mark.asyncio
+async def test_get_precision_is_read_only_under_no_persist(monkeypatch):
+    """Read-back is unaffected by no-persist pause and never mutates state (like recall)."""
+    monkeypatch.setattr(no_persist, "is_paused", lambda: True)
+    res = await admin_handlers.do_get_recall_precision("nobody")
+    assert res["ok"] is True
+    assert vector._agent_betas == {}  # pure read, no override created

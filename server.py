@@ -39,6 +39,7 @@ from admin_handlers import (
     do_export_memories,
     do_get_profile,
     do_get_queue_status,
+    do_get_recall_precision,
     do_import_memories,
     do_list_episodes,
     do_list_memories,
@@ -538,6 +539,28 @@ registry.auto_tool(
         ("agent_id", str),
         ("precision", str, ""),
         ("beta", float, 0),
+    ],
+)
+
+registry.auto_tool(
+    "get_recall_precision",
+    "Read an agent's effective recall precision (knob 3) — the read-back companion to "
+    "set_recall_precision. Returns the resolved specificity weight (beta) and its named "
+    "precision level (strict / balanced / lenient, or 'custom' for a raw beta), and flags "
+    "whether the value is a per-agent override or the global CPERSONA_RECALL_PRECISION "
+    "default (overridden + global_precision / global_beta). Read-only: it never "
+    "recalibrates and never persists, so a UI can load the current setting, let the user "
+    "edit it, and write it back instead of the control being write-only.",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent whose precision to read"},
+        },
+        "required": ["agent_id"],
+    },
+    do_get_recall_precision,
+    [
+        ("agent_id", str),
     ],
 )
 
