@@ -901,6 +901,45 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
     }
 
 
+def _precision_label(beta: float) -> str:
+    """Invert a specificity weight (beta) back to its named precision level.
+
+    The named levels store exact betas (strict=2.0 / balanced=1.0 / lenient=0.5), so an
+    exact match is reliable; a raw beta set via the override returns 'custom'.
+    """
+    for name, value in config._PRECISION_BETA.items():
+        if value == beta:
+            return name
+    return "custom"
+
+
+async def do_get_recall_precision(agent_id: str) -> dict:
+    """Read an agent's effective recall precision (knob 3, read-back for set_recall_precision).
+
+    Returns the resolved specificity weight (``beta``) and its named ``precision`` level,
+    flagging whether it comes from a per-agent override (``overridden``) or the global
+    CPERSONA_RECALL_PRECISION default. This is the read companion to set_recall_precision:
+    a client can load the current value, let the user edit it, and write it back, instead
+    of the pill being write-only. Read-only — it never recalibrates and never persists, so
+    it is not gated by no-persist pause (like recall).
+    """
+    if not agent_id:
+        return {"ok": False, "error": "agent_id is required"}
+
+    overridden = agent_id in vector._agent_betas
+    beta = vector._get_precision_beta(agent_id)
+    global_beta = config.FUSED_GATE_BETA
+    return {
+        "ok": True,
+        "agent_id": agent_id,
+        "precision": _precision_label(beta),
+        "beta": beta,
+        "overridden": overridden,
+        "global_precision": _precision_label(global_beta),
+        "global_beta": global_beta,
+    }
+
+
 def _restore_calibration_state(state: dict) -> None:
     """Load persisted thresholds from a sidecar payload into live config + dict.
 
