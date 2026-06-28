@@ -10,7 +10,7 @@ import math
 import re
 from datetime import datetime, timezone
 
-from config import (
+from cpersona.config import (
     BOOST_DECAY_RATE,
     COSINE_CEIL,
     COSINE_FLOOR,

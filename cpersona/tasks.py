@@ -9,10 +9,10 @@ import asyncio
 import json
 import logging
 
-from _vendored_mcp_common import no_persist
+from cpersona._vendored_mcp_common import no_persist
 
-from config import TASK_MAX_RETRIES, TASK_RETRY_DELAY
-from database import get_db
+from cpersona.config import TASK_MAX_RETRIES, TASK_RETRY_DELAY
+from cpersona.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +80,8 @@ class MemoryTaskQueue:
         # back into the handlers. Attribute access via module ensures runtime
         # patching of admin_handlers.do_update_profile / memory_handlers.do_archive_episode
         # propagates (preserves v2.4.10 monolith-era test patchability).
-        import admin_handlers
-        import memory_handlers
+        from cpersona import admin_handlers
+        from cpersona import memory_handlers
 
         while self._running:
             await self._event.wait()

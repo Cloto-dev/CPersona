@@ -18,9 +18,9 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_isolation.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
-import admin_handlers  # noqa: E402
-import memory_handlers  # noqa: E402
-from database import get_db  # noqa: E402
+from cpersona import admin_handlers # noqa: E402
+from cpersona import memory_handlers # noqa: E402
+from cpersona.database import get_db  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)

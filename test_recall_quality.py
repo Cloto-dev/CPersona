@@ -18,16 +18,16 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_recall_quality.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
-import admin_handlers  # noqa: E402
-import config  # noqa: E402
-from database import get_db  # noqa: E402
-from memory_handlers import (  # noqa: E402
+from cpersona import admin_handlers # noqa: E402
+from cpersona import config # noqa: E402
+from cpersona.database import get_db  # noqa: E402
+from cpersona.memory_handlers import (  # noqa: E402
     _apply_quality_gate,
     _autocut,
     _episode_boundary_factor,
     _get_episode_boundary_ts,
 )
-from utils import _parse_timestamp_utc  # noqa: E402
+from cpersona.utils import _parse_timestamp_utc  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)
