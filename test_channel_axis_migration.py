@@ -27,6 +27,7 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_channel_axis_migration.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
+import admin_handlers  # noqa: E402
 import maintenance_handlers  # noqa: E402
 import memory_handlers  # noqa: E402
 from database import close_db, get_db  # noqa: E402
@@ -179,3 +180,19 @@ async def test_channel_scoped_memory_does_not_leak_to_other_channels():
 
     assert await _kw("secret", channel="111") == ["alpha secret"]
     assert await _kw("secret", channel="222") == ["beta secret"]
+
+
+# --------------------------------------------------------------------------- #
+# list_memories exposes channel (for kernel per-channel episode grouping)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_list_memories_returns_channel():
+    await _insert("a memory in 111", "111")
+    await _insert("a global memory", "")
+
+    out = await admin_handlers.do_list_memories("agent-a", 10)
+    by_content = {m["content"]: m["channel"] for m in out["memories"]}
+    assert by_content["a memory in 111"] == "111"
+    assert by_content["a global memory"] == ""
