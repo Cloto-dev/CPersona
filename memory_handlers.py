@@ -945,7 +945,10 @@ async def _search_episodes_fts(
     fts_query = _build_fts_query(query)
     if not fts_query:
         return []
-    channel_clause = " AND e.channel = ?" if channel else ""
+    # ''=global (knob2 v2): an episode stored under channel '' is global and
+    # surfaces in every channel-scoped recall, so old (pre-per-channel) episodes
+    # are never orphaned once recall starts filtering by concrete channel.
+    channel_clause = " AND (e.channel = ? OR e.channel = '')" if channel else ""
     channel_params = (channel,) if channel else ()
     proj_frag, proj_params = gamma_clause("e.project_id", project_id)
     proj_extra = (" AND " + proj_frag) if proj_frag else ""
@@ -988,7 +991,10 @@ async def _search_memories_keyword(
     project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
     source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
     """
-    channel_clause = " AND channel = ?" if channel else ""
+    # ''=global (knob2 v2): stored channel '' matches every channel-scoped
+    # recall. The .replace("channel", "m.channel") on the FTS-join path below
+    # rewrites both column refs, so the OR clause stays correct there too.
+    channel_clause = " AND (channel = ? OR channel = '')" if channel else ""
     channel_params = (channel,) if channel else ()
     proj_frag_bare, proj_params_bare = gamma_clause("project_id", project_id)
     proj_extra_bare = (" AND " + proj_frag_bare) if proj_frag_bare else ""
