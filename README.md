@@ -5,11 +5,11 @@
 ### MCP Memory Server
 
 Give Claude persistent memory across sessions.
-Single SQLite file. 21 tools. Zero LLM dependency.
+Single SQLite file. 27 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)]()
-[![Tests](https://img.shields.io/badge/tests-97-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-146-brightgreen)]()
 
 [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/clotodev/books/claude-memory-mcp-server)
 
@@ -209,23 +209,29 @@ jina-v5-nano achieves +47% improvement over the MiniLM baseline.
 |------|-------------|
 | `store` | Store a message in agent memory |
 | `recall` | Recall relevant memories (vector + FTS5 + keyword, RRF merge) |
+| `recall_with_context` | Recall with external conversation context (auto-dedup) |
 | `get_profile` | Get current agent profile |
 | `update_profile` | Save pre-computed agent profile |
 | `archive_episode` | Archive conversation episode with summary and keywords |
 | `list_memories` | List recent memories |
 | `list_episodes` | List archived episodes |
+| `update_memory` | Update memory content (rejects if locked) |
+| `lock_memory` | Lock memory to prevent deletion/editing |
+| `unlock_memory` | Unlock memory to allow deletion/editing |
 | `delete_memory` | Delete a single memory (ownership enforced) |
 | `delete_episode` | Delete a single episode (ownership enforced) |
 | `delete_agent_data` | Delete all data for an agent |
 | `calibrate_threshold` | Auto-calibrate vector search threshold via z-score |
+| `set_recall_precision` | Set an agent's recall precision (knob 3) and recalibrate its gate |
+| `get_recall_precision` | Read an agent's effective recall precision (knob 3) |
+| `pause_persistence` | Turn writes into no-ops for an opt-in TTL window |
+| `resume_persistence` | Re-enable persistence immediately |
+| `persistence_status` | Report whether persistence is paused and the TTL remaining |
+| `migrate_channel_axis` | Re-channel bridge-type memories to their concrete channel |
 | `export_memories` | Export to JSONL (memories, episodes, profiles) |
 | `import_memories` | Import from JSONL (idempotent via msg_id dedup) |
 | `merge_memories` | Merge one agent's data into another (atomic, with dedup) |
 | `get_queue_status` | Background task queue status |
-| `recall_with_context` | Recall with external conversation context (auto-dedup) |
-| `update_memory` | Update memory content (rejects if locked) |
-| `lock_memory` | Lock memory to prevent deletion/editing |
-| `unlock_memory` | Unlock memory to allow deletion/editing |
 | `check_health` | 16-point database health check with auto-repair |
 | `deep_check` | Deep semantic data quality analysis with auto-repair |
 
@@ -263,8 +269,8 @@ All settings via environment variables with sensible defaults:
 
 ## Stats
 
-- **~3,500 LOC** Python (single file, `server.py`)
-- **117 tests** across 12 test modules
+- **~5,600 LOC** Python across focused modules
+- **146 tests** across 12 test modules
 - **Schema v10** (auto-migrating)
 - **MIT License**
 
