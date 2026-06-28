@@ -21,6 +21,7 @@ from _vendored_mcp_common import no_persist
 from _vendored_mcp_common.embedding_client import EmbeddingClient
 from _vendored_mcp_common.isolation import coerce_for_write, gamma_clause
 
+import health
 import vector
 from config import (
     AUTOCUT_ENABLED,
@@ -729,6 +730,10 @@ async def do_recall(
     """
     db = await get_db()
 
+    # Detect the static degraded case (mode=none) before dispatch; the runtime fault case
+    # is observed at the embedding boundary in vector._search_vector. See health.py.
+    health.observe_config()
+
     exclude_set: set[str] = set()
     if exclude_contents:
         exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
@@ -822,7 +827,11 @@ async def do_recall(
             )
             await db.commit()
 
-    return {"messages": messages}
+    result: dict = {"messages": messages}
+    advisory = health.maybe_advisory()
+    if advisory is not None:
+        result["advisory"] = advisory
+    return result
 
 
 async def do_recall_with_context(
@@ -886,7 +895,13 @@ async def do_recall_with_context(
 
     messages.sort(key=_ts_sort_key)
 
-    return {"messages": messages}
+    result: dict = {"messages": messages}
+    # Forward the advisory do_recall already produced — do NOT call maybe_advisory() again
+    # here (that would flip the full template to the short one within one logical recall).
+    advisory = recall_result.get("advisory")
+    if advisory is not None:
+        result["advisory"] = advisory
+    return result
 
 
 # CJK codepoint ranges: hiragana, katakana, CJK unified + ext-A, halfwidth katakana.
