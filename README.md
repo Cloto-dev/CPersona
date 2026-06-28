@@ -28,22 +28,28 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 
 ## Quick Start
 
-**Prerequisites:** Python 3.10+, Git
+**Prerequisites:** Python 3.11+ (and [uv](https://docs.astral.sh/uv/) for the one-command path).
 
 ### 1. Install cpersona
+
+```bash
+uvx cpersona          # run directly, no install step
+# or
+pip install cpersona  # then the `cpersona` command is on your PATH
+```
+
+<details>
+<summary>From source (for development)</summary>
 
 ```bash
 git clone https://github.com/Cloto-dev/cpersona.git
 cd cpersona
 python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-# source .venv/bin/activate
-
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install .
 ```
+Run it with `python -m cpersona` (or `python server.py`).
+</details>
 
 ### 2. Set up Embedding Server (Recommended)
 
@@ -85,27 +91,28 @@ cpersona was tuned and benchmarked against jina-v5-nano (33M params, 768d), so C
       }
     },
     "cpersona": {
-      "command": "/path/to/.venv/bin/python",
-      "args": ["/path/to/cpersona/server.py"],
+      "command": "uvx",
+      "args": ["cpersona"],
       "env": {
         "CPERSONA_DB_PATH": "/home/you/.claude/cpersona.db",
-        "CPERSONA_EMBEDDING_MODE": "http",
-        "CPERSONA_EMBEDDING_URL": "http://127.0.0.1:8401/embed"
+        "EMBEDDING_MODE": "http",
+        "EMBEDDING_HTTP_URL": "http://127.0.0.1:8401/embed"
       }
     }
   }
 }
 ```
 
-> **Windows:** use `.venv/Scripts/python.exe` and `C:/Users/you/.claude/cpersona.db`
+> **Windows:** use `C:/Users/you/.claude/cpersona.db` for the DB path.
+> **No embedding server yet?** Drop the two `EMBEDDING_*` lines (or set `EMBEDDING_MODE=none`) — cpersona runs on FTS5 + keyword and tells you when it's degraded.
 
 **Claude Code:**
 
 ```bash
-claude mcp add-json embedding '{"type":"stdio","command":"/path/to/.venv/bin/python","args":["/path/to/servers/embedding/server.py"],"env":{"EMBEDDING_PROVIDER":"onnx_jina_v5_nano","EMBEDDING_HTTP_PORT":"8401"}}' -s user
-
-claude mcp add-json cpersona '{"type":"stdio","command":"/path/to/.venv/bin/python","args":["/path/to/cpersona/server.py"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","CPERSONA_EMBEDDING_MODE":"http","CPERSONA_EMBEDDING_URL":"http://127.0.0.1:8401/embed"}}' -s user
+claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
+
+(The embedding server in step 2 is registered separately; it is currently installed from source.)
 
 That's it. Claude now has persistent memory. Ask it to `store` something and `recall` it in a later session.
 

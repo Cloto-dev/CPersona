@@ -56,16 +56,16 @@ keyword only).
 
 ### 1. Install CPersona
 
+The one-command path (needs [uv](https://docs.astral.sh/uv/)):
+
 ```bash
-git clone https://github.com/Cloto-dev/cpersona.git
-cd cpersona
-python -m venv .venv
-# macOS / Linux:
-source .venv/bin/activate
-# Windows:
-# .venv\Scripts\activate
-pip install .
+uvx cpersona          # run directly
+# or: pip install cpersona  (then the `cpersona` command is on PATH)
 ```
+
+From source (development): `git clone https://github.com/Cloto-dev/cpersona.git`,
+`python -m venv .venv && source .venv/bin/activate`, `pip install .`, run with
+`python -m cpersona`.
 
 ### 2. Install the embedding server (recommended)
 
@@ -90,13 +90,12 @@ EMBEDDING_PROVIDER=onnx_jina_v5_nano python server.py   # serves http://127.0.0.
 
 ### 3. Register with the MCP client
 
-Replace `/path/to/...` with the real paths from steps 1–2, and pick an absolute
-`CPERSONA_DB_PATH` (e.g. `~/.claude/cpersona.db`).
+Pick an absolute `CPERSONA_DB_PATH` (e.g. `~/.claude/cpersona.db`).
 
 **Claude Code:**
 
 ```bash
-claude mcp add-json cpersona '{"type":"stdio","command":"/path/to/cpersona/.venv/bin/python","args":["/path/to/cpersona/server.py"],"env":{"CPERSONA_DB_PATH":"/absolute/path/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
+claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/absolute/path/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
 
 **Claude Desktop** — add to `claude_desktop_config.json`:
@@ -105,8 +104,8 @@ claude mcp add-json cpersona '{"type":"stdio","command":"/path/to/cpersona/.venv
 {
   "mcpServers": {
     "cpersona": {
-      "command": "/path/to/cpersona/.venv/bin/python",
-      "args": ["/path/to/cpersona/server.py"],
+      "command": "uvx",
+      "args": ["cpersona"],
       "env": {
         "CPERSONA_DB_PATH": "/absolute/path/cpersona.db",
         "EMBEDDING_MODE": "http",
@@ -117,9 +116,11 @@ claude mcp add-json cpersona '{"type":"stdio","command":"/path/to/cpersona/.venv
 }
 ```
 
-> **Windows:** use `.venv/Scripts/python.exe` and a `C:/Users/you/...` DB path.
-> **ClotoCore users:** don't clone — install CPersona from the in-app
-> marketplace ([ClotoHub](https://hub.cloto.dev)), which distributes this repo.
+> **No embedding server yet?** Drop the `EMBEDDING_*` lines (or set
+> `EMBEDDING_MODE=none`) — recall runs on FTS5 + keyword and reports when degraded.
+> **From source:** use `"command": "python", "args": ["-m", "cpersona"]` with the
+> venv's python. **ClotoCore users:** install from the in-app marketplace
+> ([ClotoHub](https://hub.cloto.dev)) instead.
 
 After restarting the client, confirm the `cpersona` server is connected, then
 ask Claude to `store` a fact and `recall` it.
