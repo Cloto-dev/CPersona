@@ -16,9 +16,21 @@ os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 os.environ["CPERSONA_CONFIDENCE_ENABLED"] = "true"  # the branch that regressed
 os.environ["CPERSONA_RECALL_MODE"] = "rsf"
 
+import httpx  # noqa: E402
 import pytest  # noqa: E402
 
+import config  # noqa: E402
+import health  # noqa: E402
 import memory_handlers as M  # noqa: E402
+import vector  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_health():
+    """health is a process-level singleton; reset it around every test."""
+    health._reset()
+    yield
+    health._reset()
 
 
 class _FakeDB:
@@ -88,3 +100,138 @@ async def test_do_recall_deep_skips_recall_count_update(monkeypatch):
     _patch(monkeypatch)
     out = await M.do_recall("agent.t", "x", limit=5, deep=True)
     assert "messages" in out and len(out["messages"]) == 2
+
+
+# --- degraded-advisory: health state machine (drive health.* directly, no DB) ---
+
+
+def test_health_single_blip_is_debounced():
+    health.observe_failure("conn refused")
+    assert health.maybe_advisory() is None
+    assert not health.is_faulted()
+
+
+def test_health_fault_promotes_on_second_failure():
+    health.observe_failure("conn refused")
+    health.observe_failure("conn refused")
+    adv = health.maybe_advisory()
+    assert adv is not None
+    assert adv["severity"] == "fault"
+    assert adv["degraded"] is True
+    assert "conn refused" in adv["evidence"]
+
+
+def test_health_full_then_short_within_outage():
+    health.observe_failure("e")
+    health.observe_failure("e")
+    first = health.maybe_advisory()
+    second = health.maybe_advisory()
+    assert len(first["runbook"]) > len(second["runbook"])
+    assert "Notify the user" in first["runbook"]
+    assert "Notify the user" not in second["runbook"]
+
+
+def test_health_recovery_rearms_full():
+    health.observe_failure("e")
+    health.observe_failure("e")
+    assert health.maybe_advisory() is not None  # full emitted
+    health.observe_ok()
+    assert health.maybe_advisory() is None  # healthy is silent
+    health.observe_failure("e2")
+    health.observe_failure("e2")
+    adv = health.maybe_advisory()
+    assert "Notify the user" in adv["runbook"]  # re-armed full
+    assert "e2" in adv["evidence"]
+
+
+def test_health_opt_out(monkeypatch):
+    monkeypatch.setattr(config, "DEGRADED_ADVISORY_ENABLED", False)
+    health.observe_failure("e")
+    health.observe_failure("e")
+    assert health.maybe_advisory() is None
+
+
+# --- degraded-advisory: do_recall / do_recall_with_context integration ---
+
+
+@pytest.mark.asyncio
+async def test_do_recall_hint_advisory_when_mode_none(monkeypatch):
+    """mode=none (the file's default env) -> observe_config sets hint -> advisory attached."""
+    _patch(monkeypatch)
+    out = await M.do_recall("agent.t", "x", limit=5)
+    assert out["advisory"]["severity"] == "hint"
+    assert out["advisory"]["degraded"] is True
+
+
+@pytest.mark.asyncio
+async def test_do_recall_no_advisory_when_healthy(monkeypatch):
+    _patch(monkeypatch)
+    monkeypatch.setattr(config, "EMBEDDING_MODE", "http")  # observe_config -> no-op
+    health.observe_ok()
+    out = await M.do_recall("agent.t", "x", limit=5)
+    assert "advisory" not in out
+
+
+@pytest.mark.asyncio
+async def test_do_recall_fault_advisory(monkeypatch):
+    _patch(monkeypatch)
+    monkeypatch.setattr(config, "EMBEDDING_MODE", "http")  # keep observe_config a no-op
+    health.observe_failure("connection refused")
+    health.observe_failure("connection refused")
+    out = await M.do_recall("agent.t", "x", limit=5)
+    assert out["advisory"]["severity"] == "fault"
+    assert "connection refused" in out["advisory"]["evidence"]
+
+
+@pytest.mark.asyncio
+async def test_recall_with_context_forwards_advisory(monkeypatch):
+    """do_recall_with_context must forward the advisory do_recall produced (refinement 2)."""
+    _patch(monkeypatch)
+    monkeypatch.setattr(config, "EMBEDDING_MODE", "http")
+    health.observe_failure("e")
+    health.observe_failure("e")
+    out = await M.do_recall_with_context("agent.t", "x", external_context=[], limit=5)
+    assert "advisory" in out and out["advisory"]["severity"] == "fault"
+
+
+# --- degraded-advisory: probe unit ---
+
+
+class _FakeHTTPClient:
+    def __init__(self, exc=None):
+        self._exc = exc
+
+    async def post(self, url, json=None, timeout=None):
+        if self._exc is not None:
+            raise self._exc
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+        return _Resp()
+
+
+class _FakeEmbeddingClient:
+    def __init__(self, exc=None):
+        self.mode = "http"
+        self._http_url = "http://127.0.0.1:9/embed"
+        self._client = _FakeHTTPClient(exc)
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_failure(monkeypatch):
+    monkeypatch.setattr(
+        vector, "_embedding_client", _FakeEmbeddingClient(httpx.ConnectError("connection refused"))
+    )
+    ok, evidence = await vector._probe_embedding_health()
+    assert ok is False
+    assert "POST http://127.0.0.1:9/embed failed" in evidence
+    assert "connection refused" in evidence
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_ok(monkeypatch):
+    monkeypatch.setattr(vector, "_embedding_client", _FakeEmbeddingClient(None))
+    ok, evidence = await vector._probe_embedding_health()
+    assert ok is True and evidence is None

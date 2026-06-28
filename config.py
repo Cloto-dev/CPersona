@@ -23,6 +23,13 @@ VECTOR_MIN_SIMILARITY = float(os.environ.get("CPERSONA_VECTOR_MIN_SIMILARITY", "
 EMBEDDING_CACHE_SIZE = int(os.environ.get("CPERSONA_EMBEDDING_CACHE_SIZE", "256"))
 EMBEDDING_CACHE_TTL = int(os.environ.get("CPERSONA_EMBEDDING_CACHE_TTL", "300"))
 
+# Degraded-advisory runtime guard (v2.4.33): when embeddings are unavailable at runtime
+# (mode=none, or a configured http endpoint is unreachable) do_recall attaches an
+# `advisory` to its response so the calling agent can self-report the degradation
+# instead of silently serving keyword/FTS-only recall. On by default; opt out for a
+# deliberate FTS-only deployment. See health.py + docs/DEGRADED_ADVISORY_DESIGN.md.
+DEGRADED_ADVISORY_ENABLED = os.environ.get("CPERSONA_DEGRADED_ADVISORY", "true").lower() == "true"
+
 TASK_QUEUE_ENABLED = os.environ.get("CPERSONA_TASK_QUEUE_ENABLED", "true").lower() == "true"
 
 CONFIDENCE_ENABLED = os.environ.get("CPERSONA_CONFIDENCE_ENABLED", "false").lower() == "true"
