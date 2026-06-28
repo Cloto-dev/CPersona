@@ -127,9 +127,12 @@ async def _search_vector(
                 if raw_id.startswith("mem:"):
                     mem_id = int(raw_id[4:])
                     if channel:
+                        # ''=global (knob2 v2): a stored channel of '' is global
+                        # and matches every channel-scoped recall, so old/global
+                        # memories are never orphaned by per-channel filing.
                         row = await db.execute_fetchall(
                             f"SELECT msg_id, content, source, timestamp FROM memories "
-                            f"WHERE id = ? AND channel = ?{proj_extra}{src_clause}",
+                            f"WHERE id = ? AND (channel = ? OR channel = ''){proj_extra}{src_clause}",
                             (mem_id, channel, *proj_params, *src_params),
                         )
                     else:
@@ -187,10 +190,12 @@ async def _search_vector(
     scan_limit = min(MAX_MEMORIES, max(limit * 10, 100))
 
     if channel:
+        # ''=global (knob2 v2): stored channel '' matches every channel-scoped
+        # recall (see the by-id path above).
         rows = await db.execute_fetchall(
             f"""SELECT id, msg_id, content, source, timestamp, embedding
                FROM memories
-               WHERE agent_id = ? AND channel = ? AND embedding IS NOT NULL{proj_extra}{src_clause}
+               WHERE agent_id = ? AND (channel = ? OR channel = '') AND embedding IS NOT NULL{proj_extra}{src_clause}
                ORDER BY created_at DESC
                LIMIT ?""",
             (agent_id, channel, *proj_params, *src_params, scan_limit),
