@@ -7,7 +7,7 @@
   "version": "2.4.33",
   "category": "memory",
   "trust_level": "core",
-  "magic_seal": "sha256:c22a4556f19b41b1b0f54c3c6ec71e082fd93331354d092c7a5f34497d72f3db",
+  "magic_seal": "sha256:f3173dfa5e70484336d7dc0df0ef7bb552b59d180cd1c12a7a538fc0b707c806",
   "install": {
     "source": {
       "type": "git",
