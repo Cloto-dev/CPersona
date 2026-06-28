@@ -48,7 +48,7 @@ Versioning: introduced in cloto-mcp-cpersona 2.4.33.
 
 from __future__ import annotations
 
-import config
+from cpersona import config
 
 UNKNOWN = "unknown"
 HEALTHY = "healthy"

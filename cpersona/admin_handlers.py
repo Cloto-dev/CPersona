@@ -13,13 +13,13 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from _vendored_mcp_common import no_persist
-from _vendored_mcp_common.isolation import gamma_clause
+from cpersona._vendored_mcp_common import no_persist
+from cpersona._vendored_mcp_common.isolation import gamma_clause
 
-import config
-import tasks
-import vector
-from config import (
+from cpersona import config
+from cpersona import tasks
+from cpersona import vector
+from cpersona.config import (
     CALIBRATE_FLOOR,
     CALIBRATE_METHOD,
     CALIBRATE_PERCENTILE,
@@ -30,8 +30,8 @@ from config import (
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
 )
-from database import get_db
-from utils import _clamp_limit, _try_parse_json
+from cpersona.database import get_db
+from cpersona.utils import _clamp_limit, _try_parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -556,7 +556,7 @@ async def _calibrate_fused_gate(
     """
     import numpy as np
 
-    from memory_handlers import (
+    from cpersona.memory_handlers import (
         _apply_recall_scoring,
         _gate_score,
         _recall_cascade,

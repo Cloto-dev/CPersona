@@ -15,8 +15,8 @@ import tempfile
 import aiosqlite
 import pytest
 
-import database
-from database import SCHEMA_VERSION
+from cpersona import database
+from cpersona.database import SCHEMA_VERSION
 
 # v8 schema as it stood before the project_id axis was added (v2.4.10 era).
 _V8_SCHEMA = """

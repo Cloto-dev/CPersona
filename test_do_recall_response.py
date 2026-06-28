@@ -19,10 +19,10 @@ os.environ["CPERSONA_RECALL_MODE"] = "rsf"
 import httpx  # noqa: E402
 import pytest  # noqa: E402
 
-import config  # noqa: E402
-import health  # noqa: E402
-import memory_handlers as M  # noqa: E402
-import vector  # noqa: E402
+from cpersona import config # noqa: E402
+from cpersona import health # noqa: E402
+from cpersona import memory_handlers as M # noqa: E402
+from cpersona import vector # noqa: E402
 
 
 @pytest.fixture(autouse=True)

@@ -17,13 +17,13 @@ from datetime import datetime, timezone
 
 import aiosqlite
 import httpx
-from _vendored_mcp_common import no_persist
-from _vendored_mcp_common.embedding_client import EmbeddingClient
-from _vendored_mcp_common.isolation import coerce_for_write, gamma_clause
+from cpersona._vendored_mcp_common import no_persist
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+from cpersona._vendored_mcp_common.isolation import coerce_for_write, gamma_clause
 
-import health
-import vector
-from config import (
+from cpersona import health
+from cpersona import vector
+from cpersona.config import (
     AUTOCUT_ENABLED,
     AUTOCUT_MIN_GAP_RATIO,
     AUTOCUT_MIN_RESULTS,
@@ -41,16 +41,16 @@ from config import (
     STORE_BLOB,
     VECTOR_SEARCH_MODE,
 )
-import config  # for runtime-mutable VECTOR_MIN_SIMILARITY access
-from database import get_db
-from utils import (
+from cpersona import config # for runtime-mutable VECTOR_MIN_SIMILARITY access
+from cpersona.database import get_db
+from cpersona.utils import (
     _compute_confidence,
     _content_excluded,
     _parse_timestamp_utc,
     _sanitize_content,
     _try_parse_json,
 )
-from vector import _search_vector
+from cpersona.vector import _search_vector
 
 logger = logging.getLogger(__name__)
 

@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 
 from mcp.types import JSONRPCNotification, JSONRPCRequest
 
-from _vendored_mcp_common.mgp_utils import (
+from cpersona._vendored_mcp_common.mgp_utils import (
     write_mgp_method_response,
     write_mgp_notification,
     write_mgp_stream_chunk,
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     # lands in Phase 2 Step 2-ε. Until then this is a forward reference
     # only resolved by static type checkers — runtime never executes this
     # block, so the deferred import does not affect imports or tests.
-    from _vendored_mcp_common.llm_provider import StreamState
+    from cpersona._vendored_mcp_common.llm_provider import StreamState
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +228,6 @@ async def _reply_error(
     code: int,
     message: str,
 ) -> None:
-    from _vendored_mcp_common.mgp_utils import write_mgp_method_error
+    from cpersona._vendored_mcp_common.mgp_utils import write_mgp_method_error
 
     await write_mgp_method_error(write_stream, request_id, code, message)

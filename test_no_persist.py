@@ -12,19 +12,19 @@ import tempfile
 
 import pytest
 import pytest_asyncio
-from _vendored_mcp_common import no_persist
+from cpersona._vendored_mcp_common import no_persist
 
 # Override DB path BEFORE importing server modules
 _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_no_persist.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
-import admin_handlers  # noqa: E402
-import maintenance_handlers  # noqa: E402
-import memory_handlers  # noqa: E402
-import server  # noqa: E402
-import tasks  # noqa: E402
-from database import get_db  # noqa: E402
+from cpersona import admin_handlers # noqa: E402
+from cpersona import maintenance_handlers # noqa: E402
+from cpersona import memory_handlers # noqa: E402
+from cpersona import server # noqa: E402
+from cpersona import tasks # noqa: E402
+from cpersona.database import get_db  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)

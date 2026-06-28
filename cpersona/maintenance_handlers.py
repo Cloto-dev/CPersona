@@ -11,12 +11,12 @@ import json
 import logging
 import re
 
-from _vendored_mcp_common import no_persist
+from cpersona._vendored_mcp_common import no_persist
 
-import vector
-from config import MAX_CONTENT_LENGTH
-from database import SCHEMA_VERSION, get_db
-from utils import _MEMORY_ANNOTATION_PATTERN, _MENTION_PATTERN
+from cpersona import vector
+from cpersona.config import MAX_CONTENT_LENGTH
+from cpersona.database import SCHEMA_VERSION, get_db
+from cpersona.utils import _MEMORY_ANNOTATION_PATTERN, _MENTION_PATTERN
 
 logger = logging.getLogger(__name__)
 

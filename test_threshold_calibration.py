@@ -17,11 +17,11 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_threshold_calibration.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
-import admin_handlers  # noqa: E402
-import config  # noqa: E402
-import vector  # noqa: E402
-from database import get_db  # noqa: E402
-from _vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
+from cpersona import admin_handlers # noqa: E402
+from cpersona import config # noqa: E402
+from cpersona import vector # noqa: E402
+from cpersona.database import get_db  # noqa: E402
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 
 
 def _remove_sidecar():
@@ -165,7 +165,7 @@ async def test_check_health_detects_null_episode_embeddings():
     )
     await db.commit()
 
-    from maintenance_handlers import do_check_health
+    from cpersona.maintenance_handlers import do_check_health
 
     result = await do_check_health("agent-ep", fix=False)
     issue_types = {issue["type"] for issue in result.get("issues", [])}

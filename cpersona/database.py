@@ -5,7 +5,7 @@ import os
 
 import aiosqlite
 
-from config import DB_PATH, FTS_ENABLED
+from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 

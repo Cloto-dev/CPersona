@@ -16,10 +16,10 @@ _tmpdir = tempfile.mkdtemp()
 os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(_tmpdir, "test_recall_precision.db"))
 os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 
-import admin_handlers  # noqa: E402
-import config  # noqa: E402
-import vector  # noqa: E402
-from _vendored_mcp_common import no_persist  # noqa: E402
+from cpersona import admin_handlers # noqa: E402
+from cpersona import config # noqa: E402
+from cpersona import vector # noqa: E402
+from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

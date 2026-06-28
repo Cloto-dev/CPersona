@@ -1158,7 +1158,7 @@ async def handle_think_with_tools_streaming(
         caller (decorator). Supplies ``request_id`` (for chunk routing) and
         ``session`` (for the write stream).
     """
-    from _vendored_mcp_common.mgp_utils import send_mgp_stream_chunk
+    from cpersona._vendored_mcp_common.mgp_utils import send_mgp_stream_chunk
 
     request_id = getattr(ctx, "request_id", 0)
     session = ctx.session
@@ -1350,7 +1350,7 @@ def _build_mgp_capabilities(config: "ProviderConfig") -> dict[str, dict]:
     kernel determines the effective trust level from ``mcp.toml`` — so we
     omit ``trust_level`` from the self-declaration as well.
     """
-    from _vendored_mcp_common.mgp_utils import MgpCapabilities
+    from cpersona._vendored_mcp_common.mgp_utils import MgpCapabilities
 
     mgp = MgpCapabilities()
     mgp.set_server_id(f"cloto-mcp-{config.provider_id}")
@@ -1376,7 +1376,7 @@ async def run_server(server: Server, config: "ProviderConfig | None" = None):
     """
     import anyio
 
-    from _vendored_mcp_common.mcp_stream_interceptor import mgp_message_interceptor
+    from cpersona._vendored_mcp_common.mcp_stream_interceptor import mgp_message_interceptor
 
     experimental_caps = _build_mgp_capabilities(config) if config is not None else {}
 

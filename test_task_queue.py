@@ -17,11 +17,11 @@ os.environ["CPERSONA_TASK_MAX_RETRIES"] = "3"
 os.environ["CPERSONA_TASK_RETRY_DELAY"] = "1"  # fast retry for tests
 os.environ["CPERSONA_LLM_PROXY_URL"] = "http://127.0.0.1:1/noop"  # will fail → triggers fallback
 
-import admin_handlers  # noqa: E402
-import memory_handlers  # noqa: E402
-import server  # noqa: E402,F401  (imports trigger registry init for transitive coverage)
-import tasks  # noqa: E402
-from database import get_db  # noqa: E402
+from cpersona import admin_handlers # noqa: E402
+from cpersona import memory_handlers # noqa: E402
+from cpersona import server # noqa: E402,F401  (imports trigger registry init for transitive coverage)
+from cpersona import tasks # noqa: E402
+from cpersona.database import get_db  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)

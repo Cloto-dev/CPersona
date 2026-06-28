@@ -7,12 +7,12 @@ import heapq
 import logging
 
 import aiosqlite
-from _vendored_mcp_common.embedding_client import EmbeddingClient
-from _vendored_mcp_common.isolation import gamma_clause
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+from cpersona._vendored_mcp_common.isolation import gamma_clause
 
-import config
-import health
-from config import (
+from cpersona import config
+from cpersona import health
+from cpersona.config import (
     MAX_MEMORIES,
     VECTOR_SEARCH_MODE,
 )
