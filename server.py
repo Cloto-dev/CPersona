@@ -64,7 +64,7 @@ from config import (
     TASK_QUEUE_ENABLED,
 )
 from database import close_db, get_db
-from maintenance_handlers import do_check_health, do_deep_check
+from maintenance_handlers import do_check_health, do_deep_check, do_migrate_channel_axis
 from memory_handlers import (
     do_archive_episode,
     do_recall,
@@ -810,6 +810,44 @@ registry.auto_tool(
     },
     do_deep_check,
     [("agent_id", str), ("fix", bool, False), ("checks", list, [])],
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+
+registry.auto_tool(
+    "migrate_channel_axis",
+    "Re-channel bridge-type memories to their concrete channel (knob2 v2 default "
+    "flip prep). Memories the kernel filed under the bridge type ('discord') are "
+    "rewritten to the concrete channel recovered from the stored session_id "
+    "('{channel_id}:{user_id}:{chunk}' | '{channel_id}:shared' → channel_id), so "
+    "per-channel recall can match them. Non-destructive (only the channel column "
+    "changes) and idempotent (re-running is a no-op once moved). dry_run=true "
+    "(default) reports the recoverable count, the channels that would be recovered, "
+    "and an unrecoverable bucket (channel='discord' rows with no snowflake "
+    "session_id) without mutating. globalize_unrecoverable=true moves the "
+    "unrecoverable bucket to channel='' (global, matched by every channel-scoped "
+    "recall) so the flip orphans nothing; default false (report only).",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {
+                "type": "string",
+                "description": "Agent ID to migrate (empty = all agents)",
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "Preview counts only, no mutation (default: true)",
+                "default": True,
+            },
+            "globalize_unrecoverable": {
+                "type": "boolean",
+                "description": "Also move channel='discord' rows with no snowflake session_id to channel='' (global). Default false.",
+                "default": False,
+            },
+        },
+        "required": [],
+    },
+    do_migrate_channel_axis,
+    [("agent_id", str, ""), ("dry_run", bool, True), ("globalize_unrecoverable", bool, False)],
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 

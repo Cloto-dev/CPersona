@@ -512,3 +512,123 @@ async def do_deep_check(agent_id: str, fix: bool = False, checks: list | None = 
         out["repairs_skipped"] = True
         out["repairs_skip_reason"] = "no-persist mode active — fix downgraded to fix=False"
     return out
+
+
+# Discord bridge session_id = "{channel_id}:{user_id}:{chunk}" (bridge.rs) or
+# "{channel_id}:shared" (thread, main.rs). channel_id is a numeric snowflake, so
+# the concrete channel is the substring before the first ':'. The kernel stores
+# it at metadata.session_id (system.rs), persisted into the memories.metadata
+# JSON column, so json_extract recovers it deterministically.
+_SESSION_ID_EXPR = "json_extract(metadata, '$.session_id')"
+_SNOWFLAKE_SESSION_GLOB = "[0-9]*:*"
+
+
+async def do_migrate_channel_axis(
+    agent_id: str = "",
+    dry_run: bool = True,
+    globalize_unrecoverable: bool = False,
+) -> dict:
+    """Re-channel bridge-type memories to their concrete channel (knob2 v2).
+
+    Prepares the knob2 v2 default flip (Goal #120). Under the historical default
+    the kernel filed PerUser memories under the bridge *type* ("discord") rather
+    than the concrete channel, so once recall starts filtering by the concrete
+    channel those memories can no longer be matched. This tool recovers the
+    concrete channel from the stored session_id
+    (metadata.session_id = "{channel_id}:{user_id}:{chunk}" | "{channel_id}:shared")
+    and rewrites each affected memory's channel in place.
+
+    Non-destructive: only the `channel` column changes; content, embedding,
+    source and metadata are untouched. Idempotent: once a row's channel is the
+    concrete id it no longer matches the channel='discord' scope, so re-running
+    is a no-op. dry_run (default True) reports the counts and the channels that
+    would be recovered without mutating anything.
+
+    Two buckets are reported:
+      - recoverable:   channel='discord' rows whose session_id is a snowflake
+                       (channel_id deterministically recoverable).
+      - unrecoverable: channel='discord' rows with no snowflake session_id
+                       (e.g. session_id missing). These cannot be re-channelled.
+                       With globalize_unrecoverable=True they are instead moved
+                       to channel='' (global), which the v2 recall change makes
+                       match every channel-scoped recall, so they are not
+                       orphaned by the flip. Default False (report only).
+    """
+    db = await get_db()
+
+    # Under no-persist, force a report-only run so nothing mutates.
+    paused = no_persist.is_paused()
+    effective_dry_run = dry_run or paused
+
+    agent_clause = " AND agent_id = ?" if agent_id else ""
+    agent_params = (agent_id,) if agent_id else ()
+
+    sid = _SESSION_ID_EXPR
+    recovered_expr = f"substr({sid}, 1, instr({sid}, ':') - 1)"
+
+    # Recoverable rows, grouped by the channel they would be moved to.
+    recoverable_rows = await db.execute_fetchall(
+        f"""SELECT {recovered_expr} AS recovered_channel, COUNT(*) AS n
+           FROM memories
+           WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}
+           GROUP BY recovered_channel
+           ORDER BY n DESC""",
+        (_SNOWFLAKE_SESSION_GLOB, *agent_params),
+    )
+    recoverable_total = sum(r[1] for r in recoverable_rows)
+    by_channel = [{"channel": r[0], "count": r[1]} for r in recoverable_rows]
+
+    # Total bridge-type rows; unrecoverable = total − recoverable (this captures
+    # NULL session_id rows too, which a `NOT (sid GLOB ?)` filter would drop).
+    total_row = await db.execute_fetchall(
+        f"SELECT COUNT(*) FROM memories WHERE channel = 'discord'{agent_clause}",
+        agent_params,
+    )
+    total_discord = total_row[0][0] if total_row else 0
+    unrecoverable_total = total_discord - recoverable_total
+
+    # A few samples for inspection in dry-run.
+    sample_rows = await db.execute_fetchall(
+        f"""SELECT id, {recovered_expr}, {sid}
+           FROM memories
+           WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}
+           LIMIT 5""",
+        (_SNOWFLAKE_SESSION_GLOB, *agent_params),
+    )
+    samples = [{"id": r[0], "recovered_channel": r[1], "session_id": r[2]} for r in sample_rows]
+
+    migrated = 0
+    globalized = 0
+    if not effective_dry_run:
+        cur = await db.execute(
+            f"""UPDATE memories
+               SET channel = {recovered_expr}
+               WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}""",
+            (_SNOWFLAKE_SESSION_GLOB, *agent_params),
+        )
+        migrated = cur.rowcount if cur.rowcount and cur.rowcount > 0 else recoverable_total
+        if globalize_unrecoverable and unrecoverable_total:
+            # The recoverable UPDATE above already moved its rows off 'discord',
+            # so whatever is still 'discord' is exactly the unrecoverable bucket.
+            cur2 = await db.execute(
+                f"UPDATE memories SET channel = '' WHERE channel = 'discord'{agent_clause}",
+                agent_params,
+            )
+            globalized = cur2.rowcount if cur2.rowcount and cur2.rowcount > 0 else unrecoverable_total
+        await db.commit()
+
+    out = {
+        "agent_id": agent_id,
+        "dry_run": effective_dry_run,
+        "recoverable_total": recoverable_total,
+        "recoverable_by_channel": by_channel,
+        "unrecoverable_total": unrecoverable_total,
+        "globalize_unrecoverable": globalize_unrecoverable,
+        "migrated": migrated,
+        "globalized": globalized,
+        "samples": samples,
+    }
+    if paused and not dry_run:
+        out["repairs_skipped"] = True
+        out["repairs_skip_reason"] = "no-persist mode active — dry_run forced"
+    return out
