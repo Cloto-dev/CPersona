@@ -85,7 +85,7 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
         params.extend(p)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = await db.execute_fetchall(
-        f"SELECT id, agent_id, project_id, msg_id, content, source, timestamp, created_at, locked "
+        f"SELECT id, agent_id, project_id, msg_id, content, source, timestamp, created_at, locked, channel "
         f"FROM memories {where} ORDER BY created_at DESC LIMIT ?",
         (*params, _clamp_limit(limit, 500)),
     )
@@ -106,6 +106,9 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
                 "timestamp": row[6],
                 "created_at": row[7],
                 "locked": bool(row[8]),
+                # channel (knob2 v2): lets the kernel group unarchived memories
+                # per channel for per-channel episode archival.
+                "channel": row[9],
             }
         )
     return {"memories": memories, "count": len(memories)}

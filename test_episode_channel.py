@@ -2,7 +2,9 @@
 
 Covers the channel tag on archived episodes and channel-scoped episode recall:
 - ``do_archive_episode`` stores the channel (defaulting to '' = unscoped)
-- ``_search_episodes_fts`` filters by channel (exact match; '' = all channels)
+- ``_search_episodes_fts`` filters by channel: a recall channel of '' means no
+  filter (all channels); a stored episode channel of '' is global and matches
+  every channel-scoped recall (knob2 v2 ''=global, orphan prevention)
 - the recall cascade / RRF source_id suppression has a channel exception, so the
   session-start grounding path still surfaces channel-scoped episodes even when
   a per-user ``source_id`` filter is active
@@ -121,10 +123,15 @@ async def test_episode_search_empty_channel_returns_all():
 
 
 @pytest.mark.asyncio
-async def test_episode_search_unscoped_episode_not_matched_by_channel_filter():
+async def test_unscoped_episode_is_global_and_matches_every_channel_filter():
+    # knob2 v2 ''=global: an episode archived under channel '' (a pre-per-channel
+    # or shared episode) is global and surfaces in every channel-scoped recall,
+    # so old episodes are not orphaned once recall filters by the concrete
+    # channel. (Previously '' was excluded by a channel filter; the flip's
+    # orphan-prevention deliberately reverses that.)
     await _archive("raspberry unscoped")  # channel = ''
     contents = await _ep_search("raspberry", channel="discord:111")
-    assert contents == []
+    assert contents == ["[Episode] raspberry unscoped"]
 
 
 # ============================================================
