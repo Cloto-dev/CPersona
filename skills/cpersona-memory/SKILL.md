@@ -52,7 +52,7 @@ server** and an optional but strongly recommended **embedding server** (it
 powers the vector-search layer; without it CPersona still runs on FTS5 +
 keyword only).
 
-**Prerequisites:** Python 3.10+ and Git.
+**Prerequisites:** Python 3.10+ (Git only for from-source installs).
 
 ### 1. Install CPersona
 
@@ -76,12 +76,16 @@ The reference server is [CEmbedding](https://github.com/Cloto-dev/CEmbedding)
 tuned and benchmarked against:
 
 ```bash
-git clone https://github.com/Cloto-dev/CEmbedding.git && cd CEmbedding
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install ".[onnx]"
-python download_model.py --model jina-v5-nano
-EMBEDDING_PROVIDER=onnx_jina_v5_nano python server.py   # serves http://127.0.0.1:8401/embed
+# one-time model fetch into ./data/models (run both commands from the same directory)
+uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
+EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
 ```
+
+Or install it onto your PATH with `pip install "cembedding[onnx]"`, then run
+`cembedding-download-model --model jina-v5-nano` and
+`EMBEDDING_PROVIDER=onnx_jina_v5_nano cembedding`. From source: `git clone
+https://github.com/Cloto-dev/CEmbedding.git`, `pip install ".[onnx]"`, run with
+`python -m cembedding`.
 
 > Without an embedding server, set `EMBEDDING_MODE=none`. Vector search (the
 > strongest retrieval layer) is then disabled and recall falls back to FTS5 +
