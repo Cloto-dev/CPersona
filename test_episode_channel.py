@@ -25,8 +25,8 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_episode_channel.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
-import memory_handlers  # noqa: E402
-from database import close_db, get_db  # noqa: E402
+from cpersona import memory_handlers # noqa: E402
+from cpersona.database import close_db, get_db  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)

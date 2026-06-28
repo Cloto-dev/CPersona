@@ -27,10 +27,10 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_channel_axis_migration.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
-import admin_handlers  # noqa: E402
-import maintenance_handlers  # noqa: E402
-import memory_handlers  # noqa: E402
-from database import close_db, get_db  # noqa: E402
+from cpersona import admin_handlers # noqa: E402
+from cpersona import maintenance_handlers # noqa: E402
+from cpersona import memory_handlers # noqa: E402
+from cpersona.database import close_db, get_db  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)

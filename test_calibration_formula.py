@@ -13,7 +13,7 @@ import numpy as np
 os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "x.db"))
 os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 
-import admin_handlers  # noqa: E402
+from cpersona import admin_handlers # noqa: E402
 
 
 def _unit(v):
