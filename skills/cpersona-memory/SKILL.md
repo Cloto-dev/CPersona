@@ -228,7 +228,7 @@ Argument details live in each tool's MCP description.
 
 ## Key facts
 
-- 27 tools · Schema v10 (auto-migrating) · ~3,500 LOC single-file Python · MIT.
+- 27 tools · Schema v10 (auto-migrating) · ~5,600 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up by copying one file.
 - Benchmarked on LMEB: `jina-v5-nano` (768d) scores NDCG@10 54.14, +47% over the
