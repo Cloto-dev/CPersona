@@ -1,0 +1,37 @@
+name: CI
+
+# Runs the full test suite on every PR and every push to master. This is the hard gate
+# the project previously lacked: the suite was run by hand (and rarely), which is how
+# embedding-path regressions reached production. The suite is hermetic and bounded
+# (see conftest.py + [tool.pytest.ini_options] in pyproject.toml), so it needs no
+# embedding server and cannot hang.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync dependencies (incl. test toolchain)
+        run: uv sync --dev --python ${{ matrix.python-version }}
+      - name: Run tests
+        run: uv run pytest
