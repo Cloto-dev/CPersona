@@ -15,6 +15,27 @@ dependencies = [
 Homepage = "https://github.com/Cloto-dev/cpersona"
 Repository = "https://github.com/Cloto-dev/cpersona"
 
+[dependency-groups]
+# Test toolchain (installed by `uv sync --dev`; used locally and in CI).
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pytest-timeout>=2.3",
+]
+
+[tool.pytest.ini_options]
+# A bare `pytest` must never hang. Two failure modes did so historically and are the
+# reason the suite was rarely run (so embedding-path regressions reached production):
+# a lingering queue-worker, and any embedding call to a non-resident endpoint. A per-test
+# timeout turns either into a loud failure instead of an unbounded block, making the
+# suite safe to run on every change. The signal method (POSIX) interrupts blocking
+# syscalls; the dev and CI platforms are macOS/Linux.
+timeout = 60
+timeout_method = "signal"
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra"
+
 [project.scripts]
 cpersona = "cpersona.server:run"
 
