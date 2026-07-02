@@ -26,7 +26,6 @@ from cpersona.config import (
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
-    FTS_ENABLED,
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
 )
@@ -208,13 +207,10 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
     content = content.strip()
+    # The memories_fts index is kept in sync by the AFTER UPDATE trigger
+    # (bug-008); the previous manual UPDATE of the external-content FTS table ran
+    # after the base row was already rewritten and left stale trigrams behind.
     await db.execute("UPDATE memories SET content = ? WHERE id = ?", (content, memory_id))
-
-    if FTS_ENABLED:
-        try:
-            await db.execute("UPDATE memories_fts SET content = ? WHERE rowid = ?", (content, memory_id))
-        except Exception:
-            pass
 
     await db.commit()
     return {"ok": True, "updated_id": memory_id}

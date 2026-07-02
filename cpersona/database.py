@@ -9,7 +9,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # v2.4.17: project_id is a second isolation axis layered on top of agent_id,
 # giving agent_id × project_id two-tier γ semantics.
@@ -137,9 +137,30 @@ CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, content)
     VALUES ('delete', old.id, old.content);
 END;
+
+CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, content)
+    VALUES ('delete', old.id, old.content);
+    INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+END;
 """
 
 _db: aiosqlite.Connection | None = None
+
+
+async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, coldef: str) -> None:
+    """Idempotently add a column via an existence check (not a swallowed error).
+
+    The previous migrations wrapped each ALTER in a bare ``except Exception: pass``
+    to tolerate the "duplicate column" case on re-run, but that also swallowed
+    genuine failures (database is locked / disk I/O), leaving the column missing
+    while the migration was still stamped complete (bug-004). Checking
+    PRAGMA table_info first means the normal "already applied" path never raises,
+    so any exception that does propagate is a real failure the caller must act on.
+    """
+    cols = await db.execute_fetchall(f"PRAGMA table_info({table})")
+    if column not in {c[1] for c in cols}:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
 
 
 async def get_db() -> aiosqlite.Connection:
@@ -164,20 +185,19 @@ async def get_db() -> aiosqlite.Connection:
     row = await _db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     current = row[0][0] if row else 0
 
-    if current < 3:
-        try:
-            await _db.execute("ALTER TABLE episodes ADD COLUMN resolved INTEGER NOT NULL DEFAULT 0")
-        except Exception:
-            pass
+    # Run the migration ladder. Any unexpected failure (locked DB, disk I/O)
+    # withholds the version stamp below so the ladder is retried on the next
+    # boot rather than being marked complete with a column missing (bug-004).
+    # The idempotent existence checks make every step safe to re-run.
+    migration_error: Exception | None = None
+    try:
+        if current < 3:
+            await _ensure_column(_db, "episodes", "resolved", "INTEGER NOT NULL DEFAULT 0")
 
-    if current < 4 and FTS_ENABLED:
-        try:
+        if current < 4 and FTS_ENABLED:
             await _db.execute("INSERT OR IGNORE INTO memories_fts(rowid, content) SELECT id, content FROM memories")
-        except Exception:
-            pass
 
-    if current < 5 and FTS_ENABLED:
-        try:
+        if current < 5 and FTS_ENABLED:
             await _db.executescript(
                 """
                 DROP TRIGGER IF EXISTS episodes_ai;
@@ -195,88 +215,68 @@ async def get_db() -> aiosqlite.Connection:
                 "SELECT id, summary, keywords FROM episodes"
             )
             await _db.execute("INSERT OR IGNORE INTO memories_fts(rowid, content) SELECT id, content FROM memories")
-        except Exception as e:
-            logger.warning("FTS trigram migration failed (non-fatal): %s", e)
 
-    if current < 6:
-        try:
-            await _db.execute("ALTER TABLE memories ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
-            await _db.execute("UPDATE memories SET channel = 'chat' WHERE channel = ''")
-        except Exception:
-            pass
-        await _db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memories_agent_channel ON memories(agent_id, channel, created_at DESC)"
-        )
+        if current < 6:
+            await _ensure_column(_db, "memories", "channel", "TEXT NOT NULL DEFAULT ''")
+            await _db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_agent_channel ON memories(agent_id, channel, created_at DESC)"
+            )
 
-    if current < 7:
-        try:
-            await _db.execute("ALTER TABLE memories ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            await _db.execute("ALTER TABLE memories ADD COLUMN last_recalled_at TEXT")
-        except Exception:
-            pass
+        if current < 7:
+            await _ensure_column(_db, "memories", "recall_count", "INTEGER NOT NULL DEFAULT 0")
+            await _ensure_column(_db, "memories", "last_recalled_at", "TEXT")
 
-    if current < 8:
-        try:
-            await _db.execute("ALTER TABLE memories ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
-        except Exception:
-            pass
+        if current < 8:
+            await _ensure_column(_db, "memories", "locked", "INTEGER NOT NULL DEFAULT 0")
 
-    # v2.4.17: add the project_id γ-semantics axis to all four data tables.
-    # CREATE TABLE IF NOT EXISTS does not add columns to an existing table,
-    # so ALTER TABLE backfills them. The PRAGMA existence check keeps this
-    # idempotent — a DB with v9 partially applied can be re-run without error.
-    if current < 9:
-        for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
-            cols = await _db.execute_fetchall(f"PRAGMA table_info({table})")
-            existing = {c[1] for c in cols}
-            if "project_id" not in existing:
-                try:
-                    await _db.execute(f"ALTER TABLE {table} ADD COLUMN project_id TEXT NOT NULL DEFAULT ''")
-                except Exception as e:
-                    logger.warning(
-                        "v9 migration: ALTER TABLE %s ADD COLUMN project_id failed: %s",
-                        table,
-                        e,
-                    )
+        # v2.4.17: add the project_id γ-semantics axis to all four data tables.
+        if current < 9:
+            for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
+                await _ensure_column(_db, table, "project_id", "TEXT NOT NULL DEFAULT ''")
 
-    # v2.4.22: per-channel episodic loop. Episodes gain a `channel` column so
-    # archived sessions can be scoped to one conversation channel (mirrors the
-    # `channel` axis memories already carry). Existing episodes default to ''
-    # (= unscoped / shared) and remain visible to unfiltered recall. The
-    # PRAGMA existence check keeps the migration idempotent.
-    if current < 10:
-        cols = await _db.execute_fetchall("PRAGMA table_info(episodes)")
-        existing = {c[1] for c in cols}
-        if "channel" not in existing:
-            try:
-                await _db.execute("ALTER TABLE episodes ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
-            except Exception as e:
-                logger.warning(
-                    "v10 migration: ALTER TABLE episodes ADD COLUMN channel failed: %s",
-                    e,
-                )
-        await _db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_episodes_agent_channel "
-            "ON episodes(agent_id, channel, created_at DESC)"
+        # v2.4.22: per-channel episodic loop. Episodes gain a `channel` column so
+        # archived sessions can be scoped to one conversation channel. Existing
+        # episodes default to '' (= unscoped / shared).
+        if current < 10:
+            await _ensure_column(_db, "episodes", "channel", "TEXT NOT NULL DEFAULT ''")
+            await _db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_episodes_agent_channel "
+                "ON episodes(agent_id, channel, created_at DESC)"
+            )
+
+        # v2.4.35 (bug-008): memories_fts lacked an AFTER UPDATE trigger, so
+        # in-place content edits (do_update_memory, check_health content fixes)
+        # left stale trigrams in the FTS index — old wording kept matching new
+        # content (recall contamination). Add the trigger (idempotent via FTS_SQL)
+        # and rebuild the index once to clear any contamination already present.
+        if current < 11 and FTS_ENABLED:
+            await _db.executescript(FTS_SQL)
+            await _db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+    except Exception as e:
+        migration_error = e
+        logger.error(
+            "schema migration failed at current=%d (version stamp withheld, will retry next boot): %s",
+            current,
+            e,
         )
 
     # The isolation index depends on the v2.4.17 project_id column. Run it
-    # unconditionally after the migration so v8 boots get the index once the
-    # columns exist; CREATE INDEX IF NOT EXISTS keeps it idempotent.
+    # after the migration so v8 boots get the index once the columns exist;
+    # CREATE INDEX IF NOT EXISTS keeps it idempotent. Non-fatal on its own.
     try:
         await _db.executescript(ISOLATION_INDEX_SQL)
     except Exception as e:
-        logger.warning("v9 isolation index creation failed (non-fatal): %s", e)
+        logger.warning("isolation index creation failed (non-fatal): %s", e)
 
-    if current < SCHEMA_VERSION:
+    # Only advance the recorded version if the ladder completed cleanly. A
+    # withheld stamp leaves `current` unchanged so the next boot re-runs the
+    # idempotent steps rather than skipping a step that never applied.
+    if migration_error is None and current < SCHEMA_VERSION:
         await _db.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-        await _db.commit()
+    await _db.commit()
 
     return _db
 
