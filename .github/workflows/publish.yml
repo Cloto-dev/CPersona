@@ -1,0 +1,77 @@
+name: Publish to PyPI
+
+# Publishes cpersona to PyPI via OIDC Trusted Publishing (no stored token).
+#
+# Trigger: a `vX.Y.Z` tag push (the release cut), or manual dispatch against an
+# already-existing tag (lets us publish a previously-cut tag without retagging —
+# e.g. a tag pushed before this workflow existed).
+#
+# Guardrail: the tag version and pyproject.toml version must agree, or the run
+# fails loud before building — a mistyped tag can never publish a mismatched
+# artifact. The "verify green -> tag -> publish" discipline is upstream of this:
+# tags are only cut on merged, CI-green master.
+#
+# Authentication: OIDC Trusted Publishing. PyPI must have a trusted publisher
+# registered for this project (owner Cloto-dev, repo CPersona, workflow
+# publish.yml, environment pypi). No PYPI_API_TOKEN secret is stored anywhere.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (e.g. v2.4.35). Must already point at the commit to ship.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/cpersona
+    permissions:
+      id-token: write # OIDC token for Trusted Publishing
+    steps:
+      - name: Resolve target ref
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ref=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "tag_version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "tag_version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          TAG: ${{ inputs.tag }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Verify tag version matches pyproject
+        run: |
+          pyproject_version=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          tag_version="${{ steps.ref.outputs.tag_version }}"
+          if [ "$pyproject_version" != "$tag_version" ]; then
+            echo "::error::tag version '$tag_version' does not match pyproject version '$pyproject_version'"
+            exit 1
+          fi
+          echo "version match: $pyproject_version"
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Publish to PyPI (OIDC Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
