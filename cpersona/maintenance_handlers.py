@@ -71,8 +71,17 @@ async def do_check_health(agent_id: str = "", fix: bool = False) -> dict:
         total_dupes = sum(r[1] - 1 for r in dup_rows)
         issues.append({"type": "duplicate_content", "groups": len(dup_rows), "total_extra": total_dupes})
         if fix:
+            # Scope the delete to the requested agent and never remove a locked
+            # row (bug-007): the previous unscoped delete mutated every agent's
+            # data on a single-agent check and could drop lock-protected
+            # memories. The per-group MIN(id) survivor is always kept; only
+            # unlocked non-survivor duplicates within scope are removed.
             await db.execute(
-                "DELETE FROM memories WHERE id NOT IN (SELECT MIN(id) FROM memories GROUP BY agent_id, content)"
+                f"""DELETE FROM memories
+                    WHERE locked = 0
+                      AND id NOT IN (SELECT MIN(id) FROM memories GROUP BY agent_id, content)
+                      {agent_clause}""",
+                agent_params,
             )
 
     rows = await db.execute_fetchall(

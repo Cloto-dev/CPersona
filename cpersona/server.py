@@ -20,6 +20,7 @@ This shell:
 """
 
 import asyncio
+import hmac
 import logging
 import os
 
@@ -117,13 +118,20 @@ async def do_archive_episode_or_queue(
             project_id=project_id,
             channel=channel,
         )
-    if tasks._task_queue and TASK_QUEUE_ENABLED:
-        # NOTE: the queue path does not yet propagate project_id or channel —
-        # the LLM-driven branch is not expected from project/channel-tagged
-        # callers (which always pre-compute summary). Tracked for follow-up.
-        task_id = await tasks._task_queue.enqueue("archive_episode", agent_id, history)
-        return {"ok": True, "queued": True, "task_id": task_id}
-    return await do_archive_episode(agent_id, history)
+    # Server-side summary synthesis was removed prior to v2.4.10 (the queue no
+    # longer has an LLM to turn raw history into a summary). Enqueuing an
+    # empty-summary archive therefore produced a task the worker completed as a
+    # no-op — the episode was silently dropped while the caller got
+    # {ok:true, queued:true} (bug-006). Surface the misuse instead: callers MUST
+    # pre-compute the summary (see the archive_episode cost-efficiency guidance).
+    return {
+        "ok": False,
+        "episode_id": None,
+        "error": (
+            "summary is required: server-side episode summarisation was removed; "
+            "pre-compute summary (and keywords) before calling archive_episode"
+        ),
+    }
 
 
 # =============================================================================
@@ -895,9 +903,14 @@ async def _run_http_server():
             if request.method == "OPTIONS":
                 await self.app(scope, receive, send)
                 return
-            header = request.headers.get("authorization", "")
-            if auth_token and header:
-                if not header.startswith("Bearer ") or header[7:] != auth_token:
+            if auth_token:
+                header = request.headers.get("authorization", "")
+                token = header[7:] if header.startswith("Bearer ") else ""
+                # A missing/malformed header yields an empty token, which must
+                # be rejected — the earlier code let header-less requests fall
+                # through to the app (auth bypass, bug-003). compare_digest keeps
+                # the check constant-time against token-probing.
+                if not token or not hmac.compare_digest(token, auth_token):
                     response = JSONResponse(
                         {"error": "unauthorized"},
                         status_code=401,
@@ -905,8 +918,6 @@ async def _run_http_server():
                     )
                     await response(scope, receive, send)
                     return
-            elif auth_token and not header:
-                pass
             await self.app(scope, receive, send)
 
     @contextlib.asynccontextmanager

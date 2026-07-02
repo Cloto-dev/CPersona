@@ -34,8 +34,20 @@ class MemoryTaskQueue:
         """Start the background processing loop."""
         self._running = True
         self._task = asyncio.create_task(self._loop())
+        # Without a done-callback an unhandled exception in _loop dies silently
+        # (the exception is only surfaced when the Task is GC'd) — the queue
+        # would appear alive while no longer draining (bug-005).
+        self._task.add_done_callback(self._on_loop_done)
         self._event.set()
         logger.info("MemoryTaskQueue: started (max_retries=%d, retry_delay=%ds)", TASK_MAX_RETRIES, TASK_RETRY_DELAY)
+
+    @staticmethod
+    def _on_loop_done(task: asyncio.Task):
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("MemoryTaskQueue: processing loop exited abnormally: %s", exc, exc_info=exc)
 
     async def stop(self):
         """Stop the background loop gracefully."""
@@ -87,60 +99,85 @@ class MemoryTaskQueue:
             await self._event.wait()
             self._event.clear()
 
-            while self._running:
-                task = await self._fetch_next()
-                if task is None:
-                    break
+            try:
+                await self._drain(admin_handlers, memory_handlers)
+            except Exception as e:
+                # Never let an unexpected error (e.g. a transient DB fault in
+                # _fetch_next) terminate the loop — that would silently stop all
+                # future processing (bug-005). Log and wait for the next signal.
+                logger.error("MemoryTaskQueue: drain aborted, re-arming: %s", e, exc_info=e)
 
-                task_id, task_type, agent_id, payload, retries = task
-                # If the session re-enters no-persist after this task was
-                # enqueued, drop it instead of writing late — the user's
-                # ephemeral intent overrides queued work that pre-dates it.
-                if no_persist.is_paused():
-                    logger.info(
-                        "MemoryTaskQueue: skipping task %d (%s) under no-persist mode",
-                        task_id,
-                        task_type,
-                    )
-                    await self._delete_task(task_id)
-                    continue
+    async def _drain(self, admin_handlers, memory_handlers):
+        """Drain all currently-pending tasks in FIFO order."""
+        while self._running:
+            task = await self._fetch_next()
+            if task is None:
+                break
+
+            task_id, task_type, agent_id, payload, retries = task
+            # If the session re-enters no-persist after this task was
+            # enqueued, drop it instead of writing late — the user's
+            # ephemeral intent overrides queued work that pre-dates it.
+            if no_persist.is_paused():
                 logger.info(
-                    "MemoryTaskQueue: processing %s (task_id=%d, agent=%s, retry=%d/%d)",
-                    task_type,
+                    "MemoryTaskQueue: skipping task %d (%s) under no-persist mode",
                     task_id,
-                    agent_id,
-                    retries,
-                    TASK_MAX_RETRIES,
+                    task_type,
                 )
-                try:
-                    if task_type == "update_profile":
-                        await admin_handlers.do_update_profile(agent_id, payload)
-                    elif task_type == "archive_episode":
-                        await memory_handlers.do_archive_episode(agent_id, payload)
-                    else:
-                        logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
+                await self._delete_task(task_id)
+                continue
+            logger.info(
+                "MemoryTaskQueue: processing %s (task_id=%d, agent=%s, retry=%d/%d)",
+                task_type,
+                task_id,
+                agent_id,
+                retries,
+                TASK_MAX_RETRIES,
+            )
+            try:
+                if task_type == "update_profile":
+                    await admin_handlers.do_update_profile(agent_id, payload)
+                elif task_type == "archive_episode":
+                    await memory_handlers.do_archive_episode(agent_id, payload)
+                else:
+                    logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
 
+                await self._delete_task(task_id)
+                logger.info("MemoryTaskQueue: completed %s (task_id=%d)", task_type, task_id)
+            except Exception as e:
+                logger.error("MemoryTaskQueue: task %d (%s) failed: %s", task_id, task_type, e)
+                if retries + 1 >= TASK_MAX_RETRIES:
+                    logger.error("MemoryTaskQueue: task %d exceeded max retries, discarding", task_id)
                     await self._delete_task(task_id)
-                    logger.info("MemoryTaskQueue: completed %s (task_id=%d)", task_type, task_id)
-                except Exception as e:
-                    logger.error("MemoryTaskQueue: task %d (%s) failed: %s", task_id, task_type, e)
-                    if retries + 1 >= TASK_MAX_RETRIES:
-                        logger.error("MemoryTaskQueue: task %d exceeded max retries, discarding", task_id)
-                        await self._delete_task(task_id)
-                    else:
-                        await self._increment_retry(task_id)
-                        await asyncio.sleep(TASK_RETRY_DELAY)
+                else:
+                    await self._increment_retry(task_id)
+                    await asyncio.sleep(TASK_RETRY_DELAY)
 
     async def _fetch_next(self) -> tuple | None:
         db = await get_db()
-        rows = await db.execute_fetchall(
-            "SELECT id, task_type, agent_id, payload, retries FROM pending_memory_tasks ORDER BY id ASC LIMIT 1"
-        )
-        if not rows:
-            return None
-        task_id, task_type, agent_id, payload_json, retries = rows[0]
-        payload = json.loads(payload_json)
-        return (task_id, task_type, agent_id, payload, retries)
+        while True:
+            rows = await db.execute_fetchall(
+                "SELECT id, task_type, agent_id, payload, retries FROM pending_memory_tasks ORDER BY id ASC LIMIT 1"
+            )
+            if not rows:
+                return None
+            task_id, task_type, agent_id, payload_json, retries = rows[0]
+            try:
+                payload = json.loads(payload_json)
+            except (ValueError, TypeError) as e:
+                # A single malformed payload row must not wedge the queue: the
+                # head row would re-raise on every drain (including after
+                # restart) and stall all following tasks forever (bug-005).
+                # Discard the poison row and advance to the next one instead.
+                logger.error(
+                    "MemoryTaskQueue: task %d (%s) has an unparseable payload, discarding: %s",
+                    task_id,
+                    task_type,
+                    e,
+                )
+                await self._delete_task(task_id)
+                continue
+            return (task_id, task_type, agent_id, payload, retries)
 
     async def _delete_task(self, task_id: int):
         db = await get_db()

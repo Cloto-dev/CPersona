@@ -319,17 +319,24 @@ async def test_tool_update_profile_queues():
 
 
 @pytest.mark.asyncio
-async def test_tool_archive_episode_queues():
-    """archive_episode tool should enqueue when task queue is active and summary is unset."""
+async def test_tool_archive_episode_without_summary_is_rejected_not_queued():
+    """An empty-summary archive must NOT enqueue a task (bug-006).
+
+    Server-side summary synthesis was removed prior to v2.4.10, so the queue
+    worker can no longer turn raw history into a summary — enqueuing an
+    empty-summary archive produced a task the worker completed as a no-op,
+    silently dropping the episode while returning {ok:true, queued:true}. The
+    wrapper now surfaces the misuse and writes nothing to the queue.
+    """
     tasks._task_queue = tasks.MemoryTaskQueue()
     result = await server.do_archive_episode_or_queue("agent-q", [{"content": "conversation data"}])
-    assert result["ok"] is True
-    assert result["queued"] is True
+    assert result["ok"] is False
+    assert result.get("queued") is not True
+    assert "summary" in result.get("error", "").lower()
 
     db = await get_db()
     rows = await db.execute_fetchall("SELECT task_type FROM pending_memory_tasks")
-    assert len(rows) == 1
-    assert rows[0][0] == "archive_episode"
+    assert len(rows) == 0
 
 
 @pytest.mark.skip(
