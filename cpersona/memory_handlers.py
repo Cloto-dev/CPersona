@@ -1085,7 +1085,15 @@ async def do_archive_episode(
     db = await get_db()
 
     if not summary:
-        return {"ok": True, "episode_id": None}
+        # No server-side synthesis exists to fill this in, so an empty summary
+        # cannot produce a stored episode. Return an explicit failure rather
+        # than {ok:true, episode_id:None}, which read as success while writing
+        # nothing (bug-006).
+        return {
+            "ok": False,
+            "episode_id": None,
+            "error": "summary is required to archive an episode",
+        }
 
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)

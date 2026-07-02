@@ -112,21 +112,21 @@ class _TempDB:
 
 
 @pytest.mark.asyncio
-async def test_schema_version_constant_is_10():
-    """The migration target constant must be 10."""
-    assert SCHEMA_VERSION == 10
+async def test_schema_version_constant_is_11():
+    """The migration target constant must be 11 (v11 = memories_fts AU trigger, bug-008)."""
+    assert SCHEMA_VERSION == 11
 
 
 @pytest.mark.asyncio
 async def test_fresh_db_creates_current_schema():
-    """A brand-new DB is stamped v10 with project_id on every data table and
-    a channel column on episodes."""
+    """A brand-new DB is stamped at the current version with project_id on every
+    data table and a channel column on episodes."""
     async with _TempDB() as tmp:
         db = await database.get_db()
         for table in _ISOLATED_TABLES:
             assert "project_id" in await _columns(db, table), f"{table} missing project_id"
         assert "channel" in await _columns(db, "episodes"), "episodes missing channel"
-        assert await _schema_version(db) == 10
+        assert await _schema_version(db) == 11
         indexes = await _index_names(db)
         assert "idx_memories_isolation" in indexes
         assert "idx_episodes_isolation" in indexes
@@ -159,7 +159,7 @@ async def test_v8_to_v9_migration_preserves_legacy_rows():
         for table in _ISOLATED_TABLES:
             assert "project_id" in await _columns(db, table), f"{table} missing project_id after migration"
         assert "channel" in await _columns(db, "episodes"), "episodes missing channel after migration"
-        assert await _schema_version(db) == 10
+        assert await _schema_version(db) == 11
 
         # Legacy rows survive and default to the global pool (project_id = '')
         # and the unscoped channel ('').
@@ -195,7 +195,7 @@ async def test_v9_migration_is_idempotent():
 
         # Second boot on the same file: must not raise, must keep the row.
         db = await database.get_db()
-        assert await _schema_version(db) == 10
+        assert await _schema_version(db) == 11
         rows = await db.execute_fetchall(
             "SELECT content, project_id FROM memories WHERE agent_id = 'agent-x'"
         )
@@ -244,7 +244,7 @@ async def test_v9_to_v10_adds_episode_channel():
         db = await database.get_db()
 
         assert "channel" in await _columns(db, "episodes"), "episodes missing channel after v10"
-        assert await _schema_version(db) == 10
+        assert await _schema_version(db) == 11
 
         # Legacy episode survives and defaults to the unscoped channel ('').
         ep = await db.execute_fetchall(
