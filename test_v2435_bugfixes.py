@@ -157,12 +157,22 @@ async def test_malformed_payload_does_not_block_following_task():
 # bug-007 — check_health duplicate delete: agent-scoped + locked-safe
 # --------------------------------------------------------------------------
 
+_DUP_SEQ = 0
+
+
 async def _insert_dup(db, agent_id: str, content: str) -> int:
     """Insert a raw duplicate row, bypassing do_store's content dedup — this is
-    exactly the pre-existing duplicate condition check_health is meant to repair."""
+    exactly the pre-existing duplicate condition check_health is meant to repair.
+
+    Each row gets a distinct channel so the insert passes the v12 UNIQUE dedup
+    index (agent_id, project_id, channel, content) while still being a
+    duplicate under check_health's broader (agent_id, content) grouping —
+    the cross-channel case the index deliberately leaves to check_health."""
+    global _DUP_SEQ
+    _DUP_SEQ += 1
     cur = await db.execute(
-        "INSERT INTO memories (agent_id, content, source, timestamp) VALUES (?, ?, '{}', '2026-01-01T00:00:00Z')",
-        (agent_id, content),
+        "INSERT INTO memories (agent_id, content, channel, source, timestamp) VALUES (?, ?, ?, '{}', '2026-01-01T00:00:00Z')",
+        (agent_id, content, f"ch{_DUP_SEQ}"),
     )
     await db.commit()
     return cur.lastrowid

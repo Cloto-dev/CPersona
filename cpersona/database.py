@@ -9,7 +9,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # v2.4.17: project_id is a second isolation axis layered on top of agent_id,
 # giving agent_id × project_id two-tier γ semantics.
@@ -252,6 +252,39 @@ async def get_db() -> aiosqlite.Connection:
         if current < 11 and FTS_ENABLED:
             await _db.executescript(FTS_SQL)
             await _db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+
+        # v2.4.36 (bug-010): do_store's SELECT-probe dedup and post-commit
+        # `SELECT id ... ORDER BY id DESC` id lookup both race concurrent
+        # stores on the shared connection. The store path now uses
+        # INSERT OR IGNORE + cursor.lastrowid; these UNIQUE indexes are the
+        # constraint OR IGNORE resolves against. Unlocked exact duplicates are
+        # collapsed first with the same keep-MIN(id), never-touch-locked
+        # policy as check_health's duplicate_content repair. If a locked
+        # duplicate still blocks index creation, the index is skipped
+        # non-fatally below (SELECT-based dedup stays as the fallback), same
+        # doctrine as the isolation index.
+        if current < 12:
+            await _db.execute(
+                """DELETE FROM memories
+                   WHERE locked = 0
+                     AND id NOT IN (
+                         SELECT MIN(id) FROM memories
+                         GROUP BY agent_id, project_id, channel, content
+                     )"""
+            )
+            for index_sql in (
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_content "
+                "ON memories(agent_id, project_id, channel, content)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_msg_id "
+                "ON memories(agent_id, project_id, msg_id) WHERE msg_id != ''",
+            ):
+                try:
+                    await _db.execute(index_sql)
+                except Exception as e:
+                    logger.warning(
+                        "dedup unique index creation failed (non-fatal, SELECT dedup remains): %s",
+                        e,
+                    )
     except Exception as e:
         migration_error = e
         logger.error(

@@ -13,7 +13,10 @@ import logging
 import os
 from datetime import datetime, timezone
 
+import httpx
+
 from cpersona._vendored_mcp_common import no_persist
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.isolation import gamma_clause
 
 from cpersona import config
@@ -26,6 +29,7 @@ from cpersona.config import (
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
+    STORE_BLOB,
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
 )
@@ -207,12 +211,45 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
     content = content.strip()
+
+    # bug-011: recompute the embedding for the new text with the same policy as
+    # do_store. On failure (or no client) the BLOB is NULLed rather than left
+    # stale, so recall stops matching the old wording and check_health's
+    # null-embedding repair can re-embed the row later.
+    embedding_blob = None
+    if vector._embedding_client and (VECTOR_SEARCH_MODE == "local" or STORE_BLOB):
+        try:
+            embeddings = await vector._embedding_client.embed([content])
+            if embeddings and embeddings[0]:
+                embedding_blob = EmbeddingClient.pack_embedding(embeddings[0])
+        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as e:
+            logger.warning("Embedding failed during update_memory: %s", e)
+
     # The memories_fts index is kept in sync by the AFTER UPDATE trigger
     # (bug-008); the previous manual UPDATE of the external-content FTS table ran
     # after the base row was already rewritten and left stale trigrams behind.
-    await db.execute("UPDATE memories SET content = ? WHERE id = ?", (content, memory_id))
+    await db.execute(
+        "UPDATE memories SET content = ?, embedding = ? WHERE id = ?",
+        (content, embedding_blob, memory_id),
+    )
 
     await db.commit()
+
+    # Keep the remote vector entry in step with the new text (same
+    # namespace/id scheme as do_store; non-fatal).
+    if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
+        try:
+            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+            await vector._embedding_client._client.post(
+                f"{base_url}/index",
+                json={
+                    "namespace": f"cpersona:{row[1]}",
+                    "items": [{"id": f"mem:{memory_id}", "text": content}],
+                },
+            )
+        except Exception as e:
+            logger.debug("Remote index update failed (non-fatal): %s", e)
+
     return {"ok": True, "updated_id": memory_id}
 
 
