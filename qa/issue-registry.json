@@ -151,6 +151,19 @@
       "expected": "absent",
       "status": "fixed",
       "fix_note": "Fixed in v2.4.36: do_update_memory re-embeds the new content with the same policy as do_store (NULL on failure or when no client is configured, so check_health null-embedding repair applies) and re-sends the row to the remote /index."
+    },
+    {
+      "id": "bug-012",
+      "summary": "(MEDIUM) The v11 FTS AFTER UPDATE triggers (memories_fts_au / episodes_au) fire on every column update, so do_recall's per-hit recall_count/last_recalled_at bump rewrites each hit's full trigram posting on every recall: ~20x slower hot-path UPDATE (p50 1.1ms vs 0.05ms, p95 8ms vs 0.07ms on a 2000-row corpus) and unbounded FTS index bloat (~29KB of dead postings per recall, +66% db size over 200 recalls). The maintenance embedding-only UPDATEs on episodes churn the same way.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-03T00:00:00Z",
+      "version": "2.4.35",
+      "commit": "6acf54a",
+      "file": "cpersona/database.py",
+      "pattern": "AFTER UPDATE ON (memories|episodes) BEGIN",
+      "expected": "absent",
+      "status": "fixed",
+      "fix_note": "Fixed after v2.4.36 (schema v13): both AU triggers are column-scoped (AFTER UPDATE OF content / OF summary, keywords) and guarded by WHEN old <> new, so recall-count bumps and embedding-only updates no longer touch the FTS index while real content edits still reindex (bug-008 guarantee preserved). Migration drops and recreates the triggers; the index itself is untouched so no rebuild is needed."
     }
   ]
 }
