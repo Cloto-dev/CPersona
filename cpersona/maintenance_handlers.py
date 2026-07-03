@@ -97,19 +97,11 @@ async def do_check_health(agent_id: str = "", fix: bool = False) -> dict:
                     (MAX_CONTENT_LENGTH, row_id),
                 )
 
-    count = (
-        await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM memories WHERE channel = '' {agent_clause}",
-            agent_params,
-        )
-    )[0][0]
-    if count > 0:
-        issues.append({"type": "empty_channel", "count": count})
-        if fix:
-            await db.execute(
-                f"UPDATE memories SET channel = 'chat' WHERE channel = '' {agent_clause}",
-                agent_params,
-            )
+    # channel = '' is the *global* channel (matched by every channel-scoped
+    # recall, and the target of migrate_channel_axis globalize) — it is a valid
+    # value, not corruption. The former empty_channel check rewrote it to
+    # 'chat', re-orphaning globalized rows from non-chat channels (bug-009);
+    # it was a leftover from the v6-migration worldview and has been removed.
 
     if vector._embedding_client:
         try:

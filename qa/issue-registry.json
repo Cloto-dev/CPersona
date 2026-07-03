@@ -122,9 +122,9 @@
       "commit": "ab93504",
       "file": "cpersona/maintenance_handlers.py",
       "pattern": "channel = 'chat' WHERE channel = ''",
-      "expected": "present",
-      "status": "open",
-      "fix_note": "Remove the empty_channel check/fix; under the current semantics '' is a valid (global) value."
+      "expected": "absent",
+      "status": "fixed",
+      "fix_note": "Fixed in v2.4.36: the empty_channel check/fix was removed from check_health; channel='' is the valid global channel under the ''=global semantics (recall matching + migrate_channel_axis globalize target)."
     },
     {
       "id": "bug-010",
@@ -135,9 +135,9 @@
       "commit": "ab93504",
       "file": "cpersona/memory_handlers.py",
       "pattern": "SELECT id FROM memories WHERE agent_id = \\? ORDER BY id DESC LIMIT 1",
-      "expected": "present",
-      "status": "open",
-      "fix_note": "Use the cursor.lastrowid from the INSERT; enforce dedup with a UNIQUE index + INSERT OR IGNORE."
+      "expected": "absent",
+      "status": "fixed",
+      "fix_note": "Fixed in v2.4.36: do_store uses INSERT OR IGNORE + cursor.lastrowid for the remote index binding; SCHEMA_VERSION 11->12 adds UNIQUE dedup indexes (agent_id, project_id, channel, content) and a partial (agent_id, project_id, msg_id) WHERE msg_id != '' that make the dedup atomic. Migration collapses unlocked exact duplicates first (keep-MIN(id), never-touch-locked) and skips index creation non-fatally if a locked duplicate blocks it."
     },
     {
       "id": "bug-011",
@@ -148,9 +148,9 @@
       "commit": "ab93504",
       "file": "cpersona/admin_handlers.py",
       "pattern": "UPDATE memories SET content = \\? WHERE id = \\?",
-      "expected": "present",
-      "status": "open",
-      "fix_note": "Re-embed on update (NULL the embedding on failure so check_health can repair), and re-send to the remote index."
+      "expected": "absent",
+      "status": "fixed",
+      "fix_note": "Fixed in v2.4.36: do_update_memory re-embeds the new content with the same policy as do_store (NULL on failure or when no client is configured, so check_health null-embedding repair applies) and re-sends the row to the remote /index."
     }
   ]
 }
