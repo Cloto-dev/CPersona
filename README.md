@@ -20,6 +20,8 @@ Single SQLite file. 27 tools. Zero LLM dependency.
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
+> **Project status (July 2026)** — Accuracy-improvement work on the 2.4 series is **complete** (RRF fusion, per-agent threshold calibration, recall-precision control, channel/project isolation). The remaining 2.4.x releases are stabilization only — bug fixes, health-check hardening, and performance repairs — after which 2.4 will be declared **stable**. New feature development moves to the 2.5 series.
+
 ## The Problem
 
 Claude forgets everything between sessions. Every conversation starts from zero — no context about your project, your preferences, or what you discussed yesterday.
