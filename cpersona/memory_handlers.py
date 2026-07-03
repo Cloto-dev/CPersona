@@ -109,29 +109,33 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as e:
             logger.warning("Embedding failed during store: %s", e)
 
-    await db.execute(
-        """INSERT INTO memories (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, channel)
+    # OR IGNORE lets the v12 UNIQUE dedup indexes absorb a concurrent writer
+    # that slipped in between the SELECT-based dedup probes above and this
+    # INSERT (bug-010 TOCTOU); rowcount 0 means the row already exists.
+    cursor = await db.execute(
+        """INSERT OR IGNORE INTO memories (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, channel)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, channel),
     )
     await db.commit()
+    if cursor.rowcount == 0:
+        return {"ok": True, "skipped": True, "reason": "duplicate (unique index)"}
+    # lastrowid comes from this cursor's INSERT, so a store interleaved on the
+    # shared connection cannot shift it (bug-010: the previous max-id re-SELECT
+    # could bind a different row's id to the remote vector entry, making recall
+    # return another memory's content).
+    mem_id = cursor.lastrowid
 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         try:
-            row = await db.execute_fetchall(
-                "SELECT id FROM memories WHERE agent_id = ? ORDER BY id DESC LIMIT 1",
-                (agent_id,),
+            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+            await vector._embedding_client._client.post(
+                f"{base_url}/index",
+                json={
+                    "namespace": f"cpersona:{agent_id}",
+                    "items": [{"id": f"mem:{mem_id}", "text": content}],
+                },
             )
-            if row:
-                mem_id = row[0][0]
-                base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
-                await vector._embedding_client._client.post(
-                    f"{base_url}/index",
-                    json={
-                        "namespace": f"cpersona:{agent_id}",
-                        "items": [{"id": f"mem:{mem_id}", "text": content}],
-                    },
-                )
         except Exception as e:
             logger.debug("Remote index failed (non-fatal): %s", e)
 
