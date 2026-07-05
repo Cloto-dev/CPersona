@@ -436,7 +436,21 @@ def _autocut(results: list[dict]) -> list[dict]:
     """
     if len(results) < AUTOCUT_MIN_RESULTS:
         return results
-    scores = [r.get("_rsf_score") or r.get("_rrf_score") or r.get("_cosine") or 0 for r in results]
+    # bug-013: gap detection is only meaningful on similarity-scale signals
+    # (confidence / cosine). Rank-fusion scores (rrf / rsf) decay
+    # hyperbolically by construction — their "gaps" encode retriever overlap
+    # (hit by both retrievers vs one), not relevance breaks, so on homogeneous
+    # corpora autocut sliced a 17k-hit recall down to 2 rows. Fusion-ordered
+    # results rely on the fused quality gate for contamination control; skip
+    # the cut unless the ordering signal is similarity-scale.
+    first = results[0]
+    if first.get("_confidence_score") is not None:
+        key = "_confidence_score"
+    elif first.get("_rsf_score") is not None or first.get("_rrf_score") is not None:
+        return results
+    else:
+        key = "_cosine"
+    scores = [r.get(key) or 0 for r in results]
     max_score = scores[0]
     if max_score <= 0:
         return results
