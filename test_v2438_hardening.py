@@ -514,3 +514,55 @@ async def test_remote_search_honors_min_similarity_argument(clean_db, monkeypatc
     db = clean_db
     await vector._search_vector(db, "agent-x", "q", 10, min_similarity=0.123)
     assert captured["json"]["min_similarity"] == 0.123, "remote /search ignored min_similarity (bug-027)"
+
+
+# ---------------------------------------------------------------------------
+# bug-019 / bug-039: an omitted project_id (spec ("project_id", str, None)) must
+# reach the handler as None (= all projects), not "" (= global pool only). The
+# root fix is in the vendored auto_tool _handler; bug-039 is the missing
+# end-to-end test that drives the registered handler with the arg absent.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_tool_passes_explicit_none_default():
+    from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry
+
+    received = {}
+
+    async def handler(agent_id, project_id):
+        received["agent_id"] = agent_id
+        received["project_id"] = project_id
+        return {"ok": True}
+
+    reg = ToolRegistry("test-none-default")
+    reg.auto_tool("t", "d", {}, handler, [("agent_id", str), ("project_id", str, None)])
+
+    # project_id omitted → the explicit None default must win (bug-019)
+    await reg._handlers["t"]({"agent_id": "a"})
+    assert received["project_id"] is None, "omitted project_id reached the handler as '' (global-only), not None (all projects)"
+
+    # an explicit JSON null also resolves to None (not "")
+    await reg._handlers["t"]({"agent_id": "a", "project_id": None})
+    assert received["project_id"] is None
+
+    # a present value still passes straight through
+    await reg._handlers["t"]({"agent_id": "a", "project_id": "proj-x"})
+    assert received["project_id"] == "proj-x"
+
+
+@pytest.mark.asyncio
+async def test_auto_tool_two_tuple_still_uses_validator_default():
+    """The fix must not disturb 2-tuple specs (no default) — validator '' stands."""
+    from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry
+
+    got = {}
+
+    async def handler(agent_id):
+        got["agent_id"] = agent_id
+        return {"ok": True}
+
+    reg = ToolRegistry("test-two-tuple")
+    reg.auto_tool("t2", "d", {}, handler, [("agent_id", str)])
+    await reg._handlers["t2"]({})  # agent_id omitted
+    assert got["agent_id"] == "", "2-tuple no-default spec should still fall to the validator's '' default"

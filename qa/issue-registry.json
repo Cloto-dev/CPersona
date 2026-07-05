@@ -267,11 +267,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/_vendored_mcp_common/mcp_utils.py",
-      "pattern": "if default is not None:",
+      "pattern": "has_default = len\\(spec\\) > 2",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "Track whether a default was supplied by spec arity (len(spec)>2) and forward an explicit None to the validator, so a None default reaches the handler as None instead of collapsing to ''."
+      "fix_sketch": "Track whether a default was supplied by spec arity (len(spec)>2) and forward an explicit None to the validator, so a None default reaches the handler as None instead of collapsing to ''.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-020",
@@ -566,12 +567,13 @@
       "discovered": "2026-07-05T00:00:00Z",
       "version": "2.4.37",
       "commit": "c437697",
-      "file": "test_isolation.py",
-      "pattern": "do_recall\\(\"agent-r\", \"raspberry\", 10, deep=True, project_id=None\\)",
+      "file": "test_v2438_hardening.py",
+      "pattern": "def test_auto_tool_passes_explicit_none_default",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "fix_sketch": "Add a test that calls the registered tool handler (registry._handlers['recall']/'list_memories') with an arguments dict omitting project_id and asserts all-bucket rows are returned."
+      "fix_sketch": "Add a test that calls the registered tool handler (registry._handlers['recall']/'list_memories') with an arguments dict omitting project_id and asserts all-bucket rows are returned.",
+      "fixed_in": "2.4.38"
     }
   ]
 }

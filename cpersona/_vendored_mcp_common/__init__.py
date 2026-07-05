@@ -61,4 +61,4 @@ Phase 2 module migration from ``cloto-mcp-servers/servers/common/`` is
 complete with this sub-PR.
 """
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
