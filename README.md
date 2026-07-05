@@ -241,7 +241,7 @@ jina-v5-nano achieves +47% improvement over the MiniLM baseline.
 | `import_memories` | Import from JSONL (idempotent via msg_id dedup) |
 | `merge_memories` | Merge one agent's data into another (atomic, with dedup) |
 | `get_queue_status` | Background task queue status |
-| `check_health` | 16-point database health check with auto-repair |
+| `check_health` | Registry-driven health check (severity-tagged issues) with auto-repair |
 | `deep_check` | Deep semantic data quality analysis with auto-repair |
 
 ## Configuration
