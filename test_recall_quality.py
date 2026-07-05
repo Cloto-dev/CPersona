@@ -76,15 +76,18 @@ def test_autocut_ignores_uniform_distribution():
     assert _autocut(results) == results
 
 
-def test_autocut_works_on_rrf_scale():
-    """Relative ratio makes autocut scale-agnostic — RRF (~0–0.05) also cuts."""
+def test_autocut_skips_rrf_ordering():
+    """bug-013 reverses the v2.4.13 contract for fusion scores: RRF gaps encode
+    retriever overlap (dual-hit ~2/61 vs single-hit ~1/61), not relevance
+    breaks, so fusion-ordered results are returned whole — the fused quality
+    gate owns contamination control there."""
     results = [
         {"_rrf_score": 0.0480},
         {"_rrf_score": 0.0450},
-        {"_rrf_score": 0.0100},  # 0.035 gap / 0.048 ≈ 0.73 ≫ 0.15
+        {"_rrf_score": 0.0100},
         {"_rrf_score": 0.0090},
     ]
-    assert _autocut(results) == results[:2]
+    assert _autocut(results) == results
 
 
 def test_autocut_zero_top_score_returns_unchanged():
@@ -102,14 +105,24 @@ def test_autocut_preserves_small_result_set():
     """
     two = [{"_rsf_score": 1.0}, {"_rsf_score": 0.0}]
     assert _autocut(two) == two
-    # Once the set is large enough, autocut still fires on a real gap.
+    # bug-013: RSF is a rank-fusion scale (min-max pins the tail to 0.0), so
+    # larger sets are also returned whole; the gap cut applies to
+    # similarity-scale orderings only (cosine / confidence).
     four = [
         {"_rsf_score": 1.0},
         {"_rsf_score": 0.95},
-        {"_rsf_score": 0.10},  # 0.85 gap ≫ 0.15 * 1.0
+        {"_rsf_score": 0.10},
         {"_rsf_score": 0.0},
     ]
-    assert _autocut(four) == four[:2]
+    assert _autocut(four) == four
+    # Cosine ordering keeps the original cut behaviour on the same shape.
+    four_cos = [
+        {"_cosine": 1.0},
+        {"_cosine": 0.95},
+        {"_cosine": 0.10},  # 0.85 gap ≫ 0.15 * 1.0
+        {"_cosine": 0.0},
+    ]
+    assert _autocut(four_cos) == four_cos[:2]
 
 
 # ============================================================

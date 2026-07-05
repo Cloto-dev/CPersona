@@ -9,7 +9,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # v2.4.17: project_id is a second isolation axis layered on top of agent_id,
 # giving agent_id × project_id two-tier γ semantics.
@@ -115,7 +115,8 @@ CREATE TRIGGER IF NOT EXISTS episodes_ad AFTER DELETE ON episodes BEGIN
     VALUES ('delete', old.id, old.summary, old.keywords);
 END;
 
-CREATE TRIGGER IF NOT EXISTS episodes_au AFTER UPDATE ON episodes BEGIN
+CREATE TRIGGER IF NOT EXISTS episodes_au AFTER UPDATE OF summary, keywords ON episodes
+WHEN old.summary <> new.summary OR old.keywords <> new.keywords BEGIN
     INSERT INTO episodes_fts(episodes_fts, rowid, summary, keywords)
     VALUES ('delete', old.id, old.summary, old.keywords);
     INSERT INTO episodes_fts(rowid, summary, keywords)
@@ -138,7 +139,8 @@ CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
     VALUES ('delete', old.id, old.content);
 END;
 
-CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
+CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE OF content ON memories
+WHEN old.content <> new.content BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, content)
     VALUES ('delete', old.id, old.content);
     INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
@@ -285,6 +287,17 @@ async def get_db() -> aiosqlite.Connection:
                         "dedup unique index creation failed (non-fatal, SELECT dedup remains): %s",
                         e,
                     )
+
+        # bug-012: the v11 AFTER UPDATE triggers fired on every column update,
+        # so the recall hot path's recall_count/last_recalled_at bump rewrote
+        # each hit's full trigram posting (~20x slower UPDATE, unbounded FTS
+        # index bloat). Replace them with column-scoped, content-guarded
+        # triggers; the index itself is untouched (identical content), so no
+        # rebuild is needed.
+        if current < 13 and FTS_ENABLED:
+            await _db.execute("DROP TRIGGER IF EXISTS memories_fts_au")
+            await _db.execute("DROP TRIGGER IF EXISTS episodes_au")
+            await _db.executescript(FTS_SQL)
     except Exception as e:
         migration_error = e
         logger.error(
