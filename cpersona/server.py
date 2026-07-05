@@ -767,10 +767,16 @@ registry.auto_tool(
 
 registry.auto_tool(
     "check_health",
-    "Check memory database health (16 checks). Detects contamination, duplicates, "
-    "oversized content, embedding issues, FTS desync, invalid JSON/timestamps, "
-    "stale tasks, missing profiles, empty content, invalid/anonymous sources. "
-    "Returns storage stats. Set fix=true to auto-repair.",
+    "Check memory database health (20-check registry, each issue tagged with "
+    "severity critical/warn/info). Detects contamination, duplicates, oversized "
+    "content, embedding issues, FTS integrity (count + content-level), schema "
+    "version/object drift (missing UNIQUE indexes or FTS triggers), SQLite file "
+    "integrity, project_id naming drift, invalid JSON/timestamps, timestamp "
+    "format drift, stale tasks, missing profiles, empty content, "
+    "invalid/anonymous sources. Returns storage stats incl. project_id/channel "
+    "distributions. Set fix=true to auto-repair (agent-scoped, locked-safe); "
+    "critical file-integrity findings are report-only. Use checks parameter to "
+    "run a subset.",
     {
         "type": "object",
         "properties": {
@@ -783,19 +789,28 @@ registry.auto_tool(
                 "description": "Auto-fix detected issues",
                 "default": False,
             },
+            "checks": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Registry check names to run (empty = all). See "
+                "cpersona.checks.HEALTH_CHECK_NAMES.",
+            },
         },
     },
     do_check_health,
-    [("agent_id", str, ""), ("fix", bool, False)],
+    [("agent_id", str, ""), ("fix", bool, False), ("checks", list, [])],
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 
 registry.auto_tool(
     "deep_check",
-    "Deep semantic analysis of memory data quality. Detects issues requiring "
-    "heuristic recovery (anonymous sources, short/trivial content, stale profiles, "
-    "orphaned episodes). Set fix=true to apply repairs. Use checks parameter to "
-    "select specific checks.",
+    "Deep heuristic analysis of memory data quality. Detects issues requiring "
+    "recovery or judgment (anonymous sources, short/trivial content, stale "
+    "profiles, orphaned episodes, stale threshold calibration, embedding-space "
+    "near-duplicate pairs as merge candidates). near_duplicate and "
+    "calibration_staleness are report-only: apply decisions via merge_memories / "
+    "delete_memory / calibrate_threshold. Set fix=true to apply repairs. Use "
+    "checks parameter to select specific checks.",
     {
         "type": "object",
         "properties": {
@@ -811,7 +826,7 @@ registry.auto_tool(
             "checks": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Checks to run (empty = all). Options: anonymous_source, short_content, stale_profile, orphaned_episodes",
+                "description": "Checks to run (empty = all). Options: anonymous_source, short_content, stale_profile, orphaned_episodes, calibration_staleness, near_duplicate",
             },
         },
         "required": ["agent_id"],
