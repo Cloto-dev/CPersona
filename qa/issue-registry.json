@@ -220,10 +220,12 @@
       "commit": "c437697",
       "file": "cpersona/admin_handlers.py",
       "pattern": "INSERT INTO memories \\(agent_id, msg_id, content, source, timestamp, metadata\\)",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "Use INSERT OR IGNORE, carry project_id/channel/embedding through export+import, and wrap the import loop in an explicit transaction with rollback on error."
+      "fix_sketch": "Use INSERT OR IGNORE, carry project_id/channel/embedding through export+import, and wrap the import loop in an explicit transaction with rollback on error.",
+      "fixed_in": "2.4.38",
+      "fix_note": "v2.4.38: export now carries project_id/channel/locked (+ embedding via include_embeddings); import restores those columns, decodes the embedding, uses INSERT OR IGNORE (a dedup collision is a counted skip, not an IntegrityError abort), and runs the whole restore in one transaction that rolls back on error. Regression: test_v2438_hardening.py::test_export_import_roundtrip_preserves_axes_and_embedding, ::test_import_content_collision_skips_not_aborts."
     },
     {
       "id": "bug-017",
@@ -280,10 +282,12 @@
       "commit": "c437697",
       "file": "cpersona/admin_handlers.py",
       "pattern": "INSERT INTO memories \\(agent_id, msg_id, content, source, timestamp, metadata, channel\\)",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "error-handling",
-      "fix_sketch": "Use INSERT OR IGNORE (count skips via rowcount), preserve project_id, and wrap the merge loop in an explicit transaction with rollback on error."
+      "fix_sketch": "Use INSERT OR IGNORE (count skips via rowcount), preserve project_id, and wrap the merge loop in an explicit transaction with rollback on error.",
+      "fixed_in": "2.4.38",
+      "fix_note": "v2.4.38: do_merge_memories copies rows with INSERT OR IGNORE (content collision -> counted skip, honouring strategy='skip'), preserves project_id, and wraps the merge in a transaction with rollback on error. Regression: test_v2438_hardening.py::test_merge_preserves_project_locked_and_skips_collision."
     },
     {
       "id": "bug-021",
@@ -308,10 +312,12 @@
       "commit": "c437697",
       "file": "cpersona/admin_handlers.py",
       "pattern": "SELECT msg_id, content, source, timestamp, metadata, channel FROM memories WHERE agent_id = \\?",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "Select `locked` in the source query and carry it through the INSERT column list so locked memories stay locked after merge."
+      "fix_sketch": "Select `locked` in the source query and carry it through the INSERT column list so locked memories stay locked after merge.",
+      "fixed_in": "2.4.38",
+      "fix_note": "v2.4.38: the merge source SELECT now reads project_id/channel/embedding/locked and the INSERT sets them, so merged memories keep their locked flag and γ-axes instead of landing unlocked in the global bucket. Regression: test_v2438_hardening.py::test_merge_preserves_project_locked_and_skips_collision."
     },
     {
       "id": "bug-023",
@@ -322,10 +328,12 @@
       "commit": "c437697",
       "file": "cpersona/admin_handlers.py",
       "pattern": "ns = f\"cpersona:\\{agent_id\\}\" if agent_id else \"cpersona:\"",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "SELECT the owner agent_id alongside locked and remove from cpersona:{owner} (mirror do_update_memory's row[1] handling) instead of the caller-supplied/empty agent_id."
+      "fix_sketch": "SELECT the owner agent_id alongside locked and remove from cpersona:{owner} (mirror do_update_memory's row[1] handling) instead of the caller-supplied/empty agent_id.",
+      "fixed_in": "2.4.38",
+      "fix_note": "v2.4.38: do_delete_memory reads the row's owner agent_id and builds the remote-vector namespace as cpersona:{owner_agent_id}, so a delete-by-id (no agent_id passed) removes the vector entry from the correct namespace instead of leaving it orphaned under 'cpersona:'."
     },
     {
       "id": "bug-024",
