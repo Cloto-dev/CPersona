@@ -297,11 +297,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "SET channel = \\{recovered_expr\\}",
+      "pattern": "UPDATE OR IGNORE memories",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "Use UPDATE OR IGNORE (or a per-row try/except loop) so a single content collision skips that row and is reported, instead of aborting the whole migration."
+      "fix_sketch": "Use UPDATE OR IGNORE (or a per-row try/except loop) so a single content collision skips that row and is reported, instead of aborting the whole migration.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-022",
@@ -343,11 +344,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "DELETE FROM memories WHERE id = \\? AND agent_id = \\?",
+      "pattern": "WHERE id = \\? AND agent_id = \\? AND locked = 0",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
-      "fix_sketch": "Fold `AND locked=0` into the DELETE/UPDATE DML and branch on cursor.rowcount so the lock check and mutation are one atomic statement."
+      "fix_sketch": "Fold `AND locked=0` into the DELETE/UPDATE DML and branch on cursor.rowcount so the lock check and mutation are one atomic statement.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-025",
@@ -357,11 +359,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "vecs = np\\.array\\(vecs\\)",
+      "pattern": "Need at least 10 same-dimension embeddings",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
-      "fix_sketch": "Filter sampled rows to the modal/expected dimension (or detect length mismatch) and return ok:false with a clear 'mixed embedding dimensions' error instead of letting numpy raise."
+      "fix_sketch": "Filter sampled rows to the modal/expected dimension (or detect length mismatch) and return ok:false with a clear 'mixed embedding dimensions' error instead of letting numpy raise.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-026",
@@ -386,10 +389,11 @@
       "commit": "c437697",
       "file": "cpersona/vector.py",
       "pattern": "\"min_similarity\": _get_vector_threshold\\(agent_id\\)",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "Send `min_similarity if min_similarity is not None else _get_vector_threshold(agent_id)` in the remote POST, matching the local branch's effective_min_sim semantics."
+      "fix_sketch": "Send `min_similarity if min_similarity is not None else _get_vector_threshold(agent_id)` in the remote POST, matching the local branch's effective_min_sim semantics.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-028",
@@ -400,10 +404,11 @@
       "commit": "c437697",
       "file": "cpersona/checks.py",
       "pattern": "UPDATE memories SET content = \\? WHERE id = \\?",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "After each content mutation, re-embed via vector._embedding_client + /index (as do_update_memory does post-bug-011), or set embedding=NULL so check_null_embedding re-embeds it."
+      "fix_sketch": "After each content mutation, re-embed via vector._embedding_client + /index (as do_update_memory does post-bug-011), or set embedding=NULL so check_null_embedding re-embeds it.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-029",
@@ -413,7 +418,7 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/checks.py",
-      "pattern": "SUBSTR\\(content, 1, \\?\\) WHERE id = \\? AND locked = 0",
+      "pattern": "SUBSTR\\(content, 1, \\?\\), embedding = NULL WHERE id = \\? AND locked = 0",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
@@ -445,11 +450,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/checks.py",
-      "pattern": "DELETE FROM pending_memory_tasks WHERE created_at < datetime",
+      "pattern": "WHERE created_at < datetime\\('now', '-1 hour'\\) \\{clause\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "Apply the _agent_scope clause to both the count and the DELETE so only the target agent's stale tasks are removed."
+      "fix_sketch": "Apply the _agent_scope clause to both the count and the DELETE so only the target agent's stale tasks are removed.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-032",
@@ -459,11 +465,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "results = results\\[:limit\\]",
+      "pattern": "limit = _clamp_limit\\(limit, 100\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
-      "fix_sketch": "Call _clamp_limit(limit, CAP) at the top of do_recall/do_recall_with_context (mirroring the list handlers) before limit reaches SQL LIMIT or the slice."
+      "fix_sketch": "Call _clamp_limit(limit, CAP) at the top of do_recall/do_recall_with_context (mirroring the list handlers) before limit reaches SQL LIMIT or the slice.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-033",
@@ -487,11 +494,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "f\"%\\{query\\}%\"",
+      "pattern": "_like_escape_contains\\(query\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "Escape the query with the source_id helper (escape backslash, %, _) and add ESCAPE to the content LIKE clause, mirroring the source_id path."
+      "fix_sketch": "Escape the query with the source_id helper (escape backslash, %, _) and add ESCAPE to the content LIKE clause, mirroring the source_id path.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-035",
@@ -515,11 +523,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "await db\\.execute\\(\"DELETE FROM memories WHERE agent_id = \\?\", \\(agent_id,\\)\\)",
+      "pattern": "for _d in \\(vector\\._agent_thresholds",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
-      "fix_sketch": "After the purge, pop agent_id from vector._agent_thresholds/_agent_fused_gates/_agent_betas and re-persist the calibration sidecar so no stale per-agent state survives the wipe."
+      "fix_sketch": "After the purge, pop agent_id from vector._agent_thresholds/_agent_fused_gates/_agent_betas and re-persist the calibration sidecar so no stale per-agent state survives the wipe.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-037",
@@ -530,10 +539,11 @@
       "commit": "c437697",
       "file": "cpersona/maintenance_handlers.py",
       "pattern": "UPDATE memories SET channel = '' WHERE channel = 'discord'",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "concurrency",
-      "fix_sketch": "Restrict the globalize UPDATE to genuinely-unrecoverable rows (WHERE channel='discord' AND NOT (session_id GLOB snowflake)) so a concurrently-inserted recoverable row is not swept into global."
+      "fix_sketch": "Restrict the globalize UPDATE to genuinely-unrecoverable rows (WHERE channel='discord' AND NOT (session_id GLOB snowflake)) so a concurrently-inserted recoverable row is not swept into global.",
+      "fixed_in": "2.4.38"
     },
     {
       "id": "bug-038",

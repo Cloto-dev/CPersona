@@ -73,6 +73,13 @@ def _agent_scope(agent_id: str) -> tuple[str, tuple]:
 # ---------------------------------------------------------------------------
 
 
+# bug-028: the content-rewriting fixers below (annotation/mention/oversized)
+# must NULL the embedding alongside the content edit. The BLOB still encodes the
+# OLD text, and no other fixer repairs a content/embedding mismatch
+# (check_null_embedding only re-embeds NULL blobs, check_embedding_dimension only
+# NULLs wrong-length blobs), so leaving it stale would make vector recall score
+# the row on obsolete semantics indefinitely. NULLing routes the row into
+# check_null_embedding's re-embed path — the same self-heal do_update_memory uses.
 async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     clause, params = _agent_scope(agent_id)
     rows = await db.execute_fetchall(
@@ -83,7 +90,7 @@ async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         for row_id, content in rows:
             cleaned = _MEMORY_ANNOTATION_PATTERN.sub("", content).strip()
-            await db.execute("UPDATE memories SET content = ? WHERE id = ? AND locked = 0", (cleaned, row_id))
+            await db.execute("UPDATE memories SET content = ?, embedding = NULL WHERE id = ? AND locked = 0", (cleaned, row_id))
     return [{"type": "memory_annotation", "count": len(rows)}]
 
 
@@ -97,7 +104,7 @@ async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         for row_id, content in rows:
             cleaned = _MENTION_PATTERN.sub("", content).strip()
-            await db.execute("UPDATE memories SET content = ? WHERE id = ? AND locked = 0", (cleaned, row_id))
+            await db.execute("UPDATE memories SET content = ?, embedding = NULL WHERE id = ? AND locked = 0", (cleaned, row_id))
     return [{"type": "discord_mention", "count": len(rows)}]
 
 
@@ -149,7 +156,7 @@ async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         for row_id, _ in rows:
             await db.execute(
-                "UPDATE memories SET content = SUBSTR(content, 1, ?) WHERE id = ? AND locked = 0",
+                "UPDATE memories SET content = SUBSTR(content, 1, ?), embedding = NULL WHERE id = ? AND locked = 0",
                 (MAX_CONTENT_LENGTH, row_id),
             )
     return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[1] for r in rows)}]
@@ -665,16 +672,25 @@ async def check_timestamp_format_drift(db, agent_id: str, fix: bool) -> list[dic
 
 
 async def check_stale_pending_tasks(db, agent_id: str, fix: bool) -> list[dict]:
+    # bug-031: pending_memory_tasks is per-agent (agent_id NOT NULL), so the
+    # count/DELETE MUST be agent-scoped like every sibling check. Without the
+    # predicate, check_health(agent_id='A', fix=true) deletes EVERY agent's
+    # >1h-old un-drained store tasks — silent cross-agent data loss (the bug-007
+    # scope-leak class). An empty agent_id (CLI global sweep) yields no clause and
+    # keeps the corpus-wide behavior.
+    clause, params = _agent_scope(agent_id)
     stale = (
         await db.execute_fetchall(
-            "SELECT COUNT(*) FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour')"
+            f"SELECT COUNT(*) FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour') {clause}",
+            params,
         )
     )[0][0]
     if stale == 0:
         return []
     if fix:
         await db.execute(
-            "DELETE FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour')"
+            f"DELETE FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour') {clause}",
+            params,
         )
     return [{"type": "stale_pending_tasks", "count": stale}]
 

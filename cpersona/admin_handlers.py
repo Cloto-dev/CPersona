@@ -169,16 +169,20 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
         return {"error": f"Memory {memory_id} is locked and cannot be deleted"}
     owner_agent_id = rows[0][1]
 
+    # bug-024: fold `AND locked = 0` into the DML so a lock_memory that commits
+    # locked=1 between the SELECT above and this DELETE (a concurrent call over the
+    # single shared connection) can no longer be defeated — the atomicity the
+    # bug-007 dedup DELETE fix established, extended to the admin path.
     if agent_id:
         cursor = await db.execute(
-            "DELETE FROM memories WHERE id = ? AND agent_id = ?",
+            "DELETE FROM memories WHERE id = ? AND agent_id = ? AND locked = 0",
             (memory_id, agent_id),
         )
     else:
-        cursor = await db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        cursor = await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (memory_id,))
     await db.commit()
     if cursor.rowcount == 0:
-        return {"error": f"Memory {memory_id} not found or not owned by agent"}
+        return {"error": f"Memory {memory_id} not found, not owned by agent, or locked"}
 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         # bug-023: the row was indexed under its OWNER's namespace (cpersona:{owner}).
@@ -232,12 +236,18 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     # The memories_fts index is kept in sync by the AFTER UPDATE trigger
     # (bug-008); the previous manual UPDATE of the external-content FTS table ran
     # after the base row was already rewritten and left stale trigrams behind.
-    await db.execute(
-        "UPDATE memories SET content = ?, embedding = ? WHERE id = ?",
+    # bug-024: `AND locked = 0` + rowcount guard closes the same read-then-write
+    # window as the delete path — a lock_memory landing after the SELECT above
+    # must not be overwritten, and a raced no-op must not report success or push
+    # the new text to the remote index.
+    cursor = await db.execute(
+        "UPDATE memories SET content = ?, embedding = ? WHERE id = ? AND locked = 0",
         (content, embedding_blob, memory_id),
     )
 
     await db.commit()
+    if cursor.rowcount == 0:
+        return {"error": f"Memory {memory_id} is locked and cannot be edited"}
 
     # Keep the remote vector entry in step with the new text (same
     # namespace/id scheme as do_store; non-fatal).
@@ -310,6 +320,32 @@ async def do_delete_agent_data(agent_id: str) -> dict:
     prof_cursor = await db.execute("DELETE FROM profiles WHERE agent_id = ?", (agent_id,))
     ep_cursor = await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent_id,))
     await db.commit()
+
+    # bug-036: drop the agent's per-agent calibration from BOTH the in-process
+    # dicts and the persisted sidecar. Otherwise a stale threshold/beta/gate
+    # computed from the now-deleted corpus survives in-process and reloads on
+    # restart via _restore_calibration_state, so a later same-id agent silently
+    # inherits it and under-/over-recalls until it recalibrates.
+    removed_cal = False
+    for _d in (vector._agent_thresholds, vector._agent_fused_gates, vector._agent_betas):
+        removed_cal = (_d.pop(agent_id, None) is not None) or removed_cal
+    state = _load_calibration_state()
+    if state is not None:
+        for _key in ("agent_thresholds", "agent_fused_gates", "agent_betas"):
+            _sub = state.get(_key)
+            if isinstance(_sub, dict):
+                removed_cal = (_sub.pop(agent_id, None) is not None) or removed_cal
+        if removed_cal:
+            _save_calibration_state(
+                state.get("embedding_dim"),
+                state.get("embedding_model"),
+                state.get("global_threshold"),
+                state.get("agent_thresholds") or {},
+                global_fused_gate=state.get("global_fused_gate"),
+                agent_fused_gates=state.get("agent_fused_gates") or {},
+                fused_gate_signal=state.get("fused_gate_signal"),
+                agent_betas=state.get("agent_betas") or {},
+            )
 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         try:
@@ -432,6 +468,16 @@ async def _temporal_adjacency_sims(db, agent_id: str, limit: int, window_min: fl
         vecs.append(np.frombuffer(blob, dtype=np.float32))
     if len(times) < 2:
         return np.array([])
+    # bug-025: drop off-modal-dimension rows (times/vecs in lockstep) so np.array
+    # is not ragged on a mixed-dimension corpus during a model swap.
+    from collections import Counter
+
+    target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
+    paired = [(t, v) for t, v in zip(times, vecs) if v.shape[0] == target_dim]
+    if len(paired) < 2:
+        return np.array([])
+    times = [t for t, _ in paired]
+    vecs = [v for _, v in paired]
     return _adjacency_sims_core(times, np.array(vecs), window_min * 60.0)
 
 
@@ -725,6 +771,19 @@ async def do_calibrate_threshold(
     for (blob,) in rows:
         vec = np.frombuffer(blob, dtype=np.float32).copy()
         vecs.append(vec)
+    # bug-025: a mixed-embedding-dimension corpus (e.g. a mid-flight jina-768d ->
+    # bge-1024d model swap) yields ragged rows; np.array of ragged vectors raises
+    # ValueError on numpy>=1.24, surfacing an opaque error from
+    # calibrate/set_recall_precision and able to abort ensure_calibrated_on_startup.
+    # Keep only the modal dimension — off-dimension rows are stale relative to the
+    # live model and get re-embedded by check_embedding_dimension.
+    if vecs:
+        from collections import Counter
+
+        target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
+        vecs = [v for v in vecs if v.shape[0] == target_dim]
+    if len(vecs) < 10:
+        return {"ok": False, "error": f"Need at least 10 same-dimension embeddings, found {len(vecs)}"}
     vecs = np.array(vecs)
 
     sim_matrix = vecs @ vecs.T

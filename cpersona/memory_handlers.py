@@ -44,6 +44,7 @@ from cpersona.config import (
 from cpersona import config # for runtime-mutable VECTOR_MIN_SIMILARITY access
 from cpersona.database import get_db
 from cpersona.utils import (
+    _clamp_limit,
     _compute_confidence,
     _content_excluded,
     _parse_timestamp_utc,
@@ -154,6 +155,15 @@ def _like_escape_prefix(s: str) -> str:
     if not s:
         return ""
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def _like_escape_contains(s: str) -> str:
+    """Escape SQL LIKE specials and wrap in ``%...%`` for a literal contains match.
+
+    Used with ``ESCAPE '\\'``. Unlike a raw ``f"%{s}%"``, ``%`` and ``_`` in the
+    user query are matched literally instead of acting as wildcards (bug-034).
+    """
+    return "%" + s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
 async def _recall_cascade(
@@ -758,6 +768,11 @@ async def do_recall(
     set, in which case channel-scoped episodes are still recalled (the
     session-start grounding path).
     """
+    # bug-032: clamp the caller-supplied limit like the list handlers do. A
+    # negative limit otherwise flows to SQLite as `LIMIT -1` (unbounded full-corpus
+    # scan + O(N) scoring on the hot path) and to `results[:limit]` as a silent
+    # tail-drop. do_recall_with_context delegates here, so this covers both entries.
+    limit = _clamp_limit(limit, 100)
     db = await get_db()
 
     # Detect the static degraded case (mode=none) before dispatch; the runtime fault case
@@ -847,7 +862,12 @@ async def do_recall(
         r.pop("_resolved", None)
         messages.append(msg)
 
-    if not deep and recall_counts:
+    # bug-038: the recall_count/last_recalled_at bump is a write that feeds
+    # _compute_confidence ranking, so it must honor no-persist even though recall
+    # is readOnlyHint=true and deliberately not one of the write-gated tools —
+    # otherwise a benchmark/AB session in no-persist mode still mutates ranking
+    # state, the exact contamination no-persist exists to prevent.
+    if not deep and recall_counts and not no_persist.is_paused():
         returned_ids = [r.get("id", -1) for r in results if isinstance(r.get("id"), int) and r["id"] > 0]
         if returned_ids:
             placeholders = ",".join("?" * len(returned_ids))
@@ -1084,10 +1104,10 @@ async def _search_memories_keyword(
         f"""SELECT id, msg_id, content, source, timestamp
            FROM memories
            WHERE agent_id = ?{channel_clause}{proj_extra_bare}{src_clause_bare}
-           AND content LIKE ?
+           AND content LIKE ? ESCAPE '\\'
            ORDER BY created_at DESC
            LIMIT ?""",
-        (agent_id, *channel_params, *proj_params_bare, *src_params_bare, f"%{query}%", scan_limit),
+        (agent_id, *channel_params, *proj_params_bare, *src_params_bare, _like_escape_contains(query), scan_limit),
     )
     return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows[:limit]]
 
