@@ -83,7 +83,7 @@ async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         for row_id, content in rows:
             cleaned = _MEMORY_ANNOTATION_PATTERN.sub("", content).strip()
-            await db.execute("UPDATE memories SET content = ? WHERE id = ?", (cleaned, row_id))
+            await db.execute("UPDATE memories SET content = ? WHERE id = ? AND locked = 0", (cleaned, row_id))
     return [{"type": "memory_annotation", "count": len(rows)}]
 
 
@@ -97,16 +97,28 @@ async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         for row_id, content in rows:
             cleaned = _MENTION_PATTERN.sub("", content).strip()
-            await db.execute("UPDATE memories SET content = ? WHERE id = ?", (cleaned, row_id))
+            await db.execute("UPDATE memories SET content = ? WHERE id = ? AND locked = 0", (cleaned, row_id))
     return [{"type": "discord_mention", "count": len(rows)}]
 
 
 async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     clause, params = _agent_scope(agent_id)
+    # bug-014: group by (agent_id, project_id, content) — deliberately NOT the
+    # same key as the idx_memories_dedup_content UNIQUE index
+    # (agent_id, project_id, channel, content). Omitting channel is intentional:
+    # the index only forbids exact (…,channel,…) duplicates at write time, and
+    # this check is what collapses the same content across different channels of
+    # one project (the cross-channel cleanup the index deliberately leaves to
+    # check_health — see test_v2435_bugfixes.py::_insert_dup). Including
+    # project_id is the fix: project_id is a hard γ-isolation axis, so the same
+    # content under project '' (global) and project 'X' are legitimately
+    # distinct rows with different visibility. The previous (agent_id, content)
+    # grouping collapsed them and the MIN(id) survivor could delete the global
+    # copy, silently narrowing visibility for every other project (bug-014).
     dup_rows = await db.execute_fetchall(
         f"""SELECT content, COUNT(*) as cnt FROM memories
             WHERE 1=1 {clause}
-            GROUP BY agent_id, content HAVING cnt > 1""",
+            GROUP BY agent_id, project_id, content HAVING cnt > 1""",
         params,
     )
     if not dup_rows:
@@ -114,11 +126,12 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     total_dupes = sum(r[1] - 1 for r in dup_rows)
     if fix:
         # Agent-scoped, locked-safe (bug-007): keep the per-group MIN(id)
-        # survivor, remove only unlocked non-survivors within scope.
+        # survivor, remove only unlocked non-survivors within scope. The
+        # survivor grouping MUST match the detection grouping above (bug-014).
         await db.execute(
             f"""DELETE FROM memories
                 WHERE locked = 0
-                  AND id NOT IN (SELECT MIN(id) FROM memories GROUP BY agent_id, content)
+                  AND id NOT IN (SELECT MIN(id) FROM memories GROUP BY agent_id, project_id, content)
                   {clause}""",
             params,
         )
@@ -136,7 +149,7 @@ async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         for row_id, _ in rows:
             await db.execute(
-                "UPDATE memories SET content = SUBSTR(content, 1, ?) WHERE id = ?",
+                "UPDATE memories SET content = SUBSTR(content, 1, ?) WHERE id = ? AND locked = 0",
                 (MAX_CONTENT_LENGTH, row_id),
             )
     return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[1] for r in rows)}]
@@ -690,7 +703,8 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
         return []
     if fix:
         await db.execute(
-            f"DELETE FROM memories WHERE (TRIM(content) = '' OR content IS NULL) {clause}", params
+            f"DELETE FROM memories WHERE (TRIM(content) = '' OR content IS NULL) AND locked = 0 {clause}",
+            params,
         )
     return [{"type": "empty_content", "count": empty}]
 
@@ -871,8 +885,13 @@ async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
     if fix and rows:
         ids = [r[0] for r in rows]
         placeholders = ",".join("?" * len(ids))
-        await db.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids)
-        fixed_count = len(ids)
+        # Never delete locked rows (bug-015 / the bug-007 invariant): a memory the
+        # user explicitly locked must survive maintenance even when it is short.
+        # rowcount (not len(ids)) so the reported count excludes the survivors.
+        cur = await db.execute(
+            f"DELETE FROM memories WHERE id IN ({placeholders}) AND locked = 0", ids
+        )
+        fixed_count = cur.rowcount
     result = {"count": len(rows)}
     if fix:
         result["fixed"] = fixed_count

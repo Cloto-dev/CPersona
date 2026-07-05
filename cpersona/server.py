@@ -879,6 +879,38 @@ registry.auto_tool(
 # Streamable HTTP transport (Bearer auth, CORS)
 # =============================================================================
 
+# Hosts that only accept connections from the local machine. An unauthenticated
+# bind to one of these is a local-dev convenience, not a network exposure.
+_LOOPBACK_HTTP_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _assert_safe_http_bind(auth_token: str, host: str) -> None:
+    """Fail closed before the HTTP transport binds (bug-017).
+
+    ``auth_token`` defaults to '' and ``BearerTokenMiddleware`` only enforces
+    credentials when it is truthy, so an unset token turns auth into a no-op.
+    Combined with a public bind that silently exposes every tool — including
+    ``delete_agent_data`` and the file-reading/writing ``import``/``export`` —
+    to the whole network. Refuse to start an unauthenticated server on a
+    non-loopback interface; a loopback bind (the default) stays usable for local
+    development but is logged loudly so the missing auth is never a surprise.
+    """
+    if auth_token:
+        return
+    if host not in _LOOPBACK_HTTP_HOSTS:
+        raise SystemExit(
+            f"CPersona: refusing to start the HTTP transport on {host!r} without "
+            "CPERSONA_AUTH_TOKEN. An unauthenticated non-loopback bind exposes every "
+            "tool (delete_agent_data, export/import file access) to the network. Set "
+            "CPERSONA_AUTH_TOKEN, or set CPERSONA_HTTP_HOST to a loopback address "
+            "(127.0.0.1) for local-only use."
+        )
+    logger.warning(
+        "CPERSONA_AUTH_TOKEN is unset — the HTTP transport is UNAUTHENTICATED "
+        "(bound to loopback %s only). Set CPERSONA_AUTH_TOKEN to require a bearer token.",
+        host,
+    )
+
 
 async def _run_http_server():
     """Run CPersona as a Streamable HTTP MCP server with Bearer token auth."""
@@ -962,8 +994,11 @@ async def _run_http_server():
         lifespan=lifespan,
     )
 
-    host = os.environ.get("CPERSONA_HTTP_HOST", "0.0.0.0")
+    # Secure by default: bind loopback unless an operator opts into a wider
+    # interface. A public bind additionally requires CPERSONA_AUTH_TOKEN (bug-017).
+    host = os.environ.get("CPERSONA_HTTP_HOST", "127.0.0.1")
     port = int(os.environ.get("CPERSONA_HTTP_PORT", "8402"))
+    _assert_safe_http_bind(auth_token, host)
     logger.info("Starting Streamable HTTP on %s:%d", host, port)
 
     config = uvicorn.Config(app, host=host, port=port, log_level="info")

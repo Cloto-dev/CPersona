@@ -449,6 +449,18 @@ def _autocut(results: list[dict]) -> list[dict]:
     elif first.get("_rsf_score") is not None or first.get("_rrf_score") is not None:
         return results
     else:
+        # Fallback ordering signal is raw cosine. bug-018: cascade recall
+        # concatenates stages (vector, then episodes / profiles / keyword) in
+        # stage order rather than sorting by cosine, and the non-vector stages
+        # carry no _cosine at all. Scoring a missing signal as 0 (below) would
+        # fabricate a full-scale gap at the vector->non-vector boundary, so
+        # autocut would truncate every non-vector hit whenever a single vector
+        # hit exists — silently collapsing multi-strategy cascade recall to
+        # vector-only (drops profile injection + keyword hits). Same category
+        # error bug-013 fixed for rrf/rsf. Only gap-cut a homogeneous
+        # cosine-scored list where every row actually carries the signal.
+        if any(r.get("_cosine") is None for r in results):
+            return results
         key = "_cosine"
     scores = [r.get(key) or 0 for r in results]
     max_score = scores[0]
