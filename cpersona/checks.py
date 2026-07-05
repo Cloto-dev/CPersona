@@ -377,7 +377,8 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "kind": "trigger",
         "severity": "critical",
         "fts": True,
-        "sql": "CREATE TRIGGER memories_fts_au AFTER UPDATE ON memories BEGIN "
+        "sql": "CREATE TRIGGER memories_fts_au AFTER UPDATE OF content ON memories "
+        "WHEN old.content <> new.content BEGIN "
         "INSERT INTO memories_fts(memories_fts, rowid, content) "
         "VALUES ('delete', old.id, old.content); "
         "INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END",
@@ -402,7 +403,8 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "kind": "trigger",
         "severity": "critical",
         "fts": True,
-        "sql": "CREATE TRIGGER episodes_au AFTER UPDATE ON episodes BEGIN "
+        "sql": "CREATE TRIGGER episodes_au AFTER UPDATE OF summary, keywords ON episodes "
+        "WHEN old.summary <> new.summary OR old.keywords <> new.keywords BEGIN "
         "INSERT INTO episodes_fts(episodes_fts, rowid, summary, keywords) "
         "VALUES ('delete', old.id, old.summary, old.keywords); "
         "INSERT INTO episodes_fts(rowid, summary, keywords) "
