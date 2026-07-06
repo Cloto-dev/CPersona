@@ -122,9 +122,16 @@ class ToolRegistry:
             args = []
             for spec in params:
                 key, typ = spec[0], spec[1]
-                default = spec[2] if len(spec) > 2 else None
+                has_default = len(spec) > 2
+                default = spec[2] if has_default else None
                 validator = _VALIDATORS[typ]
-                if default is not None:
+                # bug-019: a spec that supplies an explicit default — including the
+                # literal (key, typ, None) — must pass that default to the validator.
+                # Keying on `default is not None` conflated "no default given" with
+                # "default is None", so ("project_id", str, None) fell through to the
+                # validator's hardcoded ""-default and an omitted project_id reached
+                # the handler as "" (global pool only) instead of None (all projects).
+                if has_default:
                     args.append(validator(arguments, key, default))
                 else:
                     args.append(validator(arguments, key))
