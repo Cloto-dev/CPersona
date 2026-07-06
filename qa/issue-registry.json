@@ -554,11 +554,13 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "UPDATE memories SET recall_count = recall_count \\+ 1, last_recalled_at = datetime\\('now'\\)",
+      "pattern": "if not deep and recall_counts and not no_persist\\.is_paused\\(\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
-      "fix_sketch": "Skip the recall_count/last_recalled_at bump when no_persist.is_paused() (and reconsider readOnlyHint) so a no-persist session leaves ranking state unmutated."
+      "fix_sketch": "Skip the recall_count/last_recalled_at bump when no_persist.is_paused() (and reconsider readOnlyHint) so a no-persist session leaves ranking state unmutated.",
+      "fixed_in": "2.4.38",
+      "fix_note": "v2.4.38: the recall_count/last_recalled_at bump is gated on `not no_persist.is_paused()`, so a no-persist (benchmark/AB) session no longer mutates confidence-ranking state on recall. The bump statement itself legitimately remains (normal sessions still bump), so the fix marker is the gate condition, not the statement's absence. Landed in ec91303 as the 11th task#171-approved fix; this registry flip was initially missed (the code + regression test shipped without it). Regression: test_v2438_hardening.py::test_recall_does_not_bump_recall_count_under_no_persist."
     },
     {
       "id": "bug-039",
