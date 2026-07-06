@@ -135,6 +135,13 @@ async def _search_vector(
     src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
     src_params = (src_like,) if src_like else ()
 
+    # bug-027: honor the caller's min_similarity in the remote branch too. The
+    # local branch (below) lowers the threshold for _recall_rrf/_recall_rsf so
+    # fusion has more candidates to rank; the remote /search previously hardcoded
+    # the full per-agent threshold, over-filtering and returning a smaller,
+    # differently-ranked candidate set than local for identical data.
+    effective_min_sim = min_similarity if min_similarity is not None else _get_vector_threshold(agent_id)
+
     if VECTOR_SEARCH_MODE == "remote" and _embedding_client and _embedding_client._http_url:
         try:
             base_url = _embedding_client._http_url.rsplit("/", 1)[0]
@@ -144,7 +151,7 @@ async def _search_vector(
                     "namespace": f"cpersona:{agent_id}",
                     "query": query,
                     "limit": limit,
-                    "min_similarity": _get_vector_threshold(agent_id),
+                    "min_similarity": effective_min_sim,
                 },
             )
             resp.raise_for_status()
@@ -224,7 +231,7 @@ async def _search_vector(
     health.observe_ok()  # embed succeeded — re-arm after any prior degradation
     query_vec = np.array(embeddings[0], dtype=np.float32)
     query_dim = len(query_vec)
-    effective_min_sim = min_similarity if min_similarity is not None else _get_vector_threshold(agent_id)
+    # effective_min_sim computed once near the top (shared with the remote branch, bug-027).
 
     candidates: list[tuple[float, dict]] = []
     scan_limit = min(MAX_MEMORIES, max(limit * 10, 100))

@@ -162,25 +162,33 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
     db = await get_db()
     # aiosqlite 0.22 has execute_fetchall but no execute_fetchone — using the
     # former avoids a silent AttributeError that previously broke every delete.
-    rows = await db.execute_fetchall("SELECT locked FROM memories WHERE id = ?", (memory_id,))
+    rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
         return {"error": f"Memory {memory_id} not found"}
     if rows[0][0]:
         return {"error": f"Memory {memory_id} is locked and cannot be deleted"}
+    owner_agent_id = rows[0][1]
 
+    # bug-024: fold `AND locked = 0` into the DML so a lock_memory that commits
+    # locked=1 between the SELECT above and this DELETE (a concurrent call over the
+    # single shared connection) can no longer be defeated — the atomicity the
+    # bug-007 dedup DELETE fix established, extended to the admin path.
     if agent_id:
         cursor = await db.execute(
-            "DELETE FROM memories WHERE id = ? AND agent_id = ?",
+            "DELETE FROM memories WHERE id = ? AND agent_id = ? AND locked = 0",
             (memory_id, agent_id),
         )
     else:
-        cursor = await db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        cursor = await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (memory_id,))
     await db.commit()
     if cursor.rowcount == 0:
-        return {"error": f"Memory {memory_id} not found or not owned by agent"}
+        return {"error": f"Memory {memory_id} not found, not owned by agent, or locked"}
 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
-        ns = f"cpersona:{agent_id}" if agent_id else "cpersona:"
+        # bug-023: the row was indexed under its OWNER's namespace (cpersona:{owner}).
+        # Deleting by id without passing agent_id used to compute "cpersona:" and
+        # leave the remote vector entry orphaned. Use the owner we just read.
+        ns = f"cpersona:{owner_agent_id}"
         try:
             base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
             await vector._embedding_client._client.post(
@@ -228,12 +236,18 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     # The memories_fts index is kept in sync by the AFTER UPDATE trigger
     # (bug-008); the previous manual UPDATE of the external-content FTS table ran
     # after the base row was already rewritten and left stale trigrams behind.
-    await db.execute(
-        "UPDATE memories SET content = ?, embedding = ? WHERE id = ?",
+    # bug-024: `AND locked = 0` + rowcount guard closes the same read-then-write
+    # window as the delete path — a lock_memory landing after the SELECT above
+    # must not be overwritten, and a raced no-op must not report success or push
+    # the new text to the remote index.
+    cursor = await db.execute(
+        "UPDATE memories SET content = ?, embedding = ? WHERE id = ? AND locked = 0",
         (content, embedding_blob, memory_id),
     )
 
     await db.commit()
+    if cursor.rowcount == 0:
+        return {"error": f"Memory {memory_id} is locked and cannot be edited"}
 
     # Keep the remote vector entry in step with the new text (same
     # namespace/id scheme as do_store; non-fatal).
@@ -306,6 +320,32 @@ async def do_delete_agent_data(agent_id: str) -> dict:
     prof_cursor = await db.execute("DELETE FROM profiles WHERE agent_id = ?", (agent_id,))
     ep_cursor = await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent_id,))
     await db.commit()
+
+    # bug-036: drop the agent's per-agent calibration from BOTH the in-process
+    # dicts and the persisted sidecar. Otherwise a stale threshold/beta/gate
+    # computed from the now-deleted corpus survives in-process and reloads on
+    # restart via _restore_calibration_state, so a later same-id agent silently
+    # inherits it and under-/over-recalls until it recalibrates.
+    removed_cal = False
+    for _d in (vector._agent_thresholds, vector._agent_fused_gates, vector._agent_betas):
+        removed_cal = (_d.pop(agent_id, None) is not None) or removed_cal
+    state = _load_calibration_state()
+    if state is not None:
+        for _key in ("agent_thresholds", "agent_fused_gates", "agent_betas"):
+            _sub = state.get(_key)
+            if isinstance(_sub, dict):
+                removed_cal = (_sub.pop(agent_id, None) is not None) or removed_cal
+        if removed_cal:
+            _save_calibration_state(
+                state.get("embedding_dim"),
+                state.get("embedding_model"),
+                state.get("global_threshold"),
+                state.get("agent_thresholds") or {},
+                global_fused_gate=state.get("global_fused_gate"),
+                agent_fused_gates=state.get("agent_fused_gates") or {},
+                fused_gate_signal=state.get("fused_gate_signal"),
+                agent_betas=state.get("agent_betas") or {},
+            )
 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         try:
@@ -428,6 +468,16 @@ async def _temporal_adjacency_sims(db, agent_id: str, limit: int, window_min: fl
         vecs.append(np.frombuffer(blob, dtype=np.float32))
     if len(times) < 2:
         return np.array([])
+    # bug-025: drop off-modal-dimension rows (times/vecs in lockstep) so np.array
+    # is not ragged on a mixed-dimension corpus during a model swap.
+    from collections import Counter
+
+    target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
+    paired = [(t, v) for t, v in zip(times, vecs) if v.shape[0] == target_dim]
+    if len(paired) < 2:
+        return np.array([])
+    times = [t for t, _ in paired]
+    vecs = [v for _, v in paired]
     return _adjacency_sims_core(times, np.array(vecs), window_min * 60.0)
 
 
@@ -721,6 +771,19 @@ async def do_calibrate_threshold(
     for (blob,) in rows:
         vec = np.frombuffer(blob, dtype=np.float32).copy()
         vecs.append(vec)
+    # bug-025: a mixed-embedding-dimension corpus (e.g. a mid-flight jina-768d ->
+    # bge-1024d model swap) yields ragged rows; np.array of ragged vectors raises
+    # ValueError on numpy>=1.24, surfacing an opaque error from
+    # calibrate/set_recall_precision and able to abort ensure_calibrated_on_startup.
+    # Keep only the modal dimension — off-dimension rows are stale relative to the
+    # live model and get re-embedded by check_embedding_dimension.
+    if vecs:
+        from collections import Counter
+
+        target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
+        vecs = [v for v in vecs if v.shape[0] == target_dim]
+    if len(vecs) < 10:
+        return {"ok": False, "error": f"Need at least 10 same-dimension embeddings, found {len(vecs)}"}
     vecs = np.array(vecs)
 
     sim_matrix = vecs @ vecs.T
@@ -1080,6 +1143,22 @@ async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
     return {"ok": True, "deleted_id": episode_id}
 
 
+def _decode_embedding(record: dict) -> bytes | None:
+    """Decode a base64 embedding blob from an export record.
+
+    Tolerates a missing or malformed value (returns None) so one bad embedding
+    cannot raise mid-restore and abort the whole import (bug-016); check_health's
+    null-embedding repair then re-embeds the row.
+    """
+    b64 = record.get("embedding_b64")
+    if not b64:
+        return None
+    try:
+        return base64.b64decode(b64)
+    except (ValueError, TypeError):
+        return None
+
+
 async def do_export_memories(agent_id: str, output_path: str, include_embeddings: bool = False) -> dict:
     """Export memories, episodes, and profiles to a JSONL file."""
     db = await get_db()
@@ -1111,8 +1190,12 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
         }
         f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
+        # bug-016: carry the project_id / channel γ-isolation axes and the
+        # locked flag through export so a restore reconstructs the row in its
+        # real bucket instead of collapsing everything into project ''/channel ''.
         rows = await db.execute_fetchall(
-            "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at"
+            "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
+            " project_id, channel, locked"
             f" FROM memories{agent_filter} ORDER BY id",
             agent_params,
         )
@@ -1127,6 +1210,9 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 "timestamp": row[5],
                 "metadata": _try_parse_json(row[6]) if row[6] else {},
                 "created_at": row[8],
+                "project_id": row[9],
+                "channel": row[10],
+                "locked": int(row[11]) if row[11] else 0,
             }
             if include_embeddings and row[7]:
                 record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
@@ -1134,7 +1220,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
             exported_memories += 1
 
         rows = await db.execute_fetchall(
-            "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved"
+            "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
+            " project_id, channel"
             f" FROM episodes{agent_filter} ORDER BY id",
             agent_params,
         )
@@ -1149,6 +1236,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 "end_time": row[5],
                 "created_at": row[7],
                 "resolved": bool(row[8]) if row[8] else False,
+                "project_id": row[9],
+                "channel": row[10],
             }
             if include_embeddings and row[6]:
                 record["embedding_b64"] = base64.b64encode(row[6]).decode("ascii")
@@ -1156,7 +1245,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
             exported_episodes += 1
 
         rows = await db.execute_fetchall(
-            f"SELECT agent_id, user_id, content, updated_at FROM profiles{agent_filter} ORDER BY agent_id",
+            f"SELECT agent_id, user_id, content, updated_at, project_id FROM profiles{agent_filter} ORDER BY agent_id",
             agent_params,
         )
         for row in rows:
@@ -1166,6 +1255,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 "user_id": row[1],
                 "content": row[2],
                 "updated_at": row[3],
+                "project_id": row[4],
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             exported_profiles += 1
@@ -1205,106 +1295,152 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     profile_updated = False
     errors: list[str] = []
 
-    with open(input_path, encoding="utf-8") as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as e:
-                errors.append(f"Line {line_num}: invalid JSON: {e}")
-                continue
-
-            rtype = record.get("_type", "")
-
-            if rtype == "header":
-                continue
-
-            elif rtype == "memory":
-                aid = target_agent_id or record.get("agent_id", "")
-                if not aid:
-                    errors.append(f"Line {line_num}: memory missing agent_id")
+    # bug-016: run the whole restore inside one transaction so an unexpected
+    # fault rolls back cleanly instead of leaving a half-written corpus in the
+    # shared connection for the next handler's commit to flush.
+    try:
+        with open(input_path, encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
                     continue
 
-                content = record.get("content", "")
-                if not content:
-                    skipped_memories += 1
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as e:
+                    errors.append(f"Line {line_num}: invalid JSON: {e}")
                     continue
 
-                msg_id = record.get("msg_id", "")
+                rtype = record.get("_type", "")
 
-                if msg_id:
-                    existing = await db.execute_fetchall(
-                        "SELECT id FROM memories WHERE agent_id = ? AND msg_id = ? LIMIT 1",
-                        (aid, msg_id),
-                    )
-                    if existing:
+                if rtype == "header":
+                    continue
+
+                elif rtype == "memory":
+                    aid = target_agent_id or record.get("agent_id", "")
+                    if not aid:
+                        errors.append(f"Line {line_num}: memory missing agent_id")
+                        continue
+
+                    content = record.get("content", "")
+                    if not content:
                         skipped_memories += 1
                         continue
 
-                if not dry_run:
-                    source = json.dumps(record.get("source", {}))
-                    timestamp = record.get("timestamp", "")
-                    metadata = json.dumps(record.get("metadata", {}))
-                    await db.execute(
-                        "INSERT INTO memories (agent_id, msg_id, content, source, timestamp, metadata)"
-                        " VALUES (?, ?, ?, ?, ?, ?)",
-                        (aid, msg_id, content, source, timestamp, metadata),
-                    )
-                imported_memories += 1
+                    msg_id = record.get("msg_id", "")
 
-            elif rtype == "episode":
-                aid = target_agent_id or record.get("agent_id", "")
-                if not aid:
-                    errors.append(f"Line {line_num}: episode missing agent_id")
-                    continue
+                    if msg_id:
+                        existing = await db.execute_fetchall(
+                            "SELECT id FROM memories WHERE agent_id = ? AND msg_id = ? LIMIT 1",
+                            (aid, msg_id),
+                        )
+                        if existing:
+                            skipped_memories += 1
+                            continue
 
-                summary = record.get("summary", "")
-                if not summary:
-                    continue
+                    if not dry_run:
+                        source = json.dumps(record.get("source", {}))
+                        timestamp = record.get("timestamp", "")
+                        metadata = json.dumps(record.get("metadata", {}))
+                        # bug-016: carry the project_id / channel γ-axes, the locked
+                        # flag and the embedding through, and INSERT OR IGNORE so a
+                        # collision with the v12 dedup UNIQUE index is a counted skip
+                        # rather than an uncaught IntegrityError that aborts the restore.
+                        cur = await db.execute(
+                            "INSERT OR IGNORE INTO memories"
+                            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked)"
+                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                aid,
+                                record.get("project_id", ""),
+                                record.get("channel", ""),
+                                msg_id,
+                                content,
+                                source,
+                                timestamp,
+                                metadata,
+                                _decode_embedding(record),
+                                1 if record.get("locked") else 0,
+                            ),
+                        )
+                        if cur.rowcount == 0:
+                            skipped_memories += 1
+                            continue
+                    imported_memories += 1
 
-                if not dry_run:
-                    keywords = record.get("keywords", "")
-                    start_time = record.get("start_time")
-                    end_time = record.get("end_time")
-                    resolved = 1 if record.get("resolved") else 0
-                    await db.execute(
-                        "INSERT INTO episodes (agent_id, summary, keywords, start_time, end_time, resolved)"
-                        " VALUES (?, ?, ?, ?, ?, ?)",
-                        (aid, summary, keywords, start_time, end_time, resolved),
-                    )
-                imported_episodes += 1
+                elif rtype == "episode":
+                    aid = target_agent_id or record.get("agent_id", "")
+                    if not aid:
+                        errors.append(f"Line {line_num}: episode missing agent_id")
+                        continue
 
-            elif rtype == "profile":
-                aid = target_agent_id or record.get("agent_id", "")
-                if not aid:
-                    errors.append(f"Line {line_num}: profile missing agent_id")
-                    continue
+                    summary = record.get("summary", "")
+                    if not summary:
+                        continue
 
-                content = record.get("content", "")
-                if not content:
-                    continue
+                    if not dry_run:
+                        keywords = record.get("keywords", "")
+                        start_time = record.get("start_time")
+                        end_time = record.get("end_time")
+                        resolved = 1 if record.get("resolved") else 0
+                        await db.execute(
+                            "INSERT INTO episodes"
+                            " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
+                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                aid,
+                                record.get("project_id", ""),
+                                record.get("channel", ""),
+                                summary,
+                                keywords,
+                                start_time,
+                                end_time,
+                                resolved,
+                                _decode_embedding(record),
+                            ),
+                        )
+                    imported_episodes += 1
 
-                if not dry_run:
-                    user_id = record.get("user_id", "")
-                    await db.execute(
-                        "INSERT INTO profiles (agent_id, user_id, content, updated_at)"
-                        " VALUES (?, ?, ?, datetime('now'))"
-                        " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
-                        "   content = excluded.content,"
-                        "   updated_at = excluded.updated_at",
-                        (aid, user_id, content),
-                    )
-                profile_updated = True
+                elif rtype == "profile":
+                    aid = target_agent_id or record.get("agent_id", "")
+                    if not aid:
+                        errors.append(f"Line {line_num}: profile missing agent_id")
+                        continue
 
-            else:
-                if rtype:
-                    errors.append(f"Line {line_num}: unknown type '{rtype}'")
+                    content = record.get("content", "")
+                    if not content:
+                        continue
 
-    if not dry_run:
-        await db.commit()
+                    if not dry_run:
+                        user_id = record.get("user_id", "")
+                        await db.execute(
+                            "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
+                            " VALUES (?, ?, ?, ?, datetime('now'))"
+                            " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
+                            "   content = excluded.content,"
+                            "   updated_at = excluded.updated_at",
+                            (aid, record.get("project_id", ""), user_id, content),
+                        )
+                    profile_updated = True
+
+                else:
+                    if rtype:
+                        errors.append(f"Line {line_num}: unknown type '{rtype}'")
+
+        if not dry_run:
+            await db.commit()
+    except Exception as e:
+        if not dry_run:
+            await db.rollback()
+        return {
+            "ok": False,
+            "error": f"import aborted and rolled back: {e}",
+            "dry_run": dry_run,
+            "imported_memories": 0,
+            "skipped_memories": skipped_memories,
+            "imported_episodes": 0,
+            "profile_updated": False,
+        }
 
     result: dict = {
         "ok": True,
@@ -1362,74 +1498,103 @@ async def do_merge_memories(
     profile_copied = False
     skipped_profile = False
 
-    rows = await db.execute_fetchall(
-        "SELECT msg_id, content, source, timestamp, metadata, channel FROM memories WHERE agent_id = ?",
-        (source_agent_id,),
-    )
-    for msg_id, content, source, timestamp, metadata, channel in rows:
-        if not content:
-            continue
-        if msg_id:
+    # bug-020/022: whole merge in one transaction, carrying the project_id /
+    # channel / locked axes + embedding and using INSERT OR IGNORE so a content
+    # collision is a counted skip (honouring strategy='skip') instead of an
+    # uncaught IntegrityError that half-merges the corpus.
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked"
+            " FROM memories WHERE agent_id = ?",
+            (source_agent_id,),
+        )
+        for project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked in rows:
+            if not content:
+                continue
+            if msg_id:
+                existing = await db.execute_fetchall(
+                    "SELECT id FROM memories WHERE agent_id = ? AND msg_id = ? LIMIT 1",
+                    (target_agent_id, msg_id),
+                )
+                if existing:
+                    skipped_memories += 1
+                    continue
+            if not dry_run:
+                cur = await db.execute(
+                    "INSERT OR IGNORE INTO memories"
+                    " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (target_agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked),
+                )
+                if cur.rowcount == 0:
+                    skipped_memories += 1
+                    continue
+            merged_memories += 1
+
+        rows = await db.execute_fetchall(
+            "SELECT summary, keywords, start_time, end_time, resolved, project_id, channel, embedding"
+            " FROM episodes WHERE agent_id = ?",
+            (source_agent_id,),
+        )
+        for summary, keywords, start_time, end_time, resolved, ep_project_id, ep_channel, ep_embedding in rows:
+            if not summary:
+                continue
             existing = await db.execute_fetchall(
-                "SELECT id FROM memories WHERE agent_id = ? AND msg_id = ? LIMIT 1",
-                (target_agent_id, msg_id),
+                "SELECT id FROM episodes WHERE agent_id = ? AND summary = ? LIMIT 1",
+                (target_agent_id, summary),
             )
             if existing:
-                skipped_memories += 1
+                skipped_episodes += 1
                 continue
-        if not dry_run:
-            await db.execute(
-                "INSERT INTO memories (agent_id, msg_id, content, source, timestamp, metadata, channel)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (target_agent_id, msg_id, content, source, timestamp, metadata, channel),
-            )
-        merged_memories += 1
+            if not dry_run:
+                await db.execute(
+                    "INSERT INTO episodes"
+                    " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (target_agent_id, ep_project_id, ep_channel, summary, keywords, start_time, end_time, resolved, ep_embedding),
+                )
+            merged_episodes += 1
 
-    rows = await db.execute_fetchall(
-        "SELECT summary, keywords, start_time, end_time, resolved FROM episodes WHERE agent_id = ?",
-        (source_agent_id,),
-    )
-    for summary, keywords, start_time, end_time, resolved in rows:
-        if not summary:
-            continue
-        existing = await db.execute_fetchall(
-            "SELECT id FROM episodes WHERE agent_id = ? AND summary = ? LIMIT 1",
-            (target_agent_id, summary),
+        rows = await db.execute_fetchall(
+            "SELECT user_id, content, project_id FROM profiles WHERE agent_id = ?",
+            (source_agent_id,),
         )
-        if existing:
-            skipped_episodes += 1
-            continue
-        if not dry_run:
-            await db.execute(
-                "INSERT INTO episodes (agent_id, summary, keywords, start_time, end_time, resolved)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (target_agent_id, summary, keywords, start_time, end_time, resolved),
+        for user_id, content, prof_project_id in rows:
+            if not content:
+                continue
+            existing = await db.execute_fetchall(
+                "SELECT id FROM profiles WHERE agent_id = ? AND user_id = ? LIMIT 1",
+                (target_agent_id, user_id),
             )
-        merged_episodes += 1
+            if existing:
+                skipped_profile = True
+                continue
+            if not dry_run:
+                await db.execute(
+                    "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
+                    " VALUES (?, ?, ?, ?, datetime('now'))",
+                    (target_agent_id, prof_project_id, user_id, content),
+                )
+            profile_copied = True
 
-    rows = await db.execute_fetchall(
-        "SELECT user_id, content FROM profiles WHERE agent_id = ?",
-        (source_agent_id,),
-    )
-    for user_id, content in rows:
-        if not content:
-            continue
-        existing = await db.execute_fetchall(
-            "SELECT id FROM profiles WHERE agent_id = ? AND user_id = ? LIMIT 1",
-            (target_agent_id, user_id),
-        )
-        if existing:
-            skipped_profile = True
-            continue
         if not dry_run:
-            await db.execute(
-                "INSERT INTO profiles (agent_id, user_id, content, updated_at) VALUES (?, ?, ?, datetime('now'))",
-                (target_agent_id, user_id, content),
-            )
-        profile_copied = True
-
-    if not dry_run:
-        await db.commit()
+            await db.commit()
+    except Exception as e:
+        if not dry_run:
+            await db.rollback()
+        return {
+            "ok": False,
+            "error": f"merge aborted and rolled back: {e}",
+            "dry_run": dry_run,
+            "source_agent_id": source_agent_id,
+            "target_agent_id": target_agent_id,
+            "merged_memories": 0,
+            "skipped_memories": skipped_memories,
+            "merged_episodes": 0,
+            "skipped_episodes": skipped_episodes,
+            "profile_copied": False,
+            "skipped_profile": skipped_profile,
+        }
 
     move_result = None
     if mode == "move" and not dry_run:

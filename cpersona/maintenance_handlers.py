@@ -205,19 +205,32 @@ async def do_migrate_channel_axis(
     migrated = 0
     globalized = 0
     if not effective_dry_run:
+        # bug-021: OR IGNORE — a recovered (agent_id, project_id, channel, content)
+        # can collide with an existing row on the v12 idx_memories_dedup_content
+        # UNIQUE index. A bare UPDATE would ABORT+rollback the whole statement
+        # (migrated=0), and because the collision is data-deterministic every
+        # re-run re-collides, so the migration could never complete. OR IGNORE
+        # skips the colliding row (its target content already exists) and lets the
+        # rest migrate; the docstring's idempotency claim is only true with it.
         cur = await db.execute(
-            f"""UPDATE memories
+            f"""UPDATE OR IGNORE memories
                SET channel = {recovered_expr}
                WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}""",
             (_SNOWFLAKE_SESSION_GLOB, *agent_params),
         )
         migrated = cur.rowcount if cur.rowcount and cur.rowcount > 0 else recoverable_total
         if globalize_unrecoverable and unrecoverable_total:
-            # The recoverable UPDATE above already moved its rows off 'discord',
-            # so whatever is still 'discord' is exactly the unrecoverable bucket.
+            # bug-037: globalize ONLY genuinely-unrecoverable rows (NULL session_id
+            # or a non-snowflake session_id). The earlier "whatever is still
+            # 'discord' is the unrecoverable bucket" assumption breaks across the
+            # await boundary: a do_store landing a fresh snowflake 'discord' row in
+            # the window would be swept to channel='' (a silent scope-broadening
+            # leak). Excluding snowflake rows leaves such a row on 'discord' for the
+            # next migration pass instead. (OR IGNORE for symmetry with the above.)
             cur2 = await db.execute(
-                f"UPDATE memories SET channel = '' WHERE channel = 'discord'{agent_clause}",
-                agent_params,
+                f"UPDATE OR IGNORE memories SET channel = '' "
+                f"WHERE channel = 'discord' AND ({sid} IS NULL OR NOT ({sid} GLOB ?)){agent_clause}",
+                (_SNOWFLAKE_SESSION_GLOB, *agent_params),
             )
             globalized = cur2.rowcount if cur2.rowcount and cur2.rowcount > 0 else unrecoverable_total
         await db.commit()

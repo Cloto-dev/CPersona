@@ -50,6 +50,22 @@ def test_cascade_cosine_gap_still_cuts():
     assert [r["content"] for r in cut] == ["doc0", "doc1", "doc2"]
 
 
+def test_cascade_mixed_signal_is_not_cut():
+    """bug-018: cascade concatenates a vector stage (rows carry _cosine) with
+    episode/profile/keyword stages (no _cosine). Confidence off, no fusion score,
+    so autocut falls to the cosine branch — but the non-vector rows have no
+    signal. It must return the list whole rather than scoring them 0 and cutting
+    every non-vector hit at the vector->non-vector boundary."""
+    rows = [
+        {"_cosine": 0.71, "content": "vec0"},
+        {"_cosine": 0.68, "content": "vec1"},
+        {"content": "episode0"},   # no _cosine
+        {"content": "[Profile] p"},  # no _cosine
+        {"content": "keyword0"},   # no _cosine
+    ]
+    assert _autocut(rows) == rows
+
+
 def test_confidence_sorted_gap_still_cuts():
     """Confidence-sorted results (CONFIDENCE_ENABLED) keep the gap cut, even
     when fusion scores are also present on the rows."""
