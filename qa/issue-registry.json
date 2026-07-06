@@ -375,11 +375,13 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/database.py",
-      "pattern": "if current < 11 and FTS_ENABLED:",
+      "pattern": "fts_created_this_boot",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
-      "fix_sketch": "Track FTS-index-populated state separately from schema_version (or detect an empty *_fts over populated content) and run the ('rebuild')/backfill whenever FTS is enabled but the index is empty, regardless of current version."
+      "fix_sketch": "Track FTS-index-populated state separately from schema_version (or detect an empty *_fts over populated content) and run the ('rebuild')/backfill whenever FTS is enabled but the index is empty, regardless of current version.",
+      "fixed_in": "2.4.39",
+      "fix_note": "v2.4.39: get_db() samples table-absence of memories_fts BEFORE creating FTS_SQL (fts_created_this_boot) — external-content FTS5 makes COUNT(*) mirror the content table, so table-absence is the only reliable empty-index probe. When the FTS index is created for the first time this boot (DB originally made with FTS off, now re-enabled), both FTS tables are backfilled via INSERT INTO x_fts(x_fts) VALUES('rebuild') after the migration ladder, so pre-existing memories/episodes become keyword-searchable again. Idempotent (only fires the boot the tables are created; a brand-new empty DB rebuilds two empty indexes) and non-fatal. Fix marker = fts_created_this_boot. Regression: test_followup_2_4_x.py::test_fts_backfill_when_enabled_after_created_disabled."
     },
     {
       "id": "bug-027",
@@ -481,11 +483,13 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/vector.py",
-      "pattern": "resp = await _embedding_client\\._client\\.post\\(",
+      "pattern": "timeout=REMOTE_SEARCH_TIMEOUT_SECS",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "performance",
-      "fix_sketch": "Pass an explicit short timeout (e.g. PROBE_TIMEOUT_SECS or a dedicated remote-search budget) to the /search POST so a hung endpoint falls back to local quickly."
+      "fix_sketch": "Pass an explicit short timeout (e.g. PROBE_TIMEOUT_SECS or a dedicated remote-search budget) to the /search POST so a hung endpoint falls back to local quickly.",
+      "fixed_in": "2.4.39",
+      "fix_note": "v2.4.39: the remote /search POST passes an explicit timeout=REMOTE_SEARCH_TIMEOUT_SECS (config default 5.0s, CPERSONA_REMOTE_SEARCH_TIMEOUT_SECS) instead of inheriting the embed client's 30s DEFAULT_TIMEOUT_SECS, so a hung/flapping endpoint trips the except and falls back to local search in seconds. The buggy POST line legitimately remains (only the timeout kwarg is added), so the fix marker is the timeout kwarg, not the line's absence. Regression: test_followup_2_4_x.py::test_remote_search_falls_back_to_local_on_timeout plus test_v2438_hardening.py::test_remote_search_honors_min_similarity_argument (timeout assertion)."
     },
     {
       "id": "bug-034",
@@ -510,11 +514,13 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "e\\.get\\(\"content\", \"\"\\)\\.strip\\(\\)",
+      "pattern": "_ctx_content",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
-      "fix_sketch": "Coerce defensively to str: `(e.get('content') or '').strip()` at both call sites (:872 and :888)."
+      "fix_sketch": "Coerce defensively to str: `(e.get('content') or '').strip()` at both call sites (:872 and :888).",
+      "fixed_in": "2.4.39",
+      "fix_note": "v2.4.39: both call sites in do_recall_with_context route external_context content through the null/type-safe _ctx_content() helper, which returns '' for a missing key, an explicit JSON null (None), a non-string value, or a non-dict entry, so a malformed entry is skipped instead of raising None.strip() and aborting the whole call into an opaque {error}. Fix marker = the _ctx_content helper (the buggy e.get(\"content\",\"\").strip() is gone). Regression: test_followup_2_4_x.py::test_recall_with_context_skips_null_content and ::test_recall_with_context_null_content_not_in_exclude."
     },
     {
       "id": "bug-036",

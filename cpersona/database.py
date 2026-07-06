@@ -181,7 +181,21 @@ async def get_db() -> aiosqlite.Connection:
 
     await _db.executescript(SCHEMA_SQL)
 
+    # bug-026: detect whether the FTS index is being created for the first time on
+    # THIS boot (a DB originally created with CPERSONA_FTS_ENABLED=false, now
+    # re-enabled). Such a DB was stamped at the current schema with every
+    # `current < N and FTS_ENABLED` backfill step skipped, so once the tables are
+    # (re)created here they would stay empty for all pre-existing rows and the
+    # keyword retriever would silently return zero hits for historical data. The
+    # sentinel must be sampled BEFORE executescript(FTS_SQL) creates the tables.
+    # External-content FTS5 makes COUNT(*) mirror the content table even when the
+    # index is empty, so table-absence is the only reliable "needs backfill" probe.
+    fts_created_this_boot = False
     if FTS_ENABLED:
+        existing_fts = await _db.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+        )
+        fts_created_this_boot = not existing_fts
         await _db.executescript(FTS_SQL)
 
     row = await _db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
@@ -305,6 +319,21 @@ async def get_db() -> aiosqlite.Connection:
             current,
             e,
         )
+
+    # bug-026: backfill the FTS index when it was created for the first time this
+    # boot (see the sentinel above). 'rebuild' repopulates each external-content
+    # FTS5 table from its content table, so pre-existing memories/episodes become
+    # searchable by the keyword retriever again. Idempotent: only runs the boot the
+    # tables are first created; a brand-new empty DB rebuilds two empty indexes
+    # (a no-op) and the version-gated steps still own the incremental transitions.
+    # Non-fatal so an FTS rebuild hiccup never blocks startup (recall degrades to
+    # vector/keyword-less RRF, same as a disabled index).
+    if fts_created_this_boot:
+        try:
+            await _db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+            await _db.execute("INSERT INTO episodes_fts(episodes_fts) VALUES ('rebuild')")
+        except Exception as e:
+            logger.warning("FTS first-boot backfill failed (non-fatal): %s", e)
 
     # The isolation index depends on the v2.4.17 project_id column. Run it
     # after the migration so v8 boots get the index once the columns exist;

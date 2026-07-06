@@ -14,6 +14,7 @@ from cpersona import config
 from cpersona import health
 from cpersona.config import (
     MAX_MEMORIES,
+    REMOTE_SEARCH_TIMEOUT_SECS,
     VECTOR_SEARCH_MODE,
 )
 
@@ -153,6 +154,10 @@ async def _search_vector(
                     "limit": limit,
                     "min_similarity": effective_min_sim,
                 },
+                # bug-033: bound the recall hot path with a dedicated short timeout
+                # instead of inheriting the client's 30s DEFAULT_TIMEOUT_SECS. A
+                # hung/flapping endpoint now falls back to local search in seconds.
+                timeout=REMOTE_SEARCH_TIMEOUT_SECS,
             )
             resp.raise_for_status()
             data = resp.json()

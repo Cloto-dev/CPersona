@@ -49,6 +49,11 @@ TASK_MAX_RETRIES = int(os.environ.get("CPERSONA_TASK_MAX_RETRIES", "3"))
 TASK_RETRY_DELAY = int(os.environ.get("CPERSONA_TASK_RETRY_DELAY", "30"))
 
 VECTOR_SEARCH_MODE = os.environ.get("CPERSONA_VECTOR_SEARCH_MODE", "local")
+# bug-033: dedicated per-call timeout for the remote /search POST on the recall
+# hot path. Without it the POST inherits the embed client's 30s DEFAULT_TIMEOUT_SECS,
+# so a hung/flapping endpoint blocks every recall ~30s before falling back to local.
+# Short enough to fail over fast, long enough for a healthy remote search.
+REMOTE_SEARCH_TIMEOUT_SECS = float(os.environ.get("CPERSONA_REMOTE_SEARCH_TIMEOUT_SECS", "5.0"))
 STORE_BLOB = os.environ.get("CPERSONA_STORE_BLOB", "true").lower() == "true"
 
 AUTO_CALIBRATE = os.environ.get("CPERSONA_AUTO_CALIBRATE", "false").lower() == "true"

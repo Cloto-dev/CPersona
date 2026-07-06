@@ -884,6 +884,22 @@ async def do_recall(
     return result
 
 
+def _ctx_content(entry: object) -> str:
+    """Null/type-safe ``content`` extraction for external_context entries.
+
+    bug-035: the tool schema puts no type constraint on ``content``, so an entry
+    with an explicit JSON null (-> None) — or any non-string value — made the old
+    ``entry.get("content", "").strip()`` raise ``AttributeError`` (the '' default
+    only applies when the key is *absent*, not when it is present-but-null),
+    aborting the whole ``recall_with_context`` into an opaque {error}. Skip such a
+    malformed entry instead: return '' so the caller's truthiness guard drops it.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    val = entry.get("content")
+    return val.strip() if isinstance(val, str) else ""
+
+
 async def do_recall_with_context(
     agent_id: str,
     query: str,
@@ -901,7 +917,7 @@ async def do_recall_with_context(
     """
     ctx = external_context or []
 
-    exclude_list = [e["content"].strip().lower() for e in ctx if e.get("content", "").strip()]
+    exclude_list = [c.lower() for e in ctx if (c := _ctx_content(e))]
 
     recall_result = await do_recall(
         agent_id,
@@ -916,10 +932,10 @@ async def do_recall_with_context(
     messages = recall_result.get("messages", [])
 
     for entry in ctx:
-        role = entry.get("role", "")
-        content = entry.get("content", "").strip()
+        content = _ctx_content(entry)  # bug-035: null/type-safe, skips malformed entries
         if not content:
             continue
+        role = entry.get("role", "")
 
         if role == "assistant":
             source = {"type": "Agent", "id": "self"}

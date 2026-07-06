@@ -218,7 +218,13 @@ async def do_migrate_channel_axis(
                WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}""",
             (_SNOWFLAKE_SESSION_GLOB, *agent_params),
         )
-        migrated = cur.rowcount if cur.rowcount and cur.rowcount > 0 else recoverable_total
+        # UPDATE OR IGNORE's changes() counts only rows actually updated, so a full
+        # collision (every recovered row's target content already exists → all
+        # skipped) legitimately reports 0 — that is NOT a "rowcount unavailable"
+        # signal. Only fall back to the recoverable estimate when the driver gives
+        # no count at all (None / negative); a genuine 0 must be reported as 0,
+        # otherwise the full-collision case over-reports recoverable_total migrated.
+        migrated = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else recoverable_total
         if globalize_unrecoverable and unrecoverable_total:
             # bug-037: globalize ONLY genuinely-unrecoverable rows (NULL session_id
             # or a non-snowflake session_id). The earlier "whatever is still
@@ -232,7 +238,9 @@ async def do_migrate_channel_axis(
                 f"WHERE channel = 'discord' AND ({sid} IS NULL OR NOT ({sid} GLOB ?)){agent_clause}",
                 (_SNOWFLAKE_SESSION_GLOB, *agent_params),
             )
-            globalized = cur2.rowcount if cur2.rowcount and cur2.rowcount > 0 else unrecoverable_total
+            # Same rowcount semantics as `migrated` above: a real 0 (full collision)
+            # is authoritative; only None/negative means "count unavailable".
+            globalized = cur2.rowcount if cur2.rowcount is not None and cur2.rowcount >= 0 else unrecoverable_total
         await db.commit()
 
     out = {
