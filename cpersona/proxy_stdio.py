@@ -89,7 +89,13 @@ async def main():
             # line reader and leaving this request unanswered (it hangs until timeout).
             # Surface it as a proper id-keyed JSON-RPC error like the transport path and
             # keep the loop alive, instead of corrupting the stream.
-            if response.status_code >= 400:
+            # bug-082: the >= 400 guard left 3xx open. The client is built without
+            # follow_redirects, so a reverse proxy's 301/302/307/308 (http->https or
+            # trailing-slash canonicalization of /mcp) surfaced here with an HTML body
+            # and fell through to _write_stdout — the same stream corruption, from the
+            # redirect range. Only a 2xx can carry a JSON-RPC/SSE payload; reject
+            # everything else.
+            if not (200 <= response.status_code < 300):
                 _write_error(line, f"Remote returned HTTP {response.status_code}: {response.text.strip()[:200]}")
                 continue
 

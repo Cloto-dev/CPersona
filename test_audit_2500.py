@@ -164,7 +164,11 @@ async def test_prefetch_null_embeddings_populates_cache(clean_db, fake_embedding
     ep_id = cur2.lastrowid
     await db.commit()
     cache = await checks.prefetch_null_embeddings(db, "pf")
-    assert mem_id in cache["memories"] and isinstance(cache["memories"][mem_id], (bytes, bytearray))
+    # bug-077: cache values are (text, blob) so the write path can refuse to attach a
+    # blob to content that changed after prefetch.
+    assert mem_id in cache["memories"]
+    text, blob = cache["memories"][mem_id]
+    assert text == "needs embedding" and isinstance(blob, (bytes, bytearray))
     assert ep_id in cache["episodes"]
 
 

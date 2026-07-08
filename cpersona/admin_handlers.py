@@ -786,7 +786,11 @@ async def do_calibrate_threshold(
     # every agent on the shared connection. Clamp to CALIBRATE_MAX_SAMPLE before it
     # reaches the LIMIT / quadratic path (this same sample_n also bounds the
     # _temporal_adjacency_sims call below), mirroring the _clamp_limit discipline.
-    sample_n = min(sample_size or CALIBRATE_SAMPLE_SIZE, CALIBRATE_MAX_SAMPLE)
+    # bug-081: min() only bounds the UPPER side — a negative sample_size is truthy,
+    # survives the `or` default, and reaches SQLite as `LIMIT -1`, which SQLite treats
+    # as UNBOUNDED: the whole corpus flows into the O(n^2) matrix and the OOM bug-053
+    # fixed is reopened through the lower bound. Clamp both sides.
+    sample_n = max(1, min(sample_size or CALIBRATE_SAMPLE_SIZE, CALIBRATE_MAX_SAMPLE))
     z = z_factor or CALIBRATE_Z_FACTOR
     cal_method = method or CALIBRATE_METHOD
     cal_percentile = percentile or CALIBRATE_PERCENTILE
@@ -1359,7 +1363,12 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
 async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run: bool = False) -> dict:
     """Import memories, episodes, and profiles from a JSONL file."""
     # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
-    if no_persist.is_paused():
+    # bug-079: only gate the WRITE path on no-persist (the bug-048 fix, applied to the
+    # import twin). A dry_run=True preview is write-free — every INSERT/UPSERT, the
+    # commit, and the write_lock acquire below are guarded by `if not dry_run` — so
+    # short-circuiting it into a fabricated all-zero response masks what a real import
+    # would do and contradicts the "read tools unaffected" no-persist contract.
+    if no_persist.is_paused() and not dry_run:
         return no_persist.make_skipped_response(
             {
                 "ok": True,
@@ -1708,11 +1717,20 @@ async def do_merge_memories(
         for summary, keywords, start_time, end_time, resolved, ep_project_id, ep_channel, ep_embedding in rows:
             if not summary:
                 continue
+            # bug-076: scope the episode dedup probe by the γ isolation axes, exactly
+            # like the memory probes above (bug-047/057). Episodes have NO uniqueness
+            # constraint, so this pre-check is the only dedup gate — a summary-only
+            # probe skipped a legitimately distinct episode whenever the target held
+            # the same summary text under ANY other project/channel bucket, and
+            # mode='move' then deleted it with the source agent (permanent
+            # cross-project data loss). The dry_run seen_summary key carries the same
+            # axes so the preview counts match a real run.
             existing = await db.execute_fetchall(
-                "SELECT id FROM episodes WHERE agent_id = ? AND summary = ? LIMIT 1",
-                (target_agent_id, summary),
+                "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
+                " AND summary = ? LIMIT 1",
+                (target_agent_id, ep_project_id, ep_channel, summary),
             )
-            if existing or (dry_run and (target_agent_id, summary) in seen_summary):
+            if existing or (dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in seen_summary):
                 skipped_episodes += 1
                 continue
             if not dry_run:
@@ -1723,7 +1741,7 @@ async def do_merge_memories(
                     (target_agent_id, ep_project_id, ep_channel, summary, keywords, start_time, end_time, resolved, ep_embedding),
                 )
             else:
-                seen_summary.add((target_agent_id, summary))
+                seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
             merged_episodes += 1
 
         rows = await db.execute_fetchall(

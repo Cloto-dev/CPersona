@@ -300,11 +300,19 @@ async def _search_vector(
     # cosine-scores and returns episode summaries from EVERY other channel of the
     # agent — the cross-channel contamination the v2.4.22 channel axis exists to
     # prevent, on the recall hot path. ''=global still matches every scoped recall.
+    # bug-080: honor the do_recall contract the FTS drivers already implement
+    # (`not source_id or channel`): a channel filter makes episodes safe to return
+    # even when source_id is set (the session-start grounding path) because the
+    # bug-045 channel clause scopes the fetch. Dropping ALL episodes on src_like
+    # silently defeated semantic episode recall on exactly that grounding path.
+    # NOTE: the remote branch keeps the conservative all-drop gate until the
+    # remote episode fetch carries the channel predicate (deferred bug-075) —
+    # relaxing it there would open the cross-channel leak this clause prevents.
     ep_channel_clause = " AND (channel = ? OR channel = '')" if channel else ""
     ep_channel_params = (channel,) if channel else ()
     ep_rows = (
         []
-        if src_like
+        if (src_like and not channel)
         else await db.execute_fetchall(
             f"""SELECT id, summary, start_time, embedding, resolved
                FROM episodes

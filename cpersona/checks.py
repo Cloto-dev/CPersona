@@ -162,15 +162,25 @@ async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[1] for r in rows)}]
 
 
-async def check_embedding_dimension(db, agent_id: str, fix: bool) -> list[dict]:
+async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
     if not vector._embedding_client:
         return []
     clause, params = _agent_scope(agent_id)
     try:
-        test_emb = await vector._embedding_client.embed(["test"])
-        if not (test_emb and test_emb[0]):
+        # bug-083: when do_check_health pre-probed the dimension outside the write lock
+        # (embedding_cache carries it as "expected_dim"), use that instead of a live
+        # probe — this check runs INSIDE maybe_write_lock(fix), and an embed here holds
+        # the shared write lock across an HTTP round-trip bounded only by the embedding
+        # timeout, stalling every other writer (the bug-072 class). A None probe result
+        # skips the check, same as a failed live probe.
+        if embedding_cache is not None:
+            expected_dim = embedding_cache.get("expected_dim")
+        else:
+            test_emb = await vector._embedding_client.embed(["test"])
+            expected_dim = len(test_emb[0]) if test_emb and test_emb[0] else None
+        if not expected_dim:
             return []
-        expected_bytes = len(test_emb[0]) * 4
+        expected_bytes = expected_dim * 4
         mismatched_mem = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
@@ -208,7 +218,7 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool) -> list[dict]:
                 "count": mismatched,
                 "memories": mismatched_mem,
                 "episodes": mismatched_ep,
-                "expected_dim": len(test_emb[0]),
+                "expected_dim": expected_dim,
             }
         ]
     except Exception as e:
@@ -224,14 +234,32 @@ def _null_embedding_severity(null_count: int, total: int) -> str:
     return "warn"
 
 
+async def probe_embedding_dim() -> int | None:
+    """One live probe embed, meant to run OUTSIDE the write lock (bug-083).
+    do_check_health(fix=True) calls this in the unlocked prefetch phase and passes the
+    result through embedding_cache["expected_dim"], so check_embedding_dimension no
+    longer holds the shared write lock across an embedding HTTP round-trip. None means
+    the probe failed (or no client) — the dimension check then skips, same as a failed
+    live probe."""
+    if not vector._embedding_client:
+        return None
+    try:
+        emb = await vector._embedding_client.embed(["test"])
+        return len(emb[0]) if emb and emb[0] else None
+    except Exception:
+        return None
+
+
 async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     """Pre-compute embeddings for NULL-embedding memory/episode rows OUTSIDE any write
     lock (bug-072). do_check_health calls this before taking the shared write lock so the
     ~1000 sequential embedding HTTP calls (up to 500 memories + 500 episodes, each bounded
     only by the embedding timeout) do not stall every other writer — do_store, the queue
     drain, import/merge — for the whole re-embed duration. Returns
-    {"memories": {id: blob}, "episodes": {id: blob}}; empty when there is no embedding
-    client (the fix loop then no-ops just as before)."""
+    {"memories": {id: (text, blob)}, "episodes": {id: (text, blob)}}; the text the blob
+    was computed from rides along so the write path can refuse to attach it to changed
+    content (bug-077). Empty when there is no embedding client (the fix loop then no-ops
+    just as before)."""
     out: dict = {"memories": {}, "episodes": {}}
     if not vector._embedding_client:
         return out
@@ -244,18 +272,46 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
             try:
                 emb = await vector._embedding_client.embed([text])
                 if emb and emb[0]:
-                    out[table][row_id] = vector._embedding_client.pack_embedding(emb[0])
+                    out[table][row_id] = (text, vector._embedding_client.pack_embedding(emb[0]))
             except Exception:
                 pass
     return out
 
 
+async def apply_embedding_cache(db, embedding_cache) -> int:
+    """Write pre-computed embeddings onto rows that are STILL NULL and whose text is
+    unchanged since prefetch. Meant to run under the write lock but does no network I/O.
+    The `AND {text_col} = ?` predicate is the bug-077 guard: prefetch ran unlocked, so a
+    raced writer (do_update_memory on embed failure) or a sibling fixer in the same run
+    (memory_annotation / discord_mention / oversized_content rewrite content and NULL the
+    embedding) may have changed the text after the blob was computed — attaching the old
+    text's vector to the new text would silently desync content and embedding (the
+    bug-028 coherence class). A mismatch simply leaves the row NULL for the next
+    unlocked pass. Returns the number of rows updated."""
+    applied = 0
+    for table, text_col in (("memories", "content"), ("episodes", "summary")):
+        for row_id, (text, blob) in (embedding_cache or {}).get(table, {}).items():
+            cur = await db.execute(
+                f"UPDATE {table} SET embedding = ? WHERE id = ? AND embedding IS NULL AND {text_col} = ?",
+                (blob, row_id, text),
+            )
+            if getattr(cur, "rowcount", 0) == 1:
+                applied += 1
+    return applied
+
+
 async def _reembed_null_rows(db, table: str, text_col: str, clause: str, params, embedding_cache) -> int:
     """Fill NULL embeddings for one table, preferring a pre-computed blob from
     embedding_cache (bug-072) so the HTTP round-trips happened outside the write lock.
-    A cache miss (a row inserted after prefetch) falls back to a live embed; an
-    embedding_cache of None (CLI / deep_check / tests) is the all-live path, byte-identical
-    to the pre-bug-072 behaviour."""
+
+    bug-077: a cache hit is applied with `AND {text_col} = ?` so a blob computed from
+    stale text (the row's content changed between the unlocked prefetch and this locked
+    write) is never attached to the new content.
+    bug-083: when a cache dict is present (the locked do_check_health path) a cache miss
+    does NOT fall back to a live embed — that would hold the shared write lock across an
+    HTTP round-trip, the exact stall bug-072 removed. The row stays NULL and is repaired
+    by do_check_health's second unlocked pass. An embedding_cache of None (direct calls /
+    tests, no lock held) keeps the live path."""
     cache = (embedding_cache or {}).get(table, {})
     rows = await db.execute_fetchall(
         f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL {clause} LIMIT 500", params
@@ -263,13 +319,23 @@ async def _reembed_null_rows(db, table: str, text_col: str, clause: str, params,
     re_embedded = 0
     for row_id, text in rows:
         try:
-            blob = cache.get(row_id)
-            if blob is None:
+            cached = cache.get(row_id)
+            if cached is not None:
+                cached_text, blob = cached
+                if cached_text != text:
+                    continue  # bug-077: stale prefetch — leave NULL for the next pass
+            elif embedding_cache is not None:
+                continue  # bug-083: no live embeds while the write lock is held
+            else:
                 emb = await vector._embedding_client.embed([text])
                 blob = vector._embedding_client.pack_embedding(emb[0]) if emb and emb[0] else None
             if blob is not None:
-                await db.execute(f"UPDATE {table} SET embedding = ? WHERE id = ?", (blob, row_id))
-                re_embedded += 1
+                cur = await db.execute(
+                    f"UPDATE {table} SET embedding = ? WHERE id = ? AND embedding IS NULL AND {text_col} = ?",
+                    (blob, row_id, text),
+                )
+                if getattr(cur, "rowcount", 0) == 1:
+                    re_embedded += 1
         except Exception:
             pass
     return re_embedded
@@ -865,7 +931,9 @@ HEALTH_CHECKS: list[Check] = [
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]
 
 
-_EMBEDDING_CHECKS = {"null_embedding", "null_episode_embedding"}
+# bug-083: embedding_dimension is cache-aware too — it consumes the pre-probed
+# "expected_dim" instead of live-embedding under the write lock.
+_EMBEDDING_CHECKS = {"null_embedding", "null_episode_embedding", "embedding_dimension"}
 
 
 async def run_health_checks(

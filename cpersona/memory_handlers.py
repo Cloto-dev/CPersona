@@ -755,7 +755,12 @@ async def _apply_recall_scoring(
             ts = r.get("timestamp", "")
             raw_cos = r.get("_cosine")
             is_resolved = r.get("_resolved", False)
-            rc_data = recall_counts.get(r.get("id", -1), (0, ""))
+            # bug-084: episode rows must not key into recall_counts — episodes and
+            # memories AUTOINCREMENT independently, so episode #N would inherit the
+            # unrelated memory #N's (recall_count, last_recalled_at) and get a spurious
+            # confidence boost. bug-041 excluded episodes from the dict's CONSTRUCTION;
+            # this closes the lookup side of the same invariant.
+            rc_data = (0, "") if _is_episode_result(r) else recall_counts.get(r.get("id", -1), (0, ""))
             r["_confidence_score"] = _compute_confidence(
                 raw_cos,
                 ts,
@@ -875,7 +880,8 @@ async def do_recall(
             raw_cosine = r.get("_cosine")
             ts = r.get("timestamp", "")
             is_resolved = r.get("_resolved", False)
-            rc_data = recall_counts.get(r.get("id", -1), (0, ""))
+            # bug-084: same episode guard as the ranking loop — see _apply_recall_scoring.
+            rc_data = (0, "") if _is_episode_result(r) else recall_counts.get(r.get("id", -1), (0, ""))
             msg["confidence"] = _compute_confidence(
                 raw_cosine,
                 ts,

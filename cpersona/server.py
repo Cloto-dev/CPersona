@@ -775,7 +775,12 @@ registry.auto_tool(
         ("mode", str, "copy"),
         ("dry_run", bool, False),
     ],
-    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+    # bug-078: annotations must reflect the WORST reachable behavior. mode='move'
+    # ends with do_delete_agent_data(source) — the same irreversible whole-agent wipe
+    # the delete_agent_data tool declares destructiveHint=True for. Advertising
+    # destructiveHint=False let that wipe bypass any host-side HITL approval gate
+    # keyed on the hint (the bug-054 annotation-truthfulness class).
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
 registry.auto_tool(

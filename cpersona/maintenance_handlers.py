@@ -12,6 +12,7 @@ import logging
 from cpersona._vendored_mcp_common import no_persist
 
 from cpersona import checks as checks_registry
+from cpersona import vector
 from cpersona.database import get_db, maybe_write_lock, write_lock
 
 logger = logging.getLogger(__name__)
@@ -36,9 +37,13 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
     # lock across them (as the plain maybe_write_lock wrap did) stalled every other writer
     # — do_store, the queue drain, import/merge — for the entire re-embed. The lock now
     # covers only the DB writes+commit; the network I/O happens here, unlocked.
+    # bug-083: the dimension probe embed rides in the same unlocked phase (as
+    # embedding_cache["expected_dim"]) so check_embedding_dimension no longer embeds
+    # under the lock either.
     embedding_cache = None
     if fix:
         embedding_cache = await checks_registry.prefetch_null_embeddings(db, agent_id)
+        embedding_cache["expected_dim"] = await checks_registry.probe_embedding_dim()
 
     # bug-042/043: serialise the fix writes + commit behind the shared lock so a
     # concurrent import/merge cannot flush check_health's partial repairs (and vice
@@ -49,6 +54,20 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
         )
         if fix:
             await db.commit()
+
+    # bug-083 second pass: rows NULLed DURING the locked run (embedding_dimension NULLs
+    # mismatched blobs; memory_annotation / discord_mention / oversized_content rewrite
+    # content and NULL the embedding) are absent from the round-1 prefetch, and the
+    # locked re-embed deliberately no longer live-embeds on a cache miss. Repair them
+    # here: embed the CURRENT (post-rewrite) text outside the lock, then write under a
+    # short lock with the text revalidated inside the UPDATE itself (bug-077), so a
+    # single fix run still converges without ever holding the lock across HTTP.
+    if fix and vector._embedding_client:
+        second_pass = await checks_registry.prefetch_null_embeddings(db, agent_id)
+        if second_pass["memories"] or second_pass["episodes"]:
+            async with write_lock():
+                await checks_registry.apply_embedding_cache(db, second_pass)
+                await db.commit()
 
     # bug-059: after a fix run, re-derive healthy/severity_summary from the RESIDUAL
     # state (read-only, post-commit) rather than from the issues that were FOUND.

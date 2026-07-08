@@ -295,6 +295,156 @@ def test_agent_scoped_dml_carries_agent_id():
 
 
 # --------------------------------------------------------------------------------------
+# Gate 3 (dynamic): check_health(fix=True) must never perform embedding network I/O
+# while holding the shared write lock (bug-072/083 class).
+# --------------------------------------------------------------------------------------
+
+# The round-3 audit found that the bug-072 fix (prefetch outside the lock) left three
+# in-lock embed paths open: the dimension-probe embed, the reembed live-fallback on a
+# cache miss, and rows NULLed DURING the locked run (dimension mismatch / content
+# rewrites) that prefetch could not have covered. A static gate cannot see this class —
+# the embed call sites live in helpers reached through the check registry — so this gate
+# is BEHAVIOURAL: it drives the real do_check_health(fix=True) through a DB state that
+# exercises every embed path, with a client that records whether the lock was held at
+# embed time.
+
+
+import pytest  # noqa: E402  (kept close to the dynamic gate that needs it)
+
+
+@pytest.mark.asyncio
+async def test_check_health_never_embeds_under_write_lock():
+    from conftest import FakeEmbeddingClient, fake_embed_one
+    from cpersona import database, maintenance_handlers, vector
+    from cpersona._vendored_mcp_common import no_persist
+    from cpersona.database import get_db
+
+    no_persist.resume()
+    db = await get_db()
+    for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
+        await db.execute(f"DELETE FROM {table}")
+
+    embeds_under_lock: list[str] = []
+
+    class LockAwareClient(FakeEmbeddingClient):
+        async def embed(self, texts):
+            if database._write_lock.locked():
+                embeds_under_lock.extend(texts)
+            return [fake_embed_one(t) for t in texts]
+
+    old_client = vector._embedding_client
+    vector._embedding_client = LockAwareClient()
+    try:
+        # (a) a pre-existing NULL row — the round-1 prefetch path.
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp) VALUES ('gate', 'plain null row', '')"
+        )
+        # (b) a dimension-mismatched blob — NULLed by check_embedding_dimension DURING
+        # the locked run; absent from prefetch by construction.
+        import struct
+
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp, embedding) VALUES ('gate', 'wrong dim row', '', ?)",
+            (struct.pack("<4f", 1.0, 2.0, 3.0, 4.0),),
+        )
+        # (c) an annotation row — content rewritten + embedding NULLed by a sibling
+        # fixer DURING the locked run (the bug-077 stale-cache scenario).
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp) VALUES ('gate', '[Memory from X] gate hello', '')"
+        )
+        # (d) a NULL-embedding episode — the episode arm of the same paths.
+        await db.execute("INSERT INTO episodes (agent_id, summary) VALUES ('gate', 'gate episode')")
+        await db.commit()
+
+        await maintenance_handlers.do_check_health(agent_id="gate", fix=True)
+
+        assert not embeds_under_lock, (
+            "embedding network I/O while the shared write lock was held (bug-072/083 "
+            f"class — this stalls every writer for the round-trip): {embeds_under_lock}"
+        )
+        # Convergence: one fix run repairs every row (the unlocked second pass) with a
+        # vector coherent with the FINAL content (the bug-077 content revalidation).
+        rows = await db.execute_fetchall(
+            "SELECT content, embedding FROM memories WHERE agent_id = 'gate'"
+        )
+        for content, blob in rows:
+            assert blob is not None, f"row {content!r} left unrepaired after one fix run"
+            assert bytes(blob) == FakeEmbeddingClient.pack_embedding(fake_embed_one(content)), (
+                f"row {content!r} carries a vector that does not match its final content"
+            )
+        ep = await db.execute_fetchall("SELECT embedding FROM episodes WHERE agent_id = 'gate'")
+        assert ep[0][0] is not None
+    finally:
+        vector._embedding_client = old_client
+
+
+# --------------------------------------------------------------------------------------
+# Gate 4 (static): identity/dedup probes carry the γ isolation axes (bug-076 class).
+# --------------------------------------------------------------------------------------
+
+# Row identity on the agent-scoped tables is defined by the composite UNIQUE indexes
+# (idx_memories_dedup_content = (agent_id, project_id, channel, content);
+# idx_memories_dedup_msg_id = (agent_id, project_id, msg_id)) and, for episodes (which
+# have no uniqueness constraint), by the same convention. A dedup pre-check that matches
+# an identity column but omits the axes collapses distinct γ-bucketed rows into one —
+# the bug-044/047/057 class on memories, and bug-076 (episode summary probe) where the
+# omission became silent permanent data loss under merge mode='move'. Gate 2 cannot
+# catch this (agent_id was present); this gate checks the axes.
+_IDENTITY_AXES = [
+    # (identity predicate in the WHERE clause, axes that must ride along)
+    (r"\bCONTENT\s*=\s*\?", ("PROJECT_ID", "CHANNEL")),
+    (r"\bSUMMARY\s*=\s*\?", ("PROJECT_ID", "CHANNEL")),
+    (r"\bMSG_ID\s*=\s*\?", ("PROJECT_ID",)),
+]
+
+
+def _identity_probe_violations(tree, lines=None):
+    """Return 'lineno:detail' strings for identity probes missing their γ axes."""
+    import re
+
+    out = []
+    for lineno, sql, _node in _sql_string_constants(tree):
+        up = sql.upper()
+        if re.search(r"\b(CREATE|DROP|ALTER|PRAGMA|REINDEX)\b", up):
+            continue
+        if not _dml_targets_agent_scoped(up):
+            continue
+        # Only the predicate side defines identity — `SET content = ?` is a write,
+        # not a probe.
+        where = up.split(" WHERE ", 1)[1] if " WHERE " in up else ""
+        if not where:
+            continue
+        for predicate, axes in _IDENTITY_AXES:
+            if re.search(predicate, where):
+                missing = [a for a in axes if a not in where]
+                if missing:
+                    out.append(f"{lineno}  identity probe missing {missing}")
+    return out
+
+
+def test_identity_probes_carry_isolation_axes():
+    """Any WHERE-side content=?/summary=?/msg_id=? probe against an agent-scoped table
+    must carry the γ axes that define row identity (project_id, and channel for the
+    content/summary probes), unless inline-waived. Guards the bug-044/047/057/076 class."""
+    violations = []
+    for path in _iter_module_files():
+        if path.name == "database.py":
+            continue
+        lines = _source_lines(path)
+        tree = ast.parse("\n".join(lines), filename=str(path))
+        for hit in _identity_probe_violations(tree):
+            lineno = int(hit.split()[0])
+            if _has_inline_waiver(lines, lineno, "isolation-waiver"):
+                continue
+            violations.append(f"{path.name}:{hit}")
+    assert not violations, (
+        "Identity/dedup probe missing its γ isolation axes (bug-044/047/057/076 class) — "
+        "match the composite UNIQUE-index identity, or add `# isolation-waiver: <reason>` "
+        "for a deliberate cross-bucket probe:\n  " + "\n  ".join(violations)
+    )
+
+
+# --------------------------------------------------------------------------------------
 # Teeth tests: prove the analysers actually catch violations. A static gate that silently
 # stops matching (e.g. the case-mismatch bug where an upper-cased table pattern never hit
 # an upper-cased SQL string) is worse than no gate — it reports false confidence. These
@@ -337,3 +487,24 @@ def test_isolation_gate_has_teeth():
         if _dml_targets_agent_scoped(sql.upper()) and "AGENT_ID" not in sql.upper()
     ]
     assert not hits, "isolation gate false-positived an agent_id-scoped query"
+
+
+def test_identity_probe_gate_has_teeth():
+    # The literal pre-fix bug-076 probe: agent-scoped but γ-blind — must flag.
+    bad = ast.parse('q = "SELECT id FROM episodes WHERE agent_id = ? AND summary = ? LIMIT 1"')
+    assert _identity_probe_violations(bad), (
+        "identity-probe gate failed to flag the pre-fix bug-076 episode dedup probe"
+    )
+    # The fixed probe carries both axes — must not flag.
+    good = ast.parse(
+        'q = "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?'
+        ' AND summary = ? LIMIT 1"'
+    )
+    assert not _identity_probe_violations(good), (
+        "identity-probe gate false-positived the γ-scoped episode dedup probe"
+    )
+    # A SET-side content=? (a write, not a probe) must not flag.
+    setter = ast.parse('q = "UPDATE memories SET content = ? WHERE id = ? AND agent_id = ?"')
+    assert not _identity_probe_violations(setter), (
+        "identity-probe gate false-positived a SET-side content assignment"
+    )
