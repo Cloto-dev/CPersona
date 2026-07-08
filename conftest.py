@@ -64,6 +64,15 @@ class FakeEmbeddingClient:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         return [fake_embed_one(t) for t in texts]
 
+    @staticmethod
+    def pack_embedding(embedding: list[float]) -> bytes:
+        """Little-endian float32 packing, byte-identical to the real client, so the
+        null-embedding repair / calibration paths (which call
+        ``_embedding_client.pack_embedding``) can be exercised offline."""
+        import struct
+
+        return struct.pack(f"<{len(embedding)}f", *embedding)
+
 
 @pytest.fixture
 def fake_embedding_client(monkeypatch):

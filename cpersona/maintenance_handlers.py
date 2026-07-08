@@ -12,7 +12,7 @@ import logging
 from cpersona._vendored_mcp_common import no_persist
 
 from cpersona import checks as checks_registry
-from cpersona.database import get_db
+from cpersona.database import get_db, maybe_write_lock, write_lock
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,36 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
         fix = False
     db = await get_db()
 
-    issues, severity_summary = await checks_registry.run_health_checks(
-        db, agent_id=agent_id, fix=fix, checks=checks
-    )
+    # bug-072: pre-compute the null-embedding re-embeddings OUTSIDE the write lock. Those
+    # two checks do up to ~1000 sequential embedding HTTP calls; holding the shared write
+    # lock across them (as the plain maybe_write_lock wrap did) stalled every other writer
+    # — do_store, the queue drain, import/merge — for the entire re-embed. The lock now
+    # covers only the DB writes+commit; the network I/O happens here, unlocked.
+    embedding_cache = None
     if fix:
-        await db.commit()
+        embedding_cache = await checks_registry.prefetch_null_embeddings(db, agent_id)
+
+    # bug-042/043: serialise the fix writes + commit behind the shared lock so a
+    # concurrent import/merge cannot flush check_health's partial repairs (and vice
+    # versa). The read-only (fix=False) path takes no lock.
+    async with maybe_write_lock(fix):
+        issues, severity_summary = await checks_registry.run_health_checks(
+            db, agent_id=agent_id, fix=fix, checks=checks, embedding_cache=embedding_cache
+        )
+        if fix:
+            await db.commit()
+
+    # bug-059: after a fix run, re-derive healthy/severity_summary from the RESIDUAL
+    # state (read-only, post-commit) rather than from the issues that were FOUND.
+    # Runners are inconsistent about stamping issue['fixed'] (schema_object_drift
+    # does, stale_pending_tasks deletes without a marker), so filtering on 'fixed'
+    # is unreliable; a fix=False re-run reports true residual uniformly, so a clean
+    # auto-repair is no longer reported healthy=False (and the checkup CLI no longer
+    # exits nonzero after a successful fix).
+    if fix:
+        issues, severity_summary = await checks_registry.run_health_checks(
+            db, agent_id=agent_id, fix=False, checks=checks
+        )
 
     agent_clause = "AND agent_id = ?" if agent_id else ""
     agent_params = (agent_id,) if agent_id else ()
@@ -52,16 +77,33 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
     except Exception:
         db_size_bytes = 0
 
+    # bug-058: scope episodes / profiles / pending_tasks to the requested agent
+    # when agent_id is set, so every count under an unprefixed stats key is
+    # consistent with `memories` (which is agent-scoped via `total`). Before this,
+    # check_health(agent_id='A') returned agent-scoped memories but corpus-wide
+    # episodes/profiles, so a dashboard reading stats.episodes saw every agent's
+    # episodes. Empty agent_id keeps the corpus-wide totals.
     stats = {
         "db_size_bytes": db_size_bytes,
         "memories": total,
-        "episodes": (await db.execute_fetchall("SELECT COUNT(*) FROM episodes"))[0][0],
-        "profiles": (await db.execute_fetchall("SELECT COUNT(*) FROM profiles"))[0][0],
+        "episodes": (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM episodes WHERE 1=1 {agent_clause}", agent_params
+            )
+        )[0][0],
+        "profiles": (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM profiles WHERE 1=1 {agent_clause}", agent_params
+            )
+        )[0][0],
         "pending_tasks": (
-            await db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks")
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM pending_memory_tasks WHERE 1=1 {agent_clause}", agent_params
+            )
         )[0][0],
         # Axis distributions are observations, not issues (rare != wrong).
-        "axes": await checks_registry.axis_distribution(db),
+        # bug-062: pass agent_id so a per-agent run does not leak other agents' buckets.
+        "axes": await checks_registry.axis_distribution(db, agent_id),
     }
     if agent_id:
         stats["agent_memories"] = total
@@ -94,18 +136,21 @@ async def do_deep_check(agent_id: str, fix: bool = False, checks: list | None = 
     selected = checks if checks else checks_registry.DEEP_CHECK_NAMES
     results: dict[str, dict] = {}
 
-    for name in selected:
-        runner = checks_registry.DEEP_CHECKS.get(name)
-        if runner is None:
-            continue  # unknown names are silently skipped (pre-registry behaviour)
-        try:
-            results[name] = await runner(db, agent_id, fix)
-        except Exception as e:
-            logger.warning("deep check %s crashed: %s", name, e)
-            results[name] = {"error": str(e)}
+    # bug-042/043: serialise the deep-check fix writes + commit behind the shared
+    # lock so a concurrent import/merge cannot flush this run's partial repairs.
+    async with maybe_write_lock(fix):
+        for name in selected:
+            runner = checks_registry.DEEP_CHECKS.get(name)
+            if runner is None:
+                continue  # unknown names are silently skipped (pre-registry behaviour)
+            try:
+                results[name] = await runner(db, agent_id, fix)
+            except Exception as e:
+                logger.warning("deep check %s crashed: %s", name, e)
+                results[name] = {"error": str(e)}
 
-    if fix:
-        await db.commit()
+        if fix:
+            await db.commit()
 
     out = {
         "agent_id": agent_id,
@@ -205,43 +250,55 @@ async def do_migrate_channel_axis(
     migrated = 0
     globalized = 0
     if not effective_dry_run:
-        # bug-021: OR IGNORE — a recovered (agent_id, project_id, channel, content)
-        # can collide with an existing row on the v12 idx_memories_dedup_content
-        # UNIQUE index. A bare UPDATE would ABORT+rollback the whole statement
-        # (migrated=0), and because the collision is data-deterministic every
-        # re-run re-collides, so the migration could never complete. OR IGNORE
-        # skips the colliding row (its target content already exists) and lets the
-        # rest migrate; the docstring's idempotency claim is only true with it.
-        cur = await db.execute(
-            f"""UPDATE OR IGNORE memories
-               SET channel = {recovered_expr}
-               WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}""",
-            (_SNOWFLAKE_SESSION_GLOB, *agent_params),
-        )
-        # UPDATE OR IGNORE's changes() counts only rows actually updated, so a full
-        # collision (every recovered row's target content already exists → all
-        # skipped) legitimately reports 0 — that is NOT a "rowcount unavailable"
-        # signal. Only fall back to the recoverable estimate when the driver gives
-        # no count at all (None / negative); a genuine 0 must be reported as 0,
-        # otherwise the full-collision case over-reports recoverable_total migrated.
-        migrated = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else recoverable_total
-        if globalize_unrecoverable and unrecoverable_total:
-            # bug-037: globalize ONLY genuinely-unrecoverable rows (NULL session_id
-            # or a non-snowflake session_id). The earlier "whatever is still
-            # 'discord' is the unrecoverable bucket" assumption breaks across the
-            # await boundary: a do_store landing a fresh snowflake 'discord' row in
-            # the window would be swept to channel='' (a silent scope-broadening
-            # leak). Excluding snowflake rows leaves such a row on 'discord' for the
-            # next migration pass instead. (OR IGNORE for symmetry with the above.)
-            cur2 = await db.execute(
-                f"UPDATE OR IGNORE memories SET channel = '' "
-                f"WHERE channel = 'discord' AND ({sid} IS NULL OR NOT ({sid} GLOB ?)){agent_clause}",
+        # bug-042/043: serialise the whole migrate transaction behind the shared
+        # lock so its commit cannot flush a concurrent import/merge's partial rows.
+        async with write_lock():
+          try:
+            # bug-021: OR IGNORE — a recovered (agent_id, project_id, channel, content)
+            # can collide with an existing row on the v12 idx_memories_dedup_content
+            # UNIQUE index. A bare UPDATE would ABORT+rollback the whole statement
+            # (migrated=0), and because the collision is data-deterministic every
+            # re-run re-collides, so the migration could never complete. OR IGNORE
+            # skips the colliding row (its target content already exists) and lets the
+            # rest migrate; the docstring's idempotency claim is only true with it.
+            cur = await db.execute(
+                f"""UPDATE OR IGNORE memories
+                   SET channel = {recovered_expr}
+                   WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}""",
                 (_SNOWFLAKE_SESSION_GLOB, *agent_params),
             )
-            # Same rowcount semantics as `migrated` above: a real 0 (full collision)
-            # is authoritative; only None/negative means "count unavailable".
-            globalized = cur2.rowcount if cur2.rowcount is not None and cur2.rowcount >= 0 else unrecoverable_total
-        await db.commit()
+            # UPDATE OR IGNORE's changes() counts only rows actually updated, so a full
+            # collision (every recovered row's target content already exists → all
+            # skipped) legitimately reports 0 — that is NOT a "rowcount unavailable"
+            # signal. Only fall back to the recoverable estimate when the driver gives
+            # no count at all (None / negative); a genuine 0 must be reported as 0,
+            # otherwise the full-collision case over-reports recoverable_total migrated.
+            migrated = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else recoverable_total
+            if globalize_unrecoverable and unrecoverable_total:
+                # bug-037: globalize ONLY genuinely-unrecoverable rows (NULL session_id
+                # or a non-snowflake session_id). The earlier "whatever is still
+                # 'discord' is the unrecoverable bucket" assumption breaks across the
+                # await boundary: a do_store landing a fresh snowflake 'discord' row in
+                # the window would be swept to channel='' (a silent scope-broadening
+                # leak). Excluding snowflake rows leaves such a row on 'discord' for the
+                # next migration pass instead. (OR IGNORE for symmetry with the above.)
+                cur2 = await db.execute(
+                    f"UPDATE OR IGNORE memories SET channel = '' "
+                    f"WHERE channel = 'discord' AND ({sid} IS NULL OR NOT ({sid} GLOB ?)){agent_clause}",
+                    (_SNOWFLAKE_SESSION_GLOB, *agent_params),
+                )
+                # Same rowcount semantics as `migrated` above: a real 0 (full collision)
+                # is authoritative; only None/negative means "count unavailable".
+                globalized = cur2.rowcount if cur2.rowcount is not None and cur2.rowcount >= 0 else unrecoverable_total
+            await db.commit()
+          except Exception:
+            # bug-068: roll back a partial migrate so a later committer on the shared
+            # connection cannot flush its half-written rows (the bug-042/043 class that
+            # import/merge already guard with explicit rollback; migrate was missing it).
+            # If the globalize UPDATE or the commit raises after the first UPDATE modified
+            # rows, those pending changes must not survive as another writer's commit.
+            await db.rollback()
+            raise
 
     out = {
         "agent_id": agent_id,

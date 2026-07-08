@@ -295,16 +295,23 @@ async def _search_vector(
                     )
 
     # Episodes lack per-user source tagging — skip when source_id is set.
+    # bug-045: gate episodes by the channel axis exactly like the memory branch
+    # above (and like _search_episodes_fts). Without this a channel-scoped recall
+    # cosine-scores and returns episode summaries from EVERY other channel of the
+    # agent — the cross-channel contamination the v2.4.22 channel axis exists to
+    # prevent, on the recall hot path. ''=global still matches every scoped recall.
+    ep_channel_clause = " AND (channel = ? OR channel = '')" if channel else ""
+    ep_channel_params = (channel,) if channel else ()
     ep_rows = (
         []
         if src_like
         else await db.execute_fetchall(
             f"""SELECT id, summary, start_time, embedding, resolved
                FROM episodes
-               WHERE agent_id = ? AND embedding IS NOT NULL{proj_extra}
+               WHERE agent_id = ?{ep_channel_clause} AND embedding IS NOT NULL{proj_extra}
                ORDER BY created_at DESC
                LIMIT ?""",
-            (agent_id, *proj_params, scan_limit),
+            (agent_id, *ep_channel_params, *proj_params, scan_limit),
         )
     )
 
