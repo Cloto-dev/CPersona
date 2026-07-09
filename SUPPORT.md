@@ -4,6 +4,11 @@ This document defines the release lifecycle and support policy for cpersona.
 It is written to be line-agnostic: the same rules apply to every release line
 (2.4.x, 2.5.x, ...), so the policy survives line transitions unchanged.
 
+This policy is the operative instance of the
+[Release Lifecycle Standard](docs/RELEASE_LIFECYCLE_STANDARD.md), which is
+piloted in this repository as its reference implementation and quality
+baseline before wider Cloto-family adoption.
+
 ## Release tiers
 
 Every release line is in exactly one tier at any time. The tier attaches to
