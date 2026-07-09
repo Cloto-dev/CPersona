@@ -313,6 +313,10 @@ async def test_episode_confidence_ignores_colliding_memory_recall_count(clean_db
         recall_count=50, last_recalled_at_str=recall_counts[mem_id][1],
     )["score"]
     # Pre-fix the episode inherited the memory's (50, recent) pair and scored equal to it.
+    # These two pins are the complete bug-084 contract: the episode is scored with
+    # (0, "") and the memory with its own (50, ts). No ordering assertion between the
+    # two — the direction depends on the recent-recall penalty window (last_recalled_at
+    # = now can penalize the memory below the episode), which is timezone/clock
+    # sensitive and not part of the fix.
     assert episode["_confidence_score"] == pytest.approx(expected_episode)
     assert memory["_confidence_score"] == pytest.approx(expected_memory)
-    assert episode["_confidence_score"] < memory["_confidence_score"]
