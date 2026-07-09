@@ -42,7 +42,7 @@ from cpersona.config import (
     VECTOR_SEARCH_MODE,
 )
 from cpersona import config # for runtime-mutable VECTOR_MIN_SIMILARITY access
-from cpersona.database import get_db
+from cpersona.database import get_db, write_lock
 from cpersona.utils import (
     _clamp_limit,
     _compute_confidence,
@@ -113,12 +113,17 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     # OR IGNORE lets the v12 UNIQUE dedup indexes absorb a concurrent writer
     # that slipped in between the SELECT-based dedup probes above and this
     # INSERT (bug-010 TOCTOU); rowcount 0 means the row already exists.
-    cursor = await db.execute(
-        """INSERT OR IGNORE INTO memories (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, channel)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, channel),
-    )
-    await db.commit()
+    # bug-042/043: serialise INSERT+commit behind the shared write lock so this
+    # commit cannot flush a concurrent import/merge's partial transaction (and
+    # vice versa). The remote-index push below stays outside the lock (network I/O,
+    # not a DB commit).
+    async with write_lock():
+        cursor = await db.execute(
+            """INSERT OR IGNORE INTO memories (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, channel)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, channel),
+        )
+        await db.commit()
     if cursor.rowcount == 0:
         return {"ok": True, "skipped": True, "reason": "duplicate (unique index)"}
     # lastrowid comes from this cursor's INSERT, so a store interleaved on the
@@ -664,6 +669,24 @@ async def _get_episode_boundary_ts(db: aiosqlite.Connection, agent_id: str) -> d
     return _parse_timestamp_utc(rows[0][0])
 
 
+def _is_episode_result(r: dict) -> bool:
+    """True if a fused recall row is an episode (not a memory).
+
+    bug-040/041: memories and episodes share one AUTOINCREMENT id space, so an
+    episode id must never key into a ``memories`` query — otherwise recalling
+    episode #3 reads/bumps the recall_count of the unrelated memory #3. Episode
+    rows come from both the vector path (``_rid=('ep', id)``) and the FTS path
+    (``_bm25``, no ``_rid``), but both tag ``source={'System':'episode'}`` and
+    prefix ``content`` with ``'[Episode] '``; a memory's source is a JSON string
+    (never a dict), so the dict-source check cannot false-positive on a memory.
+    """
+    src = r.get("source")
+    if isinstance(src, dict) and src.get("System") == "episode":
+        return True
+    content = r.get("content")
+    return isinstance(content, str) and content.startswith("[Episode] ")
+
+
 async def _apply_recall_scoring(
     db, agent_id: str, results: list[dict], deep: bool
 ) -> tuple[list[dict], float, dict]:
@@ -696,7 +719,14 @@ async def _apply_recall_scoring(
             if oldest and newest:
                 time_range_hours = max(0.0, (newest - oldest).total_seconds() / 3600)
 
-        mem_ids = [r["id"] for r in results if isinstance(r.get("id"), int) and r["id"] > 0]
+        # bug-041: exclude episode rows — their id collides with a memory id and
+        # would otherwise pull that unrelated memory's recall_count/last_recalled_at
+        # into the episode's confidence score.
+        mem_ids = [
+            r["id"]
+            for r in results
+            if isinstance(r.get("id"), int) and r["id"] > 0 and not _is_episode_result(r)
+        ]
         if mem_ids:
             placeholders = ",".join("?" * len(mem_ids))
             rc_rows = await db.execute_fetchall(
@@ -725,7 +755,12 @@ async def _apply_recall_scoring(
             ts = r.get("timestamp", "")
             raw_cos = r.get("_cosine")
             is_resolved = r.get("_resolved", False)
-            rc_data = recall_counts.get(r.get("id", -1), (0, ""))
+            # bug-084: episode rows must not key into recall_counts — episodes and
+            # memories AUTOINCREMENT independently, so episode #N would inherit the
+            # unrelated memory #N's (recall_count, last_recalled_at) and get a spurious
+            # confidence boost. bug-041 excluded episodes from the dict's CONSTRUCTION;
+            # this closes the lookup side of the same invariant.
+            rc_data = (0, "") if _is_episode_result(r) else recall_counts.get(r.get("id", -1), (0, ""))
             r["_confidence_score"] = _compute_confidence(
                 raw_cos,
                 ts,
@@ -845,7 +880,8 @@ async def do_recall(
             raw_cosine = r.get("_cosine")
             ts = r.get("timestamp", "")
             is_resolved = r.get("_resolved", False)
-            rc_data = recall_counts.get(r.get("id", -1), (0, ""))
+            # bug-084: same episode guard as the ranking loop — see _apply_recall_scoring.
+            rc_data = (0, "") if _is_episode_result(r) else recall_counts.get(r.get("id", -1), (0, ""))
             msg["confidence"] = _compute_confidence(
                 raw_cosine,
                 ts,
@@ -868,20 +904,53 @@ async def do_recall(
     # otherwise a benchmark/AB session in no-persist mode still mutates ranking
     # state, the exact contamination no-persist exists to prevent.
     if not deep and recall_counts and not no_persist.is_paused():
-        returned_ids = [r.get("id", -1) for r in results if isinstance(r.get("id"), int) and r["id"] > 0]
+        # bug-040: exclude episode rows — their id collides with a memory id, so
+        # bumping `WHERE id IN (...)` on the memories table would falsely increment
+        # an unrelated memory's recall_count and falsify its last_recalled_at.
+        returned_ids = [
+            r.get("id", -1)
+            for r in results
+            if isinstance(r.get("id"), int) and r["id"] > 0 and not _is_episode_result(r)
+        ]
         if returned_ids:
-            placeholders = ",".join("?" * len(returned_ids))
-            await db.execute(
-                f"UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime('now') WHERE id IN ({placeholders})",
-                returned_ids,
-            )
-            await db.commit()
+            # bug-052: this ranking-bookkeeping write is non-essential — recall is
+            # readOnlyHint=true and degrades gracefully. A failure here (e.g. a
+            # transient 'database is locked' from a co-resident writer under WAL)
+            # must not discard the already-computed recall result, so it is
+            # non-fatal. bug-042/043: serialise the write behind the shared lock so
+            # its commit cannot flush another handler's partial transaction.
+            try:
+                placeholders = ",".join("?" * len(returned_ids))
+                async with write_lock():
+                    await db.execute(
+                        f"UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime('now') WHERE id IN ({placeholders})",
+                        returned_ids,
+                    )
+                    await db.commit()
+            except Exception as e:
+                logger.warning("recall_count bump failed (non-fatal): %s", e)
 
     result: dict = {"messages": messages}
     advisory = health.maybe_advisory()
     if advisory is not None:
         result["advisory"] = advisory
     return result
+
+
+def _ctx_content(entry: object) -> str:
+    """Null/type-safe ``content`` extraction for external_context entries.
+
+    bug-035: the tool schema puts no type constraint on ``content``, so an entry
+    with an explicit JSON null (-> None) — or any non-string value — made the old
+    ``entry.get("content", "").strip()`` raise ``AttributeError`` (the '' default
+    only applies when the key is *absent*, not when it is present-but-null),
+    aborting the whole ``recall_with_context`` into an opaque {error}. Skip such a
+    malformed entry instead: return '' so the caller's truthiness guard drops it.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    val = entry.get("content")
+    return val.strip() if isinstance(val, str) else ""
 
 
 async def do_recall_with_context(
@@ -901,7 +970,7 @@ async def do_recall_with_context(
     """
     ctx = external_context or []
 
-    exclude_list = [e["content"].strip().lower() for e in ctx if e.get("content", "").strip()]
+    exclude_list = [c.lower() for e in ctx if (c := _ctx_content(e))]
 
     recall_result = await do_recall(
         agent_id,
@@ -916,10 +985,10 @@ async def do_recall_with_context(
     messages = recall_result.get("messages", [])
 
     for entry in ctx:
-        role = entry.get("role", "")
-        content = entry.get("content", "").strip()
+        content = _ctx_content(entry)  # bug-035: null/type-safe, skips malformed entries
         if not content:
             continue
+        role = entry.get("role", "")
 
         if role == "assistant":
             source = {"type": "Agent", "id": "self"}
@@ -1161,10 +1230,14 @@ async def do_archive_episode(
         except Exception as e:
             logger.warning("Embedding failed for episode: %s", e)
 
-    cursor = await db.execute(
-        """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved, channel)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved), channel),
-    )
-    await db.commit()
+    # bug-042/043: serialise INSERT+commit behind the shared write lock so the
+    # background queue drain's episode commit cannot flush — or be flushed by — a
+    # concurrent import/merge's partial transaction on the shared connection.
+    async with write_lock():
+        cursor = await db.execute(
+            """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved, channel)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved), channel),
+        )
+        await db.commit()
     return {"ok": True, "episode_id": cursor.lastrowid}

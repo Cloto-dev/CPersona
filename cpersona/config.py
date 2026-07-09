@@ -3,6 +3,12 @@
 import os
 
 DB_PATH = os.environ.get("CPERSONA_DB_PATH", "data/cpersona.db")
+# bug-054: optional confinement root for export_memories' caller-supplied
+# output_path. When set, an export's resolved realpath MUST stay within this
+# directory. When unset (default), export still rejects '..' traversal but allows
+# an absolute/relative path — the readOnlyHint=False/destructiveHint=True tool
+# annotation makes the host confirm the write. Set this for a hardened deployment.
+EXPORT_DIR = os.environ.get("CPERSONA_EXPORT_DIR", "")
 MAX_MEMORIES = int(os.environ.get("CPERSONA_MAX_MEMORIES", "500"))
 MAX_CONTENT_LENGTH = int(os.environ.get("CPERSONA_MAX_CONTENT_LENGTH", "2000"))
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
@@ -49,10 +55,22 @@ TASK_MAX_RETRIES = int(os.environ.get("CPERSONA_TASK_MAX_RETRIES", "3"))
 TASK_RETRY_DELAY = int(os.environ.get("CPERSONA_TASK_RETRY_DELAY", "30"))
 
 VECTOR_SEARCH_MODE = os.environ.get("CPERSONA_VECTOR_SEARCH_MODE", "local")
+# bug-033: dedicated per-call timeout for the remote /search POST on the recall
+# hot path. Without it the POST inherits the embed client's 30s DEFAULT_TIMEOUT_SECS,
+# so a hung/flapping endpoint blocks every recall ~30s before falling back to local.
+# Short enough to fail over fast, long enough for a healthy remote search.
+REMOTE_SEARCH_TIMEOUT_SECS = float(os.environ.get("CPERSONA_REMOTE_SEARCH_TIMEOUT_SECS", "5.0"))
 STORE_BLOB = os.environ.get("CPERSONA_STORE_BLOB", "true").lower() == "true"
 
 AUTO_CALIBRATE = os.environ.get("CPERSONA_AUTO_CALIBRATE", "false").lower() == "true"
 CALIBRATE_SAMPLE_SIZE = int(os.environ.get("CPERSONA_CALIBRATE_SAMPLE_SIZE", "200"))
+# bug-053: hard upper bound on the calibration sample. sample_size is a
+# caller-supplied MCP tool parameter that feeds both a LIMIT scan and an O(n^2)
+# dense cosine matrix (vecs @ vecs.T) plus np.triu_indices — an unclamped large
+# value (e.g. 20000) allocates multi-GB transient arrays and OOM-kills the whole
+# server process, taking recall down for every agent on the shared connection.
+# Mirrors the _clamp_limit discipline already applied to the recall/list handlers.
+CALIBRATE_MAX_SAMPLE = max(1, int(os.environ.get("CPERSONA_CALIBRATE_MAX_SAMPLE", "2000")))
 CALIBRATE_Z_FACTOR = float(os.environ.get("CPERSONA_CALIBRATE_Z_FACTOR", "1.0"))
 CALIBRATE_FLOOR = float(os.environ.get("CPERSONA_CALIBRATE_FLOOR", "0.05"))
 # v2.4.24 — calibration method. "percentile" sets the threshold at a quantile of

@@ -15,7 +15,6 @@ similarity-scale signals only:
 import os
 import tempfile
 
-import pytest
 
 _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_autocut.db")

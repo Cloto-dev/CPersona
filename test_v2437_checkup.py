@@ -417,7 +417,11 @@ def test_cli_roundtrip_exit_codes():
     with sq.connect(db_path) as raw:
         raw.execute("DROP INDEX idx_memories_dedup_content")
     assert _cli(db_path).returncode == 2
-    assert _cli(db_path, "--fix").returncode == 2  # the run that found it still reports it
+    # bug-059: a --fix run that fully repairs the critical must exit 0 — the gate is
+    # derived from the RESIDUAL state after the repair commits, not from the issues
+    # that were found (which are stamped fixed). A repair cron/CI must not read a
+    # clean fix as failure.
+    assert _cli(db_path, "--fix").returncode == 0
     assert _cli(db_path).returncode == 0  # repaired
 
     missing = _cli(os.path.join(cli_dir, "nope.db"))

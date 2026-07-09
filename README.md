@@ -296,6 +296,15 @@ cpersona is an MCP server — it works with any MCP-compatible host:
 
 cpersona is the memory layer of [ClotoCore](https://github.com/Cloto-dev/ClotoCore), an open-source AI agent platform written in Rust. While cpersona is fully standalone (MIT license), it was designed to give AI agents persistent, searchable memory within the ClotoCore ecosystem.
 
+## Release Channels & Support
+
+Releases follow a three-tier model — **Stable** (production-certified,
+critical fixes only), **Current** (newest release line, all fixes land here),
+and **Experimental** (alpha/beta pre-releases, opt-in). When a new line is
+certified Stable, the previous one keeps critical-fix support for 30 more
+days, then reaches EOL. Full policy: [SUPPORT.md](SUPPORT.md) · security
+reports: [SECURITY.md](SECURITY.md).
+
 ## Learn More
 
 - [Zenn Book (Japanese)](https://zenn.dev/clotodev/books/claude-memory-mcp-server) — Full design walkthrough and setup guide
