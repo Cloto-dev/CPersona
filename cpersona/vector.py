@@ -239,7 +239,14 @@ async def _search_vector(
     # effective_min_sim computed once near the top (shared with the remote branch, bug-027).
 
     candidates: list[tuple[float, dict]] = []
-    scan_limit = min(MAX_MEMORIES, max(limit * 10, 100))
+    # bug-085: the scan window must NOT be derived from the response limit. The
+    # old `min(MAX_MEMORIES, max(limit * 10, 100))` coupling meant a default
+    # limit=10 recall ranked only the newest 100 rows — anything older was
+    # structurally invisible to the vector retriever (and the 2.4.38 limit clamp
+    # closed the only escape hatch, collapsing LMEB LongMemEval 78→38.68). Scan
+    # breadth and response size are independent concepts: rank the newest
+    # MAX_MEMORIES rows regardless of how many the caller asked to receive.
+    scan_limit = MAX_MEMORIES
 
     if channel:
         # ''=global (knob2 v2): stored channel '' matches every channel-scoped

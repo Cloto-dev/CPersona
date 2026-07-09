@@ -1168,6 +1168,10 @@ async def _search_memories_keyword(
             if rows:
                 return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": r[5]} for r in rows]
 
+    # Note (bug-085 analysis): unlike vector._search_vector, this LIMIT is NOT a
+    # recency scan window — the LIKE predicate filters BEFORE the LIMIT applies,
+    # so it caps how many *matching* rows are fetched (always >= limit; the
+    # return slices to limit). Old rows stay reachable; no decoupling needed.
     scan_limit = min(MAX_MEMORIES, max(limit * 5, 50))
     rows = await db.execute_fetchall(
         f"""SELECT id, msg_id, content, source, timestamp
