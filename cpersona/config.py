@@ -9,7 +9,13 @@ DB_PATH = os.environ.get("CPERSONA_DB_PATH", "data/cpersona.db")
 # an absolute/relative path — the readOnlyHint=False/destructiveHint=True tool
 # annotation makes the host confirm the write. Set this for a hardened deployment.
 EXPORT_DIR = os.environ.get("CPERSONA_EXPORT_DIR", "")
-MAX_MEMORIES = int(os.environ.get("CPERSONA_MAX_MEMORIES", "500"))
+# bug-085: MAX_MEMORIES is the vector retriever's SCAN WINDOW — how many of the
+# newest rows it fetches and cosine-ranks per recall — not a response size (that
+# is the per-call `limit`, clamped in the handlers). It is the single knob that
+# bounds vector-recall reach: rows older than the window are invisible to the
+# vector retriever, so the default must comfortably exceed a real corpus.
+# Benchmarks on larger corpora raise it via the env var instead of patching code.
+MAX_MEMORIES = int(os.environ.get("CPERSONA_MAX_MEMORIES", "10000"))
 MAX_CONTENT_LENGTH = int(os.environ.get("CPERSONA_MAX_CONTENT_LENGTH", "2000"))
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 

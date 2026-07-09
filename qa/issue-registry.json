@@ -1243,6 +1243,20 @@
       "category": "id-collision",
       "fixed_in": "2.4.39",
       "fix_note": "Both lookup sites (ranking loop in _apply_recall_scoring and the response confidence loop) now short-circuit episodes to (0, '') — closing the lookup side of the invariant the bug-041 docstring states ('an episode id must never key into a memories query'). Regression: test_audit_r3.py::test_episode_confidence_ignores_colliding_memory_recall_count."
+    },
+    {
+      "id": "bug-085",
+      "summary": "(HIGH) Vector scan window was derived from the response limit: _search_vector fetched only the newest min(MAX_MEMORIES, max(limit*10, 100)) rows before cosine ranking, so a default limit=10 recall ranked only the newest 100 rows and anything older was structurally invisible to the vector retriever. The 2.4.38 limit clamp (bug-032) then closed the only escape hatch (callers passing a huge limit), collapsing LMEB LongMemEval from ~78 to 38.68 on MiniLM; re-running the harness with the clamp bypassed restored 76.99, confirming the window as the sole cause. The MAX_MEMORIES=500 default additionally capped reach below real corpus sizes even for unclamped callers.",
+      "severity": "HIGH",
+      "discovered": "2026-07-09T00:00:00Z",
+      "version": "2.4.39",
+      "file": "cpersona/vector.py",
+      "pattern": "scan_limit = MAX_MEMORIES",
+      "expected": "present",
+      "status": "fixed",
+      "category": "retrieval-window",
+      "fixed_in": "unreleased",
+      "fix_note": "Scan breadth decoupled from response size: _search_vector now fetches and ranks the newest MAX_MEMORIES rows regardless of the caller's limit, and the MAX_MEMORIES default is raised 500 -> 10000 (CPERSONA_MAX_MEMORIES env for larger corpora, e.g. benchmarks). The bug-032 response clamp is unchanged and correct. The LIKE fallback needs no change: its LIMIT applies after the content predicate, capping matched rows rather than scanned rows, so old rows were always reachable there. test_scan_window.py pins both contracts (window decoupling, 10000 default, LIKE reachability). fixed_in to be stamped at the next version bump."
     }
   ]
 }
