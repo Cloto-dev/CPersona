@@ -85,4 +85,20 @@ discretion and must not be relied upon.
 
 Certification and EOL dates are recorded in this table as they occur.
 
-*Last updated: 2026-07-09*
+## Known issues
+
+- **v2.4.39 and earlier — vector recall scan window too narrow (bug-085,
+  HIGH).** The vector retriever ranked only the newest
+  `min(MAX_MEMORIES, max(limit * 10, 100))` rows, so a default recall reached
+  only the newest **100** memories (at most 500 under the default
+  configuration) — anything older was invisible to semantic search on any
+  corpus beyond a few hundred rows. **v2.4.38 and v2.4.39 are the most
+  affected**: the response-limit clamp introduced in 2.4.38 (itself a correct
+  hardening) also capped wide-scan configurations at 1,000 rows, closing the
+  only workaround. Discovered when it collapsed LMEB LongMemEval from ~78 to
+  38.68. **Fixed in v2.4.40** — the scan window is decoupled from the response
+  limit and the `CPERSONA_MAX_MEMORIES` default is raised 500 → 10,000.
+  Upgrading is strongly recommended; no schema change is involved. Details:
+  `qa/issue-registry.json` (bug-085).
+
+*Last updated: 2026-07-10*
