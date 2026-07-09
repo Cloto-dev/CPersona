@@ -1255,8 +1255,8 @@
       "expected": "present",
       "status": "fixed",
       "category": "retrieval-window",
-      "fixed_in": "unreleased",
-      "fix_note": "Scan breadth decoupled from response size: _search_vector now fetches and ranks the newest MAX_MEMORIES rows regardless of the caller's limit, and the MAX_MEMORIES default is raised 500 -> 10000 (CPERSONA_MAX_MEMORIES env for larger corpora, e.g. benchmarks). The bug-032 response clamp is unchanged and correct. The LIKE fallback needs no change: its LIMIT applies after the content predicate, capping matched rows rather than scanned rows, so old rows were always reachable there. test_scan_window.py pins both contracts (window decoupling, 10000 default, LIKE reachability). fixed_in to be stamped at the next version bump."
+      "fixed_in": "2.4.40",
+      "fix_note": "Scan breadth decoupled from response size: _search_vector now fetches and ranks the newest MAX_MEMORIES rows regardless of the caller's limit, and the MAX_MEMORIES default is raised 500 -> 10000 (CPERSONA_MAX_MEMORIES env for larger corpora, e.g. benchmarks). The bug-032 response clamp is unchanged and correct. The LIKE fallback needs no change: its LIMIT applies after the content predicate, capping matched rows rather than scanned rows, so old rows were always reachable there. test_scan_window.py pins both contracts (window decoupling, 10000 default, LIKE reachability)."
     }
   ]
 }
