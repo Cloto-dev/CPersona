@@ -8,8 +8,8 @@ Give Claude persistent memory across sessions.
 Single SQLite file. 27 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)]()
-[![Tests](https://img.shields.io/badge/tests-146-brightgreen)]()
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
+[![Tests](https://img.shields.io/badge/tests-275-brightgreen)]()
 
 [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/clotodev/books/claude-memory-mcp-server)
 
@@ -20,7 +20,7 @@ Single SQLite file. 27 tools. Zero LLM dependency.
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
-> **Project status (July 2026)** — Accuracy-improvement work on the 2.4 series is **complete** (RRF fusion, per-agent threshold calibration, recall-precision control, channel/project isolation). The remaining 2.4.x releases are stabilization only — bug fixes, health-check hardening, and performance repairs — after which 2.4 will be declared **stable**. New feature development moves to the 2.5 series.
+> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.39, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is an internal stabilization line (**Experimental** pre-releases; the DB schema and MCP tool contract are preserved), and feature development resumes in 2.6. Tiers and support windows: [Release Channels & Support](#release-channels--support).
 
 ## The Problem
 
@@ -84,14 +84,6 @@ cpersona was tuned and benchmarked against jina-v5-nano (33M params, 768d), so C
 ```json
 {
   "mcpServers": {
-    "embedding": {
-      "command": "/path/to/.venv/bin/python",
-      "args": ["/path/to/servers/embedding/server.py"],
-      "env": {
-        "EMBEDDING_PROVIDER": "onnx_jina_v5_nano",
-        "EMBEDDING_HTTP_PORT": "8401"
-      }
-    },
     "cpersona": {
       "command": "uvx",
       "args": ["cpersona"],
@@ -105,6 +97,10 @@ cpersona was tuned and benchmarked against jina-v5-nano (33M params, 768d), so C
 }
 ```
 
+The embedding server from step 2 is a plain HTTP process, not an MCP server —
+run it however you run background services (a terminal, launchd/systemd, etc.);
+cpersona only needs its URL.
+
 > **Windows:** use `C:/Users/you/.claude/cpersona.db` for the DB path.
 > **No embedding server yet?** Drop the two `EMBEDDING_*` lines (or set `EMBEDDING_MODE=none`) — cpersona runs on FTS5 + keyword and tells you when it's degraded.
 
@@ -113,8 +109,6 @@ cpersona was tuned and benchmarked against jina-v5-nano (33M params, 768d), so C
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
-
-(The embedding server in step 2 is registered separately; it is currently installed from source.)
 
 That's it. Claude now has persistent memory. Ask it to `store` something and `recall` it in a later session.
 
@@ -150,7 +144,7 @@ That's it. Claude now has persistent memory. Ask it to `store` something and `re
 - JSONL export/import — full memory portability between environments
 - Agent-to-agent memory merge — atomic copy/move with deduplication
 - Auto-calibration — statistical threshold tuning via null distribution z-score (no labels needed)
-- Health check — 16 automated detections with auto-repair (contamination, duplicates, FTS desync, invalid data, stale tasks, empty content, invalid sources)
+- Health check — a 20-check registry with severity-tagged issues (`critical`/`warn`/`info`) and auto-repair (contamination, duplicates, FTS integrity, embedding dimension drift, schema objects, isolation-axis hygiene, stale tasks, invalid data), plus a `python -m cpersona.checkup` CLI for CI gating
 - Deep check — semantic data quality analysis (anonymous source recovery, short content, stale profiles, orphaned episodes)
 - Memory protection — lock/unlock to prevent accidental deletion or editing
 - Recent recall penalty — suppresses echo chamber effect for frequently recalled memories
@@ -181,7 +175,7 @@ That's it. Claude now has persistent memory. Ask it to `store` something and `re
                          │  │  profiles    (attributes)      │  │
                          │  │  memories_fts (FTS5 index)     │  │
                          │  │  episodes_fts (FTS5 index)     │  │
-                         │  │  task_queue   (async jobs)     │  │
+                         │  │  pending_memory_tasks (queue)  │  │
                          │  └────────────────────────────────┘  │
                          │                                      │
                          └──────────────┬───────────────────────┘
@@ -251,16 +245,20 @@ All settings via environment variables with sensible defaults:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CPERSONA_DB_PATH` | `./cpersona.db` | SQLite database path |
-| `CPERSONA_EMBEDDING_MODE` | `http` | Embedding mode (`http` or `disabled`) |
-| `CPERSONA_EMBEDDING_URL` | `http://127.0.0.1:8401/embed` | Embedding server URL |
-| `CPERSONA_VECTOR_SEARCH_MODE` | `remote` | Vector search mode |
+| `CPERSONA_EMBEDDING_MODE` | `none` | Embedding mode (`http` or `none`) |
+| `CPERSONA_EMBEDDING_URL` | *(unset)* | Embedding server URL, e.g. `http://127.0.0.1:8401/embed` |
+| `CPERSONA_VECTOR_SEARCH_MODE` | `local` | Vector search execution (`local` in-process cosine, or `remote` offload) |
 | `CPERSONA_RECALL_MODE` | `rrf` | Recall fusion strategy (`rrf`, `rsf`, or `cascade`) |
 | `CPERSONA_RRF_K` | `60` | RRF smoothing parameter |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |
-| `CPERSONA_TASK_QUEUE_ENABLED` | `false` | Enable background task queue |
+| `CPERSONA_TASK_QUEUE_ENABLED` | `true` | Background task queue (DB-persisted, crash-recoverable) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | Penalty for recently recalled memories |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | Window (minutes) for recent recall penalty |
+
+The generic aliases `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL`
+are also accepted (the `CPERSONA_`-prefixed form wins when both are set) — the
+marketplace catalog and the Quick Start use the generic names.
 
 ### Recall fusion mode (`CPERSONA_RECALL_MODE`)
 
@@ -278,9 +276,9 @@ All settings via environment variables with sensible defaults:
 
 ## Stats
 
-- **~5,600 LOC** Python across focused modules
-- **146 tests** across 12 test modules
-- **Schema v10** (auto-migrating)
+- **~7,500 LOC** Python across focused modules
+- **275 tests** across 24 test modules (including structural-enforcement gates)
+- **Schema v13** (auto-migrating)
 - **MIT License**
 
 ## Works With
@@ -296,13 +294,41 @@ cpersona is an MCP server — it works with any MCP-compatible host:
 
 cpersona is the memory layer of [ClotoCore](https://github.com/Cloto-dev/ClotoCore), an open-source AI agent platform written in Rust. While cpersona is fully standalone (MIT license), it was designed to give AI agents persistent, searchable memory within the ClotoCore ecosystem.
 
+## Quality Assurance
+
+Every release is gated by a machine-verifiable quality process:
+
+- **Audit-gated releases** — before a release is cut, the codebase goes through
+  comprehensive multi-agent audit rounds (independent finders per dimension,
+  each finding adversarially verified from multiple lenses). v2.4.39 shipped
+  after three such rounds — 43 fixes, every one re-verified against the tree
+  it landed on.
+- **Issue registry** — every audited defect lives in
+  [`qa/issue-registry.json`](qa/issue-registry.json) with a machine-checkable
+  code pattern; [`scripts/verify-issues.sh`](scripts/verify-issues.sh) verifies
+  that every fix marker is still present (and every removed defect stays
+  removed), so a regression or a silently-reverted fix fails loudly.
+- **Structural CI gates** — invariants that a plain test can't express are
+  enforced by AST- and behaviour-level gates in the pytest suite (run in CI on
+  Python 3.11/3.13): every writer holds the shared write lock, agent-scoped SQL
+  carries its isolation predicates, identity/dedup probes carry the
+  project/channel axes, and `check_health` performs no embedding network I/O
+  while holding the write lock.
+- **Release lifecycle standard** — the release process itself is specified in
+  [`docs/RELEASE_LIFECYCLE_STANDARD.md`](docs/RELEASE_LIFECYCLE_STANDARD.md)
+  (v1.0), piloted in this repository as the reference implementation for
+  Cloto-family projects.
+
 ## Release Channels & Support
 
 Releases follow a three-tier model — **Stable** (production-certified,
 critical fixes only), **Current** (newest release line, all fixes land here),
 and **Experimental** (alpha/beta pre-releases, opt-in). When a new line is
 certified Stable, the previous one keeps critical-fix support for 30 more
-days, then reaches EOL. Full policy: [SUPPORT.md](SUPPORT.md) · security
+days, then reaches EOL. Current status: **2.4.x is the Stable line**
+(latest v2.4.39); 2.5.x pre-releases are Experimental. Full policy:
+[SUPPORT.md](SUPPORT.md) · specification:
+[RELEASE_LIFECYCLE_STANDARD.md](docs/RELEASE_LIFECYCLE_STANDARD.md) · security
 reports: [SECURITY.md](SECURITY.md).
 
 ## Learn More
@@ -314,4 +340,3 @@ reports: [SECURITY.md](SECURITY.md).
 ## License
 
 MIT — free to use from any MCP host without restriction.
-</div>
