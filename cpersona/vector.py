@@ -14,6 +14,7 @@ from cpersona import config
 from cpersona import health
 from cpersona.config import (
     MAX_MEMORIES,
+    REMOTE_SEARCH_TIMEOUT_SECS,
     VECTOR_SEARCH_MODE,
 )
 
@@ -153,6 +154,10 @@ async def _search_vector(
                     "limit": limit,
                     "min_similarity": effective_min_sim,
                 },
+                # bug-033: bound the recall hot path with a dedicated short timeout
+                # instead of inheriting the client's 30s DEFAULT_TIMEOUT_SECS. A
+                # hung/flapping endpoint now falls back to local search in seconds.
+                timeout=REMOTE_SEARCH_TIMEOUT_SECS,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -290,16 +295,31 @@ async def _search_vector(
                     )
 
     # Episodes lack per-user source tagging — skip when source_id is set.
+    # bug-045: gate episodes by the channel axis exactly like the memory branch
+    # above (and like _search_episodes_fts). Without this a channel-scoped recall
+    # cosine-scores and returns episode summaries from EVERY other channel of the
+    # agent — the cross-channel contamination the v2.4.22 channel axis exists to
+    # prevent, on the recall hot path. ''=global still matches every scoped recall.
+    # bug-080: honor the do_recall contract the FTS drivers already implement
+    # (`not source_id or channel`): a channel filter makes episodes safe to return
+    # even when source_id is set (the session-start grounding path) because the
+    # bug-045 channel clause scopes the fetch. Dropping ALL episodes on src_like
+    # silently defeated semantic episode recall on exactly that grounding path.
+    # NOTE: the remote branch keeps the conservative all-drop gate until the
+    # remote episode fetch carries the channel predicate (deferred bug-075) —
+    # relaxing it there would open the cross-channel leak this clause prevents.
+    ep_channel_clause = " AND (channel = ? OR channel = '')" if channel else ""
+    ep_channel_params = (channel,) if channel else ()
     ep_rows = (
         []
-        if src_like
+        if (src_like and not channel)
         else await db.execute_fetchall(
             f"""SELECT id, summary, start_time, embedding, resolved
                FROM episodes
-               WHERE agent_id = ? AND embedding IS NOT NULL{proj_extra}
+               WHERE agent_id = ?{ep_channel_clause} AND embedding IS NOT NULL{proj_extra}
                ORDER BY created_at DESC
                LIMIT ?""",
-            (agent_id, *proj_params, scan_limit),
+            (agent_id, *ep_channel_params, *proj_params, scan_limit),
         )
     )
 

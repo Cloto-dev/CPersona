@@ -12,7 +12,7 @@ import logging
 from cpersona._vendored_mcp_common import no_persist
 
 from cpersona.config import TASK_MAX_RETRIES, TASK_RETRY_DELAY
-from cpersona.database import get_db
+from cpersona.database import get_db, write_lock
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +63,14 @@ class MemoryTaskQueue:
     async def enqueue(self, task_type: str, agent_id: str, payload: list[dict]) -> int:
         """Enqueue a task. Returns task ID."""
         db = await get_db()
-        cursor = await db.execute(
-            "INSERT INTO pending_memory_tasks (task_type, agent_id, payload) VALUES (?, ?, ?)",
-            (task_type, agent_id, json.dumps(payload)),
-        )
-        await db.commit()
+        # bug-042/043: serialise write+commit on the shared connection so this
+        # enqueue cannot flush a concurrent import/merge's partial transaction.
+        async with write_lock():
+            cursor = await db.execute(
+                "INSERT INTO pending_memory_tasks (task_type, agent_id, payload) VALUES (?, ?, ?)",
+                (task_type, agent_id, json.dumps(payload)),
+            )
+            await db.commit()
         task_id = cursor.lastrowid
         logger.info("MemoryTaskQueue: enqueued %s for agent %s (task_id=%d)", task_type, agent_id, task_id)
         self._event.set()
@@ -76,7 +79,7 @@ class MemoryTaskQueue:
     async def get_status(self) -> dict:
         """Get queue status for monitoring."""
         db = await get_db()
-        rows = await db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks")
+        rows = await db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks")  # isolation-waiver: queue depth is a global system resource, not agent-partitioned
         pending = rows[0][0] if rows else 0
         return {
             "enabled": True,
@@ -181,16 +184,20 @@ class MemoryTaskQueue:
 
     async def _delete_task(self, task_id: int):
         db = await get_db()
-        await db.execute("DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,))
-        await db.commit()
+        # bug-042/043: serialise write+commit on the shared connection.
+        async with write_lock():
+            await db.execute("DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,))
+            await db.commit()
 
     async def _increment_retry(self, task_id: int):
         db = await get_db()
-        await db.execute(
-            "UPDATE pending_memory_tasks SET retries = retries + 1 WHERE id = ?",
-            (task_id,),
-        )
-        await db.commit()
+        # bug-042/043: serialise write+commit on the shared connection.
+        async with write_lock():
+            await db.execute(
+                "UPDATE pending_memory_tasks SET retries = retries + 1 WHERE id = ?",
+                (task_id,),
+            )
+            await db.commit()
 
 
 _task_queue: MemoryTaskQueue | None = None

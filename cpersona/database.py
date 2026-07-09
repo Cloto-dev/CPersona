@@ -1,5 +1,7 @@
 """Database connection, schema, and migrations for CPersona."""
 
+import asyncio
+import contextlib
 import logging
 import os
 
@@ -10,6 +12,39 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 13
+
+# bug-042/043: all four data tables share a single aiosqlite connection, and
+# aiosqlite has no per-coroutine transaction isolation — any coroutine's
+# db.commit() flushes the shared connection's pending transaction, including a
+# DIFFERENT coroutine's half-written multi-statement work (import/merge). This
+# module-level lock serialises the commit/rollback boundary across every write
+# handler + the background queue drain, so no coroutine can commit between
+# another's first write and its own commit. Acquired at the LEAF committer only
+# (a locked handler must never call another locked handler → asyncio.Lock is not
+# reentrant); the queue drain holds it inside do_archive_episode / _delete_task,
+# never across the dispatch, so there is no nesting. Uncontended in the common
+# single-writer case (only import/merge hold it for a whole loop).
+_write_lock = asyncio.Lock()
+
+
+def write_lock() -> asyncio.Lock:
+    """The shared write-serialisation lock (bug-042/043). Use as
+    ``async with write_lock():`` around a handler's [first write … commit/rollback]."""
+    return _write_lock
+
+
+@contextlib.asynccontextmanager
+async def maybe_write_lock(acquire: bool):
+    """Acquire the shared write lock only when ``acquire`` is True (bug-042/043).
+
+    For handlers whose transaction runs only on the fix=True branch (check_health /
+    deep_check): the read-only path takes no lock, the mutating path serialises its
+    writes+commit against import/merge like every other committer."""
+    if acquire:
+        async with _write_lock:
+            yield
+    else:
+        yield
 
 # v2.4.17: project_id is a second isolation axis layered on top of agent_id,
 # giving agent_id × project_id two-tier γ semantics.
@@ -165,6 +200,20 @@ async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, cold
         await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
 
 
+async def _set_fts_backfill_pending(db: aiosqlite.Connection, pending: bool) -> None:
+    """Persist the FTS-backfill-pending flag in PRAGMA user_version bit 0 (bug-060).
+
+    Durable across boots and independent of table presence: set when the FTS
+    tables are (re)created or a rebuild fails, cleared only after a rebuild
+    succeeds, so a failed backfill is retried on the next boot instead of being
+    lost forever once the tables exist. PRAGMA cannot bind params, so the value
+    is int-cast and interpolated (never caller-controlled)."""
+    row = await db.execute_fetchall("PRAGMA user_version")
+    uv = row[0][0] if row else 0
+    uv = (uv | 1) if pending else (uv & ~1)
+    await db.execute(f"PRAGMA user_version = {int(uv)}")
+
+
 async def get_db() -> aiosqlite.Connection:
     """Get or create the database connection."""
     global _db
@@ -178,10 +227,45 @@ async def get_db() -> aiosqlite.Connection:
     _db = await aiosqlite.connect(DB_PATH)
     await _db.execute("PRAGMA journal_mode=WAL")
     await _db.execute("PRAGMA synchronous=NORMAL")
+    # bug-060: a concurrent writer / concurrent boot yields an immediate SQLITE_BUSY
+    # under WAL without a busy handler, which would fail the FTS rebuild (and any
+    # write) on its first attempt. A short busy_timeout lets SQLite retry-wait
+    # instead of erroring out on transient contention.
+    await _db.execute("PRAGMA busy_timeout=5000")
 
     await _db.executescript(SCHEMA_SQL)
 
+    # bug-026: detect whether the FTS index is being created for the first time on
+    # THIS boot (a DB originally created with CPERSONA_FTS_ENABLED=false, now
+    # re-enabled). Such a DB was stamped at the current schema with every
+    # `current < N and FTS_ENABLED` backfill step skipped, so once the tables are
+    # (re)created here they would stay empty for all pre-existing rows and the
+    # keyword retriever would silently return zero hits for historical data. The
+    # sentinel must be sampled BEFORE executescript(FTS_SQL) creates the tables.
+    # External-content FTS5 makes COUNT(*) mirror the content table even when the
+    # index is empty, so table-absence is the only reliable "needs backfill" probe.
+    fts_created_this_boot = False
+    fts_backfill_pending = False
     if FTS_ENABLED:
+        existing_fts = await _db.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+        )
+        fts_created_this_boot = not existing_fts
+        # bug-060: durable retry flag — a prior boot's rebuild may have failed
+        # (transient BUSY/I/O) and set this even though the tables now exist.
+        uv_row = await _db.execute_fetchall("PRAGMA user_version")
+        fts_backfill_pending = bool((uv_row[0][0] if uv_row else 0) & 1)
+        # bug-067: ARM the durable pending bit BEFORE creating the (empty) FTS tables and
+        # commit it now, whenever a backfill will be needed. executescript(FTS_SQL) does an
+        # implicit COMMIT that durably persists the empty tables; if the process is then
+        # killed (OOM/redeploy) before the rebuild+commit at the end of get_db(), the old
+        # code — which armed the bit only reactively, inside the rebuild's `except` — lost
+        # the flag, so the next boot saw tables-present + bit-clear and never re-indexed the
+        # historical rows (permanent silent FTS desync). Arming first makes the retry
+        # crash-durable: a killed boot leaves bit=1, so the next boot rebuilds regardless.
+        if fts_created_this_boot or fts_backfill_pending:
+            await _set_fts_backfill_pending(_db, True)
+            await _db.commit()
         await _db.executescript(FTS_SQL)
 
     row = await _db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
@@ -305,6 +389,36 @@ async def get_db() -> aiosqlite.Connection:
             current,
             e,
         )
+
+    # bug-026 / bug-060: backfill the FTS index when it was created for the first
+    # time this boot (a DB re-enabling FTS) OR when a prior boot's backfill failed
+    # and left the durable pending flag set. 'rebuild' repopulates each
+    # external-content FTS5 table from its content table, so pre-existing
+    # memories/episodes become searchable by the keyword retriever again.
+    #
+    # bug-060: completion is tracked by the durable user_version bit, NOT by table
+    # presence. The old table-absence sentinel fired only the boot the tables were
+    # first created, so a swallowed rebuild failure (transient BUSY/I/O) left the
+    # historical rows permanently unindexed — the migration ladder still stamped
+    # the version and no later boot re-backfilled (tables now existed). Now a
+    # failure sets the pending flag so the next boot retries regardless of table
+    # presence; success clears it. Still non-fatal so a hiccup never blocks startup
+    # (recall degrades to vector/keyword-less RRF, same as a disabled index).
+    if FTS_ENABLED and (fts_created_this_boot or fts_backfill_pending):
+        try:
+            await _db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+            await _db.execute("INSERT INTO episodes_fts(episodes_fts) VALUES ('rebuild')")
+            # bug-067: clear the pending bit AND commit it promptly, so the rebuild's
+            # durability and the cleared flag land together. The bit was armed+committed
+            # before the tables were created; a crash between here and the final commit
+            # would at worst leave it armed → one harmless redundant rebuild next boot.
+            await _set_fts_backfill_pending(_db, False)
+            await _db.commit()
+        except Exception as e:
+            # Belt-and-suspenders: the bit was already durably armed before table creation
+            # (bug-067), so it stays 1 for the next-boot retry even if this write is lost.
+            await _set_fts_backfill_pending(_db, True)
+            logger.warning("FTS first-boot backfill failed (non-fatal, will retry next boot): %s", e)
 
     # The isolation index depends on the v2.4.17 project_id column. Run it
     # after the migration so v8 boots get the index once the columns exist;

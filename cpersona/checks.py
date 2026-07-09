@@ -162,15 +162,25 @@ async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[1] for r in rows)}]
 
 
-async def check_embedding_dimension(db, agent_id: str, fix: bool) -> list[dict]:
+async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
     if not vector._embedding_client:
         return []
     clause, params = _agent_scope(agent_id)
     try:
-        test_emb = await vector._embedding_client.embed(["test"])
-        if not (test_emb and test_emb[0]):
+        # bug-083: when do_check_health pre-probed the dimension outside the write lock
+        # (embedding_cache carries it as "expected_dim"), use that instead of a live
+        # probe — this check runs INSIDE maybe_write_lock(fix), and an embed here holds
+        # the shared write lock across an HTTP round-trip bounded only by the embedding
+        # timeout, stalling every other writer (the bug-072 class). A None probe result
+        # skips the check, same as a failed live probe.
+        if embedding_cache is not None:
+            expected_dim = embedding_cache.get("expected_dim")
+        else:
+            test_emb = await vector._embedding_client.embed(["test"])
+            expected_dim = len(test_emb[0]) if test_emb and test_emb[0] else None
+        if not expected_dim:
             return []
-        expected_bytes = len(test_emb[0]) * 4
+        expected_bytes = expected_dim * 4
         mismatched_mem = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
@@ -208,7 +218,7 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool) -> list[dict]:
                 "count": mismatched,
                 "memories": mismatched_mem,
                 "episodes": mismatched_ep,
-                "expected_dim": len(test_emb[0]),
+                "expected_dim": expected_dim,
             }
         ]
     except Exception as e:
@@ -224,7 +234,114 @@ def _null_embedding_severity(null_count: int, total: int) -> str:
     return "warn"
 
 
-async def check_null_embedding(db, agent_id: str, fix: bool) -> list[dict]:
+async def probe_embedding_dim() -> int | None:
+    """One live probe embed, meant to run OUTSIDE the write lock (bug-083).
+    do_check_health(fix=True) calls this in the unlocked prefetch phase and passes the
+    result through embedding_cache["expected_dim"], so check_embedding_dimension no
+    longer holds the shared write lock across an embedding HTTP round-trip. None means
+    the probe failed (or no client) — the dimension check then skips, same as a failed
+    live probe."""
+    if not vector._embedding_client:
+        return None
+    try:
+        emb = await vector._embedding_client.embed(["test"])
+        return len(emb[0]) if emb and emb[0] else None
+    except Exception:
+        return None
+
+
+async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
+    """Pre-compute embeddings for NULL-embedding memory/episode rows OUTSIDE any write
+    lock (bug-072). do_check_health calls this before taking the shared write lock so the
+    ~1000 sequential embedding HTTP calls (up to 500 memories + 500 episodes, each bounded
+    only by the embedding timeout) do not stall every other writer — do_store, the queue
+    drain, import/merge — for the whole re-embed duration. Returns
+    {"memories": {id: (text, blob)}, "episodes": {id: (text, blob)}}; the text the blob
+    was computed from rides along so the write path can refuse to attach it to changed
+    content (bug-077). Empty when there is no embedding client (the fix loop then no-ops
+    just as before)."""
+    out: dict = {"memories": {}, "episodes": {}}
+    if not vector._embedding_client:
+        return out
+    clause, params = _agent_scope(agent_id)
+    for table, text_col in (("memories", "content"), ("episodes", "summary")):
+        rows = await db.execute_fetchall(
+            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL {clause} LIMIT 500", params
+        )
+        for row_id, text in rows:
+            try:
+                emb = await vector._embedding_client.embed([text])
+                if emb and emb[0]:
+                    out[table][row_id] = (text, vector._embedding_client.pack_embedding(emb[0]))
+            except Exception:
+                pass
+    return out
+
+
+async def apply_embedding_cache(db, embedding_cache) -> int:
+    """Write pre-computed embeddings onto rows that are STILL NULL and whose text is
+    unchanged since prefetch. Meant to run under the write lock but does no network I/O.
+    The `AND {text_col} = ?` predicate is the bug-077 guard: prefetch ran unlocked, so a
+    raced writer (do_update_memory on embed failure) or a sibling fixer in the same run
+    (memory_annotation / discord_mention / oversized_content rewrite content and NULL the
+    embedding) may have changed the text after the blob was computed — attaching the old
+    text's vector to the new text would silently desync content and embedding (the
+    bug-028 coherence class). A mismatch simply leaves the row NULL for the next
+    unlocked pass. Returns the number of rows updated."""
+    applied = 0
+    for table, text_col in (("memories", "content"), ("episodes", "summary")):
+        for row_id, (text, blob) in (embedding_cache or {}).get(table, {}).items():
+            cur = await db.execute(
+                f"UPDATE {table} SET embedding = ? WHERE id = ? AND embedding IS NULL AND {text_col} = ?",
+                (blob, row_id, text),
+            )
+            if getattr(cur, "rowcount", 0) == 1:
+                applied += 1
+    return applied
+
+
+async def _reembed_null_rows(db, table: str, text_col: str, clause: str, params, embedding_cache) -> int:
+    """Fill NULL embeddings for one table, preferring a pre-computed blob from
+    embedding_cache (bug-072) so the HTTP round-trips happened outside the write lock.
+
+    bug-077: a cache hit is applied with `AND {text_col} = ?` so a blob computed from
+    stale text (the row's content changed between the unlocked prefetch and this locked
+    write) is never attached to the new content.
+    bug-083: when a cache dict is present (the locked do_check_health path) a cache miss
+    does NOT fall back to a live embed — that would hold the shared write lock across an
+    HTTP round-trip, the exact stall bug-072 removed. The row stays NULL and is repaired
+    by do_check_health's second unlocked pass. An embedding_cache of None (direct calls /
+    tests, no lock held) keeps the live path."""
+    cache = (embedding_cache or {}).get(table, {})
+    rows = await db.execute_fetchall(
+        f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL {clause} LIMIT 500", params
+    )
+    re_embedded = 0
+    for row_id, text in rows:
+        try:
+            cached = cache.get(row_id)
+            if cached is not None:
+                cached_text, blob = cached
+                if cached_text != text:
+                    continue  # bug-077: stale prefetch — leave NULL for the next pass
+            elif embedding_cache is not None:
+                continue  # bug-083: no live embeds while the write lock is held
+            else:
+                emb = await vector._embedding_client.embed([text])
+                blob = vector._embedding_client.pack_embedding(emb[0]) if emb and emb[0] else None
+            if blob is not None:
+                cur = await db.execute(
+                    f"UPDATE {table} SET embedding = ? WHERE id = ? AND embedding IS NULL AND {text_col} = ?",
+                    (blob, row_id, text),
+                )
+                if getattr(cur, "rowcount", 0) == 1:
+                    re_embedded += 1
+        except Exception:
+            pass
+    return re_embedded
+
+
+async def check_null_embedding(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
     clause, params = _agent_scope(agent_id)
     null_count = (
         await db.execute_fetchall(
@@ -242,27 +359,13 @@ async def check_null_embedding(db, agent_id: str, fix: bool) -> list[dict]:
         "severity": _null_embedding_severity(null_count, total),
     }
     if fix and vector._embedding_client:
-        rows = await db.execute_fetchall(
-            f"SELECT id, content FROM memories WHERE embedding IS NULL {clause} LIMIT 500", params
-        )
-        re_embedded = 0
-        for row_id, content in rows:
-            try:
-                emb = await vector._embedding_client.embed([content])
-                if emb and emb[0]:
-                    blob = vector._embedding_client.pack_embedding(emb[0])
-                    await db.execute(
-                        "UPDATE memories SET embedding = ? WHERE id = ?", (blob, row_id)
-                    )
-                    re_embedded += 1
-            except Exception:
-                pass
+        re_embedded = await _reembed_null_rows(db, "memories", "content", clause, params, embedding_cache)
         if re_embedded > 0:
             issue["re_embedded"] = re_embedded
     return [issue]
 
 
-async def check_null_episode_embedding(db, agent_id: str, fix: bool) -> list[dict]:
+async def check_null_episode_embedding(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
     clause, params = _agent_scope(agent_id)
     null_count = (
         await db.execute_fetchall(
@@ -280,21 +383,7 @@ async def check_null_episode_embedding(db, agent_id: str, fix: bool) -> list[dic
         "severity": _null_embedding_severity(null_count, total),
     }
     if fix and vector._embedding_client:
-        rows = await db.execute_fetchall(
-            f"SELECT id, summary FROM episodes WHERE embedding IS NULL {clause} LIMIT 500", params
-        )
-        re_embedded = 0
-        for row_id, summary in rows:
-            try:
-                emb = await vector._embedding_client.embed([summary])
-                if emb and emb[0]:
-                    blob = vector._embedding_client.pack_embedding(emb[0])
-                    await db.execute(
-                        "UPDATE episodes SET embedding = ? WHERE id = ?", (blob, row_id)
-                    )
-                    re_embedded += 1
-            except Exception:
-                pass
+        re_embedded = await _reembed_null_rows(db, "episodes", "summary", clause, params, embedding_cache)
         if re_embedded > 0:
             issue["re_embedded"] = re_embedded
     return [issue]
@@ -335,9 +424,20 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
         issue = {"type": "fts_integrity_failure", "table": table, "severity": "critical"}
         if fix:
             await db.execute(rebuild)
+            # bug-069: mirror the detection fallback ladder. The enhanced rank=1 verify is
+            # unsupported on SQLite < 3.42 and raises OperationalError there; without this
+            # fallback it was caught as corruption below, falsely reporting fixed:False even
+            # though the rebuild succeeded. Try enhanced → structural; only a genuine
+            # DatabaseError (real corruption after rebuild) marks it unfixed.
             try:
                 await db.execute(f"INSERT INTO {fts}({fts}, rank) VALUES('integrity-check', 1)")
                 issue["fixed"] = True
+            except sqlite3.OperationalError:
+                try:
+                    await db.execute(f"INSERT INTO {fts}({fts}) VALUES('integrity-check')")
+                    issue["fixed"] = True
+                except sqlite3.DatabaseError:
+                    issue["fixed"] = False
             except sqlite3.DatabaseError:
                 issue["fixed"] = False
         issues.append(issue)
@@ -544,7 +644,7 @@ async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
     issue (rare != wrong); it is exposed via axis_distribution() in stats.
     """
     rows = await db.execute_fetchall(
-        "SELECT project_id, COUNT(*) FROM memories WHERE project_id != '' GROUP BY project_id"
+        "SELECT project_id, COUNT(*) FROM memories WHERE project_id != '' GROUP BY project_id"  # isolation-waiver: project-distribution audit is corpus-wide by design
     )
     clusters: dict[str, list] = {}
     for pid, count in rows:
@@ -556,12 +656,20 @@ async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "project_id_naming_drift", "clusters": drifted}]
 
 
-async def axis_distribution(db) -> dict:
-    """project_id / channel distributions for the stats block (observation only)."""
+async def axis_distribution(db, agent_id: str = "") -> dict:
+    """project_id / channel distributions for the stats block (observation only).
+
+    bug-062: scoped to the requested agent (the axes sibling of bug-058). Before this,
+    a per-agent check_health returned a corpus-wide project_id/channel distribution, so
+    check_health(agent_id='A') on the shared multi-agent DB disclosed every other agent's
+    bucket names + counts. Empty agent_id keeps the corpus-wide view (CLI global sweep).
+    """
+    clause, params = _agent_scope(agent_id)
     out: dict = {}
     for axis in ("project_id", "channel"):
         rows = await db.execute_fetchall(
-            f"SELECT {axis}, COUNT(*) FROM memories GROUP BY {axis} ORDER BY COUNT(*) DESC LIMIT 20"
+            f"SELECT {axis}, COUNT(*) FROM memories WHERE 1=1 {clause} GROUP BY {axis} ORDER BY COUNT(*) DESC LIMIT 20",
+            params,
         )
         out[axis] = {(r[0] if r[0] != "" else "(global)"): r[1] for r in rows}
     return out
@@ -696,10 +804,19 @@ async def check_stale_pending_tasks(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_missing_profile(db, agent_id: str, fix: bool) -> list[dict]:
+    # bug-055: scope to the requested agent like every sibling check. Without the
+    # predicate this corpus-wide LEFT JOIN reports OTHER agents' missing profiles
+    # into the requested agent's result (the bug-031/bug-007 scope-leak class), so
+    # check_health(agent_id='A') falsely reports healthy=False and injects an issue
+    # about an unrelated agent B. Empty agent_id (CLI global sweep) yields no clause
+    # and keeps the corpus-wide behavior.
+    scope = "AND m.agent_id = ?" if agent_id else ""
+    params = (agent_id,) if agent_id else ()
     missing = await db.execute_fetchall(
-        """SELECT DISTINCT m.agent_id FROM memories m
+        f"""SELECT DISTINCT m.agent_id FROM memories m
            LEFT JOIN profiles p ON m.agent_id = p.agent_id
-           WHERE p.id IS NULL"""
+           WHERE p.id IS NULL {scope}""",
+        params,
     )
     if not missing:
         return []
@@ -814,13 +931,21 @@ HEALTH_CHECKS: list[Check] = [
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]
 
 
+# bug-083: embedding_dimension is cache-aware too — it consumes the pre-probed
+# "expected_dim" instead of live-embedding under the write lock.
+_EMBEDDING_CHECKS = {"null_embedding", "null_episode_embedding", "embedding_dimension"}
+
+
 async def run_health_checks(
-    db, agent_id: str = "", fix: bool = False, checks: list | None = None
+    db, agent_id: str = "", fix: bool = False, checks: list | None = None, embedding_cache=None
 ) -> tuple[list[dict], dict]:
     """Run (a subset of) the registry; returns (issues, severity_summary).
 
     Every issue carries ``severity`` (runner override wins, else the registry
     default) and ``check`` (the registry name that produced it).
+
+    ``embedding_cache`` (bug-072) carries embeddings pre-computed outside the write lock
+    for the two null-embedding checks; None means those checks embed live (CLI path).
     """
     selected = set(checks) if checks else None
     issues: list[dict] = []
@@ -829,7 +954,10 @@ async def run_health_checks(
         if selected is not None and check.name not in selected:
             continue
         try:
-            found = await check.runner(db, agent_id, fix)
+            if embedding_cache is not None and check.name in _EMBEDDING_CHECKS:
+                found = await check.runner(db, agent_id, fix, embedding_cache=embedding_cache)
+            else:
+                found = await check.runner(db, agent_id, fix)
         except Exception as e:
             logger.warning("health check %s crashed: %s", check.name, e)
             found = [{"type": "check_crashed", "check_name": check.name, "detail": str(e), "severity": "warn"}]

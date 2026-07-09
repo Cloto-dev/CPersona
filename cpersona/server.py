@@ -426,7 +426,11 @@ registry.auto_tool(
         ("project_id", str, ""),
         ("channel", str, ""),
     ],
-    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+    # bug-064: NOT idempotent — do_archive_episode does a bare INSERT with no OR IGNORE and
+    # no unique constraint, so every call appends a new episode. idempotentHint=True falsely
+    # advertised retry-safety; a host retrying after a lost response would double-store the
+    # episode (inflating recall + list_episodes). False is the safe, honest declaration.
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
 )
 
 registry.auto_tool(
@@ -570,6 +574,10 @@ registry.auto_tool(
     [
         ("agent_id", str),
     ],
+    # bug-065: pure read (never recalibrates, never persists) — declare readOnlyHint like
+    # every peer read tool (get_profile / list_memories / persistence_status / …) so a host
+    # that auto-approves reads treats it consistently instead of prompting for a safe read.
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 
 registry.auto_tool(
@@ -689,7 +697,12 @@ registry.auto_tool(
     },
     do_export_memories,
     [("agent_id", str), ("output_path", str), ("include_embeddings", bool, False)],
-    annotations=ToolAnnotations(readOnlyHint=True),
+    # bug-054: export_memories WRITES/overwrites a caller-supplied filesystem path
+    # (os.makedirs + open(path,'w') in do_export_memories), so it must NOT be
+    # readOnlyHint=True — a host that auto-approves read-only tools would perform an
+    # unconfirmed, environment-modifying (and potentially destructive) file write.
+    # do_export_memories additionally confines output_path against traversal.
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
 )
 
 registry.auto_tool(
@@ -762,7 +775,12 @@ registry.auto_tool(
         ("mode", str, "copy"),
         ("dry_run", bool, False),
     ],
-    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+    # bug-078: annotations must reflect the WORST reachable behavior. mode='move'
+    # ends with do_delete_agent_data(source) — the same irreversible whole-agent wipe
+    # the delete_agent_data tool declares destructiveHint=True for. Advertising
+    # destructiveHint=False let that wipe bypass any host-side HITL approval gate
+    # keyed on the hint (the bug-054 annotation-truthfulness class).
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
 registry.auto_tool(

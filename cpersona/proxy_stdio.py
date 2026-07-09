@@ -67,16 +67,37 @@ async def main():
 
             try:
                 response = await client.post(REMOTE_URL, content=line, headers=headers)
-            except httpx.ConnectError as e:
-                _write_error(line, f"Remote server unreachable: {e}")
-                continue
-            except httpx.ReadTimeout:
-                _write_error(line, "Remote server timeout")
+            except (httpx.TransportError, httpx.HTTPError) as e:
+                # bug-051: catch the whole transport/HTTP hierarchy, not just
+                # ConnectError + ReadTimeout. ConnectTimeout/PoolTimeout/WriteTimeout
+                # (TimeoutException) and RemoteProtocolError (ProtocolError) are
+                # NEITHER of those, so before this any of them escaped the loop and
+                # killed main() — a single transient network blip permanently took
+                # down the whole stdio bridge for the session. Report a JSON-RPC
+                # error for this one request and keep the loop alive.
+                _write_error(line, f"Remote request failed: {type(e).__name__}: {e}")
                 continue
 
             # Track session ID
             if "mcp-session-id" in response.headers:
                 session_id = response.headers["mcp-session-id"]
+
+            # bug-063: httpx does not raise for 4xx/5xx without raise_for_status(). Before
+            # this a non-2xx body (a 502 gateway HTML page, a 401 auth JSON, a 500 stack
+            # trace) with a non-SSE content-type fell through to _write_stdout and was
+            # emitted verbatim as if it were a JSON-RPC message — desyncing the client's
+            # line reader and leaving this request unanswered (it hangs until timeout).
+            # Surface it as a proper id-keyed JSON-RPC error like the transport path and
+            # keep the loop alive, instead of corrupting the stream.
+            # bug-082: the >= 400 guard left 3xx open. The client is built without
+            # follow_redirects, so a reverse proxy's 301/302/307/308 (http->https or
+            # trailing-slash canonicalization of /mcp) surfaced here with an HTML body
+            # and fell through to _write_stdout — the same stream corruption, from the
+            # redirect range. Only a 2xx can carry a JSON-RPC/SSE payload; reject
+            # everything else.
+            if not (200 <= response.status_code < 300):
+                _write_error(line, f"Remote returned HTTP {response.status_code}: {response.text.strip()[:200]}")
+                continue
 
             # Parse response based on content type
             content_type = response.headers.get("content-type", "")

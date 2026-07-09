@@ -500,8 +500,9 @@ async def test_remote_search_honors_min_similarity_argument(clean_db, monkeypatc
             return {"results": []}
 
     class _FakeHTTP:
-        async def post(self, url, json=None):
+        async def post(self, url, json=None, **kwargs):
             captured["json"] = json
+            captured["kwargs"] = kwargs
             return _FakeResp()
 
     class _FakeClient:
@@ -514,6 +515,11 @@ async def test_remote_search_honors_min_similarity_argument(clean_db, monkeypatc
     db = clean_db
     await vector._search_vector(db, "agent-x", "q", 10, min_similarity=0.123)
     assert captured["json"]["min_similarity"] == 0.123, "remote /search ignored min_similarity (bug-027)"
+    # bug-033: the recall hot-path POST must carry a bounded per-call timeout, not
+    # inherit the client's 30s default.
+    assert captured["kwargs"].get("timeout") == vector.REMOTE_SEARCH_TIMEOUT_SECS, (
+        "remote /search POST did not pass a dedicated timeout (bug-033)"
+    )
 
 
 # ---------------------------------------------------------------------------
