@@ -326,7 +326,7 @@ critical fixes only), **Current** (newest release line, all fixes land here),
 and **Experimental** (alpha/beta pre-releases, opt-in). When a new line is
 certified Stable, the previous one keeps critical-fix support for 30 more
 days, then reaches EOL. Current status: **2.4.x is the Stable line**
-(latest v2.4.39); 2.5.x pre-releases are Experimental.
+(latest v2.4.40); 2.5.x pre-releases are Experimental.
 
 > **Known issue:** v2.4.39 and earlier under-scan vector recall on corpora
 > beyond a few hundred rows (bug-085; v2.4.38–v2.4.39 are the most affected —
