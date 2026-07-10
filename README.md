@@ -1,6 +1,6 @@
 <div align="center">
 
-# cpersona
+# CPersona
 
 ### MCP Memory Server
 
