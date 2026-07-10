@@ -6,8 +6,9 @@ description: >-
   between conversations, asks to install or set up CPersona / a memory server,
   or when CPersona tools are available and the conversation contains decisions,
   rules, preferences, or a session boundary worth recording. Covers install,
-  MCP-client configuration, the embedding server, and the day-to-day
-  store / recall / archive workflow.
+  MCP-client configuration, the embedding server, the day-to-day
+  store / recall / archive workflow, and persisting the memory policy into
+  the user's CLAUDE.md so the triggers survive without this skill loaded.
 ---
 
 # CPersona — persistent memory for Claude
@@ -128,6 +129,74 @@ claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"
 
 After restarting the client, confirm the `cpersona` server is connected, then
 ask Claude to `store` a fact and `recall` it.
+
+### 4. Persist the policy into CLAUDE.md (recommended)
+
+This skill only loads when a conversation happens to activate it — but the
+memory triggers below must fire in **every** session. `CLAUDE.md` is loaded
+deterministically each session, so the final setup step is to persist a small
+policy block there. Offer this to the user at the end of setup (and whenever
+you notice the triggers are not firing because no policy block exists).
+
+Rules for writing the block (per the
+[CLAUDE.md Policy Generation Standard](https://github.com/Cloto-dev/cpersona/blob/master/docs/CLAUDE_MD_POLICY_STANDARD.md)):
+
+- **Ask first.** Show the exact block and get approval before touching the
+  user's `CLAUDE.md`. Never write it silently.
+- **Default target: `~/.claude/CLAUDE.md`** (memory is cross-project
+  infrastructure). Offer a project-level `CLAUDE.md` if the user wants memory
+  rules scoped to one project.
+- **Replace, don't duplicate.** If a `BEGIN cpersona-policy` marker already
+  exists in the file, replace everything between the markers (this is also
+  how an older `vN` block gets upgraded — with consent). Never touch content
+  outside the markers.
+- Substitute `<AGENT_ID>` with the stable id chosen above before writing.
+
+The block (keep it verbatim apart from the substitution — it is budgeted at
+40 lines because `CLAUDE.md` costs context in every session, and every line
+is chosen to change behavior the agent would *not* show by default):
+
+```markdown
+<!-- BEGIN cpersona-policy v1 (managed by the cpersona-memory skill; re-run the skill to update) -->
+## CPersona memory policy
+
+Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
+
+**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
+the first substantive action. Prefer `recall_with_context` when conversation history is already
+at hand (it de-dupes and merges); add `deep=true` to dig past time decay. Skip only for trivial
+one-shot questions.
+
+**Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
+"let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
+Protect must-never-lose rules with `lock_memory`. After a successful `git commit`, `store` a
+one-line record: hash, what changed, why.
+
+**Changing an existing rule** → `update_memory`, never delete + store. If the memory is locked:
+`unlock_memory` → `update_memory` → `lock_memory`.
+
+**Session end** — fire on closing phrases ("that's all for today", "wrap it up", "good night",
+"see you tomorrow") → first `store` + lock any unsaved decisions, then
+`archive_episode(agent_id, history=<the real turns>, summary=…, keywords=…, resolved=…)`.
+Compute `summary`/`keywords` yourself (the server never calls an LLM; providing them makes
+storage synchronous). Pass the REAL conversation history — it drives timestamps and the
+episode embedding. Set `resolved=true` for finished topics so they decay out of future recalls.
+
+**"Don't save this" / benchmark sessions** → `pause_persistence(ttl_seconds=1800)`;
+`resume_persistence()` (or TTL expiry) restores. Read tools are unaffected.
+
+**Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
+and follow its runbook (usually: start or repoint the embedding server, then recall again).
+Never quietly serve keyword-only recall.
+
+**Quality & maintenance** — if recall feels off, `set_recall_precision`
+(strict/balanced/lenient) is the one policy knob; run `calibrate_threshold(agent_id)` after
+the corpus changes substantially. Monthly: `check_health(agent_id, fix=true)`. For
+Japanese/CJK-heavy corpora set `CPERSONA_RECALL_MODE=rsf`.
+
+Details, setup, and troubleshooting: the `cpersona-memory` skill.
+<!-- END cpersona-policy -->
+```
 
 ---
 
