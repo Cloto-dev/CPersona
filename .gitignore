@@ -9,3 +9,8 @@ data/
 dist/
 build/
 .DS_Store
+
+# Benchmark working artifacts (benchmarks/README.md)
+trackb_results*/
+lmeb_results*/
+*.log
