@@ -6,8 +6,9 @@ description: >-
   between conversations, asks to install or set up CPersona / a memory server,
   or when CPersona tools are available and the conversation contains decisions,
   rules, preferences, or a session boundary worth recording. Covers install,
-  MCP-client configuration, the embedding server, and the day-to-day
-  store / recall / archive workflow.
+  MCP-client configuration, the embedding server, the day-to-day
+  store / recall / archive workflow, and persisting the memory policy into
+  the user's CLAUDE.md so the triggers survive without this skill loaded.
 ---
 
 # CPersona — persistent memory for Claude
@@ -128,6 +129,51 @@ claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"
 
 After restarting the client, confirm the `cpersona` server is connected, then
 ask Claude to `store` a fact and `recall` it.
+
+### 4. Persist the policy into CLAUDE.md (recommended)
+
+This skill only loads when a conversation happens to activate it — but the
+memory triggers below must fire in **every** session. `CLAUDE.md` is loaded
+deterministically each session, so the final setup step is to persist a small
+policy block there. Offer this to the user at the end of setup (and whenever
+you notice the triggers are not firing because no policy block exists).
+
+Rules for writing the block (per the
+[CLAUDE.md Policy Generation Standard](https://github.com/Cloto-dev/cpersona/blob/master/docs/CLAUDE_MD_POLICY_STANDARD.md)):
+
+- **Ask first.** Show the exact block and get approval before touching the
+  user's `CLAUDE.md`. Never write it silently.
+- **Default target: `~/.claude/CLAUDE.md`** (memory is cross-project
+  infrastructure). Offer a project-level `CLAUDE.md` if the user wants memory
+  rules scoped to one project.
+- **Replace, don't duplicate.** If a `BEGIN cpersona-policy` marker already
+  exists in the file, replace everything between the markers (this is also
+  how an older `vN` block gets upgraded — with consent). Never touch content
+  outside the markers.
+- Substitute `<AGENT_ID>` with the stable id chosen above before writing.
+
+The block (keep it verbatim apart from the substitution — it is budgeted to
+stay small because `CLAUDE.md` costs context in every session):
+
+```markdown
+<!-- BEGIN cpersona-policy v1 (managed by the cpersona-memory skill; re-run the skill to update) -->
+## CPersona memory policy
+
+Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — do not wait to be asked:
+
+1. **Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)`
+   before the first substantive action (`recall_with_context` when history is already at hand).
+2. **Decision / rule / preference / bug finding** → `store` it immediately;
+   `lock_memory` anything that must never be lost.
+3. **Changing an existing rule** → `update_memory`, not delete + store.
+4. **Session end** (goodbyes, "wrap up", "that's all") → `archive_episode` with the real
+   conversation history plus self-computed `summary` / `keywords`; `resolved=true` for closed topics.
+5. **"Don't save this" sessions** → `pause_persistence(ttl_seconds=1800)`; `resume_persistence()` to undo.
+
+If a `recall` response carries an `advisory` field, surface it to the user (degraded mode)
+and follow its runbook. Details: the `cpersona-memory` skill.
+<!-- END cpersona-policy -->
+```
 
 ---
 
