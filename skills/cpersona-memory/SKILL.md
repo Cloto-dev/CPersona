@@ -152,26 +152,49 @@ Rules for writing the block (per the
   outside the markers.
 - Substitute `<AGENT_ID>` with the stable id chosen above before writing.
 
-The block (keep it verbatim apart from the substitution — it is budgeted to
-stay small because `CLAUDE.md` costs context in every session):
+The block (keep it verbatim apart from the substitution — it is budgeted at
+40 lines because `CLAUDE.md` costs context in every session, and every line
+is chosen to change behavior the agent would *not* show by default):
 
 ```markdown
 <!-- BEGIN cpersona-policy v1 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
-Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — do not wait to be asked:
+Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
 
-1. **Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)`
-   before the first substantive action (`recall_with_context` when history is already at hand).
-2. **Decision / rule / preference / bug finding** → `store` it immediately;
-   `lock_memory` anything that must never be lost.
-3. **Changing an existing rule** → `update_memory`, not delete + store.
-4. **Session end** (goodbyes, "wrap up", "that's all") → `archive_episode` with the real
-   conversation history plus self-computed `summary` / `keywords`; `resolved=true` for closed topics.
-5. **"Don't save this" sessions** → `pause_persistence(ttl_seconds=1800)`; `resume_persistence()` to undo.
+**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
+the first substantive action. Prefer `recall_with_context` when conversation history is already
+at hand (it de-dupes and merges); add `deep=true` to dig past time decay. Skip only for trivial
+one-shot questions.
 
-If a `recall` response carries an `advisory` field, surface it to the user (degraded mode)
-and follow its runbook. Details: the `cpersona-memory` skill.
+**Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
+"let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
+Protect must-never-lose rules with `lock_memory`. After a successful `git commit`, `store` a
+one-line record: hash, what changed, why.
+
+**Changing an existing rule** → `update_memory`, never delete + store. If the memory is locked:
+`unlock_memory` → `update_memory` → `lock_memory`.
+
+**Session end** — fire on closing phrases ("that's all for today", "wrap it up", "good night",
+"see you tomorrow") → first `store` + lock any unsaved decisions, then
+`archive_episode(agent_id, history=<the real turns>, summary=…, keywords=…, resolved=…)`.
+Compute `summary`/`keywords` yourself (the server never calls an LLM; providing them makes
+storage synchronous). Pass the REAL conversation history — it drives timestamps and the
+episode embedding. Set `resolved=true` for finished topics so they decay out of future recalls.
+
+**"Don't save this" / benchmark sessions** → `pause_persistence(ttl_seconds=1800)`;
+`resume_persistence()` (or TTL expiry) restores. Read tools are unaffected.
+
+**Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
+and follow its runbook (usually: start or repoint the embedding server, then recall again).
+Never quietly serve keyword-only recall.
+
+**Quality & maintenance** — if recall feels off, `set_recall_precision`
+(strict/balanced/lenient) is the one policy knob; run `calibrate_threshold(agent_id)` after
+the corpus changes substantially. Monthly: `check_health(agent_id, fix=true)`. For
+Japanese/CJK-heavy corpora set `CPERSONA_RECALL_MODE=rsf`.
+
+Details, setup, and troubleshooting: the `cpersona-memory` skill.
 <!-- END cpersona-policy -->
 ```
 

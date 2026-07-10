@@ -65,20 +65,32 @@ generated block MUST satisfy all of the following:
    On re-run, a block whose `BEGIN` marker is already present is **replaced
    in place** (never appended twice). Content outside the markers is never
    touched.
-4. **Size budget** — at most **20 lines** between the markers. The block
-   carries triggers and hard rules only; explanations, setup, and
-   troubleshooting stay in the skill, referenced by a one-line pointer.
-   `CLAUDE.md` is paid for in every session — respect the user's context
-   window.
+4. **Size budget** — at most **40 lines** between the markers. The budget
+   exists to force selection, not to forbid substance: baseline operations
+   (an obvious store, an explicit recall) work with no block at all, so
+   every line must earn its place by changing what the agent does *by
+   default*. Explanations, setup, and troubleshooting stay in the skill,
+   referenced by a one-line pointer. `CLAUDE.md` is paid for in every
+   session — respect the user's context window.
 5. **Versioning** — bump `vN` whenever the block content changes. On re-run
    the skill upgrades an older-versioned block (with consent, per rule 1).
 6. **Language** — the block is written in English only.
 
 ## 4. What belongs in a policy block
 
-Include: the stable identity the agent should use (e.g. `agent_id`), the
-mandatory triggers (event → tool call), and the one degraded/error behavior
-the user must not miss. Exclude: install steps, tool references,
+The test for every line: **would the agent already do this without the
+block?** If yes, cut it. The block's job is to reproduce the *quality of
+life* of a well-tuned operator environment — the reference here is the
+maintainer's own setup — not to restate behavior the agent performs anyway.
+
+Include: the stable identity the agent should use (e.g. `agent_id`); the
+mandatory triggers **with concrete natural-language fire conditions** (the
+phrases that should cause a tool call — this is what the agent gets wrong
+without a policy); the non-obvious craft that separates a good deployment
+from a default one (e.g. pre-computing summaries so storage is synchronous,
+passing real history, lock discipline for critical rules, update-not-recreate
+for rule changes); the degraded/error behavior the user must not miss; and a
+minimal maintenance cadence. Exclude: install steps, tool references,
 configuration tables, prose rationale — that is the skill's job.
 
 ## 5. Applicability table
