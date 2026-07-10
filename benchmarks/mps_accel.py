@@ -6,7 +6,7 @@ Replaces the per-query hot path of cpersona's ``_search_vector`` (full-table
 SELECT + blob join + numpy matmul, repeated for every query) with a
 per-corpus-group preloaded matrix. Everything *around* the similarity
 computation — threshold rule, candidate dict shape, candidate ordering,
-heapq top-k selection, episode handling — replicates the v2.4.39 code path
+heapq top-k selection, episode handling — replicates the v2.4.40 code path
 line-for-line, so the observable behaviour is unchanged. cpersona itself is
 never modified; we only rebind the module-level ``_search_vector`` names at
 runtime (``cpersona.memory_handlers`` binds it at import time, so both that
@@ -181,7 +181,12 @@ class FastVectorSearch:
 
         effective_min_sim = (min_similarity if min_similarity is not None
                              else self.vector_mod._get_vector_threshold(agent_id))
-        scan_limit = min(self.vector_mod.MAX_MEMORIES, max(limit * 10, 100))
+        # v2.4.40 semantics (bug-085): the scan window is MAX_MEMORIES, fully
+        # decoupled from the response limit. (The pre-2.4.40 replica used
+        # min(MAX_MEMORIES, max(limit * 10, 100)), which silently re-created
+        # the bug-085 window against a fixed 2.4.40 original — caught by the
+        # selfcheck as systematic MISMATCH on corpora larger than the window.)
+        scan_limit = self.vector_mod.MAX_MEMORIES
 
         candidates: list[tuple[float, dict]] = []
 
