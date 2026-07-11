@@ -1,4 +1,4 @@
-# Release Lifecycle Standard (v1.0)
+# Release Lifecycle Standard (v1.1)
 
 A three-tier release lifecycle and support standard for Cloto-family
 projects. This document is the **specification**; a repository adopting it
@@ -7,12 +7,16 @@ publishes its own operative `SUPPORT.md` (tier table + status) and
 
 ## Status of this document
 
-**Pilot.** This standard is piloted in **cpersona**, which serves as its
-reference implementation and quality baseline: every rule below is exercised
-and validated against real releases of this repository before family-wide
-adoption. Cloto-family **public** repositories adopt the standard
-incrementally once the pilot passes its evaluation criteria (§6). Private
-repositories are exempt.
+**Pilot.** This standard is piloted in two repositories with complementary
+roles: **cpersona** (reference implementation for policy operation and
+quality baseline) and **ClotoCore** (reference implementation for
+**structural enforcement** — the tier rules are baked into its
+update-channel / release-manifest pipeline rather than applied by registry
+convention; see its `docs/RELEASE_PIPELINE_DESIGN.md`). Every rule below is
+exercised and validated against real releases before family-wide adoption.
+Cloto-family **public** repositories adopt the standard incrementally once
+the pilot passes its evaluation criteria (§6). Private repositories are
+exempt.
 
 Canonical home: this repository, while the pilot runs. If the standard is
 adopted family-wide, the canonical home may move to a family-level
@@ -96,6 +100,21 @@ EOL.
 No further fixes. Post-EOL security fixes are at the maintainer's sole
 discretion and must not be relied upon.
 
+### 2.6 Initial state (no certified Stable line)
+
+Before a repository's **first** certification event, no Stable line exists.
+In that state:
+
+- The default distribution channel MUST serve the **Current** line (i.e. a
+  `stable` channel aliases `current` until first certification).
+- Consumer-facing surfaces SHOULD state that no line has been certified
+  Stable yet (e.g. a "Stable line not yet certified" note in the
+  `SUPPORT.md` status table and, where applicable, in update UI).
+- The installer opt-in property (§2.1) still holds: the aliased default
+  channel never resolves to a pre-release.
+- The first certification replaces the alias with a real pin; from then on
+  §2.3–§2.5 apply unchanged.
+
 ## 3. Required artifacts (per adopting repository)
 
 1. `SUPPORT.md` — operative policy: tier table, lifecycle summary, and the
@@ -114,6 +133,11 @@ cpersona's `SUPPORT.md` / `SECURITY.md` are the reference templates.
   final release; Experimental stays behind the pre-release flag.
 - **GitHub Releases**: pre-releases carry the "Pre-release" flag; the
   "Latest" badge tracks Current.
+- **Update manifest / feed** (repositories that ship their own updater): the
+  feed exposes one channel per tier, named after the tiers verbatim; the
+  default channel is `stable` and its pin flips on certification (§2.3),
+  making §2.1 and the marketplace rule above structural rather than
+  conventional. Reference implementation: ClotoCore's release pipeline.
 
 ## 5. Adoption checklist (for a new repository)
 
@@ -145,10 +169,16 @@ clean cycle passes.
 
 | Repository | Standard version | Adopted | Notes |
 | --- | --- | --- | --- |
-| cpersona | v1.0 | 2026-07-09 | Pilot / reference implementation. |
+| cpersona | v1.0 | 2026-07-09 | Pilot / reference implementation (policy operation). |
+| ClotoCore | v1.1 | 2026-07-12 | Second pilot / reference implementation (structural enforcement via update-channel + signed-manifest pipeline, `docs/RELEASE_PIPELINE_DESIGN.md`). |
 
 ## 8. Changelog
 
+- **v1.1 (2026-07-12)** — Initial-state rule for repositories with no
+  certified Stable line (§2.6, surfaced by the ClotoCore adoption — a §6
+  "standard defect" fixed per its own procedure); update-manifest/feed row
+  in the distribution mapping (§4); ClotoCore registered as second pilot
+  (structural-enforcement reference).
 - **v1.0 (2026-07-09)** — Initial standard, extracted from the cpersona
   policy discussion; vocabulary and rules benchmarked against OSS
   conventions (Node.js release phases, React release channels, Debian
