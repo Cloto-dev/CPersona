@@ -23,7 +23,7 @@ Two tracks are measured:
 | `benchmark_trackb_lmeb.py` | Track B runner (real cpersona store/recall paths) |
 | `budget_batching.py` | Token-budget dynamic batching for SentenceTransformer encode (MPS pathologies workaround); shared by both tracks |
 | `mps_accel.py` | Optional behavior-invariant recall acceleration (`--fast`): preloads each corpus group's embeddings into one matrix instead of per-query full-table scans. Zero changes to cpersona itself |
-| `test_mps_accel_equivalence.py` | Equivalence gate proving `mps_accel` returns identical results to the original `_search_vector` (numpy backend: bitwise; torch: ≤1e-5), including a `do_recall` integration comparison |
+| `mps_accel_equivalence_gate.py` | Equivalence gate proving `mps_accel` returns identical results to the original `_search_vector` (numpy backend: bitwise; torch: ≤1e-5), including a `do_recall` integration comparison. Deliberately NOT named `test_*.py`: it is a standalone script that mutates `os.environ` at import time, so pytest must never collect it |
 | `run_trackb.sh` | Track B launcher encoding the official measurement regime |
 
 ## Prerequisites
@@ -95,7 +95,7 @@ OUTPUT_DIR=trackb_results_fast bash benchmarks/run_trackb.sh --unclamp_limit --f
 Equivalence gate (run after touching recall internals or `mps_accel.py`):
 
 ```bash
-LMEB_DIR=~/lmeb python benchmarks/test_mps_accel_equivalence.py \
+LMEB_DIR=~/lmeb python benchmarks/mps_accel_equivalence_gate.py \
     --tasks LoCoMo --device mps \
     --model_path sentence-transformers/all-MiniLM-L6-v2 --backends numpy,torch
 ```

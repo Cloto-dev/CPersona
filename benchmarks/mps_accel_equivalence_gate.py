@@ -13,9 +13,14 @@ one side by side on the same DB and compares:
 
 Exit code 0 = gate passed for all requested backends.
 
+This is a standalone script, not a pytest test — it mutates os.environ at
+import time (the cpersona modules read their config on import), so it must
+never carry a test_*.py name that pytest would collect: collecting it leaks
+the env overrides into the rest of the suite.
+
 Usage:
   LMEB_DIR=~/lmeb \
-  python benchmarks/test_mps_accel_equivalence.py --tasks LoCoMo --device mps \
+  python benchmarks/mps_accel_equivalence_gate.py --tasks LoCoMo --device mps \
       --model_path sentence-transformers/all-MiniLM-L6-v2 --backends numpy,torch
 
 (CPERSONA_REPO defaults to the repo containing this script; set it to gate
