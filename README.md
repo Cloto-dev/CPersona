@@ -73,7 +73,7 @@ python download_model.py --model jina-v5-nano
 EMBEDDING_PROVIDER=onnx_jina_v5_nano python server.py   # serves http://127.0.0.1:8401/embed
 ```
 
-cpersona was tuned and benchmarked against jina-v5-nano (33M params, 768d), so CEmbedding reproduces the numbers below. Any other server that satisfies the contract above works too.
+cpersona ships with defaults tuned against jina-v5-nano (768d). Any other server that satisfies the contract above works too — see [Benchmarks](#benchmarks) for models with published measurements.
 
 > Without an embedding server, cpersona falls back to FTS5 + keyword search only. Vector search (the strongest retrieval layer) will be disabled.
 
@@ -196,15 +196,19 @@ Query → ┌── Vector search (cosine similarity)  ──┐
 
 ## Benchmarks
 
-Tested on LMEB (Long-term Memory Evaluation Benchmark) — 22 evaluation tasks measuring memory retrieval quality:
+Measured on LMEB (Long-term Memory Evaluation Benchmark, arXiv:2603.12572) — 22 retrieval tasks subsuming LoCoMo and LongMemEval. The metric is Mean NDCG@10 across all 22 tasks.
 
-| Embedding Model | Params | Dimensions | Mean NDCG@10 |
-|----------------|--------|------------|--------------|
-| MiniLM-L6-v2 | 22M | 384 | 36.88 |
-| e5-small | 33M | 384 | 46.36 |
-| jina-v5-nano | 33M | 768 | **54.14** |
+Two tracks isolate the pipeline's contribution:
 
-jina-v5-nano achieves +47% improvement over the MiniLM baseline.
+- **Track A** — the raw embedding model alone (baseline retrieval).
+- **Track B** — the same embeddings routed through cpersona's real `store`/`recall` code paths: SQLite + FTS5 + RRF fusion + per-agent auto-calibration (cpersona v2.4.40, full-ranking regime).
+
+| Embedding Model | Params | Dim | Track A (raw) | Track B (cpersona) | Δ |
+|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | 22M | 384 | 43.67 | **50.10** | +6.43 |
+| bge-m3 | 568M | 1024 | 56.83 | **57.66** | +0.83 |
+
+cpersona's hybrid pipeline outranks the raw embedding on both models (Track B > Track A) — the fusion layers add signal rather than merely persisting vectors. The weaker the embedding, the larger the pipeline's contribution: the FTS5/keyword layers rescue queries the vector search alone misses. Methodology, the measurement harness, and the reproduction regime live in [`benchmarks/`](benchmarks/README.md).
 
 ## All Tools
 
