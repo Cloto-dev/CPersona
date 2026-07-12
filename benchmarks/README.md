@@ -25,6 +25,7 @@ Two tracks are measured:
 | `mps_accel.py` | Optional behavior-invariant recall acceleration (`--fast`): preloads each corpus group's embeddings into one matrix instead of per-query full-table scans. Zero changes to cpersona itself |
 | `mps_accel_equivalence_gate.py` | Equivalence gate proving `mps_accel` returns identical results to the original `_search_vector` (numpy backend: bitwise; torch: ≤1e-5), including a `do_recall` integration comparison. Deliberately NOT named `test_*.py`: it is a standalone script that mutates `os.environ` at import time, so pytest must never collect it |
 | `run_trackb.sh` | Track B launcher encoding the official measurement regime |
+| `benchmark_latency.py` | Production-stack latency runner: end-to-end `do_recall()` / `do_store()` wall clock against a REAL HTTP embedding backend (CEmbedding `/embed`), in both `local` and `remote` (matrix `/search`) vector-search modes |
 
 ## Prerequisites
 
@@ -103,7 +104,58 @@ LMEB_DIR=~/lmeb python benchmarks/mps_accel_equivalence_gate.py \
 Long runs should be launched fully detached
 (`nohup bash benchmarks/run_trackb.sh > run.log 2>&1 &`).
 
+## Latency benchmark (production stack)
+
+`benchmark_latency.py` measures what the ranking tracks deliberately do
+not: end-to-end recall/store wall clock with a real HTTP embedding
+backend. Track B's LookupEmbeddingClient removes encode cost to isolate
+ranking quality; the latency runner puts it back, constructing the same
+`EmbeddingClient` that `server.main()` uses.
+
+One invocation measures one (corpus_size, mode) point against a
+persistent DB shared across modes. Regime: real LMEB queries (unique per
+timed pass, warmup separated so the client's LRU cache cannot serve
+repeats), `limit=10`, `recall_mode=rrf`, corpus documents truncated to
+2,000 chars (`--max_doc_chars` — cpersona memories are chat messages and
+summaries, not book chapters), `CPERSONA_MAX_MEMORIES` = corpus size so
+the local scan window covers the whole corpus, truncation layers at
+production defaults.
+
+```bash
+LMEB_DIR=~/lmeb python benchmarks/benchmark_latency.py \
+    --db /tmp/latency.db --corpus_size 10000 --mode local \
+    --embed_url http://127.0.0.1:8401/embed --out latency_10k_local.json
+```
+
+Remote mode additionally needs the CEmbedding index backfilled from the
+same DB (`scripts/backfill_embedding_index.py` in the CEmbedding repo,
+one index DB per corpus — the namespace is keyed by agent id) and a
+server restart so the namespace matrix is resident.
+
+### Measured results (2026-07-12)
+
+cpersona v2.4.40, jina-v5-nano via CEmbedding 0.6.1 (`/embed`, pad-to-longest),
+200 real queries per cell, Apple M5. `local` scans SQLite blobs in-process;
+`remote` sends the query text to CEmbedding 0.6.1's namespace-resident
+matrix `/search`.
+
+| Corpus | Recall p50 / p95 (local) | Recall p50 / p95 (remote matrix) |
+|---|---|---|
+| 1,000 | 19.8 / 28.5 ms | 15.6 / 23.7 ms |
+| 10,000 | 51.1 / 73.4 ms | 29.9 / 42.6 ms |
+| 100,000 | 444.2 / 534.5 ms | 171.1 / 251.2 ms |
+
+Reference points: a bare `/embed` round trip for a short query is ~8 ms
+(the encode share of every local recall); store p50 ranges 19–85 ms in
+local mode and roughly doubles in remote mode (the `/index` push re-encodes
+the document server-side). At 100k the local-vs-remote gap (~270 ms) is the
+per-query full-table blob scan that the resident matrix eliminates; most of
+the remaining remote time is the FTS5 retriever, which both modes share
+under `rrf`. Numbers predating CEmbedding 0.6.1 are not comparable: 0.6.0's
+fixed-length padding put a ~620 ms encode floor under every recall.
+
 ## Results
 
-Result JSON directories (`trackb_results*`, `lmeb_results*`) and run logs
-are working artifacts and are not committed to this repository.
+Result JSON directories (`trackb_results*`, `lmeb_results*`,
+`lat*_*.json`) and run logs are working artifacts and are not committed
+to this repository. The latency table above is the documented record.
