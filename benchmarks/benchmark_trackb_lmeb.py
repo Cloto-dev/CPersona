@@ -416,6 +416,11 @@ def compute_ndcg(
 # Main benchmark
 # ===================================================================
 
+# Per-role encode kwargs, set at model load (asymmetric-prompt models only).
+_DOC_ENCODE_KW: dict = {}
+_QUERY_ENCODE_KW: dict = {}
+
+
 async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], batch_size: int = 256) -> int:
     """Store corpus using cpersona's schema and FTS5 triggers with batch optimization.
 
@@ -441,7 +446,9 @@ async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], bat
         texts = [(doc.get("title", "") + " " + doc.get("text", "")).strip() for doc in batch]
 
         # Level 2: Batch-encode with sentence-transformers (GPU-accelerated)
-        embeddings = st_model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        embeddings = st_model.encode(
+            texts, normalize_embeddings=True, show_progress_bar=False, **_DOC_ENCODE_KW
+        )
 
         # Level 1 + 3: Batch INSERT with single transaction, no dedup SELECT
         rows = []
@@ -499,7 +506,9 @@ async def run_subtask(
 
     # Pre-compute query embeddings
     query_texts = [q["text"] for q in queries_data]
-    query_embeddings = st_model.encode(query_texts, normalize_embeddings=True, show_progress_bar=False)
+    query_embeddings = st_model.encode(
+        query_texts, normalize_embeddings=True, show_progress_bar=False, **_QUERY_ENCODE_KW
+    )
     emb_client.preload(query_texts, query_embeddings)
 
     results: dict[str, list[str]] = {}
@@ -777,12 +786,28 @@ async def async_main(args):
     if args.dtype == "float16":
         import torch
         model_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
+    if args.default_task:
+        model_kwargs.setdefault("model_kwargs", {})["default_task"] = args.default_task
+    if args.trust_remote_code:
+        model_kwargs["trust_remote_code"] = True
     st_model = SentenceTransformer(args.model_path, device=args.device, **model_kwargs)
     if args.budget_encode:
         from budget_batching import install_budget_batching
         install_budget_batching(st_model)
         logger.info("  Token-budget dynamic batching installed")
     logger.info(f"  Device: {st_model.device}, Dim: {st_model.get_sentence_embedding_dimension()}")
+
+    # Prompted models (jina v5: {'query','document'}) need the asymmetric
+    # prompts applied explicitly — queries encoded under the document prompt
+    # break asymmetric retrieval. Promptless models (bge-m3, MiniLM) get {}
+    # and encode exactly as before. Explicit prompt_name also keeps the
+    # embedding disk-cache keys identical to Track A's mteb-wrapper encodes.
+    global _DOC_ENCODE_KW, _QUERY_ENCODE_KW
+    st_prompts = getattr(st_model, "prompts", None) or {}
+    _DOC_ENCODE_KW = {"prompt_name": "document"} if "document" in st_prompts else {}
+    _QUERY_ENCODE_KW = {"prompt_name": "query"} if "query" in st_prompts else {}
+    if _DOC_ENCODE_KW or _QUERY_ENCODE_KW:
+        logger.info(f"  Asymmetric prompts active: {st_prompts}")
 
     # Run tasks
     task_names = [t.strip() for t in args.tasks.split(",")]
@@ -909,6 +934,12 @@ def main():
                         help="Bypass v2.4.38 bug-032's do_recall limit=100 clamp so the "
                              "harness's limit=corpus_size full-ranking convention works "
                              "(regression-isolation arm; no-op on pre-2.4.38 checkouts)")
+    parser.add_argument("--trust_remote_code", action="store_true",
+                        help="pass trust_remote_code=True for models with custom modeling "
+                             "code (e.g. jinaai/jina-embeddings-v5-text-nano)")
+    parser.add_argument("--default_task", default=None,
+                        help="default_task model kwarg for task-LoRA models "
+                             "(jina v5: 'retrieval' — encoding fails without a task)")
     args = parser.parse_args()
 
     asyncio.run(async_main(args))
