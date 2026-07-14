@@ -199,6 +199,32 @@ def summarize_results(output_dir: str, task_names: list[str], metric: str = "mai
     print(f"\nSummary saved to {summary_path}")
 
 
+def _load_st_model(args, model_kwargs):
+    """Load a sentence-transformer through mteb, with a direct fallback.
+
+    Some models exist in the mteb registry as metadata-only entries (no
+    loader — e.g. jinaai/jina-embeddings-v5-text-nano), where mteb.get_model
+    raises NotImplementedError. Those are loaded directly and wrapped; the
+    wrapper picks up the model's built-in prompts (query/document), so
+    prompt handling matches registry-loaded models.
+    """
+    try:
+        return mteb.get_model(args.model_path, device=args.device, model_kwargs=model_kwargs)
+    except NotImplementedError:
+        from sentence_transformers import SentenceTransformer
+        from mteb.models.sentence_transformer_wrapper import (
+            SentenceTransformerEncoderWrapper,
+        )
+        logger.info(f"mteb registry has no loader for {args.model_path} — loading directly")
+        st = SentenceTransformer(
+            args.model_path,
+            device=args.device,
+            trust_remote_code=args.trust_remote_code,
+            model_kwargs=model_kwargs,
+        )
+        return SentenceTransformerEncoderWrapper(st)
+
+
 # --- Main ---
 
 def main():
@@ -240,6 +266,18 @@ def main():
         choices=["float16", "float32"],
         help="model dtype for --budget_encode",
     )
+    parser.add_argument(
+        "--trust_remote_code",
+        action="store_true",
+        help="pass trust_remote_code=True when the model needs custom modeling "
+        "code (e.g. jinaai/jina-embeddings-v5-text-nano)",
+    )
+    parser.add_argument(
+        "--default_task",
+        default=None,
+        help="default_task model kwarg for task-LoRA models "
+        "(jina v5: 'retrieval' — required, encoding fails without a task)",
+    )
     args = parser.parse_args()
 
     # Resolve task list
@@ -260,11 +298,14 @@ def main():
         model_kwargs = {}
         if args.dtype == "float16":
             model_kwargs["torch_dtype"] = torch.float16
-        model = mteb.get_model(args.model_path, device=args.device, model_kwargs=model_kwargs)
+        if args.default_task:
+            model_kwargs["default_task"] = args.default_task
+        model = _load_st_model(args, model_kwargs)
         install_budget_batching(model.model)
         model_name = args.model_path.split("/")[-1]
     else:
-        model = mteb.get_model(args.model_path)
+        model_kwargs = {"default_task": args.default_task} if args.default_task else {}
+        model = _load_st_model(args, model_kwargs)
         model_name = args.model_path.split("/")[-1]
 
     # Create output directory: lmeb_results/{model_name}/

@@ -143,6 +143,14 @@ def install_budget_batching(st_model, budget_sq: float = None, max_batch: int = 
         # (encode_query/encode_document delegate with inputs=...); accept both.
         if sentences is None:
             sentences = inputs
+        # ST 5.x encode_query/encode_document also tag task="query"/"document"
+        # (Router-module routing labels). jina v5's custom module validates
+        # `task` against its LoRA adapter names and rejects these labels; the
+        # adapter is already fixed by default_task at load, and query/document
+        # asymmetry is carried by prompt_name. Promptless models ignore task
+        # entirely, so dropping the label is behavior-preserving everywhere.
+        if kwargs.get("task") in ("query", "document"):
+            kwargs.pop("task")
         if isinstance(sentences, str):
             return orig_encode(sentences, **kwargs)
         sentences = list(sentences)
@@ -159,10 +167,20 @@ def install_budget_batching(st_model, budget_sq: float = None, max_batch: int = 
         # bge-m3 scoring is cosine on both tracks, so this is score-neutral.
         kwargs["normalize_embeddings"] = True
 
+        # Prompted models (jina v5: query/document) produce different vectors
+        # for the same text under different prompts, so the prompt must be part
+        # of the cache identity. Promptless models keep the bare-text key, so
+        # existing caches stay valid.
+        prompt_tag = kwargs.get("prompt_name") or kwargs.get("prompt") or ""
+        if prompt_tag:
+            cache_texts = [f"{prompt_tag}\x1f{s}" for s in sentences]
+        else:
+            cache_texts = sentences
+
         out: list = [None] * n
         todo = list(range(n))
         if cache is not None:
-            hits = cache.get_many(sentences)
+            hits = cache.get_many(cache_texts)
             todo = []
             for i, h in enumerate(hits):
                 if h is not None:
@@ -206,7 +224,7 @@ def install_budget_batching(st_model, budget_sq: float = None, max_batch: int = 
             for j, e in zip(idx, embs):
                 out[j] = e
             if cache is not None:
-                cache.put_many([sentences[j] for j in idx], np.asarray(embs))
+                cache.put_many([cache_texts[j] for j in idx], np.asarray(embs))
             i += len(idx)
             batches += 1
             if on_mps and (batches % 25 == 0 or maxlen >= 2048):

@@ -104,6 +104,39 @@ LMEB_DIR=~/lmeb python benchmarks/mps_accel_equivalence_gate.py \
 Long runs should be launched fully detached
 (`nohup bash benchmarks/run_trackb.sh > run.log 2>&1 &`).
 
+### Prompted / task-adapter models
+
+Some models need extra flags on both tracks:
+
+- `--trust_remote_code` — the model ships custom modeling code (loaded from
+  the Hub). Required by `jinaai/jina-embeddings-v5-text-nano`.
+- `--default_task retrieval` — task-LoRA models select an adapter at load
+  time; jina v5 refuses to encode without one.
+
+Asymmetric-prompt models (jina v5 exposes `query` / `document` prompts) are
+handled automatically: both tracks apply the query prompt to queries and the
+document prompt to the corpus. The embedding disk cache keys include the
+prompt, so the same text cached under both roles stays distinct. Promptless
+models (bge-m3, MiniLM) are unaffected — they encode and cache exactly as
+before.
+
+```bash
+# jina-v5-text-nano, Track A:
+LMEB_DIR=~/lmeb EMB_CACHE_DIR=~/lmeb/embcache_jinanano \
+EMB_CACHE_MODEL=jinaai/jina-embeddings-v5-text-nano \
+python benchmarks/benchmark_lmeb.py \
+    --model_path jinaai/jina-embeddings-v5-text-nano \
+    --trust_remote_code --default_task retrieval \
+    --budget_encode --device mps
+
+# jina-v5-text-nano, Track B (flags pass through the launcher):
+MODEL_PATH=jinaai/jina-embeddings-v5-text-nano \
+EMB_CACHE_DIR=~/lmeb/embcache_jinanano \
+OUTPUT_DIR=trackb_results_jinanano \
+bash benchmarks/run_trackb.sh --unclamp_limit \
+    --trust_remote_code --default_task retrieval
+```
+
 ## Latency benchmark (production stack)
 
 `benchmark_latency.py` measures what the ranking tracks deliberately do
