@@ -245,3 +245,63 @@ async def test_probe_reports_ok(monkeypatch):
     monkeypatch.setattr(vector, "_embedding_client", _FakeEmbeddingClient(None))
     ok, evidence = await vector._probe_embedding_health()
     assert ok is True and evidence is None
+
+
+# --- 2.5.0 Task #190: the recall limit cap is layered — library clamps to the scan
+# window (MAX_MEMORIES) only; the agent-facing 100 cap lives in the MCP boundary's
+# JSON Schema. These pin both layers so neither regresses silently.
+
+
+def _patch_capture_limit(monkeypatch):
+    """_patch + record the limit do_recall hands to the retrieval driver."""
+    _patch(monkeypatch)
+    seen: dict = {}
+
+    async def _capture_rsf(db, agent_id, query, limit, deep, channel="", exclude_set=None,
+                           project_id=None, source_id=""):
+        seen["limit"] = limit
+        return await _fake_rsf(db, agent_id, query, limit, deep, channel, exclude_set,
+                               project_id, source_id)
+
+    monkeypatch.setattr(M, "_recall_rsf", _capture_rsf)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_do_recall_limit_above_100_is_not_clamped(monkeypatch):
+    """The pre-2.5.0 in-library 100 cap is gone: a library caller asking for depth
+    250 gets depth 250 (rrf/rsf fusion-list depth tracks limit, so the old cap
+    collapsed deep-ranking quality — bge-m3 LongMemEval 81.17 -> 48.98)."""
+    seen = _patch_capture_limit(monkeypatch)
+    await M.do_recall("agent.t", "x", limit=250)
+    assert seen["limit"] == 250
+
+
+@pytest.mark.asyncio
+async def test_do_recall_limit_clamps_to_scan_window(monkeypatch):
+    """The library ceiling is the vector scan window (MAX_MEMORIES), not unbounded."""
+    seen = _patch_capture_limit(monkeypatch)
+    monkeypatch.setattr(M, "MAX_MEMORIES", 500)
+    await M.do_recall("agent.t", "x", limit=99999)
+    assert seen["limit"] == 500
+
+
+@pytest.mark.asyncio
+async def test_do_recall_negative_limit_still_clamps_to_zero(monkeypatch):
+    """bug-032 stays closed: a negative limit floors at 0 instead of reaching
+    SQLite as `LIMIT -1` (unbounded full-corpus scan)."""
+    seen = _patch_capture_limit(monkeypatch)
+    await M.do_recall("agent.t", "x", limit=-5)
+    assert seen["limit"] == 0
+
+
+def test_recall_tool_schemas_cap_limit_at_100():
+    """The agent-facing 100 cap moved to the MCP boundary: both recall tools'
+    JSON Schema must declare maximum:100 (and a non-negative minimum) on limit."""
+    from cpersona import server
+
+    tools = {t.name: t for t in server.registry._tools}
+    for name in ("recall", "recall_with_context"):
+        limit_schema = tools[name].inputSchema["properties"]["limit"]
+        assert limit_schema["maximum"] == 100, f"{name}: agent-facing limit cap missing"
+        assert limit_schema["minimum"] == 0, f"{name}: limit minimum missing"

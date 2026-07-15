@@ -246,7 +246,13 @@ registry.auto_tool(
         "properties": {
             "agent_id": {"type": "string", "description": "Agent identifier"},
             "query": {"type": "string", "description": "Search query (empty returns recent memories)"},
-            "limit": {"type": "integer", "description": "Max memories to return", "default": 10},
+            "limit": {
+                "type": "integer",
+                "description": "Max memories to return (agent-facing cap; the library layer accepts up to the scan window for direct callers)",
+                "default": 10,
+                "minimum": 0,
+                "maximum": 100,
+            },
             "deep": {
                 "type": "boolean",
                 "description": "Deep recall — disable time and completion decay for exhaustive search",
@@ -313,7 +319,13 @@ registry.auto_tool(
                 "items": {"type": "object"},
                 "description": "Conversation history entries [{role, name?, user_id?, content, timestamp?}, ...]",
             },
-            "limit": {"type": "integer", "description": "Max recalled memories", "default": 10},
+            "limit": {
+                "type": "integer",
+                "description": "Max recalled memories (agent-facing cap; the library layer accepts up to the scan window for direct callers)",
+                "default": 10,
+                "minimum": 0,
+                "maximum": 100,
+            },
             "channel": {"type": "string", "description": "Memory channel filter"},
             "deep": {"type": "boolean", "description": "Disable time decay", "default": False},
             "project_id": {
