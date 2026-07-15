@@ -58,14 +58,16 @@ model (e.g. `embcache`, `embcache_minilm`) is the safe pattern.
    worst. Their value is measured separately with precision-type metrics,
    not with NDCG.
 2. **Fixed flags.** `--recall_mode rrf --auto_calibrate --budget_encode`,
-   `--dtype float16 --unclamp_limit`. Keep flags identical across runs you
-   intend to compare.
-   `--unclamp_limit` is required for the full-ranking regime: since v2.4.38
-   `do_recall` clamps the response limit to 100 (production hardening;
-   bug-085 in v2.4.40 decoupled only the *scan window* from it — the
-   response clamp remains). Track A ranks the full corpus, so Track B must
-   too; without the bypass, fusion depth collapses to 100 and large tasks
-   under-measure (observed: bge-m3 LongMemEval 81.17 → 48.98 at depth 100).
+   `--dtype float16`. Keep flags identical across runs you intend to
+   compare.
+   `--unclamp_limit` is obsolete since 2.5.0 and accepted as a no-op:
+   `do_recall`'s in-library cap is now the scan window (MAX_MEMORIES), so
+   the harness's `limit=corpus_size` full-ranking convention works against
+   a stock checkout — the agent-facing 100 cap moved to the MCP boundary
+   (JSON Schema `maximum`), which the library path does not traverse. Only
+   pre-2.5.0 checkouts (v2.4.38..v2.4.40, which capped at 100 in-library
+   and under-measured large tasks: bge-m3 LongMemEval 81.17 → 48.98 at
+   depth 100) still need the flag.
 3. **Calibration noise.** Auto-calibration samples with `ORDER BY
    RANDOM()`, so run-to-run NDCG noise of roughly ±1–3 pt per subtask
    (±1–2 pt per task mean) is inherent. Equivalence comparisons must share
@@ -88,9 +90,9 @@ LMEB_DIR=~/lmeb python benchmarks/benchmark_lmeb.py \
 Track B (official regime via launcher; extra args pass through):
 
 ```bash
-OUTPUT_DIR=trackb_results bash benchmarks/run_trackb.sh --unclamp_limit
+OUTPUT_DIR=trackb_results bash benchmarks/run_trackb.sh
 # exploration run with acceleration:
-OUTPUT_DIR=trackb_results_fast bash benchmarks/run_trackb.sh --unclamp_limit --fast --batch_size 1024
+OUTPUT_DIR=trackb_results_fast bash benchmarks/run_trackb.sh --fast --batch_size 1024
 ```
 
 Equivalence gate (run after touching recall internals or `mps_accel.py`):
