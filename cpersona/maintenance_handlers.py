@@ -14,6 +14,7 @@ from cpersona._vendored_mcp_common import no_persist
 from cpersona import checks as checks_registry
 from cpersona import vector
 from cpersona.database import connection, transaction
+from cpersona.isolation import isolation_where
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +82,11 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
                 db, agent_id=agent_id, fix=False, checks=checks
             )
 
-    agent_clause = "AND agent_id = ?" if agent_id else ""
-    agent_params = (agent_id,) if agent_id else ()
+    iso = isolation_where(agent_id=agent_id or None)
     async with connection() as db:
         total = (
             await db.execute_fetchall(
-                f"SELECT COUNT(*) FROM memories WHERE 1=1 {agent_clause}", agent_params
+                f"SELECT COUNT(*) FROM memories{iso.where}", iso.params
             )
         )[0][0]
 
@@ -108,17 +108,17 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
             "memories": total,
             "episodes": (
                 await db.execute_fetchall(
-                    f"SELECT COUNT(*) FROM episodes WHERE 1=1 {agent_clause}", agent_params
+                    f"SELECT COUNT(*) FROM episodes{iso.where}", iso.params
                 )
             )[0][0],
             "profiles": (
                 await db.execute_fetchall(
-                    f"SELECT COUNT(*) FROM profiles WHERE 1=1 {agent_clause}", agent_params
+                    f"SELECT COUNT(*) FROM profiles{iso.where}", iso.params
                 )
             )[0][0],
             "pending_tasks": (
                 await db.execute_fetchall(
-                    f"SELECT COUNT(*) FROM pending_memory_tasks WHERE 1=1 {agent_clause}", agent_params
+                    f"SELECT COUNT(*) FROM pending_memory_tasks{iso.where}", iso.params
                 )
             )[0][0],
             # Axis distributions are observations, not issues (rare != wrong).
@@ -225,8 +225,7 @@ async def do_migrate_channel_axis(
     paused = no_persist.is_paused()
     effective_dry_run = dry_run or paused
 
-    agent_clause = " AND agent_id = ?" if agent_id else ""
-    agent_params = (agent_id,) if agent_id else ()
+    iso = isolation_where(agent_id=agent_id or None)
 
     sid = _SESSION_ID_EXPR
     recovered_expr = f"substr({sid}, 1, instr({sid}, ':') - 1)"
@@ -236,10 +235,10 @@ async def do_migrate_channel_axis(
         recoverable_rows = await db.execute_fetchall(
             f"""SELECT {recovered_expr} AS recovered_channel, COUNT(*) AS n
                FROM memories
-               WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}
+               WHERE channel = 'discord' AND {sid} GLOB ?{iso.and_clause}
                GROUP BY recovered_channel
                ORDER BY n DESC""",
-            (_SNOWFLAKE_SESSION_GLOB, *agent_params),
+            (_SNOWFLAKE_SESSION_GLOB, *iso.params),
         )
         recoverable_total = sum(r[1] for r in recoverable_rows)
         by_channel = [{"channel": r[0], "count": r[1]} for r in recoverable_rows]
@@ -247,8 +246,8 @@ async def do_migrate_channel_axis(
         # Total bridge-type rows; unrecoverable = total − recoverable (this captures
         # NULL session_id rows too, which a `NOT (sid GLOB ?)` filter would drop).
         total_row = await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM memories WHERE channel = 'discord'{agent_clause}",
-            agent_params,
+            f"SELECT COUNT(*) FROM memories WHERE channel = 'discord'{iso.and_clause}",
+            iso.params,
         )
         total_discord = total_row[0][0] if total_row else 0
         unrecoverable_total = total_discord - recoverable_total
@@ -257,9 +256,9 @@ async def do_migrate_channel_axis(
         sample_rows = await db.execute_fetchall(
             f"""SELECT id, {recovered_expr}, {sid}
                FROM memories
-               WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}
+               WHERE channel = 'discord' AND {sid} GLOB ?{iso.and_clause}
                LIMIT 5""",
-            (_SNOWFLAKE_SESSION_GLOB, *agent_params),
+            (_SNOWFLAKE_SESSION_GLOB, *iso.params),
         )
         samples = [{"id": r[0], "recovered_channel": r[1], "session_id": r[2]} for r in sample_rows]
 
@@ -281,8 +280,8 @@ async def do_migrate_channel_axis(
             cur = await db.execute(
                 f"""UPDATE OR IGNORE memories
                    SET channel = {recovered_expr}
-                   WHERE channel = 'discord' AND {sid} GLOB ?{agent_clause}""",
-                (_SNOWFLAKE_SESSION_GLOB, *agent_params),
+                   WHERE channel = 'discord' AND {sid} GLOB ?{iso.and_clause}""",
+                (_SNOWFLAKE_SESSION_GLOB, *iso.params),
             )
             # UPDATE OR IGNORE's changes() counts only rows actually updated, so a full
             # collision (every recovered row's target content already exists → all
@@ -301,8 +300,8 @@ async def do_migrate_channel_axis(
                 # next migration pass instead. (OR IGNORE for symmetry with the above.)
                 cur2 = await db.execute(
                     f"UPDATE OR IGNORE memories SET channel = '' "
-                    f"WHERE channel = 'discord' AND ({sid} IS NULL OR NOT ({sid} GLOB ?)){agent_clause}",
-                    (_SNOWFLAKE_SESSION_GLOB, *agent_params),
+                    f"WHERE channel = 'discord' AND ({sid} IS NULL OR NOT ({sid} GLOB ?)){iso.and_clause}",
+                    (_SNOWFLAKE_SESSION_GLOB, *iso.params),
                 )
                 # Same rowcount semantics as `migrated` above: a real 0 (full collision)
                 # is authoritative; only None/negative means "count unavailable".
