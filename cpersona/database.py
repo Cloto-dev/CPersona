@@ -28,23 +28,65 @@ _write_lock = asyncio.Lock()
 
 
 def write_lock() -> asyncio.Lock:
-    """The shared write-serialisation lock (bug-042/043). Use as
-    ``async with write_lock():`` around a handler's [first write … commit/rollback]."""
+    """The shared write-serialisation lock (bug-042/043).
+
+    2.5.0 C-seam: production code MUST NOT acquire this directly — use
+    ``transaction()`` instead, which owns the [lock … commit/rollback] boundary.
+    Exported for tests only (the behavioural harnesses hold it to prove
+    serialisation, e.g. test_harness_2500 [17])."""
     return _write_lock
 
 
-@contextlib.asynccontextmanager
-async def maybe_write_lock(acquire: bool):
-    """Acquire the shared write lock only when ``acquire`` is True (bug-042/043).
+# --------------------------------------------------------------------------------------
+# 2.5.0 C-seam: the two connection context managers every DB access goes through.
+#
+# The seam exists so the storage backend can evolve without touching call sites:
+# today both CMs yield the single shared aiosqlite connection; a future connection
+# pool swaps the internals of these two functions only (acquire/release per scope)
+# while every handler keeps its `async with connection()/transaction() as db:` shape.
+# That is the whole point — no second migration when the backend changes.
+# --------------------------------------------------------------------------------------
 
-    For handlers whose transaction runs only on the fix=True branch (check_health /
-    deep_check): the read-only path takes no lock, the mutating path serialises its
-    writes+commit against import/merge like every other committer."""
-    if acquire:
-        async with _write_lock:
-            yield
-    else:
-        yield
+
+@contextlib.asynccontextmanager
+async def connection():
+    """Read seam: yield the shared connection for SELECT-only use.
+
+    Use for every read path. No lock, no transaction — reads on the shared
+    aiosqlite connection are safe to interleave with a serialised writer (WAL).
+    Writing under ``connection()`` is a structural-gate violation: a write
+    belongs in ``transaction()`` so its commit/rollback boundary is owned."""
+    yield await get_db()
+
+
+@contextlib.asynccontextmanager
+async def transaction():
+    """Write seam: write_lock + [writes] + commit, rollback on any exception.
+
+    The single owner of the commit/rollback boundary on the shared connection
+    (bug-042/043 serialisation + the bug-068 class: a failed multi-statement
+    write must not leave uncommitted rows for the next committer to flush).
+    The lock is acquired at the LEAF committer only — a transaction() body must
+    never call another transaction()-holding handler (asyncio.Lock is not
+    reentrant), and must never perform network I/O (the bug-072 class: an
+    embedding HTTP round-trip under the lock stalls every writer; both enforced
+    by test_structural_gates)."""
+    db = await get_db()
+    async with _write_lock:
+        try:
+            yield db
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
+
+
+async def init_db() -> None:
+    """Boot-time initialisation: open the connection, run schema + migrations.
+
+    The explicit boot entry point (server startup / test fixtures). Runtime code
+    never calls get_db() directly — it goes through connection()/transaction()."""
+    await get_db()
 
 # v2.4.17: project_id is a second isolation axis layered on top of agent_id,
 # giving agent_id × project_id two-tier γ semantics.

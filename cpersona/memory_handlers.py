@@ -42,7 +42,7 @@ from cpersona.config import (
     VECTOR_SEARCH_MODE,
 )
 from cpersona import config # for runtime-mutable VECTOR_MIN_SIMILARITY access
-from cpersona.database import get_db, write_lock
+from cpersona.database import connection, transaction
 from cpersona.utils import (
     _clamp_limit,
     _compute_confidence,
@@ -65,7 +65,6 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "id": 0}, "store")
-    db = await get_db()
 
     msg_id = message.get("id", "")
     raw_content = message.get("content", "")
@@ -83,23 +82,24 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     if not content:
         return {"ok": True, "skipped": True, "reason": "empty after sanitization"}
 
-    # Deduplicate by msg_id if provided (project-scoped — the same msg_id can
-    # legitimately appear in different projects).
-    if msg_id:
-        row = await db.execute_fetchall(
-            "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
-            (agent_id, project_id, msg_id),
-        )
-        if row:
-            return {"ok": True, "skipped": True, "reason": "duplicate msg_id"}
+    async with connection() as db:
+        # Deduplicate by msg_id if provided (project-scoped — the same msg_id can
+        # legitimately appear in different projects).
+        if msg_id:
+            row = await db.execute_fetchall(
+                "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
+                (agent_id, project_id, msg_id),
+            )
+            if row:
+                return {"ok": True, "skipped": True, "reason": "duplicate msg_id"}
 
-    # Deduplicate by exact content match (project-scoped).
-    existing = await db.execute_fetchall(
-        "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-        (agent_id, project_id, channel, content),
-    )
-    if existing:
-        return {"ok": True, "skipped": True, "reason": "duplicate content"}
+        # Deduplicate by exact content match (project-scoped).
+        existing = await db.execute_fetchall(
+            "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+            (agent_id, project_id, channel, content),
+        )
+        if existing:
+            return {"ok": True, "skipped": True, "reason": "duplicate content"}
 
     embedding_blob = None
     if vector._embedding_client and (VECTOR_SEARCH_MODE == "local" or STORE_BLOB):
@@ -113,17 +113,16 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     # OR IGNORE lets the v12 UNIQUE dedup indexes absorb a concurrent writer
     # that slipped in between the SELECT-based dedup probes above and this
     # INSERT (bug-010 TOCTOU); rowcount 0 means the row already exists.
-    # bug-042/043: serialise INSERT+commit behind the shared write lock so this
-    # commit cannot flush a concurrent import/merge's partial transaction (and
-    # vice versa). The remote-index push below stays outside the lock (network I/O,
-    # not a DB commit).
-    async with write_lock():
+    # bug-042/043: transaction() serialises INSERT+commit behind the shared write
+    # lock so this commit cannot flush a concurrent import/merge's partial
+    # transaction (and vice versa). The remote-index push below stays outside the
+    # seam (network I/O, not a DB commit).
+    async with transaction() as db:
         cursor = await db.execute(
             """INSERT OR IGNORE INTO memories (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, channel)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, channel),
         )
-        await db.commit()
     if cursor.rowcount == 0:
         return {"ok": True, "skipped": True, "reason": "duplicate (unique index)"}
     # lastrowid comes from this cursor's INSERT, so a store interleaved on the
@@ -808,7 +807,6 @@ async def do_recall(
     # scan + O(N) scoring on the hot path) and to `results[:limit]` as a silent
     # tail-drop. do_recall_with_context delegates here, so this covers both entries.
     limit = _clamp_limit(limit, 100)
-    db = await get_db()
 
     # Detect the static degraded case (mode=none) before dispatch; the runtime fault case
     # is observed at the embedding boundary in vector._search_vector. See health.py.
@@ -818,31 +816,32 @@ async def do_recall(
     if exclude_contents:
         exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
 
-    if RECALL_MODE == "rrf" and query.strip():
-        results = await _recall_rrf(
-            db, agent_id, query, limit, deep, channel, exclude_set,
-            project_id=project_id, source_id=source_id,
-        )
-    elif RECALL_MODE == "rsf" and query.strip():
-        results = await _recall_rsf(
-            db, agent_id, query, limit, deep, channel, exclude_set,
-            project_id=project_id, source_id=source_id,
-        )
-    else:
-        results = await _recall_cascade(
-            db, agent_id, query, limit, deep, channel, exclude_set,
-            project_id=project_id, source_id=source_id,
+    async with connection() as db:
+        if RECALL_MODE == "rrf" and query.strip():
+            results = await _recall_rrf(
+                db, agent_id, query, limit, deep, channel, exclude_set,
+                project_id=project_id, source_id=source_id,
+            )
+        elif RECALL_MODE == "rsf" and query.strip():
+            results = await _recall_rsf(
+                db, agent_id, query, limit, deep, channel, exclude_set,
+                project_id=project_id, source_id=source_id,
+            )
+        else:
+            results = await _recall_cascade(
+                db, agent_id, query, limit, deep, channel, exclude_set,
+                project_id=project_id, source_id=source_id,
+            )
+
+        # Episode-boundary penalty + confidence scoring (factored so the gate calibration
+        # produces the exact same per-row gate score the runtime gate keys on — Goal #132).
+        # time_range_hours / recall_counts are reused below for the response metadata + the
+        # recall-count update, so they are returned rather than recomputed.
+        results, time_range_hours, recall_counts = await _apply_recall_scoring(
+            db, agent_id, results, deep
         )
 
-    # Episode-boundary penalty + confidence scoring (factored so the gate calibration
-    # produces the exact same per-row gate score the runtime gate keys on — Goal #132).
-    # time_range_hours / recall_counts are reused below for the response metadata + the
-    # recall-count update, so they are returned rather than recomputed.
-    results, time_range_hours, recall_counts = await _apply_recall_scoring(
-        db, agent_id, results, deep
-    )
-
-    memory_count = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent_id,)))[0][0]
+        memory_count = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent_id,)))[0][0]
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26/27 (Goal #132): use the calibrated gate for whichever branch is active.
@@ -921,12 +920,11 @@ async def do_recall(
             # its commit cannot flush another handler's partial transaction.
             try:
                 placeholders = ",".join("?" * len(returned_ids))
-                async with write_lock():
+                async with transaction() as db:
                     await db.execute(
                         f"UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime('now') WHERE id IN ({placeholders})",
                         returned_ids,
                     )
-                    await db.commit()
             except Exception as e:
                 logger.warning("recall_count bump failed (non-fatal): %s", e)
 
@@ -1205,7 +1203,6 @@ async def do_archive_episode(
         return no_persist.make_skipped_response(
             {"ok": True, "episode_id": None, "id": 0}, "archive_episode"
         )
-    db = await get_db()
 
     if not summary:
         # No server-side synthesis exists to fill this in, so an empty summary
@@ -1234,14 +1231,14 @@ async def do_archive_episode(
         except Exception as e:
             logger.warning("Embedding failed for episode: %s", e)
 
-    # bug-042/043: serialise INSERT+commit behind the shared write lock so the
-    # background queue drain's episode commit cannot flush — or be flushed by — a
-    # concurrent import/merge's partial transaction on the shared connection.
-    async with write_lock():
+    # bug-042/043: transaction() serialises INSERT+commit behind the shared write
+    # lock so the background queue drain's episode commit cannot flush — or be
+    # flushed by — a concurrent import/merge's partial transaction on the shared
+    # connection.
+    async with transaction() as db:
         cursor = await db.execute(
             """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved, channel)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved), channel),
         )
-        await db.commit()
     return {"ok": True, "episode_id": cursor.lastrowid}

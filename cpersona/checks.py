@@ -167,12 +167,12 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cach
         return []
     clause, params = _agent_scope(agent_id)
     try:
-        # bug-083: when do_check_health pre-probed the dimension outside the write lock
+        # bug-083: when do_check_health pre-probed the dimension outside the write seam
         # (embedding_cache carries it as "expected_dim"), use that instead of a live
-        # probe — this check runs INSIDE maybe_write_lock(fix), and an embed here holds
-        # the shared write lock across an HTTP round-trip bounded only by the embedding
-        # timeout, stalling every other writer (the bug-072 class). A None probe result
-        # skips the check, same as a failed live probe.
+        # probe — a fix=True run executes this check INSIDE transaction(), and an embed
+        # here holds the shared write lock across an HTTP round-trip bounded only by the
+        # embedding timeout, stalling every other writer (the bug-072 class). A None
+        # probe result skips the check, same as a failed live probe.
         if embedding_cache is not None:
             expected_dim = embedding_cache.get("expected_dim")
         else:
