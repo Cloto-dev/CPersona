@@ -877,6 +877,13 @@ async def do_recall(
         content = r["content"]
 
         msg: dict = {"content": content}
+        # Task #193: a stable full-fetch handle. `id` below is the caller-supplied
+        # msg_id (absent on episodes), so previews need their own reference — this
+        # is what get_contents(refs) resolves. Episode/memory kinds share one
+        # AUTOINCREMENT id space (bug-040/041), hence the kind prefix.
+        row_id = r.get("id")
+        if isinstance(row_id, int) and row_id > 0:
+            msg["ref"] = f"ep:{row_id}" if _is_episode_result(r) else f"mem:{row_id}"
         if r.get("source"):
             msg["source"] = r["source"] if isinstance(r["source"], dict) else _try_parse_json(r["source"])
         if r.get("timestamp"):
@@ -1027,6 +1034,83 @@ async def do_recall_with_context(
     if advisory is not None:
         result["advisory"] = advisory
     return result
+
+
+# Task #193: get_contents batch size. A full row is worth ~800 tokens (the
+# token-inventory measurement that motivated the preview tier), so 20 full rows
+# already approaches a whole recall's pre-diet payload — a larger batch would
+# reopen the context-explosion hole the preview exists to close.
+GET_CONTENTS_MAX_REFS = 20
+
+
+async def do_get_contents(agent_id: str, refs: list) -> dict:
+    """Resolve recall preview refs back to full, untrimmed rows (2.5.0, Task #193).
+
+    The recall tools' MCP boundary returns ``content`` as a preview
+    (RECALL_PREVIEW_CHARS); every returned message carries a ``ref``
+    (``mem:<id>`` / ``ep:<id>``) that this fetches in full. Reads are id-keyed
+    (the ids came from an agent-scoped recall — the same provenance argument as
+    the other id-keyed handlers) with the agent_id ownership predicate enforced,
+    so a ref belonging to another agent lands in ``missing``, never in a leak.
+    Malformed refs also land in ``missing`` (fail-soft: one bad ref must not
+    abort the batch).
+    """
+    if not agent_id:
+        return {"error": "agent_id is required"}
+    if not isinstance(refs, list) or not refs:
+        return {"error": "refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' strings"}
+    if len(refs) > GET_CONTENTS_MAX_REFS:
+        return {"error": f"too many refs ({len(refs)}; max {GET_CONTENTS_MAX_REFS}) — split the fetch"}
+
+    items: list[dict] = []
+    missing: list[str] = []
+    async with connection() as db:
+        for ref in refs:
+            kind, _, raw = str(ref).partition(":")
+            try:
+                row_id = int(raw)
+            except (TypeError, ValueError):
+                row_id = -1
+            if kind not in ("mem", "ep") or row_id <= 0:
+                missing.append(str(ref))
+                continue
+            if kind == "mem":
+                rows = await db.execute_fetchall(
+                    "SELECT msg_id, content, source, timestamp FROM memories WHERE id = ? AND agent_id = ?",
+                    (row_id, agent_id),
+                )
+                if not rows:
+                    missing.append(ref)
+                    continue
+                msg_id, content, source, timestamp = rows[0]
+                # Mirror the recall message shape so callers can splice items in.
+                item: dict = {"ref": ref, "content": content}
+                if source:
+                    item["source"] = source if isinstance(source, dict) else _try_parse_json(source)
+                if timestamp:
+                    item["timestamp"] = timestamp
+                if msg_id:
+                    item["id"] = msg_id
+                items.append(item)
+            else:
+                rows = await db.execute_fetchall(
+                    "SELECT summary, start_time, resolved FROM episodes WHERE id = ? AND agent_id = ?",
+                    (row_id, agent_id),
+                )
+                if not rows:
+                    missing.append(ref)
+                    continue
+                summary, start_time, resolved = rows[0]
+                items.append(
+                    {
+                        "ref": ref,
+                        "content": f"[Episode] {summary}",
+                        "source": {"System": "episode"},
+                        "timestamp": start_time or "",
+                        "resolved": bool(resolved),
+                    }
+                )
+    return {"items": items, "missing": missing, "count": len(items)}
 
 
 # CJK codepoint ranges: hiragana, katakana, CJK unified + ext-A, halfwidth katakana.

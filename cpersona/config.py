@@ -141,6 +141,13 @@ EPISODE_DECAY_RATE = float(os.environ.get("CPERSONA_EPISODE_DECAY_RATE", "0.01")
 EPISODE_DECAY_FLOOR = float(os.environ.get("CPERSONA_EPISODE_DECAY_FLOOR", "0.5"))
 
 RECALL_MODE = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
+# 2.5.0 (Task #193): MCP-boundary preview tier for recall responses. Message
+# content longer than this many characters is returned as a pure prefix (plus
+# content_truncated/content_len markers) unless the caller opts out with
+# full_content=true; full text is re-fetchable via get_contents(refs). 0
+# disables trimming. Boundary-layer only — library callers (do_recall) always
+# receive full content, same layering as the Task #190 limit cap.
+RECALL_PREVIEW_CHARS = int(os.environ.get("CPERSONA_RECALL_PREVIEW_CHARS", "500"))
 RRF_K = max(1, int(os.environ.get("CPERSONA_RRF_K", "60")))
 RRF_THRESHOLD_FACTOR = float(os.environ.get("CPERSONA_RRF_THRESHOLD_FACTOR", "0.5"))
 # v2.4.12: Max theoretical _rrf_score ≈ num_retrievers / (RRF_K + 1), with 3

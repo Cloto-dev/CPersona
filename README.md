@@ -5,7 +5,7 @@
 ### MCP Memory Server
 
 Give Claude persistent memory across sessions.
-Single SQLite file. 27 tools. Zero LLM dependency.
+Single SQLite file. 28 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
@@ -217,6 +217,7 @@ cpersona's hybrid pipeline outranks the raw embedding on both models (Track B > 
 | `store` | Store a message in agent memory |
 | `recall` | Recall relevant memories (vector + FTS5 + keyword, RRF merge) |
 | `recall_with_context` | Recall with external conversation context (auto-dedup) |
+| `get_contents` | Expand recall preview refs (`mem:<id>` / `ep:<id>`) to full content |
 | `get_profile` | Get current agent profile |
 | `update_profile` | Save pre-computed agent profile |
 | `archive_episode` | Archive conversation episode with summary and keywords |
@@ -253,6 +254,7 @@ All settings via environment variables with sensible defaults:
 | `CPERSONA_EMBEDDING_URL` | *(unset)* | Embedding server URL, e.g. `http://127.0.0.1:8401/embed` |
 | `CPERSONA_VECTOR_SEARCH_MODE` | `local` | Vector search execution (`local` in-process cosine, or `remote` offload) |
 | `CPERSONA_RECALL_MODE` | `rrf` | Recall fusion strategy (`rrf`, `rsf`, or `cascade`) |
+| `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | Preview tier: max content chars returned by the recall tools (`0` disables; `full_content=true` / `get_contents` fetch full text) |
 | `CPERSONA_RRF_K` | `60` | RRF smoothing parameter |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |
