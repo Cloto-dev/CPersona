@@ -68,9 +68,19 @@ async def _fake_rsf(db, agent_id, query, limit, deep, channel="", exclude_set=No
 
 
 def _patch(monkeypatch):
-    async def fake_getdb():
-        return _FakeDB()
-    monkeypatch.setattr(M, "get_db", fake_getdb)
+    import contextlib
+
+    fake = _FakeDB()
+
+    # 2.5.0 C-seam: do_recall reads through connection() and bumps recall counts
+    # through transaction(), so the DB fake is injected at the seam CMs (get_db is
+    # internal to cpersona.database now).
+    @contextlib.asynccontextmanager
+    async def fake_cm():
+        yield fake
+
+    monkeypatch.setattr(M, "connection", fake_cm)
+    monkeypatch.setattr(M, "transaction", fake_cm)
     monkeypatch.setattr(M, "_recall_rsf", _fake_rsf)
     # config.py reads the env once at import; memory_handlers binds CONFIDENCE_ENABLED /
     # RECALL_MODE by value at that point, so the module-level env writes above only take

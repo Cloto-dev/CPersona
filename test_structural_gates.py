@@ -9,11 +9,15 @@ query that forgets its isolation predicate (bug-044/045/047/055/058). One missed
 site is enough; grep is too blunt (SQL spans lines, ``async with`` nests), so the gate
 walks the AST.
 
+2.5.0 C-seam: the write-lock gate was tightened into the seam-ownership pair — the
+commit/rollback boundary lives only in database.py (connection()/transaction()), and a
+transaction() body performs no network I/O (bug-072 class). See Gate 1 / Gate 1b.
+
 Run as part of the normal ``uv run pytest`` CI gate (no ci.yml change needed).
 
 Waiver protocol: a genuinely global operation (boot migration, deliberate cross-agent
 maintenance scan) is exempted by name in an allow-list here, or inline with a
-``# isolation-waiver: <reason>`` / ``# writelock-waiver: <reason>`` comment on the
+``# isolation-waiver: <reason>`` / ``# seam-waiver: <reason>`` comment on the
 statement. A waiver is a deliberate, reviewed decision — adding one is the escape hatch,
 not silence.
 """
@@ -27,12 +31,6 @@ PKG = pathlib.Path(__file__).parent / "cpersona"
 # agent_id (the mandatory isolation axis). DDL/schema/index statements are exempt (they
 # are structural, not per-agent), as are statements carrying an inline isolation-waiver.
 AGENT_SCOPED_TABLES = {"memories", "episodes", "profiles", "pending_memory_tasks"}
-
-# write_lock gate: commits reached only through these functions are boot/teardown paths
-# that run single-threaded before the server serves requests — the shared-connection race
-# (bug-042/043) cannot occur there, so they are exempt from the lock requirement.
-WRITELOCK_EXEMPT_FUNCS = {"get_db", "close_db"}
-
 
 def _iter_module_files():
     for p in sorted(PKG.glob("*.py")):
@@ -52,96 +50,130 @@ def _has_inline_waiver(lines, lineno, marker):
 
 
 # --------------------------------------------------------------------------------------
-# Gate 1: every db.commit() runs while the shared write lock is held (bug-042/043).
+# Gate 1 (C-seam, 2.5.0): the commit/rollback boundary lives ONLY in database.py.
+#
+# Every handler reaches the DB through the two seam CMs — connection() (reads) and
+# transaction() (write_lock + commit + auto-rollback). Outside database.py there is
+# therefore no legitimate call to .commit()/.rollback(), to the lock accessors, or to
+# get_db() itself. This subsumes the old "every commit under write_lock" gate
+# (bug-042/043): a handler that cannot commit cannot commit unserialised — and it also
+# closes the bug-068 class (a committer without rollback-on-fault) because the only
+# commit path rolls back automatically.
 # --------------------------------------------------------------------------------------
 
-def _is_write_lock_with(node):
-    """True if an `async with` item is write_lock() / maybe_write_lock(...)."""
+# Call names whose presence outside database.py bypasses the seam.
+_SEAM_OWNER_MODULE = "database.py"
+_SEAM_BYPASS_ATTRS = {"commit", "rollback"}
+_SEAM_BYPASS_NAMES = {"get_db", "write_lock", "maybe_write_lock"}
+
+
+def _collect_seam_bypasses(tree):
+    """Return 'lineno  detail' strings for seam-bypassing calls in a non-owner module."""
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr in _SEAM_BYPASS_ATTRS:
+            out.append(f"{node.lineno}  .{node.func.attr}() outside database.py")
+        elif isinstance(node.func, ast.Name) and node.func.id in _SEAM_BYPASS_NAMES:
+            out.append(f"{node.lineno}  {node.func.id}() outside database.py")
+    return out
+
+
+def test_db_boundary_owned_by_seam():
+    """No .commit()/.rollback()/get_db()/write_lock() outside database.py — all DB access
+    goes through connection()/transaction() (the 2.5.0 C-seam). Inline `# seam-waiver:
+    <reason>` is the reviewed escape hatch."""
+    violations = []
+    for path in _iter_module_files():
+        if path.name == _SEAM_OWNER_MODULE:
+            continue
+        lines = _source_lines(path)
+        tree = ast.parse("\n".join(lines), filename=str(path))
+        for hit in _collect_seam_bypasses(tree):
+            lineno = int(hit.split()[0])
+            if _has_inline_waiver(lines, lineno, "seam-waiver"):
+                continue
+            violations.append(f"{path.name}:{hit}")
+    assert not violations, (
+        "DB-seam bypass — the commit/rollback boundary is owned by database.py "
+        "(connection()/transaction(), bug-042/043/068 classes). Route the access through "
+        "the seam CMs, or add a `# seam-waiver: <reason>` for a reviewed exception:\n  "
+        + "\n  ".join(violations)
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 1b (C-seam, 2.5.0): a transaction() body performs no network I/O (bug-072 class).
+#
+# transaction() holds the shared write lock; an embedding HTTP round-trip inside it
+# stalls every other writer for the full network timeout. The seam makes the scope
+# explicit, so the gate is a simple lexical check over each `async with transaction()`
+# body: no reference to the embedding client, the embed() entry point, or httpx.
+# (The behavioural twin, test_check_health_never_embeds_under_write_lock below, proves
+# the same invariant end-to-end for the check registry, whose calls this static walk
+# cannot follow.)
+# --------------------------------------------------------------------------------------
+
+_NETWORK_IDENTIFIERS = {"embed", "_embedding_client", "httpx", "_client"}
+
+
+def _holds_transaction(node):
+    """True if an `async with` item opens transaction() — directly or via the
+    conditional-seam idiom `(transaction() if write else connection())`."""
     if not isinstance(node, ast.AsyncWith):
         return False
     for item in node.items:
-        call = item.context_expr
-        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
-            if call.func.id in ("write_lock", "maybe_write_lock"):
+        for n in ast.walk(item.context_expr):
+            if (
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id == "transaction"
+            ):
                 return True
     return False
 
 
-def _func_has_explicit_acquire(func_node):
-    """The import/merge handlers acquire the lock explicitly (acquire()/finally release)
-    rather than via `async with`, to avoid re-indenting a 140-line body. Detect
-    `write_lock().acquire()` anywhere in the function body."""
-    for n in ast.walk(func_node):
-        if (
-            isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Attribute)
-            and n.func.attr == "acquire"
-            and isinstance(n.func.value, ast.Call)
-            and isinstance(n.func.value.func, ast.Name)
-            and n.func.value.func.id == "write_lock"
-        ):
-            return True
-    return False
+def _collect_network_in_transaction(tree):
+    """Return 'lineno  identifier' strings for network-flavoured identifiers referenced
+    inside a transaction()-holding `async with` body."""
+    out = []
+
+    def scan_body(node):
+        for n in ast.walk(node):
+            ident = None
+            if isinstance(n, ast.Name) and n.id in _NETWORK_IDENTIFIERS:
+                ident = n.id
+            elif isinstance(n, ast.Attribute) and n.attr in _NETWORK_IDENTIFIERS:
+                ident = n.attr
+            if ident is not None:
+                out.append(f"{n.lineno}  {ident} inside transaction()")
+
+    for node in ast.walk(tree):
+        if _holds_transaction(node):
+            for stmt in node.body:
+                scan_body(stmt)
+    return out
 
 
-def _collect_unlocked_commits(tree):
-    """Return line numbers of `.commit()` calls not covered by the write lock.
-
-    Walks with a `locked` context that is set inside write_lock/maybe_write_lock
-    `async with` blocks, and a per-function `explicit` flag for the acquire()/release
-    pattern. A commit is covered if either is true.
-    """
-    unlocked = []
-    exempt_funcs = set()
-
-    def visit(node, locked, func_stack):
-        # Track function boundaries so exemptions/explicit-acquire are function-scoped.
-        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-            explicit = _func_has_explicit_acquire(node)
-            if node.name in WRITELOCK_EXEMPT_FUNCS:
-                exempt_funcs.add(node.name)
-            new_stack = func_stack + [(node.name, explicit)]
-            for child in ast.iter_child_nodes(node):
-                visit(child, locked, new_stack)
-            return
-
-        if _is_write_lock_with(node):
-            for child in ast.iter_child_nodes(node):
-                visit(child, True, func_stack)
-            return
-
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "commit"
-        ):
-            in_exempt = bool(func_stack) and func_stack[-1][0] in WRITELOCK_EXEMPT_FUNCS
-            explicit_here = any(explicit for _, explicit in func_stack)
-            if not (locked or explicit_here or in_exempt):
-                unlocked.append(node.lineno)
-
-        for child in ast.iter_child_nodes(node):
-            visit(child, locked, func_stack)
-
-    visit(tree, False, [])
-    return unlocked
-
-
-def test_all_writers_hold_write_lock():
-    """Every persisted commit must be serialised by the shared write lock (bug-042/043),
-    except documented boot/teardown paths and inline-waived statements."""
+def test_no_network_io_inside_transaction():
+    """A transaction() body must not reference the embedding client / httpx (bug-072
+    class: network I/O under the shared write lock stalls every writer). Pre-compute
+    embeddings before entering the seam; inline `# seam-waiver: <reason>` for a
+    reviewed exception."""
     violations = []
     for path in _iter_module_files():
         lines = _source_lines(path)
         tree = ast.parse("\n".join(lines), filename=str(path))
-        for lineno in _collect_unlocked_commits(tree):
-            if _has_inline_waiver(lines, lineno, "writelock-waiver"):
+        for hit in _collect_network_in_transaction(tree):
+            lineno = int(hit.split()[0])
+            if _has_inline_waiver(lines, lineno, "seam-waiver"):
                 continue
-            violations.append(f"{path.name}:{lineno}  db.commit() outside write_lock()")
+            violations.append(f"{path.name}:{hit}")
     assert not violations, (
-        "Unserialised commit(s) on the shared connection — wrap [first write … commit] in "
-        "`async with write_lock():` (bug-042/043), or add a `# writelock-waiver: <reason>` "
-        "if this is a genuine boot/teardown path:\n  " + "\n  ".join(violations)
+        "Network I/O inside a transaction() body (bug-072 class — the shared write lock "
+        "is held across the round-trip). Move the embed/HTTP work before the seam entry, "
+        "or add a `# seam-waiver: <reason>`:\n  " + "\n  ".join(violations)
     )
 
 
@@ -451,23 +483,53 @@ def test_identity_probes_carry_isolation_axes():
 # feed known-bad snippets and assert the detectors flag them.
 # --------------------------------------------------------------------------------------
 
-def test_writelock_gate_has_teeth():
+def test_seam_gate_has_teeth():
+    # The full pre-seam committer idiom — every call in it must flag.
     src = (
         "async def bad():\n"
         "    db = await get_db()\n"
-        "    await db.execute('INSERT INTO memories VALUES (1)')\n"
-        "    await db.commit()\n"
-    )
-    tree = ast.parse(src)
-    assert _collect_unlocked_commits(tree), "write_lock gate failed to flag an unlocked commit"
-
-    ok = (
-        "async def good():\n"
         "    async with write_lock():\n"
         "        await db.execute('INSERT INTO memories VALUES (1)')\n"
         "        await db.commit()\n"
+        "    await db.rollback()\n"
     )
-    assert not _collect_unlocked_commits(ast.parse(ok)), "write_lock gate false-positived a locked commit"
+    hits = _collect_seam_bypasses(ast.parse(src))
+    assert len(hits) == 4, f"seam gate missed a bypass call (got {hits})"
+
+    # The seam idiom itself must NOT flag.
+    ok = (
+        "async def good():\n"
+        "    async with transaction() as db:\n"
+        "        await db.execute('INSERT INTO memories VALUES (1)')\n"
+        "    async with connection() as db:\n"
+        "        await db.execute_fetchall('SELECT 1')\n"
+    )
+    assert not _collect_seam_bypasses(ast.parse(ok)), "seam gate false-positived the seam CMs"
+
+
+def test_transaction_network_gate_has_teeth():
+    # An embed under the write seam — the literal bug-072 shape — must flag,
+    # including through the conditional-seam idiom.
+    bad = (
+        "async def bad(fix):\n"
+        "    async with (transaction() if fix else connection()) as db:\n"
+        "        embeddings = await vector._embedding_client.embed(['x'])\n"
+    )
+    assert _collect_network_in_transaction(ast.parse(bad)), (
+        "transaction-network gate failed to flag an embed under the write seam"
+    )
+
+    # The same call under the read seam must NOT flag (no lock held).
+    ok = (
+        "async def good():\n"
+        "    async with connection() as db:\n"
+        "        embeddings = await vector._embedding_client.embed(['x'])\n"
+        "    async with transaction() as db:\n"
+        "        await db.execute('INSERT INTO memories VALUES (?)', (1,))\n"
+    )
+    assert not _collect_network_in_transaction(ast.parse(ok)), (
+        "transaction-network gate false-positived a read-seam embed / clean write body"
+    )
 
 
 def test_isolation_gate_has_teeth():

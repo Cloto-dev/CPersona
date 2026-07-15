@@ -64,7 +64,7 @@ from cpersona.config import (
     EMBEDDING_URL,
     TASK_QUEUE_ENABLED,
 )
-from cpersona.database import close_db, get_db
+from cpersona.database import close_db, init_db
 from cpersona.maintenance_handlers import do_check_health, do_deep_check, do_migrate_channel_axis
 from cpersona.memory_handlers import (
     do_archive_episode,
@@ -1055,7 +1055,7 @@ async def main():
     else:
         logger.info("Embedding disabled (mode=none), using FTS5 + keyword only")
 
-    await get_db()
+    await init_db()
 
     # Vector-similarity threshold startup guard (v2.4.24): restore persisted
     # thresholds, or (re)calibrate on first run / embedding-dimension change even when
