@@ -64,10 +64,12 @@ from cpersona.config import (
     EMBEDDING_URL,
     TASK_QUEUE_ENABLED,
 )
+from cpersona import config
 from cpersona.database import close_db, init_db
 from cpersona.maintenance_handlers import do_check_health, do_deep_check, do_migrate_channel_axis
 from cpersona.memory_handlers import (
     do_archive_episode,
+    do_get_contents,
     do_recall,
     do_recall_with_context,
     do_store,
@@ -135,7 +137,87 @@ async def do_archive_episode_or_queue(
 
 
 # =============================================================================
-# MCP Tool Registry — 24 tools
+# Recall preview boundary (2.5.0, Task #193)
+# =============================================================================
+
+# The library layer (do_recall / do_recall_with_context) always returns full
+# content — trimming is an MCP-boundary concern, the same layering as the Task
+# #190 limit cap (library bounds resources, the boundary shapes the agent-facing
+# payload). Direct library callers (bench full-ranking, future rerank) are
+# untouched by design.
+
+
+def _apply_preview(result: dict) -> dict:
+    """Trim message content to the preview tier (config.RECALL_PREVIEW_CHARS).
+
+    The preview is a PURE prefix — no ellipsis marker — so a preview fed back
+    into a later call's exclude_contents still starts-with-matches the stored
+    full text (the _content_excluded dedup contract). Trimmed messages gain
+    content_truncated=true + content_len; their `ref` resolves the full row via
+    get_contents. A cap of 0 disables trimming entirely.
+    """
+    cap = config.RECALL_PREVIEW_CHARS
+    if cap <= 0:
+        return result
+    for m in result.get("messages", []):
+        content = m.get("content")
+        if isinstance(content, str) and len(content) > cap:
+            m["content_len"] = len(content)
+            m["content"] = content[:cap]
+            m["content_truncated"] = True
+    return result
+
+
+async def do_recall_boundary(
+    agent_id: str,
+    query: str,
+    limit: int,
+    deep: bool,
+    channel: str,
+    exclude_contents: list,
+    project_id: str | None,
+    source_id: str,
+    full_content: bool = False,
+) -> dict:
+    result = await do_recall(
+        agent_id,
+        query,
+        limit,
+        deep=deep,
+        channel=channel,
+        exclude_contents=exclude_contents,
+        project_id=project_id,
+        source_id=source_id,
+    )
+    return result if full_content else _apply_preview(result)
+
+
+async def do_recall_with_context_boundary(
+    agent_id: str,
+    query: str,
+    external_context: list,
+    limit: int,
+    channel: str,
+    deep: bool,
+    project_id: str | None,
+    source_id: str,
+    full_content: bool = False,
+) -> dict:
+    result = await do_recall_with_context(
+        agent_id,
+        query,
+        external_context=external_context,
+        limit=limit,
+        channel=channel,
+        deep=deep,
+        project_id=project_id,
+        source_id=source_id,
+    )
+    return result if full_content else _apply_preview(result)
+
+
+# =============================================================================
+# MCP Tool Registry — 28 tools
 # =============================================================================
 
 registry = ToolRegistry("cloto-mcp-cpersona")
@@ -240,7 +322,9 @@ registry.auto_tool(
 
 registry.auto_tool(
     "recall",
-    "Recall relevant memories using multi-strategy search (vector + FTS5 + keyword).",
+    "Recall relevant memories using multi-strategy search (vector + FTS5 + keyword). "
+    "Message content is returned as a preview tier by default — expand selected rows "
+    "with get_contents(refs), or opt out wholesale with full_content=true.",
     {
         "type": "object",
         "properties": {
@@ -287,10 +371,20 @@ registry.auto_tool(
                 ),
                 "default": "",
             },
+            "full_content": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "v2.5.0 preview tier opt-out. By default message content longer than "
+                    "the preview cap (CPERSONA_RECALL_PREVIEW_CHARS, default 500) is "
+                    "returned as a pure prefix with content_truncated/content_len markers; "
+                    "each message's `ref` expands via get_contents. true returns full text."
+                ),
+            },
         },
         "required": ["agent_id", "query"],
     },
-    do_recall,
+    do_recall_boundary,
     [
         ("agent_id", str),
         ("query", str),
@@ -300,6 +394,7 @@ registry.auto_tool(
         ("exclude_contents", list, []),
         ("project_id", str, None),
         ("source_id", str, ""),
+        ("full_content", bool, False),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -308,7 +403,8 @@ registry.auto_tool(
     "recall_with_context",
     "Recall memories and merge with external conversation context. "
     "Automatically deduplicates, sorts chronologically, and returns a unified list. "
-    "Replaces separate recall + manual merge in the caller.",
+    "Replaces separate recall + manual merge in the caller. "
+    "Content is preview-tiered by default — see recall's full_content / get_contents.",
     {
         "type": "object",
         "properties": {
@@ -337,10 +433,15 @@ registry.auto_tool(
                 "description": "v2.4.20 per-user source filter — passed through to recall. Same semantics as in `recall`.",
                 "default": "",
             },
+            "full_content": {
+                "type": "boolean",
+                "default": False,
+                "description": "v2.5.0 preview tier opt-out — same semantics as in `recall`.",
+            },
         },
         "required": ["agent_id", "query"],
     },
-    do_recall_with_context,
+    do_recall_with_context_boundary,
     [
         ("agent_id", str),
         ("query", str),
@@ -350,7 +451,34 @@ registry.auto_tool(
         ("deep", bool, False),
         ("project_id", str, None),
         ("source_id", str, ""),
+        ("full_content", bool, False),
     ],
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+
+registry.auto_tool(
+    "get_contents",
+    "Fetch full, untrimmed content for recall preview refs. Use after a preview-tier "
+    "recall to expand only the rows that matter instead of opting the whole recall "
+    "out with full_content=true.",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {
+                "type": "string",
+                "description": "Agent identifier (ownership check — another agent's refs come back in `missing`)",
+            },
+            "refs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 20,
+                "description": "Refs from recall messages, e.g. ['mem:123', 'ep:45'] (max 20 per call)",
+            },
+        },
+        "required": ["agent_id", "refs"],
+    },
+    do_get_contents,
+    [("agent_id", str), ("refs", list, [])],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
 
