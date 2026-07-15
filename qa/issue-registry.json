@@ -469,11 +469,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "limit = _clamp_limit\\(limit, 100\\)",
+      "pattern": "limit = _clamp_limit\\(limit, MAX_MEMORIES\\)",
       "expected": "present",
       "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Call _clamp_limit(limit, CAP) at the top of do_recall/do_recall_with_context (mirroring the list handlers) before limit reaches SQL LIMIT or the slice.",
+      "fix_note": "2.5.0 (Task #190) re-layered the cap: the library clamp ceiling moved from 100 to MAX_MEMORIES (the scan window) so full-depth library callers work, while the agent-facing 100 cap now lives in the recall tools' JSON Schema (maximum:100). The bug-032 threat (negative -> LIMIT -1 unbounded scan) stays closed by the same _clamp_limit floor.",
       "fixed_in": "2.4.38"
     },
     {

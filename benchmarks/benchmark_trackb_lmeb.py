@@ -739,20 +739,13 @@ async def async_main(args):
     await server_mod.get_db()
     logger.info(f"cpersona DB initialized at {tmp_db_path}")
 
-    # --- bug-032 clamp bypass (regression isolation, 2026-07-09) ---
-    # v2.4.38 (eff9d10) added `limit = _clamp_limit(limit, 100)` to do_recall.
-    # The harness's full-ranking convention (limit=corpus_size, line ~516) then
-    # collapses to 100, and _search_vector's scan_limit = max(limit*10, 100)
-    # shrinks the vector scan window to the 1000 most-recent rows. This flag
-    # restores the pre-2.4.38 unbounded-limit behavior WITHOUT touching cpersona
-    # (patches the memory_handlers import-time binding, like mps_accel).
+    # --unclamp_limit is obsolete since 2.5.0 (Task #190): do_recall's in-library
+    # cap is now the scan window (MAX_MEMORIES), so the harness's
+    # limit=corpus_size full-ranking convention works against a stock checkout.
+    # The flag is still accepted (no-op) so pre-2.5.0 command lines keep working;
+    # on a pre-2.5.0 checkout you still need the old monkeypatch build.
     if getattr(args, "unclamp_limit", False):
-        import cpersona.memory_handlers as _mh_unclamp
-        if hasattr(_mh_unclamp, "_clamp_limit"):
-            _mh_unclamp._clamp_limit = lambda limit, cap: max(0, limit)
-            logger.info("  bug-032 limit clamp bypassed (do_recall limit unclamped)")
-        else:
-            logger.info("  --unclamp_limit: no _clamp_limit binding (old checkout) — no-op")
+        logger.info("  --unclamp_limit: no-op since 2.5.0 (do_recall caps at the scan window)")
 
     # --- Fast acceleration (external, behavior-invariant — see mps_accel.py) ---
     # Preloads each corpus group's embeddings once instead of the per-query
@@ -931,9 +924,10 @@ def main():
                         help="Fraction of --fast queries re-verified against the original "
                              "_search_vector (0 disables)")
     parser.add_argument("--unclamp_limit", action="store_true",
-                        help="Bypass v2.4.38 bug-032's do_recall limit=100 clamp so the "
-                             "harness's limit=corpus_size full-ranking convention works "
-                             "(regression-isolation arm; no-op on pre-2.4.38 checkouts)")
+                        help="Obsolete since 2.5.0 (accepted as a no-op): do_recall's "
+                             "in-library cap is the scan window, so the limit=corpus_size "
+                             "full-ranking convention works without a patch. Only needed "
+                             "on pre-2.5.0 checkouts (v2.4.38..v2.4.40 capped at 100)")
     parser.add_argument("--trust_remote_code", action="store_true",
                         help="pass trust_remote_code=True for models with custom modeling "
                              "code (e.g. jinaai/jina-embeddings-v5-text-nano)")

@@ -807,7 +807,14 @@ async def do_recall(
     # negative limit otherwise flows to SQLite as `LIMIT -1` (unbounded full-corpus
     # scan + O(N) scoring on the hot path) and to `results[:limit]` as a silent
     # tail-drop. do_recall_with_context delegates here, so this covers both entries.
-    limit = _clamp_limit(limit, 100)
+    # 2.5.0 (Task #190): the ceiling is the vector scan window (MAX_MEMORIES), not
+    # 100 — the library layer bounds resource use only. The context-explosion cap
+    # for agents lives at the MCP boundary (the recall tools' JSON Schema declares
+    # `maximum: 100`); library callers (bench full-ranking, bulk export, future
+    # rerank) may legitimately request full depth. In rrf mode the fusion-list
+    # depth tracks `limit`, so the old in-library 100 cap silently collapsed
+    # deep-ranking quality (bge-m3 LongMemEval 81.17 -> 48.98).
+    limit = _clamp_limit(limit, MAX_MEMORIES)
 
     # Detect the static degraded case (mode=none) before dispatch; the runtime fault case
     # is observed at the embedding boundary in vector._search_vector. See health.py.
