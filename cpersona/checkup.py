@@ -57,20 +57,20 @@ async def _run(args) -> int:
     # Imported here, after --db has been exported, because cpersona.config
     # resolves CPERSONA_DB_PATH at import time.
     from cpersona.checks import exit_code
-    from cpersona.database import close_db, get_db
+    from cpersona.database import close_db, connection
     from cpersona.maintenance_handlers import do_check_health, do_deep_check
 
     report = await do_check_health(agent_id=args.agent, fix=args.fix)
 
     if args.deep:
-        db = await get_db()
         if args.agent:
             agents = [args.agent]
         else:
-            agents = [
-                r[0]
-                for r in await db.execute_fetchall("SELECT DISTINCT agent_id FROM memories")
-            ]
+            async with connection() as db:
+                agents = [
+                    r[0]
+                    for r in await db.execute_fetchall("SELECT DISTINCT agent_id FROM memories")
+                ]
         report["deep"] = {}
         for agent in agents:
             report["deep"][agent] = await do_deep_check(agent, fix=args.fix)

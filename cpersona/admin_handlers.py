@@ -34,7 +34,7 @@ from cpersona.config import (
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
 )
-from cpersona.database import get_db, write_lock
+from cpersona.database import connection, transaction
 from cpersona.utils import _clamp_limit, _try_parse_json
 
 logger = logging.getLogger(__name__)
@@ -42,11 +42,11 @@ logger = logging.getLogger(__name__)
 
 async def do_get_profile(agent_id: str) -> dict:
     """Get the current profile for an agent."""
-    db = await get_db()
-    rows = await db.execute_fetchall(
-        "SELECT content FROM profiles WHERE agent_id = ? AND user_id = '' LIMIT 1",
-        (agent_id,),
-    )
+    async with connection() as db:
+        rows = await db.execute_fetchall(
+            "SELECT content FROM profiles WHERE agent_id = ? AND user_id = '' LIMIT 1",
+            (agent_id,),
+        )
     return {"profile": rows[0][0] if rows else ""}
 
 
@@ -54,14 +54,13 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
     """Update agent profile with pre-computed content."""
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "profiles_updated": 0}, "update_profile")
-    db = await get_db()
 
     if not profile:
         return {"ok": True, "profiles_updated": 0}
 
-    # bug-042/043: serialise the write+commit behind the shared lock so this
-    # commit cannot flush a concurrent import/merge's partial transaction.
-    async with write_lock():
+    # bug-042/043: transaction() serialises the write+commit behind the shared lock
+    # so this commit cannot flush a concurrent import/merge's partial transaction.
+    async with transaction() as db:
         await db.execute(
             """INSERT INTO profiles (agent_id, user_id, content, updated_at)
                VALUES (?, '', ?, datetime('now'))
@@ -70,7 +69,6 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
                    updated_at = excluded.updated_at""",
             (agent_id, profile),
         )
-        await db.commit()
     return {"ok": True, "profiles_updated": 1}
 
 
@@ -80,7 +78,6 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
     project_id (v2.4.17): γ filter — None = no filter, '' = global pool only,
     'X' = bucket 'X' ∪ global pool.
     """
-    db = await get_db()
     clauses: list[str] = []
     params: list = []
     if agent_id:
@@ -91,11 +88,12 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
         clauses.append(frag)
         params.extend(p)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    rows = await db.execute_fetchall(
-        f"SELECT id, agent_id, project_id, msg_id, content, source, timestamp, created_at, locked, channel "
-        f"FROM memories {where} ORDER BY created_at DESC LIMIT ?",
-        (*params, _clamp_limit(limit, 500)),
-    )
+    async with connection() as db:
+        rows = await db.execute_fetchall(
+            f"SELECT id, agent_id, project_id, msg_id, content, source, timestamp, created_at, locked, channel "
+            f"FROM memories {where} ORDER BY created_at DESC LIMIT ?",
+            (*params, _clamp_limit(limit, 500)),
+        )
     memories = []
     for row in rows:
         source = {}
@@ -123,7 +121,6 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
 
 async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = None) -> dict:
     """List archived episodes for dashboard display. Same γ semantics as do_list_memories."""
-    db = await get_db()
     clauses: list[str] = []
     params: list = []
     if agent_id:
@@ -134,11 +131,12 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
         clauses.append(frag)
         params.extend(p)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    rows = await db.execute_fetchall(
-        f"SELECT id, agent_id, project_id, summary, keywords, start_time, end_time, created_at "
-        f"FROM episodes {where} ORDER BY created_at DESC LIMIT ?",
-        (*params, _clamp_limit(limit, 200)),
-    )
+    async with connection() as db:
+        rows = await db.execute_fetchall(
+            f"SELECT id, agent_id, project_id, summary, keywords, start_time, end_time, created_at "
+            f"FROM episodes {where} ORDER BY created_at DESC LIMIT ?",
+            (*params, _clamp_limit(limit, 200)),
+        )
     episodes = []
     for row in rows:
         episodes.append(
@@ -163,10 +161,10 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "deleted_id": memory_id}, "delete_memory")
-    db = await get_db()
     # aiosqlite 0.22 has execute_fetchall but no execute_fetchone — using the
     # former avoids a silent AttributeError that previously broke every delete.
-    rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
+    async with connection() as db:
+        rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
         return {"error": f"Memory {memory_id} not found"}
     if rows[0][0]:
@@ -177,8 +175,8 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
     # locked=1 between the SELECT above and this DELETE (a concurrent call over the
     # single shared connection) can no longer be defeated — the atomicity the
     # bug-007 dedup DELETE fix established, extended to the admin path.
-    # bug-042/043: serialise the DELETE+commit behind the shared lock.
-    async with write_lock():
+    # bug-042/043: transaction() serialises the DELETE+commit behind the shared lock.
+    async with transaction() as db:
         if agent_id:
             cursor = await db.execute(
                 "DELETE FROM memories WHERE id = ? AND agent_id = ? AND locked = 0",
@@ -186,7 +184,6 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
             )
         else:
             cursor = await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (memory_id,))
-        await db.commit()
     if cursor.rowcount == 0:
         return {"error": f"Memory {memory_id} not found, not owned by agent, or locked"}
 
@@ -214,8 +211,8 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     if not content or not content.strip():
         return {"error": "Content cannot be empty"}
 
-    db = await get_db()
-    rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
+    async with connection() as db:
+        rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
         return {"error": f"Memory {memory_id} not found"}
     row = rows[0]
@@ -246,13 +243,12 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     # window as the delete path — a lock_memory landing after the SELECT above
     # must not be overwritten, and a raced no-op must not report success or push
     # the new text to the remote index.
-    # bug-042/043: serialise the UPDATE+commit behind the shared lock.
-    async with write_lock():
+    # bug-042/043: transaction() serialises the UPDATE+commit behind the shared lock.
+    async with transaction() as db:
         cursor = await db.execute(
             "UPDATE memories SET content = ?, embedding = ? WHERE id = ? AND locked = 0",
             (content, embedding_blob, memory_id),
         )
-        await db.commit()
     if cursor.rowcount == 0:
         return {"error": f"Memory {memory_id} is locked and cannot be edited"}
 
@@ -278,16 +274,15 @@ async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
     """Lock a memory to prevent deletion and editing."""
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "locked_id": memory_id}, "lock_memory")
-    db = await get_db()
-    rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
+    async with connection() as db:
+        rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
         return {"error": f"Memory {memory_id} not found"}
     if agent_id and rows[0][0] != agent_id:
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
-    async with write_lock():  # bug-042/043: serialise write+commit
+    async with transaction() as db:  # bug-042/043: serialise write+commit
         await db.execute("UPDATE memories SET locked = 1 WHERE id = ?", (memory_id,))
-        await db.commit()
     return {"ok": True, "locked_id": memory_id}
 
 
@@ -295,16 +290,15 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
     """Unlock a memory to allow deletion and editing."""
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "unlocked_id": memory_id}, "unlock_memory")
-    db = await get_db()
-    rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
+    async with connection() as db:
+        rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
         return {"error": f"Memory {memory_id} not found"}
     if agent_id and rows[0][0] != agent_id:
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
-    async with write_lock():  # bug-042/043: serialise write+commit
+    async with transaction() as db:  # bug-042/043: serialise write+commit
         await db.execute("UPDATE memories SET locked = 0 WHERE id = ?", (memory_id,))
-        await db.commit()
     return {"ok": True, "unlocked_id": memory_id}
 
 
@@ -324,13 +318,13 @@ async def do_delete_agent_data(agent_id: str) -> dict:
     if not agent_id:
         return {"error": "agent_id is required for bulk deletion"}
 
-    db = await get_db()
-    # bug-042/043: serialise the multi-table delete + commit behind the shared lock.
-    async with write_lock():
+    # bug-042/043: transaction() serialises the multi-table delete + commit behind
+    # the shared lock; its auto-rollback keeps a partial wipe from surviving as
+    # another writer's commit.
+    async with transaction() as db:
         mem_cursor = await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent_id,))
         prof_cursor = await db.execute("DELETE FROM profiles WHERE agent_id = ?", (agent_id,))
         ep_cursor = await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent_id,))
-        await db.commit()
 
     # bug-036: drop the agent's per-agent calibration from BOTH the in-process
     # dicts and the persisted sidecar. Otherwise a stale threshold/beta/gate
@@ -631,10 +625,10 @@ def _load_calibration_state() -> dict | None:
 
 async def _corpus_embedding_dim() -> int | None:
     """Return the float32 dimension of one stored embedding, or None when empty."""
-    db = await get_db()
-    rows = await db.execute_fetchall(
-        "SELECT embedding FROM memories WHERE embedding IS NOT NULL LIMIT 1"  # isolation-waiver: embedding dimension is corpus-invariant (any agent's row answers it)
-    )
+    async with connection() as db:
+        rows = await db.execute_fetchall(
+            "SELECT embedding FROM memories WHERE embedding IS NOT NULL LIMIT 1"  # isolation-waiver: embedding dimension is corpus-invariant (any agent's row answers it)
+        )
     if not rows or rows[0][0] is None:
         return None
     return len(rows[0][0]) // 4  # 4 bytes per float32
@@ -778,7 +772,6 @@ async def do_calibrate_threshold(
         )
     import numpy as np
 
-    db = await get_db()
     # bug-053: sample_size is a caller-supplied MCP tool parameter that feeds both a
     # LIMIT scan and an O(n^2) dense cosine matrix (vecs @ vecs.T) + np.triu_indices
     # (and a copy on the separation path). An unclamped large value allocates multi-GB
@@ -805,115 +798,118 @@ async def do_calibrate_threshold(
         return {"ok": False, "error": f"percentile must be in (0, 1] (or a percent 1-100), got {percentile}"}
     z = max(-10.0, min(10.0, z))
 
-    # Sample embeddings: per-agent when agent_id provided, all-agents when empty
-    if agent_id:
-        rows = await db.execute_fetchall(
-            "SELECT embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",
-            (agent_id, sample_n),
-        )
-    else:
-        rows = await db.execute_fetchall(
-            "SELECT embedding FROM memories WHERE embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",  # isolation-waiver: deliberate all-agents calibration; the agent_id branch above scopes per-agent
-            (sample_n,),
-        )
-
-    if len(rows) < 10:
-        return {"ok": False, "error": f"Need at least 10 embeddings, found {len(rows)}"}
-
-    vecs = []
-    for (blob,) in rows:
-        vec = _safe_frombuffer(blob)  # bug-061: skip a corrupt blob instead of crashing calibration/startup
-        if vec is None:
-            continue
-        vecs.append(vec.copy())
-    # bug-025: a mixed-embedding-dimension corpus (e.g. a mid-flight jina-768d ->
-    # bge-1024d model swap) yields ragged rows; np.array of ragged vectors raises
-    # ValueError on numpy>=1.24, surfacing an opaque error from
-    # calibrate/set_recall_precision and able to abort ensure_calibrated_on_startup.
-    # Keep only the modal dimension — off-dimension rows are stale relative to the
-    # live model and get re-embedded by check_embedding_dimension.
-    if vecs:
-        from collections import Counter
-
-        target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
-        vecs = [v for v in vecs if v.shape[0] == target_dim]
-    if len(vecs) < 10:
-        return {"ok": False, "error": f"Need at least 10 same-dimension embeddings, found {len(vecs)}"}
-    vecs = np.array(vecs)
-
-    sim_matrix = vecs @ vecs.T
-
-    n = len(vecs)
-    triu_indices = np.triu_indices(n, k=1)
-    pairwise_sims = sim_matrix[triu_indices]
-
-    num_pairs = len(pairwise_sims)
-    old_threshold = vector._get_vector_threshold(agent_id)
-
-    # Positive proxy for the separation method (label-free). Preferred: temporal
-    # adjacency (same-session memories ≈ related — a representative sample of the
-    # related distribution). Fallback: nearest-neighbour max, used only when too few
-    # temporally-adjacent pairs exist (it overestimates relatedness — extreme tail —
-    # so the threshold trends high and recall suffers).
-    pos_sims = None
-    proxy_source = None
-    if cal_method == "separation":
-        pos_sims = await _temporal_adjacency_sims(
-            db, agent_id, sample_n, CALIBRATE_TEMPORAL_WINDOW_MIN
-        )
-        proxy_source = "temporal"
-        if pos_sims is None or len(pos_sims) < 10:
-            nn = sim_matrix.copy()
-            np.fill_diagonal(nn, -np.inf)
-            pos_sims = nn.max(axis=1)
-            proxy_source = "nn_fallback"
-
-    stats = _threshold_from_sims(
-        pairwise_sims,
-        method=cal_method,
-        z_factor=z,
-        percentile=cal_percentile,
-        floor=CALIBRATE_FLOOR,
-        pos_sims=pos_sims,
-    )
-    new_threshold = stats["threshold"]
-    embedding_dim = int(vecs.shape[1])
-
-    # Apply: per-agent dict when agent_id provided, global fallback when empty
-    if agent_id:
-        vector._agent_thresholds[agent_id] = new_threshold
-    else:
-        config.VECTOR_MIN_SIMILARITY = new_threshold
-
-    # Post-fusion quality-gate calibration (v2.4.26, Goal #132). Per-agent and
-    # fusion-mode only: recall is per-agent, and the gate lives on the active mode's
-    # fused-score scale. Calibrating the curve here makes precision driven by data in
-    # every mode (cascade via the vector floor above, rsf/rrf via this gate) instead of
-    # the pool-size heuristic _adaptive_min_score.
-    fused_stats = None
-    if agent_id and config.FUSED_GATE_ENABLED:
-        # The simulate-query pass issues live fusion recalls; a flaky embedding backend
-        # must not abort calibration and lose the vector threshold computed above (which
-        # is persisted below). Degrade to the heuristic gate on any failure.
-        try:
-            fused_stats = await _calibrate_fused_gate(
-                db,
-                agent_id,
-                config.FUSED_GATE_SAMPLE_QUERIES,
-                CALIBRATE_TEMPORAL_WINDOW_MIN,
-                vector._get_precision_beta(agent_id),
-                CALIBRATE_FLOOR,
+    # Sample embeddings: per-agent when agent_id provided, all-agents when empty.
+    # The read seam stays open through the fused-gate calibration below — it issues
+    # simulate-query recalls against the same connection.
+    async with connection() as db:
+        if agent_id:
+            rows = await db.execute_fetchall(
+                "SELECT embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",
+                (agent_id, sample_n),
             )
-        except Exception as exc:
-            logger.warning(
-                "Fused-gate calibration failed for [%s]; keeping the heuristic gate: %s",
-                agent_id or "global",
-                exc,
+        else:
+            rows = await db.execute_fetchall(
+                "SELECT embedding FROM memories WHERE embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",  # isolation-waiver: deliberate all-agents calibration; the agent_id branch above scopes per-agent
+                (sample_n,),
             )
-            fused_stats = None
-        if fused_stats is not None:
-            vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
-            vector._fused_gate_signal = fused_stats["signal"]
+
+        if len(rows) < 10:
+            return {"ok": False, "error": f"Need at least 10 embeddings, found {len(rows)}"}
+
+        vecs = []
+        for (blob,) in rows:
+            vec = _safe_frombuffer(blob)  # bug-061: skip a corrupt blob instead of crashing calibration/startup
+            if vec is None:
+                continue
+            vecs.append(vec.copy())
+        # bug-025: a mixed-embedding-dimension corpus (e.g. a mid-flight jina-768d ->
+        # bge-1024d model swap) yields ragged rows; np.array of ragged vectors raises
+        # ValueError on numpy>=1.24, surfacing an opaque error from
+        # calibrate/set_recall_precision and able to abort ensure_calibrated_on_startup.
+        # Keep only the modal dimension — off-dimension rows are stale relative to the
+        # live model and get re-embedded by check_embedding_dimension.
+        if vecs:
+            from collections import Counter
+
+            target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
+            vecs = [v for v in vecs if v.shape[0] == target_dim]
+        if len(vecs) < 10:
+            return {"ok": False, "error": f"Need at least 10 same-dimension embeddings, found {len(vecs)}"}
+        vecs = np.array(vecs)
+
+        sim_matrix = vecs @ vecs.T
+
+        n = len(vecs)
+        triu_indices = np.triu_indices(n, k=1)
+        pairwise_sims = sim_matrix[triu_indices]
+
+        num_pairs = len(pairwise_sims)
+        old_threshold = vector._get_vector_threshold(agent_id)
+
+        # Positive proxy for the separation method (label-free). Preferred: temporal
+        # adjacency (same-session memories ≈ related — a representative sample of the
+        # related distribution). Fallback: nearest-neighbour max, used only when too few
+        # temporally-adjacent pairs exist (it overestimates relatedness — extreme tail —
+        # so the threshold trends high and recall suffers).
+        pos_sims = None
+        proxy_source = None
+        if cal_method == "separation":
+            pos_sims = await _temporal_adjacency_sims(
+                db, agent_id, sample_n, CALIBRATE_TEMPORAL_WINDOW_MIN
+            )
+            proxy_source = "temporal"
+            if pos_sims is None or len(pos_sims) < 10:
+                nn = sim_matrix.copy()
+                np.fill_diagonal(nn, -np.inf)
+                pos_sims = nn.max(axis=1)
+                proxy_source = "nn_fallback"
+
+        stats = _threshold_from_sims(
+            pairwise_sims,
+            method=cal_method,
+            z_factor=z,
+            percentile=cal_percentile,
+            floor=CALIBRATE_FLOOR,
+            pos_sims=pos_sims,
+        )
+        new_threshold = stats["threshold"]
+        embedding_dim = int(vecs.shape[1])
+
+        # Apply: per-agent dict when agent_id provided, global fallback when empty
+        if agent_id:
+            vector._agent_thresholds[agent_id] = new_threshold
+        else:
+            config.VECTOR_MIN_SIMILARITY = new_threshold
+
+        # Post-fusion quality-gate calibration (v2.4.26, Goal #132). Per-agent and
+        # fusion-mode only: recall is per-agent, and the gate lives on the active mode's
+        # fused-score scale. Calibrating the curve here makes precision driven by data in
+        # every mode (cascade via the vector floor above, rsf/rrf via this gate) instead of
+        # the pool-size heuristic _adaptive_min_score.
+        fused_stats = None
+        if agent_id and config.FUSED_GATE_ENABLED:
+            # The simulate-query pass issues live fusion recalls; a flaky embedding backend
+            # must not abort calibration and lose the vector threshold computed above (which
+            # is persisted below). Degrade to the heuristic gate on any failure.
+            try:
+                fused_stats = await _calibrate_fused_gate(
+                    db,
+                    agent_id,
+                    config.FUSED_GATE_SAMPLE_QUERIES,
+                    CALIBRATE_TEMPORAL_WINDOW_MIN,
+                    vector._get_precision_beta(agent_id),
+                    CALIBRATE_FLOOR,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Fused-gate calibration failed for [%s]; keeping the heuristic gate: %s",
+                    agent_id or "global",
+                    exc,
+                )
+                fused_stats = None
+            if fused_stats is not None:
+                vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
+                vector._fused_gate_signal = fused_stats["signal"]
 
     # Persist for restart survival + embedding-change detection (Tier 4).
     _save_calibration_state(
@@ -1156,13 +1152,13 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             live_dim,
         )
 
-    db = await get_db()
     global_result = await do_calibrate_threshold(agent_id="")
     agents = []
     if global_result.get("ok"):
-        agent_rows = await db.execute_fetchall(
-            "SELECT DISTINCT agent_id FROM memories WHERE embedding IS NOT NULL"
-        )
+        async with connection() as db:
+            agent_rows = await db.execute_fetchall(
+                "SELECT DISTINCT agent_id FROM memories WHERE embedding IS NOT NULL"
+            )
         for (aid,) in agent_rows:
             r = await do_calibrate_threshold(agent_id=aid)
             if r.get("ok"):
@@ -1184,9 +1180,8 @@ async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
     """Delete a single episode by ID (FTS5 triggers handle index cleanup)."""
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "deleted_id": episode_id}, "delete_episode")
-    db = await get_db()
-    # bug-042/043: serialise the DELETE+commit behind the shared lock.
-    async with write_lock():
+    # bug-042/043: transaction() serialises the DELETE+commit behind the shared lock.
+    async with transaction() as db:
         if agent_id:
             cursor = await db.execute(
                 "DELETE FROM episodes WHERE id = ? AND agent_id = ?",
@@ -1194,7 +1189,6 @@ async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
             )
         else:
             cursor = await db.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
-        await db.commit()
     if cursor.rowcount == 0:
         return {"error": f"Episode {episode_id} not found or not owned by agent"}
     return {"ok": True, "deleted_id": episode_id}
@@ -1252,14 +1246,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
         return {"error": f"output_path rejected (path traversal or outside export dir): {output_path}"}
     output_path = confined
 
-    db = await get_db()
-
     agent_filter = " WHERE agent_id = ?" if agent_id else ""
     agent_params: tuple = (agent_id,) if agent_id else ()
-
-    mem_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM memories{agent_filter}", agent_params))[0][0]
-    ep_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM episodes{agent_filter}", agent_params))[0][0]
-    prof_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM profiles{agent_filter}", agent_params))[0][0]
 
     out_dir = os.path.dirname(output_path)
     if out_dir:
@@ -1269,87 +1257,92 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     exported_episodes = 0
     exported_profiles = 0
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        header = {
-            "_type": "header",
-            "version": "cpersona-export/1.0",
-            "agent_id": agent_id,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
-            "memory_count": mem_count,
-            "episode_count": ep_count,
-            "has_profile": prof_count > 0,
-        }
-        f.write(json.dumps(header, ensure_ascii=False) + "\n")
+    async with connection() as db:
+        mem_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM memories{agent_filter}", agent_params))[0][0]
+        ep_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM episodes{agent_filter}", agent_params))[0][0]
+        prof_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM profiles{agent_filter}", agent_params))[0][0]
 
-        # bug-016: carry the project_id / channel γ-isolation axes and the
-        # locked flag through export so a restore reconstructs the row in its
-        # real bucket instead of collapsing everything into project ''/channel ''.
-        rows = await db.execute_fetchall(
-            "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
-            " project_id, channel, locked"
-            f" FROM memories{agent_filter} ORDER BY id",
-            agent_params,
-        )
-        for row in rows:
-            record: dict = {
-                "_type": "memory",
-                "id": row[0],
-                "agent_id": row[1],
-                "msg_id": row[2],
-                "content": row[3],
-                "source": _try_parse_json(row[4]) if row[4] else {},
-                "timestamp": row[5],
-                "metadata": _try_parse_json(row[6]) if row[6] else {},
-                "created_at": row[8],
-                "project_id": row[9],
-                "channel": row[10],
-                "locked": int(row[11]) if row[11] else 0,
+        with open(output_path, "w", encoding="utf-8") as f:
+            header = {
+                "_type": "header",
+                "version": "cpersona-export/1.0",
+                "agent_id": agent_id,
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "memory_count": mem_count,
+                "episode_count": ep_count,
+                "has_profile": prof_count > 0,
             }
-            if include_embeddings and row[7]:
-                record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            exported_memories += 1
+            f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
-        rows = await db.execute_fetchall(
-            "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
-            " project_id, channel"
-            f" FROM episodes{agent_filter} ORDER BY id",
-            agent_params,
-        )
-        for row in rows:
-            record = {
-                "_type": "episode",
-                "id": row[0],
-                "agent_id": row[1],
-                "summary": row[2],
-                "keywords": row[3],
-                "start_time": row[4],
-                "end_time": row[5],
-                "created_at": row[7],
-                "resolved": bool(row[8]) if row[8] else False,
-                "project_id": row[9],
-                "channel": row[10],
-            }
-            if include_embeddings and row[6]:
-                record["embedding_b64"] = base64.b64encode(row[6]).decode("ascii")
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            exported_episodes += 1
+            # bug-016: carry the project_id / channel γ-isolation axes and the
+            # locked flag through export so a restore reconstructs the row in its
+            # real bucket instead of collapsing everything into project ''/channel ''.
+            rows = await db.execute_fetchall(
+                "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
+                " project_id, channel, locked"
+                f" FROM memories{agent_filter} ORDER BY id",
+                agent_params,
+            )
+            for row in rows:
+                record: dict = {
+                    "_type": "memory",
+                    "id": row[0],
+                    "agent_id": row[1],
+                    "msg_id": row[2],
+                    "content": row[3],
+                    "source": _try_parse_json(row[4]) if row[4] else {},
+                    "timestamp": row[5],
+                    "metadata": _try_parse_json(row[6]) if row[6] else {},
+                    "created_at": row[8],
+                    "project_id": row[9],
+                    "channel": row[10],
+                    "locked": int(row[11]) if row[11] else 0,
+                }
+                if include_embeddings and row[7]:
+                    record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                exported_memories += 1
 
-        rows = await db.execute_fetchall(
-            f"SELECT agent_id, user_id, content, updated_at, project_id FROM profiles{agent_filter} ORDER BY agent_id",
-            agent_params,
-        )
-        for row in rows:
-            record = {
-                "_type": "profile",
-                "agent_id": row[0],
-                "user_id": row[1],
-                "content": row[2],
-                "updated_at": row[3],
-                "project_id": row[4],
-            }
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            exported_profiles += 1
+            rows = await db.execute_fetchall(
+                "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
+                " project_id, channel"
+                f" FROM episodes{agent_filter} ORDER BY id",
+                agent_params,
+            )
+            for row in rows:
+                record = {
+                    "_type": "episode",
+                    "id": row[0],
+                    "agent_id": row[1],
+                    "summary": row[2],
+                    "keywords": row[3],
+                    "start_time": row[4],
+                    "end_time": row[5],
+                    "created_at": row[7],
+                    "resolved": bool(row[8]) if row[8] else False,
+                    "project_id": row[9],
+                    "channel": row[10],
+                }
+                if include_embeddings and row[6]:
+                    record["embedding_b64"] = base64.b64encode(row[6]).decode("ascii")
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                exported_episodes += 1
+
+            rows = await db.execute_fetchall(
+                f"SELECT agent_id, user_id, content, updated_at, project_id FROM profiles{agent_filter} ORDER BY agent_id",
+                agent_params,
+            )
+            for row in rows:
+                record = {
+                    "_type": "profile",
+                    "agent_id": row[0],
+                    "user_id": row[1],
+                    "content": row[2],
+                    "updated_at": row[3],
+                    "project_id": row[4],
+                }
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                exported_profiles += 1
 
     return {
         "ok": True,
@@ -1364,8 +1357,8 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     """Import memories, episodes, and profiles from a JSONL file."""
     # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
     # bug-079: only gate the WRITE path on no-persist (the bug-048 fix, applied to the
-    # import twin). A dry_run=True preview is write-free — every INSERT/UPSERT, the
-    # commit, and the write_lock acquire below are guarded by `if not dry_run` — so
+    # import twin). A dry_run=True preview is write-free — every INSERT/UPSERT is
+    # guarded by `if not dry_run` and the dry_run path runs on the read seam — so
     # short-circuiting it into a fabricated all-zero response masks what a real import
     # would do and contradicts the "read tools unaffected" no-persist contract.
     if no_persist.is_paused() and not dry_run:
@@ -1383,8 +1376,6 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     if not os.path.exists(input_path):
         return {"error": f"File not found: {input_path}"}
 
-    db = await get_db()
-
     imported_memories = 0
     skipped_memories = 0
     imported_episodes = 0
@@ -1399,179 +1390,168 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     seen_msgid: set = set()
     seen_content: set = set()
 
-    # bug-016: run the whole restore inside one transaction so an unexpected
-    # fault rolls back cleanly instead of leaving a half-written corpus in the
-    # shared connection for the next handler's commit to flush.
-    # bug-042: rollback alone gives NO atomicity on the shared aiosqlite
-    # connection — a concurrent committer (queue drain / do_recall / do_store)
-    # flushes this import's partial rows at any await point, and the later rollback
-    # cannot undo an already-committed write. Hold the shared write lock for the
-    # whole transaction so no other coroutine can commit between the first INSERT
-    # and the final commit/rollback. dry_run does no writes, so it takes no lock.
-    _import_lock_held = False
-    if not dry_run:
-        await write_lock().acquire()
-        _import_lock_held = True
+    # bug-016/bug-042: the whole restore runs inside one transaction() — the lock is
+    # held across [first INSERT … commit/rollback] so no concurrent committer can
+    # flush this import's partial rows at an await point, and an unexpected fault
+    # auto-rolls-back instead of leaving a half-written corpus on the shared
+    # connection. dry_run does no writes, so it runs on the read seam.
     try:
-        with open(input_path, encoding="utf-8") as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
-
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError as e:
-                    errors.append(f"Line {line_num}: invalid JSON: {e}")
-                    continue
-
-                rtype = record.get("_type", "")
-
-                if rtype == "header":
-                    continue
-
-                elif rtype == "memory":
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        errors.append(f"Line {line_num}: memory missing agent_id")
+        async with (connection() if dry_run else transaction()) as db:
+            with open(input_path, encoding="utf-8") as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
                         continue
 
-                    content = record.get("content", "")
-                    if not content:
-                        skipped_memories += 1
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError as e:
+                        errors.append(f"Line {line_num}: invalid JSON: {e}")
                         continue
 
-                    msg_id = record.get("msg_id", "")
-                    pid = record.get("project_id", "")
-                    chan = record.get("channel", "")
+                    rtype = record.get("_type", "")
 
-                    # bug-044: dedup on the full identity (agent_id, project_id,
-                    # msg_id) — the same axes do_store and the idx_memories_dedup_msg_id
-                    # UNIQUE index use. A project-blind check would drop a legitimately
-                    # distinct cross-project memory (same msg_id, different project_id)
-                    # that INSERT OR IGNORE against the composite index would accept.
-                    if msg_id:
-                        existing = await db.execute_fetchall(
-                            "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
-                            (aid, pid, msg_id),
-                        )
-                        if existing or (dry_run and (aid, pid, msg_id) in seen_msgid):
+                    if rtype == "header":
+                        continue
+
+                    elif rtype == "memory":
+                        aid = target_agent_id or record.get("agent_id", "")
+                        if not aid:
+                            errors.append(f"Line {line_num}: memory missing agent_id")
+                            continue
+
+                        content = record.get("content", "")
+                        if not content:
                             skipped_memories += 1
                             continue
 
-                    if not dry_run:
-                        source = json.dumps(record.get("source", {}))
-                        timestamp = record.get("timestamp", "")
-                        metadata = json.dumps(record.get("metadata", {}))
-                        # bug-016: carry the project_id / channel γ-axes, the locked
-                        # flag and the embedding through, and INSERT OR IGNORE so a
-                        # collision with the v12 dedup UNIQUE index is a counted skip
-                        # rather than an uncaught IntegrityError that aborts the restore.
-                        cur = await db.execute(
-                            "INSERT OR IGNORE INTO memories"
-                            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked)"
-                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                aid,
-                                pid,
-                                chan,
-                                msg_id,
-                                content,
-                                source,
-                                timestamp,
-                                metadata,
-                                _decode_embedding(record),
-                                1 if record.get("locked") else 0,
-                            ),
-                        )
-                        if cur.rowcount == 0:
-                            skipped_memories += 1
-                            continue
-                    else:
-                        # bug-056: in dry_run the INSERT OR IGNORE rowcount==0 skip
-                        # never runs, so a content-UNIQUE-index collision (empty msg_id,
-                        # same agent/project/channel/content, or a repeat within the
-                        # file) would be over-counted as an import. Replicate the
-                        # content-uniqueness probe so the previewed imported/skipped
-                        # counts match a real run.
-                        dup = await db.execute_fetchall(
-                            "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-                            (aid, pid, chan, content),
-                        )
-                        if dup or (aid, pid, chan, content) in seen_content:
-                            skipped_memories += 1
-                            continue
-                        # bug-070: record this record's identities so a later duplicate in
-                        # the same file is previewed as skipped, matching the real run.
+                        msg_id = record.get("msg_id", "")
+                        pid = record.get("project_id", "")
+                        chan = record.get("channel", "")
+
+                        # bug-044: dedup on the full identity (agent_id, project_id,
+                        # msg_id) — the same axes do_store and the idx_memories_dedup_msg_id
+                        # UNIQUE index use. A project-blind check would drop a legitimately
+                        # distinct cross-project memory (same msg_id, different project_id)
+                        # that INSERT OR IGNORE against the composite index would accept.
                         if msg_id:
-                            seen_msgid.add((aid, pid, msg_id))
-                        seen_content.add((aid, pid, chan, content))
-                    imported_memories += 1
+                            existing = await db.execute_fetchall(
+                                "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
+                                (aid, pid, msg_id),
+                            )
+                            if existing or (dry_run and (aid, pid, msg_id) in seen_msgid):
+                                skipped_memories += 1
+                                continue
 
-                elif rtype == "episode":
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        errors.append(f"Line {line_num}: episode missing agent_id")
-                        continue
+                        if not dry_run:
+                            source = json.dumps(record.get("source", {}))
+                            timestamp = record.get("timestamp", "")
+                            metadata = json.dumps(record.get("metadata", {}))
+                            # bug-016: carry the project_id / channel γ-axes, the locked
+                            # flag and the embedding through, and INSERT OR IGNORE so a
+                            # collision with the v12 dedup UNIQUE index is a counted skip
+                            # rather than an uncaught IntegrityError that aborts the restore.
+                            cur = await db.execute(
+                                "INSERT OR IGNORE INTO memories"
+                                " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked)"
+                                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                (
+                                    aid,
+                                    pid,
+                                    chan,
+                                    msg_id,
+                                    content,
+                                    source,
+                                    timestamp,
+                                    metadata,
+                                    _decode_embedding(record),
+                                    1 if record.get("locked") else 0,
+                                ),
+                            )
+                            if cur.rowcount == 0:
+                                skipped_memories += 1
+                                continue
+                        else:
+                            # bug-056: in dry_run the INSERT OR IGNORE rowcount==0 skip
+                            # never runs, so a content-UNIQUE-index collision (empty msg_id,
+                            # same agent/project/channel/content, or a repeat within the
+                            # file) would be over-counted as an import. Replicate the
+                            # content-uniqueness probe so the previewed imported/skipped
+                            # counts match a real run.
+                            dup = await db.execute_fetchall(
+                                "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+                                (aid, pid, chan, content),
+                            )
+                            if dup or (aid, pid, chan, content) in seen_content:
+                                skipped_memories += 1
+                                continue
+                            # bug-070: record this record's identities so a later duplicate in
+                            # the same file is previewed as skipped, matching the real run.
+                            if msg_id:
+                                seen_msgid.add((aid, pid, msg_id))
+                            seen_content.add((aid, pid, chan, content))
+                        imported_memories += 1
 
-                    summary = record.get("summary", "")
-                    if not summary:
-                        continue
+                    elif rtype == "episode":
+                        aid = target_agent_id or record.get("agent_id", "")
+                        if not aid:
+                            errors.append(f"Line {line_num}: episode missing agent_id")
+                            continue
 
-                    if not dry_run:
-                        keywords = record.get("keywords", "")
-                        start_time = record.get("start_time")
-                        end_time = record.get("end_time")
-                        resolved = 1 if record.get("resolved") else 0
-                        await db.execute(
-                            "INSERT INTO episodes"
-                            " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
-                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                aid,
-                                record.get("project_id", ""),
-                                record.get("channel", ""),
-                                summary,
-                                keywords,
-                                start_time,
-                                end_time,
-                                resolved,
-                                _decode_embedding(record),
-                            ),
-                        )
-                    imported_episodes += 1
+                        summary = record.get("summary", "")
+                        if not summary:
+                            continue
 
-                elif rtype == "profile":
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        errors.append(f"Line {line_num}: profile missing agent_id")
-                        continue
+                        if not dry_run:
+                            keywords = record.get("keywords", "")
+                            start_time = record.get("start_time")
+                            end_time = record.get("end_time")
+                            resolved = 1 if record.get("resolved") else 0
+                            await db.execute(
+                                "INSERT INTO episodes"
+                                " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
+                                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                (
+                                    aid,
+                                    record.get("project_id", ""),
+                                    record.get("channel", ""),
+                                    summary,
+                                    keywords,
+                                    start_time,
+                                    end_time,
+                                    resolved,
+                                    _decode_embedding(record),
+                                ),
+                            )
+                        imported_episodes += 1
 
-                    content = record.get("content", "")
-                    if not content:
-                        continue
+                    elif rtype == "profile":
+                        aid = target_agent_id or record.get("agent_id", "")
+                        if not aid:
+                            errors.append(f"Line {line_num}: profile missing agent_id")
+                            continue
 
-                    if not dry_run:
-                        user_id = record.get("user_id", "")
-                        await db.execute(
-                            "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
-                            " VALUES (?, ?, ?, ?, datetime('now'))"
-                            " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
-                            "   content = excluded.content,"
-                            "   updated_at = excluded.updated_at",
-                            (aid, record.get("project_id", ""), user_id, content),
-                        )
-                    profile_updated = True
+                        content = record.get("content", "")
+                        if not content:
+                            continue
 
-                else:
-                    if rtype:
-                        errors.append(f"Line {line_num}: unknown type '{rtype}'")
+                        if not dry_run:
+                            user_id = record.get("user_id", "")
+                            await db.execute(
+                                "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
+                                " VALUES (?, ?, ?, ?, datetime('now'))"
+                                " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
+                                "   content = excluded.content,"
+                                "   updated_at = excluded.updated_at",
+                                (aid, record.get("project_id", ""), user_id, content),
+                            )
+                        profile_updated = True
 
-        if not dry_run:
-            await db.commit()
+                    else:
+                        if rtype:
+                            errors.append(f"Line {line_num}: unknown type '{rtype}'")
+
     except Exception as e:
-        if not dry_run:
-            await db.rollback()
         return {
             "ok": False,
             "error": f"import aborted and rolled back: {e}",
@@ -1581,9 +1561,6 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
             "imported_episodes": 0,
             "profile_updated": False,
         }
-    finally:
-        if _import_lock_held:
-            write_lock().release()
 
     result: dict = {
         "ok": True,
@@ -1636,8 +1613,6 @@ async def do_merge_memories(
     if mode not in ("copy", "move"):
         return {"error": f"Invalid mode '{mode}'. Supported: 'copy', 'move'"}
 
-    db = await get_db()
-
     merged_memories = 0
     skipped_memories = 0
     merged_episodes = 0
@@ -1656,121 +1631,114 @@ async def do_merge_memories(
     # channel / locked axes + embedding and using INSERT OR IGNORE so a content
     # collision is a counted skip (honouring strategy='skip') instead of an
     # uncaught IntegrityError that half-merges the corpus.
-    # bug-043: rollback gives no atomicity on the shared connection — hold the
-    # shared write lock for the whole merge transaction so no concurrent committer
-    # can flush its partial rows (and vice versa). dry_run does no writes → no lock.
-    _merge_lock_held = False
-    if not dry_run:
-        await write_lock().acquire()
-        _merge_lock_held = True
+    # bug-043: transaction() holds the shared write lock for the whole merge so no
+    # concurrent committer can flush its partial rows (and vice versa), commits at
+    # exit and auto-rolls-back on fault. dry_run does no writes → read seam.
     try:
-        rows = await db.execute_fetchall(
-            "SELECT project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked"
-            " FROM memories WHERE agent_id = ?",
-            (source_agent_id,),
-        )
-        for project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked in rows:
-            if not content:
-                continue
-            # bug-047: dedup against the target on the full identity (agent_id,
-            # project_id, msg_id), matching the INSERT OR IGNORE's composite UNIQUE
-            # index. A project-blind check drops a distinct source memory whose
-            # msg_id collides with a target row in an unrelated project bucket.
-            if msg_id:
+        async with (connection() if dry_run else transaction()) as db:
+            rows = await db.execute_fetchall(
+                "SELECT project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked"
+                " FROM memories WHERE agent_id = ?",
+                (source_agent_id,),
+            )
+            for project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked in rows:
+                if not content:
+                    continue
+                # bug-047: dedup against the target on the full identity (agent_id,
+                # project_id, msg_id), matching the INSERT OR IGNORE's composite UNIQUE
+                # index. A project-blind check drops a distinct source memory whose
+                # msg_id collides with a target row in an unrelated project bucket.
+                if msg_id:
+                    existing = await db.execute_fetchall(
+                        "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
+                        (target_agent_id, project_id, msg_id),
+                    )
+                    if existing:
+                        skipped_memories += 1
+                        continue
+                if not dry_run:
+                    cur = await db.execute(
+                        "INSERT OR IGNORE INTO memories"
+                        " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (target_agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked),
+                    )
+                    if cur.rowcount == 0:
+                        skipped_memories += 1
+                        continue
+                else:
+                    # bug-057: in dry_run the INSERT OR IGNORE rowcount==0 skip never
+                    # runs, so a content-UNIQUE-index collision (source content already
+                    # in the target under a different/empty msg_id) would be over-counted
+                    # as a merge. Replicate the content-uniqueness probe so the preview
+                    # counts equal a real merge.
+                    dup = await db.execute_fetchall(
+                        "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+                        (target_agent_id, project_id, channel, content),
+                    )
+                    if dup:
+                        skipped_memories += 1
+                        continue
+                merged_memories += 1
+
+            rows = await db.execute_fetchall(
+                "SELECT summary, keywords, start_time, end_time, resolved, project_id, channel, embedding"
+                " FROM episodes WHERE agent_id = ?",
+                (source_agent_id,),
+            )
+            for summary, keywords, start_time, end_time, resolved, ep_project_id, ep_channel, ep_embedding in rows:
+                if not summary:
+                    continue
+                # bug-076: scope the episode dedup probe by the γ isolation axes, exactly
+                # like the memory probes above (bug-047/057). Episodes have NO uniqueness
+                # constraint, so this pre-check is the only dedup gate — a summary-only
+                # probe skipped a legitimately distinct episode whenever the target held
+                # the same summary text under ANY other project/channel bucket, and
+                # mode='move' then deleted it with the source agent (permanent
+                # cross-project data loss). The dry_run seen_summary key carries the same
+                # axes so the preview counts match a real run.
                 existing = await db.execute_fetchall(
-                    "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
-                    (target_agent_id, project_id, msg_id),
+                    "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
+                    " AND summary = ? LIMIT 1",
+                    (target_agent_id, ep_project_id, ep_channel, summary),
+                )
+                if existing or (dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in seen_summary):
+                    skipped_episodes += 1
+                    continue
+                if not dry_run:
+                    await db.execute(
+                        "INSERT INTO episodes"
+                        " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (target_agent_id, ep_project_id, ep_channel, summary, keywords, start_time, end_time, resolved, ep_embedding),
+                    )
+                else:
+                    seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
+                merged_episodes += 1
+
+            rows = await db.execute_fetchall(
+                "SELECT user_id, content, project_id FROM profiles WHERE agent_id = ?",
+                (source_agent_id,),
+            )
+            for user_id, content, prof_project_id in rows:
+                if not content:
+                    continue
+                existing = await db.execute_fetchall(
+                    "SELECT id FROM profiles WHERE agent_id = ? AND user_id = ? LIMIT 1",
+                    (target_agent_id, user_id),
                 )
                 if existing:
-                    skipped_memories += 1
+                    skipped_profile = True
                     continue
-            if not dry_run:
-                cur = await db.execute(
-                    "INSERT OR IGNORE INTO memories"
-                    " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (target_agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked),
-                )
-                if cur.rowcount == 0:
-                    skipped_memories += 1
-                    continue
-            else:
-                # bug-057: in dry_run the INSERT OR IGNORE rowcount==0 skip never
-                # runs, so a content-UNIQUE-index collision (source content already
-                # in the target under a different/empty msg_id) would be over-counted
-                # as a merge. Replicate the content-uniqueness probe so the preview
-                # counts equal a real merge.
-                dup = await db.execute_fetchall(
-                    "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-                    (target_agent_id, project_id, channel, content),
-                )
-                if dup:
-                    skipped_memories += 1
-                    continue
-            merged_memories += 1
+                if not dry_run:
+                    await db.execute(
+                        "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
+                        " VALUES (?, ?, ?, ?, datetime('now'))",
+                        (target_agent_id, prof_project_id, user_id, content),
+                    )
+                profile_copied = True
 
-        rows = await db.execute_fetchall(
-            "SELECT summary, keywords, start_time, end_time, resolved, project_id, channel, embedding"
-            " FROM episodes WHERE agent_id = ?",
-            (source_agent_id,),
-        )
-        for summary, keywords, start_time, end_time, resolved, ep_project_id, ep_channel, ep_embedding in rows:
-            if not summary:
-                continue
-            # bug-076: scope the episode dedup probe by the γ isolation axes, exactly
-            # like the memory probes above (bug-047/057). Episodes have NO uniqueness
-            # constraint, so this pre-check is the only dedup gate — a summary-only
-            # probe skipped a legitimately distinct episode whenever the target held
-            # the same summary text under ANY other project/channel bucket, and
-            # mode='move' then deleted it with the source agent (permanent
-            # cross-project data loss). The dry_run seen_summary key carries the same
-            # axes so the preview counts match a real run.
-            existing = await db.execute_fetchall(
-                "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
-                " AND summary = ? LIMIT 1",
-                (target_agent_id, ep_project_id, ep_channel, summary),
-            )
-            if existing or (dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in seen_summary):
-                skipped_episodes += 1
-                continue
-            if not dry_run:
-                await db.execute(
-                    "INSERT INTO episodes"
-                    " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (target_agent_id, ep_project_id, ep_channel, summary, keywords, start_time, end_time, resolved, ep_embedding),
-                )
-            else:
-                seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
-            merged_episodes += 1
-
-        rows = await db.execute_fetchall(
-            "SELECT user_id, content, project_id FROM profiles WHERE agent_id = ?",
-            (source_agent_id,),
-        )
-        for user_id, content, prof_project_id in rows:
-            if not content:
-                continue
-            existing = await db.execute_fetchall(
-                "SELECT id FROM profiles WHERE agent_id = ? AND user_id = ? LIMIT 1",
-                (target_agent_id, user_id),
-            )
-            if existing:
-                skipped_profile = True
-                continue
-            if not dry_run:
-                await db.execute(
-                    "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
-                    " VALUES (?, ?, ?, ?, datetime('now'))",
-                    (target_agent_id, prof_project_id, user_id, content),
-                )
-            profile_copied = True
-
-        if not dry_run:
-            await db.commit()
     except Exception as e:
-        if not dry_run:
-            await db.rollback()
         return {
             "ok": False,
             "error": f"merge aborted and rolled back: {e}",
@@ -1784,9 +1752,6 @@ async def do_merge_memories(
             "profile_copied": False,
             "skipped_profile": skipped_profile,
         }
-    finally:
-        if _merge_lock_held:
-            write_lock().release()
 
     # The move-mode delete runs as its own locked transaction AFTER the merge
     # commit + lock release above (do_delete_agent_data re-acquires the lock), so

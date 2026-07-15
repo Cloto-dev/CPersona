@@ -590,14 +590,14 @@
       "discovered": "2026-07-06T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "_import_lock_held",
+      "pattern": "the whole restore runs inside one transaction",
       "expected": "present",
       "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Do not depend on rollback for atomicity on a shared connection: give do_import_memories its own dedicated aiosqlite.connect() connection, or serialize all write handlers plus the queue drain behind one module-level asyncio.Lock so no other coroutine commits between the import's INSERTs and its final commit.",
       "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). During import loop await points, MemoryTaskQueue._drain or a concurrent do_recall/do_store commits on the same shared connection, flushing the import's partial rows; a later import error's rollback only reverts since the last commit, leaving a half-written corpus (violates bug-016 whole-restore contract). Reverse: import's rollback discards a drain's uncommitted episode INSERT while the drain still deletes its queue row, losing the episode.",
       "fixed_in": "2.4.39",
-      "fix_note": "do_import_memories now holds the shared write_lock() for the whole transaction (acquire/release + finally), so no concurrent committer can flush its partial rows on the shared connection."
+      "fix_note": "do_import_memories originally held the shared write_lock() for the whole transaction (acquire/release + finally, 2.4.39). The 2.5.0 C-seam subsumed that fix: the whole restore now runs inside the transaction() context manager (lock + commit + auto-rollback owned by database.py); dry_run runs on the read seam. Marker = the conditional-seam entry in do_import_memories."
     },
     {
       "id": "bug-043",
@@ -606,14 +606,14 @@
       "discovered": "2026-07-06T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "_merge_lock_held",
+      "pattern": "holds the shared write lock for the whole merge",
       "expected": "present",
       "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Isolate the merge transaction on a dedicated aiosqlite connection, or guard all write handlers plus the queue drain with one shared asyncio.Lock so no other coroutine can commit/rollback between the merge's INSERTs and its commit.",
       "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). The merge loop interleaves INSERT OR IGNOREs with await execute_fetchall dedup probes; at those await points a concurrent queue drain / do_recall / do_store commits on the shared connection, flushing the merge's already-inserted rows. A later merge error's rollback then leaves those rows behind (the half-merge outcome bug-020/022 aimed to prevent). Symmetrically the merge rollback can discard a drain's uncommitted episode INSERT while the drain deletes its queue row.",
       "fixed_in": "2.4.39",
-      "fix_note": "do_merge_memories now holds the shared write_lock() for the whole transaction; the move-mode delete runs after release (no reentrancy)."
+      "fix_note": "do_merge_memories originally held the shared write_lock() for the whole transaction (2.4.39). The 2.5.0 C-seam subsumed that fix: the whole merge now runs inside the transaction() context manager (lock + commit + auto-rollback owned by database.py); the move-mode delete still runs after the seam exits (no reentrancy). Marker = the bug-043 seam comment above the merge try block."
     },
     {
       "id": "bug-045",
