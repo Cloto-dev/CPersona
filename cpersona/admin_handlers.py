@@ -17,7 +17,7 @@ import httpx
 
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
-from cpersona._vendored_mcp_common.isolation import gamma_clause
+from cpersona.isolation import isolation_where
 
 from cpersona import config
 from cpersona import tasks
@@ -78,21 +78,13 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
     project_id (v2.4.17): γ filter — None = no filter, '' = global pool only,
     'X' = bucket 'X' ∪ global pool.
     """
-    clauses: list[str] = []
-    params: list = []
-    if agent_id:
-        clauses.append("agent_id = ?")
-        params.append(agent_id)
-    frag, p = gamma_clause("project_id", project_id)
-    if frag:
-        clauses.append(frag)
-        params.extend(p)
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    # Empty agent_id = all agents (the tool schema documents it) — hence `or None`.
+    iso = isolation_where(agent_id=agent_id or None, project_id=project_id)
     async with connection() as db:
         rows = await db.execute_fetchall(
             f"SELECT id, agent_id, project_id, msg_id, content, source, timestamp, created_at, locked, channel "
-            f"FROM memories {where} ORDER BY created_at DESC LIMIT ?",
-            (*params, _clamp_limit(limit, 500)),
+            f"FROM memories{iso.where} ORDER BY created_at DESC LIMIT ?",
+            (*iso.params, _clamp_limit(limit, 500)),
         )
     memories = []
     for row in rows:
@@ -121,21 +113,13 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
 
 async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = None) -> dict:
     """List archived episodes for dashboard display. Same γ semantics as do_list_memories."""
-    clauses: list[str] = []
-    params: list = []
-    if agent_id:
-        clauses.append("agent_id = ?")
-        params.append(agent_id)
-    frag, p = gamma_clause("project_id", project_id)
-    if frag:
-        clauses.append(frag)
-        params.extend(p)
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    # Empty agent_id = all agents (the tool schema documents it) — hence `or None`.
+    iso = isolation_where(agent_id=agent_id or None, project_id=project_id)
     async with connection() as db:
         rows = await db.execute_fetchall(
             f"SELECT id, agent_id, project_id, summary, keywords, start_time, end_time, created_at "
-            f"FROM episodes {where} ORDER BY created_at DESC LIMIT ?",
-            (*params, _clamp_limit(limit, 200)),
+            f"FROM episodes{iso.where} ORDER BY created_at DESC LIMIT ?",
+            (*iso.params, _clamp_limit(limit, 200)),
         )
     episodes = []
     for row in rows:
@@ -470,18 +454,14 @@ async def _temporal_adjacency_sims(db, agent_id: str, limit: int, window_min: fl
     """Fetch (timestamp, embedding) ordered by time and build same-session pair sims."""
     import numpy as np
 
-    if agent_id:
-        rows = await db.execute_fetchall(
-            "SELECT timestamp, embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL "
-            "AND timestamp IS NOT NULL ORDER BY timestamp DESC LIMIT ?",
-            (agent_id, limit),
-        )
-    else:
-        rows = await db.execute_fetchall(
-            "SELECT timestamp, embedding FROM memories WHERE embedding IS NOT NULL "  # isolation-waiver: deliberate all-agents fallback; the agent_id branch above scopes per-agent
-            "AND timestamp IS NOT NULL ORDER BY timestamp DESC LIMIT ?",
-            (limit,),
-        )
+    # Per-agent when agent_id provided, deliberate all-agents fallback when empty —
+    # the empty case is the typed no-filter form of the helper (Task #180).
+    iso = isolation_where(agent_id=agent_id or None)
+    rows = await db.execute_fetchall(
+        f"SELECT timestamp, embedding FROM memories WHERE embedding IS NOT NULL "
+        f"AND timestamp IS NOT NULL{iso.and_clause} ORDER BY timestamp DESC LIMIT ?",
+        (*iso.params, limit),
+    )
     times, vecs = [], []
     for ts, blob in rows:
         sec = _parse_ts_seconds(ts)
@@ -626,8 +606,11 @@ def _load_calibration_state() -> dict | None:
 async def _corpus_embedding_dim() -> int | None:
     """Return the float32 dimension of one stored embedding, or None when empty."""
     async with connection() as db:
+        # Embedding dimension is corpus-invariant (any agent's row answers it) — the
+        # typed no-filter helper call replaces the old waiver comment (Task #180).
+        iso = isolation_where(agent_id=None)
         rows = await db.execute_fetchall(
-            "SELECT embedding FROM memories WHERE embedding IS NOT NULL LIMIT 1"  # isolation-waiver: embedding dimension is corpus-invariant (any agent's row answers it)
+            f"SELECT embedding FROM memories WHERE embedding IS NOT NULL{iso.and_clause} LIMIT 1"
         )
     if not rows or rows[0][0] is None:
         return None
@@ -798,20 +781,16 @@ async def do_calibrate_threshold(
         return {"ok": False, "error": f"percentile must be in (0, 1] (or a percent 1-100), got {percentile}"}
     z = max(-10.0, min(10.0, z))
 
-    # Sample embeddings: per-agent when agent_id provided, all-agents when empty.
+    # Sample embeddings: per-agent when agent_id provided, deliberate all-agents
+    # calibration when empty (the typed no-filter form of the helper, Task #180).
     # The read seam stays open through the fused-gate calibration below — it issues
     # simulate-query recalls against the same connection.
+    iso = isolation_where(agent_id=agent_id or None)
     async with connection() as db:
-        if agent_id:
-            rows = await db.execute_fetchall(
-                "SELECT embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",
-                (agent_id, sample_n),
-            )
-        else:
-            rows = await db.execute_fetchall(
-                "SELECT embedding FROM memories WHERE embedding IS NOT NULL ORDER BY RANDOM() LIMIT ?",  # isolation-waiver: deliberate all-agents calibration; the agent_id branch above scopes per-agent
-                (sample_n,),
-            )
+        rows = await db.execute_fetchall(
+            f"SELECT embedding FROM memories WHERE embedding IS NOT NULL{iso.and_clause} ORDER BY RANDOM() LIMIT ?",
+            (*iso.params, sample_n),
+        )
 
         if len(rows) < 10:
             return {"ok": False, "error": f"Need at least 10 embeddings, found {len(rows)}"}
@@ -1246,8 +1225,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
         return {"error": f"output_path rejected (path traversal or outside export dir): {output_path}"}
     output_path = confined
 
-    agent_filter = " WHERE agent_id = ?" if agent_id else ""
-    agent_params: tuple = (agent_id,) if agent_id else ()
+    iso = isolation_where(agent_id=agent_id or None)
 
     out_dir = os.path.dirname(output_path)
     if out_dir:
@@ -1258,9 +1236,9 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     exported_profiles = 0
 
     async with connection() as db:
-        mem_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM memories{agent_filter}", agent_params))[0][0]
-        ep_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM episodes{agent_filter}", agent_params))[0][0]
-        prof_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM profiles{agent_filter}", agent_params))[0][0]
+        mem_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM memories{iso.where}", iso.params))[0][0]
+        ep_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM episodes{iso.where}", iso.params))[0][0]
+        prof_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM profiles{iso.where}", iso.params))[0][0]
 
         with open(output_path, "w", encoding="utf-8") as f:
             header = {
@@ -1280,8 +1258,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
             rows = await db.execute_fetchall(
                 "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
                 " project_id, channel, locked"
-                f" FROM memories{agent_filter} ORDER BY id",
-                agent_params,
+                f" FROM memories{iso.where} ORDER BY id",
+                iso.params,
             )
             for row in rows:
                 record: dict = {
@@ -1306,8 +1284,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
             rows = await db.execute_fetchall(
                 "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
                 " project_id, channel"
-                f" FROM episodes{agent_filter} ORDER BY id",
-                agent_params,
+                f" FROM episodes{iso.where} ORDER BY id",
+                iso.params,
             )
             for row in rows:
                 record = {
@@ -1329,8 +1307,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 exported_episodes += 1
 
             rows = await db.execute_fetchall(
-                f"SELECT agent_id, user_id, content, updated_at, project_id FROM profiles{agent_filter} ORDER BY agent_id",
-                agent_params,
+                f"SELECT agent_id, user_id, content, updated_at, project_id FROM profiles{iso.where} ORDER BY agent_id",
+                iso.params,
             )
             for row in rows:
                 record = {

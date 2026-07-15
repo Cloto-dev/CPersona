@@ -453,11 +453,12 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/checks.py",
-      "pattern": "WHERE created_at < datetime\\('now', '-1 hour'\\) \\{clause\\}",
+      "pattern": "WHERE created_at < datetime\\('now', '-1 hour'\\)\\{iso.and_clause\\}",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Apply the _agent_scope clause to both the count and the DELETE so only the target agent's stale tasks are removed.",
+      "fix_note": "2.5.0 (Task #180): the _agent_scope fragment was unified into isolation_where(); the pattern now pins the helper-derived {iso.and_clause} on the same statements.",
       "fixed_in": "2.4.38"
     },
     {
@@ -686,12 +687,12 @@
       "discovered": "2026-07-06T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/vector.py",
-      "pattern": "FROM episodes WHERE id = \\?\\{proj_extra\\}",
+      "pattern": "FROM episodes WHERE id = \\?\\{iso_ep_fetch.and_clause\\}",
       "expected": "present",
       "status": "open",
       "category": "read-path-drops-channel-axis",
       "fix_sketch": "When channel is set, append AND (channel = ? OR channel = '') to this episode-by-id SELECT and pass channel in the params tuple, matching the memory-by-id branch.",
-      "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). In the remote branch an ep:<id> hit is rehydrated via SELECT summary, start_time, resolved FROM episodes WHERE id = ?{proj_extra}. The by-id memory path adds (channel = ? OR channel = '') when channel is set, but this episode lookup omits it, so an episode from another channel is returned into a channel-scoped recall. Not the production default (production is local) but a real remote-mode correctness gap."
+      "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). In the remote branch an ep:<id> hit is rehydrated via SELECT summary, start_time, resolved FROM episodes WHERE id = ?{iso_ep_fetch.and_clause} (2.5.0 Task #180 renamed the fragment from {proj_extra}; iso_ep_fetch deliberately still omits the channel axis, so the gap is unchanged). The by-id memory path adds (channel = ? OR channel = '') when channel is set, but this episode lookup omits it, so an episode from another channel is returned into a channel-scoped recall. Not the production default (production is local) but a real remote-mode correctness gap. The fix is one line now: build iso_ep_fetch with channel=channel."
     },
     {
       "id": "bug-047",
@@ -778,7 +779,7 @@
       "discovered": "2026-07-06T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/checks.py",
-      "pattern": "AND m\\.agent_id = \\?",
+      "pattern": "isolation_where.agent_id=agent_id or None, alias=.m..",
       "expected": "present",
       "status": "fixed",
       "category": "health-check-scope-leak",

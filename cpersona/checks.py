@@ -41,6 +41,7 @@ import re
 import sqlite3
 
 from cpersona import vector
+from cpersona.isolation import isolation_where
 from cpersona.config import FTS_ENABLED, MAX_CONTENT_LENGTH
 from cpersona.database import SCHEMA_VERSION
 from cpersona.utils import _MEMORY_ANNOTATION_PATTERN, _MENTION_PATTERN
@@ -61,12 +62,6 @@ _SHORT_CONTENT_THRESHOLD = 5
 _STALE_PROFILE_DAYS = 30
 
 
-def _agent_scope(agent_id: str) -> tuple[str, tuple]:
-    clause = "AND agent_id = ?" if agent_id else ""
-    params = (agent_id,) if agent_id else ()
-    return clause, params
-
-
 # ---------------------------------------------------------------------------
 # check_health runners — each returns a list of issue dicts. The dispatcher
 # stamps ``severity`` from the registry default unless the runner set one.
@@ -81,9 +76,9 @@ def _agent_scope(agent_id: str) -> tuple[str, tuple]:
 # the row on obsolete semantics indefinitely. NULLing routes the row into
 # check_null_embedding's re-embed path — the same self-heal do_update_memory uses.
 async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, content FROM memories WHERE content LIKE '%[Memory from%' {clause}", params
+        f"SELECT id, content FROM memories WHERE content LIKE '%[Memory from%'{iso.and_clause}", iso.params
     )
     if not rows:
         return []
@@ -95,9 +90,9 @@ async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, content FROM memories WHERE content LIKE '%<@%' {clause}", params
+        f"SELECT id, content FROM memories WHERE content LIKE '%<@%'{iso.and_clause}", iso.params
     )
     if not rows:
         return []
@@ -109,7 +104,7 @@ async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     # bug-014: group by (agent_id, project_id, content) — deliberately NOT the
     # same key as the idx_memories_dedup_content UNIQUE index
     # (agent_id, project_id, channel, content). Omitting channel is intentional:
@@ -124,9 +119,9 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     # copy, silently narrowing visibility for every other project (bug-014).
     dup_rows = await db.execute_fetchall(
         f"""SELECT content, COUNT(*) as cnt FROM memories
-            WHERE 1=1 {clause}
+            WHERE 1=1{iso.and_clause}
             GROUP BY agent_id, project_id, content HAVING cnt > 1""",
-        params,
+        iso.params,
     )
     if not dup_rows:
         return []
@@ -139,17 +134,17 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
             f"""DELETE FROM memories
                 WHERE locked = 0
                   AND id NOT IN (SELECT MIN(id) FROM memories GROUP BY agent_id, project_id, content)
-                  {clause}""",
-            params,
+                 {iso.and_clause}""",
+            iso.params,
         )
     return [{"type": "duplicate_content", "groups": len(dup_rows), "total_extra": total_dupes}]
 
 
 async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, length(content) as len FROM memories WHERE length(content) > ? {clause}",
-        (MAX_CONTENT_LENGTH, *params),
+        f"SELECT id, length(content) as len FROM memories WHERE length(content) > ?{iso.and_clause}",
+        (MAX_CONTENT_LENGTH, *iso.params),
     )
     if not rows:
         return []
@@ -165,7 +160,7 @@ async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
 async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
     if not vector._embedding_client:
         return []
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     try:
         # bug-083: when do_check_health pre-probed the dimension outside the write seam
         # (embedding_cache carries it as "expected_dim"), use that instead of a live
@@ -184,15 +179,15 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cach
         mismatched_mem = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
-                WHERE embedding IS NOT NULL AND length(embedding) != ? {clause}""",
-                (expected_bytes, *params),
+                WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
+                (expected_bytes, *iso.params),
             )
         )[0][0]
         mismatched_ep = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM episodes
-                WHERE embedding IS NOT NULL AND length(embedding) != ? {clause}""",
-                (expected_bytes, *params),
+                WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
+                (expected_bytes, *iso.params),
             )
         )[0][0]
         mismatched = mismatched_mem + mismatched_ep
@@ -203,14 +198,14 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cach
             if mismatched_mem > 0:
                 await db.execute(
                     f"""UPDATE memories SET embedding = NULL
-                    WHERE embedding IS NOT NULL AND length(embedding) != ? {clause}""",
-                    (expected_bytes, *params),
+                    WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
+                    (expected_bytes, *iso.params),
                 )
             if mismatched_ep > 0:
                 await db.execute(
                     f"""UPDATE episodes SET embedding = NULL
-                    WHERE embedding IS NOT NULL AND length(embedding) != ? {clause}""",
-                    (expected_bytes, *params),
+                    WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
+                    (expected_bytes, *iso.params),
                 )
         return [
             {
@@ -263,10 +258,10 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     out: dict = {"memories": {}, "episodes": {}}
     if not vector._embedding_client:
         return out
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     for table, text_col in (("memories", "content"), ("episodes", "summary")):
         rows = await db.execute_fetchall(
-            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL {clause} LIMIT 500", params
+            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT 500", iso.params
         )
         for row_id, text in rows:
             try:
@@ -300,7 +295,7 @@ async def apply_embedding_cache(db, embedding_cache) -> int:
     return applied
 
 
-async def _reembed_null_rows(db, table: str, text_col: str, clause: str, params, embedding_cache) -> int:
+async def _reembed_null_rows(db, table: str, text_col: str, iso, embedding_cache) -> int:
     """Fill NULL embeddings for one table, preferring a pre-computed blob from
     embedding_cache (bug-072) so the HTTP round-trips happened outside the write lock.
 
@@ -314,7 +309,7 @@ async def _reembed_null_rows(db, table: str, text_col: str, clause: str, params,
     tests, no lock held) keeps the live path."""
     cache = (embedding_cache or {}).get(table, {})
     rows = await db.execute_fetchall(
-        f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL {clause} LIMIT 500", params
+        f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT 500", iso.params
     )
     re_embedded = 0
     for row_id, text in rows:
@@ -342,16 +337,16 @@ async def _reembed_null_rows(db, table: str, text_col: str, clause: str, params,
 
 
 async def check_null_embedding(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     null_count = (
         await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM memories WHERE embedding IS NULL {clause}", params
+            f"SELECT COUNT(*) FROM memories WHERE embedding IS NULL{iso.and_clause}", iso.params
         )
     )[0][0]
     if null_count == 0:
         return []
     total = (
-        await db.execute_fetchall(f"SELECT COUNT(*) FROM memories WHERE 1=1 {clause}", params)
+        await db.execute_fetchall(f"SELECT COUNT(*) FROM memories WHERE 1=1{iso.and_clause}", iso.params)
     )[0][0]
     issue = {
         "type": "null_embedding",
@@ -359,23 +354,23 @@ async def check_null_embedding(db, agent_id: str, fix: bool, embedding_cache=Non
         "severity": _null_embedding_severity(null_count, total),
     }
     if fix and vector._embedding_client:
-        re_embedded = await _reembed_null_rows(db, "memories", "content", clause, params, embedding_cache)
+        re_embedded = await _reembed_null_rows(db, "memories", "content", iso, embedding_cache)
         if re_embedded > 0:
             issue["re_embedded"] = re_embedded
     return [issue]
 
 
 async def check_null_episode_embedding(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     null_count = (
         await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM episodes WHERE embedding IS NULL {clause}", params
+            f"SELECT COUNT(*) FROM episodes WHERE embedding IS NULL{iso.and_clause}", iso.params
         )
     )[0][0]
     if null_count == 0:
         return []
     total = (
-        await db.execute_fetchall(f"SELECT COUNT(*) FROM episodes WHERE 1=1 {clause}", params)
+        await db.execute_fetchall(f"SELECT COUNT(*) FROM episodes WHERE 1=1{iso.and_clause}", iso.params)
     )[0][0]
     issue = {
         "type": "null_episode_embedding",
@@ -383,7 +378,7 @@ async def check_null_episode_embedding(db, agent_id: str, fix: bool, embedding_c
         "severity": _null_embedding_severity(null_count, total),
     }
     if fix and vector._embedding_client:
-        re_embedded = await _reembed_null_rows(db, "episodes", "summary", clause, params, embedding_cache)
+        re_embedded = await _reembed_null_rows(db, "episodes", "summary", iso, embedding_cache)
         if re_embedded > 0:
             issue["re_embedded"] = re_embedded
     return [issue]
@@ -643,8 +638,12 @@ async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
     is deliberately *not* server knowledge. Distribution itself is not an
     issue (rare != wrong); it is exposed via axis_distribution() in stats.
     """
+    # The project-distribution audit is corpus-wide by design (naming drift is a
+    # cross-bucket phenomenon); the typed no-filter helper call replaces the old
+    # waiver comment (Task #180).
+    iso = isolation_where(agent_id=None)
     rows = await db.execute_fetchall(
-        "SELECT project_id, COUNT(*) FROM memories WHERE project_id != '' GROUP BY project_id"  # isolation-waiver: project-distribution audit is corpus-wide by design
+        f"SELECT project_id, COUNT(*) FROM memories WHERE project_id != ''{iso.and_clause} GROUP BY project_id"
     )
     clusters: dict[str, list] = {}
     for pid, count in rows:
@@ -664,28 +663,28 @@ async def axis_distribution(db, agent_id: str = "") -> dict:
     check_health(agent_id='A') on the shared multi-agent DB disclosed every other agent's
     bucket names + counts. Empty agent_id keeps the corpus-wide view (CLI global sweep).
     """
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     out: dict = {}
     for axis in ("project_id", "channel"):
         rows = await db.execute_fetchall(
-            f"SELECT {axis}, COUNT(*) FROM memories WHERE 1=1 {clause} GROUP BY {axis} ORDER BY COUNT(*) DESC LIMIT 20",
-            params,
+            f"SELECT {axis}, COUNT(*) FROM memories WHERE 1=1{iso.and_clause} GROUP BY {axis} ORDER BY COUNT(*) DESC LIMIT 20",
+            iso.params,
         )
         out[axis] = {(r[0] if r[0] != "" else "(global)"): r[1] for r in rows}
     return out
 
 
 async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     try:
         bad_source = (
             await db.execute_fetchall(
-                f"SELECT COUNT(*) FROM memories WHERE json_valid(source) = 0 {clause}", params
+                f"SELECT COUNT(*) FROM memories WHERE json_valid(source) = 0{iso.and_clause}", iso.params
             )
         )[0][0]
         bad_metadata = (
             await db.execute_fetchall(
-                f"SELECT COUNT(*) FROM memories WHERE json_valid(metadata) = 0 {clause}", params
+                f"SELECT COUNT(*) FROM memories WHERE json_valid(metadata) = 0{iso.and_clause}", iso.params
             )
         )[0][0]
     except Exception:
@@ -694,29 +693,29 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
         return []
     if fix:
         await db.execute(
-            f"UPDATE memories SET source = '{{}}' WHERE json_valid(source) = 0 {clause}", params
+            f"UPDATE memories SET source = '{{}}' WHERE json_valid(source) = 0{iso.and_clause}", iso.params
         )
         await db.execute(
-            f"UPDATE memories SET metadata = '{{}}' WHERE json_valid(metadata) = 0 {clause}",
-            params,
+            f"UPDATE memories SET metadata = '{{}}' WHERE json_valid(metadata) = 0{iso.and_clause}",
+            iso.params,
         )
     return [{"type": "invalid_json", "bad_source": bad_source, "bad_metadata": bad_metadata}]
 
 
 async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     bad_ts = (
         await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM memories WHERE datetime(timestamp) IS NULL AND timestamp != '' {clause}",
-            params,
+            f"SELECT COUNT(*) FROM memories WHERE datetime(timestamp) IS NULL AND timestamp != ''{iso.and_clause}",
+            iso.params,
         )
     )[0][0]
     if bad_ts == 0:
         return []
     if fix:
         await db.execute(
-            f"UPDATE memories SET timestamp = created_at WHERE datetime(timestamp) IS NULL AND timestamp != '' {clause}",
-            params,
+            f"UPDATE memories SET timestamp = created_at WHERE datetime(timestamp) IS NULL AND timestamp != ''{iso.and_clause}",
+            iso.params,
         )
     return [{"type": "invalid_timestamp", "count": bad_ts}]
 
@@ -745,9 +744,9 @@ async def check_timestamp_format_drift(db, agent_id: str, fix: bool) -> list[dic
     timestamps stay untouched: their intended zone is unknowable, so rewriting
     them would fabricate data; they are reported as unfixable instead.
     """
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, timestamp FROM memories WHERE timestamp != '' {clause}", params
+        f"SELECT id, timestamp FROM memories WHERE timestamp != ''{iso.and_clause}", iso.params
     )
     counts = {"utc": 0, "aware": 0, "naive": 0}
     aware_rows: list[tuple[int, str]] = []
@@ -786,19 +785,19 @@ async def check_stale_pending_tasks(db, agent_id: str, fix: bool) -> list[dict]:
     # >1h-old un-drained store tasks — silent cross-agent data loss (the bug-007
     # scope-leak class). An empty agent_id (CLI global sweep) yields no clause and
     # keeps the corpus-wide behavior.
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     stale = (
         await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour') {clause}",
-            params,
+            f"SELECT COUNT(*) FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour'){iso.and_clause}",
+            iso.params,
         )
     )[0][0]
     if stale == 0:
         return []
     if fix:
         await db.execute(
-            f"DELETE FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour') {clause}",
-            params,
+            f"DELETE FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour'){iso.and_clause}",
+            iso.params,
         )
     return [{"type": "stale_pending_tasks", "count": stale}]
 
@@ -810,13 +809,12 @@ async def check_missing_profile(db, agent_id: str, fix: bool) -> list[dict]:
     # check_health(agent_id='A') falsely reports healthy=False and injects an issue
     # about an unrelated agent B. Empty agent_id (CLI global sweep) yields no clause
     # and keeps the corpus-wide behavior.
-    scope = "AND m.agent_id = ?" if agent_id else ""
-    params = (agent_id,) if agent_id else ()
+    iso = isolation_where(agent_id=agent_id or None, alias="m")
     missing = await db.execute_fetchall(
         f"""SELECT DISTINCT m.agent_id FROM memories m
            LEFT JOIN profiles p ON m.agent_id = p.agent_id
-           WHERE p.id IS NULL {scope}""",
-        params,
+           WHERE p.id IS NULL{iso.and_clause}""",
+        iso.params,
     )
     if not missing:
         return []
@@ -825,32 +823,32 @@ async def check_missing_profile(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     empty = (
         await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM memories WHERE TRIM(content) = '' OR content IS NULL {clause}",
-            params,
+            f"SELECT COUNT(*) FROM memories WHERE TRIM(content) = '' OR content IS NULL{iso.and_clause}",
+            iso.params,
         )
     )[0][0]
     if empty == 0:
         return []
     if fix:
         await db.execute(
-            f"DELETE FROM memories WHERE (TRIM(content) = '' OR content IS NULL) AND locked = 0 {clause}",
-            params,
+            f"DELETE FROM memories WHERE (TRIM(content) = '' OR content IS NULL) AND locked = 0{iso.and_clause}",
+            iso.params,
         )
     return [{"type": "empty_content", "count": empty}]
 
 
 async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     try:
         bad = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
                     WHERE (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
-                    OR json_extract(source, '$.type') IS NULL) {clause}""",
-                params,
+                    OR json_extract(source, '$.type') IS NULL){iso.and_clause}""",
+                iso.params,
             )
         )[0][0]
     except Exception:
@@ -861,22 +859,22 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
         await db.execute(
             f"""UPDATE memories SET source = '{{"type":"User","id":"","name":""}}'
                 WHERE (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
-                OR json_extract(source, '$.type') IS NULL) {clause}""",
-            params,
+                OR json_extract(source, '$.type') IS NULL){iso.and_clause}""",
+            iso.params,
         )
     return [{"type": "invalid_source_type", "count": bad}]
 
 
 async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
-    clause, params = _agent_scope(agent_id)
+    iso = isolation_where(agent_id=agent_id or None)
     try:
         anon = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
                     WHERE json_extract(source, '$.type') = 'User'
                     AND json_extract(source, '$.id') = ''
-                    AND json_extract(source, '$.name') = '' {clause}""",
-                params,
+                    AND json_extract(source, '$.name') = ''{iso.and_clause}""",
+                iso.params,
             )
         )[0][0]
     except Exception:

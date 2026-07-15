@@ -15,11 +15,11 @@ transaction() body performs no network I/O (bug-072 class). See Gate 1 / Gate 1b
 
 Run as part of the normal ``uv run pytest`` CI gate (no ci.yml change needed).
 
-Waiver protocol: a genuinely global operation (boot migration, deliberate cross-agent
-maintenance scan) is exempted by name in an allow-list here, or inline with a
-``# isolation-waiver: <reason>`` / ``# seam-waiver: <reason>`` comment on the
-statement. A waiver is a deliberate, reviewed decision — adding one is the escape hatch,
-not silence.
+Waiver protocol (seam gates only): a reviewed exception to Gate 1/1b is granted inline
+with a ``# seam-waiver: <reason>`` comment on the statement. The isolation gates (2/4)
+accept NO waivers as of 2.5.0 (Task #180): a deliberately global operation is spelled
+out in code as ``isolation_where(agent_id=None)`` — a typed, greppable decision —
+instead of a comment the analyser trusts blindly.
 """
 
 import ast
@@ -225,28 +225,48 @@ def _sql_string_constants(tree):
                 yield node.lineno, v, node
 
 
-# Dynamic-fragment variable-name conventions that carry the agent predicate at runtime.
-# `_agent_scope(agent_id)` (checks.py) returns a `clause`/`params` pair; maintenance builds
-# `agent_clause`. A fragment named for any of these is treated as agent-scoped, because the
-# predicate lives where the static analyser cannot read it. Known limitation: a future dev
-# who names a *channel-only* fragment `clause` would slip past — the durable fix is to route
-# all predicate construction through one `isolation_where()` helper (2.5.0 structural note),
-# after which this heuristic can be replaced by "fragment came from isolation_where()".
-_AGENT_SCOPE_VARNAME_HINTS = ("agent", "clause", "scope")
+# 2.5.0 (Task #180): a dynamically-assembled isolation predicate is accepted ONLY when it
+# demonstrably comes from cpersona.isolation.isolation_where(). Two conditions, both
+# required: (a) the f-string embeds an IsolationFilter accessor — an attribute named
+# clause / and_clause / where — and (b) the enclosing function actually calls
+# isolation_where(). This replaces the pre-2.5.0 variable-NAME heuristic
+# (agent/clause/scope), whose documented hole — any fragment *named* `clause` passed,
+# whatever it contained — is now a teeth-tested violation.
+_ISO_FRAGMENT_ATTRS = {"clause", "and_clause", "where"}
 
 
-def _has_agent_dynamic_fragment(node):
-    """True if a string expression injects a dynamic fragment whose source references a
-    variable named like an agent-scope clause (agent_clause / clause / scope). Such queries
-    (e.g. `f"... WHERE 1=1 {clause}"`) carry the agent predicate at runtime where the static
-    analyser cannot see it — treated as scoped."""
+def _isolation_call_spans(tree):
+    """(lineno, end_lineno) spans of every function whose body calls isolation_where()."""
+    spans = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "isolation_where"
+            for n in ast.walk(node)
+        ):
+            spans.append((node.lineno, node.end_lineno))
+    return spans
+
+
+def _has_helper_fragment(node):
+    """True if the string expression embeds an IsolationFilter accessor
+    (``{iso.where}`` / ``{iso.and_clause}`` / ``{iso.clause}``)."""
     for n in ast.walk(node):
         if isinstance(n, ast.FormattedValue):
-            for name in ast.walk(n.value):
-                ident = getattr(name, "id", None) or getattr(name, "attr", None)
-                if ident and any(h in ident.lower() for h in _AGENT_SCOPE_VARNAME_HINTS):
+            for a in ast.walk(n.value):
+                if isinstance(a, ast.Attribute) and a.attr in _ISO_FRAGMENT_ATTRS:
                     return True
     return False
+
+
+def _uses_isolation_helper(node, spans):
+    """True if the SQL expression embeds a helper fragment AND sits inside a function
+    that calls isolation_where() — the accessor must be fed by the real helper, not a
+    like-named attribute on some other object."""
+    return _has_helper_fragment(node) and any(a <= node.lineno <= b for a, b in spans)
 
 
 def _is_id_keyed(sql_upper):
@@ -277,52 +297,61 @@ def _dml_targets_agent_scoped(sql_upper):
     return hit
 
 
-def test_agent_scoped_dml_carries_agent_id():
-    """Any SELECT/UPDATE/DELETE/INSERT whose target is memories/episodes/profiles/
-    pending_memory_tasks must reference agent_id (the mandatory isolation axis), unless
-    inline-waived. Guards against the missing-predicate class (bug-044/045/047/055/058).
+def _agent_dml_violations(tree):
+    """Return 'lineno  detail' strings for agent-scoped DML that carries neither a
+    visible agent_id predicate nor an isolation_where()-derived fragment.
 
     A statement is considered scoped (not a violation) when any of these hold:
       1. the static SQL text contains `agent_id` (predicate visible to the analyser);
       2. it is id-keyed (`WHERE id = ?` / `id IN (`) — provenance-safe, the id came from a
          prior agent-scoped read;
-      3. it injects a dynamic fragment named for an agent-scope clause (clause/scope/agent*),
-         where the predicate is added at runtime (e.g. `_agent_scope(agent_id)`);
-      4. it carries an inline `# isolation-waiver: <reason>` for a deliberate global op.
-    The residual — an agent-scoped DML matching none of these — fails the gate.
+      3. it embeds an IsolationFilter accessor AND its enclosing function calls
+         isolation_where() — the predicate (or the typed decision to omit it,
+         `agent_id=None`) comes from the single helper.
+    There is NO waiver escape (2.5.0, Task #180): the residual fails the gate.
     """
     import re
 
+    spans = _isolation_call_spans(tree)
+    out = []
+    for lineno, sql, node in _sql_string_constants(tree):
+        up = sql.upper()
+        # Skip pure DDL / index / trigger / pragma statements.
+        if re.search(r"\b(CREATE|DROP|ALTER|PRAGMA|REINDEX)\b", up):
+            continue
+        targets = _dml_targets_agent_scoped(up)
+        if not targets:
+            continue
+        if "AGENT_ID" in up:                      # (1) static predicate visible
+            continue
+        if _is_id_keyed(up):                       # (2) provenance-safe by primary key
+            continue
+        if _uses_isolation_helper(node, spans):    # (3) predicate from isolation_where()
+            continue
+        out.append(f"{lineno}  DML on {sorted(targets)} without agent_id")
+    return out
+
+
+def test_agent_scoped_dml_carries_agent_id():
+    """Any SELECT/UPDATE/DELETE/INSERT whose target is memories/episodes/profiles/
+    pending_memory_tasks must reference agent_id (the mandatory isolation axis) — either
+    statically, by primary key, or through isolation_where(). Guards against the
+    missing-predicate class (bug-044/045/047/055/058)."""
     violations = []
     for path in _iter_module_files():
         # database.py is schema/migration/DDL + deliberate cross-agent maintenance.
-        if path.name == "database.py":
+        # isolation.py is the helper itself (it holds fragments, not statements).
+        if path.name in ("database.py", "isolation.py"):
             continue
         lines = _source_lines(path)
         tree = ast.parse("\n".join(lines), filename=str(path))
-        for lineno, sql, node in _sql_string_constants(tree):
-            up = sql.upper()
-            # Skip pure DDL / index / trigger / pragma statements.
-            if re.search(r"\b(CREATE|DROP|ALTER|PRAGMA|REINDEX)\b", up):
-                continue
-            targets = _dml_targets_agent_scoped(up)
-            if not targets:
-                continue
-            if "AGENT_ID" in up:                      # (1) static predicate visible
-                continue
-            if _is_id_keyed(up):                       # (2) provenance-safe by primary key
-                continue
-            if _has_agent_dynamic_fragment(node):      # (3) predicate injected at runtime
-                continue
-            if _has_inline_waiver(lines, lineno, "isolation-waiver"):  # (4) deliberate global
-                continue
-            violations.append(
-                f"{path.name}:{lineno}  DML on {sorted(targets)} without agent_id"
-            )
+        for hit in _agent_dml_violations(tree):
+            violations.append(f"{path.name}:{hit}")
     assert not violations, (
         "Agent-scoped DML missing the agent_id isolation predicate (bug-044/045/047/055/"
-        "058 class). Add agent_id to the WHERE, or `# isolation-waiver: <reason>` for a "
-        "deliberate global operation:\n  " + "\n  ".join(violations)
+        "058 class). Add agent_id to the WHERE, or build the predicate with "
+        "isolation_where() — a deliberate global scan is spelled isolation_where("
+        "agent_id=None); comment waivers are not accepted:\n  " + "\n  ".join(violations)
     )
 
 
@@ -457,7 +486,9 @@ def _identity_probe_violations(tree, lines=None):
 def test_identity_probes_carry_isolation_axes():
     """Any WHERE-side content=?/summary=?/msg_id=? probe against an agent-scoped table
     must carry the γ axes that define row identity (project_id, and channel for the
-    content/summary probes), unless inline-waived. Guards the bug-044/047/057/076 class."""
+    content/summary probes). Guards the bug-044/047/057/076 class. No waiver escape
+    (2.5.0, Task #180) — a cross-bucket probe that is genuinely wanted is a gate-design
+    conversation, not a comment."""
     violations = []
     for path in _iter_module_files():
         if path.name == "database.py":
@@ -465,14 +496,10 @@ def test_identity_probes_carry_isolation_axes():
         lines = _source_lines(path)
         tree = ast.parse("\n".join(lines), filename=str(path))
         for hit in _identity_probe_violations(tree):
-            lineno = int(hit.split()[0])
-            if _has_inline_waiver(lines, lineno, "isolation-waiver"):
-                continue
             violations.append(f"{path.name}:{hit}")
     assert not violations, (
         "Identity/dedup probe missing its γ isolation axes (bug-044/047/057/076 class) — "
-        "match the composite UNIQUE-index identity, or add `# isolation-waiver: <reason>` "
-        "for a deliberate cross-bucket probe:\n  " + "\n  ".join(violations)
+        "match the composite UNIQUE-index identity:\n  " + "\n  ".join(violations)
     )
 
 
@@ -533,22 +560,57 @@ def test_transaction_network_gate_has_teeth():
 
 
 def test_isolation_gate_has_teeth():
-    # An agent-scoped SELECT with no agent_id, not id-keyed, no dynamic clause → must flag.
+    # An agent-scoped SELECT with no agent_id, not id-keyed, no helper → must flag.
     bad = ast.parse('q = "SELECT content FROM memories WHERE content = ?"')
-    hits = [
-        sql for _, sql, _ in _sql_string_constants(bad)
-        if _dml_targets_agent_scoped(sql.upper()) and "AGENT_ID" not in sql.upper()
-        and not _is_id_keyed(sql.upper())
-    ]
-    assert hits, "isolation gate failed to flag an unscoped agent-table query"
+    assert _agent_dml_violations(bad), (
+        "isolation gate failed to flag an unscoped agent-table query"
+    )
 
-    # A properly-scoped query must NOT flag.
+    # A statically-scoped query must NOT flag.
     good = ast.parse('q = "SELECT content FROM memories WHERE agent_id = ?"')
-    hits = [
-        sql for _, sql, _ in _sql_string_constants(good)
-        if _dml_targets_agent_scoped(sql.upper()) and "AGENT_ID" not in sql.upper()
-    ]
-    assert not hits, "isolation gate false-positived an agent_id-scoped query"
+    assert not _agent_dml_violations(good), (
+        "isolation gate false-positived an agent_id-scoped query"
+    )
+
+    # The documented hole in the pre-2.5.0 varname heuristic: an ad-hoc fragment merely
+    # NAMED `clause` (contents unknown to the analyser) must now flag.
+    adhoc = ast.parse(
+        "async def f(clause):\n"
+        "    q = f\"SELECT content FROM memories WHERE 1=1 {clause}\"\n"
+    )
+    assert _agent_dml_violations(adhoc), (
+        "isolation gate still passes an ad-hoc clause-named fragment (Task #180 hole)"
+    )
+
+    # The helper idiom must pass — including the typed global scan (agent_id=None).
+    helper = ast.parse(
+        "async def f(agent_id):\n"
+        "    iso = isolation_where(agent_id=agent_id)\n"
+        "    q = f\"SELECT COUNT(*) FROM memories{iso.where}\"\n"
+    )
+    assert not _agent_dml_violations(helper), (
+        "isolation gate false-positived the isolation_where() idiom"
+    )
+
+    # A helper-LOOKING accessor with no isolation_where() call in the enclosing
+    # function must flag (the accessor alone proves nothing about its origin).
+    impostor = ast.parse(
+        "async def f(other):\n"
+        "    q = f\"SELECT COUNT(*) FROM memories{other.where}\"\n"
+    )
+    assert _agent_dml_violations(impostor), (
+        "isolation gate trusts a .where accessor without an isolation_where() call"
+    )
+
+    # A waiver comment must no longer rescue an unscoped statement. _agent_dml_violations
+    # never consults comments, but pin the end-to-end behaviour anyway: the marker text
+    # appears nowhere in the decision path.
+    waived = ast.parse(
+        'q = "SELECT content FROM memories WHERE content = ?"  # isolation-waiver: nope'
+    )
+    assert _agent_dml_violations(waived), (
+        "isolation gate resurrects the abolished isolation-waiver escape"
+    )
 
 
 def test_identity_probe_gate_has_teeth():
