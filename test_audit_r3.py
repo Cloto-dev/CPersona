@@ -121,8 +121,8 @@ async def test_reembed_refuses_stale_prefetch_blob(clean_db, fake_embedding_clie
     # do_update_memory embed-failure path).
     await db.execute("UPDATE memories SET content = 'new text', embedding = NULL WHERE id = ?", (mid,))
     await db.commit()
-    clause, params = checks._agent_scope("st")
-    n = await checks._reembed_null_rows(db, "memories", "content", clause, params, cache)
+    iso = checks.isolation_where(agent_id="st")
+    n = await checks._reembed_null_rows(db, "memories", "content", iso, cache)
     await db.commit()
     assert n == 0
     row = await db.execute_fetchall("SELECT embedding FROM memories WHERE id = ?", (mid,))

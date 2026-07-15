@@ -19,7 +19,8 @@ import aiosqlite
 import httpx
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
-from cpersona._vendored_mcp_common.isolation import coerce_for_write, gamma_clause
+from cpersona._vendored_mcp_common.isolation import coerce_for_write
+from cpersona.isolation import isolation_where
 
 from cpersona import health
 from cpersona import vector
@@ -61,7 +62,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
 
     project_id (v2.4.17): isolation axis. Defaults to '' (= global pool).
     Dedup is project-scoped so the same msg_id under different projects can
-    coexist; reads use γ semantics (see _vendored_mcp_common.isolation.gamma_clause).
+    coexist; reads use γ semantics (see cpersona.isolation.isolation_where).
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "id": 0}, "store")
@@ -1077,23 +1078,21 @@ async def _search_episodes_fts(
     fts_query = _build_fts_query(query)
     if not fts_query:
         return []
-    # ''=global (knob2 v2): an episode stored under channel '' is global and
-    # surfaces in every channel-scoped recall, so old (pre-per-channel) episodes
-    # are never orphaned once recall starts filtering by concrete channel.
-    channel_clause = " AND (e.channel = ? OR e.channel = '')" if channel else ""
-    channel_params = (channel,) if channel else ()
-    proj_frag, proj_params = gamma_clause("e.project_id", project_id)
-    proj_extra = (" AND " + proj_frag) if proj_frag else ""
+    # isolation_where composes all three axes (Task #180): exact agent, γ project,
+    # and the knob2 v2 channel contract — an episode stored under channel '' is
+    # global and surfaces in every channel-scoped recall, so old (pre-per-channel)
+    # episodes are never orphaned once recall starts filtering by concrete channel.
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
 
     rows = await db.execute_fetchall(
         f"""SELECT e.id, e.summary, e.start_time, e.resolved, bm25(episodes_fts)
            FROM episodes_fts f
            JOIN episodes e ON f.rowid = e.id
            WHERE episodes_fts MATCH ?
-           AND e.agent_id = ?{channel_clause}{proj_extra}
+           AND {iso.clause}
            ORDER BY rank
            LIMIT ?""",
-        (fts_query, agent_id, *channel_params, *proj_params, limit),
+        (fts_query, *iso.params, limit),
     )
 
     return [
@@ -1123,15 +1122,12 @@ async def _search_memories_keyword(
     project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
     source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
     """
-    # ''=global (knob2 v2): stored channel '' matches every channel-scoped
-    # recall. The .replace("channel", "m.channel") on the FTS-join path below
-    # rewrites both column refs, so the OR clause stays correct there too.
-    channel_clause = " AND (channel = ? OR channel = '')" if channel else ""
-    channel_params = (channel,) if channel else ()
-    proj_frag_bare, proj_params_bare = gamma_clause("project_id", project_id)
-    proj_extra_bare = (" AND " + proj_frag_bare) if proj_frag_bare else ""
-    proj_frag_m, proj_params_m = gamma_clause("m.project_id", project_id)
-    proj_extra_m = (" AND " + proj_frag_m) if proj_frag_m else ""
+    # isolation_where composes all three axes (Task #180): exact agent, γ project,
+    # and the knob2 v2 channel contract (stored channel '' matches every
+    # channel-scoped recall). The alias="m" variant serves the FTS-join path —
+    # this replaces the old .replace("channel", "m.channel") rewrite hack.
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    iso_m = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="m")
 
     src_like = _like_escape_prefix(source_id)
     src_clause_bare = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
@@ -1143,10 +1139,10 @@ async def _search_memories_keyword(
         rows = await db.execute_fetchall(
             f"""SELECT id, msg_id, content, source, timestamp
                FROM memories
-               WHERE agent_id = ?{channel_clause}{proj_extra_bare}{src_clause_bare}
+               WHERE {iso.clause}{src_clause_bare}
                ORDER BY created_at DESC
                LIMIT ?""",
-            (agent_id, *channel_params, *proj_params_bare, *src_params_bare, limit),
+            (*iso.params, *src_params_bare, limit),
         )
         return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows]
 
@@ -1158,10 +1154,10 @@ async def _search_memories_keyword(
                    FROM memories_fts f
                    JOIN memories m ON f.rowid = m.id
                    WHERE memories_fts MATCH ?
-                   AND m.agent_id = ?{channel_clause.replace("channel", "m.channel")}{proj_extra_m}{src_clause_m}
+                   AND {iso_m.clause}{src_clause_m}
                    ORDER BY rank
                    LIMIT ?""",
-                (fts_query, agent_id, *channel_params, *proj_params_m, *src_params_m, limit),
+                (fts_query, *iso_m.params, *src_params_m, limit),
             )
             if rows:
                 return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": r[5]} for r in rows]
@@ -1174,11 +1170,11 @@ async def _search_memories_keyword(
     rows = await db.execute_fetchall(
         f"""SELECT id, msg_id, content, source, timestamp
            FROM memories
-           WHERE agent_id = ?{channel_clause}{proj_extra_bare}{src_clause_bare}
+           WHERE {iso.clause}{src_clause_bare}
            AND content LIKE ? ESCAPE '\\'
            ORDER BY created_at DESC
            LIMIT ?""",
-        (agent_id, *channel_params, *proj_params_bare, *src_params_bare, _like_escape_contains(query), scan_limit),
+        (*iso.params, *src_params_bare, _like_escape_contains(query), scan_limit),
     )
     return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows[:limit]]
 

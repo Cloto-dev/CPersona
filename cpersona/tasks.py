@@ -13,6 +13,7 @@ from cpersona._vendored_mcp_common import no_persist
 
 from cpersona.config import TASK_MAX_RETRIES, TASK_RETRY_DELAY
 from cpersona.database import connection, transaction
+from cpersona.isolation import isolation_where
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,11 @@ class MemoryTaskQueue:
 
     async def get_status(self) -> dict:
         """Get queue status for monitoring."""
+        # Queue depth is a global system resource, not agent-partitioned — the typed
+        # no-filter helper call replaces the old waiver comment (Task #180).
+        iso = isolation_where(agent_id=None)
         async with connection() as db:
-            rows = await db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks")  # isolation-waiver: queue depth is a global system resource, not agent-partitioned
+            rows = await db.execute_fetchall(f"SELECT COUNT(*) FROM pending_memory_tasks{iso.where}")
         pending = rows[0][0] if rows else 0
         return {
             "enabled": True,

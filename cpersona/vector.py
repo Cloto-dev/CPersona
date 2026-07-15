@@ -8,7 +8,7 @@ import logging
 
 import aiosqlite
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
-from cpersona._vendored_mcp_common.isolation import gamma_clause
+from cpersona.isolation import isolation_where
 
 from cpersona import config
 from cpersona import health
@@ -129,8 +129,14 @@ async def _search_vector(
     ``json_extract(source, '$.id')`` applied to memory rows (not episodes).
     Used by Discord multi-user sessions to prevent cross-user contamination.
     """
-    proj_frag, proj_params = gamma_clause("project_id", project_id)
-    proj_extra = (" AND " + proj_frag) if proj_frag else ""
+    # isolation_where composes the axes (Task #180). `iso` (agent + γ project +
+    # knob2 v2 channel) scopes the local scans; `iso_fetch` (no agent — row
+    # identity is already pinned by the remote hit's id) scopes the remote by-id
+    # fetches; `iso_ep_fetch` deliberately omits channel on the remote episode
+    # fetch (deferred bug-075 — see the episode gate note below).
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    iso_fetch = isolation_where(project_id=project_id, channel=channel)
+    iso_ep_fetch = isolation_where(project_id=project_id)
 
     src_like = _escape_like_prefix(source_id)
     src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
@@ -167,20 +173,14 @@ async def _search_vector(
                 score = hit["score"]
                 if raw_id.startswith("mem:"):
                     mem_id = int(raw_id[4:])
-                    if channel:
-                        # ''=global (knob2 v2): a stored channel of '' is global
-                        # and matches every channel-scoped recall, so old/global
-                        # memories are never orphaned by per-channel filing.
-                        row = await db.execute_fetchall(
-                            f"SELECT msg_id, content, source, timestamp FROM memories "
-                            f"WHERE id = ? AND (channel = ? OR channel = ''){proj_extra}{src_clause}",
-                            (mem_id, channel, *proj_params, *src_params),
-                        )
-                    else:
-                        row = await db.execute_fetchall(
-                            f"SELECT msg_id, content, source, timestamp FROM memories WHERE id = ?{proj_extra}{src_clause}",
-                            (mem_id, *proj_params, *src_params),
-                        )
+                    # ''=global (knob2 v2): a stored channel of '' is global
+                    # and matches every channel-scoped recall, so old/global
+                    # memories are never orphaned by per-channel filing.
+                    row = await db.execute_fetchall(
+                        f"SELECT msg_id, content, source, timestamp FROM memories "
+                        f"WHERE id = ?{iso_fetch.and_clause}{src_clause}",
+                        (mem_id, *iso_fetch.params, *src_params),
+                    )
                     if row:
                         results.append(
                             {
@@ -199,8 +199,8 @@ async def _search_vector(
                         continue
                     ep_id = int(raw_id[3:])
                     row = await db.execute_fetchall(
-                        f"SELECT summary, start_time, resolved FROM episodes WHERE id = ?{proj_extra}",
-                        (ep_id, *proj_params),
+                        f"SELECT summary, start_time, resolved FROM episodes WHERE id = ?{iso_ep_fetch.and_clause}",
+                        (ep_id, *iso_ep_fetch.params),
                     )
                     if row:
                         results.append(
@@ -248,26 +248,16 @@ async def _search_vector(
     # MAX_MEMORIES rows regardless of how many the caller asked to receive.
     scan_limit = MAX_MEMORIES
 
-    if channel:
-        # ''=global (knob2 v2): stored channel '' matches every channel-scoped
-        # recall (see the by-id path above).
-        rows = await db.execute_fetchall(
-            f"""SELECT id, msg_id, content, source, timestamp, embedding
-               FROM memories
-               WHERE agent_id = ? AND (channel = ? OR channel = '') AND embedding IS NOT NULL{proj_extra}{src_clause}
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (agent_id, channel, *proj_params, *src_params, scan_limit),
-        )
-    else:
-        rows = await db.execute_fetchall(
-            f"""SELECT id, msg_id, content, source, timestamp, embedding
-               FROM memories
-               WHERE agent_id = ? AND embedding IS NOT NULL{proj_extra}{src_clause}
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (agent_id, *proj_params, *src_params, scan_limit),
-        )
+    # ''=global (knob2 v2): stored channel '' matches every channel-scoped
+    # recall (see the by-id path above) — the channel axis rides in `iso`.
+    rows = await db.execute_fetchall(
+        f"""SELECT id, msg_id, content, source, timestamp, embedding
+           FROM memories
+           WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}
+           ORDER BY created_at DESC
+           LIMIT ?""",
+        (*iso.params, *src_params, scan_limit),
+    )
 
     if rows:
         valid_rows = []
@@ -315,18 +305,16 @@ async def _search_vector(
     # NOTE: the remote branch keeps the conservative all-drop gate until the
     # remote episode fetch carries the channel predicate (deferred bug-075) —
     # relaxing it there would open the cross-channel leak this clause prevents.
-    ep_channel_clause = " AND (channel = ? OR channel = '')" if channel else ""
-    ep_channel_params = (channel,) if channel else ()
     ep_rows = (
         []
         if (src_like and not channel)
         else await db.execute_fetchall(
             f"""SELECT id, summary, start_time, embedding, resolved
                FROM episodes
-               WHERE agent_id = ?{ep_channel_clause} AND embedding IS NOT NULL{proj_extra}
+               WHERE {iso.clause} AND embedding IS NOT NULL
                ORDER BY created_at DESC
                LIMIT ?""",
-            (agent_id, *ep_channel_params, *proj_params, scan_limit),
+            (*iso.params, scan_limit),
         )
     )
 
