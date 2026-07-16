@@ -414,6 +414,28 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
         # (transient BUSY/I/O) and set this even though the tables now exist.
         uv_row = await db.execute_fetchall("PRAGMA user_version")
         fts_backfill_pending = bool((uv_row[0][0] if uv_row else 0) & 1)
+        # bug-118: version-gated FTS migrations (v11 rebuild, v13 trigger narrowing)
+        # are permanently skipped when the schema version advances while
+        # FTS_ENABLED=false — the stamp records them as done, so re-enabling FTS
+        # later leaves the OLD trigger bodies in place (FTS_SQL's CREATE TRIGGER
+        # IF NOT EXISTS keeps an existing trigger, whatever its body) and never
+        # runs the v11 contamination rebuild. Probe the trigger DDL itself instead
+        # of the version stamp: the current memories_fts_au is column-scoped
+        # ("AFTER UPDATE OF content"); an absent or unscoped body means a skipped
+        # FTS-gated migration. Drop the update triggers so FTS_SQL below recreates
+        # the current bodies, and arm the durable backfill bit so the rebuild
+        # clears any stale trigrams. Any future migration that changes FTS_SQL
+        # must keep this probe pointed at the newest trigger shape.
+        fts_triggers_stale = False
+        if not fts_created_this_boot:
+            au_row = await db.execute_fetchall(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='memories_fts_au'"
+            )
+            au_sql = (au_row[0][0] or "") if au_row else ""
+            if "AFTER UPDATE OF content" not in au_sql:
+                fts_triggers_stale = True
+                await db.execute("DROP TRIGGER IF EXISTS memories_fts_au")
+                await db.execute("DROP TRIGGER IF EXISTS episodes_au")
         # bug-067: ARM the durable pending bit BEFORE creating the (empty) FTS tables and
         # commit it now, whenever a backfill will be needed. executescript(FTS_SQL) does an
         # implicit COMMIT that durably persists the empty tables; if the process is then
@@ -422,7 +444,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
         # the flag, so the next boot saw tables-present + bit-clear and never re-indexed the
         # historical rows (permanent silent FTS desync). Arming first makes the retry
         # crash-durable: a killed boot leaves bit=1, so the next boot rebuilds regardless.
-        if fts_created_this_boot or fts_backfill_pending:
+        if fts_created_this_boot or fts_backfill_pending or fts_triggers_stale:
             await _set_fts_backfill_pending(db, True)
             await db.commit()
         await db.executescript(FTS_SQL)

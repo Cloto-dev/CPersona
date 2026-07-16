@@ -1077,6 +1077,12 @@ async def deep_stale_profile(db, agent_id: str, fix: bool) -> dict:
 
 
 async def deep_orphaned_episodes(db, agent_id: str, fix: bool) -> dict:
+    # bug-116: memories.timestamp is caller-supplied ISO-8601 (usually offset-aware,
+    # 'T' separator) while episodes.start/end_time may be naive datetime('now') format
+    # (space separator) — raw string comparison across the two formats is lexicographic
+    # garbage ('T' > ' '), yielding false-positive orphans. SQLite's datetime()
+    # normalises both (offset-aware values are converted to UTC; naive values are
+    # already UTC by the bug-114 invariant), making the range test format-independent.
     rows = await db.execute_fetchall(
         """SELECT e.id, e.summary, e.start_time, e.end_time FROM episodes e
            WHERE e.agent_id = ?
@@ -1084,7 +1090,8 @@ async def deep_orphaned_episodes(db, agent_id: str, fix: bool) -> dict:
            AND NOT EXISTS (
                SELECT 1 FROM memories m
                WHERE m.agent_id = e.agent_id
-               AND m.timestamp >= e.start_time AND m.timestamp <= e.end_time
+               AND datetime(m.timestamp) >= datetime(e.start_time)
+               AND datetime(m.timestamp) <= datetime(e.end_time)
            )""",
         (agent_id,),
     )

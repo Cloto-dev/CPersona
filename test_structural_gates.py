@@ -237,17 +237,24 @@ _ISO_FRAGMENT_ATTRS = {"clause", "and_clause", "where"}
 
 
 def _isolation_call_spans(tree):
-    """(lineno, end_lineno) spans of every function whose body calls isolation_where()."""
+    """(lineno, end_lineno) spans of every function whose body calls isolation_where()
+    OR declares an `iso` parameter (bug-120: a shared worker like _reembed_null_rows
+    receives the IsolationFilter built by its gate-checked callers — the conduit
+    parameter is the documented way to thread the helper through)."""
     spans = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        if any(
+        calls_helper = any(
             isinstance(n, ast.Call)
             and isinstance(n.func, ast.Name)
             and n.func.id == "isolation_where"
             for n in ast.walk(node)
-        ):
+        )
+        takes_iso_param = any(
+            a.arg == "iso" for a in node.args.args + node.args.kwonlyargs + node.args.posonlyargs
+        )
+        if calls_helper or takes_iso_param:
             spans.append((node.lineno, node.end_lineno))
     return spans
 
@@ -281,7 +288,12 @@ def _is_id_keyed(sql_upper):
 
 def _dml_targets_agent_scoped(sql_upper):
     """Return the set of agent-scoped tables this statement performs DML against
-    (SELECT ... FROM t / UPDATE t / DELETE FROM t / INSERT INTO t). Excludes pure DDL."""
+    (SELECT ... FROM t / UPDATE t / DELETE FROM t / INSERT INTO t). Excludes pure DDL.
+
+    bug-120 (C04): an interpolated table target (`f"DELETE FROM {table}"` reconstructs
+    as `FROM {?}`) is returned as the pseudo-target '<interpolated>' — the analyser
+    cannot prove it is NOT an agent-scoped table, so the statement must satisfy the
+    same scoping rules instead of being silently skipped."""
     import re
 
     hit = set()
@@ -295,7 +307,43 @@ def _dml_targets_agent_scoped(sql_upper):
         ]
         if any(re.search(p, sql_upper) for p in patterns):
             hit.add(t)
+    if re.search(r"\b(FROM|UPDATE|INTO)\s+\{\?\}", sql_upper):
+        hit.add("<interpolated>")
     return hit
+
+
+def _strip_sql_comments(sql):
+    """Remove SQL line (`-- …`) and block (`/* … */`) comments so a commented
+    `agent_id` can no longer satisfy the scoping check (bug-120 / C03)."""
+    import re
+
+    sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    return re.sub(r"--[^\n]*", " ", sql)
+
+
+def _where_scoped_by_agent_id(where_text):
+    """True when the WHERE clause carries a real agent_id *conjunct* (bug-120 / C03):
+
+    - the mention must be a comparison predicate (`AGENT_ID = …` / `AGENT_ID IN (…)`),
+      not a bare substring (`OR agent_id IS NULL`, an unrelated column, a comment);
+    - the clause must not contain a paren-depth-0 OR — a top-level disjunction voids
+      conjunctive scoping (`WHERE agent_id = ? OR locked = 0` is unscoped for half its
+      rows). Depth-limited on purpose: a lexical gate, not a SQL parser.
+    """
+    import re
+
+    depth = 0
+    depth0_chars = []
+    for ch in where_text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            depth0_chars.append(ch)
+    if re.search(r"\bOR\b", "".join(depth0_chars)):
+        return False
+    return bool(re.search(r"\bAGENT_ID\s*(=|IN\s*\()", where_text))
 
 
 def _agent_dml_violations(tree):
@@ -316,23 +364,29 @@ def _agent_dml_violations(tree):
     spans = _isolation_call_spans(tree)
     out = []
     for lineno, sql, node in _sql_string_constants(tree):
-        up = sql.upper()
+        up = _strip_sql_comments(sql).upper()  # bug-120: a commented agent_id is not scoping
         # Skip pure DDL / index / trigger / pragma statements.
         if re.search(r"\b(CREATE|DROP|ALTER|PRAGMA|REINDEX)\b", up):
+            continue
+        # Skip FTS5 self-referencing control commands (`INSERT INTO fts(fts)
+        # VALUES('rebuild'/'integrity-check')`) — index maintenance, not row DML.
+        if re.search(r"\bINTO\s+(\{\?\}|\w+)\s*\(\s*\1\s*[,)]", up):
             continue
         targets = _dml_targets_agent_scoped(up)
         if not targets:
             continue
-        # (1) static predicate visible — 2.5.0b1 audit: for UPDATE/DELETE/SELECT
-        # the mention must sit in the WHERE clause, so a column-list / SET-clause
-        # agent_id can no longer clear an unscoped statement. INSERTs have no
-        # WHERE: agent_id in the column list IS the scoping there.
+        # (1) static predicate visible — 2.5.0b1 audit + bug-120 (C03): for
+        # UPDATE/DELETE/SELECT the agent_id must be a real WHERE *conjunct*
+        # (comparison predicate, no top-level OR), so `OR agent_id IS NULL`,
+        # comments, and unrelated mentions no longer clear an unscoped
+        # statement. INSERTs have no WHERE: agent_id in the column list IS
+        # the scoping there.
         if up.lstrip().startswith("INSERT"):
-            if "AGENT_ID" in up:
+            if re.search(r"\bAGENT_ID\b", up):
                 continue
         else:
             where_idx = up.find("WHERE")
-            if where_idx >= 0 and "AGENT_ID" in up[where_idx:]:
+            if where_idx >= 0 and _where_scoped_by_agent_id(up[where_idx + len("WHERE"):]):
                 continue
         if _is_id_keyed(up):                       # (2) provenance-safe by primary key
             continue

@@ -804,11 +804,6 @@ async def do_calibrate_threshold(
     ``method`` defaults to ``percentile``. The result is persisted to a sidecar keyed by
     embedding dimension so a later embedding-model swap triggers recalibration at startup.
     """
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response(
-            {"ok": True, "old_threshold": None, "new_threshold": None, "sample_size": 0},
-            "calibrate_threshold",
-        )
     import numpy as np
 
     # bug-053: sample_size is a caller-supplied MCP tool parameter that feeds both a
@@ -836,6 +831,34 @@ async def do_calibrate_threshold(
     if not (0.0 < cal_percentile <= 1.0):
         return {"ok": False, "error": f"percentile must be in (0, 1] (or a percent 1-100), got {percentile}"}
     z = max(-10.0, min(10.0, z))
+
+    # bug-119 (bug-111 sibling class): the old skeleton carried a phantom
+    # `sample_size` key and none of the real payload's keys, so no-persist
+    # consumers branching on the success shape broke. Mirror the real success
+    # shape (echo keys resolved above, computed fields nulled); the guard sits
+    # AFTER the pure param validation so invalid input still returns the real
+    # error response, pause or not (same doctrine as the import/merge gates).
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {
+                "ok": True,
+                "sidecar_persisted": False,
+                "scope": "per_agent" if agent_id else "global",
+                "agent_id": agent_id,
+                "sampled_embeddings": 0,
+                "num_pairs": 0,
+                "method": cal_method,
+                "z_factor": z,
+                "percentile": cal_percentile,
+                "embedding_dim": None,
+                "embedding_model": config.EMBEDDING_MODEL,
+                "distribution": None,
+                "null_admit_rate": None,
+                "old_threshold": vector._get_vector_threshold(agent_id),
+                "new_threshold": None,
+            },
+            "calibrate_threshold",
+        )
 
     # Sample embeddings: per-agent when agent_id provided, deliberate all-agents
     # calibration when empty (the typed no-filter form of the helper, Task #180).
@@ -1025,11 +1048,6 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
     the gate threshold is precomputed on the separation curve at a fixed beta, so changing
     it requires recalibration, which this tool performs once rather than per recall.
     """
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response(
-            {"ok": True, "agent_id": agent_id, "beta": None, "precision": None},
-            "set_recall_precision",
-        )
     if not agent_id:
         return {"ok": False, "error": "agent_id is required"}
 
@@ -1052,6 +1070,24 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
         clear = True
         resolved_beta = config.FUSED_GATE_BETA
         resolved_precision = "default"
+
+    # bug-119 (bug-111 sibling class): mirror the real success shape — the old
+    # skeleton dropped cleared / fused_gate / calibrate and nulled precision/beta
+    # instead of echoing the resolved values. The guard sits AFTER the pure
+    # resolution above so invalid input still returns the real error response.
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {
+                "ok": True,
+                "agent_id": agent_id,
+                "precision": resolved_precision,
+                "beta": resolved_beta,
+                "cleared": clear,
+                "fused_gate": None,
+                "calibrate": None,
+            },
+            "set_recall_precision",
+        )
 
     # Apply the override, then recalibrate so the change takes effect now (this also
     # persists the sidecar, including agent_betas, via do_calibrate_threshold). Keep it
