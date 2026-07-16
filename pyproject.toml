@@ -1,6 +1,6 @@
 [project]
 name = "cpersona"
-version = "2.5.0a2"
+version = "2.5.0b1"
 description = "CPersona — Persistent AI memory server with 3-layer hybrid search, confidence scoring, and 28 tools. MIT licensed."
 requires-python = ">=3.11"
 license = {text = "MIT"}
