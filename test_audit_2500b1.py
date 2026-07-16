@@ -7,6 +7,7 @@ handler-failure routing in the drain (bug-090), and the agent-wipe queue purge
 (bug-093).
 """
 import asyncio
+import os
 
 import pytest
 import pytest_asyncio
@@ -675,3 +676,162 @@ async def test_temporal_span_is_scoped_to_recall_axes(clean_db, monkeypatch):
         f"scoped span {scoped_hours}h not tighter than agent-wide {agentwide_hours}h"
     )
     assert scoped_hours <= 25  # the 'b'∪shared window spans one day
+
+
+# ---------------------------------------------------------------------------
+# bug-108: the read seam must not self-deadlock when first-touch races a
+# close_db (its lock is separate from get_db's init lock).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_seam_survives_closed_db_race(clean_db):
+    # Simulate the race: the write connection vanishes right before the read
+    # seam enters its locked section — the old shared-lock design deadlocked
+    # here (asyncio.Lock is not reentrant).
+    await _reset_read_seam()
+    saved = database._db
+    database._db = None  # as if close_db() won the race; get_db must re-init
+    try:
+        async with connection() as r:
+            rows = await r.execute_fetchall("SELECT 1")
+        assert rows == [(1,)]
+    finally:
+        if database._db is not None and database._db is not saved:
+            await database._db.close()
+        await _reset_read_seam()
+        database._db = saved
+
+
+# ---------------------------------------------------------------------------
+# bug-109: an agent wipe during the drain's unlocked prepare window must veto
+# the episode insert (the task-row delete is the claim token).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_drain_does_not_resurrect_wiped_agent(clean_db, monkeypatch):
+    monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
+    queue = tasks.MemoryTaskQueue()
+    await queue.enqueue("archive_episode", "wiped-agent", [{"content": "hi"}])
+
+    async def prepare_and_wipe(agent_id, history, summary="", *a, **kw):
+        # The wipe lands while the drain is inside its unlocked prepare phase.
+        await admin_handlers.do_delete_agent_data(agent_id)
+        return (agent_id, "", "resurrected?", "", None, None, None, 0, "")
+
+    monkeypatch.setattr(memory_handlers, "_prepare_episode_row", prepare_and_wipe)
+    queue._running = True
+    await queue._drain(admin_handlers, memory_handlers)
+    queue._running = False
+
+    eps = (
+        await clean_db.execute_fetchall(
+            "SELECT COUNT(*) FROM episodes WHERE agent_id='wiped-agent'"
+        )
+    )[0][0]
+    assert eps == 0, "drain resurrected an episode for a wiped agent"
+
+
+# ---------------------------------------------------------------------------
+# bug-110: the truncation guard also covers the profile tail; abort responses
+# keep per-line diagnostics; no-persist delete shape matches the real one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_file_cut_at_profile_boundary(clean_db, tmp_path):
+    from cpersona.database import transaction
+
+    db = clean_db
+    async with transaction() as tdb:
+        await tdb.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) "
+            "VALUES ('pb', 'a memory', '{}', 't')"
+        )
+        await tdb.execute(
+            "INSERT INTO profiles (agent_id, user_id, content) VALUES ('pb', '', 'the profile')"
+        )
+    out = str(tmp_path / "with-profile.jsonl")
+    res = await admin_handlers.do_export_memories("pb", out)
+    assert res["ok"] and res["profiles"] == 1
+
+    lines = open(out, encoding="utf-8").read().splitlines()
+    cut = str(tmp_path / "profile-cut.jsonl")
+    open(cut, "w", encoding="utf-8").write("\n".join(lines[:-1]) + "\n")  # drop the profile line
+
+    async with transaction() as tdb:
+        await tdb.execute("DELETE FROM memories WHERE agent_id='pb'")
+        await tdb.execute("DELETE FROM profiles WHERE agent_id='pb'")
+    ri = await admin_handlers.do_import_memories(cut)
+    assert ri["ok"] is False and "truncated" in ri["error"], ri
+    left = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id='pb'"))[0][0]
+    assert left == 0
+
+
+@pytest.mark.asyncio
+async def test_no_persist_delete_shape_matches_real_response(clean_db):
+    from cpersona._vendored_mcp_common import no_persist
+
+    real = await admin_handlers.do_delete_agent_data("shape-agent")
+    no_persist.pause(ttl_seconds=60)
+    try:
+        skipped = await admin_handlers.do_delete_agent_data("shape-agent")
+    finally:
+        no_persist.resume()
+    missing = {k for k in real if k not in skipped}
+    assert not missing, f"no-persist response lost keys: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# bug-112: a report-only boot refuses to create a missing database.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skip_boot_migrations_refuses_missing_db(tmp_path, monkeypatch):
+    saved_db = database._db
+    database._db = None
+    await _reset_read_seam()
+    missing = str(tmp_path / "nope" / "absent.db")
+    monkeypatch.setattr(database, "DB_PATH", missing)
+    monkeypatch.setattr(database, "SKIP_BOOT_MIGRATIONS", True)
+    try:
+        with pytest.raises(FileNotFoundError):
+            await database.get_db()
+        assert not os.path.exists(missing), "report-only boot created a database file"
+    finally:
+        if database._db is not None:
+            await database._db.close()
+        await _reset_read_seam()
+        database._db = saved_db
+
+
+# ---------------------------------------------------------------------------
+# bug-113: truncating an oversized row into a dedup-index collision deletes the
+# duplicate instead of crashing the check on every fix run.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_oversized_truncation_collision_converges(clean_db):
+    from cpersona import maintenance_handlers
+    from cpersona.config import MAX_CONTENT_LENGTH
+    from cpersona.database import transaction
+
+    db = clean_db
+    base = "x" * MAX_CONTENT_LENGTH
+    async with transaction() as tdb:
+        await tdb.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) VALUES ('ov', ?, '{}', 't')",
+            (base,),
+        )
+        await tdb.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) VALUES ('ov', ?, '{}', 't')",
+            (base + "tail beyond the cap",),
+        )
+    res = await maintenance_handlers.do_check_health(agent_id="ov", fix=True)
+    crashed = [i for i in res["issues"] if i.get("check") == "oversized_content" and i.get("type") == "check_crashed"]
+    assert not crashed, f"oversized fixer still crashes on collision: {crashed}"
+    rows = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id='ov'"))[0][0]
+    assert rows == 1, f"collision left {rows} rows (expected the survivor only)"

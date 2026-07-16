@@ -371,6 +371,8 @@ async def do_delete_agent_data(agent_id: str) -> dict:
                 "deleted_memories": 0,
                 "deleted_profiles": 0,
                 "deleted_episodes": 0,
+                # bug-111: same shape as the real response (bug-093 added it).
+                "deleted_pending_tasks": 0,
             },
             "delete_agent_data",
         )
@@ -629,7 +631,7 @@ def _save_calibration_state(
         "calibrated_at": datetime.now(timezone.utc).isoformat(),
     }
     path = _calibration_sidecar_path()
-    tmp = path + ".tmp"
+    tmp = f"{path}.tmp.{os.getpid()}"
     try:
         with open(tmp, "w") as fh:
             json.dump(payload, fh)
@@ -1335,7 +1337,9 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     # destination directly with "w" destroyed the previous backup the moment the
     # export started, and a mid-export fault (disk full, process kill) left a
     # truncated JSONL that a later restore accepted as complete.
-    tmp_path = output_path + ".tmp"
+    # PID-suffixed so two processes exporting the same path cannot interleave
+    # writes into one temp file (bug-091 hardening).
+    tmp_path = f"{output_path}.tmp.{os.getpid()}"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             header = {
@@ -1346,6 +1350,9 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 "memory_count": len(mem_rows),
                 "episode_count": len(ep_rows),
                 "has_profile": len(prof_rows) > 0,
+                # bug-110: an exact count, so the import can detect a file cut at
+                # the episode/profile boundary (has_profile alone cannot).
+                "profile_count": len(prof_rows),
             }
             f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
@@ -1450,6 +1457,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     file_header: dict | None = None
     file_memories = 0
     file_episodes = 0
+    file_profiles = 0
     # bug-070: dry_run performs no INSERT OR IGNORE, so it cannot collide against a row
     # it "inserted" earlier IN THE SAME FILE — a duplicate later in the file was
     # over-counted as imported (a real run sees its own uncommitted row on the shared
@@ -1625,6 +1633,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                     imported_episodes += 1
 
                 elif rtype == "profile":
+                    file_profiles += 1
                     aid = target_agent_id or record.get("agent_id", "")
                     if not aid:
                         errors.append(f"Line {line_num}: profile missing agent_id")
@@ -1657,25 +1666,39 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
             if file_header is not None:
                 declared_mem = file_header.get("memory_count")
                 declared_ep = file_header.get("episode_count")
-                if (isinstance(declared_mem, int) and declared_mem != file_memories) or (
-                    isinstance(declared_ep, int) and declared_ep != file_episodes
+                # bug-110: profiles are validated too — a file cut exactly at the
+                # episode/profile boundary passed the two-count check and restored
+                # a profile-less corpus with ok:true.
+                declared_prof = file_header.get("profile_count")
+                if (
+                    (isinstance(declared_mem, int) and declared_mem != file_memories)
+                    or (isinstance(declared_ep, int) and declared_ep != file_episodes)
+                    or (isinstance(declared_prof, int) and declared_prof != file_profiles)
                 ):
                     raise ValueError(
                         f"file truncated or inconsistent: header declares "
-                        f"{declared_mem} memories / {declared_ep} episodes, "
-                        f"file contains {file_memories} / {file_episodes}"
+                        f"{declared_mem} memories / {declared_ep} episodes / "
+                        f"{declared_prof} profiles, file contains "
+                        f"{file_memories} / {file_episodes} / {file_profiles}"
                     )
 
     except Exception as e:
-        return {
+        # bug-110: keep the per-line diagnostics (a torn last line lands in
+        # `errors` AND triggers the count mismatch — the operator needs both),
+        # and do not claim a rollback on the write-free dry_run path.
+        aborted = "aborted (dry run — nothing was written)" if dry_run else "aborted and rolled back"
+        result = {
             "ok": False,
-            "error": f"import aborted and rolled back: {e}",
+            "error": f"import {aborted}: {e}",
             "dry_run": dry_run,
             "imported_memories": 0,
             "skipped_memories": skipped_memories,
             "imported_episodes": 0,
             "profile_updated": False,
         }
+        if errors:
+            result["errors"] = errors
+        return result
 
     result: dict = {
         "ok": True,

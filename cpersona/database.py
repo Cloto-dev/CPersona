@@ -71,7 +71,14 @@ async def connection():
     Any implicit transaction such a statement opens (sqlite3 BEGINs before DML)
     is rolled back on scope exit below — without that, the connection would
     keep the read transaction open and pin its WAL snapshot forever, serving
-    stale rows to every later read in the process."""
+    stale rows to every later read in the process.
+
+    Known limitation (accepted): scopes are per-coroutine but in_transaction is
+    per-connection, so one scope's exit can roll back a transaction another
+    in-flight read scope opened (the FTS integrity-check). Reads carry no
+    writes, every fetch is atomic inside the aiosqlite worker, and the sole
+    consequence is a report-only run aggregating across two WAL snapshots —
+    verified non-destructive in the 2.5.0b1 regression hunt."""
     db = await _get_read_db()
     try:
         yield db
@@ -264,6 +271,11 @@ _read_db_owner: aiosqlite.Connection | None = None
 # concurrently — the exact contender-commit interleaving the write seam exists
 # to prevent (bug-087).
 _init_lock = asyncio.Lock()
+# The read seam holds its own lock (bug-108): _get_read_db calls get_db() while
+# locked, and get_db() acquires _init_lock when _db is unset — a shared lock
+# self-deadlocked whenever a close_db raced first-touch (asyncio.Lock is not
+# reentrant). Ordering is always _read_lock → _init_lock, never the reverse.
+_read_lock = asyncio.Lock()
 
 
 async def _get_read_db() -> aiosqlite.Connection:
@@ -277,7 +289,7 @@ async def _get_read_db() -> aiosqlite.Connection:
     write_db = await get_db()
     if _read_db is not None and _read_db_owner is write_db:
         return _read_db
-    async with _init_lock:
+    async with _read_lock:
         write_db = await get_db()
         if _read_db is not None and _read_db_owner is write_db:
             return _read_db
@@ -343,6 +355,13 @@ async def get_db() -> aiosqlite.Connection:
     async with _init_lock:
         if _db is not None:
             return _db
+        # bug-112: a report-only boot (SKIP_BOOT_MIGRATIONS) must not create
+        # anything — connecting to a missing path would leave a 0-byte,
+        # schema-less DB behind a mistyped monitoring-cron path.
+        if SKIP_BOOT_MIGRATIONS and DB_PATH != ":memory:" and not os.path.exists(DB_PATH):
+            raise FileNotFoundError(
+                f"database not found: {DB_PATH} (report-only mode does not create databases)"
+            )
         db_dir = os.path.dirname(DB_PATH)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
