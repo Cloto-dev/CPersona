@@ -56,9 +56,16 @@ def _build_parser() -> argparse.ArgumentParser:
 async def _run(args) -> int:
     # Imported here, after --db has been exported, because cpersona.config
     # resolves CPERSONA_DB_PATH at import time.
+    from cpersona import database
     from cpersona.checks import exit_code
     from cpersona.database import close_db, connection
     from cpersona.maintenance_handlers import do_check_health, do_deep_check
+
+    if not args.fix:
+        # bug-105: a report-only run must not write — without this, get_db()'s
+        # boot path silently migrated a version-stale DB from a monitoring cron
+        # and crashed outright on a read-only file/filesystem.
+        database.SKIP_BOOT_MIGRATIONS = True
 
     report = await do_check_health(agent_id=args.agent, fix=args.fix)
 

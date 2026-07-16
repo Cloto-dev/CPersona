@@ -248,6 +248,12 @@ END;
 
 _db: aiosqlite.Connection | None = None
 _read_db: aiosqlite.Connection | None = None
+# bug-105: maintenance CLIs (checkup without --fix) set this before first DB
+# touch so a report-only run performs no boot-time writes — the old behaviour
+# silently migrated a version-stale DB from a monitoring cron and failed
+# outright on a read-only file/filesystem. A stale schema then surfaces through
+# check_schema_version instead of being repaired as a side effect.
+SKIP_BOOT_MIGRATIONS = False
 # The write connection _read_db was opened alongside. When the write connection
 # is swapped out underneath us (a fresh boot in the test harnesses, close_db +
 # re-init), the read connection would otherwise keep serving the OLD database
@@ -353,6 +359,12 @@ async def get_db() -> aiosqlite.Connection:
 
 async def _init_schema(db: aiosqlite.Connection) -> None:
     """Run pragmas, schema, and the migration ladder on a fresh connection."""
+    if SKIP_BOOT_MIGRATIONS:
+        # bug-105: session pragma only (per-connection, no file write); schema,
+        # FTS bootstrap and the migration ladder are all write paths.
+        with contextlib.suppress(Exception):
+            await db.execute("PRAGMA busy_timeout=5000")
+        return
     await db.execute("PRAGMA journal_mode=WAL")
     await db.execute("PRAGMA synchronous=NORMAL")
     # bug-060: a concurrent writer / concurrent boot yields an immediate SQLITE_BUSY
