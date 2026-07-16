@@ -41,22 +41,44 @@ def write_lock() -> asyncio.Lock:
 # 2.5.0 C-seam: the two connection context managers every DB access goes through.
 #
 # The seam exists so the storage backend can evolve without touching call sites:
-# today both CMs yield the single shared aiosqlite connection; a future connection
-# pool swaps the internals of these two functions only (acquire/release per scope)
-# while every handler keeps its `async with connection()/transaction() as db:` shape.
+# a future connection pool swaps the internals of these two functions only
+# (acquire/release per scope) while every handler keeps its
+# `async with connection()/transaction() as db:` shape.
 # That is the whole point — no second migration when the backend changes.
+#
+# 2.5.0b1 (bug-086): reads moved off the writer's connection. WAL snapshot
+# isolation only exists *across* connections — on the old shared connection a
+# SELECT executed inside another coroutine's open transaction and observed its
+# uncommitted rows (dirty read: a dedup probe could match an import row that was
+# later rolled back, acknowledging a store as duplicate of a row that ended up
+# existing nowhere). The read seam now owns a dedicated read connection.
 # --------------------------------------------------------------------------------------
 
 
 @contextlib.asynccontextmanager
 async def connection():
-    """Read seam: yield the shared connection for SELECT-only use.
+    """Read seam: yield the dedicated read connection for SELECT use.
 
-    Use for every read path. No lock, no transaction — reads on the shared
-    aiosqlite connection are safe to interleave with a serialised writer (WAL).
-    Writing under ``connection()`` is a structural-gate violation: a write
-    belongs in ``transaction()`` so its commit/rollback boundary is owned."""
-    yield await get_db()
+    Reads run on their own connection, so WAL gives them snapshot isolation
+    from the serialised writer: a reader never observes another coroutine's
+    uncommitted transaction (bug-086 dirty-read class). Writing under
+    ``connection()`` is a structural-gate violation — a write belongs in
+    ``transaction()`` so its commit/rollback boundary is owned.
+
+    Not ``PRAGMA query_only``: FTS5's integrity-check command is spelled as an
+    INSERT (``INSERT INTO fts(fts, rank) VALUES('integrity-check', 1)``), so the
+    read-only health checks legitimately execute write-shaped statements here.
+    Any implicit transaction such a statement opens (sqlite3 BEGINs before DML)
+    is rolled back on scope exit below — without that, the connection would
+    keep the read transaction open and pin its WAL snapshot forever, serving
+    stale rows to every later read in the process."""
+    db = await _get_read_db()
+    try:
+        yield db
+    finally:
+        if db is not _db and db._conn is not None and db._conn.in_transaction:
+            with contextlib.suppress(Exception):
+                await db.rollback()
 
 
 @contextlib.asynccontextmanager
@@ -225,6 +247,51 @@ END;
 """
 
 _db: aiosqlite.Connection | None = None
+_read_db: aiosqlite.Connection | None = None
+# The write connection _read_db was opened alongside. When the write connection
+# is swapped out underneath us (a fresh boot in the test harnesses, close_db +
+# re-init), the read connection would otherwise keep serving the OLD database
+# file — so _get_read_db() re-keys itself on the current write connection.
+_read_db_owner: aiosqlite.Connection | None = None
+# Serialises first-touch initialisation: without it two coroutines racing into
+# get_db() would both run the (idempotent but committing) migration ladder
+# concurrently — the exact contender-commit interleaving the write seam exists
+# to prevent (bug-087).
+_init_lock = asyncio.Lock()
+
+
+async def _get_read_db() -> aiosqlite.Connection:
+    """Get or create the dedicated read-only connection (bug-086).
+
+    Opened only after get_db() has completed schema + migrations, so the read
+    connection never observes a half-initialised database, and re-keyed on the
+    current write connection so a rebooted DB (close_db + re-init, or the test
+    harnesses' boot simulations) never leaves reads pointed at the old file."""
+    global _read_db, _read_db_owner
+    write_db = await get_db()
+    if _read_db is not None and _read_db_owner is write_db:
+        return _read_db
+    async with _init_lock:
+        write_db = await get_db()
+        if _read_db is not None and _read_db_owner is write_db:
+            return _read_db
+        stale, _read_db, _read_db_owner = _read_db, None, None
+        if stale is not None and stale is not write_db:
+            with contextlib.suppress(Exception):
+                await stale.close()
+        if DB_PATH == ":memory:":
+            # A second connection to :memory: would open a different, empty DB;
+            # fall back to shared-connection semantics for in-memory use.
+            _read_db, _read_db_owner = write_db, write_db
+            return _read_db
+        rdb = await aiosqlite.connect(DB_PATH)
+        try:
+            await rdb.execute("PRAGMA busy_timeout=5000")
+        except BaseException:
+            await rdb.close()
+            raise
+        _read_db, _read_db_owner = rdb, write_db
+    return _read_db
 
 
 async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, coldef: str) -> None:
@@ -257,25 +324,44 @@ async def _set_fts_backfill_pending(db: aiosqlite.Connection, pending: bool) -> 
 
 
 async def get_db() -> aiosqlite.Connection:
-    """Get or create the database connection."""
+    """Get or create the write connection (schema + migrations complete).
+
+    The global is published only after initialisation succeeds (bug-087): the
+    old code assigned ``_db`` right after connect, so a failed migration left
+    every later caller on the memoised fast path with a half-initialised
+    connection. A failed boot now leaves ``_db`` unset and the connection
+    closed; a retried call re-runs the idempotent ladder."""
     global _db
     if _db is not None:
         return _db
+    async with _init_lock:
+        if _db is not None:
+            return _db
+        db_dir = os.path.dirname(DB_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        db = await aiosqlite.connect(DB_PATH)
+        try:
+            await _init_schema(db)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await db.close()
+            raise
+        _db = db
+    return _db
 
-    db_dir = os.path.dirname(DB_PATH)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
 
-    _db = await aiosqlite.connect(DB_PATH)
-    await _db.execute("PRAGMA journal_mode=WAL")
-    await _db.execute("PRAGMA synchronous=NORMAL")
+async def _init_schema(db: aiosqlite.Connection) -> None:
+    """Run pragmas, schema, and the migration ladder on a fresh connection."""
+    await db.execute("PRAGMA journal_mode=WAL")
+    await db.execute("PRAGMA synchronous=NORMAL")
     # bug-060: a concurrent writer / concurrent boot yields an immediate SQLITE_BUSY
     # under WAL without a busy handler, which would fail the FTS rebuild (and any
     # write) on its first attempt. A short busy_timeout lets SQLite retry-wait
     # instead of erroring out on transient contention.
-    await _db.execute("PRAGMA busy_timeout=5000")
+    await db.execute("PRAGMA busy_timeout=5000")
 
-    await _db.executescript(SCHEMA_SQL)
+    await db.executescript(SCHEMA_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on
     # THIS boot (a DB originally created with CPERSONA_FTS_ENABLED=false, now
@@ -289,13 +375,13 @@ async def get_db() -> aiosqlite.Connection:
     fts_created_this_boot = False
     fts_backfill_pending = False
     if FTS_ENABLED:
-        existing_fts = await _db.execute_fetchall(
+        existing_fts = await db.execute_fetchall(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'"
         )
         fts_created_this_boot = not existing_fts
         # bug-060: durable retry flag — a prior boot's rebuild may have failed
         # (transient BUSY/I/O) and set this even though the tables now exist.
-        uv_row = await _db.execute_fetchall("PRAGMA user_version")
+        uv_row = await db.execute_fetchall("PRAGMA user_version")
         fts_backfill_pending = bool((uv_row[0][0] if uv_row else 0) & 1)
         # bug-067: ARM the durable pending bit BEFORE creating the (empty) FTS tables and
         # commit it now, whenever a backfill will be needed. executescript(FTS_SQL) does an
@@ -306,11 +392,11 @@ async def get_db() -> aiosqlite.Connection:
         # historical rows (permanent silent FTS desync). Arming first makes the retry
         # crash-durable: a killed boot leaves bit=1, so the next boot rebuilds regardless.
         if fts_created_this_boot or fts_backfill_pending:
-            await _set_fts_backfill_pending(_db, True)
-            await _db.commit()
-        await _db.executescript(FTS_SQL)
+            await _set_fts_backfill_pending(db, True)
+            await db.commit()
+        await db.executescript(FTS_SQL)
 
-    row = await _db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
+    row = await db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     current = row[0][0] if row else 0
 
     # Run the migration ladder. Any unexpected failure (locked DB, disk I/O)
@@ -320,13 +406,13 @@ async def get_db() -> aiosqlite.Connection:
     migration_error: Exception | None = None
     try:
         if current < 3:
-            await _ensure_column(_db, "episodes", "resolved", "INTEGER NOT NULL DEFAULT 0")
+            await _ensure_column(db, "episodes", "resolved", "INTEGER NOT NULL DEFAULT 0")
 
         if current < 4 and FTS_ENABLED:
-            await _db.execute("INSERT OR IGNORE INTO memories_fts(rowid, content) SELECT id, content FROM memories")
+            await db.execute("INSERT OR IGNORE INTO memories_fts(rowid, content) SELECT id, content FROM memories")
 
         if current < 5 and FTS_ENABLED:
-            await _db.executescript(
+            await db.executescript(
                 """
                 DROP TRIGGER IF EXISTS episodes_ai;
                 DROP TRIGGER IF EXISTS episodes_ad;
@@ -337,37 +423,37 @@ async def get_db() -> aiosqlite.Connection:
                 DROP TABLE IF EXISTS memories_fts;
                 """
             )
-            await _db.executescript(FTS_SQL)
-            await _db.execute(
+            await db.executescript(FTS_SQL)
+            await db.execute(
                 "INSERT OR IGNORE INTO episodes_fts(rowid, summary, keywords) "
                 "SELECT id, summary, keywords FROM episodes"
             )
-            await _db.execute("INSERT OR IGNORE INTO memories_fts(rowid, content) SELECT id, content FROM memories")
+            await db.execute("INSERT OR IGNORE INTO memories_fts(rowid, content) SELECT id, content FROM memories")
 
         if current < 6:
-            await _ensure_column(_db, "memories", "channel", "TEXT NOT NULL DEFAULT ''")
-            await _db.execute(
+            await _ensure_column(db, "memories", "channel", "TEXT NOT NULL DEFAULT ''")
+            await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_memories_agent_channel ON memories(agent_id, channel, created_at DESC)"
             )
 
         if current < 7:
-            await _ensure_column(_db, "memories", "recall_count", "INTEGER NOT NULL DEFAULT 0")
-            await _ensure_column(_db, "memories", "last_recalled_at", "TEXT")
+            await _ensure_column(db, "memories", "recall_count", "INTEGER NOT NULL DEFAULT 0")
+            await _ensure_column(db, "memories", "last_recalled_at", "TEXT")
 
         if current < 8:
-            await _ensure_column(_db, "memories", "locked", "INTEGER NOT NULL DEFAULT 0")
+            await _ensure_column(db, "memories", "locked", "INTEGER NOT NULL DEFAULT 0")
 
         # v2.4.17: add the project_id γ-semantics axis to all four data tables.
         if current < 9:
             for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
-                await _ensure_column(_db, table, "project_id", "TEXT NOT NULL DEFAULT ''")
+                await _ensure_column(db, table, "project_id", "TEXT NOT NULL DEFAULT ''")
 
         # v2.4.22: per-channel episodic loop. Episodes gain a `channel` column so
         # archived sessions can be scoped to one conversation channel. Existing
         # episodes default to '' (= unscoped / shared).
         if current < 10:
-            await _ensure_column(_db, "episodes", "channel", "TEXT NOT NULL DEFAULT ''")
-            await _db.execute(
+            await _ensure_column(db, "episodes", "channel", "TEXT NOT NULL DEFAULT ''")
+            await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_episodes_agent_channel "
                 "ON episodes(agent_id, channel, created_at DESC)"
             )
@@ -378,8 +464,8 @@ async def get_db() -> aiosqlite.Connection:
         # content (recall contamination). Add the trigger (idempotent via FTS_SQL)
         # and rebuild the index once to clear any contamination already present.
         if current < 11 and FTS_ENABLED:
-            await _db.executescript(FTS_SQL)
-            await _db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+            await db.executescript(FTS_SQL)
+            await db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
 
         # v2.4.36 (bug-010): do_store's SELECT-probe dedup and post-commit
         # `SELECT id ... ORDER BY id DESC` id lookup both race concurrent
@@ -392,7 +478,7 @@ async def get_db() -> aiosqlite.Connection:
         # non-fatally below (SELECT-based dedup stays as the fallback), same
         # doctrine as the isolation index.
         if current < 12:
-            await _db.execute(
+            await db.execute(
                 """DELETE FROM memories
                    WHERE locked = 0
                      AND id NOT IN (
@@ -407,7 +493,7 @@ async def get_db() -> aiosqlite.Connection:
                 "ON memories(agent_id, project_id, msg_id) WHERE msg_id != ''",
             ):
                 try:
-                    await _db.execute(index_sql)
+                    await db.execute(index_sql)
                 except Exception as e:
                     logger.warning(
                         "dedup unique index creation failed (non-fatal, SELECT dedup remains): %s",
@@ -421,9 +507,9 @@ async def get_db() -> aiosqlite.Connection:
         # triggers; the index itself is untouched (identical content), so no
         # rebuild is needed.
         if current < 13 and FTS_ENABLED:
-            await _db.execute("DROP TRIGGER IF EXISTS memories_fts_au")
-            await _db.execute("DROP TRIGGER IF EXISTS episodes_au")
-            await _db.executescript(FTS_SQL)
+            await db.execute("DROP TRIGGER IF EXISTS memories_fts_au")
+            await db.execute("DROP TRIGGER IF EXISTS episodes_au")
+            await db.executescript(FTS_SQL)
     except Exception as e:
         migration_error = e
         logger.error(
@@ -448,25 +534,25 @@ async def get_db() -> aiosqlite.Connection:
     # (recall degrades to vector/keyword-less RRF, same as a disabled index).
     if FTS_ENABLED and (fts_created_this_boot or fts_backfill_pending):
         try:
-            await _db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
-            await _db.execute("INSERT INTO episodes_fts(episodes_fts) VALUES ('rebuild')")
+            await db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+            await db.execute("INSERT INTO episodes_fts(episodes_fts) VALUES ('rebuild')")
             # bug-067: clear the pending bit AND commit it promptly, so the rebuild's
             # durability and the cleared flag land together. The bit was armed+committed
             # before the tables were created; a crash between here and the final commit
             # would at worst leave it armed → one harmless redundant rebuild next boot.
-            await _set_fts_backfill_pending(_db, False)
-            await _db.commit()
+            await _set_fts_backfill_pending(db, False)
+            await db.commit()
         except Exception as e:
             # Belt-and-suspenders: the bit was already durably armed before table creation
             # (bug-067), so it stays 1 for the next-boot retry even if this write is lost.
-            await _set_fts_backfill_pending(_db, True)
+            await _set_fts_backfill_pending(db, True)
             logger.warning("FTS first-boot backfill failed (non-fatal, will retry next boot): %s", e)
 
     # The isolation index depends on the v2.4.17 project_id column. Run it
     # after the migration so v8 boots get the index once the columns exist;
     # CREATE INDEX IF NOT EXISTS keeps it idempotent. Non-fatal on its own.
     try:
-        await _db.executescript(ISOLATION_INDEX_SQL)
+        await db.executescript(ISOLATION_INDEX_SQL)
     except Exception as e:
         logger.warning("isolation index creation failed (non-fatal): %s", e)
 
@@ -474,18 +560,22 @@ async def get_db() -> aiosqlite.Connection:
     # withheld stamp leaves `current` unchanged so the next boot re-runs the
     # idempotent steps rather than skipping a step that never applied.
     if migration_error is None and current < SCHEMA_VERSION:
-        await _db.execute(
+        await db.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    await _db.commit()
+    await db.commit()
 
-    return _db
 
 
 async def close_db():
-    """Close the database connection."""
-    global _db
+    """Close the write and read connections."""
+    global _db, _read_db, _read_db_owner
+    if _read_db is not None:
+        if _read_db is not _db:
+            await _read_db.close()
+        _read_db = None
+    _read_db_owner = None
     if _db is not None:
         await _db.close()
         _db = None
