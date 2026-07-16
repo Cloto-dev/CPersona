@@ -1302,6 +1302,36 @@ async def do_archive_episode(
             "error": "summary is required to archive an episode",
         }
 
+    row = await _prepare_episode_row(
+        agent_id, history, summary, keywords, resolved, project_id, channel
+    )
+
+    # bug-042/043: transaction() serialises INSERT+commit behind the shared write
+    # lock so the background queue drain's episode commit cannot flush — or be
+    # flushed by — a concurrent import/merge's partial transaction on the shared
+    # connection.
+    async with transaction() as db:
+        episode_id = await _insert_episode_row(db, row)
+    return {"ok": True, "episode_id": episode_id}
+
+
+async def _prepare_episode_row(
+    agent_id: str,
+    history: list[dict],
+    summary: str,
+    keywords: str = "",
+    resolved: bool | None = None,
+    project_id: str = "",
+    channel: str = "",
+) -> tuple:
+    """Prepare an episode row: validation + embedding (network I/O, NO lock held).
+
+    Split from the INSERT (bug-089) so the queue drain can run the insert and
+    its task-row delete in ONE transaction — the prepare half must stay outside
+    because it performs the embedding HTTP round-trip (bug-072 class).
+    Raises ValueError when the episode cannot be stored (empty summary)."""
+    if not summary:
+        raise ValueError("summary is required to archive an episode")
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)
 
@@ -1318,14 +1348,14 @@ async def do_archive_episode(
         except Exception as e:
             logger.warning("Embedding failed for episode: %s", e)
 
-    # bug-042/043: transaction() serialises INSERT+commit behind the shared write
-    # lock so the background queue drain's episode commit cannot flush — or be
-    # flushed by — a concurrent import/merge's partial transaction on the shared
-    # connection.
-    async with transaction() as db:
-        cursor = await db.execute(
-            """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved, channel)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved), channel),
-        )
-    return {"ok": True, "episode_id": cursor.lastrowid}
+    return (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved), channel)
+
+
+async def _insert_episode_row(db, row: tuple) -> int:
+    """Leaf: INSERT a prepared episode row inside the caller's open transaction."""
+    cursor = await db.execute(
+        """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved, channel)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        row,
+    )
+    return cursor.lastrowid

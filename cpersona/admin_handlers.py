@@ -286,35 +286,37 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
     return {"ok": True, "unlocked_id": memory_id}
 
 
-async def do_delete_agent_data(agent_id: str) -> dict:
-    """Delete ALL data for a specific agent (memories, profiles, episodes)."""
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response(
-            {
-                "ok": True,
-                "agent_id": agent_id,
-                "deleted_memories": 0,
-                "deleted_profiles": 0,
-                "deleted_episodes": 0,
-            },
-            "delete_agent_data",
-        )
-    if not agent_id:
-        return {"error": "agent_id is required for bulk deletion"}
+async def _delete_agent_rows(db, agent_id: str) -> dict:
+    """Leaf: delete the agent's rows inside the CALLER's open transaction.
 
-    # bug-042/043: transaction() serialises the multi-table delete + commit behind
-    # the shared lock; its auto-rollback keeps a partial wipe from surviving as
-    # another writer's commit.
-    async with transaction() as db:
-        mem_cursor = await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent_id,))
-        prof_cursor = await db.execute("DELETE FROM profiles WHERE agent_id = ?", (agent_id,))
-        ep_cursor = await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent_id,))
+    Takes the caller's transaction() connection so a composite operation
+    (merge mode='move', bug-088) can make the wipe part of its own atomic
+    unit instead of a second transaction with a loss window in between.
+    Also clears the agent's crash-recovery queue rows (bug-093): a wiped
+    agent must not have the drain resurrect its data later.
+    """
+    mem_cursor = await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent_id,))
+    prof_cursor = await db.execute("DELETE FROM profiles WHERE agent_id = ?", (agent_id,))
+    ep_cursor = await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent_id,))
+    task_cursor = await db.execute(
+        "DELETE FROM pending_memory_tasks WHERE agent_id = ?", (agent_id,)
+    )
+    return {
+        "deleted_memories": mem_cursor.rowcount,
+        "deleted_profiles": prof_cursor.rowcount,
+        "deleted_episodes": ep_cursor.rowcount,
+        "deleted_pending_tasks": task_cursor.rowcount,
+    }
 
-    # bug-036: drop the agent's per-agent calibration from BOTH the in-process
-    # dicts and the persisted sidecar. Otherwise a stale threshold/beta/gate
-    # computed from the now-deleted corpus survives in-process and reloads on
-    # restart via _restore_calibration_state, so a later same-id agent silently
-    # inherits it and under-/over-recalls until it recalibrates.
+
+def _purge_agent_calibration(agent_id: str) -> bool:
+    """Drop the agent's calibration from the in-process dicts + sidecar (bug-036).
+
+    Otherwise a stale threshold/beta/gate computed from the now-deleted corpus
+    survives in-process and reloads on restart via _restore_calibration_state,
+    so a later same-id agent silently inherits it and under-/over-recalls until
+    it recalibrates. Non-DB side effect — call AFTER the delete transaction
+    commits, never inside it."""
     removed_cal = False
     for _d in (vector._agent_thresholds, vector._agent_fused_gates, vector._agent_betas):
         removed_cal = (_d.pop(agent_id, None) is not None) or removed_cal
@@ -335,7 +337,11 @@ async def do_delete_agent_data(agent_id: str) -> dict:
                 fused_gate_signal=state.get("fused_gate_signal"),
                 agent_betas=state.get("agent_betas") or {},
             )
+    return removed_cal
 
+
+async def _purge_agent_remote_namespace(agent_id: str) -> None:
+    """Purge the agent's remote vector namespace (network I/O — post-commit only)."""
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         try:
             base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
@@ -346,19 +352,40 @@ async def do_delete_agent_data(agent_id: str) -> dict:
         except Exception as e:
             logger.debug("Remote purge failed (non-fatal): %s", e)
 
-    result = {
-        "ok": True,
-        "agent_id": agent_id,
-        "deleted_memories": mem_cursor.rowcount,
-        "deleted_profiles": prof_cursor.rowcount,
-        "deleted_episodes": ep_cursor.rowcount,
-    }
+
+async def do_delete_agent_data(agent_id: str) -> dict:
+    """Delete ALL data for a specific agent (memories, profiles, episodes)."""
+    if no_persist.is_paused():
+        return no_persist.make_skipped_response(
+            {
+                "ok": True,
+                "agent_id": agent_id,
+                "deleted_memories": 0,
+                "deleted_profiles": 0,
+                "deleted_episodes": 0,
+            },
+            "delete_agent_data",
+        )
+    if not agent_id:
+        return {"error": "agent_id is required for bulk deletion"}
+
+    # bug-042/043: transaction() serialises the multi-table delete + commit behind
+    # the shared lock; its auto-rollback keeps a partial wipe from surviving as
+    # another writer's commit.
+    async with transaction() as db:
+        counts = await _delete_agent_rows(db, agent_id)
+
+    _purge_agent_calibration(agent_id)
+    await _purge_agent_remote_namespace(agent_id)
+
+    result = {"ok": True, "agent_id": agent_id, **counts}
     logger.info(
-        "Deleted agent data for %s: %d memories, %d profiles, %d episodes",
+        "Deleted agent data for %s: %d memories, %d profiles, %d episodes, %d pending tasks",
         agent_id,
-        mem_cursor.rowcount,
-        prof_cursor.rowcount,
-        ep_cursor.rowcount,
+        counts["deleted_memories"],
+        counts["deleted_profiles"],
+        counts["deleted_episodes"],
+        counts["deleted_pending_tasks"],
     )
     return result
 
@@ -1716,6 +1743,18 @@ async def do_merge_memories(
                     )
                 profile_copied = True
 
+            # bug-088: mode='move' deletes the source INSIDE the same transaction
+            # as the copy. As two transactions, any writer queued behind the merge
+            # on the FIFO write lock could insert into the source between the
+            # merge commit and the delete — the delete then wiped an acknowledged
+            # row that was never copied (deterministic loss, not just a crash
+            # window). One atomic unit also removes the crash window where the
+            # move degraded to a copy, and the mid-flight no-persist pause that
+            # silently skipped the wipe under ok:true.
+            move_counts = None
+            if mode == "move" and not dry_run:
+                move_counts = await _delete_agent_rows(db, source_agent_id)
+
     except Exception as e:
         return {
             "ok": False,
@@ -1731,12 +1770,14 @@ async def do_merge_memories(
             "skipped_profile": skipped_profile,
         }
 
-    # The move-mode delete runs as its own locked transaction AFTER the merge
-    # commit + lock release above (do_delete_agent_data re-acquires the lock), so
-    # there is no re-entrant acquisition of the non-reentrant lock.
+    # The delete happened inside the merge transaction (bug-088); only the
+    # non-DB side effects (calibration purge, remote namespace) run here,
+    # post-commit, mirroring do_delete_agent_data's ordering.
     move_result = None
-    if mode == "move" and not dry_run:
-        move_result = await do_delete_agent_data(source_agent_id)
+    if move_counts is not None:
+        _purge_agent_calibration(source_agent_id)
+        await _purge_agent_remote_namespace(source_agent_id)
+        move_result = {"ok": True, "agent_id": source_agent_id, **move_counts}
 
     result: dict = {
         "ok": True,
