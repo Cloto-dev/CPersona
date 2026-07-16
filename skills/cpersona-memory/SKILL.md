@@ -53,7 +53,7 @@ server** and an optional but strongly recommended **embedding server** (it
 powers the vector-search layer; without it CPersona still runs on FTS5 +
 keyword only).
 
-**Prerequisites:** Python 3.10+ (Git only for from-source installs).
+**Prerequisites:** Python 3.11+ (Git only for from-source installs).
 
 ### 1. Install CPersona
 
