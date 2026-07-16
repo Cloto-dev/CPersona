@@ -160,8 +160,23 @@ class MemoryTaskQueue:
                     # — visible, instead of a silent bogus "completed".
                     row = await memory_handlers._prepare_episode_row(agent_id, payload, summary="")
                     async with transaction() as db:
-                        await memory_handlers._insert_episode_row(db, row)
-                        await db.execute("DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,))
+                        # bug-109: the task-row DELETE doubles as the claim token.
+                        # rowcount 0 means the row vanished during the unlocked
+                        # prepare window — a delete_agent_data / merge move wiped
+                        # the agent (bug-093 purge) — so inserting now would
+                        # resurrect data for a deleted agent. Delete-first makes
+                        # the whole unit self-cancelling in that case.
+                        cur = await db.execute(
+                            "DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,)
+                        )
+                        if cur.rowcount:
+                            await memory_handlers._insert_episode_row(db, row)
+                        else:
+                            logger.info(
+                                "MemoryTaskQueue: task %d vanished during prepare "
+                                "(agent wiped) — skipping insert",
+                                task_id,
+                            )
                 else:
                     logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
                     await self._delete_task(task_id)
