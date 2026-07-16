@@ -61,8 +61,10 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     """Store a message in agent memory.
 
     project_id (v2.4.17): isolation axis. Defaults to '' (= global pool).
-    Dedup is project-scoped so the same msg_id under different projects can
-    coexist; reads use γ semantics (see cpersona.isolation.isolation_where).
+    Dedup checks the γ-visible scope (bug-106): a bucket write collides with an
+    identical global-pool row (a recall in that bucket would surface both), while
+    sibling buckets stay distinct; reads use the same γ semantics (see
+    cpersona.isolation.isolation_where).
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "id": 0}, "store")
@@ -83,21 +85,34 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     if not content:
         return {"ok": True, "skipped": True, "reason": "empty after sanitization"}
 
+    # bug-106: the dedup probes check the γ-VISIBLE scope, matching read semantics.
+    # A bucket write ('X') collides with an identical row in the global pool —
+    # recall('X') surfaces X ∪ '' and would return both copies — while a global
+    # write probes the global pool only (a bucket copy must not hide the row from
+    # every other bucket). Same shape on the channel axis. Import/merge keep
+    # exact-bucket probes deliberately: a restore/merge must reconstruct legacy
+    # corpora faithfully across buckets (bug-044/076 precedent). The v12 UNIQUE
+    # indexes stay exact-bucket as the TOCTOU backstop.
+    proj_scope = (project_id, "") if project_id else ("",)
+    chan_scope = (channel, "") if channel else ("",)
+    proj_in = ",".join("?" * len(proj_scope))
+    chan_in = ",".join("?" * len(chan_scope))
     async with connection() as db:
-        # Deduplicate by msg_id if provided (project-scoped — the same msg_id can
-        # legitimately appear in different projects).
+        # Deduplicate by msg_id if provided (γ-project-scoped — the same msg_id in
+        # two sibling buckets stays legitimately distinct, bug-044).
         if msg_id:
             row = await db.execute_fetchall(
-                "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
-                (agent_id, project_id, msg_id),
+                f"SELECT id FROM memories WHERE agent_id = ? AND project_id IN ({proj_in}) AND msg_id = ? LIMIT 1",
+                (agent_id, *proj_scope, msg_id),
             )
             if row:
                 return {"ok": True, "skipped": True, "reason": "duplicate msg_id"}
 
-        # Deduplicate by exact content match (project-scoped).
+        # Deduplicate by exact content match (γ-visible scope).
         existing = await db.execute_fetchall(
-            "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-            (agent_id, project_id, channel, content),
+            f"SELECT id FROM memories WHERE agent_id = ? AND project_id IN ({proj_in})"
+            f" AND channel IN ({chan_in}) AND content = ? LIMIT 1",
+            (agent_id, *proj_scope, *chan_scope, content),
         )
         if existing:
             return {"ok": True, "skipped": True, "reason": "duplicate content"}
@@ -688,7 +703,12 @@ def _is_episode_result(r: dict) -> bool:
 
 
 async def _apply_recall_scoring(
-    db, agent_id: str, results: list[dict], deep: bool
+    db,
+    agent_id: str,
+    results: list[dict],
+    deep: bool,
+    project_id: str | None = None,
+    channel: str = "",
 ) -> tuple[list[dict], float, dict]:
     """Post-recall scoring run before the quality gate: the episode-boundary penalty
     (L3, v2.4.14) and, when CONFIDENCE_ENABLED, the confidence score (which also
@@ -709,9 +729,14 @@ async def _apply_recall_scoring(
         return results, time_range_hours, recall_counts
 
     if CONFIDENCE_ENABLED:
+        # bug-107: the temporal span is computed over the SAME isolation scope as
+        # the recall — an agent-wide MIN/MAX let timestamps from unrelated
+        # projects/channels scale a tightly-scoped recall's confidence curve.
+        # Callers that score corpus-wide (gate calibration) keep the defaults.
+        range_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
         range_row = await db.execute_fetchall(
-            "SELECT MIN(timestamp), MAX(timestamp) FROM memories WHERE agent_id = ?",
-            (agent_id,),
+            f"SELECT MIN(timestamp), MAX(timestamp) FROM memories{range_iso.where}",
+            range_iso.params,
         )
         if range_row and range_row[0][0] and range_row[0][1]:
             oldest = _parse_timestamp_utc(range_row[0][0])
@@ -846,7 +871,7 @@ async def do_recall(
         # time_range_hours / recall_counts are reused below for the response metadata + the
         # recall-count update, so they are returned rather than recomputed.
         results, time_range_hours, recall_counts = await _apply_recall_scoring(
-            db, agent_id, results, deep
+            db, agent_id, results, deep, project_id=project_id, channel=channel
         )
 
         memory_count = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent_id,)))[0][0]
