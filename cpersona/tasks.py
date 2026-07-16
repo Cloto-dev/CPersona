@@ -141,13 +141,31 @@ class MemoryTaskQueue:
             )
             try:
                 if task_type == "update_profile":
-                    await admin_handlers.do_update_profile(agent_id, payload)
+                    # bug-090: a handler-returned failure dict is a FAILURE, not a
+                    # success to delete-and-log-completed — route it into the retry
+                    # path like a raise. (The upsert itself is idempotent, so the
+                    # separate delete transaction below is redo-safe.)
+                    result = await admin_handlers.do_update_profile(agent_id, payload)
+                    if isinstance(result, dict) and (result.get("error") or result.get("ok") is False):
+                        raise RuntimeError(f"handler returned failure: {result.get('error') or result}")
+                    await self._delete_task(task_id)
                 elif task_type == "archive_episode":
-                    await memory_handlers.do_archive_episode(agent_id, payload)
+                    # bug-089: prepare (embedding HTTP) outside the lock, then run
+                    # the episode INSERT and the task-row delete in ONE transaction.
+                    # As two commits, a crash between them replayed the bare INSERT
+                    # on the next boot and duplicated the episode; a failure of the
+                    # delete alone had the same effect (at-least-once redo against a
+                    # non-idempotent insert). A legacy history-only payload (no
+                    # summary) raises here and lands in the retry/discard path below
+                    # — visible, instead of a silent bogus "completed".
+                    row = await memory_handlers._prepare_episode_row(agent_id, payload, summary="")
+                    async with transaction() as db:
+                        await memory_handlers._insert_episode_row(db, row)
+                        await db.execute("DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,))
                 else:
                     logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
+                    await self._delete_task(task_id)
 
-                await self._delete_task(task_id)
                 logger.info("MemoryTaskQueue: completed %s (task_id=%d)", task_type, task_id)
             except Exception as e:
                 logger.error("MemoryTaskQueue: task %d (%s) failed: %s", task_id, task_type, e)

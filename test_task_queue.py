@@ -253,18 +253,26 @@ async def test_fifo_ordering():
     """Tasks should be processed in FIFO order (id ASC)."""
     processed = []
     original_update = admin_handlers.do_update_profile
-    original_archive = memory_handlers.do_archive_episode
+    # bug-089: the drain no longer dispatches archive_episode through the full
+    # handler — it prepares outside the lock and runs episode INSERT + task
+    # delete in one transaction, so the patch points are the prepare/insert seams.
+    original_prepare = memory_handlers._prepare_episode_row
+    original_insert = memory_handlers._insert_episode_row
 
     async def mock_update_profile(agent_id, history):
         processed.append(("update_profile", agent_id))
         return {"ok": True, "profiles_updated": 0}
 
-    async def mock_archive_episode(agent_id, history):
-        processed.append(("archive_episode", agent_id))
-        return {"ok": True, "episode_id": None}
+    async def mock_prepare_episode_row(agent_id, history, summary="", *a, **kw):
+        return (agent_id, "", "mock summary", "", None, None, None, 0, "")
+
+    async def mock_insert_episode_row(db, row):
+        processed.append(("archive_episode", row[0]))
+        return 1
 
     admin_handlers.do_update_profile = mock_update_profile
-    memory_handlers.do_archive_episode = mock_archive_episode
+    memory_handlers._prepare_episode_row = mock_prepare_episode_row
+    memory_handlers._insert_episode_row = mock_insert_episode_row
 
     try:
         queue = tasks.MemoryTaskQueue()
@@ -282,7 +290,8 @@ async def test_fifo_ordering():
         assert processed[2] == ("archive_episode", "agent-C")
     finally:
         admin_handlers.do_update_profile = original_update
-        memory_handlers.do_archive_episode = original_archive
+        memory_handlers._prepare_episode_row = original_prepare
+        memory_handlers._insert_episode_row = original_insert
 
 
 # ============================================================
