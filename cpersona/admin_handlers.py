@@ -1731,6 +1731,11 @@ async def do_merge_memories(
             {
                 "ok": True,
                 "dry_run": dry_run,
+                # bug-111 sibling: mirror the real success shape (echo keys too).
+                "source_agent_id": source_agent_id,
+                "target_agent_id": target_agent_id,
+                "strategy": strategy,
+                "mode": mode,
                 "merged_memories": 0,
                 "skipped_memories": 0,
                 "merged_episodes": 0,
