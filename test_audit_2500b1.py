@@ -486,3 +486,117 @@ async def test_set_recall_precision_rolls_back_beta_on_raise(clean_db, monkeypat
     res = await admin_handlers.do_set_recall_precision("beta-agent", precision="strict")
     assert res["ok"] is False and "calibrate blew up" in res["error"]
     assert "beta-agent" not in vector._agent_betas, "raised calibration leaked the beta override"
+
+
+# ---------------------------------------------------------------------------
+# bug-098: fixers must never mutate locked rows — lock_memory's contract is
+# "this row cannot be lost or altered by maintenance".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fixers_do_not_mutate_locked_rows(clean_db):
+    from cpersona import maintenance_handlers
+
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp, locked) "
+        "VALUES ('lk', 'locked bad row', 'not-json{', 'not-a-timestamp', 1)"
+    )
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp, locked) "
+        "VALUES ('lk', 'unlocked bad row', 'not-json{', 'not-a-timestamp', 0)"
+    )
+    await db.commit()
+
+    await maintenance_handlers.do_check_health(agent_id="lk", fix=True)
+
+    rows = await db.execute_fetchall(
+        "SELECT locked, source, timestamp FROM memories WHERE agent_id='lk' ORDER BY locked"
+    )
+    unlocked, locked = rows[0], rows[1]
+    assert locked[1] == "not-json{", "fixer rewrote a locked row's source"
+    assert locked[2] == "not-a-timestamp", "fixer rewrote a locked row's timestamp"
+    assert unlocked[1] == "{}", "fixer failed to repair the unlocked row"
+
+
+# ---------------------------------------------------------------------------
+# bug-097: content-rewriting fixers run before duplicate_content in the
+# registry, so a single fix pass converges.
+# ---------------------------------------------------------------------------
+
+
+def test_health_checks_order_oversized_before_duplicate():
+    from cpersona.checks import HEALTH_CHECKS
+
+    names = [c.name for c in HEALTH_CHECKS]
+    assert names.index("oversized_content") < names.index("duplicate_content")
+
+
+# ---------------------------------------------------------------------------
+# bug-099: an acknowledgement requires the UPDATE to have matched a row — a
+# row deleted between the ownership pre-check and the UPDATE returns an error.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lock_memory_vanished_row_is_an_error(clean_db, monkeypatch):
+    import contextlib as _ctx
+
+    @_ctx.asynccontextmanager
+    async def fake_connection():
+        class _Stub:
+            async def execute_fetchall(self, *a, **kw):
+                return [("ghost-agent",)]  # pre-check "finds" the row
+
+        yield _Stub()
+
+    monkeypatch.setattr(admin_handlers, "connection", fake_connection)
+    res = await admin_handlers.do_lock_memory(999_999_999, agent_id="ghost-agent")
+    assert "error" in res, "lock acknowledged a row the UPDATE never matched"
+
+
+# ---------------------------------------------------------------------------
+# bug-104: no-persist skipped responses must not echo caller ids in the
+# action-specific *_id keys.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_no_persist_skip_nulls_action_id_keys(clean_db):
+    from cpersona._vendored_mcp_common import no_persist
+
+    no_persist.pause(ttl_seconds=60)
+    try:
+        res = await admin_handlers.do_delete_memory(12345)
+        assert res["persisted"] is False
+        assert res.get("deleted_id") is None, "skipped delete echoed a truthy deleted_id"
+    finally:
+        no_persist.resume()
+
+
+# ---------------------------------------------------------------------------
+# bug-105: a report-only boot (checkup without --fix) performs no schema writes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skip_boot_migrations_writes_nothing(tmp_path, monkeypatch):
+    import sqlite3
+
+    saved_db = database._db
+    database._db = None
+    await _reset_read_seam()
+    fresh = str(tmp_path / "ro-report.db")
+    sqlite3.connect(fresh).close()  # an empty, schema-less database file
+    monkeypatch.setattr(database, "DB_PATH", fresh)
+    monkeypatch.setattr(database, "SKIP_BOOT_MIGRATIONS", True)
+    try:
+        db = await database.get_db()
+        tables = await db.execute_fetchall("SELECT name FROM sqlite_master WHERE type='table'")
+        assert tables == [], f"report-only boot created schema objects: {tables}"
+    finally:
+        if database._db is not None:
+            await database._db.close()
+        await _reset_read_seam()
+        database._db = saved_db

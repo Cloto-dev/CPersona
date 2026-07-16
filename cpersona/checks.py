@@ -693,10 +693,10 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
         return []
     if fix:
         await db.execute(
-            f"UPDATE memories SET source = '{{}}' WHERE json_valid(source) = 0{iso.and_clause}", iso.params
+            f"UPDATE memories SET source = '{{}}' WHERE json_valid(source) = 0 AND locked = 0{iso.and_clause}", iso.params
         )
         await db.execute(
-            f"UPDATE memories SET metadata = '{{}}' WHERE json_valid(metadata) = 0{iso.and_clause}",
+            f"UPDATE memories SET metadata = '{{}}' WHERE json_valid(metadata) = 0 AND locked = 0{iso.and_clause}",
             iso.params,
         )
     return [{"type": "invalid_json", "bad_source": bad_source, "bad_metadata": bad_metadata}]
@@ -714,7 +714,7 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
         return []
     if fix:
         await db.execute(
-            f"UPDATE memories SET timestamp = created_at WHERE datetime(timestamp) IS NULL AND timestamp != ''{iso.and_clause}",
+            f"UPDATE memories SET timestamp = created_at WHERE datetime(timestamp) IS NULL AND timestamp != '' AND locked = 0{iso.and_clause}",
             iso.params,
         )
     return [{"type": "invalid_timestamp", "count": bad_ts}]
@@ -767,7 +767,8 @@ async def check_timestamp_format_drift(db, agent_id: str, fix: bool) -> list[dic
                 canon = parsed.astimezone(datetime.timezone.utc).isoformat()
                 if canon != ts:
                     await db.execute(
-                        "UPDATE memories SET timestamp = ? WHERE id = ?", (canon, row_id)
+                        "UPDATE memories SET timestamp = ? WHERE id = ? AND locked = 0",
+                        (canon, row_id),
                     )
                     normalized += 1
             except ValueError:
@@ -859,7 +860,7 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
         await db.execute(
             f"""UPDATE memories SET source = '{{"type":"User","id":"","name":""}}'
                 WHERE (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
-                OR json_extract(source, '$.type') IS NULL){iso.and_clause}""",
+                OR json_extract(source, '$.type') IS NULL) AND locked = 0{iso.and_clause}""",
             iso.params,
         )
     return [{"type": "invalid_source_type", "count": bad}]
@@ -906,8 +907,12 @@ class Check:
 HEALTH_CHECKS: list[Check] = [
     Check("memory_annotation", "info", True, check_memory_annotation),
     Check("discord_mention", "info", True, check_discord_mention),
-    Check("duplicate_content", "warn", True, check_duplicate_content),
+    # bug-097: oversized_content runs BEFORE duplicate_content — its truncation
+    # rewrites content and can mint fresh duplicate groups, which the dup check
+    # must still see within the same fix pass (the bug-059 residual re-run
+    # reports them, but ordering lets a single pass converge).
     Check("oversized_content", "warn", True, check_oversized_content),
+    Check("duplicate_content", "warn", True, check_duplicate_content),
     Check("embedding_dimension", "critical", True, check_embedding_dimension),
     Check("null_embedding", "warn", True, check_null_embedding),
     Check("null_episode_embedding", "warn", True, check_null_episode_embedding),
@@ -1005,7 +1010,8 @@ async def deep_anonymous_source(db, agent_id: str, fix: bool) -> dict:
         for item in recoverable:
             new_source = json.dumps({"type": "User", "id": "", "name": item["recovered_name"]})
             await db.execute(
-                "UPDATE memories SET source = ? WHERE id = ?", (new_source, item["id"])
+                "UPDATE memories SET source = ? WHERE id = ? AND locked = 0",
+                (new_source, item["id"]),
             )
         fixed_count = len(recoverable)
     result = {"recoverable": len(recoverable), "unrecoverable": len(unrecoverable)}

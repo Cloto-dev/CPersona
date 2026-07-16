@@ -64,10 +64,13 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _decay() -> None:
-    """Lazily clear the flag if its TTL has elapsed."""
+def _decay(now=None) -> None:
+    """Lazily clear the flag if its TTL has elapsed.
+
+    ``now`` lets status() evaluate the clock exactly once across the decay
+    check and the remaining-TTL subtraction (bug-103)."""
     global _no_persist_until
-    if _no_persist_until is not None and _now() >= _no_persist_until:
+    if _no_persist_until is not None and (now or _now()) >= _no_persist_until:
         _no_persist_until = None
 
 
@@ -121,14 +124,17 @@ def resume() -> dict[str, Any]:
 
 def status() -> dict[str, Any]:
     """Return the current pause state in tool-response shape."""
-    _decay()
+    # bug-103: evaluate the clock once — a second _now() after _decay() could
+    # cross the TTL boundary and report the contradictory paused:true / ttl:0.
+    now = _now()
+    _decay(now)
     if _no_persist_until is None:
         return {
             "paused": False,
             "expires_at": None,
             "ttl_remaining_seconds": None,
         }
-    remaining = (_no_persist_until - _now()).total_seconds()
+    remaining = (_no_persist_until - now).total_seconds()
     return {
         "paused": True,
         "expires_at": _no_persist_until.isoformat(),
@@ -175,6 +181,12 @@ def make_skipped_response(
     body: dict[str, Any] = dict(default_body)
     if "id" in body:
         body["id"] = "no-persist"
+    # bug-104: action-specific id keys must not echo the caller-supplied id —
+    # a truthy deleted_id/updated_id read as success to consumers that branch
+    # on the id field instead of the authoritative `persisted: false`.
+    for key in ("deleted_id", "updated_id", "locked_id", "unlocked_id", "episode_id"):
+        if key in body:
+            body[key] = None
     body["persisted"] = False
     body["dry_run"] = True
     body["reason"] = (
