@@ -765,15 +765,28 @@ async def _apply_recall_scoring(
     if EPISODE_PENALTY_ENABLED:
         episode_boundary_ts = await _get_episode_boundary_ts(db, agent_id)
         if episode_boundary_ts is not None:
+            penalized = False
             for r in results:
                 factor = _episode_boundary_factor(r.get("timestamp"), episode_boundary_ts)
                 if factor < 1.0:
+                    penalized = True
                     if "_cosine" in r:
                         r["_cosine"] = r["_cosine"] * factor
                     if "_rrf_score" in r:
                         r["_rrf_score"] = r["_rrf_score"] * factor
                     if "_rsf_score" in r:
                         r["_rsf_score"] = r["_rsf_score"] * factor
+            # bug-115: with confidence off (the default), the penalised scores never
+            # re-ordered anything — the confidence block below owns the only re-sort,
+            # so under default config the penalty was a ranking no-op (computed, then
+            # ignored by output order and downstream truncation). Re-sort here for
+            # homogeneous fusion-ordered lists. Cascade results (no fusion score on
+            # every row) intentionally keep stage order — bug-018 doctrine.
+            if penalized and not CONFIDENCE_ENABLED:
+                for score_key in ("_rrf_score", "_rsf_score"):
+                    if all(r.get(score_key) is not None for r in results):
+                        results.sort(key=lambda r, k=score_key: r[k], reverse=True)
+                        break
 
     if CONFIDENCE_ENABLED:
         for r in results:

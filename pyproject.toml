@@ -1,6 +1,6 @@
 [project]
 name = "cpersona"
-version = "2.5.0b1"
+version = "2.5.0b2"
 description = "CPersona — Persistent AI memory server with 3-layer hybrid search, confidence scoring, and 28 tools. MIT licensed."
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -60,3 +60,19 @@ packages = ["cpersona"]
 # Anchored patterns: a bare "skills" is a gitignore-style glob and would also
 # match .agents/skills/ (local delegation tooling that must not ship).
 include = ["/cpersona", "/skills", "/README.md", "/LICENSE", "/pyproject.toml"]
+
+[tool.ruff.lint]
+# 2.5.0b2 (bug-114 class prevention): flake8-datetimez bans naive datetime
+# CONSTRUCTION statically — the parse-side naive-as-UTC guard in
+# _parse_timestamp_utc handles values already in the DB; DTZ keeps new naive
+# values from being written by Python code in the first place. The default
+# rule set (E4, E7, E9, F) is preserved via extend-select.
+extend-select = ["DTZ"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately construct naive datetimes (e.g. to exercise the bug-114
+# naive-guard); benchmarks and scripts are operator-run, not server code.
+"test_*.py" = ["DTZ"]
+"conftest.py" = ["DTZ"]
+"benchmarks/*" = ["DTZ"]
+"scripts/*" = ["DTZ"]

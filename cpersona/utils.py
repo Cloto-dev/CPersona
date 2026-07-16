@@ -46,6 +46,12 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     if not exclude_set:
         return False
     normalized = content.strip().lower()
+    # bug-121: '' starts-with-matches every exclude entry (str.startswith('') is
+    # always True in the reversed check), so any exclude filter silently dropped
+    # every legitimately-empty-content memory. Empty content can never be a
+    # dedup hit — nothing meaningful to deduplicate against.
+    if not normalized:
+        return False
     for excl in exclude_set:
         if normalized.startswith(excl) or excl.startswith(normalized):
             return True
@@ -84,6 +90,10 @@ def _format_memory_timestamp(ts_raw: str) -> str | None:
         return None
     try:
         dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            # bug-114 class: naive DB timestamps are UTC (SQLite datetime('now')),
+            # not system-local — anchor before converting to local for display.
+            dt = dt.replace(tzinfo=timezone.utc)
         local_dt = dt.astimezone()
         tz_name = local_dt.strftime("%Z")
         return local_dt.strftime(f"%Y-%m-%d %H:%M {tz_name}")
@@ -92,11 +102,21 @@ def _format_memory_timestamp(ts_raw: str) -> str | None:
 
 
 def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
-    """Parse an ISO-8601 timestamp string into a UTC datetime."""
+    """Parse an ISO-8601 timestamp string into a UTC datetime.
+
+    Naive timestamps are UTC by invariant (bug-114): every DB-written naive
+    value comes from SQLite ``datetime('now')``, which emits UTC without an
+    offset. ``astimezone()`` on a naive datetime would instead assume
+    system-local time and shift the value by the host's UTC offset (on a JST
+    host, 9 hours) — silently corrupting recall-boost decay and the episode
+    boundary factor on every non-UTC deployment.
+    """
     if not ts_raw:
         return None
     try:
         dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
     except (ValueError, OSError):
         return None

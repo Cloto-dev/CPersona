@@ -32,6 +32,16 @@ jobs:
       - name: Ruff
         run: uvx ruff@0.15.21 check .
 
+  verify-issues:
+    # bug-122 (2.5.0b1 audit C02): the issue registry is the regression contract —
+    # 113+ documented patterns pinned to files. It was verified only by hand, so a
+    # refactor could silently strip a fix marker (stale pin) without CI noticing.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify issue registry
+        run: bash scripts/verify-issues.sh
+
   test:
     runs-on: ubuntu-latest
     strategy:
