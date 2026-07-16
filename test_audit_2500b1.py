@@ -334,3 +334,155 @@ async def test_drain_archives_and_deletes_task_atomically(clean_db, monkeypatch)
     eps = (await clean_db.execute_fetchall("SELECT COUNT(*) FROM episodes WHERE agent_id='agent-ok'"))[0][0]
     left = (await clean_db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks"))[0][0]
     assert (eps, left) == (1, 0)
+
+
+# ---------------------------------------------------------------------------
+# bug-091: export is atomic (temp + os.replace) — a mid-export fault must leave
+# the previous backup untouched; import rejects a truncated file against its
+# own header instead of silently restoring a partial corpus.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_export_failure_preserves_previous_backup(clean_db, tmp_path, monkeypatch):
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES ('exp', 'row one', '{}', 't')"
+    )
+    await db.commit()
+
+    out = str(tmp_path / "backup.jsonl")
+    first = await admin_handlers.do_export_memories("exp", out)
+    assert first["ok"] and first["memories"] == 1
+    previous_bytes = open(out, "rb").read()
+
+    import os as _os
+
+    def failing_replace(src, dst):
+        raise OSError("injected replace fault")
+
+    monkeypatch.setattr(admin_handlers.os, "replace", failing_replace)
+    with pytest.raises(OSError, match="injected replace fault"):
+        await admin_handlers.do_export_memories("exp", out)
+    monkeypatch.undo()
+
+    assert open(out, "rb").read() == previous_bytes, "failed export clobbered the previous backup"
+    assert not _os.path.exists(out + ".tmp"), "failed export left a temp file behind"
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_truncated_file(clean_db, tmp_path):
+    db = clean_db
+    for i in range(3):
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) "
+            f"VALUES ('trunc', 'row {i}', '{{}}', 't')"
+        )
+    await db.commit()
+
+    out = str(tmp_path / "full.jsonl")
+    res = await admin_handlers.do_export_memories("trunc", out)
+    assert res["ok"] and res["memories"] == 3
+
+    lines = open(out, encoding="utf-8").read().splitlines()
+    truncated = str(tmp_path / "cut.jsonl")
+    open(truncated, "w", encoding="utf-8").write("\n".join(lines[:-1]) + "\n")
+
+    await db.execute("DELETE FROM memories")
+    await db.commit()
+
+    ri = await admin_handlers.do_import_memories(truncated)
+    assert ri["ok"] is False and "truncated" in ri["error"]
+    left = (await db.execute_fetchall("SELECT COUNT(*) FROM memories"))[0][0]
+    assert left == 0, "a truncated backup was partially restored"
+
+
+# ---------------------------------------------------------------------------
+# bug-092: recall stats + created_at survive an export -> import round-trip.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_roundtrip_preserves_recall_stats_and_created_at(clean_db, tmp_path):
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp, recall_count, last_recalled_at, created_at) "
+        "VALUES ('rt', 'sticky row', '{}', 't', 7, '2026-01-02T00:00:00+00:00', '2020-05-05 05:05:05')"
+    )
+    await db.commit()
+
+    out = str(tmp_path / "rt.jsonl")
+    assert (await admin_handlers.do_export_memories("rt", out))["ok"]
+    await db.execute("DELETE FROM memories")
+    await db.commit()
+
+    ri = await admin_handlers.do_import_memories(out)
+    assert ri["ok"] and ri["imported_memories"] == 1
+    row = (
+        await db.execute_fetchall(
+            "SELECT recall_count, last_recalled_at, created_at FROM memories WHERE agent_id='rt'"
+        )
+    )[0]
+    assert row[0] == 7
+    assert row[1] == "2026-01-02T00:00:00+00:00"
+    assert row[2] == "2020-05-05 05:05:05"
+
+
+# ---------------------------------------------------------------------------
+# bug-094: a JSON-array keywords value is coerced (not an InterfaceError abort),
+# and dry_run previews the same counts as the real run for such a file.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_keywords_array_is_coerced(clean_db, tmp_path):
+    import json as _json
+
+    db = clean_db
+    path = str(tmp_path / "hand.jsonl")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(_json.dumps({"_type": "header", "memory_count": 0, "episode_count": 1}) + "\n")
+        f.write(
+            _json.dumps(
+                {"_type": "episode", "agent_id": "kw", "summary": "hand-authored", "keywords": ["a", "b"]}
+            )
+            + "\n"
+        )
+
+    preview = await admin_handlers.do_import_memories(path, dry_run=True)
+    assert preview["ok"] and preview["imported_episodes"] == 1
+
+    real = await admin_handlers.do_import_memories(path)
+    assert real["ok"] and real["imported_episodes"] == 1, real
+    kw = (await db.execute_fetchall("SELECT keywords FROM episodes WHERE agent_id='kw'"))[0][0]
+    assert kw == "a b"
+
+
+# ---------------------------------------------------------------------------
+# bug-095/096: sidecar persistence failure is surfaced, and a RAISED
+# calibration failure rolls the un-persisted beta override back.
+# ---------------------------------------------------------------------------
+
+
+def test_sidecar_save_failure_returns_false(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        admin_handlers, "_calibration_sidecar_path", lambda: str(tmp_path / "no-such-dir" / "cal.json")
+    )
+    ok = admin_handlers._save_calibration_state(64, "m", 0.5, {})
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_set_recall_precision_rolls_back_beta_on_raise(clean_db, monkeypatch):
+    from cpersona import vector
+
+    vector._agent_betas.pop("beta-agent", None)
+
+    async def raising_calibrate(agent_id=""):
+        raise RuntimeError("calibrate blew up")
+
+    monkeypatch.setattr(admin_handlers, "do_calibrate_threshold", raising_calibrate)
+    res = await admin_handlers.do_set_recall_precision("beta-agent", precision="strict")
+    assert res["ok"] is False and "calibrate blew up" in res["error"]
+    assert "beta-agent" not in vector._agent_betas, "raised calibration leaked the beta override"
