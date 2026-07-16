@@ -267,7 +267,11 @@ async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
     async with transaction() as db:  # bug-042/043: serialise write+commit
-        await db.execute("UPDATE memories SET locked = 1 WHERE id = ?", (memory_id,))
+        cur = await db.execute("UPDATE memories SET locked = 1 WHERE id = ?", (memory_id,))
+    if cur.rowcount == 0:
+        # bug-099: the ownership pre-check and this UPDATE straddle an await — a
+        # concurrent delete in between must not be acknowledged as a lock.
+        return {"error": f"Memory {memory_id} not found"}
     return {"ok": True, "locked_id": memory_id}
 
 
@@ -283,7 +287,10 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
     async with transaction() as db:  # bug-042/043: serialise write+commit
-        await db.execute("UPDATE memories SET locked = 0 WHERE id = ?", (memory_id,))
+        cur = await db.execute("UPDATE memories SET locked = 0 WHERE id = ?", (memory_id,))
+    if cur.rowcount == 0:
+        # bug-099: see do_lock_memory.
+        return {"error": f"Memory {memory_id} not found"}
     return {"ok": True, "unlocked_id": memory_id}
 
 
@@ -692,6 +699,7 @@ async def _calibrate_fused_gate(
     from cpersona.memory_handlers import (
         _apply_recall_scoring,
         _gate_score,
+        _is_episode_result,
         _recall_cascade,
         _recall_rrf,
         _recall_rsf,
@@ -739,8 +747,13 @@ async def _calibrate_fused_gate(
         queries_run += 1
         for r in results:
             rid = r.get("id")
-            if not isinstance(rid, int) or rid <= 0 or rid == qid:
-                continue  # skip the pseudo-query itself and profiles (-1)
+            if not isinstance(rid, int) or rid <= 0:
+                continue  # skip profiles (-1)
+            # bug-101: only skip the pseudo-query MEMORY — an EPISODE that merely
+            # shares its integer id (the AUTOINCREMENT spaces are independent) is
+            # a legitimate sample and was silently dropped from the curve.
+            if rid == qid and not _is_episode_result(r):
+                continue
             score, row_signal = _gate_score(r)
             if score is None or row_signal != signal:
                 continue  # only the active gate signal contributes to the curve
@@ -1447,183 +1460,191 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     # flush this import's partial rows at an await point, and an unexpected fault
     # auto-rolls-back instead of leaving a half-written corpus on the shared
     # connection. dry_run does no writes, so it runs on the read seam.
+    # bug-102: read the input file BEFORE entering the write seam — blocking file
+    # I/O inside transaction() stalls the event loop (and with it every reader)
+    # for as long as the disk takes, while the write lock is held.
+    try:
+        with open(input_path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError as e:
+        return {"error": f"could not read {input_path}: {e}"}
+
     try:
         async with (connection() if dry_run else transaction()) as db:
-            with open(input_path, encoding="utf-8") as f:
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line:
+            for line_num, line in enumerate(lines, 1):
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as e:
+                    errors.append(f"Line {line_num}: invalid JSON: {e}")
+                    continue
+
+                rtype = record.get("_type", "")
+
+                if rtype == "header":
+                    file_header = record
+                    continue
+
+                elif rtype == "memory":
+                    file_memories += 1
+                    aid = target_agent_id or record.get("agent_id", "")
+                    if not aid:
+                        errors.append(f"Line {line_num}: memory missing agent_id")
                         continue
 
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError as e:
-                        errors.append(f"Line {line_num}: invalid JSON: {e}")
+                    content = record.get("content", "")
+                    if not content:
+                        skipped_memories += 1
                         continue
 
-                    rtype = record.get("_type", "")
+                    msg_id = record.get("msg_id", "")
+                    pid = record.get("project_id", "")
+                    chan = record.get("channel", "")
 
-                    if rtype == "header":
-                        file_header = record
-                        continue
-
-                    elif rtype == "memory":
-                        file_memories += 1
-                        aid = target_agent_id or record.get("agent_id", "")
-                        if not aid:
-                            errors.append(f"Line {line_num}: memory missing agent_id")
-                            continue
-
-                        content = record.get("content", "")
-                        if not content:
+                    # bug-044: dedup on the full identity (agent_id, project_id,
+                    # msg_id) — the same axes do_store and the idx_memories_dedup_msg_id
+                    # UNIQUE index use. A project-blind check would drop a legitimately
+                    # distinct cross-project memory (same msg_id, different project_id)
+                    # that INSERT OR IGNORE against the composite index would accept.
+                    if msg_id:
+                        existing = await db.execute_fetchall(
+                            "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
+                            (aid, pid, msg_id),
+                        )
+                        if existing or (dry_run and (aid, pid, msg_id) in seen_msgid):
                             skipped_memories += 1
                             continue
 
-                        msg_id = record.get("msg_id", "")
-                        pid = record.get("project_id", "")
-                        chan = record.get("channel", "")
-
-                        # bug-044: dedup on the full identity (agent_id, project_id,
-                        # msg_id) — the same axes do_store and the idx_memories_dedup_msg_id
-                        # UNIQUE index use. A project-blind check would drop a legitimately
-                        # distinct cross-project memory (same msg_id, different project_id)
-                        # that INSERT OR IGNORE against the composite index would accept.
-                        if msg_id:
-                            existing = await db.execute_fetchall(
-                                "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
-                                (aid, pid, msg_id),
-                            )
-                            if existing or (dry_run and (aid, pid, msg_id) in seen_msgid):
-                                skipped_memories += 1
-                                continue
-
-                        if not dry_run:
-                            source = json.dumps(record.get("source", {}))
-                            timestamp = record.get("timestamp", "")
-                            metadata = json.dumps(record.get("metadata", {}))
-                            # bug-016: carry the project_id / channel γ-axes, the locked
-                            # flag and the embedding through, and INSERT OR IGNORE so a
-                            # collision with the v12 dedup UNIQUE index is a counted skip
-                            # rather than an uncaught IntegrityError that aborts the restore.
-                            # bug-092: created_at and the recall stats ride along too — the
-                            # old INSERT re-stamped every restored row with import time and
-                            # zeroed its recall-frequency boost.
-                            cur = await db.execute(
-                                "INSERT OR IGNORE INTO memories"
-                                " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,"
-                                "  embedding, locked, recall_count, last_recalled_at, created_at)"
-                                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
-                                (
-                                    aid,
-                                    pid,
-                                    chan,
-                                    msg_id,
-                                    content,
-                                    source,
-                                    timestamp,
-                                    metadata,
-                                    _decode_embedding(record),
-                                    1 if record.get("locked") else 0,
-                                    int(record.get("recall_count") or 0),
-                                    record.get("last_recalled_at"),
-                                    record.get("created_at"),
-                                ),
-                            )
-                            if cur.rowcount == 0:
-                                skipped_memories += 1
-                                continue
-                        else:
-                            # bug-056: in dry_run the INSERT OR IGNORE rowcount==0 skip
-                            # never runs, so a content-UNIQUE-index collision (empty msg_id,
-                            # same agent/project/channel/content, or a repeat within the
-                            # file) would be over-counted as an import. Replicate the
-                            # content-uniqueness probe so the previewed imported/skipped
-                            # counts match a real run.
-                            dup = await db.execute_fetchall(
-                                "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-                                (aid, pid, chan, content),
-                            )
-                            if dup or (aid, pid, chan, content) in seen_content:
-                                skipped_memories += 1
-                                continue
-                            # bug-070: record this record's identities so a later duplicate in
-                            # the same file is previewed as skipped, matching the real run.
-                            if msg_id:
-                                seen_msgid.add((aid, pid, msg_id))
-                            seen_content.add((aid, pid, chan, content))
-                        imported_memories += 1
-
-                    elif rtype == "episode":
-                        file_episodes += 1
-                        aid = target_agent_id or record.get("agent_id", "")
-                        if not aid:
-                            errors.append(f"Line {line_num}: episode missing agent_id")
+                    if not dry_run:
+                        source = json.dumps(record.get("source", {}))
+                        timestamp = record.get("timestamp", "")
+                        metadata = json.dumps(record.get("metadata", {}))
+                        # bug-016: carry the project_id / channel γ-axes, the locked
+                        # flag and the embedding through, and INSERT OR IGNORE so a
+                        # collision with the v12 dedup UNIQUE index is a counted skip
+                        # rather than an uncaught IntegrityError that aborts the restore.
+                        # bug-092: created_at and the recall stats ride along too — the
+                        # old INSERT re-stamped every restored row with import time and
+                        # zeroed its recall-frequency boost.
+                        cur = await db.execute(
+                            "INSERT OR IGNORE INTO memories"
+                            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,"
+                            "  embedding, locked, recall_count, last_recalled_at, created_at)"
+                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+                            (
+                                aid,
+                                pid,
+                                chan,
+                                msg_id,
+                                content,
+                                source,
+                                timestamp,
+                                metadata,
+                                _decode_embedding(record),
+                                1 if record.get("locked") else 0,
+                                int(record.get("recall_count") or 0),
+                                record.get("last_recalled_at"),
+                                record.get("created_at"),
+                            ),
+                        )
+                        if cur.rowcount == 0:
+                            skipped_memories += 1
                             continue
-
-                        summary = record.get("summary", "")
-                        if not summary:
-                            continue
-
-                        # bug-094: coerce field types on BOTH paths — a JSON-array
-                        # keywords value (the natural hand-authored format) reached
-                        # db.execute as a Python list and aborted the whole import
-                        # with an InterfaceError, while the same file previewed
-                        # cleanly under dry_run (the binding was write-path only).
-                        keywords = record.get("keywords", "")
-                        if isinstance(keywords, list):
-                            keywords = " ".join(str(k) for k in keywords)
-                        else:
-                            keywords = str(keywords or "")
-                        start_time = record.get("start_time")
-                        end_time = record.get("end_time")
-                        resolved = 1 if record.get("resolved") else 0
-
-                        if not dry_run:
-                            await db.execute(
-                                "INSERT INTO episodes"
-                                " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
-                                "  embedding, created_at)"
-                                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
-                                (
-                                    aid,
-                                    record.get("project_id", ""),
-                                    record.get("channel", ""),
-                                    summary,
-                                    keywords,
-                                    start_time,
-                                    end_time,
-                                    resolved,
-                                    _decode_embedding(record),
-                                    record.get("created_at"),
-                                ),
-                            )
-                        imported_episodes += 1
-
-                    elif rtype == "profile":
-                        aid = target_agent_id or record.get("agent_id", "")
-                        if not aid:
-                            errors.append(f"Line {line_num}: profile missing agent_id")
-                            continue
-
-                        content = record.get("content", "")
-                        if not content:
-                            continue
-
-                        if not dry_run:
-                            user_id = record.get("user_id", "")
-                            await db.execute(
-                                "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
-                                " VALUES (?, ?, ?, ?, datetime('now'))"
-                                " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
-                                "   content = excluded.content,"
-                                "   updated_at = excluded.updated_at",
-                                (aid, record.get("project_id", ""), user_id, content),
-                            )
-                        profile_updated = True
-
                     else:
-                        if rtype:
-                            errors.append(f"Line {line_num}: unknown type '{rtype}'")
+                        # bug-056: in dry_run the INSERT OR IGNORE rowcount==0 skip
+                        # never runs, so a content-UNIQUE-index collision (empty msg_id,
+                        # same agent/project/channel/content, or a repeat within the
+                        # file) would be over-counted as an import. Replicate the
+                        # content-uniqueness probe so the previewed imported/skipped
+                        # counts match a real run.
+                        dup = await db.execute_fetchall(
+                            "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+                            (aid, pid, chan, content),
+                        )
+                        if dup or (aid, pid, chan, content) in seen_content:
+                            skipped_memories += 1
+                            continue
+                        # bug-070: record this record's identities so a later duplicate in
+                        # the same file is previewed as skipped, matching the real run.
+                        if msg_id:
+                            seen_msgid.add((aid, pid, msg_id))
+                        seen_content.add((aid, pid, chan, content))
+                    imported_memories += 1
+
+                elif rtype == "episode":
+                    file_episodes += 1
+                    aid = target_agent_id or record.get("agent_id", "")
+                    if not aid:
+                        errors.append(f"Line {line_num}: episode missing agent_id")
+                        continue
+
+                    summary = record.get("summary", "")
+                    if not summary:
+                        continue
+
+                    # bug-094: coerce field types on BOTH paths — a JSON-array
+                    # keywords value (the natural hand-authored format) reached
+                    # db.execute as a Python list and aborted the whole import
+                    # with an InterfaceError, while the same file previewed
+                    # cleanly under dry_run (the binding was write-path only).
+                    keywords = record.get("keywords", "")
+                    if isinstance(keywords, list):
+                        keywords = " ".join(str(k) for k in keywords)
+                    else:
+                        keywords = str(keywords or "")
+                    start_time = record.get("start_time")
+                    end_time = record.get("end_time")
+                    resolved = 1 if record.get("resolved") else 0
+
+                    if not dry_run:
+                        await db.execute(
+                            "INSERT INTO episodes"
+                            " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
+                            "  embedding, created_at)"
+                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+                            (
+                                aid,
+                                record.get("project_id", ""),
+                                record.get("channel", ""),
+                                summary,
+                                keywords,
+                                start_time,
+                                end_time,
+                                resolved,
+                                _decode_embedding(record),
+                                record.get("created_at"),
+                            ),
+                        )
+                    imported_episodes += 1
+
+                elif rtype == "profile":
+                    aid = target_agent_id or record.get("agent_id", "")
+                    if not aid:
+                        errors.append(f"Line {line_num}: profile missing agent_id")
+                        continue
+
+                    content = record.get("content", "")
+                    if not content:
+                        continue
+
+                    if not dry_run:
+                        user_id = record.get("user_id", "")
+                        await db.execute(
+                            "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
+                            " VALUES (?, ?, ?, ?, datetime('now'))"
+                            " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
+                            "   content = excluded.content,"
+                            "   updated_at = excluded.updated_at",
+                            (aid, record.get("project_id", ""), user_id, content),
+                        )
+                    profile_updated = True
+
+                else:
+                    if rtype:
+                        errors.append(f"Line {line_num}: unknown type '{rtype}'")
 
             # bug-091: validate the file body against its own header. A truncated
             # export (or a torn last line, already collected in `errors`) shows up

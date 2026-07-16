@@ -130,13 +130,16 @@ async def _search_vector(
     Used by Discord multi-user sessions to prevent cross-user contamination.
     """
     # isolation_where composes the axes (Task #180). `iso` (agent + γ project +
-    # knob2 v2 channel) scopes the local scans; `iso_fetch` (no agent — row
-    # identity is already pinned by the remote hit's id) scopes the remote by-id
-    # fetches; `iso_ep_fetch` deliberately omits channel on the remote episode
-    # fetch (deferred bug-075 — see the episode gate note below).
+    # knob2 v2 channel) scopes the local scans; `iso_fetch` scopes the remote
+    # by-id fetches; `iso_ep_fetch` deliberately omits channel on the remote
+    # episode fetch (deferred bug-075 — see the episode gate note below).
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
-    iso_fetch = isolation_where(project_id=project_id, channel=channel)
-    iso_ep_fetch = isolation_where(project_id=project_id)
+    # bug-100: the by-id fetches carry agent_id too. Row identity IS pinned by the
+    # remote hit's id, but ownership then rests entirely on the remote index's
+    # namespace matching DB ownership — a desynced or mis-seeded index would have
+    # surfaced another agent's row. The predicate makes the fetch fail closed.
+    iso_fetch = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    iso_ep_fetch = isolation_where(agent_id=agent_id, project_id=project_id)
 
     src_like = _escape_like_prefix(source_id)
     src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
