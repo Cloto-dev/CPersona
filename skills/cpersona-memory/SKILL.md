@@ -20,7 +20,7 @@ merged by Reciprocal Rank Fusion). It has **zero LLM dependency** — the server
 never calls a model, so there is no API cost or hidden latency from memory
 itself; the calling agent (you) does all summarization.
 
-- **27 tools**, single SQLite file, MIT licensed.
+- **28 tools**, single SQLite file, MIT licensed.
 - Works with Claude Desktop, Claude Code, and any MCP host.
 - Repo: <https://github.com/Cloto-dev/cpersona>
 
@@ -263,11 +263,11 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 
 ---
 
-## Tool reference (27)
+## Tool reference (28)
 
 | Group | Tools |
 |-------|-------|
-| Core read/write | `store`, `recall`, `recall_with_context`, `list_memories`, `list_episodes` |
+| Core read/write | `store`, `recall`, `recall_with_context`, `get_contents`, `list_memories`, `list_episodes` |
 | Episodes / profile | `archive_episode`, `get_profile`, `update_profile` |
 | Editing / protection | `update_memory`, `lock_memory`, `unlock_memory`, `delete_memory`, `delete_episode`, `delete_agent_data` |
 | Recall tuning | `set_recall_precision`, `get_recall_precision`, `calibrate_threshold` |
@@ -302,7 +302,7 @@ Argument details live in each tool's MCP description.
 
 ## Key facts
 
-- 27 tools · Schema v10 (auto-migrating) · ~5,600 LOC Python across focused modules · MIT.
+- 28 tools · Schema v13 (auto-migrating) · ~5,600 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up by copying one file.
 - Benchmarked on LMEB: `jina-v5-nano` (768d) scores NDCG@10 54.14, +47% over the

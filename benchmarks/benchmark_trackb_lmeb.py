@@ -460,7 +460,7 @@ async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], bat
         # UNIQUE(agent_id, project_id, msg_id) — exact-duplicate corpus docs
         # collapse, which is the shipped dedup behaviour. OR IGNORE mirrors
         # do_store; the dropped count is logged below (no silent truncation).
-        cur = await db.executemany(
+        await db.executemany(
             "INSERT OR IGNORE INTO memories (agent_id, msg_id, content, source, timestamp, metadata, embedding) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             rows,

@@ -48,7 +48,11 @@ class _FakeDB:
             return []
         return []
 
+    def __init__(self):
+        self.executed: list[str] = []
+
     async def execute(self, sql, params=()):
+        self.executed.append(" ".join(sql.split()))
         return None
 
     async def commit(self):
@@ -90,6 +94,7 @@ def _patch(monkeypatch):
     # the _recall_rsf patch goes unused, and do_recall returns no messages).
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
     monkeypatch.setattr(M, "RECALL_MODE", "rsf")
+    return fake
 
 
 @pytest.mark.asyncio
@@ -107,9 +112,13 @@ async def test_do_recall_confidence_enabled_returns_messages(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_recall_deep_skips_recall_count_update(monkeypatch):
     """deep=True takes the other recall_counts branch (`if not deep and recall_counts`)."""
-    _patch(monkeypatch)
+    db = _patch(monkeypatch)
     out = await M.do_recall("agent.t", "x", limit=5, deep=True)
     assert "messages" in out and len(out["messages"]) == 2
+    # 2.5.0b1 audit: assert the skip itself — without this the test passed even
+    # if the recall-count UPDATE ran (the fake db swallowed it silently).
+    bumps = [q for q in db.executed if q.startswith("UPDATE memories SET recall_count")]
+    assert bumps == [], f"deep=True still bumped recall_count: {bumps}"
 
 
 # --- degraded-advisory: health state machine (drive health.* directly, no DB) ---

@@ -692,6 +692,10 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
     if bad_source + bad_metadata == 0:
         return []
     if fix:
+        # bug-098: every fixer that rewrites row fields carries locked = 0 —
+        # check_health(fix=true) must never alter a locked memory (same guard on
+        # invalid_timestamp / timestamp_format_drift / invalid_source_type /
+        # deep_anonymous_source).
         await db.execute(
             f"UPDATE memories SET source = '{{}}' WHERE json_valid(source) = 0 AND locked = 0{iso.and_clause}", iso.params
         )
