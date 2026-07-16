@@ -150,10 +150,21 @@ async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
         return []
     if fix:
         for row_id, _ in rows:
-            await db.execute(
-                "UPDATE memories SET content = SUBSTR(content, 1, ?), embedding = NULL WHERE id = ? AND locked = 0",
-                (MAX_CONTENT_LENGTH, row_id),
-            )
+            try:
+                await db.execute(
+                    "UPDATE memories SET content = SUBSTR(content, 1, ?), embedding = NULL WHERE id = ? AND locked = 0",
+                    (MAX_CONTENT_LENGTH, row_id),
+                )
+            except sqlite3.IntegrityError:
+                # bug-113: the truncated body collides with an existing row in the
+                # same (agent, project, channel) bucket via idx_memories_dedup_content
+                # — the oversized row IS a duplicate of that survivor. Delete it
+                # (keep-existing, never-touch-locked, same policy as the dup fixer);
+                # the old bare UPDATE crashed the check here on EVERY fix run,
+                # leaving the row permanently unfixable.
+                await db.execute(
+                    "DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,)
+                )
     return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[1] for r in rows)}]
 
 
