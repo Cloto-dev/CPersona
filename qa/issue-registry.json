@@ -1612,7 +1612,7 @@
     },
     {
       "id": "bug-111",
-      "summary": "(LOW) do_delete_agent_data's no-persist skipped response kept the pre-bug-093 three-count shape while the real response gained deleted_pending_tasks — the schema differed across pause state. Found by the post-fix regression hunt (Anthropic).",
+      "summary": "(LOW) do_delete_agent_data's no-persist skipped response kept the pre-bug-093 three-count shape while the real response gained deleted_pending_tasks — the schema differed across pause state. Found by the post-fix regression hunt (Anthropic); the final fix-verification pass caught the same drift in do_merge_memories' skeleton (missing source/target/strategy/mode echo keys), fixed together.",
       "severity": "LOW",
       "discovered": "2026-07-16T00:00:00Z",
       "version": "2.5.0b1",
@@ -1622,7 +1622,7 @@
       "status": "fixed",
       "category": "response-shape",
       "fixed_in": "2.5.0b1",
-      "fix_note": "The skipped skeleton carries deleted_pending_tasks: 0. Regression: test_audit_2500b1.py::test_no_persist_delete_shape_matches_real_response."
+      "fix_note": "Both skipped skeletons mirror their real response shapes: delete_agent_data carries deleted_pending_tasks: 0 and merge_memories echoes source_agent_id/target_agent_id/strategy/mode. Regression: test_audit_2500b1.py::test_no_persist_delete_shape_matches_real_response (covers both)."
     },
     {
       "id": "bug-112",

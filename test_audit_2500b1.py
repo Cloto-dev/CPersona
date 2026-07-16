@@ -782,6 +782,17 @@ async def test_no_persist_delete_shape_matches_real_response(clean_db):
     missing = {k for k in real if k not in skipped}
     assert not missing, f"no-persist response lost keys: {missing}"
 
+    # Same drift class, merge edition (bug-111 sibling): compare against a real
+    # copy-mode merge's unconditional keys.
+    real_merge = await admin_handlers.do_merge_memories("shape-a", "shape-b")
+    no_persist.pause(ttl_seconds=60)
+    try:
+        skipped_merge = await admin_handlers.do_merge_memories("shape-a", "shape-b")
+    finally:
+        no_persist.resume()
+    missing_merge = {k for k in real_merge if k not in skipped_merge}
+    assert not missing_merge, f"merge no-persist response lost keys: {missing_merge}"
+
 
 # ---------------------------------------------------------------------------
 # bug-112: a report-only boot refuses to create a missing database.
