@@ -160,6 +160,11 @@ def _apply_preview(result: dict) -> dict:
     if cap <= 0:
         return result
     for m in result.get("messages", []):
+        # bug-117: injected rows without a ref ([Profile], external_context echoes)
+        # have no get_contents handle — truncating them would make their full
+        # content permanently unreachable. Only trim rows the caller can expand.
+        if not m.get("ref"):
+            continue
         content = m.get("content")
         if isinstance(content, str) and len(content) > cap:
             m["content_len"] = len(content)
