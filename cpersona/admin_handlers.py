@@ -8,6 +8,7 @@ Accesses `vector._embedding_client` (remote vector index sync) and
 """
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -593,7 +594,7 @@ def _save_calibration_state(
     agent_fused_gates: dict | None = None,
     fused_gate_signal: str | None = None,
     agent_betas: dict | None = None,
-) -> None:
+) -> bool:
     """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
 
     Persistence lets thresholds survive a restart without recomputation, and lets the
@@ -602,6 +603,12 @@ def _save_calibration_state(
     embedding fingerprint, plus the RECALL_MODE it was calibrated for. Per-agent precision
     overrides (knob 3, v2.4.29) are persisted next to the gates they produced so a restore
     keeps each agent's gate and the beta it sits on in sync.
+
+    bug-095: written via temp-file + os.replace — an in-place json.dump killed
+    mid-write corrupted the sidecar for EVERY agent (the loader then returns None
+    and, with auto-calibration off, all agents silently fall back to the global
+    default threshold). Returns False when persistence failed so callers can
+    surface it instead of reporting the calibration as durably saved.
     """
     payload = {
         "embedding_dim": embedding_dim,
@@ -614,11 +621,18 @@ def _save_calibration_state(
         "agent_betas": agent_betas or {},
         "calibrated_at": datetime.now(timezone.utc).isoformat(),
     }
+    path = _calibration_sidecar_path()
+    tmp = path + ".tmp"
     try:
-        with open(_calibration_sidecar_path(), "w") as fh:
+        with open(tmp, "w") as fh:
             json.dump(payload, fh)
+        os.replace(tmp, path)
+        return True
     except OSError as exc:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
         logger.warning("Could not persist calibration sidecar: %s", exc)
+        return False
 
 
 def _load_calibration_state() -> dict | None:
@@ -918,7 +932,10 @@ async def do_calibrate_threshold(
                 vector._fused_gate_signal = fused_stats["signal"]
 
     # Persist for restart survival + embedding-change detection (Tier 4).
-    _save_calibration_state(
+    # bug-095: surface a failed sidecar write — the in-memory calibration applied,
+    # but a restart would restore the PREVIOUS sidecar, so the caller must not be
+    # told the save was durable.
+    sidecar_persisted = _save_calibration_state(
         embedding_dim,
         config.EMBEDDING_MODEL,
         config.VECTOR_MIN_SIMILARITY,
@@ -931,6 +948,7 @@ async def do_calibrate_threshold(
 
     result = {
         "ok": True,
+        "sidecar_persisted": sidecar_persisted,
         "scope": "per_agent" if agent_id else "global",
         "agent_id": agent_id,
         "sampled_embeddings": n,
@@ -1032,7 +1050,14 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
     else:
         vector._agent_betas[agent_id] = resolved_beta
 
-    cal = await do_calibrate_threshold(agent_id=agent_id)
+    # bug-096: the rollback must also cover a RAISED calibration failure (transient
+    # DB lock, numpy fault) — the old ok:False-only path leaked the un-persisted
+    # beta into process memory, and the next routine calibration then persisted a
+    # gate at a beta the caller was told failed to apply.
+    try:
+        cal = await do_calibrate_threshold(agent_id=agent_id)
+    except Exception as exc:
+        cal = {"ok": False, "error": f"calibration raised: {exc}"}
     if not cal.get("ok"):
         if had_override:
             vector._agent_betas[agent_id] = prev_beta
@@ -1258,37 +1283,56 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
+    # Fetch everything first: the header is derived from the fetched rows below,
+    # so it always matches the file body exactly (and the import validates it) —
+    # the old pre-write COUNT queries could disagree with the row SELECTs when a
+    # concurrent store committed in between (torn header, bug-091).
+    async with connection() as db:
+        # bug-016: carry the project_id / channel γ-isolation axes and the
+        # locked flag through export so a restore reconstructs the row in its
+        # real bucket instead of collapsing everything into project ''/channel ''.
+        # bug-092: recall_count / last_recalled_at ride along too — dropping them
+        # reset every restored row's recall-frequency scoring boost.
+        mem_rows = await db.execute_fetchall(
+            "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
+            " project_id, channel, locked, recall_count, last_recalled_at"
+            f" FROM memories{iso.where} ORDER BY id",
+            iso.params,
+        )
+        ep_rows = await db.execute_fetchall(
+            "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
+            " project_id, channel"
+            f" FROM episodes{iso.where} ORDER BY id",
+            iso.params,
+        )
+        prof_rows = await db.execute_fetchall(
+            f"SELECT agent_id, user_id, content, updated_at, project_id FROM profiles{iso.where} ORDER BY agent_id",
+            iso.params,
+        )
+
     exported_memories = 0
     exported_episodes = 0
     exported_profiles = 0
 
-    async with connection() as db:
-        mem_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM memories{iso.where}", iso.params))[0][0]
-        ep_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM episodes{iso.where}", iso.params))[0][0]
-        prof_count = (await db.execute_fetchall(f"SELECT COUNT(*) FROM profiles{iso.where}", iso.params))[0][0]
-
-        with open(output_path, "w", encoding="utf-8") as f:
+    # bug-091: write to a temp file and os.replace() on success. Opening the
+    # destination directly with "w" destroyed the previous backup the moment the
+    # export started, and a mid-export fault (disk full, process kill) left a
+    # truncated JSONL that a later restore accepted as complete.
+    tmp_path = output_path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             header = {
                 "_type": "header",
                 "version": "cpersona-export/1.0",
                 "agent_id": agent_id,
                 "exported_at": datetime.now(timezone.utc).isoformat(),
-                "memory_count": mem_count,
-                "episode_count": ep_count,
-                "has_profile": prof_count > 0,
+                "memory_count": len(mem_rows),
+                "episode_count": len(ep_rows),
+                "has_profile": len(prof_rows) > 0,
             }
             f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
-            # bug-016: carry the project_id / channel γ-isolation axes and the
-            # locked flag through export so a restore reconstructs the row in its
-            # real bucket instead of collapsing everything into project ''/channel ''.
-            rows = await db.execute_fetchall(
-                "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
-                " project_id, channel, locked"
-                f" FROM memories{iso.where} ORDER BY id",
-                iso.params,
-            )
-            for row in rows:
+            for row in mem_rows:
                 record: dict = {
                     "_type": "memory",
                     "id": row[0],
@@ -1302,19 +1346,15 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                     "project_id": row[9],
                     "channel": row[10],
                     "locked": int(row[11]) if row[11] else 0,
+                    "recall_count": int(row[12]) if row[12] else 0,
+                    "last_recalled_at": row[13],
                 }
                 if include_embeddings and row[7]:
                     record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
                 exported_memories += 1
 
-            rows = await db.execute_fetchall(
-                "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
-                " project_id, channel"
-                f" FROM episodes{iso.where} ORDER BY id",
-                iso.params,
-            )
-            for row in rows:
+            for row in ep_rows:
                 record = {
                     "_type": "episode",
                     "id": row[0],
@@ -1333,11 +1373,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
                 exported_episodes += 1
 
-            rows = await db.execute_fetchall(
-                f"SELECT agent_id, user_id, content, updated_at, project_id FROM profiles{iso.where} ORDER BY agent_id",
-                iso.params,
-            )
-            for row in rows:
+            for row in prof_rows:
                 record = {
                     "_type": "profile",
                     "agent_id": row[0],
@@ -1348,6 +1384,11 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 }
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
                 exported_profiles += 1
+        os.replace(tmp_path, output_path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp_path)
+        raise
 
     return {
         "ok": True,
@@ -1386,6 +1427,12 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     imported_episodes = 0
     profile_updated = False
     errors: list[str] = []
+    # bug-091: track the header and the per-type record counts actually present in
+    # the file, so a truncated backup (mid-export crash, partial copy) is rejected
+    # instead of silently restoring a partial corpus with ok:true.
+    file_header: dict | None = None
+    file_memories = 0
+    file_episodes = 0
     # bug-070: dry_run performs no INSERT OR IGNORE, so it cannot collide against a row
     # it "inserted" earlier IN THE SAME FILE — a duplicate later in the file was
     # over-counted as imported (a real run sees its own uncommitted row on the shared
@@ -1417,9 +1464,11 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                     rtype = record.get("_type", "")
 
                     if rtype == "header":
+                        file_header = record
                         continue
 
                     elif rtype == "memory":
+                        file_memories += 1
                         aid = target_agent_id or record.get("agent_id", "")
                         if not aid:
                             errors.append(f"Line {line_num}: memory missing agent_id")
@@ -1456,10 +1505,14 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                             # flag and the embedding through, and INSERT OR IGNORE so a
                             # collision with the v12 dedup UNIQUE index is a counted skip
                             # rather than an uncaught IntegrityError that aborts the restore.
+                            # bug-092: created_at and the recall stats ride along too — the
+                            # old INSERT re-stamped every restored row with import time and
+                            # zeroed its recall-frequency boost.
                             cur = await db.execute(
                                 "INSERT OR IGNORE INTO memories"
-                                " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked)"
-                                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,"
+                                "  embedding, locked, recall_count, last_recalled_at, created_at)"
+                                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
                                 (
                                     aid,
                                     pid,
@@ -1471,6 +1524,9 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                                     metadata,
                                     _decode_embedding(record),
                                     1 if record.get("locked") else 0,
+                                    int(record.get("recall_count") or 0),
+                                    record.get("last_recalled_at"),
+                                    record.get("created_at"),
                                 ),
                             )
                             if cur.rowcount == 0:
@@ -1498,6 +1554,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                         imported_memories += 1
 
                     elif rtype == "episode":
+                        file_episodes += 1
                         aid = target_agent_id or record.get("agent_id", "")
                         if not aid:
                             errors.append(f"Line {line_num}: episode missing agent_id")
@@ -1507,15 +1564,26 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                         if not summary:
                             continue
 
+                        # bug-094: coerce field types on BOTH paths — a JSON-array
+                        # keywords value (the natural hand-authored format) reached
+                        # db.execute as a Python list and aborted the whole import
+                        # with an InterfaceError, while the same file previewed
+                        # cleanly under dry_run (the binding was write-path only).
+                        keywords = record.get("keywords", "")
+                        if isinstance(keywords, list):
+                            keywords = " ".join(str(k) for k in keywords)
+                        else:
+                            keywords = str(keywords or "")
+                        start_time = record.get("start_time")
+                        end_time = record.get("end_time")
+                        resolved = 1 if record.get("resolved") else 0
+
                         if not dry_run:
-                            keywords = record.get("keywords", "")
-                            start_time = record.get("start_time")
-                            end_time = record.get("end_time")
-                            resolved = 1 if record.get("resolved") else 0
                             await db.execute(
                                 "INSERT INTO episodes"
-                                " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
-                                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
+                                "  embedding, created_at)"
+                                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
                                 (
                                     aid,
                                     record.get("project_id", ""),
@@ -1526,6 +1594,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                                     end_time,
                                     resolved,
                                     _decode_embedding(record),
+                                    record.get("created_at"),
                                 ),
                             )
                         imported_episodes += 1
@@ -1555,6 +1624,22 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                     else:
                         if rtype:
                             errors.append(f"Line {line_num}: unknown type '{rtype}'")
+
+            # bug-091: validate the file body against its own header. A truncated
+            # export (or a torn last line, already collected in `errors`) shows up
+            # as a count shortfall — raise INSIDE the transaction scope so a real
+            # run rolls back everything instead of committing a partial restore.
+            if file_header is not None:
+                declared_mem = file_header.get("memory_count")
+                declared_ep = file_header.get("episode_count")
+                if (isinstance(declared_mem, int) and declared_mem != file_memories) or (
+                    isinstance(declared_ep, int) and declared_ep != file_episodes
+                ):
+                    raise ValueError(
+                        f"file truncated or inconsistent: header declares "
+                        f"{declared_mem} memories / {declared_ep} episodes, "
+                        f"file contains {file_memories} / {file_episodes}"
+                    )
 
     except Exception as e:
         return {
