@@ -1199,9 +1199,13 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
     global_result = await do_calibrate_threshold(agent_id="")
     agents = []
     if global_result.get("ok"):
+        # Deliberate corpus-wide agent enumeration (typed no-filter helper —
+        # the structural gate's sanctioned spelling for a global scan).
+        iso_all = isolation_where(agent_id=None)
         async with connection() as db:
             agent_rows = await db.execute_fetchall(
-                "SELECT DISTINCT agent_id FROM memories WHERE embedding IS NOT NULL"
+                f"SELECT DISTINCT agent_id FROM memories WHERE embedding IS NOT NULL{iso_all.and_clause}",
+                iso_all.params,
             )
         for (aid,) in agent_rows:
             r = await do_calibrate_threshold(agent_id=aid)

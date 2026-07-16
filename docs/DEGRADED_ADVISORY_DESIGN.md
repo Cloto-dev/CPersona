@@ -1,7 +1,7 @@
 # Dense-Degraded Runtime Detection + Advisory Context Injection
 
 **Status**: design (Route B accepted for the 2.4.x line; Route A planned for 2.5.0)
-**Decision**: 博士 + claude-code, 2026-06-28 (handoff: CPersona memory `id 1165`, `agent_id=claude-web`, `project_id=cloto`)
+**Decision**: project owner + claude-code, 2026-06-28 (handoff: CPersona memory `id 1165`, `agent_id=claude-web`, `project_id=cloto`)
 **Scope**: surgical patch — no SCHEMA change, no new tool. A new response field + a process-level health state + one env var.
 
 ---

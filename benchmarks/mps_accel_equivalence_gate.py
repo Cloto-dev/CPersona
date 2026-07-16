@@ -136,7 +136,6 @@ async def gate(args):
                                          show_progress_bar=False)
                 emb_client.preload(query_texts, q_embs)
 
-                worst = {b: 0.0 for b in backends}
                 for qi, q in enumerate(queries_data):
                     ref = await original(db, AGENT_ID, q["text"], corpus_size)
                     for b in backends:
