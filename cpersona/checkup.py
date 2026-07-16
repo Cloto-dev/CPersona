@@ -73,10 +73,15 @@ async def _run(args) -> int:
         if args.agent:
             agents = [args.agent]
         else:
+            from cpersona.isolation import isolation_where
+
+            iso_all = isolation_where(agent_id=None)  # deliberate corpus-wide scan
             async with connection() as db:
                 agents = [
                     r[0]
-                    for r in await db.execute_fetchall("SELECT DISTINCT agent_id FROM memories")
+                    for r in await db.execute_fetchall(
+                        f"SELECT DISTINCT agent_id FROM memories{iso_all.where}", iso_all.params
+                    )
                 ]
         report["deep"] = {}
         for agent in agents:

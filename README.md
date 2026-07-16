@@ -20,7 +20,7 @@ Single SQLite file. 28 tools. Zero LLM dependency.
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
-> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.39, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is an internal stabilization line (**Experimental** pre-releases; the DB schema and MCP tool contract are preserved), and feature development resumes in 2.6. Tiers and support windows: [Release Channels & Support](#release-channels--support).
+> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.40, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is an internal stabilization line (**Experimental** pre-releases; the DB schema and MCP tool contract are preserved), and feature development resumes in 2.6. Tiers and support windows: [Release Channels & Support](#release-channels--support).
 
 ## The Problem
 
@@ -62,6 +62,22 @@ POST /embed
 Request:  { "texts": ["string", ...] }        # non-empty array, max 100 per batch
 Response: { "embeddings": [[float, ...], ...], "dimensions": <int> }
 ```
+
+Contract requirements (2.5.0b1 clarifications):
+
+- **Embeddings MUST be L2-normalized.** cpersona computes similarity as a raw
+  dot product; a backend returning unnormalized vectors biases ranking by
+  vector magnitude. Every supported backend (the client's `api` mode and all
+  CEmbedding providers) already normalizes.
+- **The contract is role-less** — queries and documents are embedded through
+  the same call. Prompt-prefix models (e5-style, prompted bge) will
+  underperform behind it; symmetric or retrieval-merged models (jina-v5-nano,
+  bge-m3, MiniLM) are the intended fit.
+- **Swapping models behind the same URL:** cpersona fingerprints the backend
+  by embedding *dimension* only (the contract carries no model identity). A
+  same-dimension model swap silently invalidates the stored corpus — after
+  one, re-embed (`check_health(fix=true)` repairs NULLed rows) and
+  `calibrate_threshold`.
 
 The reference server is [CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) — it runs jina-v5-nano on-device (CPU) and exposes exactly this endpoint:
 

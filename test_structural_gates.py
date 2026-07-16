@@ -125,10 +125,11 @@ def _holds_transaction(node):
         return False
     for item in node.items:
         for n in ast.walk(item.context_expr):
-            if (
-                isinstance(n, ast.Call)
-                and isinstance(n.func, ast.Name)
-                and n.func.id == "transaction"
+            if isinstance(n, ast.Call) and (
+                (isinstance(n.func, ast.Name) and n.func.id == "transaction")
+                # 2.5.0b1 audit: module-prefixed calls (database.transaction())
+                # are ast.Attribute — a Name-only match silently ungated them.
+                or (isinstance(n.func, ast.Attribute) and n.func.attr == "transaction")
             ):
                 return True
     return False
@@ -322,8 +323,17 @@ def _agent_dml_violations(tree):
         targets = _dml_targets_agent_scoped(up)
         if not targets:
             continue
-        if "AGENT_ID" in up:                      # (1) static predicate visible
-            continue
+        # (1) static predicate visible — 2.5.0b1 audit: for UPDATE/DELETE/SELECT
+        # the mention must sit in the WHERE clause, so a column-list / SET-clause
+        # agent_id can no longer clear an unscoped statement. INSERTs have no
+        # WHERE: agent_id in the column list IS the scoping there.
+        if up.lstrip().startswith("INSERT"):
+            if "AGENT_ID" in up:
+                continue
+        else:
+            where_idx = up.find("WHERE")
+            if where_idx >= 0 and "AGENT_ID" in up[where_idx:]:
+                continue
         if _is_id_keyed(up):                       # (2) provenance-safe by primary key
             continue
         if _uses_isolation_helper(node, spans):    # (3) predicate from isolation_where()

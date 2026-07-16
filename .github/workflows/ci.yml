@@ -19,6 +19,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    # 2.5.0b1: the pre-b1 audit found lint drift that had accumulated invisibly
+    # because CI ran pytest only — ruff is now a gate alongside the suite.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Ruff
+        run: uvx ruff@0.15.21 check .
+
   test:
     runs-on: ubuntu-latest
     strategy:

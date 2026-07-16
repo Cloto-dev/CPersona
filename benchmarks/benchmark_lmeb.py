@@ -23,7 +23,6 @@ import logging
 import os
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 
@@ -36,7 +35,7 @@ sys.path.insert(0, LMEB_DIR)
 os.environ["LOCAL_DATA_PREFIX"] = os.path.join(LMEB_DIR, "eval_data")
 
 # Register LMEB custom tasks before importing mteb tasks
-import src  # noqa: E402 — registers tasks into _TASKS_REGISTRY
+import src  # noqa: E402, F401 — side-effect import: registers tasks into _TASKS_REGISTRY
 import mteb  # noqa: E402
 
 logging.basicConfig(
@@ -181,7 +180,7 @@ def summarize_results(output_dir: str, task_names: list[str], metric: str = "mai
     if type_means:
         print(f"Mean (Type): {sum(type_means) / len(type_means) * 100:.2f}")
 
-    print(f"\nPer-task scores:")
+    print("\nPer-task scores:")
     for name in task_names:
         if name in results:
             print(f"  {name}: {results[name] * 100:.2f}")

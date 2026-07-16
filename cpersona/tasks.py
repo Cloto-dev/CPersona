@@ -177,10 +177,15 @@ class MemoryTaskQueue:
                     await asyncio.sleep(TASK_RETRY_DELAY)
 
     async def _fetch_next(self) -> tuple | None:
+        # The queue is a global FIFO by design — typed no-filter helper (the
+        # structural gate's sanctioned spelling for a deliberate global scan).
+        iso_all = isolation_where(agent_id=None)
         while True:
             async with connection() as db:
                 rows = await db.execute_fetchall(
-                    "SELECT id, task_type, agent_id, payload, retries FROM pending_memory_tasks ORDER BY id ASC LIMIT 1"
+                    f"SELECT id, task_type, agent_id, payload, retries FROM pending_memory_tasks{iso_all.where}"
+                    " ORDER BY id ASC LIMIT 1",
+                    iso_all.params,
                 )
             if not rows:
                 return None
