@@ -2,14 +2,16 @@
 
 Covers the architectural fixes landed for the pre-b1 comprehensive audit:
 read/write connection separation (bug-086), init-failure memoisation (bug-087),
-and the read-seam snapshot-unpinning guarantee that backs both.
+atomic merge mode='move' (bug-088), single-transaction queue drain (bug-089),
+handler-failure routing in the drain (bug-090), and the agent-wipe queue purge
+(bug-093).
 """
 import asyncio
 
 import pytest
 import pytest_asyncio
 
-from cpersona import database
+from cpersona import admin_handlers, database, memory_handlers, tasks
 from cpersona.database import connection, get_db, transaction
 
 
@@ -177,3 +179,158 @@ async def test_get_db_is_not_memoized_on_failed_init(tmp_path, monkeypatch):
             await database._db.close()
         await _reset_read_seam()
         database._db = saved_db
+
+
+# ---------------------------------------------------------------------------
+# bug-088: merge mode='move' runs the source wipe INSIDE the merge transaction.
+# A fault anywhere in the unit (including the delete) must roll back the copy
+# too — as two transactions, the committed copy survived a failed delete and
+# the response contradicted the DB state.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_merge_move_is_one_atomic_unit(clean_db, monkeypatch):
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES ('src', 'movable row', '{}', 't')"
+    )
+    await db.commit()
+
+    async def failing_delete(db_, agent_id):
+        raise RuntimeError("injected delete fault")
+
+    monkeypatch.setattr(admin_handlers, "_delete_agent_rows", failing_delete)
+    res = await admin_handlers.do_merge_memories("src", "dst", mode="move")
+    assert res["ok"] is False and "injected delete fault" in res["error"]
+
+    # The copy was rolled back together with the failed delete: dst empty, src intact.
+    dst = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id='dst'"))[0][0]
+    src = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id='src'"))[0][0]
+    assert (dst, src) == (0, 1), "merge move committed a partial copy despite the delete fault"
+
+
+@pytest.mark.asyncio
+async def test_merge_move_deletes_source_in_same_call(clean_db):
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES ('src2', 'row to move', '{}', 't')"
+    )
+    await db.commit()
+
+    res = await admin_handlers.do_merge_memories("src2", "dst2", mode="move")
+    assert res["ok"] is True and res["merged_memories"] == 1
+    assert res["source_deleted"]["deleted_memories"] == 1
+
+    dst = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id='dst2'"))[0][0]
+    src = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id='src2'"))[0][0]
+    assert (dst, src) == (1, 0)
+
+
+# ---------------------------------------------------------------------------
+# bug-093: wiping an agent also clears its crash-recovery queue rows, so the
+# drain cannot resurrect data for a deleted agent.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_data_purges_pending_tasks(clean_db):
+    db = clean_db
+    await db.execute(
+        "INSERT INTO pending_memory_tasks (task_type, agent_id, payload) "
+        "VALUES ('archive_episode', 'wipe-me', '[]')"
+    )
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES ('wipe-me', 'row', '{}', 't')"
+    )
+    await db.commit()
+
+    res = await admin_handlers.do_delete_agent_data("wipe-me")
+    assert res["ok"] is True
+    assert res["deleted_pending_tasks"] == 1
+    left = (
+        await db.execute_fetchall(
+            "SELECT COUNT(*) FROM pending_memory_tasks WHERE agent_id='wipe-me'"
+        )
+    )[0][0]
+    assert left == 0
+
+
+# ---------------------------------------------------------------------------
+# bug-090: a handler-returned failure dict is a failure — the drain must retry
+# (and eventually discard), never delete-and-log-completed on the first pass.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_drain_treats_failure_dict_as_failure(clean_db, monkeypatch):
+    monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
+    calls = {"n": 0}
+
+    async def failing_update_profile(agent_id, payload):
+        calls["n"] += 1
+        return {"ok": False, "error": "synthetic failure"}
+
+    monkeypatch.setattr(admin_handlers, "do_update_profile", failing_update_profile)
+
+    queue = tasks.MemoryTaskQueue()
+    await queue.enqueue("update_profile", "agent-fd", [{"content": "x"}])
+    queue._running = True
+    await queue._drain(admin_handlers, memory_handlers)
+    queue._running = False
+
+    # Retried up to the cap instead of being swallowed as a success on call 1.
+    assert calls["n"] >= 2, "failure dict was treated as success (no retry)"
+    left = (await clean_db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks"))[0][0]
+    assert left == 0  # discarded after max retries — visibly, via the error path
+
+
+# ---------------------------------------------------------------------------
+# bug-089: the drain's episode INSERT and its task-row delete are one
+# transaction; a legacy summary-less payload fails visibly (retry → discard)
+# instead of logging "completed" while writing nothing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_drain_archive_is_single_transaction(clean_db, monkeypatch):
+    monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
+    queue = tasks.MemoryTaskQueue()
+    await queue.enqueue(
+        "archive_episode", "agent-at", [{"content": "hi", "timestamp": "t"}]
+    )
+
+    # Fault the insert: the task row must survive the failed attempt (same
+    # transaction as the insert), then be discarded after max retries.
+    async def failing_insert(db, row):
+        raise RuntimeError("injected insert fault")
+
+    monkeypatch.setattr(memory_handlers, "_insert_episode_row", failing_insert)
+    queue._running = True
+    await queue._drain(admin_handlers, memory_handlers)
+    queue._running = False
+
+    eps = (await clean_db.execute_fetchall("SELECT COUNT(*) FROM episodes"))[0][0]
+    assert eps == 0, "a failed drain attempt leaked a committed episode"
+
+
+@pytest.mark.asyncio
+async def test_drain_archives_and_deletes_task_atomically(clean_db, monkeypatch):
+    monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
+
+    async def prepared(agent_id, history, summary="", *a, **kw):
+        return (agent_id, "", "drained summary", "", None, None, None, 0, "")
+
+    monkeypatch.setattr(memory_handlers, "_prepare_episode_row", prepared)
+    queue = tasks.MemoryTaskQueue()
+    await queue.enqueue("archive_episode", "agent-ok", [{"content": "hi"}])
+    queue._running = True
+    await queue._drain(admin_handlers, memory_handlers)
+    queue._running = False
+
+    eps = (await clean_db.execute_fetchall("SELECT COUNT(*) FROM episodes WHERE agent_id='agent-ok'"))[0][0]
+    left = (await clean_db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks"))[0][0]
+    assert (eps, left) == (1, 0)
