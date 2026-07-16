@@ -1,4 +1,4 @@
-# Release Lifecycle Standard (v1.1)
+# Release Lifecycle Standard (v1.2)
 
 A three-tier release lifecycle and support standard for Cloto-family
 projects. This document is the **specification**; a repository adopting it
@@ -65,6 +65,14 @@ X.Y.0aN → X.Y.0bN (→ X.Y.0rcN if needed) → X.Y.0     [Experimental]
   resolves to a pre-release (pip excludes pre-releases without `--pre`;
   other ecosystems use pre-release flags / dist-tags to the same effect).
 - The `rc` stage is optional; alpha → beta → final is the default ladder.
+- **The ladder is risk-triggered, not universal.** A release MUST go through the
+  pre-release ladder when it contains a change that is not rollback-safe: a
+  database schema or data migration, a break in the public tool/API contract,
+  or a change to default behavior. An **additive, behavior-preserving** release
+  MAY skip the ladder and release direct-to-final (consistent with the
+  installer opt-in property in §2.1 and the distribution mapping in §4 — a
+  direct final simply becomes Current's newest release). When in doubt, use
+  the ladder.
 
 ### 2.2 Release gate (entry into Current)
 
@@ -100,7 +108,25 @@ EOL.
 No further fixes. Post-EOL security fixes are at the maintainer's sole
 discretion and must not be relied upon.
 
-### 2.6 Initial state (no certified Stable line)
+### 2.6 Feature releases within a line
+
+The lifecycle diagram in §2 shows the birth of a line (`X.Y.0`); it is not the
+end of the line's development. A line in **Current** MAY take feature releases
+(`X.Y.1`, `X.Y.2`, …) in addition to bug-fix releases:
+
+- Each in-line release chooses its own path by the risk trigger in §2.1:
+  additive feature releases may go direct-to-final; rollback-unsafe changes
+  belong to the **next** line (`X.(Y+1).0`), not to an in-line release.
+- Certification (§2.3) assesses the line **as of its newest release**. A
+  feature release shipped during the soak therefore effectively restarts the
+  soak assessment: the maintainer certifies the line including that release,
+  or not at all. Shipping features into a line under active certification
+  review is a deliberate trade-off, not a loophole.
+- A **Stable** line takes no feature releases — its fix policy (§1) already
+  restricts it to critical, data-loss, and security fixes. Features always
+  target the Current (or next Experimental) line.
+
+### 2.7 Initial state (no certified Stable line)
 
 Before a repository's **first** certification event, no Stable line exists.
 In that state:
@@ -169,13 +195,18 @@ clean cycle passes.
 
 | Repository | Standard version | Adopted | Notes |
 | --- | --- | --- | --- |
-| cpersona | v1.0 | 2026-07-09 | Pilot / reference implementation (policy operation). |
+| cpersona | v1.2 | 2026-07-09 | Pilot / reference implementation (policy operation). Tracks the newest standard version (canonical home). |
 | ClotoCore | v1.1 | 2026-07-12 | Second pilot / reference implementation (structural enforcement via update-channel + signed-manifest pipeline, `docs/RELEASE_PIPELINE_DESIGN.md`). |
 
 ## 8. Changelog
 
+- **v1.2 (2026-07-16)** — Risk-triggered pre-release ladder criteria (§2.1)
+  and in-line feature-release rule (§2.6), surfaced by the 2.5.1 planning
+  discussion (server-served operating context, an additive feature targeting a
+  line whose `X.Y.0` is still in Experimental) — both §6 "standard defects"
+  fixed per its own procedure. Former §2.6 renumbered to §2.7.
 - **v1.1 (2026-07-12)** — Initial-state rule for repositories with no
-  certified Stable line (§2.6, surfaced by the ClotoCore adoption — a §6
+  certified Stable line (now §2.7, surfaced by the ClotoCore adoption — a §6
   "standard defect" fixed per its own procedure); update-manifest/feed row
   in the distribution mapping (§4); ClotoCore registered as second pilot
   (structural-enforcement reference).
