@@ -11,7 +11,7 @@ Single SQLite file. 28 tools. Zero LLM dependency.
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
 [![Tests](https://img.shields.io/badge/tests-275-brightgreen)]()
 
-[Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/clotodev/books/claude-memory-mcp-server)
+[Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
 
 </div>
 
@@ -31,6 +31,15 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 ## Quick Start
 
 **Prerequisites:** Python 3.11+ (and [uv](https://docs.astral.sh/uv/) for the one-command path).
+
+> **Claude Code? Let the agent do the setup.** This repo ships an [Agent Skill](skills/cpersona-memory/SKILL.md) that walks Claude through the whole installation — cpersona, the embedding server, MCP registration, and a store/recall smoke test — and, more importantly, teaches it *when* to store, recall, and archive memories afterwards:
+>
+> ```bash
+> git clone --depth 1 https://github.com/Cloto-dev/cpersona.git /tmp/cpersona
+> mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claude/skills/
+> ```
+>
+> Then just tell Claude Code: *"Set up CPersona — I want persistent memory."* The manual steps below are for Claude Desktop users and anyone who prefers to configure things by hand.
 
 ### 1. Install cpersona
 
@@ -362,7 +371,7 @@ reports: [SECURITY.md](SECURITY.md).
 
 ## Learn More
 
-- [Zenn Book (Japanese)](https://zenn.dev/clotodev/books/claude-memory-mcp-server) — Full design walkthrough and setup guide
+- [Zenn Book (Japanese)](https://zenn.dev/cloto/books/claude-memory-mcp-server) — Full design walkthrough and setup guide
 - [Memory System Design](https://github.com/Cloto-dev/ClotoCore/blob/main/docs/CPERSONA_MEMORY_DESIGN.md) — Technical specification
 - [ClotoCore](https://github.com/Cloto-dev/ClotoCore) — The AI agent platform
 
