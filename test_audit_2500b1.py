@@ -600,3 +600,78 @@ async def test_skip_boot_migrations_writes_nothing(tmp_path, monkeypatch):
             await database._db.close()
         await _reset_read_seam()
         database._db = saved_db
+
+
+# ---------------------------------------------------------------------------
+# bug-106: write dedup checks the γ-visible scope, matching read semantics.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_store_dedup_is_gamma_visible(clean_db):
+    msg = {"content": "gamma dedup sentinel", "source": {}, "timestamp": "t"}
+
+    first = await memory_handlers.do_store("gd", dict(msg))
+    assert first.get("ok") and not first.get("skipped")
+
+    # A bucket write collides with the identical global-pool row: recall('X')
+    # would have surfaced both copies.
+    bucket = await memory_handlers.do_store("gd", dict(msg), project_id="X")
+    assert bucket.get("skipped") is True, bucket
+
+    # Sibling buckets stay legitimately distinct (bug-044 precedent)…
+    y = await memory_handlers.do_store("gd", {**msg, "content": "y-only row"}, project_id="Y")
+    assert y.get("ok") and not y.get("skipped")
+    x = await memory_handlers.do_store("gd", {**msg, "content": "y-only row"}, project_id="X")
+    assert x.get("ok") and not x.get("skipped"), "sibling-bucket write was wrongly deduped"
+
+    # …and a global write does not dedup against a bucket-only copy (that would
+    # hide the row from every other bucket).
+    g = await memory_handlers.do_store("gd", {**msg, "content": "y-only row"})
+    assert g.get("ok") and not g.get("skipped"), "global write was deduped against a bucket copy"
+
+
+@pytest.mark.asyncio
+async def test_store_dedup_gamma_channel_axis(clean_db):
+    msg = {"content": "channel dedup sentinel", "source": {}, "timestamp": "t"}
+    first = await memory_handlers.do_store("gc", dict(msg))  # shared channel ''
+    assert first.get("ok") and not first.get("skipped")
+    scoped = await memory_handlers.do_store("gc", dict(msg), channel="discord")
+    assert scoped.get("skipped") is True, "channel write missed the identical shared-channel row"
+
+
+# ---------------------------------------------------------------------------
+# bug-107: the confidence temporal span is computed over the recall's own
+# isolation scope, not the whole agent.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_temporal_span_is_scoped_to_recall_axes(clean_db, monkeypatch):
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp, channel) "
+        "VALUES ('ts', 'ancient', '{}', '2020-01-01T00:00:00+00:00', 'a')"
+    )
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp, channel) "
+        "VALUES ('ts', 'recent one', '{}', '2026-01-01T00:00:00+00:00', 'b')"
+    )
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp, channel) "
+        "VALUES ('ts', 'recent two', '{}', '2026-01-02T00:00:00+00:00', 'b')"
+    )
+    await db.commit()
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+
+    row = {"id": 1, "content": "recent one", "source": "{}", "timestamp": "2026-01-01T00:00:00+00:00"}
+    _, scoped_hours, _ = await memory_handlers._apply_recall_scoring(
+        db, "ts", [dict(row)], False, channel="b"
+    )
+    _, agentwide_hours, _ = await memory_handlers._apply_recall_scoring(
+        db, "ts", [dict(row)], False
+    )
+    assert scoped_hours < agentwide_hours, (
+        f"scoped span {scoped_hours}h not tighter than agent-wide {agentwide_hours}h"
+    )
+    assert scoped_hours <= 25  # the 'b'∪shared window spans one day

@@ -49,3 +49,14 @@ build-backend = "hatchling.build"
 # scripts/sync-vendored-mcp-common.sh). The root server.py is a shim for the
 # git-clone / marketplace path and is deliberately excluded from the wheel.
 packages = ["cpersona"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Ship the agent skills with the PyPI artifact (2.5.0b1): pip users previously
+# had no way to obtain skills/ without cloning the repo. Placed under the
+# package so it imports nothing and pollutes no top-level namespace.
+"skills" = "cpersona/skills"
+
+[tool.hatch.build.targets.sdist]
+# Anchored patterns: a bare "skills" is a gitignore-style glob and would also
+# match .agents/skills/ (local delegation tooling that must not ship).
+include = ["/cpersona", "/skills", "/README.md", "/LICENSE", "/pyproject.toml"]
