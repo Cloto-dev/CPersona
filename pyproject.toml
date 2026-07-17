@@ -35,6 +35,10 @@ timeout_method = "signal"
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra"
+# The suite lives in tests/. Pinning collection there keeps a bare `pytest` from
+# wandering into scratch dirs or vendored code (a stray root-level file with a
+# stdin read once aborted collection of the whole suite).
+testpaths = ["tests"]
 
 [project.scripts]
 cpersona = "cpersona.server:run"
@@ -72,7 +76,6 @@ extend-select = ["DTZ"]
 [tool.ruff.lint.per-file-ignores]
 # Tests deliberately construct naive datetimes (e.g. to exercise the bug-114
 # naive-guard); benchmarks and scripts are operator-run, not server code.
-"test_*.py" = ["DTZ"]
-"conftest.py" = ["DTZ"]
+"tests/*" = ["DTZ"]
 "benchmarks/*" = ["DTZ"]
 "scripts/*" = ["DTZ"]
