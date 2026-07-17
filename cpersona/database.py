@@ -585,7 +585,11 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
     # failure sets the pending flag so the next boot retries regardless of table
     # presence; success clears it. Still non-fatal so a hiccup never blocks startup
     # (recall degrades to vector/keyword-less RRF, same as a disabled index).
-    if FTS_ENABLED and (fts_created_this_boot or fts_backfill_pending):
+    # bug-123: the arm block above includes fts_triggers_stale, but this execution
+    # block didn't — a stale-trigger boot armed the durable bit yet deferred the
+    # actual rebuild to the NEXT boot, leaving the bit set (and the index
+    # potentially contaminated) for the rest of the current process lifetime.
+    if FTS_ENABLED and (fts_created_this_boot or fts_backfill_pending or fts_triggers_stale):
         try:
             await db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
             await db.execute("INSERT INTO episodes_fts(episodes_fts) VALUES ('rebuild')")
@@ -622,7 +626,15 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
 
 
 async def close_db():
-    """Close the write and read connections."""
+    """Close the write and read connections.
+
+    bug-124: every aiosqlite connection owns a NON-daemon worker thread, so an
+    orphaned connection (``database._db = None`` without a ``close()``) keeps
+    the interpreter alive forever after main() returns — the test suite printed
+    its summary and then hung until CI's 6-hour job limit. Anything that
+    re-points the module globals (test reboot harnesses, embedded re-init)
+    must go through this helper instead of assigning ``None`` directly.
+    """
     global _db, _read_db, _read_db_owner
     if _read_db is not None:
         if _read_db is not _db:

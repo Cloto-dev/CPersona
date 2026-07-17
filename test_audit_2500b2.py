@@ -183,7 +183,11 @@ def test_preview_skips_refless_rows(monkeypatch):
 async def test_stale_fts_trigger_modernised_on_boot(monkeypatch, tmp_path):
     dbfile = str(tmp_path / "stale-fts.db")
     monkeypatch.setattr(database, "DB_PATH", dbfile)
-    database._db = None
+    # bug-124: re-pointing the globals must go through close_db() — a bare
+    # `database._db = None` orphans the session-shared connection, whose
+    # non-daemon aiosqlite worker thread then blocks interpreter exit (the
+    # 6-hour CI hang). close_db() also resets the dedicated read connection.
+    await database.close_db()
     db = await database.get_db()
     # Simulate the skipped-v13 state: replace the column-scoped trigger with the
     # old full-column body (no "OF content").
@@ -196,8 +200,7 @@ async def test_stale_fts_trigger_modernised_on_boot(monkeypatch, tmp_path):
            END"""
     )
     await db.commit()
-    await db.close()
-    database._db = None
+    await database.close_db()
 
     db = await database.get_db()
     try:
@@ -208,12 +211,13 @@ async def test_stale_fts_trigger_modernised_on_boot(monkeypatch, tmp_path):
             "stale FTS trigger body survived a boot — the skipped FTS-gated migration "
             "was not recovered by the DDL probe"
         )
-        # The rebuild path must have cleared its durable pending bit again.
+        # bug-123: the recovery must rebuild in the SAME boot — the old condition
+        # armed the bit on fts_triggers_stale but deferred the rebuild to the
+        # next boot, leaving the pending bit set.
         uv = await db.execute_fetchall("PRAGMA user_version")
         assert not (uv[0][0] & 1), "backfill pending bit left armed after the recovery rebuild"
     finally:
-        await db.close()
-        database._db = None
+        await database.close_db()
 
 
 # ---------------------------------------------------------------------------

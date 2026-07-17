@@ -1777,6 +1777,34 @@
       "category": "ci-gate",
       "fixed_in": "2.5.0b2",
       "fix_note": "Dedicated verify-issues CI job runs scripts/verify-issues.sh on every PR/master push."
+    },
+    {
+      "id": "bug-123",
+      "summary": "(MEDIUM) bug-118 follow-up: the boot rebuild's execution condition omitted fts_triggers_stale, so a stale-trigger boot armed the durable backfill bit and modernised the trigger DDL but deferred the actual FTS rebuild to the NEXT boot - the pending bit (and any stale trigrams) survived the whole current process lifetime.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-17T00:00:00Z",
+      "version": "2.5.0b2",
+      "file": "cpersona/database.py",
+      "pattern": "bug-123",
+      "expected": "present",
+      "status": "fixed",
+      "category": "boot-migration",
+      "fixed_in": "2.5.0b3",
+      "fix_note": "Rebuild condition now includes fts_triggers_stale, so the recovery rebuilds in the same boot that detected the stale trigger."
+    },
+    {
+      "id": "bug-124",
+      "summary": "(HIGH) test_stale_fts_trigger_modernised_on_boot re-pointed database._db with a bare '= None', orphaning the session-shared aiosqlite connection; its NON-daemon worker thread blocked interpreter exit after the suite summary, so every CI test job hung to the 6-hour limit (2.5.0b2 was merged while those jobs were still running).",
+      "severity": "HIGH",
+      "discovered": "2026-07-17T00:00:00Z",
+      "version": "2.5.0b2",
+      "file": "cpersona/database.py",
+      "pattern": "bug-124",
+      "expected": "present",
+      "status": "fixed",
+      "category": "test-infra",
+      "fixed_in": "2.5.0b3",
+      "fix_note": "Reboot-pattern tests go through database.close_db() (which closes write+read connections); close_db's docstring carries the doctrine, and the CI test job now has timeout-minutes:15 so any future hang fails fast instead of masking as a 6h cancel."
     }
   ]
 }
