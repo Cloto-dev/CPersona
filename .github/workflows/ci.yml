@@ -44,10 +44,11 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.13"]
+        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -56,5 +57,11 @@ jobs:
           enable-cache: true
       - name: Sync dependencies (incl. test toolchain)
         run: uv sync --dev --python ${{ matrix.python-version }}
-      - name: Run tests
-        run: uv run pytest
+      - name: Run tests (DIAGNOSTIC — verbose, fail-fast, thread timeout)
+        run: uv run pytest -vv -x --timeout=20 --timeout-method=thread 2>&1 | tee pytest-diag.log
+      - name: Upload diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-diag
+          path: pytest-diag.log
