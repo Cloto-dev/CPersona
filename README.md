@@ -221,7 +221,7 @@ Query → ┌── Vector search (cosine similarity)  ──┐
 
 ## Benchmarks
 
-Measured on LMEB (Long-term Memory Evaluation Benchmark, arXiv:2603.12572) — 22 retrieval tasks subsuming LoCoMo and LongMemEval. The metric is Mean NDCG@10 across all 22 tasks.
+Measured on LMEB (Long-horizon Memory Embedding Benchmark, arXiv:2603.12572) — 22 datasets subsuming LoCoMo and LongMemEval, measured here as 22 retrieval tasks. The metric is Mean NDCG@10 across all 22 tasks.
 
 Two tracks isolate the pipeline's contribution:
 

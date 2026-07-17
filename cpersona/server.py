@@ -14,7 +14,7 @@ Thin orchestration shell. Tool implementations live in module siblings:
 This shell:
   1. Imports do_* handlers
   2. Defines orchestration wrappers (do_update_profile_or_queue / do_archive_episode_or_queue)
-  3. Registers 24 MCP tools
+  3. Registers the MCP tools (see the Tool Registry section below for the count)
   4. Wires HTTP/stdio transport
   5. main() initializes singletons (vector._embedding_client, tasks._task_queue) and runs the server
 """
@@ -531,7 +531,7 @@ registry.auto_tool(
             "agent_id": {"type": "string", "description": "Agent identifier"},
             "history": {
                 "type": "array",
-                "description": "Original conversation messages (used for timestamp extraction and embedding)",
+                "description": "Original conversation messages (used for start/end timestamp extraction; the episode embedding is computed from summary)",
                 "items": {"type": "object"},
             },
             "summary": {
@@ -637,17 +637,19 @@ registry.auto_tool(
     "calibrate_threshold",
     "Auto-calibrate the vector search threshold from the null (random-pair) cosine "
     "distribution. Samples random memory pairs and places the threshold ABOVE the "
-    "null mean so unrelated pairs are rejected. method='percentile' (default) uses a "
-    "quantile of the null distribution (robust to anisotropic models such as bge-m3); "
-    "method='zscore' uses mean + z*std. No labels used, purely statistical. Adapts to "
-    "both embedding model and corpus characteristics.",
+    "null mean so unrelated pairs are rejected. method='separation' (default) learns "
+    "the operating point from two populations — null pairs vs temporally-adjacent "
+    "same-session positives (nearest-neighbour fallback when too few exist); "
+    "method='percentile' uses a quantile of the null distribution (robust to "
+    "anisotropic models such as bge-m3); method='zscore' uses mean + z*std. No labels "
+    "used, purely statistical. Adapts to both embedding model and corpus characteristics.",
     {
         "type": "object",
         "properties": {
             "agent_id": {"type": "string", "description": "Agent ID whose memories to sample"},
             "sample_size": {"type": "integer", "description": "Number of embeddings to sample (default: 200)"},
             "z_factor": {"type": "number", "description": "Z-score multiplier for method='zscore' (default: 1.0, higher = stricter)"},
-            "method": {"type": "string", "description": "'percentile' (default), 'zscore', or 'separation' (two-population, learns the operating point from null vs nearest-neighbour positives)"},
+            "method": {"type": "string", "description": "'separation' (default; two-population — learns the operating point from null pairs vs temporally-adjacent same-session positives, falling back to nearest-neighbour when too few exist), 'percentile', or 'zscore'"},
             "percentile": {"type": "number", "description": "Null-distribution quantile for method='percentile' (default: 0.95, higher = stricter)"},
         },
         "required": ["agent_id"],
