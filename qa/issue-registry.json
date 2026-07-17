@@ -1804,7 +1804,7 @@
       "status": "fixed",
       "category": "test-infra",
       "fixed_in": "2.5.0b3",
-      "fix_note": "Reboot-pattern tests go through database.close_db() (which closes write+read connections); close_db's docstring carries the doctrine, and the CI test job now has timeout-minutes:15 so any future hang fails fast instead of masking as a 6h cancel."
+      "fix_note": "Reboot-pattern tests go through database.close_db() (which closes write+read connections); close_db's docstring carries the doctrine, and the CI test job now has timeout-minutes:15 so any future hang fails fast instead of masking as a 6h cancel. Class prevention (post-b3): tests/test_structural_gates.py::test_no_orphaning_connection_repoint statically rejects any database._db/_read_db re-point with no prior close()/stash in scope (inline `# orphan-waiver:` escape; teeth test included)."
     }
   ]
 }
