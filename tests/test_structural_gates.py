@@ -25,7 +25,7 @@ instead of a comment the analyser trusts blindly.
 import ast
 import pathlib
 
-PKG = pathlib.Path(__file__).parent / "cpersona"
+PKG = pathlib.Path(__file__).parent.parent / "cpersona"
 
 # Agent-scoped tables: every runtime DML statement touching one of these MUST filter by
 # agent_id (the mandatory isolation axis). DDL/schema/index statements are exempt (they
