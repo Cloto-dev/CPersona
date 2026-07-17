@@ -81,7 +81,7 @@ discretion and must not be relied upon.
 | Line | Tier | Notes |
 | --- | --- | --- |
 | 2.4.x | **Stable** | Latest release: see GitHub Releases / PyPI. |
-| 2.5.x | **Experimental** (planned) | Internal stabilization line — DB schema and MCP tool contract are preserved. |
+| 2.5.x | **Experimental** | Internal stabilization line — DB schema and MCP tool contract are preserved. |
 
 Certification and EOL dates are recorded in this table as they occur.
 
@@ -101,4 +101,4 @@ Certification and EOL dates are recorded in this table as they occur.
   Upgrading is strongly recommended; no schema change is involved. Details:
   `qa/issue-registry.json` (bug-085).
 
-*Last updated: 2026-07-10*
+*Last updated: 2026-07-17*
