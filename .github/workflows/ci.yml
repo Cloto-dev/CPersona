@@ -44,6 +44,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # bug-124: the full suite finishes in seconds; a leaked non-daemon thread once
+    # kept the step alive to the 6-HOUR default job limit (burning runner time and
+    # masking the failure as "cancelled"). Anything past 15 minutes is a hang.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
