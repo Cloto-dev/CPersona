@@ -1351,6 +1351,9 @@ async def do_archive_episode(
     # connection.
     async with transaction() as db:
         episode_id = await _insert_episode_row(db, row)
+    await vector.remote_index_upsert(
+        agent_id, [{"id": f"ep:{episode_id}", "text": summary}]
+    )
     return {"ok": True, "episode_id": episode_id}
 
 

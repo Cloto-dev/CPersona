@@ -690,10 +690,11 @@
       "file": "cpersona/vector.py",
       "pattern": "FROM episodes WHERE id = \\?\\{iso_ep_fetch.and_clause\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-drops-channel-axis",
       "fix_sketch": "When channel is set, append AND (channel = ? OR channel = '') to this episode-by-id SELECT and pass channel in the params tuple, matching the memory-by-id branch.",
-      "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). In the remote branch an ep:<id> hit is rehydrated via SELECT summary, start_time, resolved FROM episodes WHERE id = ?{iso_ep_fetch.and_clause} (2.5.0 Task #180 renamed the fragment from {proj_extra}; iso_ep_fetch deliberately still omits the channel axis, so the gap is unchanged). The by-id memory path adds (channel = ? OR channel = '') when channel is set, but this episode lookup omits it, so an episode from another channel is returned into a channel-scoped recall. Not the production default (production is local) but a real remote-mode correctness gap. The fix is one line now: build iso_ep_fetch with channel=channel."
+      "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). In the remote branch an ep:<id> hit is rehydrated via SELECT summary, start_time, resolved FROM episodes WHERE id = ?{iso_ep_fetch.and_clause} (2.5.0 Task #180 renamed the fragment from {proj_extra}; iso_ep_fetch deliberately still omits the channel axis, so the gap is unchanged). The by-id memory path adds (channel = ? OR channel = '') when channel is set, but this episode lookup omits it, so an episode from another channel is returned into a channel-scoped recall. Not the production default (production is local) but a real remote-mode correctness gap. The fix is one line now: build iso_ep_fetch with channel=channel.",
+      "fix_note": "The remote episode by-id fetch now uses isolation_where with agent, project, and channel, matching the memory fetch. Regression: test_remote_export_cluster.py::test_bug_046_remote_episode_fetch_rejects_other_channel."
     },
     {
       "id": "bug-047",
@@ -720,10 +721,11 @@
       "file": "cpersona/memory_handlers.py",
       "pattern": "INSERT INTO episodes \\(agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved, channel\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "remote-index-sql-row-inconsistency",
       "fix_sketch": "After the episode INSERT+commit, mirror the do_store remote sync: when VECTOR_SEARCH_MODE=='remote' and a client/_http_url exist, POST to f'{base}/index' with namespace f'cpersona:{agent_id}' and items=[{'id': f'ep:{cursor.lastrowid}', 'text': summary}] in a non-fatal try/except (and add ep:{id} /remove in do_delete_episode for delete consistency).",
-      "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). With remote mode, archive_episode inserts the row with a local blob but never POSTs ep:<id> to {base}/index. A later recall's remote branch POSTs /search and returns only what the remote namespace holds; with no episodes indexed there are zero ep: hits and the branch returns without a local fallback, so every archived episode is unrecallable via semantic search in remote mode (FTS keyword recall survives). Distinct from the deferred bug-028: this is a write path with no push at all, unlike do_store/do_update_memory which do push."
+      "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). With remote mode, archive_episode inserts the row with a local blob but never POSTs ep:<id> to {base}/index. A later recall's remote branch POSTs /search and returns only what the remote namespace holds; with no episodes indexed there are zero ep: hits and the branch returns without a local fallback, so every archived episode is unrecallable via semantic search in remote mode (FTS keyword recall survives). Distinct from the deferred bug-028: this is a write path with no push at all, unlike do_store/do_update_memory which do push.",
+      "fix_note": "do_archive_episode now calls remote_index_upsert with ep:{episode_id} and the summary after the transaction commits. Regression: test_remote_export_cluster.py::test_bug_049_archive_episode_syncs_remote_index_after_commit."
     },
     {
       "id": "bug-051",
@@ -878,10 +880,11 @@
       "file": "cpersona/admin_handlers.py",
       "pattern": "\"INSERT OR IGNORE INTO memories\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "remote-index-sql-row-inconsistency",
       "fix_sketch": "After a successful non-dry-run import/merge insert, when VECTOR_SEARCH_MODE=='remote' collect new (id, content/summary) pairs and POST them to f'{base}/index' under cpersona:{target_agent_id} (batched, non-fatal try/except), matching the do_store id scheme (mem:{id} / ep:{id}).",
-      "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). With VECTOR_SEARCH_MODE=remote, import_memories (dashboard restore) and merge_memories (agent consolidation) insert rows for target_agent_id but never POST them to {base}/index under cpersona:{target_agent_id}. Because the remote /search branch returns early on success with no local fallback, restored/merged rows never appear in recall until an unrelated re-index (there is none for import/merge). Distinct from deferred bug-028 (check_null_embedding re-push): these are separate write handlers that, unlike do_store/do_update_memory, sync nothing. Line 1350 is the import INSERT (1524 the merge INSERT)."
+      "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). With VECTOR_SEARCH_MODE=remote, import_memories (dashboard restore) and merge_memories (agent consolidation) insert rows for target_agent_id but never POST them to {base}/index under cpersona:{target_agent_id}. Because the remote /search branch returns early on success with no local fallback, restored/merged rows never appear in recall until an unrelated re-index (there is none for import/merge). Distinct from deferred bug-028 (check_null_embedding re-push): these are separate write handlers that, unlike do_store/do_update_memory, sync nothing. Line 1350 is the import INSERT (1524 the merge INSERT).",
+      "fix_note": "Import and merge now capture inserted episode ids and include ep:{id}/summary items in their existing post-commit remote-index batches. Regression: test_remote_export_cluster.py::test_bug_050_import_and_merge_sync_episode_ids."
     },
     {
       "id": "bug-058",
@@ -1092,8 +1095,9 @@
       "file": "cpersona/admin_handlers.py",
       "pattern": "async def do_export_memories",
       "expected": "present",
-      "status": "open",
-      "category": "correctness"
+      "status": "fixed",
+      "category": "correctness",
+      "fix_note": "Export now counts and streams all three tables with fetchmany(500) through a dedicated private read_snapshot connection, preserving exact header/body counts from one WAL snapshot without pinning or sharing the process-wide read connection. Regressions: test_remote_export_cluster.py::test_bug_073_export_streams_snapshot_and_roundtrips and ::test_bug_073_export_survives_concurrent_reader_scope."
     },
     {
       "id": "bug-074",
@@ -1117,8 +1121,9 @@
       "file": "cpersona/vector.py",
       "pattern": "SELECT summary, start_time, resolved FROM episodes WHERE id = \\?",
       "expected": "present",
-      "status": "open",
-      "category": "correctness"
+      "status": "fixed",
+      "category": "correctness",
+      "fix_note": "The remote episode fetch now carries the channel predicate and permits source-filtered episodes only when a channel is present, symmetric with the local branch. Regression: test_remote_export_cluster.py::test_bug_075_remote_episode_source_gate_matches_channel_scoped_local_contract."
     },
     {
       "id": "bug-076",

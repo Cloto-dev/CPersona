@@ -35,7 +35,7 @@ from cpersona.config import (
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
 )
-from cpersona.database import connection, transaction
+from cpersona.database import connection, read_snapshot, transaction
 from cpersona.utils import _clamp_limit, _try_parse_json
 
 logger = logging.getLogger(__name__)
@@ -1355,33 +1355,6 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    # Fetch everything first: the header is derived from the fetched rows below,
-    # so it always matches the file body exactly (and the import validates it) —
-    # the old pre-write COUNT queries could disagree with the row SELECTs when a
-    # concurrent store committed in between (torn header, bug-091).
-    async with connection() as db:
-        # bug-016: carry the project_id / channel γ-isolation axes and the
-        # locked flag through export so a restore reconstructs the row in its
-        # real bucket instead of collapsing everything into project ''/channel ''.
-        # bug-092: recall_count / last_recalled_at ride along too — dropping them
-        # reset every restored row's recall-frequency scoring boost.
-        mem_rows = await db.execute_fetchall(
-            "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
-            " project_id, channel, locked, recall_count, last_recalled_at"
-            f" FROM memories{iso.where} ORDER BY id",
-            iso.params,
-        )
-        ep_rows = await db.execute_fetchall(
-            "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
-            " project_id, channel"
-            f" FROM episodes{iso.where} ORDER BY id",
-            iso.params,
-        )
-        prof_rows = await db.execute_fetchall(
-            f"SELECT agent_id, user_id, content, updated_at, project_id FROM profiles{iso.where} ORDER BY agent_id",
-            iso.params,
-        )
-
     exported_memories = 0
     exported_episodes = 0
     exported_profiles = 0
@@ -1394,73 +1367,108 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     # writes into one temp file (bug-091 hardening).
     tmp_path = f"{output_path}.tmp.{os.getpid()}"
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            header = {
-                "_type": "header",
-                "version": "cpersona-export/1.0",
-                "agent_id": agent_id,
-                "exported_at": datetime.now(timezone.utc).isoformat(),
-                "memory_count": len(mem_rows),
-                "episode_count": len(ep_rows),
-                "has_profile": len(prof_rows) > 0,
-                # bug-110: an exact count, so the import can detect a file cut at
-                # the episode/profile boundary (has_profile alone cannot).
-                "profile_count": len(prof_rows),
-            }
-            f.write(json.dumps(header, ensure_ascii=False) + "\n")
+        async with read_snapshot() as db:
+            # bug-073/091: one private read transaction gives the COUNT header
+            # and all three streamed bodies the same WAL snapshot. Rows are read
+            # in bounded chunks instead of materialising the corpus in memory.
+            counts = []
+            for table in ("memories", "episodes", "profiles"):
+                cur = await db.execute(
+                    f"SELECT COUNT(*) FROM {table}{iso.where}", iso.params
+                )
+                row = await cur.fetchone()
+                counts.append(row[0])
+            memory_count, episode_count, profile_count = counts
 
-            for row in mem_rows:
-                record: dict = {
-                    "_type": "memory",
-                    "id": row[0],
-                    "agent_id": row[1],
-                    "msg_id": row[2],
-                    "content": row[3],
-                    "source": _try_parse_json(row[4]) if row[4] else {},
-                    "timestamp": row[5],
-                    "metadata": _try_parse_json(row[6]) if row[6] else {},
-                    "created_at": row[8],
-                    "project_id": row[9],
-                    "channel": row[10],
-                    "locked": int(row[11]) if row[11] else 0,
-                    "recall_count": int(row[12]) if row[12] else 0,
-                    "last_recalled_at": row[13],
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                header = {
+                    "_type": "header",
+                    "version": "cpersona-export/1.0",
+                    "agent_id": agent_id,
+                    "exported_at": datetime.now(timezone.utc).isoformat(),
+                    "memory_count": memory_count,
+                    "episode_count": episode_count,
+                    "has_profile": profile_count > 0,
+                    # bug-110: an exact count, so the import can detect a file cut at
+                    # the episode/profile boundary (has_profile alone cannot).
+                    "profile_count": profile_count,
                 }
-                if include_embeddings and row[7]:
-                    record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                exported_memories += 1
+                f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
-            for row in ep_rows:
-                record = {
-                    "_type": "episode",
-                    "id": row[0],
-                    "agent_id": row[1],
-                    "summary": row[2],
-                    "keywords": row[3],
-                    "start_time": row[4],
-                    "end_time": row[5],
-                    "created_at": row[7],
-                    "resolved": bool(row[8]) if row[8] else False,
-                    "project_id": row[9],
-                    "channel": row[10],
-                }
-                if include_embeddings and row[6]:
-                    record["embedding_b64"] = base64.b64encode(row[6]).decode("ascii")
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                exported_episodes += 1
+                # bug-016: carry the project_id / channel γ-isolation axes and the
+                # locked flag through export. bug-092: carry recall stats too.
+                cur = await db.execute(
+                    "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
+                    " project_id, channel, locked, recall_count, last_recalled_at"
+                    f" FROM memories{iso.where} ORDER BY id",
+                    iso.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    for row in rows:
+                        record: dict = {
+                            "_type": "memory",
+                            "id": row[0],
+                            "agent_id": row[1],
+                            "msg_id": row[2],
+                            "content": row[3],
+                            "source": _try_parse_json(row[4]) if row[4] else {},
+                            "timestamp": row[5],
+                            "metadata": _try_parse_json(row[6]) if row[6] else {},
+                            "created_at": row[8],
+                            "project_id": row[9],
+                            "channel": row[10],
+                            "locked": int(row[11]) if row[11] else 0,
+                            "recall_count": int(row[12]) if row[12] else 0,
+                            "last_recalled_at": row[13],
+                        }
+                        if include_embeddings and row[7]:
+                            record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_memories += 1
 
-            for row in prof_rows:
-                record = {
-                    "_type": "profile",
-                    "agent_id": row[0],
-                    "user_id": row[1],
-                    "content": row[2],
-                    "updated_at": row[3],
-                    "project_id": row[4],
-                }
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                exported_profiles += 1
+                cur = await db.execute(
+                    "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
+                    " project_id, channel"
+                    f" FROM episodes{iso.where} ORDER BY id",
+                    iso.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    for row in rows:
+                        record = {
+                            "_type": "episode",
+                            "id": row[0],
+                            "agent_id": row[1],
+                            "summary": row[2],
+                            "keywords": row[3],
+                            "start_time": row[4],
+                            "end_time": row[5],
+                            "created_at": row[7],
+                            "resolved": bool(row[8]) if row[8] else False,
+                            "project_id": row[9],
+                            "channel": row[10],
+                        }
+                        if include_embeddings and row[6]:
+                            record["embedding_b64"] = base64.b64encode(row[6]).decode("ascii")
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_episodes += 1
+
+                cur = await db.execute(
+                    "SELECT agent_id, user_id, content, updated_at, project_id"
+                    f" FROM profiles{iso.where} ORDER BY agent_id",
+                    iso.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    for row in rows:
+                        record = {
+                            "_type": "profile",
+                            "agent_id": row[0],
+                            "user_id": row[1],
+                            "content": row[2],
+                            "updated_at": row[3],
+                            "project_id": row[4],
+                        }
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_profiles += 1
         os.replace(tmp_path, output_path)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -1679,7 +1687,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                     resolved = 1 if record.get("resolved") else 0
 
                     if not dry_run:
-                        await db.execute(
+                        cur = await db.execute(
                             "INSERT INTO episodes"
                             " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
                             "  embedding, created_at)"
@@ -1696,6 +1704,9 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                                 _decode_embedding(record),
                                 record.get("created_at"),
                             ),
+                        )
+                        remote_items.setdefault(aid, []).append(
+                            {"id": f"ep:{cur.lastrowid}", "text": summary}
                         )
                     imported_episodes += 1
 
@@ -1952,12 +1963,13 @@ async def do_merge_memories(
                     skipped_episodes += 1
                     continue
                 if not dry_run:
-                    await db.execute(
+                    cur = await db.execute(
                         "INSERT INTO episodes"
                         " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
                         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (target_agent_id, ep_project_id, ep_channel, summary, keywords, start_time, end_time, resolved, ep_embedding),
                     )
+                    remote_items.append({"id": f"ep:{cur.lastrowid}", "text": summary})
                 else:
                     seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
                 merged_episodes += 1
