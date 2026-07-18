@@ -193,7 +193,7 @@
       "fix_sketch": "GROUP BY agent_id, project_id, channel, content in BOTH the detection query and the survivor MIN(id) subquery to match idx_memories_dedup_content and the v12 migration.",
       "note": "Initial audit framing (full-key collapse) was imprecise: the broad grouping's cross-CHANNEL cleanup is intentional (test _insert_dup). The real defect was crossing the PROJECT isolation axis; fix adds project_id (not channel) to the grouping.",
       "fixed_in": "2.4.38",
-      "fix_note": "v2.4.38: check_duplicate_content groups by (agent_id, project_id, content) in both detection and the MIN(id) survivor subquery — deliberately including project_id (a γ relevance axis — agent_id is the only hard isolation boundary, see cpersona/isolation.py, but the same content under different projects is legitimately distinct with different visibility) while still omitting channel (preserving the intended cross-channel cleanup the UNIQUE index leaves to check_health). Cross-project content is no longer collapsed, so the MIN(id) survivor can no longer delete the global copy and narrow another project's visibility. Regression: test_v2438_hardening.py::test_duplicate_content_does_not_collapse_across_projects; cross-channel dedup pinned by test_v2435_bugfixes.py."
+      "fix_note": "v2.4.38: check_duplicate_content groups by (agent_id, project_id, content) in both detection and the MIN(id) survivor subquery — deliberately including project_id (a γ relevance axis — agent_id is the only hard isolation boundary, see cpersona/isolation.py, but the same content under different projects is legitimately distinct with different visibility) while still omitting channel (preserving the intended cross-channel cleanup the UNIQUE index leaves to check_health). Cross-project content is no longer collapsed, so the MIN(id) survivor can no longer delete the global copy and narrow another project's visibility. Regression: test_v2438_hardening.py::test_duplicate_content_does_not_collapse_across_projects; cross-channel dedup pinned by test_v2435_bugfixes.py. bug-128 extended the global-survivor principle to the channel axis."
     },
     {
       "id": "bug-015",
@@ -421,13 +421,13 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/checks.py",
-      "pattern": "SUBSTR\\(content, 1, \\?\\), embedding = NULL WHERE id = \\? AND locked = 0",
+      "pattern": "_rewrite_or_delete_on_collision\\(db, row_id, content\\[:MAX_CONTENT_LENGTH\\]\\)",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Add `AND locked = 0` to the oversized selection and UPDATE (and re-embed after truncation).",
       "fixed_in": "2.4.38",
-      "fix_note": "v2.4.38: check_oversized_content's truncate UPDATE excludes locked rows (AND locked = 0), so a locked oversized memory keeps its full content. Regression: test_v2438_hardening.py::test_locked_rows_survive_destructive_maintenance."
+      "fix_note": "v2.4.38: check_oversized_content's truncate UPDATE excludes locked rows (AND locked = 0), so a locked oversized memory keeps its full content. bug-127 moved the truncate through the shared rewrite helper, which retains the locked=0 guard. Regression: test_v2438_hardening.py::test_locked_rows_survive_destructive_maintenance."
     },
     {
       "id": "bug-030",
@@ -1650,7 +1650,7 @@
       "status": "fixed",
       "category": "check-robustness",
       "fixed_in": "2.5.0b1",
-      "fix_note": "On an IntegrityError the oversized row is deleted as a duplicate of the colliding survivor (keep-existing, never-touch-locked — the dup fixer's policy). Regression: test_audit_2500b1.py::test_oversized_truncation_collision_converges."
+      "fix_note": "On an IntegrityError the oversized row is deleted as a duplicate of the colliding survivor (keep-existing, never-touch-locked — the dup fixer's policy). Regression: test_audit_2500b1.py::test_oversized_truncation_collision_converges. bug-127 generalized this guard to check_memory_annotation/check_discord_mention via a shared helper."
     },
     {
       "id": "bug-114",
@@ -1833,6 +1833,48 @@
       "category": "recall-ranking",
       "fixed_in": "2.5.0",
       "fix_note": "The episode-penalty re-sort now checks fusion-score homogeneity across scored rows only and sinks profile sentinels with a negative-infinity sort key. Regression: test_audit_2500b3.py::test_episode_penalty_resorts_with_profile_row."
+    },
+    {
+      "id": "bug-127",
+      "summary": "Annotation and Discord-mention content rewrites used bare UPDATEs, so a dedup-index collision crashed the health fix loop and left the colliding row permanently dirty.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/checks.py",
+      "pattern": "bug-127",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "fixed_in": "2.5.0",
+      "fix_note": "All content-rewriting checks now share an IntegrityError guard that deletes the unlocked rewritten duplicate while preserving the existing survivor. Regression: test_audit_2500b3.py::test_memory_annotation_collision_deletes_rewritten_duplicate and test_audit_2500b3.py::test_discord_mention_collision_deletes_rewritten_duplicate."
+    },
+    {
+      "id": "bug-128",
+      "summary": "Cross-channel duplicate repair kept MIN(id), which could delete the channel='' shared row and silently narrow recall visibility.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/checks.py",
+      "pattern": "bug-128",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "fixed_in": "2.5.0",
+      "fix_note": "The survivor subquery now prefers a channel='' shared row and falls back to MIN(id) only when no shared copy exists. Regression: test_audit_2500b3.py::test_duplicate_content_prefers_shared_channel_survivor."
+    },
+    {
+      "id": "bug-129",
+      "summary": "NULL-embedding prefetch made one timeout-bounded backend call per row without consulting or feeding the health circuit breaker.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/checks.py",
+      "pattern": "bug-129",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "fixed_in": "2.5.0",
+      "fix_note": "Prefetch now skips an already faulted backend, embeds rows in chunks of 32, records chunk failures, and exits once the breaker latches. Regression: test_audit_2500b3.py::test_prefetch_null_embeddings_skips_faulted_backend and test_audit_2500b3.py::test_prefetch_null_embeddings_batches_rows."
     }
   ]
 }
