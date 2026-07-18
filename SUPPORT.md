@@ -80,8 +80,8 @@ discretion and must not be relied upon.
 
 | Line | Tier | Notes |
 | --- | --- | --- |
-| 2.4.x | **Stable** | Latest release: see GitHub Releases / PyPI. |
-| 2.5.x | **Experimental** | Internal stabilization line — DB schema and MCP tool contract are preserved. |
+| 2.4.x | **Stable** | Certified Stable; the marketplace serves this line by default. Enters Grace 30 days after 2.5.x is certified Stable. |
+| 2.5.x | **Current** | Latest release: 2.5.0 (final). Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Awaiting production-soak certification to Stable. |
 
 Certification and EOL dates are recorded in this table as they occur.
 

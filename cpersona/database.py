@@ -38,10 +38,10 @@ def write_lock() -> asyncio.Lock:
 
 
 # --------------------------------------------------------------------------------------
-# 2.5.0 C-seam: the two connection context managers every DB access goes through.
+# 2.5.0 C-seam: the connection context managers every DB access goes through.
 #
 # The seam exists so the storage backend can evolve without touching call sites:
-# a future connection pool swaps the internals of these two functions only
+# a future connection pool swaps the internals of these functions only
 # (acquire/release per scope) while every handler keeps its
 # `async with connection()/transaction() as db:` shape.
 # That is the whole point — no second migration when the backend changes.
@@ -86,6 +86,32 @@ async def connection():
         if db is not _db and db._conn is not None and db._conn.in_transaction:
             with contextlib.suppress(Exception):
                 await db.rollback()
+
+
+@contextlib.asynccontextmanager
+async def read_snapshot():
+    """Dedicated private read connection pinned to ONE consistent WAL snapshot
+    for the whole scope — for long streaming reads (bug-073 export) that must
+    see a stable row set across a COUNT header + the streamed body.
+
+    Why not connection(): that yields the shared _read_db singleton. A long
+    explicit transaction there (a) is rolled back by any other read scope's exit
+    (the documented shared-connection limitation) and (b) pins the WAL snapshot
+    process-wide, serving stale rows to every other reader and blocking
+    checkpointing. A private connection isolates both. isolation_level=None puts
+    the driver in autocommit so the explicit BEGIN below is the sole transaction
+    boundary; the DEFERRED snapshot is established at the first read (the COUNT)
+    and held until rollback. Read-only, so exit always rolls back. The connection
+    is closed on exit so its worker thread is joined (bug-124)."""
+    db = await aiosqlite.connect(DB_PATH, isolation_level=None)
+    try:
+        await db.execute("PRAGMA busy_timeout=5000")
+        await db.execute("BEGIN")
+        yield db
+    finally:
+        with contextlib.suppress(Exception):
+            await db.execute("ROLLBACK")
+        await db.close()
 
 
 @contextlib.asynccontextmanager
