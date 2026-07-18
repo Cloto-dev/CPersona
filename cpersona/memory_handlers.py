@@ -186,6 +186,29 @@ def _like_escape_contains(s: str) -> str:
     return "%" + s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
+async def _append_profile_rows(db, agent_id: str, results: list[dict]) -> None:
+    """Append the agent's profile rows as id=-1 sentinel injection rows.
+
+    bug-136: single source of truth for profile injection, previously copy-pasted
+    verbatim into _recall_cascade / _recall_rrf / _recall_rsf. Profiles are global
+    per agent (not project-tagged, v2.4.17) -- the UNIQUE constraint stays
+    agent_id x user_id. Mutates `results` in place.
+    """
+    profile_rows = await db.execute_fetchall(
+        "SELECT content FROM profiles WHERE agent_id = ? AND user_id = '' ORDER BY updated_at DESC LIMIT 3",
+        (agent_id,),
+    )
+    for (profile_content,) in profile_rows:
+        results.append(
+            {
+                "id": -1,
+                "content": f"[Profile] {profile_content}",
+                "source": {"System": "profile"},
+                "timestamp": "",
+            }
+        )
+
+
 async def _recall_cascade(
     db,
     agent_id: str,
@@ -227,21 +250,7 @@ async def _recall_cascade(
                 results.append(row)
                 seen_ids.add(rid)
 
-    # Profiles are not project-tagged in v2.4.17 (the UNIQUE constraint stays
-    # agent_id × user_id), so profile injection is global per agent.
-    profile_rows = await db.execute_fetchall(
-        "SELECT content FROM profiles WHERE agent_id = ? AND user_id = '' ORDER BY updated_at DESC LIMIT 3",
-        (agent_id,),
-    )
-    for (profile_content,) in profile_rows:
-        results.append(
-            {
-                "id": -1,
-                "content": f"[Profile] {profile_content}",
-                "source": {"System": "profile"},
-                "timestamp": "",
-            }
-        )
+    await _append_profile_rows(db, agent_id, results)
 
     remaining = max(0, limit - len(results))
     if remaining > 0:
@@ -322,19 +331,7 @@ async def _recall_rrf(
         row["_rrf_score"] = rrf_scores[rid]
         results.append(row)
 
-    profile_rows = await db.execute_fetchall(
-        "SELECT content FROM profiles WHERE agent_id = ? AND user_id = '' ORDER BY updated_at DESC LIMIT 3",
-        (agent_id,),
-    )
-    for (profile_content,) in profile_rows:
-        results.append(
-            {
-                "id": -1,
-                "content": f"[Profile] {profile_content}",
-                "source": {"System": "profile"},
-                "timestamp": "",
-            }
-        )
+    await _append_profile_rows(db, agent_id, results)
 
     return results
 
@@ -433,19 +430,7 @@ async def _recall_rsf(
         row["_rsf_score"] = fused[rid] / n_active
         results.append(row)
 
-    profile_rows = await db.execute_fetchall(
-        "SELECT content FROM profiles WHERE agent_id = ? AND user_id = '' ORDER BY updated_at DESC LIMIT 3",
-        (agent_id,),
-    )
-    for (profile_content,) in profile_rows:
-        results.append(
-            {
-                "id": -1,
-                "content": f"[Profile] {profile_content}",
-                "source": {"System": "profile"},
-                "timestamp": "",
-            }
-        )
+    await _append_profile_rows(db, agent_id, results)
 
     return results
 

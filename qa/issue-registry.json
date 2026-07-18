@@ -1959,6 +1959,20 @@
       "category": "transport",
       "fixed_in": "2.5.0",
       "fix_note": "The proxy now accepts both SSE data-field forms and always emits errors with null for unrecoverable IDs. Regression: tests/test_proxy_stdio.py::test_sse_data_lines_allow_optional_space and test_write_error_always_emits_response."
+    },
+    {
+      "id": "bug-136",
+      "summary": "Profile injection was copy-pasted across all three recall fusion strategies, so changing one copy could silently make profile behavior strategy-dependent.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "bug-136",
+      "expected": "present",
+      "status": "fixed",
+      "category": "maintainability",
+      "fixed_in": "2.5.0",
+      "fix_note": "Profile injection now has one _append_profile_rows helper called at the original position in cascade, RRF, and RSF recall. Regression: tests/test_audit_2500b3.py::test_profile_injection_shared_across_recall_strategies."
     }
   ]
 }
