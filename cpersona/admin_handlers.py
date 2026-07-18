@@ -1303,31 +1303,33 @@ def _decode_embedding(record: dict) -> bytes | None:
     return decoded
 
 
-def _confine_export_path(output_path: str) -> str | None:
-    """bug-054: validate export_memories' caller-supplied output_path.
+def _confine_io_path(path: str) -> str | None:
+    """bug-054: validate export/import caller-supplied filesystem paths.
 
-    Returns the path to write to, or None if it must be rejected. When
+    Returns the path to use, or None if it must be rejected. When
     config.EXPORT_DIR is set the resolved realpath must stay within it (blocks
     traversal and absolute escapes into config/cron/dotfiles). When unset, only
     ``..`` traversal segments are rejected (backward-compatible for ad-hoc
     backups); the destructiveHint tool annotation makes the host confirm the write.
+
+    bug-130: import uses the same confinement as export.
     """
-    if not output_path:
+    if not path:
         return None
     if config.EXPORT_DIR:
         root = os.path.realpath(config.EXPORT_DIR)
-        real = os.path.realpath(output_path)
+        real = os.path.realpath(path)
         if real == root or real.startswith(root + os.sep):
             return real
         return None
-    if ".." in os.path.normpath(output_path).split(os.sep):
+    if ".." in path.split(os.sep):
         return None
-    return output_path
+    return path
 
 
 async def do_export_memories(agent_id: str, output_path: str, include_embeddings: bool = False) -> dict:
     """Export memories, episodes, and profiles to a JSONL file."""
-    confined = _confine_export_path(output_path)
+    confined = _confine_io_path(output_path)
     if confined is None:
         return {"error": f"output_path rejected (path traversal or outside export dir): {output_path}"}
     output_path = confined
@@ -1479,8 +1481,17 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
             },
             "import_memories",
         )
+    confined = _confine_io_path(input_path)
+    if confined is None:
+        return {"error": f"input_path rejected (path traversal or outside export dir): {input_path}"}
+    input_path = confined
     if not os.path.exists(input_path):
         return {"error": f"File not found: {input_path}"}
+    # bug-130: reject oversized imports before opening or reading the file.
+    if os.path.getsize(input_path) > config.MAX_IMPORT_BYTES:
+        return {
+            "error": f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {input_path}"
+        }
 
     imported_memories = 0
     skipped_memories = 0
@@ -1502,6 +1513,8 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     # indexes) so the preview matches a real run. Populated only on the dry_run path.
     seen_msgid: set = set()
     seen_content: set = set()
+    # bug-132: queue only rows actually inserted, then sync after commit.
+    remote_items: dict[str, list[dict]] = {}
 
     # bug-016/bug-042: the whole restore runs inside one transaction() — the lock is
     # held across [first INSERT … commit/rollback] so no concurrent committer can
@@ -1601,6 +1614,9 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                         if cur.rowcount == 0:
                             skipped_memories += 1
                             continue
+                        remote_items.setdefault(aid, []).append(
+                            {"id": f"mem:{cur.lastrowid}", "text": content}
+                        )
                     else:
                         # bug-056: in dry_run the INSERT OR IGNORE rowcount==0 skip
                         # never runs, so a content-UNIQUE-index collision (empty msg_id,
@@ -1736,6 +1752,9 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
             result["errors"] = errors
         return result
 
+    for aid, items in remote_items.items():
+        await vector.remote_index_upsert(aid, items)
+
     result: dict = {
         "ok": True,
         "dry_run": dry_run,
@@ -1805,6 +1824,8 @@ async def do_merge_memories(
     # the dry_run preview matches (memories don't need this — the source's own UNIQUE
     # indexes already make intra-batch content/msg_id collisions impossible).
     seen_summary: set = set()
+    # bug-132: queue only rows actually inserted, then sync after commit.
+    remote_items: list[dict] = []
 
     # bug-020/022: whole merge in one transaction, carrying the project_id /
     # channel / locked axes + embedding and using INSERT OR IGNORE so a content
@@ -1816,11 +1837,26 @@ async def do_merge_memories(
     try:
         async with (connection() if dry_run else transaction()) as db:
             rows = await db.execute_fetchall(
-                "SELECT project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked"
+                "SELECT project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
+                " created_at, recall_count, last_recalled_at"
                 " FROM memories WHERE agent_id = ?",
                 (source_agent_id,),
             )
-            for project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked in rows:
+            # bug-131: preserve the ranking metadata used by confidence and decay.
+            for (
+                project_id,
+                msg_id,
+                content,
+                source,
+                timestamp,
+                metadata,
+                channel,
+                embedding,
+                locked,
+                created_at,
+                recall_count,
+                last_recalled_at,
+            ) in rows:
                 if not content:
                     continue
                 # bug-047: dedup against the target on the full identity (agent_id,
@@ -1838,13 +1874,29 @@ async def do_merge_memories(
                 if not dry_run:
                     cur = await db.execute(
                         "INSERT OR IGNORE INTO memories"
-                        " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (target_agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding, locked),
+                        " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding,"
+                        "  locked, created_at, recall_count, last_recalled_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            target_agent_id,
+                            project_id,
+                            channel,
+                            msg_id,
+                            content,
+                            source,
+                            timestamp,
+                            metadata,
+                            embedding,
+                            locked,
+                            created_at,
+                            recall_count,
+                            last_recalled_at,
+                        ),
                     )
                     if cur.rowcount == 0:
                         skipped_memories += 1
                         continue
+                    remote_items.append({"id": f"mem:{cur.lastrowid}", "text": content})
                 else:
                     # bug-057: in dry_run the INSERT OR IGNORE rowcount==0 skip never
                     # runs, so a content-UNIQUE-index collision (source content already
@@ -1947,6 +1999,7 @@ async def do_merge_memories(
     # The delete happened inside the merge transaction (bug-088); only the
     # non-DB side effects (calibration purge, remote namespace) run here,
     # post-commit, mirroring do_delete_agent_data's ordering.
+    await vector.remote_index_upsert(target_agent_id, remote_items)
     move_result = None
     if move_counts is not None:
         _purge_agent_calibration(source_agent_id)

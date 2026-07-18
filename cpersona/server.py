@@ -877,7 +877,7 @@ registry.auto_tool(
     },
     do_import_memories,
     [("input_path", str), ("target_agent_id", str, ""), ("dry_run", bool, False)],
-    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
 registry.auto_tool(
