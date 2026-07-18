@@ -1917,6 +1917,20 @@
       "category": "data-integrity",
       "fixed_in": "2.5.0",
       "fix_note": "Import and merge now batch-upsert each inserted memory to the target agent's remote namespace after the database transaction commits. Regression: test_audit_2500b3.py::test_import_syncs_inserted_memories_to_remote_index and test_audit_2500b3.py::test_merge_remote_sync_respects_vector_mode."
+    },
+    {
+      "id": "bug-133",
+      "summary": "Bare int() and float() environment parsing made any malformed numeric setting raise during module import and crash the entire server.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/config.py",
+      "pattern": "bug-133",
+      "expected": "present",
+      "status": "fixed",
+      "category": "robustness",
+      "fixed_in": "2.5.0",
+      "fix_note": "Numeric environment settings now use warning-and-default coercion helpers so malformed values degrade independently without blocking import. Regression: tests/test_config_parsing.py::test_invalid_numeric_env_values_fall_back_to_defaults."
     }
   ]
 }
