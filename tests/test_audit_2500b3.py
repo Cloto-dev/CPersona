@@ -378,3 +378,38 @@ async def test_merge_remote_sync_respects_vector_mode(clean_db, monkeypatch):
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("strategy", "query"),
+    [
+        (memory_handlers._recall_cascade, ""),
+        (memory_handlers._recall_rrf, "profile injection memory"),
+        (memory_handlers._recall_rsf, "profile injection memory"),
+    ],
+    ids=("cascade", "rrf", "rsf"),
+)
+async def test_profile_injection_shared_across_recall_strategies(
+    clean_db, fake_embedding_client, strategy, query
+):
+    agent_id = f"profile-injection-{strategy.__name__}"
+    stored = await memory_handlers.do_store(
+        agent_id,
+        {
+            "content": "profile injection memory",
+            "source": {"System": "test"},
+        },
+    )
+    assert stored["ok"] and not stored.get("skipped")
+    await clean_db.execute(
+        "INSERT INTO profiles (agent_id, user_id, content) VALUES (?, '', ?)",
+        (agent_id, "persistent user context"),
+    )
+    await clean_db.commit()
+
+    results = await strategy(clean_db, agent_id, query, limit=10, deep=False)
+
+    assert any(
+        row["id"] == -1 and row["content"].startswith("[Profile] ") for row in results
+    )
