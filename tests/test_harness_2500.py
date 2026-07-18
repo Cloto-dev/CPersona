@@ -41,7 +41,11 @@ async def clean_db():
 async def _boot_fresh(monkeypatch, dbfile):
     """Point the module singleton at ``dbfile`` and boot it."""
     monkeypatch.setattr(database, "DB_PATH", dbfile)
-    database._db = None
+    # On entry the singleton is already closed/None (every test in this suite closes its
+    # own boots — see _shutdown) and awaiting close_db() here would cross event loops:
+    # the leftover object is bound to the PREVIOUS test's loop, and a cross-loop close
+    # raises. The bug-124 hazard is mid-test re-points, not this entry-point reset.
+    database._db = None  # orphan-waiver: entry-point reset; cross-loop close is unsafe
     return await database.get_db()
 
 

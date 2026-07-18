@@ -696,3 +696,160 @@ def test_identity_probe_gate_has_teeth():
     assert not _identity_probe_violations(setter), (
         "identity-probe gate false-positived a SET-side content assignment"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 6 (bug-124): no orphaning re-point of the connection singletons.
+#
+# Every aiosqlite connection owns a NON-daemon worker thread, so re-pointing
+# database._db / database._read_db without first closing (or stashing) the old object
+# leaks a thread that blocks interpreter exit forever: the suite passes in seconds and
+# the process then hangs until the CI job limit (bug-124 — 2.5.0b2 was merged with its
+# test jobs still pending because of exactly this). The doctrine lives on
+# database.close_db(); this gate makes the orphaning shape structurally unwritable.
+#
+# The analyser recognises the two safe idioms in the enclosing scope BEFORE the
+# assignment, so routine fixtures need no waiver:
+#   - a close: `await <conn>.close()` / `await database.close_db()`
+#   - a stash: `saved = database._db` (the old object stays referenced for restore)
+# Anything else needs an inline `# orphan-waiver: <reason>`.
+# --------------------------------------------------------------------------------------
+
+TESTS_DIR = pathlib.Path(__file__).parent
+_ORPHAN_ATTRS = {"_db", "_read_db"}
+_CLOSE_NAMES = {"close", "close_db"}
+
+
+def _enclosing_scope(tree, lineno):
+    """Innermost function whose span contains lineno, else the module itself."""
+    scope = tree
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.lineno <= lineno <= (node.end_lineno or node.lineno):
+                if scope is tree or node.lineno > scope.lineno:
+                    scope = node
+    return scope
+
+
+def _scope_has_safeguard(scope, before_lineno):
+    """A close call or a stash of the old connection object, earlier in the scope."""
+    for node in ast.walk(scope):
+        if (node.lineno if hasattr(node, "lineno") else before_lineno) >= before_lineno:
+            continue
+        if isinstance(node, ast.Call):
+            f = node.func
+            if isinstance(f, ast.Attribute) and f.attr in _CLOSE_NAMES:
+                return True
+            if isinstance(f, ast.Name) and f.id in _CLOSE_NAMES:
+                return True
+        if isinstance(node, ast.Assign):
+            for sub in ast.walk(node.value):
+                if isinstance(sub, ast.Attribute) and sub.attr in _ORPHAN_ATTRS:
+                    return True
+    return False
+
+
+def _collect_orphan_repoints(tree):
+    """Return 'lineno  detail' strings for unsafeguarded singleton re-points."""
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not (isinstance(target, ast.Attribute) and target.attr in _ORPHAN_ATTRS):
+                continue
+            scope = _enclosing_scope(tree, node.lineno)
+            if _scope_has_safeguard(scope, node.lineno):
+                continue
+            out.append(
+                f"{node.lineno}  .{target.attr} re-pointed with no prior close()/stash"
+            )
+    return out
+
+
+def test_no_orphaning_connection_repoint():
+    """Re-pointing database._db / _read_db without closing or stashing the old object
+    leaks a non-daemon aiosqlite thread that blocks interpreter exit (bug-124). Route
+    the teardown through database.close_db(), stash the old object for restore, or add
+    an inline `# orphan-waiver: <reason>` for a reviewed exception."""
+    violations = []
+    scanned = list(sorted(PKG.glob("*.py"))) + list(sorted(TESTS_DIR.glob("*.py")))
+    assert len(scanned) > 20, "orphan gate glob collapsed — scanning almost nothing"
+    for path in scanned:
+        if path.name == _SEAM_OWNER_MODULE:
+            continue  # database.py owns the singletons; close_db() re-points by design
+        lines = _source_lines(path)
+        tree = ast.parse("\n".join(lines), filename=str(path))
+        for hit in _collect_orphan_repoints(tree):
+            lineno = int(hit.split()[0])
+            if _has_inline_waiver(lines, lineno, "orphan-waiver"):
+                continue
+            violations.append(f"{path.name}:{hit}")
+    assert not violations, (
+        "connection-orphaning re-point — every aiosqlite connection owns a non-daemon "
+        "thread; a None/other assignment that drops the last reference hangs interpreter "
+        "exit (bug-124). Close via database.close_db(), stash the old object, or add a "
+        "`# orphan-waiver: <reason>`:\n  " + "\n  ".join(violations)
+    )
+
+
+def test_orphan_gate_has_teeth():
+    # The literal bug-124 shape — a bare re-point with no close and no stash — must flag.
+    bad = ast.parse(
+        "async def bad():\n"
+        "    database._db = None\n"
+    )
+    assert _collect_orphan_repoints(bad), (
+        "orphan gate failed to flag a bare connection re-point"
+    )
+
+    # close-then-repoint must NOT flag.
+    ok_close = ast.parse(
+        "async def good():\n"
+        "    await database._db.close()\n"
+        "    database._db = None\n"
+    )
+    assert not _collect_orphan_repoints(ok_close), (
+        "orphan gate false-positived the close-then-repoint idiom"
+    )
+
+    # close_db()-then-repoint must NOT flag.
+    ok_close_db = ast.parse(
+        "async def good():\n"
+        "    await database.close_db()\n"
+        "    database._db = None\n"
+    )
+    assert not _collect_orphan_repoints(ok_close_db), (
+        "orphan gate false-positived the close_db()-then-repoint idiom"
+    )
+
+    # stash-then-repoint must NOT flag (the old object stays referenced for restore).
+    ok_stash = ast.parse(
+        "async def good():\n"
+        "    saved = database._db\n"
+        "    database._db = None\n"
+    )
+    assert not _collect_orphan_repoints(ok_stash), (
+        "orphan gate false-positived the stash-then-repoint idiom"
+    )
+
+    # A safeguard in a DIFFERENT function must not sanctify this one.
+    cross_scope = ast.parse(
+        "async def other():\n"
+        "    await database.close_db()\n"
+        "async def bad():\n"
+        "    database._db = None\n"
+    )
+    assert _collect_orphan_repoints(cross_scope), (
+        "orphan gate accepts a close() from an unrelated scope"
+    )
+
+    # A close AFTER the re-point is too late — the old object is already dropped.
+    too_late = ast.parse(
+        "async def bad():\n"
+        "    database._db = None\n"
+        "    await database.close_db()\n"
+    )
+    assert _collect_orphan_repoints(too_late), (
+        "orphan gate accepts a close that happens after the re-point"
+    )
