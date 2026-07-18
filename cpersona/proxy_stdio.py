@@ -104,8 +104,9 @@ async def main():
             if "text/event-stream" in content_type:
                 # SSE: extract data lines
                 for sse_line in response.text.split("\n"):
-                    if sse_line.startswith("data: "):
-                        data = sse_line[6:].strip()
+                    # bug-135: SSE permits data fields with or without a space.
+                    if sse_line.startswith("data:"):
+                        data = sse_line[len("data:") :].strip()
                         if data:
                             _write_stdout(data)
             else:
@@ -128,15 +129,15 @@ def _write_error(request_line: bytes | str, error_msg: str):
     except (json.JSONDecodeError, AttributeError):
         req_id = None
 
-    if req_id is not None:
-        error = json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32000, "message": error_msg},
-            }
-        )
-        _write_stdout(error)
+    # bug-135: an unrecoverable request ID must still receive an id:null error.
+    error = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32000, "message": error_msg},
+        }
+    )
+    _write_stdout(error)
 
 
 if __name__ == "__main__":
