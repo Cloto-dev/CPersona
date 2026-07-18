@@ -157,15 +157,15 @@ async def _search_vector(
     """
     # isolation_where composes the axes (Task #180). `iso` (agent + γ project +
     # knob2 v2 channel) scopes the local scans; `iso_fetch` scopes the remote
-    # by-id fetches; `iso_ep_fetch` deliberately omits channel on the remote
-    # episode fetch (deferred bug-075 — see the episode gate note below).
+    # by-id fetches. The remote memory and episode fetches carry the same three
+    # isolation axes, symmetric with the local scans (bug-046/075).
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     # bug-100: the by-id fetches carry agent_id too. Row identity IS pinned by the
     # remote hit's id, but ownership then rests entirely on the remote index's
     # namespace matching DB ownership — a desynced or mis-seeded index would have
     # surfaced another agent's row. The predicate makes the fetch fail closed.
     iso_fetch = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
-    iso_ep_fetch = isolation_where(agent_id=agent_id, project_id=project_id)
+    iso_ep_fetch = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
 
     src_like = _escape_like_prefix(source_id)
     src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
@@ -223,8 +223,10 @@ async def _search_vector(
                             }
                         )
                 elif raw_id.startswith("ep:"):
-                    # Episodes lack per-user source — skip when source_id is set.
-                    if src_like:
+                    # Episodes lack per-user source. A channel filter makes them
+                    # safe on the session-start grounding path (bug-046/075),
+                    # matching the local branch's bug-080 contract.
+                    if src_like and not channel:
                         continue
                     ep_id = int(raw_id[3:])
                     row = await db.execute_fetchall(
@@ -331,9 +333,8 @@ async def _search_vector(
     # even when source_id is set (the session-start grounding path) because the
     # bug-045 channel clause scopes the fetch. Dropping ALL episodes on src_like
     # silently defeated semantic episode recall on exactly that grounding path.
-    # NOTE: the remote branch keeps the conservative all-drop gate until the
-    # remote episode fetch carries the channel predicate (deferred bug-075) —
-    # relaxing it there would open the cross-channel leak this clause prevents.
+    # The remote episode fetch now carries the same channel predicate and gate,
+    # so both vector branches are symmetric (bug-046/075).
     ep_rows = (
         []
         if (src_like and not channel)
