@@ -41,6 +41,16 @@ from cpersona.utils import _clamp_limit, _try_parse_json
 logger = logging.getLogger(__name__)
 
 
+def _warn_if_unscoped(operation: str, row_id: int, agent_id: str) -> None:
+    # bug-137: direct callers may omit the kernel-injected ownership scope.
+    if not agent_id:
+        logger.warning(
+            "%s is running UNSCOPED (no ownership enforcement) for row id %s",
+            operation,
+            row_id,
+        )
+
+
 async def do_get_profile(agent_id: str) -> dict:
     """Get the current profile for an agent."""
     async with connection() as db:
@@ -146,6 +156,7 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "deleted_id": memory_id}, "delete_memory")
+    _warn_if_unscoped("do_delete_memory", memory_id, agent_id)
     # aiosqlite 0.22 has execute_fetchall but no execute_fetchone — using the
     # former avoids a silent AttributeError that previously broke every delete.
     async with connection() as db:
@@ -195,6 +206,7 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
         return no_persist.make_skipped_response({"ok": True, "updated_id": memory_id}, "update_memory")
     if not content or not content.strip():
         return {"error": "Content cannot be empty"}
+    _warn_if_unscoped("do_update_memory", memory_id, agent_id)
 
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
@@ -259,6 +271,7 @@ async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
     """Lock a memory to prevent deletion and editing."""
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "locked_id": memory_id}, "lock_memory")
+    _warn_if_unscoped("do_lock_memory", memory_id, agent_id)
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
@@ -279,6 +292,7 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
     """Unlock a memory to allow deletion and editing."""
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "unlocked_id": memory_id}, "unlock_memory")
+    _warn_if_unscoped("do_unlock_memory", memory_id, agent_id)
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
@@ -1266,6 +1280,7 @@ async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
     """Delete a single episode by ID (FTS5 triggers handle index cleanup)."""
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "deleted_id": episode_id}, "delete_episode")
+    _warn_if_unscoped("do_delete_episode", episode_id, agent_id)
     # bug-042/043: transaction() serialises the DELETE+commit behind the shared lock.
     async with transaction() as db:
         if agent_id:
