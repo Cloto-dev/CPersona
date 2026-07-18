@@ -539,6 +539,7 @@ def _apply_quality_gate(
     memory_count: int,
     gate: float | None = None,
     gate_signal: str | None = None,
+    pure_recency: bool = False,
 ) -> list[dict]:
     """Adaptive quality gate — remove results below a dynamic threshold.
 
@@ -627,7 +628,10 @@ def _apply_quality_gate(
                 stats["blocked"] += 1
         else:
             # Unscored (cascade FTS/keyword without confidence) — volume rule
-            if memory_count >= 100:
+            # bug-125: an empty query is a pure-recency listing with no relevance
+            # signal, so bypass the volume rule; otherwise session-start recall
+            # returns empty for every agent with fewer than 100 memories.
+            if pure_recency or memory_count >= 100:
                 filtered.append(r)
                 stats["unscored"] += 1
             else:
@@ -783,9 +787,15 @@ async def _apply_recall_scoring(
             # homogeneous fusion-ordered lists. Cascade results (no fusion score on
             # every row) intentionally keep stage order — bug-018 doctrine.
             if penalized and not CONFIDENCE_ENABLED:
+                # bug-126: a profile injection row (id == -1) carries no fusion score, so the
+                # bare all(...) below saw None and skipped the re-sort whenever a profile was
+                # present — silently defeating the bug-115 penalty re-order under default config.
+                # Check homogeneity over the SCORED rows only; profile rows sink to the bottom
+                # via the sentinel (matching their append-at-end injection); stable-sort keeps ties.
+                scored = [r for r in results if r.get("id") != -1]
                 for score_key in ("_rrf_score", "_rsf_score"):
-                    if all(r.get(score_key) is not None for r in results):
-                        results.sort(key=lambda r, k=score_key: r[k], reverse=True)
+                    if scored and all(r.get(score_key) is not None for r in scored):
+                        results.sort(key=lambda r, k=score_key: r.get(k, float("-inf")), reverse=True)
                         break
 
     if CONFIDENCE_ENABLED:
@@ -894,6 +904,7 @@ async def do_recall(
     # The gate carries the signal it was calibrated for; _apply_quality_gate applies it
     # only to the matching branch, so a gate from a different config is inert (no scale
     # mismatch). Under CONFIDENCE_ENABLED the active signal is "confidence".
+    pure_recency = not query.strip()
     gate = None
     gate_signal = vector._fused_gate_signal
     if config.FUSED_GATE_ENABLED:
@@ -901,7 +912,12 @@ async def do_recall(
         if gate is not None and deep:
             gate = gate * 0.5  # mirror the deep relaxation of min_score
     results = _apply_quality_gate(
-        results, effective_min, memory_count, gate=gate, gate_signal=gate_signal
+        results,
+        effective_min,
+        memory_count,
+        gate=gate,
+        gate_signal=gate_signal,
+        pure_recency=pure_recency,
     )
 
     if AUTOCUT_ENABLED:

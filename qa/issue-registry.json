@@ -1678,7 +1678,7 @@
       "status": "fixed",
       "category": "recall-ranking",
       "fixed_in": "2.5.0b2",
-      "fix_note": "_apply_recall_scoring re-sorts homogeneous fusion-ordered lists after applying the penalty when confidence is off; cascade stage order is intentionally preserved (bug-018 doctrine). Regression: test_audit_2500b2.py::test_episode_penalty_resorts_fusion_results."
+      "fix_note": "_apply_recall_scoring re-sorts homogeneous fusion-ordered lists after applying the penalty when confidence is off; cascade stage order is intentionally preserved (bug-018 doctrine). Regression: test_audit_2500b2.py::test_episode_penalty_resorts_fusion_results. bug-126 re-opened and closed the profile-row hole in the same re-sort."
     },
     {
       "id": "bug-116",
@@ -1805,6 +1805,34 @@
       "category": "test-infra",
       "fixed_in": "2.5.0b3",
       "fix_note": "Reboot-pattern tests go through database.close_db() (which closes write+read connections); close_db's docstring carries the doctrine, and the CI test job now has timeout-minutes:15 so any future hang fails fast instead of masking as a 6h cancel. Class prevention (post-b3): tests/test_structural_gates.py::test_no_orphaning_connection_repoint statically rejects any database._db/_read_db re-point with no prior close()/stash in scope (inline `# orphan-waiver:` escape; teeth test included)."
+    },
+    {
+      "id": "bug-125",
+      "summary": "Empty-query recall routed through cascade recency rows with no relevance score, so the unscored volume rule silently rejected every result when the agent had fewer than 100 memories.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "bug-125",
+      "expected": "present",
+      "status": "fixed",
+      "category": "recall-ranking",
+      "fixed_in": "2.5.0",
+      "fix_note": "The quality gate now bypasses the unscored volume rule only for pure-recency empty-query recall. Regression: test_audit_2500b3.py::test_empty_query_recall_bypasses_unscored_volume_gate."
+    },
+    {
+      "id": "bug-126",
+      "summary": "A profile injection row carried no fusion score, so the all-rows homogeneity guard skipped the episode-boundary re-sort and silently defeated the bug-115 penalty under default config.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "bug-126",
+      "expected": "present",
+      "status": "fixed",
+      "category": "recall-ranking",
+      "fixed_in": "2.5.0",
+      "fix_note": "The episode-penalty re-sort now checks fusion-score homogeneity across scored rows only and sinks profile sentinels with a negative-infinity sort key. Regression: test_audit_2500b3.py::test_episode_penalty_resorts_with_profile_row."
     }
   ]
 }
