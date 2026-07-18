@@ -67,6 +67,7 @@ from cpersona.config import (
     TASK_QUEUE_ENABLED,
 )
 from cpersona import config
+from cpersona import operating_context
 from cpersona.database import close_db, init_db
 from cpersona.maintenance_handlers import do_check_health, do_deep_check, do_migrate_channel_axis
 from cpersona.memory_handlers import (
@@ -139,6 +140,83 @@ async def do_archive_episode_or_queue(
 
 
 # =============================================================================
+# Operating-context boundary (2.5.1, docs/OPERATING_CONTEXT_DESIGN.md §5)
+# =============================================================================
+
+# Hard-layer gate for the six project_id-accepting tools. Boundary-layer only,
+# same layering as the preview tier below: library callers (do_store/do_recall)
+# never see the sentinel or the registry — resolution and validation happen
+# here, so a direct library caller keeps today's exact semantics.
+
+
+def _oc_annotate(result: dict, passed: str | None, resolved: str | None, warning: str | None) -> dict:
+    """Attach the gate's advisory fields to a handler response (additive only)."""
+    if warning:
+        result["operating_context_warning"] = warning
+    if passed == operating_context.AUTO_SENTINEL:
+        # §5.2 transparency: the caller can always see what @auto became.
+        result["resolved_project_id"] = resolved
+    return result
+
+
+def _oc_reject(error: str) -> dict:
+    context = operating_context.get_context()
+    return {
+        "ok": False,
+        "error": error,
+        "operating_context_revision": context.revision if context else None,
+    }
+
+
+async def do_store_boundary(agent_id: str, message: dict, channel: str = "", project_id: str = "") -> dict:
+    resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
+    if error:
+        return _oc_reject(error)
+    result = await do_store(agent_id, message, channel=channel, project_id=resolved)
+    return _oc_annotate(result, project_id, resolved, warning)
+
+
+async def do_archive_episode_boundary(
+    agent_id: str,
+    history: list,
+    summary: str = "",
+    keywords: str = "",
+    resolved: bool | None = None,
+    project_id: str = "",
+    channel: str = "",
+) -> dict:
+    pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
+    if error:
+        return _oc_reject(error)
+    result = await do_archive_episode_or_queue(
+        agent_id,
+        history,
+        summary=summary,
+        keywords=keywords,
+        resolved=resolved,
+        project_id=pid,
+        channel=channel,
+    )
+    return _oc_annotate(result, project_id, pid, warning)
+
+
+async def do_list_memories_boundary(agent_id: str, limit: int, project_id: str | None = None) -> dict:
+    resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+    if error:
+        return _oc_reject(error)
+    result = await do_list_memories(agent_id, limit, project_id=resolved)
+    return _oc_annotate(result, project_id, resolved, warning)
+
+
+async def do_list_episodes_boundary(agent_id: str, limit: int, project_id: str | None = None) -> dict:
+    resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+    if error:
+        return _oc_reject(error)
+    result = await do_list_episodes(agent_id, limit, project_id=resolved)
+    return _oc_annotate(result, project_id, resolved, warning)
+
+
+# =============================================================================
 # Recall preview boundary (2.5.0, Task #193)
 # =============================================================================
 
@@ -186,6 +264,9 @@ async def do_recall_boundary(
     source_id: str,
     full_content: bool = False,
 ) -> dict:
+    pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+    if error:
+        return _oc_reject(error)
     result = await do_recall(
         agent_id,
         query,
@@ -193,10 +274,11 @@ async def do_recall_boundary(
         deep=deep,
         channel=channel,
         exclude_contents=exclude_contents,
-        project_id=project_id,
+        project_id=pid,
         source_id=source_id,
     )
-    return result if full_content else _apply_preview(result)
+    result = result if full_content else _apply_preview(result)
+    return _oc_annotate(result, project_id, pid, warning)
 
 
 async def do_recall_with_context_boundary(
@@ -210,6 +292,9 @@ async def do_recall_with_context_boundary(
     source_id: str,
     full_content: bool = False,
 ) -> dict:
+    pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+    if error:
+        return _oc_reject(error)
     result = await do_recall_with_context(
         agent_id,
         query,
@@ -217,17 +302,22 @@ async def do_recall_with_context_boundary(
         limit=limit,
         channel=channel,
         deep=deep,
-        project_id=project_id,
+        project_id=pid,
         source_id=source_id,
     )
-    return result if full_content else _apply_preview(result)
+    result = result if full_content else _apply_preview(result)
+    return _oc_annotate(result, project_id, pid, warning)
 
 
 # =============================================================================
-# MCP Tool Registry — 28 tools
+# MCP Tool Registry — 29 tools
 # =============================================================================
 
-registry = ToolRegistry("cloto-mcp-cpersona")
+# 2.5.1 Soft layer (§4): the sidecar's instructions.summary rides the MCP
+# initialize response verbatim. Read once at process start — MCP only sends
+# instructions at initialize, so per-call reload would buy nothing; clients
+# see operator edits on reconnect.
+registry = ToolRegistry("cloto-mcp-cpersona", instructions=operating_context.instructions_text())
 
 
 # Session no-persist controls — registered first for discoverability.
@@ -296,6 +386,66 @@ registry.auto_tool(
     annotations=ToolAnnotations(readOnlyHint=True),
 )
 
+
+async def do_get_operating_context(section: str = "") -> dict:
+    """Serve the operator-owned operating context (v2.5.1, read-only).
+
+    No args → preview tier (revision, summary, registry, defaults, section
+    names). section="X" → that doctrine section's full body. The write path is
+    the filesystem, deliberately not MCP (§7).
+    """
+    context = operating_context.get_context()
+    if context is None:
+        state = operating_context.load_state()
+        if not state["enabled"]:
+            reason = "disabled (CPERSONA_OPERATING_CONTEXT=off)"
+        elif state["parse_error"]:
+            reason = f"sidecar unusable: {state['parse_error']}"
+        else:
+            reason = f"no sidecar file at {state['path']}"
+        return {"ok": False, "enabled": False, "error": f"operating context is dormant — {reason}"}
+    if section:
+        body = context.doctrine.get(section)
+        if body is None:
+            return {
+                "ok": False,
+                "error": f"unknown doctrine section '{section}'",
+                "doctrine_sections": sorted(context.doctrine),
+            }
+        return {"ok": True, "context_revision": context.revision, "section": section, "body": body}
+    return {
+        "ok": True,
+        "context_revision": context.revision,
+        "instructions_summary": context.summary,
+        "registry": {"project_ids": context.project_ids, "enforce": context.enforce},
+        "defaults": context.defaults,
+        "doctrine_sections": sorted(context.doctrine),
+    }
+
+
+registry.auto_tool(
+    "get_operating_context",
+    "Read the server-served operating context (v2.5.1): the operator-owned doctrine "
+    "distributed to every connected client. Without arguments returns the preview tier "
+    "— context_revision, instructions_summary, project_id registry (+ enforce mode), "
+    "@auto defaults, and doctrine section names. Pass section to fetch one section's "
+    "full body. Read-only: the context is edited by the operator on the filesystem "
+    "(~/.cpersona/operating-context.toml), never via MCP.",
+    {
+        "type": "object",
+        "properties": {
+            "section": {
+                "type": "string",
+                "description": "Doctrine section name to fetch in full (from doctrine_sections). Empty = preview tier.",
+                "default": "",
+            },
+        },
+    },
+    do_get_operating_context,
+    [("section", str, "")],
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+
 registry.auto_tool(
     "store",
     "Store a message in agent memory for future recall.",
@@ -316,13 +466,15 @@ registry.auto_tool(
                 "description": (
                     "v2.4.17 isolation axis. Optional — omit or pass '' to "
                     "store in the global pool. Reads via γ semantics: a "
-                    "recall with project_id='X' returns 'X' rows + global pool."
+                    "recall with project_id='X' returns 'X' rows + global pool. "
+                    "v2.5.1: pass '@auto' to resolve this agent's default from "
+                    "the server's operating context (echoed as resolved_project_id)."
                 ),
             },
         },
         "required": ["agent_id", "message"],
     },
-    do_store,
+    do_store_boundary,
     [("agent_id", str), ("message", dict), ("channel", str, ""), ("project_id", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
@@ -563,7 +715,7 @@ registry.auto_tool(
         },
         "required": ["agent_id", "summary"],
     },
-    do_archive_episode_or_queue,
+    do_archive_episode_boundary,
     [
         ("agent_id", str),
         ("history", list, []),
@@ -595,7 +747,7 @@ registry.auto_tool(
         },
         "required": [],
     },
-    do_list_memories,
+    do_list_memories_boundary,
     [("agent_id", str), ("limit", int, 100), ("project_id", str, None)],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -615,7 +767,7 @@ registry.auto_tool(
         },
         "required": [],
     },
-    do_list_episodes,
+    do_list_episodes_boundary,
     [("agent_id", str), ("limit", int, 50), ("project_id", str, None)],
     annotations=ToolAnnotations(readOnlyHint=True),
 )

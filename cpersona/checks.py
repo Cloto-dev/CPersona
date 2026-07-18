@@ -40,7 +40,7 @@ import logging
 import re
 import sqlite3
 
-from cpersona import health, vector
+from cpersona import health, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import FTS_ENABLED, MAX_CONTENT_LENGTH
 from cpersona.database import SCHEMA_VERSION
@@ -921,6 +921,41 @@ async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
     ]
 
 
+async def check_operating_context_parse(db, agent_id: str = "", fix: bool = False) -> list[dict]:
+    """Sidecar present but unusable (v2.5.1 §8). The feature degrades to dormant
+    rather than failing the boot, so this finding is the only surface where a
+    config typo becomes visible. fix is a human editing the file — never automatic."""
+    state = operating_context.load_state()
+    if state["present"] and state["parse_error"]:
+        return [
+            {
+                "type": "operating_context_parse_error",
+                "path": state["path"],
+                "detail": state["parse_error"],
+                "hint": "operating context is dormant until the sidecar parses; edit the file",
+            }
+        ]
+    return []
+
+
+async def check_operating_context_size(db, agent_id: str = "", fix: bool = False) -> list[dict]:
+    """Instructions summary over the fixed-cost budget (v2.5.1 §4/§8). The summary
+    is injected into every client session at initialize — treat it like CLAUDE.md
+    budget, not like a doc."""
+    state = operating_context.load_state()
+    if state["summary_len"] > operating_context.SUMMARY_WARN_CHARS:
+        return [
+            {
+                "type": "operating_context_summary_oversized",
+                "path": state["path"],
+                "summary_len": state["summary_len"],
+                "budget": operating_context.SUMMARY_WARN_CHARS,
+                "hint": "move detail into [[doctrine]] sections (served via get_operating_context)",
+            }
+        ]
+    return []
+
+
 class Check:
     """A registered health check: metadata + runner (see module docstring)."""
 
@@ -959,6 +994,8 @@ HEALTH_CHECKS: list[Check] = [
     Check("empty_content", "warn", True, check_empty_content),
     Check("invalid_source_type", "warn", True, check_invalid_source_type),
     Check("anonymous_source", "info", False, check_anonymous_source),
+    Check("operating_context_parse", "warn", False, check_operating_context_parse),
+    Check("operating_context_size", "info", False, check_operating_context_size),
 ]
 
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]

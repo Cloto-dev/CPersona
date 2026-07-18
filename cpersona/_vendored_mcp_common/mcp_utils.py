@@ -67,10 +67,15 @@ _VALIDATORS: dict[type, Callable] = {
 
 
 class ToolRegistry:
-    """Decorator-based MCP tool registration."""
+    """Decorator-based MCP tool registration.
 
-    def __init__(self, server_name: str):
-        self.server = Server(server_name)
+    *instructions* is forwarded to the SDK ``Server`` and lands in the
+    ``initialize`` response's ``instructions`` field — the MCP-native channel
+    for serving operating guidance to every connected client.
+    """
+
+    def __init__(self, server_name: str, instructions: str | None = None):
+        self.server = Server(server_name, instructions=instructions)
         self._tools: list[Tool] = []
         self._handlers: dict[str, Callable] = {}
         self._bind()
