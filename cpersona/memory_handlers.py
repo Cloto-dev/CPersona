@@ -679,16 +679,15 @@ def _is_episode_result(r: dict) -> bool:
     bug-040/041: memories and episodes share one AUTOINCREMENT id space, so an
     episode id must never key into a ``memories`` query — otherwise recalling
     episode #3 reads/bumps the recall_count of the unrelated memory #3. Episode
-    rows come from both the vector path (``_rid=('ep', id)``) and the FTS path
-    (``_bm25``, no ``_rid``), but both tag ``source={'System':'episode'}`` and
-    prefix ``content`` with ``'[Episode] '``; a memory's source is a JSON string
-    (never a dict), so the dict-source check cannot false-positive on a memory.
+    rows carry structural markers: ``_rid=('ep', id)`` and/or
+    ``source={'System':'episode'}``. A memory's source is a JSON string (never a
+    dict), so the dict-source check cannot false-positive on a memory.
     """
-    src = r.get("source")
-    if isinstance(src, dict) and src.get("System") == "episode":
+    rid = r.get("_rid")
+    if isinstance(rid, tuple) and len(rid) == 2 and rid[0] == "ep":
         return True
-    content = r.get("content")
-    return isinstance(content, str) and content.startswith("[Episode] ")
+    src = r.get("source")
+    return isinstance(src, dict) and src.get("System") == "episode"
 
 
 async def _apply_recall_scoring(
@@ -1231,6 +1230,7 @@ async def _search_episodes_fts(
             "content": f"[Episode] {row[1]}",
             "source": {"System": "episode"},
             "timestamp": row[2] or "",
+            "_rid": ("ep", row[0]),
             "_resolved": bool(row[3]),
             "_bm25": row[4],
         }
