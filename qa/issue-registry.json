@@ -1875,6 +1875,48 @@
       "category": "health-check",
       "fixed_in": "2.5.0",
       "fix_note": "Prefetch now skips an already faulted backend, embeds rows in chunks of 32, records chunk failures, and exits once the breaker latches. Regression: test_audit_2500b3.py::test_prefetch_null_embeddings_skips_faulted_backend and test_audit_2500b3.py::test_prefetch_null_embeddings_batches_rows."
+    },
+    {
+      "id": "bug-130",
+      "summary": "Import accepted unconstrained caller-supplied paths and read files of unbounded size into memory, allowing arbitrary server-readable data ingestion and denial of service.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "bug-130",
+      "expected": "present",
+      "status": "fixed",
+      "category": "data-integrity",
+      "fixed_in": "2.5.0",
+      "fix_note": "Import now shares export path confinement, rejects files above MAX_IMPORT_BYTES before reading, and is annotated destructive. Regression: test_audit_2500b3.py::test_import_rejects_unconfined_and_oversized_paths."
+    },
+    {
+      "id": "bug-131",
+      "summary": "Merge omitted created_at, recall_count, and last_recalled_at when copying memories, silently resetting the ranking history used by confidence and decay.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "bug-131",
+      "expected": "present",
+      "status": "fixed",
+      "category": "data-integrity",
+      "fixed_in": "2.5.0",
+      "fix_note": "Merge now carries created_at, recall_count, and last_recalled_at from each source memory into the target row. Regression: test_audit_2500b3.py::test_merge_preserves_memory_ranking_metadata."
+    },
+    {
+      "id": "bug-132",
+      "summary": "Import and merge inserted memories without upserting them into the remote vector index, making bulk-loaded rows invisible to remote vector recall.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "bug-132",
+      "expected": "present",
+      "status": "fixed",
+      "category": "data-integrity",
+      "fixed_in": "2.5.0",
+      "fix_note": "Import and merge now batch-upsert each inserted memory to the target agent's remote namespace after the database transaction commits. Regression: test_audit_2500b3.py::test_import_syncs_inserted_memories_to_remote_index and test_audit_2500b3.py::test_merge_remote_sync_respects_vector_mode."
     }
   ]
 }

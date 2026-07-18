@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
-from cpersona import checks, health, memory_handlers, vector
+from cpersona import admin_handlers, checks, config, health, memory_handlers, vector
 from cpersona.database import get_db
 
 
@@ -239,3 +239,142 @@ async def test_prefetch_null_embeddings_batches_rows(clean_db, monkeypatch):
     assert len(client.calls) == 1
     assert set(client.calls[0]) == {"one", "two", "three"}
     assert {text for text, _ in cache["memories"].values()} == {"one", "two", "three"}
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_unconfined_and_oversized_paths(clean_db, monkeypatch, tmp_path):
+    import_file = tmp_path / "import.jsonl"
+    import_file.write_text('{"_type":"memory","agent_id":"unsafe","content":"must not import"}\n')
+
+    traversal = str(tmp_path / "child" / ".." / "import.jsonl")
+    result = await admin_handlers.do_import_memories(traversal)
+    assert result == {
+        "error": f"input_path rejected (path traversal or outside export dir): {traversal}"
+    }
+
+    export_root = tmp_path / "confined"
+    export_root.mkdir()
+    monkeypatch.setattr(config, "EXPORT_DIR", str(export_root))
+    result = await admin_handlers.do_import_memories(str(import_file))
+    assert result == {
+        "error": f"input_path rejected (path traversal or outside export dir): {import_file}"
+    }
+
+    inside = export_root / "large.jsonl"
+    inside.write_text('{"_type":"memory","agent_id":"unsafe","content":"must not import"}\n')
+    monkeypatch.setattr(
+        admin_handlers.os.path,
+        "getsize",
+        lambda _path: config.MAX_IMPORT_BYTES + 1,
+    )
+    result = await admin_handlers.do_import_memories(str(inside))
+    assert result == {
+        "error": f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {inside}"
+    }
+
+    rows = await clean_db.execute_fetchall("SELECT content FROM memories WHERE agent_id = 'unsafe'")
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_merge_preserves_memory_ranking_metadata(clean_db):
+    created_at = "2020-01-02 03:04:05"
+    last_recalled_at = "2026-06-07T08:09:10+00:00"
+    await clean_db.execute(
+        "INSERT INTO memories"
+        " (agent_id, msg_id, content, timestamp, created_at, recall_count, last_recalled_at)"
+        " VALUES ('metadata-source', 'distinctive', 'ranking history', '', ?, 37, ?)",
+        (created_at, last_recalled_at),
+    )
+    await clean_db.commit()
+
+    result = await admin_handlers.do_merge_memories("metadata-source", "metadata-target")
+    assert result["ok"] is True
+    row = await clean_db.execute_fetchall(
+        "SELECT created_at, recall_count, last_recalled_at"
+        " FROM memories WHERE agent_id = 'metadata-target' AND msg_id = 'distinctive'"
+    )
+    assert row == [(created_at, 37, last_recalled_at)]
+
+
+class _RecordingHttpClient:
+    def __init__(self):
+        self.calls = []
+
+    async def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+
+
+class _RemoteEmbeddingClient:
+    def __init__(self, http_client):
+        self._http_url = "http://embedding.test/embed"
+        self._client = http_client
+
+
+@pytest.mark.asyncio
+async def test_import_syncs_inserted_memories_to_remote_index(clean_db, monkeypatch, tmp_path):
+    http_client = _RecordingHttpClient()
+    monkeypatch.setattr(vector, "VECTOR_SEARCH_MODE", "remote")
+    monkeypatch.setattr(vector, "_embedding_client", _RemoteEmbeddingClient(http_client))
+    import_file = tmp_path / "remote-import.jsonl"
+    import_file.write_text(
+        '{"_type":"memory","agent_id":"original","msg_id":"remote-import",'
+        '"content":"remote import body"}\n'
+    )
+
+    result = await admin_handlers.do_import_memories(
+        str(import_file), target_agent_id="remote-import-target"
+    )
+    assert result["ok"] is True
+    row = await clean_db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = 'remote-import-target'"
+    )
+    assert http_client.calls == [
+        (
+            "http://embedding.test/index",
+            {
+                "json": {
+                    "namespace": "cpersona:remote-import-target",
+                    "items": [{"id": f"mem:{row[0][0]}", "text": "remote import body"}],
+                }
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_merge_remote_sync_respects_vector_mode(clean_db, monkeypatch):
+    http_client = _RecordingHttpClient()
+    monkeypatch.setattr(vector, "_embedding_client", _RemoteEmbeddingClient(http_client))
+    await clean_db.execute(
+        "INSERT INTO memories (agent_id, msg_id, content, timestamp)"
+        " VALUES ('remote-merge-source', 'remote-merge', 'remote merge body', '')"
+    )
+    await clean_db.commit()
+
+    monkeypatch.setattr(vector, "VECTOR_SEARCH_MODE", "local")
+    local_result = await admin_handlers.do_merge_memories(
+        "remote-merge-source", "local-merge-target"
+    )
+    assert local_result["ok"] is True
+    assert http_client.calls == []
+
+    monkeypatch.setattr(vector, "VECTOR_SEARCH_MODE", "remote")
+    remote_result = await admin_handlers.do_merge_memories(
+        "remote-merge-source", "remote-merge-target"
+    )
+    assert remote_result["ok"] is True
+    row = await clean_db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = 'remote-merge-target'"
+    )
+    assert http_client.calls == [
+        (
+            "http://embedding.test/index",
+            {
+                "json": {
+                    "namespace": "cpersona:remote-merge-target",
+                    "items": [{"id": f"mem:{row[0][0]}", "text": "remote merge body"}],
+                }
+            },
+        )
+    ]

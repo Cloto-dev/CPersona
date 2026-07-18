@@ -9,6 +9,7 @@ DB_PATH = os.environ.get("CPERSONA_DB_PATH", "data/cpersona.db")
 # an absolute/relative path — the readOnlyHint=False/destructiveHint=True tool
 # annotation makes the host confirm the write. Set this for a hardened deployment.
 EXPORT_DIR = os.environ.get("CPERSONA_EXPORT_DIR", "")
+MAX_IMPORT_BYTES = int(os.environ.get("CPERSONA_MAX_IMPORT_BYTES", "104857600"))
 # bug-085: MAX_MEMORIES is the vector retriever's SCAN WINDOW — how many of the
 # newest rows it fetches and cosine-ranks per recall — not a response size (that
 # is the per-call `limit`, clamped in the handlers). It is the single knob that
