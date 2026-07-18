@@ -193,7 +193,7 @@
       "fix_sketch": "GROUP BY agent_id, project_id, channel, content in BOTH the detection query and the survivor MIN(id) subquery to match idx_memories_dedup_content and the v12 migration.",
       "note": "Initial audit framing (full-key collapse) was imprecise: the broad grouping's cross-CHANNEL cleanup is intentional (test _insert_dup). The real defect was crossing the PROJECT isolation axis; fix adds project_id (not channel) to the grouping.",
       "fixed_in": "2.4.38",
-      "fix_note": "v2.4.38: check_duplicate_content groups by (agent_id, project_id, content) in both detection and the MIN(id) survivor subquery — deliberately including project_id (a γ relevance axis — agent_id is the only hard isolation boundary, see cpersona/isolation.py, but the same content under different projects is legitimately distinct with different visibility) while still omitting channel (preserving the intended cross-channel cleanup the UNIQUE index leaves to check_health). Cross-project content is no longer collapsed, so the MIN(id) survivor can no longer delete the global copy and narrow another project's visibility. Regression: test_v2438_hardening.py::test_duplicate_content_does_not_collapse_across_projects; cross-channel dedup pinned by test_v2435_bugfixes.py."
+      "fix_note": "v2.4.38: check_duplicate_content groups by (agent_id, project_id, content) in both detection and the MIN(id) survivor subquery — deliberately including project_id (a γ relevance axis — agent_id is the only hard isolation boundary, see cpersona/isolation.py, but the same content under different projects is legitimately distinct with different visibility) while still omitting channel (preserving the intended cross-channel cleanup the UNIQUE index leaves to check_health). Cross-project content is no longer collapsed, so the MIN(id) survivor can no longer delete the global copy and narrow another project's visibility. Regression: test_v2438_hardening.py::test_duplicate_content_does_not_collapse_across_projects; cross-channel dedup pinned by test_v2435_bugfixes.py. bug-128 extended the global-survivor principle to the channel axis."
     },
     {
       "id": "bug-015",
@@ -421,13 +421,13 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/checks.py",
-      "pattern": "SUBSTR\\(content, 1, \\?\\), embedding = NULL WHERE id = \\? AND locked = 0",
+      "pattern": "_rewrite_or_delete_on_collision\\(db, row_id, content\\[:MAX_CONTENT_LENGTH\\]\\)",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Add `AND locked = 0` to the oversized selection and UPDATE (and re-embed after truncation).",
       "fixed_in": "2.4.38",
-      "fix_note": "v2.4.38: check_oversized_content's truncate UPDATE excludes locked rows (AND locked = 0), so a locked oversized memory keeps its full content. Regression: test_v2438_hardening.py::test_locked_rows_survive_destructive_maintenance."
+      "fix_note": "v2.4.38: check_oversized_content's truncate UPDATE excludes locked rows (AND locked = 0), so a locked oversized memory keeps its full content. bug-127 moved the truncate through the shared rewrite helper, which retains the locked=0 guard. Regression: test_v2438_hardening.py::test_locked_rows_survive_destructive_maintenance."
     },
     {
       "id": "bug-030",
@@ -1650,7 +1650,7 @@
       "status": "fixed",
       "category": "check-robustness",
       "fixed_in": "2.5.0b1",
-      "fix_note": "On an IntegrityError the oversized row is deleted as a duplicate of the colliding survivor (keep-existing, never-touch-locked — the dup fixer's policy). Regression: test_audit_2500b1.py::test_oversized_truncation_collision_converges."
+      "fix_note": "On an IntegrityError the oversized row is deleted as a duplicate of the colliding survivor (keep-existing, never-touch-locked — the dup fixer's policy). Regression: test_audit_2500b1.py::test_oversized_truncation_collision_converges. bug-127 generalized this guard to check_memory_annotation/check_discord_mention via a shared helper."
     },
     {
       "id": "bug-114",
@@ -1678,7 +1678,7 @@
       "status": "fixed",
       "category": "recall-ranking",
       "fixed_in": "2.5.0b2",
-      "fix_note": "_apply_recall_scoring re-sorts homogeneous fusion-ordered lists after applying the penalty when confidence is off; cascade stage order is intentionally preserved (bug-018 doctrine). Regression: test_audit_2500b2.py::test_episode_penalty_resorts_fusion_results."
+      "fix_note": "_apply_recall_scoring re-sorts homogeneous fusion-ordered lists after applying the penalty when confidence is off; cascade stage order is intentionally preserved (bug-018 doctrine). Regression: test_audit_2500b2.py::test_episode_penalty_resorts_fusion_results. bug-126 re-opened and closed the profile-row hole in the same re-sort."
     },
     {
       "id": "bug-116",
@@ -1805,6 +1805,202 @@
       "category": "test-infra",
       "fixed_in": "2.5.0b3",
       "fix_note": "Reboot-pattern tests go through database.close_db() (which closes write+read connections); close_db's docstring carries the doctrine, and the CI test job now has timeout-minutes:15 so any future hang fails fast instead of masking as a 6h cancel. Class prevention (post-b3): tests/test_structural_gates.py::test_no_orphaning_connection_repoint statically rejects any database._db/_read_db re-point with no prior close()/stash in scope (inline `# orphan-waiver:` escape; teeth test included)."
+    },
+    {
+      "id": "bug-125",
+      "summary": "Empty-query recall routed through cascade recency rows with no relevance score, so the unscored volume rule silently rejected every result when the agent had fewer than 100 memories.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "bug-125",
+      "expected": "present",
+      "status": "fixed",
+      "category": "recall-ranking",
+      "fixed_in": "2.5.0",
+      "fix_note": "The quality gate now bypasses the unscored volume rule only for pure-recency empty-query recall. Regression: test_audit_2500b3.py::test_empty_query_recall_bypasses_unscored_volume_gate."
+    },
+    {
+      "id": "bug-126",
+      "summary": "A profile injection row carried no fusion score, so the all-rows homogeneity guard skipped the episode-boundary re-sort and silently defeated the bug-115 penalty under default config.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "bug-126",
+      "expected": "present",
+      "status": "fixed",
+      "category": "recall-ranking",
+      "fixed_in": "2.5.0",
+      "fix_note": "The episode-penalty re-sort now checks fusion-score homogeneity across scored rows only and sinks profile sentinels with a negative-infinity sort key. Regression: test_audit_2500b3.py::test_episode_penalty_resorts_with_profile_row."
+    },
+    {
+      "id": "bug-127",
+      "summary": "Annotation and Discord-mention content rewrites used bare UPDATEs, so a dedup-index collision crashed the health fix loop and left the colliding row permanently dirty.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/checks.py",
+      "pattern": "bug-127",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "fixed_in": "2.5.0",
+      "fix_note": "All content-rewriting checks now share an IntegrityError guard that deletes the unlocked rewritten duplicate while preserving the existing survivor. Regression: test_audit_2500b3.py::test_memory_annotation_collision_deletes_rewritten_duplicate and test_audit_2500b3.py::test_discord_mention_collision_deletes_rewritten_duplicate."
+    },
+    {
+      "id": "bug-128",
+      "summary": "Cross-channel duplicate repair kept MIN(id), which could delete the channel='' shared row and silently narrow recall visibility.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/checks.py",
+      "pattern": "bug-128",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "fixed_in": "2.5.0",
+      "fix_note": "The survivor subquery now prefers a channel='' shared row and falls back to MIN(id) only when no shared copy exists. Regression: test_audit_2500b3.py::test_duplicate_content_prefers_shared_channel_survivor."
+    },
+    {
+      "id": "bug-129",
+      "summary": "NULL-embedding prefetch made one timeout-bounded backend call per row without consulting or feeding the health circuit breaker.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/checks.py",
+      "pattern": "bug-129",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "fixed_in": "2.5.0",
+      "fix_note": "Prefetch now skips an already faulted backend, embeds rows in chunks of 32, records chunk failures, and exits once the breaker latches. Regression: test_audit_2500b3.py::test_prefetch_null_embeddings_skips_faulted_backend and test_audit_2500b3.py::test_prefetch_null_embeddings_batches_rows."
+    },
+    {
+      "id": "bug-130",
+      "summary": "Import accepted unconstrained caller-supplied paths and read files of unbounded size into memory, allowing arbitrary server-readable data ingestion and denial of service.",
+      "severity": "HIGH",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "bug-130",
+      "expected": "present",
+      "status": "fixed",
+      "category": "data-integrity",
+      "fixed_in": "2.5.0",
+      "fix_note": "Import now shares export path confinement, rejects files above MAX_IMPORT_BYTES before reading, and is annotated destructive. Regression: test_audit_2500b3.py::test_import_rejects_unconfined_and_oversized_paths."
+    },
+    {
+      "id": "bug-131",
+      "summary": "Merge omitted created_at, recall_count, and last_recalled_at when copying memories, silently resetting the ranking history used by confidence and decay.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "bug-131",
+      "expected": "present",
+      "status": "fixed",
+      "category": "data-integrity",
+      "fixed_in": "2.5.0",
+      "fix_note": "Merge now carries created_at, recall_count, and last_recalled_at from each source memory into the target row. Regression: test_audit_2500b3.py::test_merge_preserves_memory_ranking_metadata."
+    },
+    {
+      "id": "bug-132",
+      "summary": "Import and merge inserted memories without upserting them into the remote vector index, making bulk-loaded rows invisible to remote vector recall.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "bug-132",
+      "expected": "present",
+      "status": "fixed",
+      "category": "data-integrity",
+      "fixed_in": "2.5.0",
+      "fix_note": "Import and merge now batch-upsert each inserted memory to the target agent's remote namespace after the database transaction commits. Regression: test_audit_2500b3.py::test_import_syncs_inserted_memories_to_remote_index and test_audit_2500b3.py::test_merge_remote_sync_respects_vector_mode."
+    },
+    {
+      "id": "bug-133",
+      "summary": "Bare int() and float() environment parsing made any malformed numeric setting raise during module import and crash the entire server.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/config.py",
+      "pattern": "bug-133",
+      "expected": "present",
+      "status": "fixed",
+      "category": "robustness",
+      "fixed_in": "2.5.0",
+      "fix_note": "Numeric environment settings now use warning-and-default coercion helpers so malformed values degrade independently without blocking import. Regression: tests/test_config_parsing.py::test_invalid_numeric_env_values_fall_back_to_defaults."
+    },
+    {
+      "id": "bug-134",
+      "summary": "The HTTP Bearer authentication tests reimplemented the nested middleware's authorization decision, so a regression in the real middleware could pass CI.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/server.py",
+      "pattern": "bug-134",
+      "expected": "present",
+      "status": "fixed",
+      "category": "test-fidelity",
+      "fixed_in": "2.5.0",
+      "fix_note": "BearerTokenMiddleware is now module-level and parameterized so tests exercise the real ASGI middleware. Regression: tests/test_v2435_bugfixes.py::test_auth_missing_or_blank_header_is_rejected."
+    },
+    {
+      "id": "bug-135",
+      "summary": "The untested stdio proxy dropped valid SSE data lines without a space after the colon and emitted no JSON-RPC error when a malformed request's ID could not be recovered.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/proxy_stdio.py",
+      "pattern": "bug-135",
+      "expected": "present",
+      "status": "fixed",
+      "category": "transport",
+      "fixed_in": "2.5.0",
+      "fix_note": "The proxy now accepts both SSE data-field forms and always emits errors with null for unrecoverable IDs. Regression: tests/test_proxy_stdio.py::test_sse_data_lines_allow_optional_space and test_write_error_always_emits_response."
+    },
+    {
+      "id": "bug-136",
+      "summary": "Profile injection was copy-pasted across all three recall fusion strategies, so changing one copy could silently make profile behavior strategy-dependent.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "bug-136",
+      "expected": "present",
+      "status": "fixed",
+      "category": "maintainability",
+      "fixed_in": "2.5.0",
+      "fix_note": "Profile injection now has one _append_profile_rows helper called at the original position in cascade, RRF, and RSF recall. Regression: tests/test_audit_2500b3.py::test_profile_injection_shared_across_recall_strategies."
+    },
+    {
+      "id": "bug-137",
+      "summary": "Row-level admin operations silently skipped ownership enforcement when the kernel-injected agent_id was omitted.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "bug-137",
+      "expected": "present",
+      "status": "fixed",
+      "category": "observability",
+      "fixed_in": "2.5.0",
+      "fix_note": "Optional-agent row operations now log a warning when they run unscoped while preserving the injected-trust behavior. Regression: tests/test_audit_2500b3.py::test_unscoped_delete_memory_warns_without_changing_behavior."
+    },
+    {
+      "id": "bug-138",
+      "summary": "Boot silently accepted a persisted schema version newer than the build and then operated on a schema the older code may not understand.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/database.py",
+      "pattern": "bug-138",
+      "expected": "present",
+      "status": "fixed",
+      "category": "robustness",
+      "fixed_in": "2.5.0",
+      "fix_note": "Boot now warns when the persisted schema version is newer than SCHEMA_VERSION without refusing startup or changing the version stamp. Regression: tests/test_audit_2500b3.py::test_newer_schema_version_warns_without_blocking_boot."
     }
   ]
 }

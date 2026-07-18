@@ -157,7 +157,7 @@ def observe_failure(evidence: str | None) -> None:
 
 
 def is_faulted() -> bool:
-    """True once latched into ``fault`` — ``vector.py`` uses this to stop re-probing."""
+    """True once faulted; vector recall and health prefetch use it to stop re-probing."""
     return _state == FAULT
 
 

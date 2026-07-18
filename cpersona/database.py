@@ -451,6 +451,15 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
 
     row = await db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     current = row[0][0] if row else 0
+    # bug-138: preserve downgrade behavior, but make the compatibility risk loud.
+    if current > SCHEMA_VERSION:
+        logger.warning(
+            "Database schema version %d is NEWER than this build's SCHEMA_VERSION %d; "
+            "the database was written by a newer cpersona and this older build may "
+            "misread it; upgrade cpersona",
+            current,
+            SCHEMA_VERSION,
+        )
 
     # Run the migration ladder. Any unexpected failure (locked DB, disk I/O)
     # withholds the version stamp below so the ladder is retried on the next

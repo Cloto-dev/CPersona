@@ -40,7 +40,7 @@ import logging
 import re
 import sqlite3
 
-from cpersona import vector
+from cpersona import health, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import FTS_ENABLED, MAX_CONTENT_LENGTH
 from cpersona.database import SCHEMA_VERSION
@@ -75,6 +75,20 @@ _STALE_PROFILE_DAYS = 30
 # NULLs wrong-length blobs), so leaving it stale would make vector recall score
 # the row on obsolete semantics indefinitely. NULLing routes the row into
 # check_null_embedding's re-embed path — the same self-heal do_update_memory uses.
+# bug-127: this shared guard generalizes bug-113 to every content-rewriting
+# check. A rewritten body that collides with the existing row is itself a
+# duplicate, so keep the existing row and never touch locked rows.
+async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> None:
+    """Rewrite content for re-embedding, or delete an unlocked dedup collision."""
+    try:
+        await db.execute(
+            "UPDATE memories SET content = ?, embedding = NULL WHERE id = ? AND locked = 0",
+            (new_content, row_id),
+        )
+    except sqlite3.IntegrityError:
+        await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
+
+
 async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
@@ -85,7 +99,7 @@ async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         for row_id, content in rows:
             cleaned = _MEMORY_ANNOTATION_PATTERN.sub("", content).strip()
-            await db.execute("UPDATE memories SET content = ?, embedding = NULL WHERE id = ? AND locked = 0", (cleaned, row_id))
+            await _rewrite_or_delete_on_collision(db, row_id, cleaned)
     return [{"type": "memory_annotation", "count": len(rows)}]
 
 
@@ -99,7 +113,7 @@ async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         for row_id, content in rows:
             cleaned = _MENTION_PATTERN.sub("", content).strip()
-            await db.execute("UPDATE memories SET content = ?, embedding = NULL WHERE id = ? AND locked = 0", (cleaned, row_id))
+            await _rewrite_or_delete_on_collision(db, row_id, cleaned)
     return [{"type": "discord_mention", "count": len(rows)}]
 
 
@@ -127,13 +141,18 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
         return []
     total_dupes = sum(r[1] - 1 for r in dup_rows)
     if fix:
-        # Agent-scoped, locked-safe (bug-007): keep the per-group MIN(id)
-        # survivor, remove only unlocked non-survivors within scope. The
-        # survivor grouping MUST match the detection grouping above (bug-014).
+        # Agent-scoped, locked-safe (bug-007): remove only unlocked
+        # non-survivors within scope. The survivor grouping MUST match the
+        # detection grouping above (bug-014).
+        # bug-128: prefer the channel='' shared row so cross-channel dedup never
+        # deletes the broadest-visibility copy; otherwise keep the MIN(id).
         await db.execute(
             f"""DELETE FROM memories
                 WHERE locked = 0
-                  AND id NOT IN (SELECT MIN(id) FROM memories GROUP BY agent_id, project_id, content)
+                  AND id NOT IN (
+                      SELECT COALESCE(MIN(CASE WHEN channel = '' THEN id END), MIN(id))
+                      FROM memories GROUP BY agent_id, project_id, content
+                  )
                  {iso.and_clause}""",
             iso.params,
         )
@@ -143,29 +162,15 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
 async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, length(content) as len FROM memories WHERE length(content) > ?{iso.and_clause}",
+        f"SELECT id, content, length(content) as len FROM memories WHERE length(content) > ?{iso.and_clause}",
         (MAX_CONTENT_LENGTH, *iso.params),
     )
     if not rows:
         return []
     if fix:
-        for row_id, _ in rows:
-            try:
-                await db.execute(
-                    "UPDATE memories SET content = SUBSTR(content, 1, ?), embedding = NULL WHERE id = ? AND locked = 0",
-                    (MAX_CONTENT_LENGTH, row_id),
-                )
-            except sqlite3.IntegrityError:
-                # bug-113: the truncated body collides with an existing row in the
-                # same (agent, project, channel) bucket via idx_memories_dedup_content
-                # — the oversized row IS a duplicate of that survivor. Delete it
-                # (keep-existing, never-touch-locked, same policy as the dup fixer);
-                # the old bare UPDATE crashed the check here on EVERY fix run,
-                # leaving the row permanently unfixable.
-                await db.execute(
-                    "DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,)
-                )
-    return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[1] for r in rows)}]
+        for row_id, content, _ in rows:
+            await _rewrite_or_delete_on_collision(db, row_id, content[:MAX_CONTENT_LENGTH])
+    return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[2] for r in rows)}]
 
 
 async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
@@ -259,8 +264,7 @@ async def probe_embedding_dim() -> int | None:
 async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     """Pre-compute embeddings for NULL-embedding memory/episode rows OUTSIDE any write
     lock (bug-072). do_check_health calls this before taking the shared write lock so the
-    ~1000 sequential embedding HTTP calls (up to 500 memories + 500 episodes, each bounded
-    only by the embedding timeout) do not stall every other writer — do_store, the queue
+    batched embedding HTTP calls do not stall every other writer — do_store, the queue
     drain, import/merge — for the whole re-embed duration. Returns
     {"memories": {id: (text, blob)}, "episodes": {id: (text, blob)}}; the text the blob
     was computed from rides along so the write path can refuse to attach it to changed
@@ -269,18 +273,29 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     out: dict = {"memories": {}, "episodes": {}}
     if not vector._embedding_client:
         return out
+    # bug-129: do not re-probe a backend already latched as faulted by recall.
+    if health.is_faulted():
+        return out
     iso = isolation_where(agent_id=agent_id or None)
     for table, text_col in (("memories", "content"), ("episodes", "summary")):
         rows = await db.execute_fetchall(
             f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT 500", iso.params
         )
-        for row_id, text in rows:
+        for start in range(0, len(rows), 32):
+            chunk = rows[start : start + 32]
             try:
-                emb = await vector._embedding_client.embed([text])
-                if emb and emb[0]:
-                    out[table][row_id] = (text, vector._embedding_client.pack_embedding(emb[0]))
+                embeddings = await vector._embedding_client.embed([text for _, text in chunk])
             except Exception:
-                pass
+                health.observe_failure("prefetch embed failed")
+                if health.is_faulted():
+                    return out
+                continue
+            for (row_id, text), embedding in zip(chunk, embeddings or []):
+                if embedding:
+                    out[table][row_id] = (
+                        text,
+                        vector._embedding_client.pack_embedding(embedding),
+                    )
     return out
 
 
