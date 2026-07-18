@@ -1102,10 +1102,11 @@
       "discovered": "2026-07-08T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "\\[Episode\\] ",
-      "expected": "present",
-      "status": "open",
-      "category": "correctness"
+      "pattern": "content\\.startswith\\(\"\\[Episode\\] ",
+      "expected": "absent",
+      "status": "fixed",
+      "category": "correctness",
+      "fix_note": "Episode result classification now uses only structural _rid/source markers, and FTS episode rows are tagged with _rid=('ep', id) at the source."
     },
     {
       "id": "bug-075",

@@ -41,10 +41,12 @@ async def clean_db():
 def test_is_episode_result_discriminator():
     # A memory row's source is a JSON string (never a dict) — must be treated as memory.
     assert memory_handlers._is_episode_result({"id": 3, "source": '{"type":"User"}', "content": "hi"}) is False
+    # Memory content is not a discriminator, even when it resembles an episode preview.
+    assert memory_handlers._is_episode_result({"id": 3, "source": '{"type":"User"}', "content": "[Episode] notes"}) is False
     # A vector episode row: dict source marker.
     assert memory_handlers._is_episode_result({"id": 3, "source": {"System": "episode"}, "content": "[Episode] x"}) is True
-    # An FTS episode row carries no _rid but has the content prefix + dict source.
-    assert memory_handlers._is_episode_result({"id": 3, "content": "[Episode] recap", "source": {"System": "episode"}}) is True
+    # An FTS episode row carries the explicit structural result id.
+    assert memory_handlers._is_episode_result({"id": 3, "content": "[Episode] recap", "source": {"System": "episode"}, "_rid": ("ep", 3)}) is True
     # A plain memory with ordinary content is not an episode.
     assert memory_handlers._is_episode_result({"id": 3, "content": "just a memory", "source": "{}"}) is False
 
