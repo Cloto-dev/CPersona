@@ -1,11 +1,12 @@
 """Regression tests for the 2.5.0b3 audit fixes (bug-125..129)."""
 
+import logging
 from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
 
-from cpersona import admin_handlers, checks, config, health, memory_handlers, vector
+from cpersona import admin_handlers, checks, config, database, health, memory_handlers, vector
 from cpersona.database import get_db
 
 
@@ -413,3 +414,68 @@ async def test_profile_injection_shared_across_recall_strategies(
     assert any(
         row["id"] == -1 and row["content"].startswith("[Profile] ") for row in results
     )
+
+
+@pytest.mark.asyncio
+async def test_unscoped_delete_memory_warns_without_changing_behavior(clean_db, caplog):
+    unscoped = await clean_db.execute(
+        "INSERT INTO memories (agent_id, content, timestamp) VALUES ('owner', 'unscoped', '')"
+    )
+    scoped = await clean_db.execute(
+        "INSERT INTO memories (agent_id, content, timestamp) VALUES ('owner', 'scoped', '')"
+    )
+    await clean_db.commit()
+
+    with caplog.at_level(logging.WARNING, logger=admin_handlers.__name__):
+        result = await admin_handlers.do_delete_memory(unscoped.lastrowid, agent_id="")
+
+    assert result == {"ok": True, "deleted_id": unscoped.lastrowid}
+    assert await clean_db.execute_fetchall(
+        "SELECT id FROM memories WHERE id = ?", (unscoped.lastrowid,)
+    ) == []
+    assert any(
+        "do_delete_memory" in record.message
+        and "UNSCOPED" in record.message
+        and str(unscoped.lastrowid) in record.message
+        for record in caplog.records
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=admin_handlers.__name__):
+        result = await admin_handlers.do_delete_memory(scoped.lastrowid, agent_id="owner")
+
+    assert result == {"ok": True, "deleted_id": scoped.lastrowid}
+    assert not caplog.records
+
+
+@pytest.mark.asyncio
+async def test_newer_schema_version_warns_without_blocking_boot(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "newer-schema.db"))
+    await database.close_db()
+    future_version = database.SCHEMA_VERSION + 1
+    try:
+        db = await database.get_db()
+        await db.execute(
+            "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
+            (future_version,),
+        )
+        await db.commit()
+        await database.close_db()
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=database.__name__):
+            db = await database.get_db()
+
+        assert db is database._db
+        assert any(
+            str(future_version) in record.message
+            and "NEWER" in record.message
+            and str(database.SCHEMA_VERSION) in record.message
+            and "upgrade cpersona" in record.message
+            for record in caplog.records
+        )
+        assert await db.execute_fetchall(
+            "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
+        ) == [(future_version,)]
+    finally:
+        await database.close_db()

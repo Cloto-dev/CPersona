@@ -1973,6 +1973,34 @@
       "category": "maintainability",
       "fixed_in": "2.5.0",
       "fix_note": "Profile injection now has one _append_profile_rows helper called at the original position in cascade, RRF, and RSF recall. Regression: tests/test_audit_2500b3.py::test_profile_injection_shared_across_recall_strategies."
+    },
+    {
+      "id": "bug-137",
+      "summary": "Row-level admin operations silently skipped ownership enforcement when the kernel-injected agent_id was omitted.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "bug-137",
+      "expected": "present",
+      "status": "fixed",
+      "category": "observability",
+      "fixed_in": "2.5.0",
+      "fix_note": "Optional-agent row operations now log a warning when they run unscoped while preserving the injected-trust behavior. Regression: tests/test_audit_2500b3.py::test_unscoped_delete_memory_warns_without_changing_behavior."
+    },
+    {
+      "id": "bug-138",
+      "summary": "Boot silently accepted a persisted schema version newer than the build and then operated on a schema the older code may not understand.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/database.py",
+      "pattern": "bug-138",
+      "expected": "present",
+      "status": "fixed",
+      "category": "robustness",
+      "fixed_in": "2.5.0",
+      "fix_note": "Boot now warns when the persisted schema version is newer than SCHEMA_VERSION without refusing startup or changing the version stamp. Regression: tests/test_audit_2500b3.py::test_newer_schema_version_warns_without_blocking_boot."
     }
   ]
 }
