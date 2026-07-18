@@ -26,6 +26,8 @@ import os
 
 from mcp.server.stdio import stdio_server
 from mcp.types import ToolAnnotations
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry
@@ -1049,6 +1051,43 @@ registry.auto_tool(
 _LOOPBACK_HTTP_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
+class BearerTokenMiddleware:
+    """Simple Bearer token authentication middleware.
+
+    bug-134: module-level so the real class is unit-tested, not a hand-copied
+    replica.
+    """
+
+    def __init__(self, app, auth_token: str = ""):
+        self.app = app
+        self.auth_token = auth_token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope, receive)
+        if request.method == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+        if self.auth_token:
+            header = request.headers.get("authorization", "")
+            token = header[7:] if header.startswith("Bearer ") else ""
+            # A missing/malformed header yields an empty token, which must
+            # be rejected — the earlier code let header-less requests fall
+            # through to the app (auth bypass, bug-003). compare_digest keeps
+            # the check constant-time against token-probing.
+            if not token or not hmac.compare_digest(token, self.auth_token):
+                response = JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 def _assert_safe_http_bind(auth_token: str, host: str) -> None:
     """Fail closed before the HTTP transport binds (bug-017).
 
@@ -1087,8 +1126,6 @@ async def _run_http_server():
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
     from starlette.middleware.cors import CORSMiddleware
-    from starlette.requests import Request
-    from starlette.responses import JSONResponse
     from starlette.routing import Mount
 
     auth_token = os.environ.get("CPERSONA_AUTH_TOKEN", "")
@@ -1100,37 +1137,6 @@ async def _run_http_server():
 
     async def mcp_endpoint(scope, receive, send):
         await session_manager.handle_request(scope, receive, send)
-
-    class BearerTokenMiddleware:
-        """Simple Bearer token authentication middleware."""
-
-        def __init__(self, app):
-            self.app = app
-
-        async def __call__(self, scope, receive, send):
-            if scope["type"] != "http":
-                await self.app(scope, receive, send)
-                return
-            request = Request(scope, receive)
-            if request.method == "OPTIONS":
-                await self.app(scope, receive, send)
-                return
-            if auth_token:
-                header = request.headers.get("authorization", "")
-                token = header[7:] if header.startswith("Bearer ") else ""
-                # A missing/malformed header yields an empty token, which must
-                # be rejected — the earlier code let header-less requests fall
-                # through to the app (auth bypass, bug-003). compare_digest keeps
-                # the check constant-time against token-probing.
-                if not token or not hmac.compare_digest(token, auth_token):
-                    response = JSONResponse(
-                        {"error": "unauthorized"},
-                        status_code=401,
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-                    await response(scope, receive, send)
-                    return
-            await self.app(scope, receive, send)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
@@ -1154,7 +1160,7 @@ async def _run_http_server():
                 ],
                 expose_headers=["Mcp-Session-Id"],
             ),
-            Middleware(BearerTokenMiddleware),
+            Middleware(BearerTokenMiddleware, auth_token=auth_token),
         ],
         lifespan=lifespan,
     )

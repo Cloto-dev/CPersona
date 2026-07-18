@@ -28,6 +28,7 @@ os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 from cpersona import admin_handlers  # noqa: E402
 from cpersona import maintenance_handlers  # noqa: E402
 from cpersona import memory_handlers  # noqa: E402
+from cpersona import server  # noqa: E402
 from cpersona import tasks  # noqa: E402
 from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
@@ -55,58 +56,70 @@ async def setup_db():
 # bug-003 — HTTP Bearer auth
 # --------------------------------------------------------------------------
 
-def _build_middleware(auth_token: str):
-    """Instantiate the BearerTokenMiddleware defined inside _run_http_server.
+async def _call_auth_middleware(auth_token: str, header: str | None = None, method: str = "POST"):
+    app_reached = False
+    sent = []
 
-    The middleware class is a closure over auth_token, so we replicate the exact
-    authorise decision the closure makes rather than reaching into a running
-    server. Keeping this in lockstep with the closure is the point of the test:
-    if the closure logic drifts back to the bypass, this asserts on the intended
-    contract.
-    """
-    import hmac
+    async def dummy_app(scope, receive, send):
+        nonlocal app_reached
+        app_reached = True
 
-    def authorised(header: str) -> bool:
-        if not auth_token:
-            return True
-        token = header[7:] if header.startswith("Bearer ") else ""
-        return bool(token) and hmac.compare_digest(token, auth_token)
+    headers = [] if header is None else [(b"authorization", header.encode())]
+    scope = {"type": "http", "method": method, "path": "/mcp", "headers": headers}
 
-    return authorised
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
 
+    async def send(message):
+        sent.append(message)
 
-def test_auth_missing_header_is_rejected():
-    authorised = _build_middleware("s3cret")
-    assert authorised("") is False  # bug-003: header-less request must NOT pass
+    middleware = server.BearerTokenMiddleware(dummy_app, auth_token=auth_token)
+    await middleware(scope, receive, send)
+    return app_reached, sent
 
 
-def test_auth_wrong_token_is_rejected():
-    authorised = _build_middleware("s3cret")
-    assert authorised("Bearer nope") is False
-    assert authorised("Basic s3cret") is False
-    assert authorised("s3cret") is False  # missing 'Bearer ' prefix
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header", [None, ""])
+async def test_auth_missing_or_blank_header_is_rejected(header):
+    app_reached, sent = await _call_auth_middleware("s3cret", header)
+
+    assert app_reached is False  # bug-003: header-less request must NOT pass
+    assert sent[0]["status"] == 401
+    assert (b"www-authenticate", b"Bearer") in sent[0]["headers"]
 
 
-def test_auth_correct_token_is_accepted():
-    authorised = _build_middleware("s3cret")
-    assert authorised("Bearer s3cret") is True
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header", ["Bearer wrong", "Basic s3cret", "s3cret"])
+async def test_auth_wrong_or_malformed_token_is_rejected(header):
+    app_reached, sent = await _call_auth_middleware("s3cret", header)
+
+    assert app_reached is False
+    assert sent[0]["status"] == 401
 
 
-def test_auth_disabled_passes_through():
-    authorised = _build_middleware("")
-    assert authorised("") is True
-    assert authorised("Bearer anything") is True
+@pytest.mark.asyncio
+async def test_auth_correct_token_is_accepted():
+    app_reached, sent = await _call_auth_middleware("s3cret", "Bearer s3cret")
+
+    assert app_reached is True
+    assert sent == []
 
 
-def test_server_middleware_source_has_no_bypass_branch():
-    """Guard the actual source: the `elif ... : pass` bypass must be gone."""
-    import inspect
+@pytest.mark.asyncio
+async def test_auth_options_passes_through():
+    app_reached, sent = await _call_auth_middleware("s3cret", "Bearer wrong", method="OPTIONS")
 
-    from cpersona import server
+    assert app_reached is True
+    assert sent == []
 
-    src = inspect.getsource(server._run_http_server)
-    assert "elif auth_token and not header" not in src
-    assert "hmac.compare_digest" in src
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header", [None, "Bearer anything", "Basic anything"])
+async def test_auth_disabled_passes_through(header):
+    app_reached, sent = await _call_auth_middleware("", header)
+
+    assert app_reached is True
+    assert sent == []
 
 
 # --------------------------------------------------------------------------

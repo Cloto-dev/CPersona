@@ -1931,6 +1931,34 @@
       "category": "robustness",
       "fixed_in": "2.5.0",
       "fix_note": "Numeric environment settings now use warning-and-default coercion helpers so malformed values degrade independently without blocking import. Regression: tests/test_config_parsing.py::test_invalid_numeric_env_values_fall_back_to_defaults."
+    },
+    {
+      "id": "bug-134",
+      "summary": "The HTTP Bearer authentication tests reimplemented the nested middleware's authorization decision, so a regression in the real middleware could pass CI.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/server.py",
+      "pattern": "bug-134",
+      "expected": "present",
+      "status": "fixed",
+      "category": "test-fidelity",
+      "fixed_in": "2.5.0",
+      "fix_note": "BearerTokenMiddleware is now module-level and parameterized so tests exercise the real ASGI middleware. Regression: tests/test_v2435_bugfixes.py::test_auth_missing_or_blank_header_is_rejected."
+    },
+    {
+      "id": "bug-135",
+      "summary": "The untested stdio proxy dropped valid SSE data lines without a space after the colon and emitted no JSON-RPC error when a malformed request's ID could not be recovered.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-18T00:00:00Z",
+      "version": "2.5.0b3",
+      "file": "cpersona/proxy_stdio.py",
+      "pattern": "bug-135",
+      "expected": "present",
+      "status": "fixed",
+      "category": "transport",
+      "fixed_in": "2.5.0",
+      "fix_note": "The proxy now accepts both SSE data-field forms and always emits errors with null for unrecoverable IDs. Regression: tests/test_proxy_stdio.py::test_sse_data_lines_allow_optional_space and test_write_error_always_emits_response."
     }
   ]
 }
