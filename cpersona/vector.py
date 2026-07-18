@@ -27,6 +27,32 @@ PROBE_TIMEOUT_SECS = 3.0
 
 _embedding_client: EmbeddingClient | None = None
 
+
+async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
+    """Push memory items to an agent's remote vector index in bounded chunks.
+
+    This is network I/O only and must be called outside the DB write seam.
+    Failures are non-fatal, matching the store path's inline remote push.
+    """
+    if (
+        VECTOR_SEARCH_MODE != "remote"
+        or not _embedding_client
+        or not _embedding_client._http_url
+        or not _embedding_client._client
+    ):
+        return
+
+    base_url = _embedding_client._http_url.rsplit("/", 1)[0]
+    for start in range(0, len(items), 128):
+        chunk = items[start : start + 128]
+        try:
+            await _embedding_client._client.post(
+                f"{base_url}/index",
+                json={"namespace": f"cpersona:{agent_id}", "items": chunk},
+            )
+        except Exception as e:
+            logger.debug("Remote index failed (non-fatal): %s", e)
+
 # Per-agent vector-similarity threshold overrides (v2.4.15).
 # Populated by do_calibrate_threshold / startup auto-calibration; agents with
 # no calibration data fall back to the global config.VECTOR_MIN_SIMILARITY.
