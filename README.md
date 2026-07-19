@@ -308,8 +308,10 @@ marketplace catalog and the Quick Start use the generic names.
 
 ## Stats
 
-- **~9,000 LOC** Python across focused modules
-- **435 tests** across 35 test modules (including structural-enforcement gates)
+- **~9,000 LOC** Python across focused modules, plus a 3,300-line vendored MCP
+  common snapshot
+- **435 tests** across 35 test modules (~10,000 LOC — more test code than
+  server code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)
 - **MIT License**
 
