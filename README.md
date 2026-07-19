@@ -7,7 +7,7 @@
 Give Claude persistent memory across sessions.
 Single SQLite file. 29 tools. Zero LLM dependency.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
 [![Tests](https://img.shields.io/badge/tests-435-brightgreen)]()
 
@@ -32,7 +32,7 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 
 **Prerequisites:** Python 3.11+ (and [uv](https://docs.astral.sh/uv/) for the one-command path).
 
-> **Claude Code? Let the agent do the setup.** This repo ships an [Agent Skill](skills/cpersona-memory/SKILL.md) that walks Claude through the whole installation — cpersona, the embedding server, MCP registration, and a store/recall smoke test — and, more importantly, teaches it *when* to store, recall, and archive memories afterwards:
+> **Claude Code? Let the agent do the setup.** This repo ships an [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/skills/cpersona-memory/SKILL.md) that walks Claude through the whole installation — cpersona, the embedding server, MCP registration, and a store/recall smoke test — and, more importantly, teaches it *when* to store, recall, and archive memories afterwards:
 >
 > ```bash
 > git clone --depth 1 https://github.com/Cloto-dev/cpersona.git /tmp/cpersona
@@ -233,7 +233,7 @@ Two tracks isolate the pipeline's contribution:
 | all-MiniLM-L6-v2 | 22M | 384 | 43.67 | **50.10** | +6.43 |
 | bge-m3 | 568M | 1024 | 56.83 | **57.66** | +0.83 |
 
-cpersona's hybrid pipeline outranks the raw embedding on both models (Track B > Track A) — the fusion layers add signal rather than merely persisting vectors. The weaker the embedding, the larger the pipeline's contribution: the FTS5/keyword layers rescue queries the vector search alone misses. Methodology, the measurement harness, and the reproduction regime live in [`benchmarks/`](benchmarks/README.md).
+cpersona's hybrid pipeline outranks the raw embedding on both models (Track B > Track A) — the fusion layers add signal rather than merely persisting vectors. The weaker the embedding, the larger the pipeline's contribution: the FTS5/keyword layers rescue queries the vector search alone misses. Methodology, the measurement harness, and the reproduction regime live in [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
 
 ## All Tools
 
@@ -338,8 +338,8 @@ Every release is gated by a machine-verifiable quality process:
   after three such rounds — 43 fixes, every one re-verified against the tree
   it landed on.
 - **Issue registry** — every audited defect lives in
-  [`qa/issue-registry.json`](qa/issue-registry.json) with a machine-checkable
-  code pattern; [`scripts/verify-issues.sh`](scripts/verify-issues.sh) verifies
+  [`qa/issue-registry.json`](https://github.com/Cloto-dev/cpersona/blob/master/qa/issue-registry.json) with a machine-checkable
+  code pattern; [`scripts/verify-issues.sh`](https://github.com/Cloto-dev/cpersona/blob/master/scripts/verify-issues.sh) verifies
   that every fix marker is still present (and every removed defect stays
   removed), so a regression or a silently-reverted fix fails loudly.
 - **Structural CI gates** — invariants that a plain test can't express are
@@ -349,7 +349,7 @@ Every release is gated by a machine-verifiable quality process:
   project/channel axes, and `check_health` performs no embedding network I/O
   while holding the write lock.
 - **Release lifecycle standard** — the release process itself is specified in
-  [`docs/RELEASE_LIFECYCLE_STANDARD.md`](docs/RELEASE_LIFECYCLE_STANDARD.md)
+  [`docs/RELEASE_LIFECYCLE_STANDARD.md`](https://github.com/Cloto-dev/cpersona/blob/master/docs/RELEASE_LIFECYCLE_STANDARD.md)
   (v1.0), piloted in this repository as the reference implementation for
   Cloto-family projects.
 
@@ -366,12 +366,12 @@ fixes land while it awaits production-soak certification.
 > **Known issue:** v2.4.39 and earlier under-scan vector recall on corpora
 > beyond a few hundred rows (bug-085; v2.4.38–v2.4.39 are the most affected —
 > the limit clamp closed the only workaround). Fixed in v2.4.40; upgrading is
-> strongly recommended. See [SUPPORT.md § Known issues](SUPPORT.md#known-issues).
+> strongly recommended. See [SUPPORT.md § Known issues](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues).
 
 Full policy:
-[SUPPORT.md](SUPPORT.md) · specification:
-[RELEASE_LIFECYCLE_STANDARD.md](docs/RELEASE_LIFECYCLE_STANDARD.md) · security
-reports: [SECURITY.md](SECURITY.md).
+[SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) · specification:
+[RELEASE_LIFECYCLE_STANDARD.md](https://github.com/Cloto-dev/cpersona/blob/master/docs/RELEASE_LIFECYCLE_STANDARD.md) · security
+reports: [SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md).
 
 ### Found a bug, or something the docs do not explain?
 
@@ -382,7 +382,7 @@ Reports are welcome even when you are not certain it is a bug. If it turns out
 to be a configuration problem, that is still useful signal — it means the
 documentation was unclear, which is a defect of its own. Security
 vulnerabilities are the one exception: please report those privately via
-[SECURITY.md](SECURITY.md) rather than in a public issue.
+[SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md) rather than in a public issue.
 
 ## Learn More
 
