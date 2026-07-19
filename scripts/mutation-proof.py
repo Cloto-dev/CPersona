@@ -100,22 +100,29 @@ MUTATIONS: list[Mutation] = [
     # do_import_memories (admin_handlers.py) — the highest-value split target
     # and the one the soak never exercises. CSC Task #287.
     # ---------------------------------------------------------------------
-    # M04 is a documented EQUIVALENT mutant: it removes one layer of a two-layer
-    # defence, leaving observable behaviour identical. Deleting it would lose the
-    # finding; the load-bearing layer it sits above is mutated separately (M11).
-    #
-    # M06 was classified the same way and that was WRONG -- see its entry below.
+    # M04 and M06 were both filed as equivalent mutants. Both classifications
+    # turned out to be wrong, and they were wrong in the same way: each was
+    # reasoned about on the real-import path, where a second layer does hold the
+    # invariant up, without asking whether that second layer exists on the
+    # dry_run path. It does not. A preview has no INSERT, so a guard the real
+    # path can afford to lose is often the only one a preview has.
     Mutation(
         id="M04",
-        target="do_import_memories msg_id pre-check (EQUIVALENT — expected to survive)",
+        target="do_import_memories msg_id pre-check — load-bearing on the dry_run path",
         file="cpersona/admin_handlers.py",
         find="if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):",
         replace="if False:",
-        breaks="nothing observable: the row falls through to INSERT OR IGNORE and the "
-        "v12 UNIQUE index turns it into the same counted skip. The pre-check is a "
-        "fast path, not the correctness guarantee — that is M11.",
-        expect="(none — equivalent mutant)",
-        equivalent=True,
+        # RECLASSIFIED (CSC Task #287). Filed as equivalent because "the row
+        # falls through to INSERT OR IGNORE and the v12 UNIQUE index turns it
+        # into the same counted skip". True of a real import. On a dry_run there
+        # IS no INSERT OR IGNORE, so this pre-check is the entire msg_id dedup
+        # gate, and removing it makes the preview report an import the real run
+        # would skip — 3 imported / 1 skipped where the truth is 2 / 2.
+        #
+        # It survived for a year of runs because no dry_run scenario contained a
+        # within-file msg_id duplicate. import-dry-run-intra-file-duplicates does.
+        breaks="a preview counts a within-file msg_id duplicate as imported; the previewed counts stop matching a real run (bug-070)",
+        expect="test_equivalence_252.py[import-dry-run-intra-file-duplicates]",
     ),
     Mutation(
         id="M05",
@@ -140,33 +147,35 @@ MUTATIONS: list[Mutation] = [
         source = json.dumps(record.get("source", {}))""",
         replace="""    if True:
         source = json.dumps(record.get("source", {}))""",
-        # RECLASSIFIED (CSC Task #293). This was filed as an equivalent mutant on
-        # the reasoning that the read seam makes an escaped INSERT harmless. That
-        # is true of the DATABASE and false of the promise, because dry_run has
-        # two write targets and only one of them has two layers:
+        # This entry has been classified three times, and the history is the
+        # useful part — it is a record of an invariant gaining a layer.
         #
-        #   database       read seam (M10) + this guard        -> rolled back
-        #   remote index   this guard, alone                   -> nothing
+        # (1) EQUIVALENT, pre-#287. Reasoning: dry_run runs on the read seam, so
+        #     an INSERT that escapes this guard is never committed. True of the
+        #     database, and the database was all anyone was watching.
+        # (2) BEHAVIOURAL, CSC Task #293. dry_run had two write targets and only
+        #     one was doubly defended:
+        #         database       read seam (M10) + this guard   -> rolled back
+        #         remote index   this guard, alone              -> nothing
+        #     `remote_items` was populated inside this guard and shipped after
+        #     the transaction closed, where no rollback reaches. Removing the
+        #     guard left the database spotless and published the previewed rows
+        #     to the live index — invisible to every DB assertion in the suite,
+        #     and found only because the behavioural snapshot records outbound
+        #     traffic as well as rows.
+        # (3) EQUIVALENT again, CSC Task #287 — but for a different reason than
+        #     (1), and this is the point. The remote queue now goes through
+        #     _ImportTally.queue_remote, which a preview cannot make write, so
+        #     the second target has two layers too. The counts also survive: the
+        #     escaped INSERT runs on the shared read connection, which sees its
+        #     own uncommitted rows, so INSERT OR IGNORE reproduces exactly the
+        #     skips that seen_msgid / seen_content were emulating.
         #
-        # The `remote_items` list is populated inside this same guard, and the
-        # post-commit loop at :1781 ships it OUTSIDE the transaction, where no
-        # rollback reaches. Removing the guard therefore leaves the database
-        # spotless while publishing the previewed rows to the live vector index.
-        #
-        # The original verdict was not careless -- it was reached by watching the
-        # database, which is where the whole 2.5.2 discussion had been focused.
-        # It is exactly the blind spot a hand-authored mutation list cannot see
-        # past: this harness only asks whether some test goes red, so a write
-        # through a door no test watches reads identically to no write at all.
-        # The behavioural snapshot (`tests/behaviour_252.py`) records outbound
-        # traffic as well as rows, which is how the second target surfaced.
-        #
-        # No live bug: both `remote_items` populate sites (:1640, :1708) sit
-        # inside the guard today, so a real dry_run ships nothing. The risk is to
-        # the #287 extraction -- hoisting that append out of the guard while
-        # tidying is invisible to every DB assertion in the suite.
-        breaks="dry_run publishes the previewed rows to the remote vector index; the DB stays clean, so DB-watching tests see nothing",
-        expect="test_equivalence_252.py[import-dry-run] (outbound), not a DB assertion",
+        # Keep it. A future edit that moves the queue back outside queue_remote
+        # flips this to CAUGHT, and that is exactly the alarm we want.
+        breaks="nothing observable: the read seam holds the database and queue_remote holds the index (see the history above)",
+        expect="(none — equivalent mutant)",
+        equivalent=True,
     ),
     # The load-bearing layers the two equivalent mutants sit above.
     Mutation(
