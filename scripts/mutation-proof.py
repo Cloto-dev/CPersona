@@ -100,10 +100,11 @@ MUTATIONS: list[Mutation] = [
     # do_import_memories (admin_handlers.py) — the highest-value split target
     # and the one the soak never exercises. CSC Task #287.
     # ---------------------------------------------------------------------
-    # M04 and M06 are kept as documented EQUIVALENT mutants. Both survive, and
-    # both should: each removes one layer of a two-layer defence, leaving
-    # observable behaviour identical. Deleting them would lose the finding; the
-    # load-bearing layer each one sits above is mutated separately (M10/M11).
+    # M04 is a documented EQUIVALENT mutant: it removes one layer of a two-layer
+    # defence, leaving observable behaviour identical. Deleting it would lose the
+    # finding; the load-bearing layer it sits above is mutated separately (M11).
+    #
+    # M06 was classified the same way and that was WRONG -- see its entry below.
     Mutation(
         id="M04",
         target="do_import_memories msg_id pre-check (EQUIVALENT — expected to survive)",
@@ -127,7 +128,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M06",
-        target="do_import_memories dry_run guard (EQUIVALENT — expected to survive)",
+        target="do_import_memories dry_run guard — the REMOTE half of the promise",
         file="cpersona/admin_handlers.py",
         # `if not dry_run:` appears six times; anchor on the memory-record body
         # that follows it so the match is unambiguous.
@@ -135,12 +136,33 @@ MUTATIONS: list[Mutation] = [
                         source = json.dumps(record.get("source", {}))""",
         replace="""                    if True:
                         source = json.dumps(record.get("source", {}))""",
-        breaks="nothing observable: under dry_run the whole import runs on the read "
-        "seam (`connection() if dry_run else transaction()`, admin_handlers.py:1557), "
-        "so an INSERT that escapes the guard is never committed. The seam choice is "
-        "the real invariant — that is M10.",
-        expect="(none — equivalent mutant)",
-        equivalent=True,
+        # RECLASSIFIED (CSC Task #293). This was filed as an equivalent mutant on
+        # the reasoning that the read seam makes an escaped INSERT harmless. That
+        # is true of the DATABASE and false of the promise, because dry_run has
+        # two write targets and only one of them has two layers:
+        #
+        #   database       read seam (M10) + this guard        -> rolled back
+        #   remote index   this guard, alone                   -> nothing
+        #
+        # The `remote_items` list is populated inside this same guard, and the
+        # post-commit loop at :1781 ships it OUTSIDE the transaction, where no
+        # rollback reaches. Removing the guard therefore leaves the database
+        # spotless while publishing the previewed rows to the live vector index.
+        #
+        # The original verdict was not careless -- it was reached by watching the
+        # database, which is where the whole 2.5.2 discussion had been focused.
+        # It is exactly the blind spot a hand-authored mutation list cannot see
+        # past: this harness only asks whether some test goes red, so a write
+        # through a door no test watches reads identically to no write at all.
+        # The behavioural snapshot (`tests/behaviour_252.py`) records outbound
+        # traffic as well as rows, which is how the second target surfaced.
+        #
+        # No live bug: both `remote_items` populate sites (:1640, :1708) sit
+        # inside the guard today, so a real dry_run ships nothing. The risk is to
+        # the #287 extraction -- hoisting that append out of the guard while
+        # tidying is invisible to every DB assertion in the suite.
+        breaks="dry_run publishes the previewed rows to the remote vector index; the DB stays clean, so DB-watching tests see nothing",
+        expect="test_equivalence_252.py[import-dry-run] (outbound), not a DB assertion",
     ),
     # The load-bearing layers the two equivalent mutants sit above.
     Mutation(
@@ -320,9 +342,14 @@ def main() -> int:
             print("           !! a test pins a redundant layer — it will fail on a valid simplification")
         print()
 
-    # A crash mid-run must never leave a mutant behind.
-    if run(["git", "diff", "--quiet"]).returncode != 0:
-        print("!! FILES LEFT MODIFIED — restore manually before committing")
+    # A crash mid-run must never leave a mutant behind. Scope the check to the
+    # files this run actually wrote: a whole-tree `git diff --quiet` also trips
+    # on unrelated work in progress, and reporting "FILES LEFT MODIFIED" for a
+    # file no mutation touched trains the reader to ignore the one warning here
+    # that must never be ignored.
+    touched = sorted({m.file for m in selected})
+    if run(["git", "diff", "--quiet", "--", *touched]).returncode != 0:
+        print(f"!! MUTANT LEFT ON DISK in {touched} — restore before committing")
         return 2
 
     print("=" * 70)
