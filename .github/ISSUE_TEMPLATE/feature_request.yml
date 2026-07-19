@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a capability or a change in behaviour.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve
+      description: >
+        The situation you ran into, rather than the solution you have in mind.
+        Knowing the underlying problem often surfaces a simpler answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional — a sketch of the behaviour, tool, or option you would expect.
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround
+      description: How you are handling it today, if at all.
+    validations:
+      required: false
