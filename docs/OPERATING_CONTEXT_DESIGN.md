@@ -1,6 +1,7 @@
 # Server-Served Operating Context (Global Config + MCP Instructions Distribution)
 
-**Status**: design draft (target: 2.5.1, direct release — no pre-release ladder)
+**Status**: implemented on `feature/2.5.1-operating-context` (target: 2.5.1, direct
+release — no pre-release ladder; merge/tag gated on 2.5.0 final)
 **Decision**: project owner, 2026-07-16 (design discussion immediately after the 2.5.0b1
 release; CSC Goal #171 / Task #246)
 **Scope**: additive — no DB schema change, one new read tool, one sidecar config file.
@@ -136,8 +137,9 @@ The invariant table:
 
 ### 5.1 Registry validation
 
-Applied on tools that accept `project_id` (write: `store`, `archive_episode`, `update_memory`;
-read: `recall`, `recall_with_context`, `list_*`). Modes:
+Applied on the six tools that accept `project_id` (write: `store`, `archive_episode`;
+read: `recall`, `recall_with_context`, `list_memories`, `list_episodes` — `update_memory`
+does not take `project_id` in the current tool contract). Modes:
 
 - `off` — no checks (registry is documentation only).
 - `warn` (default) — unknown id is accepted; the response carries
