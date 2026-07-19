@@ -1,0 +1,86 @@
+name: Bug report
+description: Report something that does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Fill in what you can — a
+        partial report is far more useful than no report. If the issue is a
+        security vulnerability, please follow
+        [SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md)
+        instead of opening a public issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: >
+        The tool calls, configuration, or commands that trigger it. If you can
+        reproduce it from a fresh database, say so — it narrows the cause a lot.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: false
+
+  - type: input
+    id: cpersona-version
+    attributes:
+      label: cpersona version
+      description: "`pip show cpersona`, or the version your MCP client reports."
+      placeholder: "2.5.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mcp-client
+    attributes:
+      label: MCP client
+      options:
+        - Claude Code
+        - Claude Desktop
+        - ClotoCore
+        - Cursor
+        - Other / not sure
+    validations:
+      required: false
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version and OS
+      placeholder: "3.11.2 on Debian 12 / 3.13 on macOS 15"
+    validations:
+      required: false
+
+  - type: input
+    id: embedding-server
+    attributes:
+      label: Embedding server
+      description: >
+        Which backend `EMBEDDING_HTTP_URL` points at, if any. Recall behaviour
+        differs substantially when no embedding server is configured.
+      placeholder: "CEmbedding (jina-v5-nano) / none"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: >
+        Stack traces, MCP client logs, or the output of `check_health`.
+        This is automatically formatted as code, so no backticks needed.
+      render: shell
+    validations:
+      required: false

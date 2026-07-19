@@ -4,6 +4,9 @@ This document defines the release lifecycle and support policy for cpersona.
 It is written to be line-agnostic: the same rules apply to every release line
 (2.4.x, 2.5.x, ...), so the policy survives line transitions unchanged.
 
+**Looking to report a problem?** See [Reporting an issue](#reporting-an-issue)
+at the end of this document.
+
 This policy is the operative instance of the
 [Release Lifecycle Standard](docs/RELEASE_LIFECYCLE_STANDARD.md), which is
 piloted in this repository as its reference implementation and quality
@@ -101,4 +104,28 @@ Certification and EOL dates are recorded in this table as they occur.
   Upgrading is strongly recommended; no schema change is involved. Details:
   `qa/issue-registry.json` (bug-085).
 
-*Last updated: 2026-07-17*
+## Reporting an issue
+
+Bugs and feature requests belong in
+[GitHub Issues](https://github.com/Cloto-dev/cpersona/issues). Two templates
+are provided — [bug report](https://github.com/Cloto-dev/cpersona/issues/new?template=bug_report.yml)
+and [feature request](https://github.com/Cloto-dev/cpersona/issues/new?template=feature_request.yml)
+— but a plain issue is fine too; the templates exist to save you from guessing
+what is useful, not as a barrier.
+
+A few things that make a report easier to act on, none of them required:
+
+- The cpersona version, and whether an embedding server is configured. Recall
+  behaviour differs substantially between the two configurations.
+- Whether the problem reproduces against a fresh database. This separates data
+  state from code paths faster than anything else.
+- The output of `check_health` when the symptom involves recall quality or
+  missing memories.
+
+Please check [Known issues](#known-issues) first — a match there means the
+diagnosis already exists and may already be fixed in a later release.
+
+**Security vulnerabilities are the exception.** Do not open a public issue for
+them; follow [SECURITY.md](SECURITY.md) instead.
+
+*Last updated: 2026-07-20*

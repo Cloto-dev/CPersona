@@ -5,7 +5,7 @@
 ### MCP Memory Server
 
 Give Claude persistent memory across sessions.
-Single SQLite file. 28 tools. Zero LLM dependency.
+Single SQLite file. 29 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
@@ -20,7 +20,7 @@ Single SQLite file. 28 tools. Zero LLM dependency.
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
-> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.40, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is an internal stabilization line (**Experimental** pre-releases; the DB schema and MCP tool contract are preserved), and feature development resumes in 2.6. Tiers and support windows: [Release Channels & Support](#release-channels--support).
+> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.40, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is the **Current** line (latest: v2.5.1) — an internal stabilization line that has passed the full release gate and is where all fixes land, pending production-soak certification; the DB schema and MCP tool contract are preserved, and feature development resumes in 2.6. Tiers and support windows: [Release Channels & Support](#release-channels--support).
 
 ## The Problem
 
@@ -245,6 +245,7 @@ cpersona's hybrid pipeline outranks the raw embedding on both models (Track B > 
 | `get_contents` | Expand recall preview refs (`mem:<id>` / `ep:<id>`) to full content |
 | `get_profile` | Get current agent profile |
 | `update_profile` | Save pre-computed agent profile |
+| `get_operating_context` | Read the operator-owned operating context served to every client (read-only; edited on the filesystem) |
 | `archive_episode` | Archive conversation episode with summary and keywords |
 | `list_memories` | List recent memories |
 | `list_episodes` | List archived episodes |
@@ -357,7 +358,8 @@ critical fixes only), **Current** (newest release line, all fixes land here),
 and **Experimental** (alpha/beta pre-releases, opt-in). When a new line is
 certified Stable, the previous one keeps critical-fix support for 30 more
 days, then reaches EOL. Current status: **2.4.x is the Stable line**
-(latest v2.4.40); 2.5.x pre-releases are Experimental.
+(latest v2.4.40) and **2.5.x is the Current line** (latest v2.5.1), where all
+fixes land while it awaits production-soak certification.
 
 > **Known issue:** v2.4.39 and earlier under-scan vector recall on corpora
 > beyond a few hundred rows (bug-085; v2.4.38–v2.4.39 are the most affected —
@@ -368,6 +370,17 @@ Full policy:
 [SUPPORT.md](SUPPORT.md) · specification:
 [RELEASE_LIFECYCLE_STANDARD.md](docs/RELEASE_LIFECYCLE_STANDARD.md) · security
 reports: [SECURITY.md](SECURITY.md).
+
+### Found a bug, or something the docs do not explain?
+
+Open an issue — [bug report](https://github.com/Cloto-dev/cpersona/issues/new?template=bug_report.yml)
+or [feature request](https://github.com/Cloto-dev/cpersona/issues/new?template=feature_request.yml).
+
+Reports are welcome even when you are not certain it is a bug. If it turns out
+to be a configuration problem, that is still useful signal — it means the
+documentation was unclear, which is a defect of its own. Security
+vulnerabilities are the one exception: please report those privately via
+[SECURITY.md](SECURITY.md) rather than in a public issue.
 
 ## Learn More
 
