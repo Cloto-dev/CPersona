@@ -26,6 +26,10 @@ import tempfile
 # race that individual test files would otherwise each have to handle by hand.
 os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "conftest.db"))
 os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
+# Same hermeticity rule for the 2.5.1 operating-context sidecar: a developer's real
+# ~/.cpersona/operating-context.toml must not leak warnings/instructions into the
+# suite. Tests that exercise the feature opt back in per-test via monkeypatch.
+os.environ.setdefault("CPERSONA_OPERATING_CONTEXT", "off")
 
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
