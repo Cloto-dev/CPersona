@@ -35,6 +35,10 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 > **Claude Code? Let the agent do the setup.** This repo ships an [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/skills/cpersona-memory/SKILL.md) that walks Claude through the whole installation — cpersona, the embedding server, MCP registration, and a store/recall smoke test — and, more importantly, teaches it *when* to store, recall, and archive memories afterwards:
 >
 > ```bash
+> # Installed from PyPI? The skill ships inside the wheel — no clone needed:
+> python -c "import cpersona,pathlib,shutil; s=pathlib.Path(cpersona.__file__).parent/'skills'/'cpersona-memory'; shutil.copytree(s, pathlib.Path.home()/'.claude/skills/cpersona-memory', dirs_exist_ok=True)"
+>
+> # Running via uvx (isolated environment), or not installed yet:
 > git clone --depth 1 https://github.com/Cloto-dev/cpersona.git /tmp/cpersona
 > mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claude/skills/
 > ```
