@@ -2352,6 +2352,43 @@
     "seam": "#287",
     "thresholds": {}
   },
+  "import-dry-run-intra-file-duplicates": {
+    "covers": "import: a preview dedups WITHIN the file, on both the content and msg_id axes (bug-070)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "imp",
+          "channel": "",
+          "content": "original text",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": null,
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "mid-1",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "dry_run": true,
+      "imported_episodes": 0,
+      "imported_memories": 2,
+      "ok": true,
+      "profile_updated": false,
+      "skipped_memories": 2
+    },
+    "seam": "#287",
+    "thresholds": {}
+  },
   "import-fresh": {
     "covers": "import: fresh records land; counts and rows agree",
     "db": {

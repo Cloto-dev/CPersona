@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import os
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
@@ -800,6 +801,66 @@ async def _calibrate_fused_gate(
     }
 
 
+async def _sample_embeddings(db, agent_id: str, sample_n: int):
+    """Draw the embedding sample the null distribution is built from.
+
+    Returns (vecs, None) on success or (None, error_response) when the corpus
+    cannot support a calibration. Two independent floors have to hold, and they
+    fail for different reasons: too few rows to draw from at all, and too few of
+    them sharing one dimension once the ragged ones are dropped. The suite only
+    ever tripped the first until CSC Task #285 (mutation M08) pointed at the gap.
+    """
+    import numpy as np
+
+    # Per-agent when agent_id is provided, deliberate all-agents calibration when
+    # empty (the typed no-filter form of the helper, Task #180).
+    iso = isolation_where(agent_id=agent_id or None)
+    rows = await db.execute_fetchall(
+        f"SELECT embedding FROM memories WHERE embedding IS NOT NULL{iso.and_clause} ORDER BY RANDOM() LIMIT ?",
+        (*iso.params, sample_n),
+    )
+
+    if len(rows) < 10:
+        return None, {"ok": False, "error": f"Need at least 10 embeddings, found {len(rows)}"}
+
+    vecs = []
+    for (blob,) in rows:
+        vec = _safe_frombuffer(blob)  # bug-061: skip a corrupt blob instead of crashing calibration/startup
+        if vec is None:
+            continue
+        vecs.append(vec.copy())
+    # bug-025: a mixed-embedding-dimension corpus (e.g. a mid-flight jina-768d ->
+    # bge-1024d model swap) yields ragged rows; np.array of ragged vectors raises
+    # ValueError on numpy>=1.24, surfacing an opaque error from
+    # calibrate/set_recall_precision and able to abort ensure_calibrated_on_startup.
+    # Keep only the modal dimension — off-dimension rows are stale relative to the
+    # live model and get re-embedded by check_embedding_dimension.
+    if vecs:
+        from collections import Counter
+
+        target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
+        vecs = [v for v in vecs if v.shape[0] == target_dim]
+    if len(vecs) < 10:
+        return None, {"ok": False, "error": f"Need at least 10 same-dimension embeddings, found {len(vecs)}"}
+    return np.array(vecs), None
+
+
+def _null_distribution(vecs):
+    """All-pairs cosine similarities, and their upper triangle.
+
+    Treating every pair of distinct memories as a NON-match is what makes this a
+    null distribution: the threshold is then placed where a genuine match would
+    have to stand out from unrelated noise. The full matrix comes back too — the
+    separation method's nearest-neighbour fallback reuses it rather than
+    recomputing an O(n^2) product.
+    """
+    import numpy as np
+
+    sim_matrix = vecs @ vecs.T
+    pairwise_sims = sim_matrix[np.triu_indices(len(vecs), k=1)]
+    return sim_matrix, pairwise_sims
+
+
 async def do_calibrate_threshold(
     agent_id: str,
     sample_size: int = 0,
@@ -874,47 +935,16 @@ async def do_calibrate_threshold(
             "calibrate_threshold",
         )
 
-    # Sample embeddings: per-agent when agent_id provided, deliberate all-agents
-    # calibration when empty (the typed no-filter form of the helper, Task #180).
     # The read seam stays open through the fused-gate calibration below — it issues
     # simulate-query recalls against the same connection.
-    iso = isolation_where(agent_id=agent_id or None)
     async with connection() as db:
-        rows = await db.execute_fetchall(
-            f"SELECT embedding FROM memories WHERE embedding IS NOT NULL{iso.and_clause} ORDER BY RANDOM() LIMIT ?",
-            (*iso.params, sample_n),
-        )
+        vecs, sample_error = await _sample_embeddings(db, agent_id, sample_n)
+        if sample_error is not None:
+            return sample_error
 
-        if len(rows) < 10:
-            return {"ok": False, "error": f"Need at least 10 embeddings, found {len(rows)}"}
-
-        vecs = []
-        for (blob,) in rows:
-            vec = _safe_frombuffer(blob)  # bug-061: skip a corrupt blob instead of crashing calibration/startup
-            if vec is None:
-                continue
-            vecs.append(vec.copy())
-        # bug-025: a mixed-embedding-dimension corpus (e.g. a mid-flight jina-768d ->
-        # bge-1024d model swap) yields ragged rows; np.array of ragged vectors raises
-        # ValueError on numpy>=1.24, surfacing an opaque error from
-        # calibrate/set_recall_precision and able to abort ensure_calibrated_on_startup.
-        # Keep only the modal dimension — off-dimension rows are stale relative to the
-        # live model and get re-embedded by check_embedding_dimension.
-        if vecs:
-            from collections import Counter
-
-            target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
-            vecs = [v for v in vecs if v.shape[0] == target_dim]
-        if len(vecs) < 10:
-            return {"ok": False, "error": f"Need at least 10 same-dimension embeddings, found {len(vecs)}"}
-        vecs = np.array(vecs)
-
-        sim_matrix = vecs @ vecs.T
+        sim_matrix, pairwise_sims = _null_distribution(vecs)
 
         n = len(vecs)
-        triu_indices = np.triu_indices(n, k=1)
-        pairwise_sims = sim_matrix[triu_indices]
-
         num_pairs = len(pairwise_sims)
         old_threshold = vector._get_vector_threshold(agent_id)
 
@@ -1484,8 +1514,62 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     }
 
 
-async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run: bool = False) -> dict:
-    """Import memories, episodes, and profiles from a JSONL file."""
+@dataclass
+class _ImportTally:
+    """The state one import run threads through its per-record handlers.
+
+    `dry_run` lives here rather than travelling as a separate argument because
+    the preview's real hazard is not the database. dry_run has two write targets
+    and they are not equally defended:
+
+        database       read seam + per-record guard   -> rolled back
+        remote index   per-record guard, alone        -> nothing
+
+    `remote_items` is shipped after the transaction closes (see the tail of
+    do_import_memories), where no rollback reaches — so that one guard was all
+    that stood between a preview and a live index write, and CSC Task #293 found
+    it by mutating the guard away: the database stayed spotless and every
+    DB-watching test in the suite stayed green.
+
+    Routing the queue through `queue_remote` makes a preview structurally unable
+    to publish, rather than leaving it to every future edit to remember the
+    guard — which matters because bundling this state was itself the change that
+    could most easily have dropped it.
+    """
+
+    dry_run: bool
+    imported_memories: int = 0
+    skipped_memories: int = 0
+    imported_episodes: int = 0
+    profile_updated: bool = False
+    errors: list[str] = field(default_factory=list)
+    # bug-091: track the header and the per-type record counts actually present in
+    # the file, so a truncated backup (mid-export crash, partial copy) is rejected
+    # instead of silently restoring a partial corpus with ok:true.
+    file_header: dict | None = None
+    file_memories: int = 0
+    file_episodes: int = 0
+    file_profiles: int = 0
+    # bug-070: dry_run performs no INSERT OR IGNORE, so it cannot collide against a row
+    # it "inserted" earlier IN THE SAME FILE — a duplicate later in the file was
+    # over-counted as imported (a real run sees its own uncommitted row on the shared
+    # connection and skips it). Track within-file identities on BOTH dedup axes (the v12
+    # (agent_id,project_id,msg_id) and (agent_id,project_id,channel,content) UNIQUE
+    # indexes) so the preview matches a real run. Populated only on the dry_run path.
+    seen_msgid: set = field(default_factory=set)
+    seen_content: set = field(default_factory=set)
+    # bug-132: queue only rows actually inserted, then sync after commit.
+    remote_items: dict[str, list[dict]] = field(default_factory=dict)
+
+    def queue_remote(self, agent_id: str, ref: str, text: str) -> None:
+        """Queue a written row for the remote index. A preview queues nothing."""
+        if self.dry_run:
+            return
+        self.remote_items.setdefault(agent_id, []).append({"id": ref, "text": text})
+
+
+def _validate_import_preconditions(input_path: str, dry_run: bool) -> tuple[str | None, dict | None]:
+    """Vet the request before any file or database work. Returns (path, error)."""
     # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
     # bug-079: only gate the WRITE path on no-persist (the bug-048 fix, applied to the
     # import twin). A dry_run=True preview is write-free — every INSERT/UPSERT is
@@ -1493,7 +1577,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     # short-circuiting it into a fabricated all-zero response masks what a real import
     # would do and contradicts the "read tools unaffected" no-persist contract.
     if no_persist.is_paused() and not dry_run:
-        return no_persist.make_skipped_response(
+        return None, no_persist.make_skipped_response(
             {
                 "ok": True,
                 "dry_run": dry_run,
@@ -1506,38 +1590,204 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
         )
     confined = _confine_io_path(input_path)
     if confined is None:
-        return {"error": f"input_path rejected (path traversal or outside export dir): {input_path}"}
-    input_path = confined
-    if not os.path.exists(input_path):
-        return {"error": f"File not found: {input_path}"}
-    # bug-130: reject oversized imports before opening or reading the file.
-    if os.path.getsize(input_path) > config.MAX_IMPORT_BYTES:
-        return {
-            "error": f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {input_path}"
+        return None, {
+            "error": f"input_path rejected (path traversal or outside export dir): {input_path}"
         }
+    if not os.path.exists(confined):
+        return None, {"error": f"File not found: {confined}"}
+    # bug-130: reject oversized imports before opening or reading the file.
+    if os.path.getsize(confined) > config.MAX_IMPORT_BYTES:
+        return None, {
+            "error": f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {confined}"
+        }
+    return confined, None
 
-    imported_memories = 0
-    skipped_memories = 0
-    imported_episodes = 0
-    profile_updated = False
-    errors: list[str] = []
-    # bug-091: track the header and the per-type record counts actually present in
-    # the file, so a truncated backup (mid-export crash, partial copy) is rejected
-    # instead of silently restoring a partial corpus with ok:true.
-    file_header: dict | None = None
-    file_memories = 0
-    file_episodes = 0
-    file_profiles = 0
-    # bug-070: dry_run performs no INSERT OR IGNORE, so it cannot collide against a row
-    # it "inserted" earlier IN THE SAME FILE — a duplicate later in the file was
-    # over-counted as imported (a real run sees its own uncommitted row on the shared
-    # connection and skips it). Track within-file identities on BOTH dedup axes (the v12
-    # (agent_id,project_id,msg_id) and (agent_id,project_id,channel,content) UNIQUE
-    # indexes) so the preview matches a real run. Populated only on the dry_run path.
-    seen_msgid: set = set()
-    seen_content: set = set()
-    # bug-132: queue only rows actually inserted, then sync after commit.
-    remote_items: dict[str, list[dict]] = {}
+
+async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally) -> None:
+    """Import one memory row, or account for why it was skipped.
+
+    The two paths are asymmetric by necessity, not by accident: a real run lets
+    the UNIQUE indexes do the deduplication and reads the outcome back from
+    `rowcount`, while a preview has no INSERT to learn from and has to probe for
+    the same collisions by hand. Keeping the previewed counts equal to a real
+    run's is the whole contract (bug-056 / bug-070).
+    """
+    content = record.get("content", "")
+    if not content:
+        tally.skipped_memories += 1
+        return
+
+    msg_id = record.get("msg_id", "")
+    pid = record.get("project_id", "")
+    chan = record.get("channel", "")
+
+    # bug-044: dedup on the full identity (agent_id, project_id,
+    # msg_id) — the same axes do_store and the idx_memories_dedup_msg_id
+    # UNIQUE index use. A project-blind check would drop a legitimately
+    # distinct cross-project memory (same msg_id, different project_id)
+    # that INSERT OR IGNORE against the composite index would accept.
+    if msg_id:
+        existing = await db.execute_fetchall(
+            "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
+            (aid, pid, msg_id),
+        )
+        if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):
+            tally.skipped_memories += 1
+            return
+
+    if not tally.dry_run:
+        source = json.dumps(record.get("source", {}))
+        timestamp = record.get("timestamp", "")
+        metadata = json.dumps(record.get("metadata", {}))
+        # bug-016: carry the project_id / channel γ-axes, the locked
+        # flag and the embedding through, and INSERT OR IGNORE so a
+        # collision with the v12 dedup UNIQUE index is a counted skip
+        # rather than an uncaught IntegrityError that aborts the restore.
+        # bug-092: created_at and the recall stats ride along too — the
+        # old INSERT re-stamped every restored row with import time and
+        # zeroed its recall-frequency boost.
+        cur = await db.execute(
+            "INSERT OR IGNORE INTO memories"
+            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,"
+            "  embedding, locked, recall_count, last_recalled_at, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+            (
+                aid,
+                pid,
+                chan,
+                msg_id,
+                content,
+                source,
+                timestamp,
+                metadata,
+                _decode_embedding(record),
+                1 if record.get("locked") else 0,
+                int(record.get("recall_count") or 0),
+                record.get("last_recalled_at"),
+                record.get("created_at"),
+            ),
+        )
+        if cur.rowcount == 0:
+            tally.skipped_memories += 1
+            return
+        tally.queue_remote(aid, f"mem:{cur.lastrowid}", content)
+    else:
+        # bug-056: in dry_run the INSERT OR IGNORE rowcount==0 skip
+        # never runs, so a content-UNIQUE-index collision (empty msg_id,
+        # same agent/project/channel/content, or a repeat within the
+        # file) would be over-counted as an import. Replicate the
+        # content-uniqueness probe so the previewed imported/skipped
+        # counts match a real run.
+        dup = await db.execute_fetchall(
+            "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+            (aid, pid, chan, content),
+        )
+        if dup or (aid, pid, chan, content) in tally.seen_content:
+            tally.skipped_memories += 1
+            return
+        # bug-070: record this record's identities so a later duplicate in
+        # the same file is previewed as skipped, matching the real run.
+        if msg_id:
+            tally.seen_msgid.add((aid, pid, msg_id))
+        tally.seen_content.add((aid, pid, chan, content))
+    tally.imported_memories += 1
+
+
+async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally) -> None:
+    """Import one episode row. Episodes have no dedup index, so every one lands."""
+    summary = record.get("summary", "")
+    if not summary:
+        return
+
+    # bug-094: coerce field types on BOTH paths — a JSON-array
+    # keywords value (the natural hand-authored format) reached
+    # db.execute as a Python list and aborted the whole import
+    # with an InterfaceError, while the same file previewed
+    # cleanly under dry_run (the binding was write-path only).
+    keywords = record.get("keywords", "")
+    if isinstance(keywords, list):
+        keywords = " ".join(str(k) for k in keywords)
+    else:
+        keywords = str(keywords or "")
+
+    if not tally.dry_run:
+        cur = await db.execute(
+            "INSERT INTO episodes"
+            " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
+            "  embedding, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+            (
+                aid,
+                record.get("project_id", ""),
+                record.get("channel", ""),
+                summary,
+                keywords,
+                record.get("start_time"),
+                record.get("end_time"),
+                1 if record.get("resolved") else 0,
+                _decode_embedding(record),
+                record.get("created_at"),
+            ),
+        )
+        tally.queue_remote(aid, f"ep:{cur.lastrowid}", summary)
+    tally.imported_episodes += 1
+
+
+async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally) -> None:
+    """Upsert one profile row, keyed on (agent_id, user_id)."""
+    content = record.get("content", "")
+    if not content:
+        return
+
+    if not tally.dry_run:
+        await db.execute(
+            "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
+            " VALUES (?, ?, ?, ?, datetime('now'))"
+            " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
+            "   content = excluded.content,"
+            "   updated_at = excluded.updated_at",
+            (aid, record.get("project_id", ""), record.get("user_id", ""), content),
+        )
+    tally.profile_updated = True
+
+
+def _validate_file_header(tally: _ImportTally) -> None:
+    """Check the body against the header's own declared counts.
+
+    bug-091: a truncated export (or a torn last line, already collected in
+    `errors`) shows up as a count shortfall. The caller runs this INSIDE the
+    transaction scope so the raise rolls a real run back rather than committing a
+    partial restore.
+    """
+    if tally.file_header is None:
+        return
+
+    declared_mem = tally.file_header.get("memory_count")
+    declared_ep = tally.file_header.get("episode_count")
+    # bug-110: profiles are validated too — a file cut exactly at the
+    # episode/profile boundary passed the two-count check and restored
+    # a profile-less corpus with ok:true.
+    declared_prof = tally.file_header.get("profile_count")
+    if (
+        (isinstance(declared_mem, int) and declared_mem != tally.file_memories)
+        or (isinstance(declared_ep, int) and declared_ep != tally.file_episodes)
+        or (isinstance(declared_prof, int) and declared_prof != tally.file_profiles)
+    ):
+        raise ValueError(
+            f"file truncated or inconsistent: header declares "
+            f"{declared_mem} memories / {declared_ep} episodes / "
+            f"{declared_prof} profiles, file contains "
+            f"{tally.file_memories} / {tally.file_episodes} / {tally.file_profiles}"
+        )
+
+
+async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run: bool = False) -> dict:
+    """Import memories, episodes, and profiles from a JSONL file."""
+    input_path, error = _validate_import_preconditions(input_path, dry_run)
+    if error is not None:
+        return error
+
+    tally = _ImportTally(dry_run=dry_run)
 
     # bug-016/bug-042: the whole restore runs inside one transaction() — the lock is
     # held across [first INSERT … commit/rollback] so no concurrent committer can
@@ -1563,202 +1813,49 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError as e:
-                    errors.append(f"Line {line_num}: invalid JSON: {e}")
+                    tally.errors.append(f"Line {line_num}: invalid JSON: {e}")
                     continue
 
                 rtype = record.get("_type", "")
 
                 if rtype == "header":
-                    file_header = record
+                    tally.file_header = record
                     continue
 
                 elif rtype == "memory":
-                    file_memories += 1
+                    # Counted before the agent_id check on purpose: this is the
+                    # counter _validate_file_header compares against, so it must
+                    # count records PRESENT in the file, not records accepted.
+                    tally.file_memories += 1
                     aid = target_agent_id or record.get("agent_id", "")
                     if not aid:
-                        errors.append(f"Line {line_num}: memory missing agent_id")
+                        tally.errors.append(f"Line {line_num}: memory missing agent_id")
                         continue
-
-                    content = record.get("content", "")
-                    if not content:
-                        skipped_memories += 1
-                        continue
-
-                    msg_id = record.get("msg_id", "")
-                    pid = record.get("project_id", "")
-                    chan = record.get("channel", "")
-
-                    # bug-044: dedup on the full identity (agent_id, project_id,
-                    # msg_id) — the same axes do_store and the idx_memories_dedup_msg_id
-                    # UNIQUE index use. A project-blind check would drop a legitimately
-                    # distinct cross-project memory (same msg_id, different project_id)
-                    # that INSERT OR IGNORE against the composite index would accept.
-                    if msg_id:
-                        existing = await db.execute_fetchall(
-                            "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
-                            (aid, pid, msg_id),
-                        )
-                        if existing or (dry_run and (aid, pid, msg_id) in seen_msgid):
-                            skipped_memories += 1
-                            continue
-
-                    if not dry_run:
-                        source = json.dumps(record.get("source", {}))
-                        timestamp = record.get("timestamp", "")
-                        metadata = json.dumps(record.get("metadata", {}))
-                        # bug-016: carry the project_id / channel γ-axes, the locked
-                        # flag and the embedding through, and INSERT OR IGNORE so a
-                        # collision with the v12 dedup UNIQUE index is a counted skip
-                        # rather than an uncaught IntegrityError that aborts the restore.
-                        # bug-092: created_at and the recall stats ride along too — the
-                        # old INSERT re-stamped every restored row with import time and
-                        # zeroed its recall-frequency boost.
-                        cur = await db.execute(
-                            "INSERT OR IGNORE INTO memories"
-                            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,"
-                            "  embedding, locked, recall_count, last_recalled_at, created_at)"
-                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
-                            (
-                                aid,
-                                pid,
-                                chan,
-                                msg_id,
-                                content,
-                                source,
-                                timestamp,
-                                metadata,
-                                _decode_embedding(record),
-                                1 if record.get("locked") else 0,
-                                int(record.get("recall_count") or 0),
-                                record.get("last_recalled_at"),
-                                record.get("created_at"),
-                            ),
-                        )
-                        if cur.rowcount == 0:
-                            skipped_memories += 1
-                            continue
-                        remote_items.setdefault(aid, []).append(
-                            {"id": f"mem:{cur.lastrowid}", "text": content}
-                        )
-                    else:
-                        # bug-056: in dry_run the INSERT OR IGNORE rowcount==0 skip
-                        # never runs, so a content-UNIQUE-index collision (empty msg_id,
-                        # same agent/project/channel/content, or a repeat within the
-                        # file) would be over-counted as an import. Replicate the
-                        # content-uniqueness probe so the previewed imported/skipped
-                        # counts match a real run.
-                        dup = await db.execute_fetchall(
-                            "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-                            (aid, pid, chan, content),
-                        )
-                        if dup or (aid, pid, chan, content) in seen_content:
-                            skipped_memories += 1
-                            continue
-                        # bug-070: record this record's identities so a later duplicate in
-                        # the same file is previewed as skipped, matching the real run.
-                        if msg_id:
-                            seen_msgid.add((aid, pid, msg_id))
-                        seen_content.add((aid, pid, chan, content))
-                    imported_memories += 1
+                    await _import_memory_record(db, record, aid, tally)
 
                 elif rtype == "episode":
-                    file_episodes += 1
+                    tally.file_episodes += 1
                     aid = target_agent_id or record.get("agent_id", "")
                     if not aid:
-                        errors.append(f"Line {line_num}: episode missing agent_id")
+                        tally.errors.append(f"Line {line_num}: episode missing agent_id")
                         continue
-
-                    summary = record.get("summary", "")
-                    if not summary:
-                        continue
-
-                    # bug-094: coerce field types on BOTH paths — a JSON-array
-                    # keywords value (the natural hand-authored format) reached
-                    # db.execute as a Python list and aborted the whole import
-                    # with an InterfaceError, while the same file previewed
-                    # cleanly under dry_run (the binding was write-path only).
-                    keywords = record.get("keywords", "")
-                    if isinstance(keywords, list):
-                        keywords = " ".join(str(k) for k in keywords)
-                    else:
-                        keywords = str(keywords or "")
-                    start_time = record.get("start_time")
-                    end_time = record.get("end_time")
-                    resolved = 1 if record.get("resolved") else 0
-
-                    if not dry_run:
-                        cur = await db.execute(
-                            "INSERT INTO episodes"
-                            " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
-                            "  embedding, created_at)"
-                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
-                            (
-                                aid,
-                                record.get("project_id", ""),
-                                record.get("channel", ""),
-                                summary,
-                                keywords,
-                                start_time,
-                                end_time,
-                                resolved,
-                                _decode_embedding(record),
-                                record.get("created_at"),
-                            ),
-                        )
-                        remote_items.setdefault(aid, []).append(
-                            {"id": f"ep:{cur.lastrowid}", "text": summary}
-                        )
-                    imported_episodes += 1
+                    await _import_episode_record(db, record, aid, tally)
 
                 elif rtype == "profile":
-                    file_profiles += 1
+                    tally.file_profiles += 1
                     aid = target_agent_id or record.get("agent_id", "")
                     if not aid:
-                        errors.append(f"Line {line_num}: profile missing agent_id")
+                        tally.errors.append(f"Line {line_num}: profile missing agent_id")
                         continue
-
-                    content = record.get("content", "")
-                    if not content:
-                        continue
-
-                    if not dry_run:
-                        user_id = record.get("user_id", "")
-                        await db.execute(
-                            "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
-                            " VALUES (?, ?, ?, ?, datetime('now'))"
-                            " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
-                            "   content = excluded.content,"
-                            "   updated_at = excluded.updated_at",
-                            (aid, record.get("project_id", ""), user_id, content),
-                        )
-                    profile_updated = True
+                    await _import_profile_record(db, record, aid, tally)
 
                 else:
                     if rtype:
-                        errors.append(f"Line {line_num}: unknown type '{rtype}'")
+                        tally.errors.append(f"Line {line_num}: unknown type '{rtype}'")
 
-            # bug-091: validate the file body against its own header. A truncated
-            # export (or a torn last line, already collected in `errors`) shows up
-            # as a count shortfall — raise INSIDE the transaction scope so a real
-            # run rolls back everything instead of committing a partial restore.
-            if file_header is not None:
-                declared_mem = file_header.get("memory_count")
-                declared_ep = file_header.get("episode_count")
-                # bug-110: profiles are validated too — a file cut exactly at the
-                # episode/profile boundary passed the two-count check and restored
-                # a profile-less corpus with ok:true.
-                declared_prof = file_header.get("profile_count")
-                if (
-                    (isinstance(declared_mem, int) and declared_mem != file_memories)
-                    or (isinstance(declared_ep, int) and declared_ep != file_episodes)
-                    or (isinstance(declared_prof, int) and declared_prof != file_profiles)
-                ):
-                    raise ValueError(
-                        f"file truncated or inconsistent: header declares "
-                        f"{declared_mem} memories / {declared_ep} episodes / "
-                        f"{declared_prof} profiles, file contains "
-                        f"{file_memories} / {file_episodes} / {file_profiles}"
-                    )
+            # Inside the transaction scope: the raise must roll a real run back
+            # rather than commit a partial restore (bug-091).
+            _validate_file_header(tally)
 
     except Exception as e:
         # bug-110: keep the per-line diagnostics (a torn last line lands in
@@ -1770,28 +1867,225 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
             "error": f"import {aborted}: {e}",
             "dry_run": dry_run,
             "imported_memories": 0,
-            "skipped_memories": skipped_memories,
+            "skipped_memories": tally.skipped_memories,
             "imported_episodes": 0,
             "profile_updated": False,
         }
-        if errors:
-            result["errors"] = errors
+        if tally.errors:
+            result["errors"] = tally.errors
         return result
 
-    for aid, items in remote_items.items():
+    # Outside the transaction, so nothing here is covered by its rollback. A
+    # preview reaches this loop with an empty queue by construction — see
+    # _ImportTally.queue_remote.
+    for aid, items in tally.remote_items.items():
         await vector.remote_index_upsert(aid, items)
 
     result: dict = {
         "ok": True,
         "dry_run": dry_run,
-        "imported_memories": imported_memories,
-        "skipped_memories": skipped_memories,
-        "imported_episodes": imported_episodes,
-        "profile_updated": profile_updated,
+        "imported_memories": tally.imported_memories,
+        "skipped_memories": tally.skipped_memories,
+        "imported_episodes": tally.imported_episodes,
+        "profile_updated": tally.profile_updated,
     }
-    if errors:
-        result["errors"] = errors
+    if tally.errors:
+        result["errors"] = tally.errors
     return result
+
+
+@dataclass
+class _MergeTally:
+    """The state one merge threads through its three row-copy passes.
+
+    `dry_run` lives here for the same reason it does in _ImportTally: the remote
+    index write at the tail of do_merge_memories runs outside the transaction,
+    so the per-row guard is the only thing standing between a preview and a live
+    index write. `queue_remote` makes a preview structurally unable to publish.
+    """
+
+    dry_run: bool
+    merged_memories: int = 0
+    skipped_memories: int = 0
+    merged_episodes: int = 0
+    skipped_episodes: int = 0
+    profile_copied: bool = False
+    skipped_profile: bool = False
+    # bug-071: episodes have NO uniqueness constraint on summary and are inserted with a
+    # bare INSERT, so intra-batch dedup relies on the target existing-check seeing the
+    # real run's own uncommitted rows. dry_run inserts nothing, so two source episodes
+    # with the same summary were both counted as merged. Track within-batch summaries so
+    # the dry_run preview matches (memories don't need this — the source's own UNIQUE
+    # indexes already make intra-batch content/msg_id collisions impossible).
+    seen_summary: set = field(default_factory=set)
+    # bug-132: queue only rows actually inserted, then sync after commit.
+    remote_items: list[dict] = field(default_factory=list)
+
+    def queue_remote(self, ref: str, text: str) -> None:
+        """Queue a written row for the remote index. A preview queues nothing."""
+        if self.dry_run:
+            return
+        self.remote_items.append({"id": ref, "text": text})
+
+
+async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
+    """Copy the source agent's memory rows into the target, skipping collisions."""
+    rows = await db.execute_fetchall(
+        "SELECT project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
+        " created_at, recall_count, last_recalled_at"
+        " FROM memories WHERE agent_id = ?",
+        (source_agent_id,),
+    )
+    # bug-131: preserve the ranking metadata used by confidence and decay.
+    for (
+        project_id,
+        msg_id,
+        content,
+        source,
+        timestamp,
+        metadata,
+        channel,
+        embedding,
+        locked,
+        created_at,
+        recall_count,
+        last_recalled_at,
+    ) in rows:
+        if not content:
+            continue
+        # bug-047: dedup against the target on the full identity (agent_id,
+        # project_id, msg_id), matching the INSERT OR IGNORE's composite UNIQUE
+        # index. A project-blind check drops a distinct source memory whose
+        # msg_id collides with a target row in an unrelated project bucket.
+        if msg_id:
+            existing = await db.execute_fetchall(
+                "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
+                (target_agent_id, project_id, msg_id),
+            )
+            if existing:
+                tally.skipped_memories += 1
+                continue
+        if not tally.dry_run:
+            cur = await db.execute(
+                "INSERT OR IGNORE INTO memories"
+                " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding,"
+                "  locked, created_at, recall_count, last_recalled_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    target_agent_id,
+                    project_id,
+                    channel,
+                    msg_id,
+                    content,
+                    source,
+                    timestamp,
+                    metadata,
+                    embedding,
+                    locked,
+                    created_at,
+                    recall_count,
+                    last_recalled_at,
+                ),
+            )
+            if cur.rowcount == 0:
+                tally.skipped_memories += 1
+                continue
+            tally.queue_remote(f"mem:{cur.lastrowid}", content)
+        else:
+            # bug-057: in dry_run the INSERT OR IGNORE rowcount==0 skip never
+            # runs, so a content-UNIQUE-index collision (source content already
+            # in the target under a different/empty msg_id) would be over-counted
+            # as a merge. Replicate the content-uniqueness probe so the preview
+            # counts equal a real merge.
+            dup = await db.execute_fetchall(
+                "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+                (target_agent_id, project_id, channel, content),
+            )
+            if dup:
+                tally.skipped_memories += 1
+                continue
+        tally.merged_memories += 1
+
+
+async def _merge_episode_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
+    """Copy the source agent's episodes. No uniqueness index — the probe is the gate."""
+    rows = await db.execute_fetchall(
+        "SELECT summary, keywords, start_time, end_time, resolved, project_id, channel, embedding"
+        " FROM episodes WHERE agent_id = ?",
+        (source_agent_id,),
+    )
+    for summary, keywords, start_time, end_time, resolved, ep_project_id, ep_channel, ep_embedding in rows:
+        if not summary:
+            continue
+        # bug-076: scope the episode dedup probe by the γ isolation axes, exactly
+        # like the memory probes above (bug-047/057). Episodes have NO uniqueness
+        # constraint, so this pre-check is the only dedup gate — a summary-only
+        # probe skipped a legitimately distinct episode whenever the target held
+        # the same summary text under ANY other project/channel bucket, and
+        # mode='move' then deleted it with the source agent (permanent
+        # cross-project data loss). The dry_run seen_summary key carries the same
+        # axes so the preview counts match a real run.
+        existing = await db.execute_fetchall(
+            "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
+            " AND summary = ? LIMIT 1",
+            (target_agent_id, ep_project_id, ep_channel, summary),
+        )
+        if existing or (
+            tally.dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in tally.seen_summary
+        ):
+            tally.skipped_episodes += 1
+            continue
+        if not tally.dry_run:
+            cur = await db.execute(
+                "INSERT INTO episodes"
+                " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (target_agent_id, ep_project_id, ep_channel, summary, keywords, start_time, end_time, resolved, ep_embedding),
+            )
+            tally.queue_remote(f"ep:{cur.lastrowid}", summary)
+        else:
+            tally.seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
+        tally.merged_episodes += 1
+
+
+async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
+    """Copy the source agent's profiles, leaving any the target already has."""
+    rows = await db.execute_fetchall(
+        "SELECT user_id, content, project_id FROM profiles WHERE agent_id = ?",
+        (source_agent_id,),
+    )
+    for user_id, content, prof_project_id in rows:
+        if not content:
+            continue
+        existing = await db.execute_fetchall(
+            "SELECT id FROM profiles WHERE agent_id = ? AND user_id = ? LIMIT 1",
+            (target_agent_id, user_id),
+        )
+        if existing:
+            tally.skipped_profile = True
+            continue
+        if not tally.dry_run:
+            await db.execute(
+                "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
+                " VALUES (?, ?, ?, ?, datetime('now'))",
+                (target_agent_id, prof_project_id, user_id, content),
+            )
+        tally.profile_copied = True
+
+
+def _validate_merge_arguments(source_agent_id: str, target_agent_id: str, strategy: str, mode: str) -> dict | None:
+    """Return an error response if the request is not a merge we can perform."""
+    if not source_agent_id:
+        return {"error": "source_agent_id is required"}
+    if not target_agent_id:
+        return {"error": "target_agent_id is required"}
+    if source_agent_id == target_agent_id:
+        return {"error": "source_agent_id and target_agent_id must differ"}
+    if strategy != "skip":
+        return {"error": f"Unsupported strategy '{strategy}'. Currently supported: 'skip'"}
+    if mode not in ("copy", "move"):
+        return {"error": f"Invalid mode '{mode}'. Supported: 'copy', 'move'"}
+    return None
 
 
 async def do_merge_memories(
@@ -1826,32 +2120,11 @@ async def do_merge_memories(
             },
             "merge_memories",
         )
-    if not source_agent_id:
-        return {"error": "source_agent_id is required"}
-    if not target_agent_id:
-        return {"error": "target_agent_id is required"}
-    if source_agent_id == target_agent_id:
-        return {"error": "source_agent_id and target_agent_id must differ"}
-    if strategy != "skip":
-        return {"error": f"Unsupported strategy '{strategy}'. Currently supported: 'skip'"}
-    if mode not in ("copy", "move"):
-        return {"error": f"Invalid mode '{mode}'. Supported: 'copy', 'move'"}
+    invalid = _validate_merge_arguments(source_agent_id, target_agent_id, strategy, mode)
+    if invalid is not None:
+        return invalid
 
-    merged_memories = 0
-    skipped_memories = 0
-    merged_episodes = 0
-    skipped_episodes = 0
-    profile_copied = False
-    skipped_profile = False
-    # bug-071: episodes have NO uniqueness constraint on summary and are inserted with a
-    # bare INSERT, so intra-batch dedup relies on the target existing-check seeing the
-    # real run's own uncommitted rows. dry_run inserts nothing, so two source episodes
-    # with the same summary were both counted as merged. Track within-batch summaries so
-    # the dry_run preview matches (memories don't need this — the source's own UNIQUE
-    # indexes already make intra-batch content/msg_id collisions impossible).
-    seen_summary: set = set()
-    # bug-132: queue only rows actually inserted, then sync after commit.
-    remote_items: list[dict] = []
+    tally = _MergeTally(dry_run=dry_run)
 
     # bug-020/022: whole merge in one transaction, carrying the project_id /
     # channel / locked axes + embedding and using INSERT OR IGNORE so a content
@@ -1862,148 +2135,10 @@ async def do_merge_memories(
     # exit and auto-rolls-back on fault. dry_run does no writes → read seam.
     try:
         async with (connection() if dry_run else transaction()) as db:
-            rows = await db.execute_fetchall(
-                "SELECT project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
-                " created_at, recall_count, last_recalled_at"
-                " FROM memories WHERE agent_id = ?",
-                (source_agent_id,),
-            )
-            # bug-131: preserve the ranking metadata used by confidence and decay.
-            for (
-                project_id,
-                msg_id,
-                content,
-                source,
-                timestamp,
-                metadata,
-                channel,
-                embedding,
-                locked,
-                created_at,
-                recall_count,
-                last_recalled_at,
-            ) in rows:
-                if not content:
-                    continue
-                # bug-047: dedup against the target on the full identity (agent_id,
-                # project_id, msg_id), matching the INSERT OR IGNORE's composite UNIQUE
-                # index. A project-blind check drops a distinct source memory whose
-                # msg_id collides with a target row in an unrelated project bucket.
-                if msg_id:
-                    existing = await db.execute_fetchall(
-                        "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
-                        (target_agent_id, project_id, msg_id),
-                    )
-                    if existing:
-                        skipped_memories += 1
-                        continue
-                if not dry_run:
-                    cur = await db.execute(
-                        "INSERT OR IGNORE INTO memories"
-                        " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding,"
-                        "  locked, created_at, recall_count, last_recalled_at)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            target_agent_id,
-                            project_id,
-                            channel,
-                            msg_id,
-                            content,
-                            source,
-                            timestamp,
-                            metadata,
-                            embedding,
-                            locked,
-                            created_at,
-                            recall_count,
-                            last_recalled_at,
-                        ),
-                    )
-                    if cur.rowcount == 0:
-                        skipped_memories += 1
-                        continue
-                    remote_items.append({"id": f"mem:{cur.lastrowid}", "text": content})
-                else:
-                    # bug-057: in dry_run the INSERT OR IGNORE rowcount==0 skip never
-                    # runs, so a content-UNIQUE-index collision (source content already
-                    # in the target under a different/empty msg_id) would be over-counted
-                    # as a merge. Replicate the content-uniqueness probe so the preview
-                    # counts equal a real merge.
-                    dup = await db.execute_fetchall(
-                        "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-                        (target_agent_id, project_id, channel, content),
-                    )
-                    if dup:
-                        skipped_memories += 1
-                        continue
-                merged_memories += 1
+            await _merge_memory_rows(db, source_agent_id, target_agent_id, tally)
+            await _merge_episode_rows(db, source_agent_id, target_agent_id, tally)
+            await _merge_profile_rows(db, source_agent_id, target_agent_id, tally)
 
-            rows = await db.execute_fetchall(
-                "SELECT summary, keywords, start_time, end_time, resolved, project_id, channel, embedding"
-                " FROM episodes WHERE agent_id = ?",
-                (source_agent_id,),
-            )
-            for summary, keywords, start_time, end_time, resolved, ep_project_id, ep_channel, ep_embedding in rows:
-                if not summary:
-                    continue
-                # bug-076: scope the episode dedup probe by the γ isolation axes, exactly
-                # like the memory probes above (bug-047/057). Episodes have NO uniqueness
-                # constraint, so this pre-check is the only dedup gate — a summary-only
-                # probe skipped a legitimately distinct episode whenever the target held
-                # the same summary text under ANY other project/channel bucket, and
-                # mode='move' then deleted it with the source agent (permanent
-                # cross-project data loss). The dry_run seen_summary key carries the same
-                # axes so the preview counts match a real run.
-                existing = await db.execute_fetchall(
-                    "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
-                    " AND summary = ? LIMIT 1",
-                    (target_agent_id, ep_project_id, ep_channel, summary),
-                )
-                if existing or (dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in seen_summary):
-                    skipped_episodes += 1
-                    continue
-                if not dry_run:
-                    cur = await db.execute(
-                        "INSERT INTO episodes"
-                        " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (target_agent_id, ep_project_id, ep_channel, summary, keywords, start_time, end_time, resolved, ep_embedding),
-                    )
-                    remote_items.append({"id": f"ep:{cur.lastrowid}", "text": summary})
-                else:
-                    seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
-                merged_episodes += 1
-
-            rows = await db.execute_fetchall(
-                "SELECT user_id, content, project_id FROM profiles WHERE agent_id = ?",
-                (source_agent_id,),
-            )
-            for user_id, content, prof_project_id in rows:
-                if not content:
-                    continue
-                existing = await db.execute_fetchall(
-                    "SELECT id FROM profiles WHERE agent_id = ? AND user_id = ? LIMIT 1",
-                    (target_agent_id, user_id),
-                )
-                if existing:
-                    skipped_profile = True
-                    continue
-                if not dry_run:
-                    await db.execute(
-                        "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
-                        " VALUES (?, ?, ?, ?, datetime('now'))",
-                        (target_agent_id, prof_project_id, user_id, content),
-                    )
-                profile_copied = True
-
-            # bug-088: mode='move' deletes the source INSIDE the same transaction
-            # as the copy. As two transactions, any writer queued behind the merge
-            # on the FIFO write lock could insert into the source between the
-            # merge commit and the delete — the delete then wiped an acknowledged
-            # row that was never copied (deterministic loss, not just a crash
-            # window). One atomic unit also removes the crash window where the
-            # move degraded to a copy, and the mid-flight no-persist pause that
-            # silently skipped the wipe under ok:true.
             move_counts = None
             if mode == "move" and not dry_run:
                 move_counts = await _delete_agent_rows(db, source_agent_id)
@@ -2016,17 +2151,19 @@ async def do_merge_memories(
             "source_agent_id": source_agent_id,
             "target_agent_id": target_agent_id,
             "merged_memories": 0,
-            "skipped_memories": skipped_memories,
+            "skipped_memories": tally.skipped_memories,
             "merged_episodes": 0,
-            "skipped_episodes": skipped_episodes,
+            "skipped_episodes": tally.skipped_episodes,
             "profile_copied": False,
-            "skipped_profile": skipped_profile,
+            "skipped_profile": tally.skipped_profile,
         }
 
     # The delete happened inside the merge transaction (bug-088); only the
     # non-DB side effects (calibration purge, remote namespace) run here,
     # post-commit, mirroring do_delete_agent_data's ordering.
-    await vector.remote_index_upsert(target_agent_id, remote_items)
+    # Outside the transaction: no rollback covers this. A preview arrives with
+    # an empty queue by construction — see _MergeTally.queue_remote.
+    await vector.remote_index_upsert(target_agent_id, tally.remote_items)
     move_result = None
     if move_counts is not None:
         _purge_agent_calibration(source_agent_id)
@@ -2040,12 +2177,12 @@ async def do_merge_memories(
         "target_agent_id": target_agent_id,
         "strategy": strategy,
         "mode": mode,
-        "merged_memories": merged_memories,
-        "skipped_memories": skipped_memories,
-        "merged_episodes": merged_episodes,
-        "skipped_episodes": skipped_episodes,
-        "profile_copied": profile_copied,
-        "skipped_profile": skipped_profile,
+        "merged_memories": tally.merged_memories,
+        "skipped_memories": tally.skipped_memories,
+        "merged_episodes": tally.merged_episodes,
+        "skipped_episodes": tally.skipped_episodes,
+        "profile_copied": tally.profile_copied,
+        "skipped_profile": tally.skipped_profile,
     }
     if move_result:
         result["source_deleted"] = move_result
@@ -2056,11 +2193,11 @@ async def do_merge_memories(
         target_agent_id,
         strategy,
         mode,
-        merged_memories,
-        skipped_memories,
-        merged_episodes,
-        skipped_episodes,
-        "copied" if profile_copied else ("skipped" if skipped_profile else "none"),
+        tally.merged_memories,
+        tally.skipped_memories,
+        tally.merged_episodes,
+        tally.skipped_episodes,
+        "copied" if tally.profile_copied else ("skipped" if tally.skipped_profile else "none"),
         " [DRY RUN]" if dry_run else "",
     )
     return result

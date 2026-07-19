@@ -750,7 +750,26 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp", dry_run=True)
 
 
-@scenario("import-msgid-collision", "#287", "import: an existing msg_id is skipped, the stored row is not overwritten", seed=_seed_import_target, unstable_row_ids=True)
+# A preview has no INSERT to learn from, so it has to remember what it already
+# previewed or it double-counts duplicates that a real run would skip (bug-070).
+# Added while refactoring #287: dropping the `else` branch that populates those
+# sets leaves the DB untouched and every other import scenario green, so nothing
+# else in the matrix watches this.
+@scenario("import-dry-run-intra-file-duplicates", "#287",
+          "import: a preview dedups WITHIN the file, on both the content and msg_id axes (bug-070)",
+          seed=_seed_import_target)
+async def _(ctx):
+    path = ctx.path("dupes.jsonl")
+    write_jsonl(path, [
+        {"_type": "memory", "agent_id": "imp", "content": "repeated body"},
+        {"_type": "memory", "agent_id": "imp", "content": "repeated body"},
+        {"_type": "memory", "agent_id": "imp", "msg_id": "mid-x", "content": "first under mid-x"},
+        {"_type": "memory", "agent_id": "imp", "msg_id": "mid-x", "content": "second under mid-x"},
+    ])
+    return await admin_handlers.do_import_memories(path, target_agent_id="imp", dry_run=True)
+
+
+@scenario("import-msgid-collision", "#287","import: an existing msg_id is skipped, the stored row is not overwritten", seed=_seed_import_target, unstable_row_ids=True)
 async def _(ctx):
     path = ctx.path("collide.jsonl")
     write_jsonl(path, [

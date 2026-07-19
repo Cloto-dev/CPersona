@@ -109,7 +109,7 @@ MUTATIONS: list[Mutation] = [
         id="M04",
         target="do_import_memories msg_id pre-check (EQUIVALENT — expected to survive)",
         file="cpersona/admin_handlers.py",
-        find="if existing or (dry_run and (aid, pid, msg_id) in seen_msgid):",
+        find="if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):",
         replace="if False:",
         breaks="nothing observable: the row falls through to INSERT OR IGNORE and the "
         "v12 UNIQUE index turns it into the same counted skip. The pre-check is a "
@@ -121,8 +121,12 @@ MUTATIONS: list[Mutation] = [
         id="M05",
         target="do_import_memories header validation",
         file="cpersona/admin_handlers.py",
-        find="if file_header is not None:",
-        replace="if False:",
+        # _validate_file_header guards with an early return, so disabling the
+        # check means always taking it — the inverse of the pre-#287 `if False:`.
+        find="""    if tally.file_header is None:
+        return""",
+        replace="""    if True:
+        return""",
         breaks="a truncated export restores partially and reports ok:true (bug-091/110)",
         expect="test_import_rejects_truncated_file, test_import_rejects_file_cut_at_profile_boundary",
     ),
@@ -132,10 +136,10 @@ MUTATIONS: list[Mutation] = [
         file="cpersona/admin_handlers.py",
         # `if not dry_run:` appears six times; anchor on the memory-record body
         # that follows it so the match is unambiguous.
-        find="""                    if not dry_run:
-                        source = json.dumps(record.get("source", {}))""",
-        replace="""                    if True:
-                        source = json.dumps(record.get("source", {}))""",
+        find="""    if not tally.dry_run:
+        source = json.dumps(record.get("source", {}))""",
+        replace="""    if True:
+        source = json.dumps(record.get("source", {}))""",
         # RECLASSIFIED (CSC Task #293). This was filed as an equivalent mutant on
         # the reasoning that the read seam makes an escaped INSERT harmless. That
         # is true of the DATABASE and false of the promise, because dry_run has
@@ -181,10 +185,10 @@ MUTATIONS: list[Mutation] = [
         # see it. M06 alone and M10's seam edit alone both survive.
         also=(
             (
-                """                    if not dry_run:
-                        source = json.dumps(record.get("source", {}))""",
-                """                    if True:
-                        source = json.dumps(record.get("source", {}))""",
+                """    if not tally.dry_run:
+        source = json.dumps(record.get("source", {}))""",
+                """    if True:
+        source = json.dumps(record.get("source", {}))""",
             ),
         ),
         breaks="dry_run both runs on the WRITE seam AND executes its INSERTs — the preview commits real rows",
@@ -202,12 +206,12 @@ MUTATIONS: list[Mutation] = [
         async with transaction() as db:""",
         also=(
             (
-                """                if not dry_run:
-                    cur = await db.execute(
-                        "INSERT OR IGNORE INTO memories\"""",
-                """                if True:
-                    cur = await db.execute(
-                        "INSERT OR IGNORE INTO memories\"""",
+                """        if not tally.dry_run:
+            cur = await db.execute(
+                "INSERT OR IGNORE INTO memories\"""",
+                """        if True:
+            cur = await db.execute(
+                "INSERT OR IGNORE INTO memories\"""",
             ),
         ),
         breaks="merge preview both runs on the WRITE seam AND executes its INSERTs — the preview commits copied rows",
@@ -219,10 +223,10 @@ MUTATIONS: list[Mutation] = [
         file="cpersona/admin_handlers.py",
         # Two INSERT OR IGNORE sites (import at :1617, merge at :1902); anchor on
         # the import one via its distinct column list.
-        find="""                            "INSERT OR IGNORE INTO memories"
-                            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,\"""",
-        replace="""                            "INSERT OR REPLACE INTO memories"
-                            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,\"""",
+        find="""            "INSERT OR IGNORE INTO memories"
+            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,\"""",
+        replace="""            "INSERT OR REPLACE INTO memories"
+            " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,\"""",
         breaks="a re-import overwrites existing rows instead of skipping — silent data loss on restore",
         expect="test_import_skips_rows_whose_msg_id_already_exists",
     ),
