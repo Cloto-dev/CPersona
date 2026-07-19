@@ -9,7 +9,7 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
-[![Tests](https://img.shields.io/badge/tests-275-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-435-brightgreen)]()
 
 [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
 
@@ -308,8 +308,8 @@ marketplace catalog and the Quick Start use the generic names.
 
 ## Stats
 
-- **~7,500 LOC** Python across focused modules
-- **275 tests** across 24 test modules (including structural-enforcement gates)
+- **~9,000 LOC** Python across focused modules
+- **435 tests** across 35 test modules (including structural-enforcement gates)
 - **Schema v13** (auto-migrating)
 - **MIT License**
 
