@@ -1,9 +1,39 @@
 [project]
 name = "cpersona"
 version = "2.5.1"
-description = "CPersona — Persistent AI memory server with 3-layer hybrid search, confidence scoring, and 28 tools. MIT licensed."
+description = "CPersona — Persistent AI memory server with 3-layer hybrid search, confidence scoring, and 29 tools. MIT licensed."
 requires-python = ">=3.11"
 license = {text = "MIT"}
+readme = "README.md"
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "memory",
+    "persistent-memory",
+    "semantic-search",
+    "vector-search",
+    "rag",
+    "llm",
+    "agent",
+    "claude",
+]
+# PyPI renders these as the sidebar filters (License / Topic / Intended
+# Audience). The field was empty until 2.5.2, so the package was absent from
+# every faceted search on PyPI. Python versions list only what CI actually
+# exercises (3.11 and 3.13) plus 3.12, which lies between them; requires-python
+# still admits any 3.11+ interpreter.
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "mcp>=1.26.0",
     "aiosqlite>=0.20.0",
@@ -12,8 +42,15 @@ dependencies = [
 ]
 
 [project.urls]
+# Rendered in the PyPI sidebar. Issues is the one that closes the loop: a user
+# who installs from PyPI and hits a defect otherwise has no path back here.
+# Changelog points at Releases because this repository keeps no CHANGELOG.md —
+# the release notes are the changelog.
 Homepage = "https://github.com/Cloto-dev/cpersona"
 Repository = "https://github.com/Cloto-dev/cpersona"
+Issues = "https://github.com/Cloto-dev/cpersona/issues"
+Changelog = "https://github.com/Cloto-dev/cpersona/releases"
+Documentation = "https://github.com/Cloto-dev/cpersona#readme"
 
 [dependency-groups]
 # Test toolchain (installed by `uv sync --dev`; used locally and in CI).
