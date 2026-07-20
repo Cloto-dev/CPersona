@@ -2,6 +2,9 @@
   "task": "REALTALK",
   "memory_type": "Dialogue",
   "mean_ndcg_at_10": 42.96,
+  "invalid": true,
+  "invalid_reason": "do_recall clamped to 100 in-library on v2.4.38..v2.4.40, while the harness convention is full ranking (limit=corpus_size). Any answer past rank 100 was scored as a miss, so large-corpus tasks are under-measured. Fixed in 2.5.0.",
+  "superseded_by": "trackb_results_v2440_bgem3",
   "subtasks": {
     "commonsense": 28.2,
     "multi_hop": 29.49,

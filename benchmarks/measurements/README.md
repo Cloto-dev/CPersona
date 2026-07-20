@@ -17,15 +17,40 @@ than as a deleted mistake: it is what lets a later reader tell "the model got
 worse" apart from "the harness stopped measuring the tail". Do not delete or
 "clean up" the `.INVALID-*` / `.CLAMPED-*` directories.
 
+Keeping them only works if they cannot be mistaken for results, so the warning
+lives in the data, not just in the directory name:
+
+```json
+"mean_ndcg_at_10": 48.98,
+"invalid": true,
+"invalid_reason": "do_recall clamped to 100 in-library on v2.4.38..v2.4.40, ...",
+"superseded_by": "trackb_results_v2440_bgem3"
+```
+
+Filter on `invalid` before aggregating. A directory-name suffix does not survive
+a file being copied, and `jq .mean_ndcg_at_10 **/LongMemEval.json` returns 81.17,
+48.98 and 38.72 with nothing to tell them apart. The three fields were added on
+2026-07-21; no measured value was modified, and the addition is verifiable
+against the parent commit.
+
+Track A files carry their own provenance because mteb writes it (`mteb_version`,
+`dataset_revision`). Track B files do not: which build produced a set is recorded
+only in the directory name and in this file. Treat that as a known weakness of
+these records rather than as something the data can answer.
+
 ## Track B — cpersona store/recall paths (`mean_ndcg_at_10`)
 
-| Result set | LongMemEval | QASPER | EPBench | LoCoMo | KnowMeBench | Tasks |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `trackb_results_v2440_minilm` | 76.92 | 41.23 | 57.73 | 36.64 | 42.25 | 23 |
-| `trackb_results_v2440_bgem3` | 81.17 | 48.56 | 90.23 | 45.91 | 51.62 | 23 |
-| `trackb_results_jinanano` | 81.91 | 44.32 | 76.97 | 45.09 | 50.22 | 23 |
-| `trackb_results_v2440_bgem3.CLAMPED-depth100` ⚠ | **48.98** | — | 90.19 | 45.88 | 51.40 | 5 |
-| `trackb_results_v2440_bgem3.INVALID-v2439-window` ⚠ | **38.72** | — | 87.22 | 39.17 | **22.82** | 5 |
+| Result set | LongMemEval | QASPER | EPBench | LoCoMo | KnowMeBench | REALTALK | Tasks |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `trackb_results_v2440_minilm` | 76.92 | 41.23 | 57.73 | 36.64 | 42.25 | 36.90 | 23 |
+| `trackb_results_v2440_bgem3` | 81.17 | 48.56 | 90.23 | 45.91 | 51.62 | 43.04 | 23 |
+| `trackb_results_jinanano` | 81.91 | 44.32 | 76.97 | 45.09 | 50.22 | 41.97 | 23 |
+| `trackb_results_v2440_bgem3.CLAMPED-depth100` ⚠ | **48.98** | — | 90.19 | 45.88 | 51.40 | 42.96 | 5 |
+| `trackb_results_v2440_bgem3.INVALID-v2439-window` ⚠ | **38.72** | — | 87.22 | 39.17 | **22.82** | 34.41 | 5 |
+
+Every number in the two ⚠ rows is invalid, not just the bolded ones. A figure
+that moved only slightly under a broken regime is still a figure produced by a
+broken regime; the bolding marks where the damage is visible, not where it is.
 
 The three valid sets are the model-strength comparison behind the finding that
 the filter layer's contribution moves with embedding strength: MiniLM leans on
