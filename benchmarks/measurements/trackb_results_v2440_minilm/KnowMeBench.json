@@ -1,0 +1,34 @@
+{
+  "task": "KnowMeBench",
+  "memory_type": "Episodic",
+  "mean_ndcg_at_10": 42.25,
+  "subtasks": {
+    "event_driven/adversarial_abstention": 41.02,
+    "event_driven/information_extraction": 55.78,
+    "event_driven/mind-body_interaction": 27.9,
+    "event_driven/mnestic_trigger_analysis": 27.79,
+    "event_driven/temporal_reasoning": 28.47,
+    "flashback_intensive/adversarial_abstention": 43.44,
+    "flashback_intensive/information_extraction": 50.96,
+    "flashback_intensive/mind-body_interaction": 36.45,
+    "flashback_intensive/mnestic_trigger_analysis": 49.52,
+    "flashback_intensive/temporal_reasoning": 16.89,
+    "psychological_depth/adversarial_abstention": 49.62,
+    "psychological_depth/information_extraction": 72.17,
+    "psychological_depth/mind-body_interaction": 44.58,
+    "psychological_depth/mnestic_trigger_analysis": 45.81,
+    "psychological_depth/temporal_reasoning": 43.32
+  },
+  "num_subtasks": 15,
+  "time_s": 93.3,
+  "recall_latency_full": {
+    "n": 2162,
+    "p50_ms": 38.83,
+    "p95_ms": 61.36,
+    "p99_ms": 110.5,
+    "mean_ms": 40.05
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

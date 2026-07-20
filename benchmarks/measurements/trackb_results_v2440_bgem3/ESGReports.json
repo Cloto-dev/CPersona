@@ -1,0 +1,20 @@
+{
+  "task": "ESGReports",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 43.23,
+  "subtasks": {
+    ".": 43.23
+  },
+  "num_subtasks": 1,
+  "time_s": 3.0,
+  "recall_latency_full": {
+    "n": 36,
+    "p50_ms": 47.93,
+    "p95_ms": 107.79,
+    "p99_ms": 141.34,
+    "mean_ms": 52.74
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

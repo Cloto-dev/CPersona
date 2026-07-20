@@ -10,7 +10,10 @@ dist/
 build/
 .DS_Store
 
-# Benchmark working artifacts (benchmarks/README.md)
-trackb_results*/
-lmeb_results*/
-*.log
+# Benchmark working artifacts written at the repo root by benchmarks/run_trackb.sh
+# (OUTPUT_DIR defaults to a repo-root-relative path; see benchmarks/README.md).
+# Anchored to the root on purpose: curated result sets kept under
+# benchmarks/measurements/ are tracked deliberately and must not be swept up here.
+/trackb_results*/
+/lmeb_results*/
+/*.log

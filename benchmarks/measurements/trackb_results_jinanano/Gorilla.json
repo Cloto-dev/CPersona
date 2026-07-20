@@ -1,0 +1,22 @@
+{
+  "task": "Gorilla",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 34.26,
+  "subtasks": {
+    "gorilla_huggingface": 32.96,
+    "gorilla_pytorch": 35.73,
+    "gorilla_tensor": 34.1
+  },
+  "num_subtasks": 3,
+  "time_s": 300.9,
+  "recall_latency_full": {
+    "n": 598,
+    "p50_ms": 128.19,
+    "p95_ms": 228.28,
+    "p99_ms": 277.58,
+    "mean_ms": 136.62
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

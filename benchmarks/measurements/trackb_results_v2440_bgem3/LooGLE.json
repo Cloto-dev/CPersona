@@ -1,0 +1,21 @@
+{
+  "task": "LooGLE",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 64.12,
+  "subtasks": {
+    "LongDepQA": 46.37,
+    "ShortDepQA": 81.87
+  },
+  "num_subtasks": 2,
+  "time_s": 406.3,
+  "recall_latency_full": {
+    "n": 3052,
+    "p50_ms": 107.41,
+    "p95_ms": 282.5,
+    "p99_ms": 407.74,
+    "mean_ms": 128.04
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

@@ -1,0 +1,34 @@
+{
+  "metric": "main_score",
+  "mean_dataset": 0.5736568438251564,
+  "type_means": {
+    "Episodic": 0.6325657654320987,
+    "Dialogue": 0.5478475833333333,
+    "Semantic": 0.5741896428571429,
+    "Procedural": 0.568430125
+  },
+  "per_task": {
+    "EPBench": 0.8084146296296296,
+    "KnowMeBench": 0.4369293333333334,
+    "LoCoMo": 0.44981400000000005,
+    "LongMemEval": 0.7742133333333333,
+    "REALTALK": 0.41559999999999997,
+    "TMD": 0.3007274999999999,
+    "MemBench": 0.696204,
+    "ConvoMem": 0.6505266666666666,
+    "QASPER": 0.48497,
+    "NovelQA": 0.2985571428571428,
+    "PeerQA": 0.32465,
+    "CovidQA": 0.7844,
+    "ESGReports": 0.49111,
+    "MLDR": 0.79982,
+    "LooGLE": 0.58822,
+    "LMEB_SciFact": 0.82179,
+    "Gorilla": 0.35885666666666666,
+    "ToolBench": 0.54993,
+    "ReMe": 0.6523533333333333,
+    "Proced_mem_bench": 0.5332366666666667,
+    "MemGovern": 0.8836639583333333,
+    "DeepPlanning": 0.5164633333333334
+  }
+}

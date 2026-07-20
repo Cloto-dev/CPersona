@@ -1,0 +1,26 @@
+{
+  "task": "NovelQA",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 36.11,
+  "subtasks": {
+    "Character": 48.12,
+    "Meaning": 53.8,
+    "Plot": 28.88,
+    "Relation": 30.36,
+    "Setting": 54.13,
+    "Span": 8.95,
+    "Times": 28.51
+  },
+  "num_subtasks": 7,
+  "time_s": 1048.5,
+  "recall_latency_full": {
+    "n": 1541,
+    "p50_ms": 642.01,
+    "p95_ms": 1040.81,
+    "p99_ms": 1220.7,
+    "mean_ms": 645.83
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

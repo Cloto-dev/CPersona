@@ -1,0 +1,20 @@
+{
+  "task": "QASPER",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 44.32,
+  "subtasks": {
+    ".": 44.32
+  },
+  "num_subtasks": 1,
+  "time_s": 2927.8,
+  "recall_latency_full": {
+    "n": 1335,
+    "p50_ms": 74.72,
+    "p95_ms": 195.28,
+    "p99_ms": 244.26,
+    "mean_ms": 88.0
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}
