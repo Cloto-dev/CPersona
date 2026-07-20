@@ -1,0 +1,22 @@
+{
+  "task": "Proced_mem_bench",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 51.72,
+  "subtasks": {
+    "easy": 43.45,
+    "hard": 53.54,
+    "medium": 58.18
+  },
+  "num_subtasks": 3,
+  "time_s": 79.4,
+  "recall_latency_full": {
+    "n": 40,
+    "p50_ms": 43.64,
+    "p95_ms": 73.14,
+    "p99_ms": 77.86,
+    "mean_ms": 44.13
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

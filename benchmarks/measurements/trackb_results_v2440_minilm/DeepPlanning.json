@@ -1,0 +1,22 @@
+{
+  "task": "DeepPlanning",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 36.53,
+  "subtasks": {
+    "shopping_level1": 41.88,
+    "shopping_level2": 29.78,
+    "shopping_level3": 37.94
+  },
+  "num_subtasks": 3,
+  "time_s": 76.2,
+  "recall_latency_full": {
+    "n": 120,
+    "p50_ms": 543.43,
+    "p95_ms": 679.14,
+    "p99_ms": 712.36,
+    "mean_ms": 547.59
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

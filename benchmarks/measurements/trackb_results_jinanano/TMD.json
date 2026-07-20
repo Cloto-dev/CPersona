@@ -1,0 +1,31 @@
+{
+  "task": "TMD",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 25.91,
+  "subtasks": {
+    "content_time_qs": 49.26,
+    "date_span_time_qs": 52.94,
+    "dates_time_qs": 34.98,
+    "day_span_time_qs": 68.64,
+    "earlier_today_time_qs": 28.89,
+    "last_named_day_time_qs": 22.02,
+    "month_time_qs": 28.2,
+    "rel_day_time_qs": 3.95,
+    "rel_month_time_qs": 12.3,
+    "rel_session_time_qs": 3.69,
+    "session_span_time_qs": 3.45,
+    "session_time_qs": 2.56
+  },
+  "num_subtasks": 12,
+  "time_s": 649.0,
+  "recall_latency_full": {
+    "n": 2134,
+    "p50_ms": 244.09,
+    "p95_ms": 392.8,
+    "p99_ms": 457.82,
+    "mean_ms": 249.88
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

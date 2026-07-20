@@ -1,0 +1,22 @@
+{
+  "task": "REALTALK",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 42.96,
+  "subtasks": {
+    "commonsense": 28.2,
+    "multi_hop": 29.49,
+    "temporal_reasoning": 71.19
+  },
+  "num_subtasks": 3,
+  "time_s": 80.5,
+  "recall_latency_full": {
+    "n": 679,
+    "p50_ms": 96.45,
+    "p95_ms": 228.75,
+    "p99_ms": 320.67,
+    "mean_ms": 110.38
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

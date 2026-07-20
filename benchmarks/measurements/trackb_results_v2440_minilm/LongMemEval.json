@@ -1,0 +1,25 @@
+{
+  "task": "LongMemEval",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 76.92,
+  "subtasks": {
+    "knowledge_update": 89.5,
+    "multi_session": 71.35,
+    "single_session_assistant": 91.77,
+    "single_session_preference": 61.63,
+    "single_session_user": 76.34,
+    "temporal_reasoning": 70.91
+  },
+  "num_subtasks": 6,
+  "time_s": 935.5,
+  "recall_latency_full": {
+    "n": 500,
+    "p50_ms": 1571.55,
+    "p95_ms": 2242.53,
+    "p99_ms": 2635.99,
+    "mean_ms": 1586.54
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

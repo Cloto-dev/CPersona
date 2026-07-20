@@ -1,0 +1,20 @@
+{
+  "task": "MLDR",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 78.05,
+  "subtasks": {
+    ".": 78.05
+  },
+  "num_subtasks": 1,
+  "time_s": 5.5,
+  "recall_latency_full": {
+    "n": 100,
+    "p50_ms": 50.0,
+    "p95_ms": 75.34,
+    "p99_ms": 131.8,
+    "mean_ms": 49.44
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

@@ -1,0 +1,25 @@
+{
+  "task": "ConvoMem",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 61.6,
+  "subtasks": {
+    "abstention_evidence": 81.69,
+    "assistant_facts_evidence": 75.51,
+    "changing_evidence": 53.93,
+    "implicit_connection_evidence": 34.6,
+    "preference_evidence": 49.77,
+    "user_evidence": 74.08
+  },
+  "num_subtasks": 6,
+  "time_s": 7031.9,
+  "recall_latency_full": {
+    "n": 5867,
+    "p50_ms": 1023.17,
+    "p95_ms": 1978.41,
+    "p99_ms": 2312.59,
+    "mean_ms": 1161.4
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

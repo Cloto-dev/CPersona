@@ -1,0 +1,20 @@
+{
+  "task": "CovidQA",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 75.66,
+  "subtasks": {
+    ".": 75.66
+  },
+  "num_subtasks": 1,
+  "time_s": 62.3,
+  "recall_latency_full": {
+    "n": 1111,
+    "p50_ms": 51.27,
+    "p95_ms": 97.62,
+    "p99_ms": 145.68,
+    "mean_ms": 54.84
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}
