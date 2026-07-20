@@ -1,0 +1,28 @@
+{
+  "task": "ReMe",
+  "memory_type": "Episodic",
+  "mean_ndcg_at_10": 59.61,
+  "subtasks": {
+    "appworld_qwen3_14b/generalized_query": 46.0,
+    "appworld_qwen3_32b/generalized_query": 49.78,
+    "appworld_qwen3_8b/generalized_query": 43.4,
+    "bfcl_qwen3_14b/generalized_query": 80.32,
+    "bfcl_qwen3_14b/task_query": 56.46,
+    "bfcl_qwen3_32b/generalized_query": 70.22,
+    "bfcl_qwen3_32b/task_query": 56.25,
+    "bfcl_qwen3_8b/generalized_query": 75.7,
+    "bfcl_qwen3_8b/task_query": 58.36
+  },
+  "num_subtasks": 9,
+  "time_s": 116.1,
+  "recall_latency_full": {
+    "n": 1217,
+    "p50_ms": 88.17,
+    "p95_ms": 163.62,
+    "p99_ms": 240.79,
+    "mean_ms": 94.96
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

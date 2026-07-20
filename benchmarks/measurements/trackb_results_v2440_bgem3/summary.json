@@ -1,0 +1,638 @@
+{
+  "model": "BAAI/bge-m3",
+  "track": "B",
+  "pipeline": "CPersona Cascading Recall (Vector + FTS5 keyword)",
+  "code_path": "servers/cpersona/server.py do_store() + do_recall()",
+  "active_stages": [
+    "Stage 0: Vector (local BLOB cosine)",
+    "Stage 3: FTS5 keyword"
+  ],
+  "inactive_stages": [
+    "Stage 1: Episodes (no data)",
+    "Stage 2: Profile (no data)"
+  ],
+  "overall_mean": 57.66,
+  "tasks": [
+    {
+      "task": "EPBench",
+      "memory_type": "Episodic",
+      "mean_ndcg_at_10": 90.23,
+      "subtasks": {
+        "default_claude_long/Entities": 74.52,
+        "default_claude_long/Event_contents": 75.5,
+        "default_claude_long/Full_event_details": 92.62,
+        "default_claude_long/Other_entities": 100.0,
+        "default_claude_long/Spaces": 75.61,
+        "default_claude_long/Times": 89.67,
+        "default_claude_short/Entities": 92.9,
+        "default_claude_short/Event_contents": 91.33,
+        "default_claude_short/Full_event_details": 100.0,
+        "default_claude_short/Other_entities": 100.0,
+        "default_claude_short/Spaces": 94.95,
+        "default_claude_short/Times": 98.23,
+        "default_claude_very_long/Entities": 63.74,
+        "default_claude_very_long/Event_contents": 77.04,
+        "default_claude_very_long/Full_event_details": 100.0,
+        "default_claude_very_long/Other_entities": 100.0,
+        "default_claude_very_long/Spaces": 76.5,
+        "default_claude_very_long/Times": 86.08,
+        "default_gpt4o_long/Entities": 72.06,
+        "default_gpt4o_long/Event_contents": 81.42,
+        "default_gpt4o_long/Full_event_details": 100.0,
+        "default_gpt4o_long/Other_entities": 92.62,
+        "default_gpt4o_long/Spaces": 80.32,
+        "default_gpt4o_long/Times": 89.78,
+        "default_gpt4o_short/Entities": 86.37,
+        "default_gpt4o_short/Event_contents": 92.15,
+        "default_gpt4o_short/Full_event_details": 100.0,
+        "default_gpt4o_short/Other_entities": 100.0,
+        "default_gpt4o_short/Spaces": 92.46,
+        "default_gpt4o_short/Times": 96.28,
+        "sci_fi_claude_long/Entities": 78.76,
+        "sci_fi_claude_long/Event_contents": 78.11,
+        "sci_fi_claude_long/Full_event_details": 100.0,
+        "sci_fi_claude_long/Other_entities": 100.0,
+        "sci_fi_claude_long/Spaces": 77.88,
+        "sci_fi_claude_long/Times": 90.41,
+        "sci_fi_claude_short/Entities": 89.38,
+        "sci_fi_claude_short/Event_contents": 91.72,
+        "sci_fi_claude_short/Full_event_details": 100.0,
+        "sci_fi_claude_short/Other_entities": 100.0,
+        "sci_fi_claude_short/Spaces": 88.13,
+        "sci_fi_claude_short/Times": 95.23,
+        "world_news_claude_long/Entities": 82.18,
+        "world_news_claude_long/Event_contents": 82.02,
+        "world_news_claude_long/Full_event_details": 100.0,
+        "world_news_claude_long/Other_entities": 100.0,
+        "world_news_claude_long/Spaces": 81.79,
+        "world_news_claude_long/Times": 93.03,
+        "world_news_claude_short/Entities": 93.57,
+        "world_news_claude_short/Event_contents": 91.04,
+        "world_news_claude_short/Full_event_details": 100.0,
+        "world_news_claude_short/Other_entities": 100.0,
+        "world_news_claude_short/Spaces": 91.25,
+        "world_news_claude_short/Times": 95.92
+      },
+      "num_subtasks": 54,
+      "time_s": 36.4,
+      "recall_latency_full": {
+        "n": 3644,
+        "p50_ms": 9.18,
+        "p95_ms": 18.2,
+        "p99_ms": 20.83,
+        "mean_ms": 9.4
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "KnowMeBench",
+      "memory_type": "Episodic",
+      "mean_ndcg_at_10": 51.62,
+      "subtasks": {
+        "event_driven/adversarial_abstention": 51.26,
+        "event_driven/information_extraction": 69.38,
+        "event_driven/mind-body_interaction": 37.92,
+        "event_driven/mnestic_trigger_analysis": 34.07,
+        "event_driven/temporal_reasoning": 39.22,
+        "flashback_intensive/adversarial_abstention": 52.9,
+        "flashback_intensive/information_extraction": 60.02,
+        "flashback_intensive/mind-body_interaction": 42.68,
+        "flashback_intensive/mnestic_trigger_analysis": 58.01,
+        "flashback_intensive/temporal_reasoning": 20.24,
+        "psychological_depth/adversarial_abstention": 61.46,
+        "psychological_depth/information_extraction": 81.05,
+        "psychological_depth/mind-body_interaction": 50.6,
+        "psychological_depth/mnestic_trigger_analysis": 52.48,
+        "psychological_depth/temporal_reasoning": 62.99
+      },
+      "num_subtasks": 15,
+      "time_s": 125.2,
+      "recall_latency_full": {
+        "n": 2162,
+        "p50_ms": 45.9,
+        "p95_ms": 125.56,
+        "p99_ms": 135.3,
+        "mean_ms": 54.58
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "LoCoMo",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 45.91,
+      "subtasks": {
+        "adversarial": 46.14,
+        "multi_hop": 33.86,
+        "open_domain": 26.96,
+        "single_hop": 59.8,
+        "temporal_reasoning": 62.81
+      },
+      "num_subtasks": 5,
+      "time_s": 39.5,
+      "recall_latency_full": {
+        "n": 1976,
+        "p50_ms": 15.65,
+        "p95_ms": 75.85,
+        "p99_ms": 93.05,
+        "mean_ms": 19.16
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "LongMemEval",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 81.17,
+      "subtasks": {
+        "knowledge_update": 92.12,
+        "multi_session": 79.24,
+        "single_session_assistant": 91.11,
+        "single_session_preference": 59.28,
+        "single_session_user": 84.97,
+        "temporal_reasoning": 80.29
+      },
+      "num_subtasks": 6,
+      "time_s": 1434.5,
+      "recall_latency_full": {
+        "n": 500,
+        "p50_ms": 2450.53,
+        "p95_ms": 3060.13,
+        "p99_ms": 3682.55,
+        "mean_ms": 2450.53
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "REALTALK",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 43.04,
+      "subtasks": {
+        "commonsense": 28.87,
+        "multi_hop": 29.32,
+        "temporal_reasoning": 70.95
+      },
+      "num_subtasks": 3,
+      "time_s": 88.1,
+      "recall_latency_full": {
+        "n": 679,
+        "p50_ms": 107.67,
+        "p95_ms": 250.92,
+        "p99_ms": 375.97,
+        "mean_ms": 121.65
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "TMD",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 25.18,
+      "subtasks": {
+        "content_time_qs": 54.18,
+        "date_span_time_qs": 54.35,
+        "dates_time_qs": 36.37,
+        "day_span_time_qs": 62.44,
+        "earlier_today_time_qs": 23.47,
+        "last_named_day_time_qs": 18.51,
+        "month_time_qs": 25.55,
+        "rel_day_time_qs": 4.03,
+        "rel_month_time_qs": 12.35,
+        "rel_session_time_qs": 3.5,
+        "session_span_time_qs": 4.99,
+        "session_time_qs": 2.4
+      },
+      "num_subtasks": 12,
+      "time_s": 550.4,
+      "recall_latency_full": {
+        "n": 2134,
+        "p50_ms": 257.74,
+        "p95_ms": 401.33,
+        "p99_ms": 460.09,
+        "mean_ms": 256.35
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "MemBench",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 65.61,
+      "subtasks": {
+        "aggregative": 88.05,
+        "comparative": 87.55,
+        "emotion": 54.29,
+        "knowledge_updating": 46.64,
+        "multi_hop": 49.44,
+        "multi_session_assistant": 43.31,
+        "post_processing": 50.53,
+        "preference": 70.64,
+        "single_hop": 91.07,
+        "single_session_assistant": 74.55
+      },
+      "num_subtasks": 10,
+      "time_s": 6481.6,
+      "recall_latency_full": {
+        "n": 10000,
+        "p50_ms": 483.19,
+        "p95_ms": 1398.88,
+        "p99_ms": 1678.6,
+        "mean_ms": 612.7
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "ConvoMem",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 61.6,
+      "subtasks": {
+        "abstention_evidence": 81.69,
+        "assistant_facts_evidence": 75.51,
+        "changing_evidence": 53.93,
+        "implicit_connection_evidence": 34.6,
+        "preference_evidence": 49.77,
+        "user_evidence": 74.08
+      },
+      "num_subtasks": 6,
+      "time_s": 7031.9,
+      "recall_latency_full": {
+        "n": 5867,
+        "p50_ms": 1023.17,
+        "p95_ms": 1978.41,
+        "p99_ms": 2312.59,
+        "mean_ms": 1161.4
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "QASPER",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 48.56,
+      "subtasks": {
+        ".": 48.56
+      },
+      "num_subtasks": 1,
+      "time_s": 182.4,
+      "recall_latency_full": {
+        "n": 1335,
+        "p50_ms": 99.34,
+        "p95_ms": 224.66,
+        "p99_ms": 240.65,
+        "mean_ms": 128.11
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "NovelQA",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 36.11,
+      "subtasks": {
+        "Character": 48.12,
+        "Meaning": 53.8,
+        "Plot": 28.88,
+        "Relation": 30.36,
+        "Setting": 54.13,
+        "Span": 8.95,
+        "Times": 28.51
+      },
+      "num_subtasks": 7,
+      "time_s": 1048.5,
+      "recall_latency_full": {
+        "n": 1541,
+        "p50_ms": 642.01,
+        "p95_ms": 1040.81,
+        "p99_ms": 1220.7,
+        "mean_ms": 645.83
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "PeerQA",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 30.04,
+      "subtasks": {
+        ".": 30.04
+      },
+      "num_subtasks": 1,
+      "time_s": 30.8,
+      "recall_latency_full": {
+        "n": 136,
+        "p50_ms": 157.04,
+        "p95_ms": 308.51,
+        "p99_ms": 363.61,
+        "mean_ms": 178.62
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "CovidQA",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 83.93,
+      "subtasks": {
+        ".": 83.93
+      },
+      "num_subtasks": 1,
+      "time_s": 68.7,
+      "recall_latency_full": {
+        "n": 1111,
+        "p50_ms": 52.7,
+        "p95_ms": 153.65,
+        "p99_ms": 190.2,
+        "mean_ms": 60.34
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "ESGReports",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 43.23,
+      "subtasks": {
+        ".": 43.23
+      },
+      "num_subtasks": 1,
+      "time_s": 3.0,
+      "recall_latency_full": {
+        "n": 36,
+        "p50_ms": 47.93,
+        "p95_ms": 107.79,
+        "p99_ms": 141.34,
+        "mean_ms": 52.74
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "MLDR",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 80.66,
+      "subtasks": {
+        ".": 80.66
+      },
+      "num_subtasks": 1,
+      "time_s": 5.8,
+      "recall_latency_full": {
+        "n": 100,
+        "p50_ms": 51.22,
+        "p95_ms": 79.12,
+        "p99_ms": 186.91,
+        "mean_ms": 51.54
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "LooGLE",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 64.12,
+      "subtasks": {
+        "LongDepQA": 46.37,
+        "ShortDepQA": 81.87
+      },
+      "num_subtasks": 2,
+      "time_s": 406.3,
+      "recall_latency_full": {
+        "n": 3052,
+        "p50_ms": 107.41,
+        "p95_ms": 282.5,
+        "p99_ms": 407.74,
+        "mean_ms": 128.04
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "LMEB_SciFact",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 74.87,
+      "subtasks": {
+        ".": 74.87
+      },
+      "num_subtasks": 1,
+      "time_s": 18.9,
+      "recall_latency_full": {
+        "n": 188,
+        "p50_ms": 85.64,
+        "p95_ms": 191.83,
+        "p99_ms": 226.66,
+        "mean_ms": 95.73
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "Gorilla",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 32.9,
+      "subtasks": {
+        "gorilla_huggingface": 29.55,
+        "gorilla_pytorch": 32.38,
+        "gorilla_tensor": 36.77
+      },
+      "num_subtasks": 3,
+      "time_s": 80.0,
+      "recall_latency_full": {
+        "n": 598,
+        "p50_ms": 126.27,
+        "p95_ms": 218.67,
+        "p99_ms": 261.72,
+        "mean_ms": 132.77
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "ToolBench",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 52.22,
+      "subtasks": {
+        ".": 52.22
+      },
+      "num_subtasks": 1,
+      "time_s": 416.8,
+      "recall_latency_full": {
+        "n": 1100,
+        "p50_ms": 361.57,
+        "p95_ms": 553.67,
+        "p99_ms": 629.64,
+        "mean_ms": 372.68
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "ReMe",
+      "memory_type": "Episodic",
+      "mean_ndcg_at_10": 59.61,
+      "subtasks": {
+        "appworld_qwen3_14b/generalized_query": 46.0,
+        "appworld_qwen3_32b/generalized_query": 49.78,
+        "appworld_qwen3_8b/generalized_query": 43.4,
+        "bfcl_qwen3_14b/generalized_query": 80.32,
+        "bfcl_qwen3_14b/task_query": 56.46,
+        "bfcl_qwen3_32b/generalized_query": 70.22,
+        "bfcl_qwen3_32b/task_query": 56.25,
+        "bfcl_qwen3_8b/generalized_query": 75.7,
+        "bfcl_qwen3_8b/task_query": 58.36
+      },
+      "num_subtasks": 9,
+      "time_s": 116.1,
+      "recall_latency_full": {
+        "n": 1217,
+        "p50_ms": 88.17,
+        "p95_ms": 163.62,
+        "p99_ms": 240.79,
+        "mean_ms": 94.96
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "Proced_mem_bench",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 52.13,
+      "subtasks": {
+        "easy": 46.82,
+        "hard": 50.02,
+        "medium": 59.57
+      },
+      "num_subtasks": 3,
+      "time_s": 1.5,
+      "recall_latency_full": {
+        "n": 40,
+        "p50_ms": 31.66,
+        "p95_ms": 47.59,
+        "p99_ms": 50.13,
+        "mean_ms": 32.0
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "MemGovern",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 89.04,
+      "subtasks": {
+        "Azure_azure-sdk-for-python": 88.75,
+        "ClusterHQ_flocker": 87.0,
+        "DataDog_integrations-core": 81.25,
+        "Microsoft_TypeScript": 97.08,
+        "PokemonGoF_PokemonGo-Bot": 88.95,
+        "Qiskit_qiskit-terra": 90.35,
+        "StackStorm_st2": 91.02,
+        "apache_airflow": 90.2,
+        "apache_incubator-airflow": 86.07,
+        "certbot_certbot": 87.31,
+        "dask_dask": 89.2,
+        "datalad_datalad": 89.68,
+        "django_django": 95.75,
+        "dmwm_WMCore": 87.5,
+        "encode_django-rest-framework": 88.45,
+        "facebook_react": 92.7,
+        "great-expectations_great_expectations": 87.44,
+        "home-assistant_core": 81.99,
+        "home-assistant_home-assistant": 76.05,
+        "huggingface_transformers": 92.26,
+        "kubernetes_kubernetes": 83.8,
+        "mesonbuild_meson": 87.68,
+        "microsoft_vscode": 96.44,
+        "mne-tools_mne-python": 88.9,
+        "moby_moby": 93.3,
+        "napari_napari": 91.28,
+        "numpy_numpy": 93.23,
+        "optuna_optuna": 84.63,
+        "pandas-dev_pandas": 89.3,
+        "pydata_xarray": 89.58,
+        "pypa_pip": 84.76,
+        "pytest-dev_pytest": 87.67,
+        "pytorch_pytorch": 89.61,
+        "raiden-network_raiden": 90.22,
+        "rust-lang_rust": 85.13,
+        "saltstack_salt": 91.91,
+        "scikit-learn_scikit-learn": 88.82,
+        "scipy_scipy": 92.36,
+        "scrapy_scrapy": 95.24,
+        "spack_spack": 72.18,
+        "sphinx-doc_sphinx": 91.17,
+        "spotify_luigi": 89.8,
+        "spring-projects_spring-framework": 95.37,
+        "spyder-ide_spyder": 90.71,
+        "sympy_sympy": 85.91,
+        "tensorflow_tensorflow": 91.59,
+        "webpack_webpack": 91.96,
+        "xonsh_xonsh": 92.45
+      },
+      "num_subtasks": 48,
+      "time_s": 28754.8,
+      "recall_latency_full": {
+        "n": 121475,
+        "p50_ms": 210.81,
+        "p95_ms": 498.6,
+        "p99_ms": 674.08,
+        "mean_ms": 235.93
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "DeepPlanning",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 56.7,
+      "subtasks": {
+        "shopping_level1": 57.37,
+        "shopping_level2": 51.06,
+        "shopping_level3": 61.68
+      },
+      "num_subtasks": 3,
+      "time_s": 84.6,
+      "recall_latency_full": {
+        "n": 120,
+        "p50_ms": 568.59,
+        "p95_ms": 983.22,
+        "p99_ms": 1091.8,
+        "mean_ms": 605.0
+      },
+      "recall_latency_limit10": null,
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    }
+  ],
+  "accel": {
+    "backend": "numpy",
+    "device": "cpu",
+    "selfcheck": {
+      "queries": 159011,
+      "fallbacks": 0,
+      "checked": 1645,
+      "mismatches": 0
+    }
+  }
+}

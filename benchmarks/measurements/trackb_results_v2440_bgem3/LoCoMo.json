@@ -1,0 +1,24 @@
+{
+  "task": "LoCoMo",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 45.91,
+  "subtasks": {
+    "adversarial": 46.14,
+    "multi_hop": 33.86,
+    "open_domain": 26.96,
+    "single_hop": 59.8,
+    "temporal_reasoning": 62.81
+  },
+  "num_subtasks": 5,
+  "time_s": 39.5,
+  "recall_latency_full": {
+    "n": 1976,
+    "p50_ms": 15.65,
+    "p95_ms": 75.85,
+    "p99_ms": 93.05,
+    "mean_ms": 19.16
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

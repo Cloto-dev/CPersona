@@ -1,0 +1,20 @@
+{
+  "task": "ToolBench",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 52.22,
+  "subtasks": {
+    ".": 52.22
+  },
+  "num_subtasks": 1,
+  "time_s": 416.8,
+  "recall_latency_full": {
+    "n": 1100,
+    "p50_ms": 361.57,
+    "p95_ms": 553.67,
+    "p99_ms": 629.64,
+    "mean_ms": 372.68
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

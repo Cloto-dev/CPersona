@@ -1,0 +1,27 @@
+{
+  "task": "LoCoMo",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 45.88,
+  "invalid": true,
+  "invalid_reason": "do_recall clamped to 100 in-library on v2.4.38..v2.4.40, while the harness convention is full ranking (limit=corpus_size). Any answer past rank 100 was scored as a miss, so large-corpus tasks are under-measured. Fixed in 2.5.0.",
+  "superseded_by": "trackb_results_v2440_bgem3",
+  "subtasks": {
+    "adversarial": 45.74,
+    "multi_hop": 34.6,
+    "open_domain": 27.22,
+    "single_hop": 59.65,
+    "temporal_reasoning": 62.19
+  },
+  "num_subtasks": 5,
+  "time_s": 17.9,
+  "recall_latency_full": {
+    "n": 1976,
+    "p50_ms": 7.19,
+    "p95_ms": 12.8,
+    "p99_ms": 74.58,
+    "mean_ms": 8.28
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

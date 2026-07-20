@@ -1,0 +1,20 @@
+{
+  "task": "LMEB_SciFact",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 76.47,
+  "subtasks": {
+    ".": 76.47
+  },
+  "num_subtasks": 1,
+  "time_s": 97.5,
+  "recall_latency_full": {
+    "n": 188,
+    "p50_ms": 99.08,
+    "p95_ms": 218.24,
+    "p99_ms": 350.11,
+    "mean_ms": 110.5
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

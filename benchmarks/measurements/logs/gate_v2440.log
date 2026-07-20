@@ -1,0 +1,58 @@
+INFO|2026/07/10 22:59:58|datasets: PyTorch version 2.12.1 available.
+INFO|2026/07/10 22:59:58|datasets: Polars version 1.42.1 available.
+INFO|2026/07/10 22:59:59|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING|2026/07/10 22:59:59|huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+INFO|2026/07/10 22:59:59|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/modules.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 22:59:59|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 22:59:59|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/config_sentence_transformers.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 22:59:59|sentence_transformers.base.model: Loading SentenceTransformer model from BAAI/bge-m3.
+INFO|2026/07/10 22:59:59|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 22:59:59|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/config_sentence_transformers.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 22:59:59|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 22:59:59|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/README.md "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:00|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 23:00:00|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/modules.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:00|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/sentence_bert_config.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 23:00:00|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/sentence_bert_config.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:00|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/adapter_config.json "HTTP/1.1 404 Not Found"
+INFO|2026/07/10 23:00:00|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 23:00:00|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/config.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:00|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+Loading weights:   0%|          | 0/391 [00:00<?, ?it/s]Loading weights: 100%|██████████| 391/391 [00:00<00:00, 69057.30it/s]
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-m3 "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-m3/commits/main "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found"
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-m3/discussions?p=0 "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/video_preprocessor_config.json "HTTP/1.1 404 Not Found"
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-m3/commits/refs%2Fpr%2F130 "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found"
+INFO|2026/07/10 23:00:01|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/refs%2Fpr%2F130/model.safetensors.index.json "HTTP/1.1 404 Not Found"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/tokenizer_config.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/refs%2Fpr%2F130/model.safetensors "HTTP/1.1 302 Found"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/config.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/config.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/tokenizer_config.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:02|httpx: HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-m3/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+INFO|2026/07/10 23:00:03|httpx: HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-m3/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:04|httpx: HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-m3 "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:04|httpx: HTTP Request: HEAD https://huggingface.co/BAAI/bge-m3/resolve/main/1_Pooling/config.json "HTTP/1.1 307 Temporary Redirect"
+INFO|2026/07/10 23:00:04|httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-m3/5617a9f61b028005a4858fdac845db406aefb181/1_Pooling%2Fconfig.json "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:04|httpx: HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-m3 "HTTP/1.1 200 OK"
+INFO|2026/07/10 23:00:05|cpersona.admin_handlers: Deleted agent data for lmeb-trackb: 0 memories, 0 profiles, 0 episodes
+INFO|2026/07/10 23:00:28|trackb:     Stored 1024/1748
+INFO|2026/07/10 23:00:42|trackb:     Stored 1748/1748
+INFO|2026/07/10 23:00:42|cpersona.admin_handlers: Calibrated threshold [lmeb-trackb]: 0.3000 -> 0.5980 (method=separation z=1.0 pct=0.95 of 19900 pairs, mean=0.4250 std=0.0695 admit=0.011 dim=1024)
+INFO|2026/07/10 23:00:42|accel_gate: calibrated: 0.3 -> 0.598
+INFO|2026/07/10 23:00:42|mps_accel:     accel preload: 1748 memories + 0 episodes, dim=1024 (6MB, backend=numpy/cpu)
+INFO|2026/07/10 23:00:45|accel_gate:   LMEB_SciFact/.: 188 queries compared, do_recall sample=25 — OK
+INFO|2026/07/10 23:00:45|cpersona.admin_handlers: Deleted agent data for lmeb-trackb: 1748 memories, 0 profiles, 0 episodes
+
+============================================================
+EQUIVALENCE GATE: 188 queries × backends ['numpy']
+PASSED — accelerated _search_vector is behavior-identical (numpy: exact; torch: <= 1e-05)

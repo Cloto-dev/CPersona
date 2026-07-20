@@ -1,0 +1,20 @@
+{
+  "task": "PeerQA",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 30.04,
+  "subtasks": {
+    ".": 30.04
+  },
+  "num_subtasks": 1,
+  "time_s": 30.8,
+  "recall_latency_full": {
+    "n": 136,
+    "p50_ms": 157.04,
+    "p95_ms": 308.51,
+    "p99_ms": 363.61,
+    "mean_ms": 178.62
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

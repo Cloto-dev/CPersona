@@ -1,0 +1,29 @@
+{
+  "task": "MemBench",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 66.74,
+  "subtasks": {
+    "aggregative": 80.02,
+    "comparative": 84.87,
+    "emotion": 52.22,
+    "knowledge_updating": 48.22,
+    "multi_hop": 44.45,
+    "multi_session_assistant": 73.13,
+    "post_processing": 44.79,
+    "preference": 71.86,
+    "single_hop": 86.78,
+    "single_session_assistant": 81.07
+  },
+  "num_subtasks": 10,
+  "time_s": 15815.3,
+  "recall_latency_full": {
+    "n": 10000,
+    "p50_ms": 410.45,
+    "p95_ms": 1201.79,
+    "p99_ms": 1649.27,
+    "mean_ms": 533.36
+  },
+  "recall_latency_limit10": null,
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}
