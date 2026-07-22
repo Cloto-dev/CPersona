@@ -460,7 +460,63 @@ registry.auto_tool(
             "agent_id": {"type": "string", "description": "Agent identifier"},
             "message": {
                 "type": "object",
-                "description": "ClotoMessage to store (id, content, source, timestamp, metadata)",
+                "description": (
+                    "ClotoMessage to store. Legacy source shapes are normalized "
+                    "server-side where unambiguous (e.g. lowercase type words, "
+                    "Rust serde externally-tagged dicts, bare 'user'/'assistant' "
+                    "strings); unknown shapes are stored verbatim and surfaced by "
+                    "check_health(invalid_source_type)."
+                ),
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Caller-supplied message id used for msg_id-based dedup (γ-project-scoped). Optional.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The text to store. Empty content is skipped.",
+                    },
+                    "source": {
+                        "type": "object",
+                        "description": (
+                            "Attribution of who produced the content. Canonical shape is "
+                            "{type, id, name}. Type is the discriminator; id / name identify "
+                            "the concrete producer. Store null / empty {} only when the "
+                            "producer is genuinely unknown."
+                        ),
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["User", "Agent", "System"],
+                                "description": (
+                                    "Producer role. 'Assistant' / 'ai' are normalized to "
+                                    "'Agent'; 'session' is normalized to 'System'."
+                                ),
+                            },
+                            "id": {
+                                "type": "string",
+                                "description": "Stable producer id (e.g. discord user id, agent id). Empty when anonymous.",
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Human-readable label for display. Empty when unknown.",
+                            },
+                        },
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "description": (
+                            "UTC ISO-8601 timestamp with offset "
+                            "(e.g. '2026-07-22T12:00:00+00:00'). Defaults to server-time UTC "
+                            "when omitted. Aware non-UTC offsets are accepted; naive strings "
+                            "are surfaced by check_health(timestamp_format_drift)."
+                        ),
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "description": "Free-form JSON object for producer-specific context. Empty when unused.",
+                    },
+                },
             },
             "channel": {
                 "type": "string",

@@ -51,6 +51,7 @@ from cpersona.utils import (
     _parse_timestamp_utc,
     _sanitize_content,
     _try_parse_json,
+    normalize_source,
 )
 from cpersona.vector import _search_vector
 
@@ -71,7 +72,13 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
 
     msg_id = message.get("id", "")
     raw_content = message.get("content", "")
-    source = json.dumps(message.get("source", {}))
+    # 2.5.2 (Task #282): normalize known legacy source shapes at the write seam.
+    # Unknown shapes are stored verbatim so the health check still surfaces them
+    # for human-reviewed migration — never fabricate a discriminator we can't
+    # justify (would corrupt attribution and defeat anonymous_source).
+    raw_source = message.get("source", {})
+    normalized_source, _mapped = normalize_source(raw_source)
+    source = json.dumps(normalized_source if normalized_source is not None else {})
     timestamp = message.get("timestamp", datetime.now(timezone.utc).isoformat())
     metadata = json.dumps(message.get("metadata", {}))
     project_id = coerce_for_write(project_id)

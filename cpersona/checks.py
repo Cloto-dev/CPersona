@@ -44,7 +44,7 @@ from cpersona import health, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import FTS_ENABLED, MAX_CONTENT_LENGTH
 from cpersona.database import SCHEMA_VERSION
-from cpersona.utils import _MEMORY_ANNOTATION_PATTERN, _MENTION_PATTERN
+from cpersona.utils import _MEMORY_ANNOTATION_PATTERN, _MENTION_PATTERN, normalize_source
 
 logger = logging.getLogger(__name__)
 
@@ -872,6 +872,15 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
+    """Detect and (optionally) canonicalise legacy source shapes (Task #282, 1b).
+
+    Historical fix path blanket-overwrote every offending row with an anonymous
+    ``{"type":"User","id":"","name":""}`` sentinel — a lossy repair that
+    destroyed attribution wholesale. The mapping-based fix walks known legacy
+    shapes (see ``normalize_source`` for the exhaustive table) and updates only
+    rows we can rewrite without fabricating a discriminator. Rows we don't
+    recognise stay untouched so the finding remains visible on the next run.
+    """
     iso = isolation_where(agent_id=agent_id or None)
     try:
         bad = (
@@ -886,14 +895,40 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
         return []
     if bad == 0:
         return []
+    issue: dict = {"type": "invalid_source_type", "count": bad}
     if fix:
-        await db.execute(
-            f"""UPDATE memories SET source = '{{"type":"User","id":"","name":""}}'
+        # locked = 0 mirrors every sibling fixer (bug-098 invariant). We do the
+        # rewrite per-row rather than in one UPDATE because the mapping is
+        # value-dependent — the shape a row lands on is a function of its
+        # current source, not a single canonical sentinel.
+        rows = await db.execute_fetchall(
+            f"""SELECT id, source FROM memories
                 WHERE (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
                 OR json_extract(source, '$.type') IS NULL) AND locked = 0{iso.and_clause}""",
             iso.params,
         )
-    return [{"type": "invalid_source_type", "count": bad}]
+        mapped = 0
+        unmapped = 0
+        for row_id, raw in rows:
+            try:
+                parsed = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, TypeError):
+                # invalid_json handles the surrounding case; leave the row
+                # so that check surfaces it, and don't count it as mapped.
+                unmapped += 1
+                continue
+            new_source, was_mapped = normalize_source(parsed)
+            if not was_mapped:
+                unmapped += 1
+                continue
+            await db.execute(
+                "UPDATE memories SET source = ? WHERE id = ? AND locked = 0",
+                (json.dumps(new_source), row_id),
+            )
+            mapped += 1
+        issue["mapped"] = mapped
+        issue["unmapped"] = unmapped
+    return [issue]
 
 
 async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
