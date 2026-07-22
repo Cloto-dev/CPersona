@@ -8,7 +8,7 @@ import logging
 
 import aiosqlite
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
-from cpersona.isolation import isolation_where
+from cpersona.isolation import IsolationFilter, isolation_where
 
 from cpersona import config
 from cpersona import health
@@ -133,6 +133,258 @@ async def _probe_embedding_health() -> tuple[bool, str | None]:
         return False, f"mode={client.mode} / POST {client._http_url} failed: {e}"
 
 
+async def _search_vector_remote(
+    db: aiosqlite.Connection,
+    agent_id: str,
+    query: str,
+    limit: int,
+    effective_min_sim: float,
+    *,
+    iso_fetch: IsolationFilter,
+    iso_ep_fetch: IsolationFilter,
+    src_clause: str,
+    src_params: tuple,
+    src_like: str,
+    channel: str,
+) -> list[dict] | None:
+    """Rank through the remote vector service, or decline so the caller scans locally.
+
+    The return type carries the control flow, and `None` is NOT `[]`:
+
+        list (even empty)   the service answered; that answer IS the result
+        None                the service was unusable; the caller must scan locally
+
+    Conflating the two is the mistake this signature exists to make hard. A
+    remote query that legitimately matches nothing would turn into a full local
+    scan, so the two retrievers would disagree on identical data in exactly the
+    case where the corpus has nothing to say -- and silently, because a non-empty
+    local result looks like a working search. `sv-remote-empty` in the
+    behavioural snapshot (tests/behaviour_252.py) pins the distinction.
+
+    The whole body stays inside one `try`: a fault while fetching the rows a hit
+    names is as much a reason to fall back as a fault reaching the service.
+    """
+    if not (VECTOR_SEARCH_MODE == "remote" and _embedding_client and _embedding_client._http_url):
+        return None
+
+    try:
+        base_url = _embedding_client._http_url.rsplit("/", 1)[0]
+        resp = await _embedding_client._client.post(
+            f"{base_url}/search",
+            json={
+                "namespace": f"cpersona:{agent_id}",
+                "query": query,
+                "limit": limit,
+                "min_similarity": effective_min_sim,
+            },
+            # bug-033: bound the recall hot path with a dedicated short timeout
+            # instead of inheriting the client's 30s DEFAULT_TIMEOUT_SECS. A
+            # hung/flapping endpoint now falls back to local search in seconds.
+            timeout=REMOTE_SEARCH_TIMEOUT_SECS,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = []
+        for hit in data.get("results", []):
+            raw_id = hit["id"]
+            score = hit["score"]
+            if raw_id.startswith("mem:"):
+                mem_id = int(raw_id[4:])
+                # ''=global (knob2 v2): a stored channel of '' is global
+                # and matches every channel-scoped recall, so old/global
+                # memories are never orphaned by per-channel filing.
+                row = await db.execute_fetchall(
+                    f"SELECT msg_id, content, source, timestamp FROM memories "
+                    f"WHERE id = ?{iso_fetch.and_clause}{src_clause}",
+                    (mem_id, *iso_fetch.params, *src_params),
+                )
+                if row:
+                    results.append(
+                        {
+                            "id": mem_id,
+                            "_rid": ("mem", mem_id),
+                            "_cosine": score,
+                            "msg_id": row[0][0],
+                            "content": row[0][1],
+                            "source": row[0][2],
+                            "timestamp": row[0][3],
+                        }
+                    )
+            elif raw_id.startswith("ep:"):
+                # Episodes lack per-user source. A channel filter makes them
+                # safe on the session-start grounding path (bug-046/075),
+                # matching the local branch's bug-080 contract.
+                if src_like and not channel:
+                    continue
+                ep_id = int(raw_id[3:])
+                row = await db.execute_fetchall(
+                    f"SELECT summary, start_time, resolved FROM episodes WHERE id = ?{iso_ep_fetch.and_clause}",
+                    (ep_id, *iso_ep_fetch.params),
+                )
+                if row:
+                    results.append(
+                        {
+                            "id": ep_id,
+                            "_rid": ("ep", ep_id),
+                            "_cosine": score,
+                            "content": f"[Episode] {row[0][0]}",
+                            "source": {"System": "episode"},
+                            "timestamp": row[0][1] or "",
+                            "_resolved": bool(row[0][2]),
+                        }
+                    )
+        return results
+    except Exception as e:
+        logger.warning("Remote vector search failed, falling back to local: %s", e)
+        return None
+
+
+async def _scan_memories_local(
+    db: aiosqlite.Connection,
+    iso: IsolationFilter,
+    src_clause: str,
+    src_params: tuple,
+    scan_limit: int,
+    query_vec,
+    query_dim: int,
+    effective_min_sim: float,
+) -> list[tuple[float, dict]]:
+    """Cosine-rank the newest `scan_limit` memory rows against the query vector.
+
+    Rows whose embedding is a foreign width are skipped rather than reshaped: a
+    mid-flight model swap leaves a mixed-dimension corpus behind, and one stale
+    row must not take the whole scan down with a reshape error.
+    """
+    import numpy as np
+
+    # ''=global (knob2 v2): a stored channel of '' matches every channel-scoped
+    # recall (as on the remote by-id path in _search_vector_remote) -- the
+    # channel axis rides in `iso`.
+    rows = await db.execute_fetchall(
+        f"""SELECT id, msg_id, content, source, timestamp, embedding
+           FROM memories
+           WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}
+           ORDER BY created_at DESC
+           LIMIT ?""",
+        (*iso.params, *src_params, scan_limit),
+    )
+    if not rows:
+        return []
+
+    valid_rows = []
+    blobs = []
+    for row in rows:
+        blob = row[5]
+        if blob and len(blob) == query_dim * 4:
+            valid_rows.append(row)
+            blobs.append(blob)
+
+    if not valid_rows:
+        return []
+
+    mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(blobs), query_dim)
+    sims = mat @ query_vec
+
+    candidates: list[tuple[float, dict]] = []
+    for i, sim_val in enumerate(sims):
+        if sim_val >= effective_min_sim:
+            mem_id, msg_id, content, source, timestamp, _ = valid_rows[i]
+            sim = float(sim_val)
+            candidates.append(
+                (
+                    sim,
+                    {
+                        "id": mem_id,
+                        "_rid": ("mem", mem_id),
+                        "_cosine": sim,
+                        "msg_id": msg_id,
+                        "content": content,
+                        "source": source,
+                        "timestamp": timestamp,
+                    },
+                )
+            )
+    return candidates
+
+
+async def _scan_episodes_local(
+    db: aiosqlite.Connection,
+    iso: IsolationFilter,
+    scan_limit: int,
+    query_vec,
+    query_dim: int,
+    effective_min_sim: float,
+    src_like: str,
+    channel: str,
+) -> list[tuple[float, dict]]:
+    """Cosine-rank episode summaries, structurally mirroring the memory scan.
+
+    Episodes lack per-user source tagging — skip them when source_id is set.
+    bug-045: gate episodes by the channel axis exactly like the memory branch
+    (and like _search_episodes_fts). Without this a channel-scoped recall
+    cosine-scores and returns episode summaries from EVERY other channel of the
+    agent — the cross-channel contamination the v2.4.22 channel axis exists to
+    prevent, on the recall hot path. ''=global still matches every scoped recall.
+    bug-080: honor the do_recall contract the FTS drivers already implement
+    (`not source_id or channel`): a channel filter makes episodes safe to return
+    even when source_id is set (the session-start grounding path) because the
+    bug-045 channel clause scopes the fetch. Dropping ALL episodes on src_like
+    silently defeated semantic episode recall on exactly that grounding path.
+    The remote episode fetch carries the same channel predicate and gate, so both
+    vector branches stay symmetric (bug-046/075).
+    """
+    import numpy as np
+
+    if src_like and not channel:
+        return []
+
+    ep_rows = await db.execute_fetchall(
+        f"""SELECT id, summary, start_time, embedding, resolved
+           FROM episodes
+           WHERE {iso.clause} AND embedding IS NOT NULL
+           ORDER BY created_at DESC
+           LIMIT ?""",
+        (*iso.params, scan_limit),
+    )
+    if not ep_rows:
+        return []
+
+    valid_ep_rows = []
+    ep_blobs = []
+    for row in ep_rows:
+        blob = row[3]
+        if blob and len(blob) == query_dim * 4:
+            valid_ep_rows.append(row)
+            ep_blobs.append(blob)
+
+    if not valid_ep_rows:
+        return []
+
+    ep_mat = np.frombuffer(b"".join(ep_blobs), dtype=np.float32).reshape(len(ep_blobs), query_dim)
+    ep_sims = ep_mat @ query_vec
+
+    candidates: list[tuple[float, dict]] = []
+    for i, sim_val in enumerate(ep_sims):
+        if sim_val >= effective_min_sim:
+            ep_id, summary, start_time, _, ep_resolved = valid_ep_rows[i]
+            sim = float(sim_val)
+            candidates.append(
+                (
+                    sim,
+                    {
+                        "id": ep_id,
+                        "_rid": ("ep", ep_id),
+                        "_cosine": sim,
+                        "content": f"[Episode] {summary}",
+                        "source": {"System": "episode"},
+                        "timestamp": start_time or "",
+                        "_resolved": bool(ep_resolved),
+                    },
+                )
+            )
+    return candidates
+
+
 async def _search_vector(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -178,76 +430,23 @@ async def _search_vector(
     # differently-ranked candidate set than local for identical data.
     effective_min_sim = min_similarity if min_similarity is not None else _get_vector_threshold(agent_id)
 
-    if VECTOR_SEARCH_MODE == "remote" and _embedding_client and _embedding_client._http_url:
-        try:
-            base_url = _embedding_client._http_url.rsplit("/", 1)[0]
-            resp = await _embedding_client._client.post(
-                f"{base_url}/search",
-                json={
-                    "namespace": f"cpersona:{agent_id}",
-                    "query": query,
-                    "limit": limit,
-                    "min_similarity": effective_min_sim,
-                },
-                # bug-033: bound the recall hot path with a dedicated short timeout
-                # instead of inheriting the client's 30s DEFAULT_TIMEOUT_SECS. A
-                # hung/flapping endpoint now falls back to local search in seconds.
-                timeout=REMOTE_SEARCH_TIMEOUT_SECS,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            results = []
-            for hit in data.get("results", []):
-                raw_id = hit["id"]
-                score = hit["score"]
-                if raw_id.startswith("mem:"):
-                    mem_id = int(raw_id[4:])
-                    # ''=global (knob2 v2): a stored channel of '' is global
-                    # and matches every channel-scoped recall, so old/global
-                    # memories are never orphaned by per-channel filing.
-                    row = await db.execute_fetchall(
-                        f"SELECT msg_id, content, source, timestamp FROM memories "
-                        f"WHERE id = ?{iso_fetch.and_clause}{src_clause}",
-                        (mem_id, *iso_fetch.params, *src_params),
-                    )
-                    if row:
-                        results.append(
-                            {
-                                "id": mem_id,
-                                "_rid": ("mem", mem_id),
-                                "_cosine": score,
-                                "msg_id": row[0][0],
-                                "content": row[0][1],
-                                "source": row[0][2],
-                                "timestamp": row[0][3],
-                            }
-                        )
-                elif raw_id.startswith("ep:"):
-                    # Episodes lack per-user source. A channel filter makes them
-                    # safe on the session-start grounding path (bug-046/075),
-                    # matching the local branch's bug-080 contract.
-                    if src_like and not channel:
-                        continue
-                    ep_id = int(raw_id[3:])
-                    row = await db.execute_fetchall(
-                        f"SELECT summary, start_time, resolved FROM episodes WHERE id = ?{iso_ep_fetch.and_clause}",
-                        (ep_id, *iso_ep_fetch.params),
-                    )
-                    if row:
-                        results.append(
-                            {
-                                "id": ep_id,
-                                "_rid": ("ep", ep_id),
-                                "_cosine": score,
-                                "content": f"[Episode] {row[0][0]}",
-                                "source": {"System": "episode"},
-                                "timestamp": row[0][1] or "",
-                                "_resolved": bool(row[0][2]),
-                            }
-                        )
-            return results
-        except Exception as e:
-            logger.warning("Remote vector search failed, falling back to local: %s", e)
+    # None means "not answered" and is the only value that continues to the local
+    # scan below; an empty list is an answer. See _search_vector_remote.
+    remote_results = await _search_vector_remote(
+        db,
+        agent_id,
+        query,
+        limit,
+        effective_min_sim,
+        iso_fetch=iso_fetch,
+        iso_ep_fetch=iso_ep_fetch,
+        src_clause=src_clause,
+        src_params=src_params,
+        src_like=src_like,
+        channel=channel,
+    )
+    if remote_results is not None:
+        return remote_results
 
     import numpy as np
 
@@ -269,7 +468,6 @@ async def _search_vector(
     query_dim = len(query_vec)
     # effective_min_sim computed once near the top (shared with the remote branch, bug-027).
 
-    candidates: list[tuple[float, dict]] = []
     # bug-085: the scan window must NOT be derived from the response limit. The
     # old `min(MAX_MEMORIES, max(limit * 10, 100))` coupling meant a default
     # limit=10 recall ranked only the newest 100 rows — anything older was
@@ -279,106 +477,14 @@ async def _search_vector(
     # MAX_MEMORIES rows regardless of how many the caller asked to receive.
     scan_limit = MAX_MEMORIES
 
-    # ''=global (knob2 v2): stored channel '' matches every channel-scoped
-    # recall (see the by-id path above) — the channel axis rides in `iso`.
-    rows = await db.execute_fetchall(
-        f"""SELECT id, msg_id, content, source, timestamp, embedding
-           FROM memories
-           WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}
-           ORDER BY created_at DESC
-           LIMIT ?""",
-        (*iso.params, *src_params, scan_limit),
+    # Memories first, then episodes: nlargest is stable, so this order is what
+    # breaks a tie between a memory and an episode of equal similarity.
+    candidates = await _scan_memories_local(
+        db, iso, src_clause, src_params, scan_limit, query_vec, query_dim, effective_min_sim
     )
-
-    if rows:
-        valid_rows = []
-        blobs = []
-        for row in rows:
-            blob = row[5]
-            if blob and len(blob) == query_dim * 4:
-                valid_rows.append(row)
-                blobs.append(blob)
-
-        if valid_rows:
-            mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(blobs), query_dim)
-            sims = mat @ query_vec
-
-            for i, sim_val in enumerate(sims):
-                if sim_val >= effective_min_sim:
-                    mem_id, msg_id, content, source, timestamp, _ = valid_rows[i]
-                    sim = float(sim_val)
-                    candidates.append(
-                        (
-                            sim,
-                            {
-                                "id": mem_id,
-                                "_rid": ("mem", mem_id),
-                                "_cosine": sim,
-                                "msg_id": msg_id,
-                                "content": content,
-                                "source": source,
-                                "timestamp": timestamp,
-                            },
-                        )
-                    )
-
-    # Episodes lack per-user source tagging — skip when source_id is set.
-    # bug-045: gate episodes by the channel axis exactly like the memory branch
-    # above (and like _search_episodes_fts). Without this a channel-scoped recall
-    # cosine-scores and returns episode summaries from EVERY other channel of the
-    # agent — the cross-channel contamination the v2.4.22 channel axis exists to
-    # prevent, on the recall hot path. ''=global still matches every scoped recall.
-    # bug-080: honor the do_recall contract the FTS drivers already implement
-    # (`not source_id or channel`): a channel filter makes episodes safe to return
-    # even when source_id is set (the session-start grounding path) because the
-    # bug-045 channel clause scopes the fetch. Dropping ALL episodes on src_like
-    # silently defeated semantic episode recall on exactly that grounding path.
-    # The remote episode fetch now carries the same channel predicate and gate,
-    # so both vector branches are symmetric (bug-046/075).
-    ep_rows = (
-        []
-        if (src_like and not channel)
-        else await db.execute_fetchall(
-            f"""SELECT id, summary, start_time, embedding, resolved
-               FROM episodes
-               WHERE {iso.clause} AND embedding IS NOT NULL
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (*iso.params, scan_limit),
-        )
+    candidates += await _scan_episodes_local(
+        db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel
     )
-
-    if ep_rows:
-        valid_ep_rows = []
-        ep_blobs = []
-        for row in ep_rows:
-            blob = row[3]
-            if blob and len(blob) == query_dim * 4:
-                valid_ep_rows.append(row)
-                ep_blobs.append(blob)
-
-        if valid_ep_rows:
-            ep_mat = np.frombuffer(b"".join(ep_blobs), dtype=np.float32).reshape(len(ep_blobs), query_dim)
-            ep_sims = ep_mat @ query_vec
-
-            for i, sim_val in enumerate(ep_sims):
-                if sim_val >= effective_min_sim:
-                    ep_id, summary, start_time, _, ep_resolved = valid_ep_rows[i]
-                    sim = float(sim_val)
-                    candidates.append(
-                        (
-                            sim,
-                            {
-                                "id": ep_id,
-                                "_rid": ("ep", ep_id),
-                                "_cosine": sim,
-                                "content": f"[Episode] {summary}",
-                                "source": {"System": "episode"},
-                                "timestamp": start_time or "",
-                                "_resolved": bool(ep_resolved),
-                            },
-                        )
-                    )
 
     top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
     return [c[1] for c in top_k]
