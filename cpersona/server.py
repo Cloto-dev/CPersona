@@ -1095,7 +1095,9 @@ registry.auto_tool(
     "invalid/anonymous sources. Returns storage stats incl. project_id/channel "
     "distributions. Set fix=true to auto-repair (agent-scoped, locked-safe); "
     "critical file-integrity findings are report-only. Use checks parameter to "
-    "run a subset.",
+    "run a subset. Response includes a three-level status "
+    "(healthy/degraded/unhealthy) derived from severity counts (info never "
+    "degrades) alongside the legacy healthy boolean (len(issues) == 0).",
     {
         "type": "object",
         "properties": {

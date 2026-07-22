@@ -1049,6 +1049,23 @@ def exit_code(summary: dict, strict: bool = False) -> int:
     return 0
 
 
+def health_status(summary: dict) -> str:
+    """Three-level gate status derived from a severity summary.
+
+    critical -> ``unhealthy``; otherwise warn -> ``degraded``; otherwise
+    ``healthy``. Info counts are observations, not gate signals — the same
+    stance ``exit_code`` takes when it returns 0 for an info-only summary — so
+    an info-only DB reports ``status='healthy'`` even though the caller-visible
+    ``healthy`` boolean (``len(issues) == 0``) may be False. Colocated with
+    ``exit_code`` so the two gate mappings evolve together.
+    """
+    if summary.get("critical"):
+        return "unhealthy"
+    if summary.get("warn"):
+        return "degraded"
+    return "healthy"
+
+
 # ---------------------------------------------------------------------------
 # deep-check runners — heuristic (but still deterministic) per-agent analysis.
 # Each returns the per-check result dict used in do_deep_check's response.

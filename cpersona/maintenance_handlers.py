@@ -133,10 +133,14 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
                 )
             )[0][0]
 
+    # ``status`` follows gate semantics (info never degrades), whereas the
+    # legacy ``healthy`` boolean is ``len(issues) == 0``. Both are exposed
+    # deliberately: an info-only DB is healthy=False but status='healthy'.
     result = {
         "total_memories": total,
         "issues": issues,
         "severity_summary": severity_summary,
+        "status": checks_registry.health_status(severity_summary),
         "healthy": len(issues) == 0,
         "fixed": fix,
         "stats": stats,
