@@ -197,3 +197,120 @@ def _try_parse_json(s: str) -> dict:
         return json.loads(s)
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+# Canonical source contract (2.5.2, Task #282 item 1/1b).
+# The wire shape is {"type": <"User"|"Agent"|"System">, "id": str, "name": str}.
+# ~75 % of production memories carried legacy variants that survived a write path
+# with zero validation; the enum here is intentionally the same three values as
+# ClotoCore's serde tag ("Assistant" is written to "Agent"), so the marketplace
+# and Rust callers agree on the discriminator.
+_CANONICAL_TYPES = ("User", "Agent", "System")
+
+# Case-insensitive type-word aliases. Anything not listed here is left untouched
+# (health-check surfaces the invalid row for human review — the contract is
+# "normalize what we understand, never fabricate a type we don't").
+_TYPE_ALIASES = {
+    "user": "User",
+    "agent": "Agent",
+    "system": "System",
+    "assistant": "Agent",
+    "ai": "Agent",
+    "session": "System",
+}
+
+# Bare-string aliases (the whole source is a JSON string, not a dict). We are
+# strict here because a bare "claude-code" or agent-id string is legitimately
+# ambiguous — those rows are left for the (1a) human-reviewed migration.
+_BARE_STRING_ALIASES = {
+    "user": "User",
+    "assistant": "Agent",
+    "ai": "Agent",
+}
+
+
+def normalize_source(source):
+    """Fold a legacy ``source`` value into the canonical contract.
+
+    Returns ``(normalized, mapped)``:
+    - ``mapped=True`` — the input matched a known legacy shape and was
+      rewritten to ``{"type": <User|Agent|System>, "id": str, "name": str}``
+      (id / name are preserved when present; the discriminator is authoritative).
+    - ``mapped=False`` — the input is either already canonical OR uses a shape
+      we deliberately do not touch (unknown dict, unknown vocabulary, unknown
+      bare string, {}, None, etc.). The caller MUST persist the original
+      value verbatim — silent fabrication of a discriminator would falsify
+      attribution and defeat the anonymous_source detector downstream.
+
+    Recognised legacy shapes (write path + check_invalid_source_type fixer
+    share this mapping, so behaviour is symmetric):
+
+    1. Canonical dict — untouched.
+    2. Case-insensitive type vocabulary in ``$.type`` — rewritten to the
+       canonical spelling; sibling ``id`` / ``name`` are preserved when present.
+       ``assistant`` / ``ai`` fold to ``Agent`` (the enum stays 3-valued),
+       ``session`` folds to ``System``. Unknown vocabulary (e.g. ``migration``)
+       is left untouched.
+    3. Rust serde externally-tagged dict from ClotoCore (single key ∈ enum):
+       ``{"User": "u1"}`` → ``{"type":"User","id":"u1","name":"u1"}``,
+       ``{"System": "ep"}`` → ``{"type":"System","id":"ep","name":""}``,
+       ``{"Agent": {"id":"a","name":"A"}}`` → ``{"type":"Agent","id":"a","name":"A"}``.
+    4. Bare string — ``"user"`` / ``"assistant"`` / ``"ai"`` (case-insensitive)
+       fold to the corresponding canonical dict with empty id / name. Other
+       bare strings (``"claude-code"``, arbitrary agent ids) stay untouched
+       for the human-reviewed migration path.
+    """
+    # (5) Unknown / null / non-dict-non-str — leave the caller's value alone.
+    if source is None:
+        return source, False
+
+    # (4) Bare string source.
+    if isinstance(source, str):
+        canon = _BARE_STRING_ALIASES.get(source.strip().lower())
+        if canon is None:
+            return source, False
+        return {"type": canon, "id": "", "name": ""}, True
+
+    if not isinstance(source, dict):
+        return source, False
+
+    # (1) Already canonical — the fast path used by every 2.5.x producer.
+    raw_type = source.get("type")
+    if isinstance(raw_type, str) and raw_type in _CANONICAL_TYPES:
+        return source, False
+
+    # (2) Case-insensitive type-word variant — preserve id / name, rewrite type.
+    if isinstance(raw_type, str):
+        canon = _TYPE_ALIASES.get(raw_type.strip().lower())
+        if canon is None:
+            # Unknown vocabulary ("migration", "bot", ...) — leave for human review.
+            return source, False
+        new_source = dict(source)
+        new_source["type"] = canon
+        return new_source, True
+
+    # (3) Rust serde externally-tagged dict: exactly one key ∈ enum.
+    # $.type absent (or non-string) AND len == 1 AND key ∈ enum is the discriminator.
+    if raw_type is None and len(source) == 1:
+        (key, value), = source.items()
+        if key in _CANONICAL_TYPES:
+            if isinstance(value, dict):
+                # Inner dict may carry id / name and free-form extras.
+                new_source = dict(value)
+                new_source["type"] = key
+                new_source.setdefault("id", "")
+                new_source.setdefault("name", "")
+                return new_source, True
+            if isinstance(value, str):
+                # String inner value: User/Agent → id + name mirror (preserves
+                # display when name was implicit); System → id only (System's
+                # inner has always been a bare label like "profile"/"episode").
+                if key == "System":
+                    return {"type": key, "id": value, "name": ""}, True
+                return {"type": key, "id": value, "name": value}, True
+            # Other inner types (list / None / int) — untouched.
+            return source, False
+
+    # (5) Everything else: empty {}, dicts with $.type absent that are not the
+    # serde shape, dicts with multiple keys but no $.type — leave alone.
+    return source, False

@@ -172,3 +172,49 @@ async def test_recall_keyword_path_gamma_filter():
     no_filter = await memory_handlers.do_recall("agent-r", "raspberry", 10, deep=True, project_id=None)
     contents_all = {m["content"] for m in no_filter["messages"]}
     assert contents_all == {"raspberry pi notes", "raspberry pi config", "raspberry pi tuning"}
+
+
+# ============================================================
+# Write-side dedup channel contract (Task #289, 2026-07-20)
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_dedup_channel_scope_is_write_side_not_read_side():
+    """do_store's dedup probe must NOT adopt isolation_where's channel semantics.
+
+    The two contracts agree everywhere except channel='':
+
+        isolation_where(channel='')  -> no channel predicate  (a read sees every channel)
+        do_store       (channel='')  -> channel IN ('')       (dedup against global only)
+
+    That divergence is deliberate and load-bearing. Reading semantics here would
+    make an identical message already stored under 'discord' collide with a store
+    into the global channel, and the caller gets {"skipped": "duplicate content"}
+    — a silent drop, since do_store reports every outcome as ok:true (b1-1).
+
+    The hand-rolled proj_in/chan_in in memory_handlers.do_store therefore is NOT
+    a helper-avoidance defect to be tidied away. This test exists so that a
+    refactor which "consolidates" it onto isolation_where fails loudly here
+    instead of quietly narrowing what gets stored.
+    """
+    db = await get_db()
+
+    # Same content, one row already in a named channel.
+    await memory_handlers.do_store("agent-ch", _msg("shared text"), channel="discord")
+    # A store into the global channel must still land: different channel bucket.
+    res = await memory_handlers.do_store("agent-ch", _msg("shared text"))
+    assert res.get("skipped") is not True, (
+        "global-channel store was deduped against a 'discord' row — the dedup probe "
+        "adopted read-side channel semantics"
+    )
+
+    rows = await db.execute_fetchall(
+        "SELECT channel FROM memories WHERE agent_id = ? AND content = ? ORDER BY channel",
+        ("agent-ch", "shared text"),
+    )
+    assert [r[0] for r in rows] == ["", "discord"]
+
+    # And the genuine duplicate — same content, same channel — is still caught.
+    dup = await memory_handlers.do_store("agent-ch", _msg("shared text"), channel="discord")
+    assert dup.get("skipped") is True and dup.get("reason") == "duplicate content"

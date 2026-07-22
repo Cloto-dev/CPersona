@@ -572,3 +572,55 @@ async def test_auto_tool_two_tuple_still_uses_validator_default():
     reg.auto_tool("t2", "d", {}, handler, [("agent_id", str)])
     await reg._handlers["t2"]({})  # agent_id omitted
     assert got["agent_id"] == "", "2-tuple no-default spec should still fall to the validator's '' default"
+
+
+@pytest.mark.asyncio
+async def test_export_import_preserves_both_source_shapes(clean_db, tmp_path):
+    """The roundtrip must survive the source shapes the real corpus actually holds.
+
+    Measured on the production corpus (1587 rows, Task #288): `source` is an
+    object in 868 rows and a bare JSON string in 719 — "claude-code",
+    "assistant", "user" and friends. The pre-existing roundtrip test covers one
+    object-shaped source only, so the string shape — 45% of real rows — was
+    never exercised.
+
+    Equality is asserted semantically, not byte-wise. Import re-serialises
+    through json.dumps, which respaces a compact object literal
+    ({"type":"User"} -> {"type": "User"}); that rewrote 87 production rows in
+    the exercise and is cosmetic, since every consumer reads the column through
+    json_extract. What must not change is the extracted value.
+    """
+    db = clean_db
+    A = "agent-src-shapes"
+    rows = [
+        ("obj-conforming", '{"type":"User","id":"u1","name":"n1"}'),
+        ("obj-compact", '{"type":"Agent","id":"","name":""}'),
+        ("bare-string", '"claude-code"'),
+        ("empty-object", "{}"),
+    ]
+    for msg_id, source in rows:
+        await db.execute(
+            "INSERT INTO memories "
+            "(agent_id, project_id, channel, msg_id, content, source, timestamp, metadata) "
+            "VALUES (?, '', '', ?, ?, ?, '2026-01-01T00:00:00Z', '{}')",
+            (A, msg_id, f"content for {msg_id}", source),
+        )
+    await db.commit()
+
+    out = str(tmp_path / "shapes.jsonl")
+    assert (await admin_handlers.do_export_memories(A, out, include_embeddings=True))["ok"]
+    await db.execute("DELETE FROM memories")
+    await db.commit()
+    assert (await admin_handlers.do_import_memories(out, target_agent_id=""))["ok"]
+
+    for msg_id, source in rows:
+        got = (
+            await db.execute_fetchall(
+                "SELECT source, json_type(source), json_extract(source, '$.type') "
+                "FROM memories WHERE agent_id=? AND msg_id=?",
+                (A, msg_id),
+            )
+        )[0]
+        assert json.loads(got[0]) == json.loads(source), f"{msg_id}: source value changed"
+        expected_type = "object" if isinstance(json.loads(source), dict) else "text"
+        assert got[1] == expected_type, f"{msg_id}: json_type changed"
