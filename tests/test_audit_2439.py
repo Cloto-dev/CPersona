@@ -23,11 +23,25 @@ from cpersona.vector import _search_vector
 
 @pytest_asyncio.fixture
 async def clean_db():
-    """A freshly-truncated DB for the DB-backed audit tests."""
+    """A freshly-truncated DB for the DB-backed audit tests.
+
+    The DB file is shared with the rest of the suite through a single
+    process-wide singleton (see conftest._close_singleton_db), and DELETE FROM
+    does not reset the AUTOINCREMENT counter that SQLite keeps in
+    sqlite_sequence. So if another test file ran first in the same process,
+    the next INSERT here would return an id > 1 — which silently vacates any
+    test that asserts on a specific id (bug-040/041 pins a memory#1 vs
+    episode#1 collision by id literal). Reset the sequence so ids restart at
+    1 regardless of order.
+    """
     no_persist.resume()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
+    await db.execute(
+        "DELETE FROM sqlite_sequence WHERE name IN "
+        "('memories','episodes','profiles','pending_memory_tasks')"
+    )
     await db.commit()
     return db
 
@@ -57,11 +71,19 @@ async def test_recall_bump_skips_episode_ids(clean_db, fake_embedding_client, mo
     db = clean_db
     # memory #1 and an episode #1 (same id space). Recall the episode's topic.
     await memory_handlers.do_store("a1", {"content": "quantum physics lecture notes", "source": {"type": "User"}, "timestamp": "2026-07-01T00:00:00+00:00"})
-    await memory_handlers.do_archive_episode("a1", [], summary="baking sourdough bread recipe")
-    before = (await db.execute_fetchall("SELECT recall_count FROM memories WHERE id = 1"))[0][0]
+    ep = await memory_handlers.do_archive_episode("a1", [], summary="baking sourdough bread recipe")
+    mem_id = (await db.execute_fetchall("SELECT id FROM memories ORDER BY id"))[0][0]
+    ep_id = ep["episode_id"]
+    # Guard the test's premise: bug-040/041 only reproduces when the memory
+    # and the episode actually share an id. If the fixture reset ever
+    # regresses (e.g. sqlite_sequence not cleared, ids drift under
+    # cross-file order), the collision disappears and the assertion below
+    # becomes vacuous. Fail loudly instead.
+    assert mem_id == ep_id == 1, (mem_id, ep_id)
+    before = (await db.execute_fetchall("SELECT recall_count FROM memories WHERE id = ?", (mem_id,)))[0][0]
     # Query matches the EPISODE, whose id (1) collides with memory #1.
     await memory_handlers.do_recall("a1", "sourdough bread baking", limit=5)
-    after = (await db.execute_fetchall("SELECT recall_count FROM memories WHERE id = 1"))[0][0]
+    after = (await db.execute_fetchall("SELECT recall_count FROM memories WHERE id = ?", (mem_id,)))[0][0]
     # Pre-fix, recalling episode #1 bumped memory #1. Now the episode is excluded.
     assert after == before
 
