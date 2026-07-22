@@ -2012,6 +2012,51 @@
       "category": "robustness",
       "fixed_in": "2.5.0",
       "fix_note": "Boot now warns when the persisted schema version is newer than SCHEMA_VERSION without refusing startup or changing the version stamp. Regression: tests/test_audit_2500b3.py::test_newer_schema_version_warns_without_blocking_boot."
+    },
+    {
+      "id": "bug-139",
+      "summary": "check_invalid_source_type(fix=True) counted every offending row in `count` but the fix loop only saw locked = 0 rows, so a locked-heavy corpus read as 'found N, processed 0' with no reconciliation (mapped + unmapped < count). Pre-existing asymmetry made visible by the 2.5.2 mapped/unmapped exposure.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "commit": "b64c031",
+      "file": "cpersona/checks.py",
+      "pattern": "bug-139",
+      "expected": "present",
+      "status": "fixed",
+      "category": "dry-run-count-divergence",
+      "fixed_in": "2.5.2a1",
+      "fix_note": "The fix-path issue dict now carries an additive `locked` counter (count - rows visible to the fixer) so mapped + unmapped + locked always reconciles with count. Regression: tests/test_source_normalization.py::test_fix_reports_locked_rows_it_cannot_touch."
+    },
+    {
+      "id": "bug-140",
+      "summary": "do_store normalizes an explicit null source to {} at the write seam (v2.5.1 persisted the literal 'null', so recall returned source=None; 2.5.2 rows return {}), but the store tool description did not document the convergence — consumers could not know None and {} now denote the same anonymous producer, and legacy 'null' rows coexist with new '{}' rows in the same corpus.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "commit": "b64c031",
+      "file": "cpersona/server.py",
+      "pattern": "bug-140",
+      "expected": "present",
+      "status": "fixed",
+      "category": "response-shape",
+      "fixed_in": "2.5.2a1",
+      "fix_note": "Deliberate contract change (2.5.x charter: contract drift allowed when intentional and documented). The store tool's source description now states that null is normalized to {} at the write seam and both persist (and recall) as the anonymous {}. Health checks already treated null and {} identically, so no behavioural fix was needed."
+    },
+    {
+      "id": "bug-141",
+      "summary": "The no-persist branch of do_store returned {ok, id:'no-persist', persisted:false} without the `embedded` key that 2.5.2 added to the success contract, while the tool description read as if embedded were always present — a consumer treating it as required would KeyError under pause_persistence.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "commit": "b64c031",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "bug-141",
+      "expected": "present",
+      "status": "fixed",
+      "category": "no-persist-contract",
+      "fixed_in": "2.5.2a1",
+      "fix_note": "The skipped response now carries embedded:false (nothing was persisted), and the store tool description documents the no-persist shape with an instruction to branch on `persisted`. Regression: tests/test_no_persist.py::test_store_skipped_under_pause."
     }
   ]
 }

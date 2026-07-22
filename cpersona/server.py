@@ -453,7 +453,11 @@ registry.auto_tool(
     "local embedding blob was persisted or the remote index push succeeded (false under "
     "EMBEDDING_MODE=none). Dedup skips return {ok:true, skipped:true, reason:..., id:<row-id>} "
     "for the msg_id / content branches (echoing the pre-existing row); the OR IGNORE "
-    "fallback (reason='duplicate (unique index)') omits id by design (TOCTOU seam).",
+    "fallback (reason='duplicate (unique index)') omits id by design (TOCTOU seam). "
+    # bug-141: the no-persist branch has its own shape — document it so
+    # consumers branch on `persisted`, not on key presence.
+    "Under pause_persistence the write is skipped and the response carries "
+    "persisted:false (id:'no-persist', embedded:false) — branch on persisted.",
     {
         "type": "object",
         "properties": {
@@ -482,7 +486,11 @@ registry.auto_tool(
                             "Attribution of who produced the content. Canonical shape is "
                             "{type, id, name}. Type is the discriminator; id / name identify "
                             "the concrete producer. Store null / empty {} only when the "
-                            "producer is genuinely unknown."
+                            "producer is genuinely unknown. "
+                            # bug-140: null and {} converge at the write seam;
+                            # recall echoes {} for rows stored either way.
+                            "A null source is normalized to {} at the write seam, so "
+                            "both persist (and recall) as the anonymous {}."
                         ),
                         "properties": {
                             "type": {

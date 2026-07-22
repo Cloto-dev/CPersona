@@ -340,3 +340,34 @@ async def test_fix_maps_known_legacy_shapes_preserving_id_and_name(clean_db):
         assert parsed["id"] != "" or parsed["name"] != "", (
             f"row {row_id} lost attribution to a blanket-User overwrite"
         )
+
+
+@pytest.mark.asyncio
+async def test_fix_reports_locked_rows_it_cannot_touch(clean_db):
+    """bug-139: ``count`` spans every offending row, but the fixer only sees
+    ``locked = 0`` (bug-098 invariant). The additive ``locked`` counter
+    reconciles the arithmetic (count == mapped + unmapped + locked) so a
+    locked-heavy corpus doesn't read as "found N, processed 0"."""
+    from cpersona.database import transaction
+
+    async with transaction() as db_tx:
+        # Locked mappable offender — counted, never rewritten.
+        await db_tx.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp, locked) "
+            "VALUES ('lockfix', 'a', '{\"type\":\"user\",\"id\":\"u1\"}', 't', 1)"
+        )
+        # Unlocked mappable offender — rewritten by the fixer.
+        await db_tx.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) "
+            "VALUES ('lockfix', 'b', '{\"type\":\"assistant\"}', 't')"
+        )
+        ran = await checks.check_invalid_source_type(db_tx, "lockfix", fix=True)
+
+    assert ran and ran[0]["type"] == "invalid_source_type"
+    assert ran[0]["count"] == 2, ran
+    assert ran[0]["mapped"] == 1
+    assert ran[0]["unmapped"] == 0
+    assert ran[0]["locked"] == 1
+    assert (
+        ran[0]["mapped"] + ran[0]["unmapped"] + ran[0]["locked"] == ran[0]["count"]
+    )

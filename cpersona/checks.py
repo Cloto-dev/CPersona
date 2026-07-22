@@ -928,6 +928,11 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
             mapped += 1
         issue["mapped"] = mapped
         issue["unmapped"] = unmapped
+        # bug-139: `count` spans every offending row, but the fix loop only
+        # sees locked = 0 rows (bug-098 invariant). Surface the remainder so
+        # mapped + unmapped + locked reconciles with count instead of reading
+        # as "found N, processed 0" when the offenders are locked.
+        issue["locked"] = bad - len(rows)
     return [issue]
 
 
