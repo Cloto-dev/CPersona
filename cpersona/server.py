@@ -448,7 +448,12 @@ registry.auto_tool(
 
 registry.auto_tool(
     "store",
-    "Store a message in agent memory for future recall.",
+    "Store a message in agent memory for future recall. "
+    "Success returns {ok:true, id:<row-id>, embedded:<bool>}; embedded is true iff a "
+    "local embedding blob was persisted or the remote index push succeeded (false under "
+    "EMBEDDING_MODE=none). Dedup skips return {ok:true, skipped:true, reason:..., id:<row-id>} "
+    "for the msg_id / content branches (echoing the pre-existing row); the OR IGNORE "
+    "fallback (reason='duplicate (unique index)') omits id by design (TOCTOU seam).",
     {
         "type": "object",
         "properties": {
@@ -483,7 +488,11 @@ registry.auto_tool(
     "recall",
     "Recall relevant memories using multi-strategy search (vector + FTS5 + keyword). "
     "Message content is returned as a preview tier by default — expand selected rows "
-    "with get_contents(refs), or opt out wholesale with full_content=true.",
+    "with get_contents(refs), or opt out wholesale with full_content=true. "
+    "v2.5.2 additive: each scored message carries match_reason={signal, score, ...} where "
+    "signal is the branch the ranking / quality gate keyed on (confidence > rsf > cosine > rrf) "
+    "and the remaining keys (cosine / rrf / rsf) surface the internal per-retriever "
+    "contributions present on that row. Unscored rows (cascade FTS/keyword) omit match_reason.",
     {
         "type": "object",
         "properties": {

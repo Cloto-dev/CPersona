@@ -106,7 +106,9 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
                 (agent_id, *proj_scope, msg_id),
             )
             if row:
-                return {"ok": True, "skipped": True, "reason": "duplicate msg_id"}
+                # v2.5.2 additive: echo the existing row's id so callers can chain
+                # (e.g. update_memory) without a second lookup.
+                return {"ok": True, "skipped": True, "reason": "duplicate msg_id", "id": row[0][0]}
 
         # Deduplicate by exact content match (γ-visible scope).
         existing = await db.execute_fetchall(
@@ -115,7 +117,8 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
             (agent_id, *proj_scope, *chan_scope, content),
         )
         if existing:
-            return {"ok": True, "skipped": True, "reason": "duplicate content"}
+            # v2.5.2 additive: same id echo as the msg_id branch above.
+            return {"ok": True, "skipped": True, "reason": "duplicate content", "id": existing[0][0]}
 
     embedding_blob = None
     if vector._embedding_client and (VECTOR_SEARCH_MODE == "local" or STORE_BLOB):
@@ -140,12 +143,27 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
             (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, channel),
         )
     if cursor.rowcount == 0:
+        # v2.5.2 additive asymmetry: the msg_id / content branches echo the
+        # existing row's id from their SELECT probe. The OR IGNORE fallback fires
+        # only when a concurrent writer slipped between those probes and this
+        # INSERT (bug-010 TOCTOU), and a fresh SELECT to recover the id would
+        # re-enter the same TOCTOU seam we deliberately closed — so this branch
+        # stays id-less by design. Callers keying on `id` MUST treat it as
+        # optional under `skipped=True`.
         return {"ok": True, "skipped": True, "reason": "duplicate (unique index)"}
     # lastrowid comes from this cursor's INSERT, so a store interleaved on the
     # shared connection cannot shift it (bug-010: the previous max-id re-SELECT
     # could bind a different row's id to the remote vector entry, making recall
     # return another memory's content).
     mem_id = cursor.lastrowid
+
+    # v2.5.2 additive: `embedded` reports whether any embedding surface was
+    # actually populated for this row — the local blob (persisted with the
+    # INSERT above) or the remote index push below. False under EMBEDDING_MODE
+    # =none, or when the embedding call raised and we degraded to the SQL-only
+    # path.
+    local_embedded = embedding_blob is not None
+    remote_embedded = False
 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         try:
@@ -157,10 +175,11 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
                     "items": [{"id": f"mem:{mem_id}", "text": content}],
                 },
             )
+            remote_embedded = True
         except Exception as e:
             logger.debug("Remote index failed (non-fatal): %s", e)
 
-    result = {"ok": True}
+    result = {"ok": True, "id": mem_id, "embedded": local_embedded or remote_embedded}
     if truncated:
         result["truncated"] = True
     return result
@@ -943,6 +962,25 @@ async def do_recall(
                 recall_count=rc_data[0],
                 last_recalled_at_str=rc_data[1],
             )
+        # v2.5.2 additive: expose the score the ranking / gate keyed on so agents can
+        # tell WHY a row surfaced (confidence vs rsf vs cosine vs rrf) instead of
+        # guessing from opaque `confidence`. `signal` matches _gate_score's branch
+        # precedence (confidence > rsf > cosine > rrf); the breakdown carries the
+        # internal per-retriever contributions actually present on this row. Unscored
+        # rows (cascade FTS/keyword stages without any signal) omit the key entirely
+        # so consumers can distinguish "no signal at all" from "signal was zero".
+        # Scoring reshape lives in 2.6.0 (charter §5 soak isolation); this exposes
+        # only what the existing scoring layer already computed.
+        gate_score, gate_signal = _gate_score(r)
+        if gate_signal is not None:
+            match_reason: dict = {"signal": gate_signal, "score": gate_score}
+            if r.get("_cosine") is not None:
+                match_reason["cosine"] = r["_cosine"]
+            if r.get("_rrf_score") is not None:
+                match_reason["rrf"] = r["_rrf_score"]
+            if r.get("_rsf_score") is not None:
+                match_reason["rsf"] = r["_rsf_score"]
+            msg["match_reason"] = match_reason
         r.pop("_rid", None)
         r.pop("_cosine", None)
         r.pop("_confidence_score", None)
