@@ -150,7 +150,7 @@ wheels = [
 
 [[package]]
 name = "cpersona"
-version = "2.5.1"
+version = "2.5.2a1"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
