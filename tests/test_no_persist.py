@@ -95,6 +95,9 @@ async def test_store_skipped_under_pause():
     no_persist.pause(ttl_seconds=120)
     resp = await memory_handlers.do_store("agent-np", _msg("should not persist"))
     assert _is_skipped(resp)
+    # bug-141: the skipped response keeps the success-contract keys — nothing
+    # was persisted, so embedded is present and False (not absent).
+    assert resp["embedded"] is False
 
     no_persist.resume()
     db = await get_db()
