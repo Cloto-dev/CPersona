@@ -68,7 +68,11 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     cpersona.isolation.isolation_where).
     """
     if no_persist.is_paused():
-        return no_persist.make_skipped_response({"ok": True, "id": 0}, "store")
+        # bug-141: keep the no-persist shape aligned with the success contract
+        # ({ok, id, embedded}) — nothing was persisted, so embedded is False.
+        return no_persist.make_skipped_response(
+            {"ok": True, "id": 0, "embedded": False}, "store"
+        )
 
     msg_id = message.get("id", "")
     raw_content = message.get("content", "")
