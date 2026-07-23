@@ -299,6 +299,24 @@ async def _search_vector_remote(
         return None
 
 
+def _cosine_batch(query_vec, query_dim: int, blobs: list[bytes]):
+    """Batched cosine similarity of `query_vec` against pre-filtered float32
+    blobs (each MUST be exactly ``query_dim * 4`` bytes).
+
+    Extracted so the local memory / episode scanners and the ``_apply_recall_scoring``
+    bug-155 cosine backfill share ONE unpack + matmul implementation; the two
+    paths cannot silently drift on how a stored embedding is turned into a
+    similarity. The caller is responsible for the width filter (a foreign-width
+    blob in this list will crash the reshape) -- the scanners and the backfill
+    both do that filter for their own reasons (bug-085 ragged-dim tolerance),
+    keeping the helper's contract minimal.
+    """
+    import numpy as np
+
+    mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(blobs), query_dim)
+    return mat @ query_vec
+
+
 async def _scan_memories_local(
     db: aiosqlite.Connection,
     iso: IsolationFilter,
@@ -315,8 +333,6 @@ async def _scan_memories_local(
     mid-flight model swap leaves a mixed-dimension corpus behind, and one stale
     row must not take the whole scan down with a reshape error.
     """
-    import numpy as np
-
     # ''=global (knob2 v2): a stored channel of '' matches every channel-scoped
     # recall (as on the remote by-id path in _search_vector_remote) -- the
     # channel axis rides in `iso`.
@@ -342,8 +358,7 @@ async def _scan_memories_local(
     if not valid_rows:
         return []
 
-    mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(blobs), query_dim)
-    sims = mat @ query_vec
+    sims = _cosine_batch(query_vec, query_dim, blobs)
 
     candidates: list[tuple[float, dict]] = []
     for i, sim_val in enumerate(sims):
@@ -393,8 +408,6 @@ async def _scan_episodes_local(
     The remote episode fetch carries the same channel predicate and gate, so both
     vector branches stay symmetric (bug-046/075).
     """
-    import numpy as np
-
     if src_like and not channel:
         return []
 
@@ -420,8 +433,7 @@ async def _scan_episodes_local(
     if not valid_ep_rows:
         return []
 
-    ep_mat = np.frombuffer(b"".join(ep_blobs), dtype=np.float32).reshape(len(ep_blobs), query_dim)
-    ep_sims = ep_mat @ query_vec
+    ep_sims = _cosine_batch(query_vec, query_dim, ep_blobs)
 
     candidates: list[tuple[float, dict]] = []
     for i, sim_val in enumerate(ep_sims):

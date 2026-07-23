@@ -2607,6 +2607,21 @@
       "fix_note": "Dropped the unused import and the extraneous f prefix. Found by the parent agent while running the CI gates against the fixes for bug-162/163 — the code review that produced bug-162..bug-178 ran pytest, verify-issues and mutation-proof but not ruff, so a red gate sat under a report that read as green. Isolated against a master worktree copy before attributing it to the branch. Registry anchor note: the unused import cannot serve as the absent-pattern — two OTHER test functions in the same file import checks_module and use it — so the anchor is the f-string violation, which the fix removed and which occurs once."
     },
     {
+      "id": "bug-155",
+      "summary": "Under CONFIDENCE_ENABLED (production), rows admitted only via the FTS / keyword channels in _recall_rrf / _recall_rsf reach _apply_recall_scoring with _cosine=None even when their embedding blob sits in the DB; _compute_confidence's None-branch (sqrt(time_decay) * ...) is >= its cosine-branch (sqrt(norm_cos*time_decay) * ...), so vector-less rows structurally out-score real vector hits and invert the fusion intent (the keyword channel is documented to help DOWN-rank lexical contaminants).",
+      "severity": "HIGH",
+      "discovered": "2026-07-24T00:00:00Z",
+      "version": "2.5.2a2",
+      "commit": "7f406da",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "bug-155",
+      "expected": "present",
+      "status": "fixed",
+      "category": "recall-ranking",
+      "fixed_in": "unreleased",
+      "fix_note": "Added memory_handlers._backfill_cosines, invoked from _apply_recall_scoring after the empty-results early return and BEFORE the episode-boundary penalty (so the penalty scales backfilled cosines uniformly with native ones), gated on CONFIDENCE_ENABLED so confidence-off deployments stay byte-for-byte identical. For each row that reaches scoring with _cosine=None, a positive integer id, and is not a profile sentinel (id=-1), the fix re-embeds the query (cache hit against the vector-channel call), fetches the embedding blob from the correct table per row kind (bug-040/041: memories and episodes share an AUTOINCREMENT id space so an episode id N must not read memory id N's blob), filters ragged widths (bug-085 tolerance), and materialises the true cosine on r['_cosine'] so downstream confidence scoring, episode-penalty scaling and the b1-4 match_reason.cosine surface it naturally. The batched cosine math is shared with the local scanners via a new vector._cosine_batch helper so the two paths cannot silently drift. The raw_cosine=None branch of _compute_confidence is unchanged: rows with genuinely no/ragged blob keep today's elevated score (production count is zero), deferred to the 2.6.0 scoring redesign. Regression: tests/test_bug155_cosine_backfill.py + tests/behaviour_252.py::recall-cosine-backfill."
+    },
+    {
       "id": "bug-180",
       "summary": "(C15, OPEN) Under VECTOR_SEARCH_MODE=remote with STORE_BLOB=false the local cosine scan — the documented safety net for a remote /search outage — is structurally empty for memories: do_store skips the local blob for every row, so the scan's `embedding IS NOT NULL` predicate matches nothing. A /search fault with a working /embed then returns zero vector hits while health.observe_ok() marks the subsystem HEALTHY (the advisory observes the embed boundary only), so recall degrades to FTS/keyword silently in exactly the configuration that has no fallback.",
       "severity": "LOW",

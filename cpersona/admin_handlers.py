@@ -784,7 +784,11 @@ async def _calibrate_fused_gate(
         results = await recall_fn(db, agent_id, qcontent, 20, False)
         # Apply the same penalty + confidence scoring do_recall runs, so _gate_score
         # returns the exact value the runtime gate compares (confidence when enabled).
-        results, _, _ = await _apply_recall_scoring(db, agent_id, results, False)
+        # bug-155: pass the pseudo-query so the FTS-only rows in the sample get
+        # backfilled cosines exactly like the runtime recall path does — otherwise
+        # the calibration curve would be built on a signal shape (cosine-less
+        # confidence branch) the runtime no longer produces.
+        results, _, _ = await _apply_recall_scoring(db, agent_id, results, False, query=qcontent)
         queries_run += 1
         for r in results:
             rid = r.get("id")
