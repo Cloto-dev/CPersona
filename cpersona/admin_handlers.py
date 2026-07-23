@@ -1154,10 +1154,20 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
     except Exception as exc:
         cal = {"ok": False, "error": f"calibration raised: {exc}"}
     if not cal.get("ok"):
-        if had_override:
-            vector._agent_betas[agent_id] = prev_beta
+        # bug-149 (bug-096 residual): compare-and-restore. do_calibrate_threshold awaits, so a
+        # concurrent set_recall_precision for the SAME agent can apply + persist its own
+        # value while this call is suspended. Roll back only if this call's own write is
+        # still the live value; otherwise leave the concurrent writer's applied value in
+        # place rather than clobbering it with our stale pre-await snapshot.
+        if clear:
+            this_write_survived = agent_id not in vector._agent_betas
         else:
-            vector._agent_betas.pop(agent_id, None)
+            this_write_survived = vector._agent_betas.get(agent_id) == resolved_beta
+        if this_write_survived:
+            if had_override:
+                vector._agent_betas[agent_id] = prev_beta
+            else:
+                vector._agent_betas.pop(agent_id, None)
         return {
             "ok": False,
             "agent_id": agent_id,
@@ -1307,10 +1317,18 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
 
 
 async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
-    """Delete a single episode by ID (FTS5 triggers handle index cleanup)."""
+    """Delete a single episode by ID (FTS5 triggers handle the LOCAL index cleanup)."""
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "deleted_id": episode_id}, "delete_episode")
     _warn_if_unscoped("do_delete_episode", episode_id, agent_id)
+    # Read the owner up front so the remote-vector removal below targets the namespace
+    # the episode was indexed under (cpersona:{owner}), matching how do_delete_memory
+    # resolves the owner for its bug-023 removal even when the caller omits agent_id.
+    async with connection() as db:
+        rows = await db.execute_fetchall("SELECT agent_id FROM episodes WHERE id = ?", (episode_id,))
+    if not rows:
+        return {"error": f"Episode {episode_id} not found or not owned by agent"}
+    owner_agent_id = rows[0][0]
     # bug-042/043: transaction() serialises the DELETE+commit behind the shared lock.
     async with transaction() as db:
         if agent_id:
@@ -1322,6 +1340,23 @@ async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
             cursor = await db.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
     if cursor.rowcount == 0:
         return {"error": f"Episode {episode_id} not found or not owned by agent"}
+
+    if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
+        # bug-023 sibling: episodes are pushed into the same remote index on create
+        # (bug-049, id=ep:{id} under cpersona:{owner}). delete_episode used to remove
+        # only the SQLite row, orphaning the remote vector — it kept surfacing in
+        # remote-mode recall, wasting top-K slots until the by-id rehydrate missed.
+        # Mirror do_delete_memory's /remove; a removal failure must not fail the delete.
+        ns = f"cpersona:{owner_agent_id}"
+        try:
+            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+            await vector._embedding_client._client.post(
+                f"{base_url}/remove",
+                json={"namespace": ns, "ids": [f"ep:{episode_id}"]},
+            )
+        except Exception as e:
+            logger.debug("Remote remove failed (non-fatal): %s", e)
+
     return {"ok": True, "deleted_id": episode_id}
 
 

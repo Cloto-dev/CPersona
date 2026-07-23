@@ -632,6 +632,74 @@ async def check_schema_objects(db, agent_id: str, fix: bool) -> list[dict]:
     return issues
 
 
+async def check_dedup_msg_id_index(db, agent_id: str, fix: bool) -> list[dict]:
+    """Detect and remediate a permanently-missing msg_id dedup UNIQUE index (bug-145).
+
+    check_schema_objects already flags idx_memories_dedup_msg_id when it is
+    missing, but its fix only re-issues the identical CREATE, which fails
+    identically whenever a pre-v12 DB holds two rows sharing a non-empty
+    (agent_id, project_id, msg_id) with different content (the TOCTOU race the
+    index closes). Nothing else collapses msg_id collisions, so that critical
+    finding is otherwise permanent — only hand-written SQL could clear it. This
+    check supplies the same non-destructive remediation the v12 migration
+    applies: keep the newest (MAX id) colliding row's msg_id, blank the older
+    unlocked colliders ('' is excluded by the partial index), then retry the
+    CREATE. No row is deleted, no content is touched, and locked rows are left
+    alone (bug-098) — a locked collider still blocks the CREATE and is surfaced
+    via fix_error, the same "locked row wins" doctrine as check_schema_objects.
+
+    The index is a global schema object, so (like check_schema_objects) this
+    check ignores agent_id: a collision under any agent blocks the whole index.
+    """
+    table_row = await db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='memories'"
+    )
+    if not table_row:
+        # No table yet (fresh/uninitialised DB) — nothing to guard.
+        return []
+    index_row = await db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memories_dedup_msg_id'"
+    )
+    if index_row:
+        # Index present — the guarantee holds, no finding.
+        return []
+    issue: dict = {
+        "type": "dedup_msg_id_index_missing",
+        "object": "idx_memories_dedup_msg_id",
+    }
+    if fix:
+        # Same collision resolution as the v12 migration (database.py): keep the
+        # newest (MAX id) colliding row's msg_id, blank the older unlocked ones.
+        # The index is global, so the resolution is a DELIBERATE cross-agent scan
+        # spelled isolation_where(agent_id=None) (empty and_clause) — a collision
+        # under any agent blocks the whole index, so scoping to one agent would
+        # leave it uncreatable. locked = 0 honours bug-098.
+        iso = isolation_where(agent_id=None)
+        await db.execute(
+            f"""UPDATE memories
+               SET msg_id = ''
+               WHERE locked = 0
+                 AND msg_id != ''
+                 AND id NOT IN (
+                     SELECT MAX(id) FROM memories
+                     WHERE msg_id != ''
+                     GROUP BY agent_id, project_id, msg_id
+                 ){iso.and_clause}""",
+            iso.params,
+        )
+        try:
+            await db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_msg_id "
+                "ON memories(agent_id, project_id, msg_id) WHERE msg_id != ''"
+            )
+            issue["fixed"] = True
+        except Exception as e:
+            # A locked collider still blocks the CREATE — surface, never force.
+            issue["fixed"] = False
+            issue["fix_error"] = str(e)
+    return [issue]
+
+
 async def check_sqlite_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     """PRAGMA quick_check — file-level corruption. Report-only: there is no
     safe automatic repair for a damaged database file; restore from backup."""
@@ -882,11 +950,21 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     recognise stay untouched so the finding remains visible on the next run.
     """
     iso = isolation_where(agent_id=agent_id or None)
+    # bug-144: json_extract raises OperationalError 'malformed JSON' (not NULL) on
+    # any non-JSON source value, so a single malformed row aborts a whole-agent
+    # COUNT and the outer except then reports the entire agent clean — a silent
+    # false negative that also blocks this fixer. The json_valid(source) guard
+    # excludes malformed rows (they are check_invalid_json's responsibility) so
+    # the check keeps working for the rest of the corpus. It MUST come first:
+    # SQLite short-circuits AND left-to-right, so json_valid(source)=0 stops the
+    # row before json_extract is ever evaluated (a guard placed last still
+    # throws). The outer except stays as a last-resort backstop.
     try:
         bad = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
-                    WHERE (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
+                    WHERE json_valid(source)
+                    AND (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
                     OR json_extract(source, '$.type') IS NULL){iso.and_clause}""",
                 iso.params,
             )
@@ -903,7 +981,8 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
         # current source, not a single canonical sentinel.
         rows = await db.execute_fetchall(
             f"""SELECT id, source FROM memories
-                WHERE (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
+                WHERE json_valid(source)
+                AND (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
                 OR json_extract(source, '$.type') IS NULL) AND locked = 0{iso.and_clause}""",
             iso.params,
         )
@@ -938,11 +1017,17 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
 
 async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
+    # bug-144: same malformed-JSON hazard as check_invalid_source_type — a single
+    # non-JSON source row makes json_extract raise and the outer except reports
+    # the whole agent clean. json_valid(source) MUST lead so SQLite's
+    # left-to-right AND short-circuit skips json_extract on malformed rows (they
+    # stay check_invalid_json's responsibility); the outer except is a backstop.
     try:
         anon = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
-                    WHERE json_extract(source, '$.type') = 'User'
+                    WHERE json_valid(source)
+                    AND json_extract(source, '$.type') = 'User'
                     AND json_extract(source, '$.id') = ''
                     AND json_extract(source, '$.name') = ''{iso.and_clause}""",
                 iso.params,
@@ -1023,6 +1108,12 @@ HEALTH_CHECKS: list[Check] = [
     Check("null_episode_embedding", "warn", True, check_null_episode_embedding),
     Check("fts_integrity", "warn", True, check_fts_integrity),
     Check("schema_version", "critical", False, check_schema_version),
+    # bug-145: dedup_msg_id_index runs BEFORE schema_objects — it collapses the
+    # msg_id collisions that make the UNIQUE index CREATE fail, so once it
+    # (re)creates the index a single fix pass leaves schema_objects nothing to
+    # report (schema_objects' own fix only re-issues the identical, still-failing
+    # CREATE). Same ordering doctrine as oversized_content before duplicate_content.
+    Check("dedup_msg_id_index", "critical", True, check_dedup_msg_id_index),
     Check("schema_objects", "critical", True, check_schema_objects),
     Check("sqlite_integrity", "critical", False, check_sqlite_integrity),
     Check("axis_hygiene", "warn", False, check_axis_hygiene),

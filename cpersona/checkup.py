@@ -33,7 +33,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--db",
-        help="Path to the cpersona SQLite database (default: $CPERSONA_DB_PATH or ~/.claude/cpersona.db)",
+        help=(
+            "Path to the cpersona SQLite database. Resolution order: the --db "
+            "value, else $CPERSONA_DB_PATH, else the relative 'data/cpersona.db' "
+            "from the current working directory (the cpersona.config default). "
+            "When neither --db nor $CPERSONA_DB_PATH is set, the resolved "
+            "absolute path is printed to stderr before the run."
+        ),
     )
     parser.add_argument(
         "--agent", default="", help="Restrict agent-scoped checks to one agent_id (default: all)"
@@ -67,27 +73,40 @@ async def _run(args) -> int:
         # and crashed outright on a read-only file/filesystem.
         database.SKIP_BOOT_MIGRATIONS = True
 
-    report = await do_check_health(agent_id=args.agent, fix=args.fix)
+    try:
+        report = await do_check_health(agent_id=args.agent, fix=args.fix)
 
-    if args.deep:
-        if args.agent:
-            agents = [args.agent]
-        else:
-            from cpersona.isolation import isolation_where
+        if args.deep:
+            if args.agent:
+                agents = [args.agent]
+            else:
+                from cpersona.isolation import isolation_where
 
-            iso_all = isolation_where(agent_id=None)  # deliberate corpus-wide scan
-            async with connection() as db:
-                agents = [
-                    r[0]
-                    for r in await db.execute_fetchall(
-                        f"SELECT DISTINCT agent_id FROM memories{iso_all.where}", iso_all.params
-                    )
-                ]
-        report["deep"] = {}
-        for agent in agents:
-            report["deep"][agent] = await do_deep_check(agent, fix=args.fix)
-
-    await close_db()
+                iso_all = isolation_where(agent_id=None)  # deliberate corpus-wide scan
+                async with connection() as db:
+                    agents = [
+                        r[0]
+                        for r in await db.execute_fetchall(
+                            f"SELECT DISTINCT agent_id FROM memories{iso_all.where}",
+                            iso_all.params,
+                        )
+                    ]
+            report["deep"] = {}
+            for agent in agents:
+                report["deep"][agent] = await do_deep_check(agent, fix=args.fix)
+    except Exception as exc:
+        # C9: a corrupt DB, or one missing the `memories` table, is exactly the
+        # failure class this monitoring CLI exists to catch. Without this guard
+        # the exception propagated out of _run, the close_db() below was skipped,
+        # and aiosqlite's non-daemon worker thread (see database.close_db,
+        # bug-124) kept the interpreter alive so the process hung forever instead
+        # of emitting a nonzero exit. Report a readable error and gate as critical.
+        print(f"error: checkup failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        # Always release the read/write connections; each owns a non-daemon
+        # worker thread that would otherwise block interpreter shutdown.
+        await close_db()
 
     code = exit_code(report["severity_summary"], strict=args.strict)
 
@@ -125,6 +144,21 @@ def main(argv: list | None = None) -> int:
             print(f"error: database not found: {args.db}", file=sys.stderr)
             return 2
         os.environ["CPERSONA_DB_PATH"] = args.db
+    elif not os.environ.get("CPERSONA_DB_PATH"):
+        # C8: the help text no longer advertises a phantom '~/.claude/cpersona.db'
+        # default the code never implements. The real fallback is the relative
+        # 'data/cpersona.db' from cpersona.config, resolved against the current
+        # working directory. Announce the resolved absolute path so an unattended
+        # cron/systemd run cannot silently monitor (or, under --fix, create) a
+        # database other than the one the operator intended. This only reports the
+        # already-resolved path; it does not change the resolution behaviour.
+        from cpersona.config import DB_PATH
+
+        print(
+            "cpersona checkup: neither --db nor CPERSONA_DB_PATH is set; "
+            f"using default database {os.path.abspath(DB_PATH)}",
+            file=sys.stderr,
+        )
     return asyncio.run(_run(args))
 
 
