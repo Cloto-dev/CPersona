@@ -186,7 +186,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
                     "items": [{"id": f"mem:{mem_id}", "text": content}],
                 },
             )
-            # 252a2 audit C3: httpx does NOT raise on 4xx/5xx, so the discarded
+            # bug-146: httpx does NOT raise on 4xx/5xx, so the discarded
             # response let a backend failure (bad namespace, expired auth, 500)
             # still report embedded=True while the vector never landed —
             # contradicting the store tool contract ("embedded is true iff ...
@@ -708,7 +708,7 @@ async def _get_episode_boundary_ts(
     Used by the episode boundary penalty to distinguish current-session
     memories (no penalty) from prior-session memories (decayed score).
 
-    252a2 audit C4: the boundary is scoped to the SAME isolation axes as the
+    bug-147: the boundary is scoped to the SAME isolation axes as the
     recall (project_id/channel) via isolation_where, matching the sibling
     confidence-span scoping (the bug-107 fix). An agent-wide MAX(created_at) let
     an unrelated bucket's most-recent episode set the boundary for a

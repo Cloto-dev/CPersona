@@ -1,6 +1,6 @@
 """Regression tests for the 252-a2 audit item I6 (verify-issues gate).
 
-C1: scripts/verify-issues.sh serialized the 7 registry fields joined with '|'
+bug-152: scripts/verify-issues.sh serialized the 7 registry fields joined with '|'
 and re-read them with `IFS='|'`. Any field containing a literal pipe shifted
 every following field, so bug-012's pattern
 ``AFTER UPDATE ON (memories|episodes) BEGIN`` was mis-parsed: its verdict

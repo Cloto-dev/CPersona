@@ -1,6 +1,6 @@
-"""Regression tests for the 2.5.2a2 audit remediation, fix group I2 (C5, C17).
+"""Regression tests for the 2.5.2a2 audit remediation, fix group I2 (bug-144, bug-145).
 
-C5 (checks.py): ``check_invalid_source_type`` / ``check_anonymous_source`` wrapped
+bug-144 (checks.py): ``check_invalid_source_type`` / ``check_anonymous_source`` wrapped
 their whole-agent ``json_extract`` COUNT in ``except Exception: return []``. A
 single malformed-JSON source row makes SQLite's ``json_extract`` raise
 ``OperationalError: malformed JSON``, so the SELECT aborts and the bare except
@@ -9,7 +9,7 @@ mapped fixer. The fix adds a leading ``json_valid(source)`` guard (SQLite
 short-circuits AND left-to-right) so malformed rows are excluded (they remain
 ``check_invalid_json``'s responsibility) and the check keeps working.
 
-C17 (database.py + checks.py): a pre-v12 DB with two rows sharing a non-empty
+bug-145 (database.py + checks.py): a pre-v12 DB with two rows sharing a non-empty
 ``(agent_id, project_id, msg_id)`` but different content permanently blocks the
 ``idx_memories_dedup_msg_id`` UNIQUE index — the v12 migration swallowed the
 CREATE failure and no remediation path existed. Both sides now resolve the
@@ -64,13 +64,13 @@ async def temp_db():
 
 
 # ---------------------------------------------------------------------------
-# C5 — a malformed-JSON source row must not mask real source findings for the
+# bug-144 — a malformed-JSON source row must not mask real source findings for the
 # rest of the agent.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c5_malformed_source_does_not_mask_invalid_type_and_anonymous(temp_db):
+async def test_bug144_malformed_source_does_not_mask_invalid_type_and_anonymous(temp_db):
     db = temp_db
     agent = "c5"
     # (a) a malformed-JSON source row — check_invalid_json's territory, and the
@@ -112,7 +112,7 @@ async def test_c5_malformed_source_does_not_mask_invalid_type_and_anonymous(temp
 
 
 @pytest.mark.asyncio
-async def test_c5_check_invalid_json_still_owns_the_malformed_row(temp_db):
+async def test_bug144_check_invalid_json_still_owns_the_malformed_row(temp_db):
     """The guard hands malformed rows to check_invalid_json, which still sees them —
     the row is excluded from the source-type checks, not from detection entirely."""
     db = temp_db
@@ -128,13 +128,13 @@ async def test_c5_check_invalid_json_still_owns_the_malformed_row(temp_db):
 
 
 # ---------------------------------------------------------------------------
-# C17 (a) — the v12 migration resolves a pre-v12 msg_id collision so the UNIQUE
+# bug-145 (a) — the v12 migration resolves a pre-v12 msg_id collision so the UNIQUE
 # index is created, without deleting a row or touching content.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c17_v11_migration_resolves_msg_id_collision_without_deleting_rows():
+async def test_bug145_v11_migration_resolves_msg_id_collision_without_deleting_rows():
     async with _TempDB("i2_migration.db") as tmp:
         # Build a schema_version=11 DB from the real table DDL (the memories
         # columns are identical at v11) WITHOUT the v12 dedup indexes, so the
@@ -187,7 +187,7 @@ async def test_c17_v11_migration_resolves_msg_id_collision_without_deleting_rows
 
 
 # ---------------------------------------------------------------------------
-# C17 (b) — the health check detects the missing index and remediates it via the
+# bug-145 (b) — the health check detects the missing index and remediates it via the
 # same non-destructive collision resolution, through the public registry runner.
 # ---------------------------------------------------------------------------
 
@@ -207,7 +207,7 @@ async def _break_msg_id_index(db):
 
 
 @pytest.mark.asyncio
-async def test_c17_health_check_reports_missing_index(temp_db):
+async def test_bug145_health_check_reports_missing_index(temp_db):
     db = temp_db
     await _break_msg_id_index(db)
     # Run through the public runner (fix=False, isolated to this check).
@@ -221,7 +221,7 @@ async def test_c17_health_check_reports_missing_index(temp_db):
 
 
 @pytest.mark.asyncio
-async def test_c17_health_check_remediates_missing_index(temp_db):
+async def test_bug145_health_check_remediates_missing_index(temp_db):
     db = temp_db
     await _break_msg_id_index(db)
 

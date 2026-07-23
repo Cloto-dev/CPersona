@@ -1154,7 +1154,7 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
     except Exception as exc:
         cal = {"ok": False, "error": f"calibration raised: {exc}"}
     if not cal.get("ok"):
-        # C19 (bug-096 residual): compare-and-restore. do_calibrate_threshold awaits, so a
+        # bug-149 (bug-096 residual): compare-and-restore. do_calibrate_threshold awaits, so a
         # concurrent set_recall_precision for the SAME agent can apply + persist its own
         # value while this call is suspended. Roll back only if this call's own write is
         # still the live value; otherwise leave the concurrent writer's applied value in

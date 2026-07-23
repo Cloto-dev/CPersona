@@ -1,12 +1,12 @@
-"""Regression tests for the I3-memory fix group (252a2 audit clusters C3, C4).
+"""Regression tests for the I3-memory fix group (252a2 audit clusters bug-146, bug-147).
 
-C3 — do_store's remote-index branch discarded the POST response and set
+bug-146 — do_store's remote-index branch discarded the POST response and set
 ``embedded=True`` for ANY non-raising response, including a silent HTTP 4xx/5xx
 (httpx does not raise on those). A backend failure therefore reported
 ``embedded:true`` while the vector never landed, contradicting the store tool
 contract ("embedded is true iff ... the remote index push succeeded").
 
-C4 — ``_get_episode_boundary_ts`` computed MAX(created_at) over ALL of the
+bug-147 — ``_get_episode_boundary_ts`` computed MAX(created_at) over ALL of the
 agent's episodes, ignoring the recall's project_id/channel scope, and runs by
 default (EPISODE_PENALTY_ENABLED=true). A recall scoped to one bucket was
 decayed against another bucket's most-recent episode, so in-scope
@@ -40,7 +40,7 @@ async def _fresh_db():
 
 
 # ============================================================
-# C3 — remote /index push must gate ``embedded`` on the HTTP status
+# bug-146 — remote /index push must gate ``embedded`` on the HTTP status
 # ============================================================
 
 
@@ -65,7 +65,7 @@ class _FakeRemoteEmbeddingClient:
     """Drop-in for ``vector._embedding_client`` on the remote-index path.
 
     ``embed`` returns an empty vector so no LOCAL blob is written — the
-    ``embedded`` flag then reflects the remote push alone, isolating C3.
+    ``embedded`` flag then reflects the remote push alone, isolating bug-146.
     """
 
     mode = "remote"
@@ -83,7 +83,7 @@ class _FakeRemoteEmbeddingClient:
 
 
 @pytest.mark.asyncio
-async def test_c3_remote_index_500_reports_embedded_false(monkeypatch):
+async def test_bug146_remote_index_500_reports_embedded_false(monkeypatch):
     """A remote /index returning HTTP 500 -> store succeeds but embedded=False.
 
     Fail-first (unfixed): do_store discards the 500 response and sets
@@ -103,7 +103,7 @@ async def test_c3_remote_index_500_reports_embedded_false(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_c3_remote_index_200_reports_embedded_true(monkeypatch):
+async def test_bug146_remote_index_200_reports_embedded_true(monkeypatch):
     """Contrast: a remote /index returning HTTP 200 -> embedded=True.
 
     Guards against the fix over-correcting (never reporting success). Passes on
@@ -122,7 +122,7 @@ async def test_c3_remote_index_200_reports_embedded_true(monkeypatch):
 
 
 # ============================================================
-# C4 — the episode-boundary penalty must scope to the recall's project/channel
+# bug-147 — the episode-boundary penalty must scope to the recall's project/channel
 # ============================================================
 
 
@@ -141,7 +141,7 @@ def _memory_row(rrf_score: float, timestamp: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_c4_boundary_scoped_to_recall_project():
+async def test_bug147_boundary_scoped_to_recall_project():
     """An episode only in project A must not penalise a recall scoped to project B.
 
     Fail-first (unfixed): _get_episode_boundary_ts ignores project_id and returns
@@ -161,7 +161,7 @@ async def test_c4_boundary_scoped_to_recall_project():
 
 
 @pytest.mark.asyncio
-async def test_c4_boundary_scoped_to_recall_channel():
+async def test_bug147_boundary_scoped_to_recall_channel():
     """The same scoping must hold on the channel axis.
 
     Fail-first (unfixed): the channel of the episode is ignored, so a recall
@@ -179,10 +179,10 @@ async def test_c4_boundary_scoped_to_recall_channel():
 
 
 @pytest.mark.asyncio
-async def test_c4_in_scope_episode_still_penalises():
+async def test_bug147_in_scope_episode_still_penalises():
     """Non-vacuity guard: an IN-scope episode must still penalise prior-session rows.
 
-    Proves the C4 fix scopes the boundary rather than disabling the penalty
+    Proves the bug-147 fix scopes the boundary rather than disabling the penalty
     wholesale. Passes on both the buggy and fixed paths.
     """
     db = await get_db()

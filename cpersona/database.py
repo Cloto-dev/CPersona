@@ -574,7 +574,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
                          GROUP BY agent_id, project_id, channel, content
                      )"""
             )
-            # bug-C17: the content-grouped DELETE above collapses only exact
+            # bug-145: the content-grouped DELETE above collapses only exact
             # content duplicates, never msg_id collisions. A pre-v12 DB can hold
             # two rows sharing a non-empty (agent_id, project_id, msg_id) with
             # DIFFERENT content — the exact TOCTOU race the msg_id UNIQUE index

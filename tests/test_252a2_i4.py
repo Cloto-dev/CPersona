@@ -1,9 +1,9 @@
-"""Regressions for the I4-admin cluster (252-a2 audit): C6 and C19.
+"""Regressions for the I4-admin cluster (252-a2 audit): bug-148 and bug-149.
 
-C6: do_delete_episode must remove the ``ep:{id}`` vector from the remote index in
+bug-148: do_delete_episode must remove the ``ep:{id}`` vector from the remote index in
 remote mode, mirroring the bug-023 removal already done by do_delete_memory.
 
-C19: do_set_recall_precision's failure rollback must not clobber a concurrent
+bug-149: do_set_recall_precision's failure rollback must not clobber a concurrent
 successful writer for the same agent_id (compare-and-restore, not a blind restore
 of the pre-await snapshot).
 """
@@ -46,11 +46,11 @@ class _RecordingRemoteClient:
         self._client = _RecordingHttpClient(raise_on_post)
 
 
-# --- C6: delete_episode purges the remote vector index -----------------------
+# --- bug-148: delete_episode purges the remote vector index -----------------------
 
 
 @pytest.mark.asyncio
-async def test_c6_delete_episode_removes_remote_vector(clean_db, monkeypatch):
+async def test_bug148_delete_episode_removes_remote_vector(clean_db, monkeypatch):
     cur = await clean_db.execute(
         "INSERT INTO episodes (agent_id, summary) VALUES ('remote-ep', 'cell biology session')"
     )
@@ -71,7 +71,7 @@ async def test_c6_delete_episode_removes_remote_vector(clean_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_c6_delete_episode_resolves_owner_namespace_when_unscoped(clean_db, monkeypatch):
+async def test_bug148_delete_episode_resolves_owner_namespace_when_unscoped(clean_db, monkeypatch):
     """An unscoped delete (agent_id omitted) must still remove under the owner's namespace."""
     cur = await clean_db.execute(
         "INSERT INTO episodes (agent_id, summary) VALUES ('owner-x', 'owned episode')"
@@ -93,7 +93,7 @@ async def test_c6_delete_episode_resolves_owner_namespace_when_unscoped(clean_db
 
 
 @pytest.mark.asyncio
-async def test_c6_remote_removal_failure_does_not_fail_delete(clean_db, monkeypatch):
+async def test_bug148_remote_removal_failure_does_not_fail_delete(clean_db, monkeypatch):
     """A remote /remove fault is non-fatal: the SQLite delete still succeeds."""
     cur = await clean_db.execute(
         "INSERT INTO episodes (agent_id, summary) VALUES ('remote-ep', 'boom')"
@@ -113,11 +113,11 @@ async def test_c6_remote_removal_failure_does_not_fail_delete(clean_db, monkeypa
     assert rows == []
 
 
-# --- C19: precision-rollback must not clobber a concurrent writer -------------
+# --- bug-149: precision-rollback must not clobber a concurrent writer -------------
 
 
 @pytest.mark.asyncio
-async def test_c19_failed_rollback_preserves_concurrent_writer(monkeypatch):
+async def test_bug149_failed_rollback_preserves_concurrent_writer(monkeypatch):
     """R1 fails calibration after R2 applied+persisted a new beta for the same agent.
 
     R1's rollback must NOT restore its stale pre-await snapshot over R2's value.
@@ -145,7 +145,7 @@ async def test_c19_failed_rollback_preserves_concurrent_writer(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_c19_solo_failure_still_rolls_back_own_write(monkeypatch):
+async def test_bug149_solo_failure_still_rolls_back_own_write(monkeypatch):
     """No concurrent writer: R1's own failed write must still roll back to prev_beta."""
     agent = "solo-agent"
     monkeypatch.setattr(vector, "_agent_betas", {agent: 1.0})
@@ -162,7 +162,7 @@ async def test_c19_solo_failure_still_rolls_back_own_write(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_c19_solo_clear_failure_restores_absence(monkeypatch):
+async def test_bug149_solo_clear_failure_restores_absence(monkeypatch):
     """No concurrent writer, clearing an unset agent: failed clear must leave it unset."""
     agent = "unset-agent"
     monkeypatch.setattr(vector, "_agent_betas", {})

@@ -633,7 +633,7 @@ async def check_schema_objects(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_dedup_msg_id_index(db, agent_id: str, fix: bool) -> list[dict]:
-    """Detect and remediate a permanently-missing msg_id dedup UNIQUE index (C17).
+    """Detect and remediate a permanently-missing msg_id dedup UNIQUE index (bug-145).
 
     check_schema_objects already flags idx_memories_dedup_msg_id when it is
     missing, but its fix only re-issues the identical CREATE, which fails
@@ -950,7 +950,7 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     recognise stay untouched so the finding remains visible on the next run.
     """
     iso = isolation_where(agent_id=agent_id or None)
-    # bug-C5: json_extract raises OperationalError 'malformed JSON' (not NULL) on
+    # bug-144: json_extract raises OperationalError 'malformed JSON' (not NULL) on
     # any non-JSON source value, so a single malformed row aborts a whole-agent
     # COUNT and the outer except then reports the entire agent clean — a silent
     # false negative that also blocks this fixer. The json_valid(source) guard
@@ -1017,7 +1017,7 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
 
 async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
-    # bug-C5: same malformed-JSON hazard as check_invalid_source_type — a single
+    # bug-144: same malformed-JSON hazard as check_invalid_source_type — a single
     # non-JSON source row makes json_extract raise and the outer except reports
     # the whole agent clean. json_valid(source) MUST lead so SQLite's
     # left-to-right AND short-circuit skips json_extract on malformed rows (they
@@ -1108,7 +1108,7 @@ HEALTH_CHECKS: list[Check] = [
     Check("null_episode_embedding", "warn", True, check_null_episode_embedding),
     Check("fts_integrity", "warn", True, check_fts_integrity),
     Check("schema_version", "critical", False, check_schema_version),
-    # bug-C17: dedup_msg_id_index runs BEFORE schema_objects — it collapses the
+    # bug-145: dedup_msg_id_index runs BEFORE schema_objects — it collapses the
     # msg_id collisions that make the UNIQUE index CREATE fail, so once it
     # (re)creates the index a single fix pass leaves schema_objects nothing to
     # report (schema_objects' own fix only re-issues the identical, still-failing

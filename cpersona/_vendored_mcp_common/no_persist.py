@@ -40,7 +40,7 @@ manager runs a single process serving every connected client — the one
 global is SHARED across all sessions. One client's ``pause()`` then turns
 writes into no-ops for every other session until ``resume()`` or the TTL
 elapses, and those sessions receive no signal. There is deliberately no
-per-session keying (C2); callers surface this blast radius via the ``scope``
+per-session keying (bug-151); callers surface this blast radius via the ``scope``
 field the tool handlers add to the pause/resume/status responses, rather than
 this module pretending per-process implies per-session.
 

@@ -1,10 +1,10 @@
 """Regression tests for the 2.5.2a2 I5 (server/env) fix group.
 
-C10 — the HTTP port and embedding-timeout env reads must route through the
+bug-150 — the HTTP port and embedding-timeout env reads must route through the
 bug-133 warn-and-fall-back-to-default parse instead of a bare int() that
 crashes startup on a malformed value.
 
-C2 — the no-persist controls must surface that the pause is a process-global
+bug-151 — the no-persist controls must surface that the pause is a process-global
 flag (an HTTP deployment shares one process across every connected session),
 so the pause/resume/status responses carry an additive ``scope`` key.
 """
@@ -27,7 +27,7 @@ from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 
 
 # ============================================================
-# C10 — malformed numeric env reads warn + fall back (no crash)
+# bug-150 — malformed numeric env reads warn + fall back (no crash)
 # ============================================================
 
 
@@ -85,7 +85,7 @@ def test_public_parse_wrappers_match_private(monkeypatch):
 
 
 # ============================================================
-# C2 — no-persist controls expose the process-global scope
+# bug-151 — no-persist controls expose the process-global scope
 # ============================================================
 
 
