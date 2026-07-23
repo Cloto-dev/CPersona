@@ -62,3 +62,31 @@ jobs:
         run: uv sync --dev --python ${{ matrix.python-version }}
       - name: Run tests
         run: uv run pytest
+
+  mutation-proof:
+    # Goal #181 (first increment): the 2.5.2 refactor seams are guarded by
+    # scripts/mutation-proof.py, which applies each hand-authored mutation, runs
+    # the suite, and asserts the mutant is CAUGHT (or is a documented equivalent
+    # mutant). A green suite is not evidence it would go RED on a real regression;
+    # this job turns that evidence into a gate. The behaviour-golden differential
+    # (scripts/capture-behaviour.py) is already gated by the `test` job — it runs
+    # as tests/test_equivalence_252.py under pytest — so it needs no step here.
+    #
+    # Pinned to 3.13 only to bound cost: the mutations exercise handler logic, not
+    # stdlib version edges, so a second Python version would add runtime without
+    # adding signal.
+    runs-on: ubuntu-latest
+    # The script runs the suite up to ~13 times, but caught mutants fail fast (-x)
+    # and every test is bounded by the 60s per-test timeout; local wall time is
+    # ~12s. 15 minutes is a generous hang ceiling, matching the `test` job.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync dependencies (incl. test toolchain)
+        run: uv sync --dev --python 3.13
+      - name: Mutation proof (2.5.2 refactor seams)
+        run: uv run --frozen python scripts/mutation-proof.py

@@ -574,6 +574,31 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
                          GROUP BY agent_id, project_id, channel, content
                      )"""
             )
+            # bug-C17: the content-grouped DELETE above collapses only exact
+            # content duplicates, never msg_id collisions. A pre-v12 DB can hold
+            # two rows sharing a non-empty (agent_id, project_id, msg_id) with
+            # DIFFERENT content — the exact TOCTOU race the msg_id UNIQUE index
+            # was added to close (concurrent stores both pass the SELECT-probe
+            # dedup and INSERT). Their content differs, so the DELETE leaves them
+            # and the partial UNIQUE index CREATE below fails permanently (the
+            # per-index try/except swallows it as a warning and no remediation
+            # path exists). Resolve non-destructively BEFORE creating the index:
+            # keep the newest (MAX id) colliding row's msg_id and blank the older
+            # unlocked colliders' msg_id ('' is excluded by the index's
+            # WHERE msg_id != ''). Never delete a row, never touch content, and
+            # honour the locked invariant (bug-098) — a locked collider still
+            # blocks the index, the same "locked row wins" fallback as content.
+            await db.execute(
+                """UPDATE memories
+                   SET msg_id = ''
+                   WHERE locked = 0
+                     AND msg_id != ''
+                     AND id NOT IN (
+                         SELECT MAX(id) FROM memories
+                         WHERE msg_id != ''
+                         GROUP BY agent_id, project_id, msg_id
+                     )"""
+            )
             for index_sql in (
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_content "
                 "ON memories(agent_id, project_id, channel, content)",

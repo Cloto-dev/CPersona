@@ -179,13 +179,22 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         try:
             base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
-            await vector._embedding_client._client.post(
+            resp = await vector._embedding_client._client.post(
                 f"{base_url}/index",
                 json={
                     "namespace": f"cpersona:{agent_id}",
                     "items": [{"id": f"mem:{mem_id}", "text": content}],
                 },
             )
+            # 252a2 audit C3: httpx does NOT raise on 4xx/5xx, so the discarded
+            # response let a backend failure (bad namespace, expired auth, 500)
+            # still report embedded=True while the vector never landed —
+            # contradicting the store tool contract ("embedded is true iff ...
+            # the remote index push succeeded"). raise_for_status() routes a
+            # non-2xx into the same except as a transport error (remote_embedded
+            # stays False, logged at the same debug level), matching every
+            # sibling remote call (search.py / vector.py / embedding_client.py).
+            resp.raise_for_status()
             remote_embedded = True
         except Exception as e:
             logger.debug("Remote index failed (non-fatal): %s", e)
@@ -688,15 +697,29 @@ def _episode_boundary_factor(
     return max(EPISODE_DECAY_FLOOR, math.exp(-EPISODE_DECAY_RATE * hours_before))
 
 
-async def _get_episode_boundary_ts(db: aiosqlite.Connection, agent_id: str) -> datetime | None:
+async def _get_episode_boundary_ts(
+    db: aiosqlite.Connection,
+    agent_id: str,
+    project_id: str | None = None,
+    channel: str = "",
+) -> datetime | None:
     """Return the latest episode's created_at as the current-session boundary.
 
     Used by the episode boundary penalty to distinguish current-session
     memories (no penalty) from prior-session memories (decayed score).
+
+    252a2 audit C4: the boundary is scoped to the SAME isolation axes as the
+    recall (project_id/channel) via isolation_where, matching the sibling
+    confidence-span scoping (the bug-107 fix). An agent-wide MAX(created_at) let
+    an unrelated bucket's most-recent episode set the boundary for a
+    tightly-scoped recall, penalising in-scope current-session memories against
+    another project/channel. project_id=None / channel='' keep the agent-wide
+    read (corpus-wide callers, e.g. gate calibration).
     """
+    scope = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     rows = await db.execute_fetchall(
-        "SELECT created_at FROM episodes WHERE agent_id=? ORDER BY created_at DESC LIMIT 1",
-        (agent_id,),
+        f"SELECT created_at FROM episodes{scope.where} ORDER BY created_at DESC LIMIT 1",
+        scope.params,
     )
     if not rows or not rows[0][0]:
         return None
@@ -781,7 +804,9 @@ async def _apply_recall_scoring(
     # v2.4.14: Episode boundary soft penalty (L3) — weaken cross-session memories
     # before quality gate so current-session signals take precedence.
     if EPISODE_PENALTY_ENABLED:
-        episode_boundary_ts = await _get_episode_boundary_ts(db, agent_id)
+        episode_boundary_ts = await _get_episode_boundary_ts(
+            db, agent_id, project_id=project_id, channel=channel
+        )
         if episode_boundary_ts is not None:
             penalized = False
             for r in results:

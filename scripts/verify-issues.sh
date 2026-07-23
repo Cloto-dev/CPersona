@@ -70,9 +70,65 @@ stale=0
 fixed=0
 errors=0
 
-# Extract issues from JSON using python3
-# Output format: id|severity|file|pattern|expected|status|summary
-while IFS='|' read -r id severity file pattern expected status summary; do
+# Extract issues from JSON using python3.
+# Records are serialized with an ASCII unit separator (US, \x1f) between the 7
+# fields instead of '|'. Issue patterns legitimately contain '|' (e.g. bug-012's
+# regex 'AFTER UPDATE ON (memories|episodes) BEGIN'); a '|' join shifted every
+# following field so that issue's verdict silently evaporated while the gate
+# still exited 0. US never occurs in the registry's human-authored JSON, and the
+# emitter asserts it (and newlines) are absent from every field so a future entry
+# cannot reintroduce the transport corruption undetected.
+# Output format: id<US>severity<US>file<US>pattern<US>expected<US>status<US>summary
+
+# Convert path for native Python on Windows (MSYS /c/ → C:/)
+_REGISTRY_PY="$REGISTRY"
+if command -v cygpath &>/dev/null; then
+    _REGISTRY_PY="$(cygpath -m "$REGISTRY")"
+fi
+
+# Serialize the registry into US-separated records. A field carrying the
+# separator (or a newline) aborts the emitter non-zero; under `set -e` that fails
+# the whole gate loudly instead of dropping a row and exiting 0.
+issues_tsv="$(
+    PYTHONUTF8=1 $PYTHON_CMD -c "
+import json, sys
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+SEP = '\x1f'
+FIELDS = ('id', 'severity', 'file', 'pattern', 'expected', 'status', 'summary')
+DEFAULTS = {'severity': '?', 'expected': 'present', 'status': 'unknown'}
+with open('$_REGISTRY_PY', encoding='utf-8') as f:
+    data = json.load(f)
+lines = []
+for issue in data.get('issues', []):
+    values = [str(issue.get(name, DEFAULTS.get(name, ''))) for name in FIELDS]
+    for name, value in zip(FIELDS, values):
+        if SEP in value or '\n' in value or '\r' in value:
+            sys.stderr.write(
+                'FATAL: issue %r field %r contains a reserved record separator '
+                '(unit-separator/newline); cannot safely serialize to the shell.\n'
+                % (issue.get('id', '?'), name)
+            )
+            sys.exit(3)
+    lines.append(SEP.join(values))
+for line in lines:
+    print(line)
+"
+)"
+
+# Independent record count for the post-loop transport reconciliation below.
+registry_count="$(
+    PYTHONUTF8=1 $PYTHON_CMD -c "
+import json
+with open('$_REGISTRY_PY', encoding='utf-8') as f:
+    data = json.load(f)
+print(len(data.get('issues', [])))
+"
+)"
+
+rows_read=0
+if [[ -n "$issues_tsv" ]]; then
+while IFS=$'\x1f' read -r id severity file pattern expected status summary; do
+    rows_read=$((rows_read + 1))
     # Apply filter
     if [[ -n "$FILTER" && "$status" != "$FILTER" ]]; then
         continue
@@ -128,29 +184,18 @@ while IFS='|' read -r id severity file pattern expected status summary; do
         fi
     fi
 
-done < <(
-    # Convert path for native Python on Windows (MSYS /c/ → C:/)
-    _REGISTRY_PY="$REGISTRY"
-    if command -v cygpath &>/dev/null; then
-        _REGISTRY_PY="$(cygpath -m "$REGISTRY")"
-    fi
-    PYTHONUTF8=1 $PYTHON_CMD -c "
-import json, sys, os
-sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-with open('$_REGISTRY_PY', encoding='utf-8') as f:
-    data = json.load(f)
-for issue in data.get('issues', []):
-    print('|'.join([
-        issue.get('id', ''),
-        issue.get('severity', '?'),
-        issue.get('file', ''),
-        issue.get('pattern', ''),
-        issue.get('expected', 'present'),
-        issue.get('status', 'unknown'),
-        issue.get('summary', ''),
-    ]))
-"
-)
+done <<< "$issues_tsv"
+fi
+
+# Transport reconciliation: every serialized registry record must have been read
+# back. A mismatch means the registry->shell hand-off dropped or split a record
+# (the class of bug that let bug-012 evaporate) -- fail loudly, never exit 0.
+if [[ "$rows_read" -ne "$registry_count" ]]; then
+    echo ""
+    echo -e "${RED}[ERROR]${NC} Transport mismatch: serialized $registry_count registry record(s) but parsed $rows_read."
+    echo -e "         The registry-to-shell serialization dropped or split a record; aborting."
+    exit 1
+fi
 
 # Summary
 echo ""
