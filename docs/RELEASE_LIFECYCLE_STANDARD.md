@@ -1,4 +1,4 @@
-# Release Lifecycle Standard (v1.2)
+# Release Lifecycle Standard (v1.3)
 
 A three-tier release lifecycle and support standard for Cloto-family
 projects. This document is the **specification**; a repository adopting it
@@ -141,6 +141,27 @@ In that state:
 - The first certification replaces the alias with a real pin; from then on
   §2.3–§2.5 apply unchanged.
 
+### 2.8 Audit finding identifiers
+
+Release-gate audits (the pre-release ladder's large-scale reviews, §2.1)
+produce finding reports; adopting repositories also keep a machine-checked
+issue registry (cpersona: `qa/issue-registry.json`) whose ids (`bug-NNN`) are
+the canonical, permanent identifiers for defects. Two rules keep the two id
+spaces from corrupting each other:
+
+- **Audit reports use severity-initial finding ids** — `C-NN` (CRITICAL),
+  `H-NN` (HIGH), `M-NN` (MEDIUM), `L-NN` (LOW), zero-padded, unique within
+  one audit. The bare `C` prefix is reserved for CRITICAL; it MUST NOT be
+  used for anything else (e.g. "cluster"). Workflow-internal working ids
+  (cluster numbers, finder ids) may exist while the audit runs but are not
+  the report's public finding ids.
+- **Only canonical ids enter the tree.** Code comments and fix markers, test
+  names, and registry patterns refer to defects exclusively by registry id
+  (`bug-NNN`). Canonical ids are assigned BEFORE fix implementation begins,
+  so fix briefs, regression tests, and registry entries are born canonical.
+  Audit ids may accompany canonical ids as cross-references in PR bodies and
+  audit reports (`bug-114 (H-03)`); they never appear alone in code.
+
 ## 3. Required artifacts (per adopting repository)
 
 1. `SUPPORT.md` — operative policy: tier table, lifecycle summary, and the
@@ -195,11 +216,18 @@ clean cycle passes.
 
 | Repository | Standard version | Adopted | Notes |
 | --- | --- | --- | --- |
-| cpersona | v1.2 | 2026-07-09 | Pilot / reference implementation (policy operation). Tracks the newest standard version (canonical home). |
-| ClotoCore | v1.1 | 2026-07-12 | Second pilot / reference implementation (structural enforcement via update-channel + signed-manifest pipeline, `docs/RELEASE_PIPELINE_DESIGN.md`). |
+| cpersona | v1.3 | 2026-07-09 | Pilot / reference implementation (policy operation). Tracks the newest standard version (canonical home). |
+| ClotoCore | v1.3 | 2026-07-12 | Second pilot / reference implementation (structural enforcement via update-channel + signed-manifest pipeline, `docs/RELEASE_PIPELINE_DESIGN.md`). |
 
 ## 8. Changelog
 
+- **v1.3 (2026-07-23)** — Audit finding-identifier convention (§2.8):
+  severity-initial report ids, canonical-registry-id-only in the tree,
+  canonical assignment before implementation. Surfaced by the cpersona
+  2.5.2a2 remediation, where a cluster-numbered `C##` scheme collided with
+  the severity-initial lineage (a cluster id was misread as CRITICAL) and
+  audit working ids leaked into code comments, test names, and registry
+  patterns as pseudo-markers, requiring a canonicalization pass.
 - **v1.2 (2026-07-16)** — Risk-triggered pre-release ladder criteria (§2.1)
   and in-line feature-release rule (§2.6), surfaced by the 2.5.1 planning
   discussion (server-served operating context, an additive feature targeting a
