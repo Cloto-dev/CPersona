@@ -324,19 +324,30 @@ registry = ToolRegistry("cloto-mcp-cpersona", instructions=operating_context.ins
 async def do_pause_persistence(ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS) -> dict:
     """Pause persistence for this MCP server process for a TTL window."""
     try:
-        return no_persist.pause(ttl_seconds=ttl_seconds)
+        result = no_persist.pause(ttl_seconds=ttl_seconds)
     except ValueError as e:
         return {"error": str(e)}
+    # C2: the no-persist flag is a single process-global attribute, not
+    # per-session. Under the streamable-HTTP transport one process serves every
+    # connected client, so a pause here silences writes for all of them. Surface
+    # that blast radius explicitly rather than letting callers assume it is
+    # scoped to their own session.
+    result["scope"] = "process"
+    return result
 
 
 async def do_resume_persistence() -> dict:
     """Re-enable persistence immediately, clearing any active TTL."""
-    return no_persist.resume()
+    result = no_persist.resume()
+    result["scope"] = "process"  # C2: process-global, see do_pause_persistence.
+    return result
 
 
 async def do_persistence_status() -> dict:
     """Report whether write tools are currently being skipped, and the TTL remaining."""
-    return no_persist.status()
+    result = no_persist.status()
+    result["scope"] = "process"  # C2: process-global, see do_pause_persistence.
+    return result
 
 
 registry.auto_tool(
@@ -346,10 +357,16 @@ registry.auto_tool(
     "update_profile, import_memories, merge_memories, calibrate_threshold) return "
     'no-op responses with `persisted: false` and `id: "no-persist"` instead of '
     "writing to the database. Read tools (recall, list_*, get_profile, etc.) are "
-    "unaffected. **This affects only this MCP server (cpersona). Call cscheduler's "
-    "pause_persistence too if you want both paused.** Use for benchmarking, AB "
-    "testing, or ephemeral exploration where memory contamination must be avoided. "
-    "Default TTL: 1800 seconds (30 minutes); upper bound: 86400 seconds (1 day).",
+    "unaffected. **The pause is PROCESS-WIDE, not per-session (response `scope`: "
+    '"process"): the flag is one module-global on the server process. On a '
+    "streamable-HTTP deployment a single process serves every connected client, so "
+    "pausing here silences writes for ALL connected sessions until resume or TTL "
+    "elapse — and the other sessions get no signal. Under stdio (one process per "
+    "client) it is effectively session-scoped.** This affects only this MCP server "
+    "(cpersona); call cscheduler's pause_persistence too if you want both paused. "
+    "Use for benchmarking, AB testing, or ephemeral exploration where memory "
+    "contamination must be avoided. Default TTL: 1800 seconds (30 minutes); upper "
+    "bound: 86400 seconds (1 day).",
     {
         "type": "object",
         "properties": {
@@ -370,7 +387,10 @@ registry.auto_tool(
 registry.auto_tool(
     "resume_persistence",
     "Re-enable persistence immediately, clearing any active no-persist TTL. "
-    "Returns was_active=true if persistence was paused before this call.",
+    "Returns was_active=true if persistence was paused before this call. **The "
+    'flag is PROCESS-WIDE (response `scope`: "process"): on a streamable-HTTP '
+    "deployment this re-enables writes for every connected session sharing the "
+    "process, not just the caller's.**",
     {"type": "object", "properties": {}},
     do_resume_persistence,
     [],
@@ -379,7 +399,10 @@ registry.auto_tool(
 
 registry.auto_tool(
     "persistence_status",
-    "Report whether persistence is currently paused and the TTL remaining (in seconds).",
+    "Report whether persistence is currently paused and the TTL remaining (in "
+    'seconds). The reported state is PROCESS-WIDE (response `scope`: "process"): '
+    "on a streamable-HTTP deployment it reflects the one flag shared by every "
+    "connected session, so `paused: true` may have been set by a different session.",
     {"type": "object", "properties": {}},
     do_persistence_status,
     [],
@@ -1343,6 +1366,28 @@ def _assert_safe_http_bind(auth_token: str, host: str) -> None:
     )
 
 
+def _resolve_http_port() -> int:
+    """Resolve CPERSONA_HTTP_PORT via the bug-133 warn+fall-back-to-default parse.
+
+    C10: a bare int() here raised an uncaught ValueError on a malformed value
+    (unit suffix, stray quote, trailing junk), aborting the HTTP transport
+    before it could bind. Route through config.parse_int so a bad value warns
+    and falls back to the default instead of crashing startup.
+    """
+    return config.parse_int("CPERSONA_HTTP_PORT", 8402)
+
+
+def _resolve_embedding_timeout() -> int:
+    """Resolve CPERSONA_EMBEDDING_TIMEOUT_SECS via the bug-133 warn+fall-back parse.
+
+    C10: this read runs in main() whenever embeddings are enabled, before the
+    transport is selected, so a bare int() raising on a malformed value crashed
+    BOTH the stdio and streamable-http transports. config.parse_int warns and
+    falls back to the default instead.
+    """
+    return config.parse_int("CPERSONA_EMBEDDING_TIMEOUT_SECS", 30)
+
+
 async def _run_http_server():
     """Run CPersona as a Streamable HTTP MCP server with Bearer token auth."""
     import contextlib
@@ -1395,7 +1440,7 @@ async def _run_http_server():
     # Secure by default: bind loopback unless an operator opts into a wider
     # interface. A public bind additionally requires CPERSONA_AUTH_TOKEN (bug-017).
     host = os.environ.get("CPERSONA_HTTP_HOST", "127.0.0.1")
-    port = int(os.environ.get("CPERSONA_HTTP_PORT", "8402"))
+    port = _resolve_http_port()
     _assert_safe_http_bind(auth_token, host)
     logger.info("Starting Streamable HTTP on %s:%d", host, port)
 
@@ -1428,7 +1473,7 @@ async def main():
             model=EMBEDDING_MODEL,
             cache_size=EMBEDDING_CACHE_SIZE,
             cache_ttl=EMBEDDING_CACHE_TTL,
-            timeout=int(os.environ.get("CPERSONA_EMBEDDING_TIMEOUT_SECS", "30")),
+            timeout=_resolve_embedding_timeout(),
         )
         await vector._embedding_client.initialize()
         logger.info("Embedding client ready (mode=%s)", EMBEDDING_MODE)

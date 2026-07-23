@@ -30,6 +30,18 @@ def _parse_float(env_key: str, default: float) -> float:
         return default
 
 
+# C10: public wrappers so entrypoint env reads that live outside config.py
+# (server.py's HTTP port and embedding timeout) can route through the same
+# bug-133 warn-and-fall-back-to-default path instead of a bare int()/float()
+# that would raise an opaque ValueError and abort startup before listening.
+def parse_int(env_key: str, default: int) -> int:
+    return _parse_int(env_key, default)
+
+
+def parse_float(env_key: str, default: float) -> float:
+    return _parse_float(env_key, default)
+
+
 DB_PATH = os.environ.get("CPERSONA_DB_PATH", "data/cpersona.db")
 # bug-054: optional confinement root for export_memories' caller-supplied
 # output_path. When set, an export's resolved realpath MUST stay within this

@@ -5,9 +5,10 @@ Used by CPersona & CScheduler to let an interactive client (typically
 Claude Code) declare "this session is ephemeral — do not write to my
 memory or scope/goal/task store" before running benchmarks, AB tests, or
 throwaway exploration. The flag is module-level state, scoped to the
-MCP server process; no filesystem, no IPC, no cross-server sync. Each
-server keeps its own flag — clients that want both paused MUST call
-``pause_persistence`` on each.
+MCP server process (which is NOT the same as a session — see Concurrency
+& scope); no filesystem, no IPC, no cross-server sync. Each server keeps
+its own flag — clients that want both paused MUST call ``pause_persistence``
+on each.
 
 Semantics
 ---------
@@ -26,14 +27,22 @@ Semantics
   top of a handler and reuse the boolean for the duration of that call
   (avoids TTL-edge flips inside long bulk operations).
 
-Concurrency
------------
+Concurrency & scope
+-------------------
 ``_no_persist_until`` is a single Python attribute; reads and writes are
-atomic under the GIL, so no ``asyncio.Lock`` is required. Module state
-is intentionally per-process: an MCP server restart loses the flag,
-which is the correct semantics — the user's intent ("don't persist *this
-session*") is naturally session-scoped, and a respawned server is
-effectively a new session.
+atomic under the GIL, so no ``asyncio.Lock`` is required.
+
+The flag is PROCESS-GLOBAL, and a process is not the same as a session in
+general. Under a one-process-per-client transport (stdio) the two coincide:
+the flag is effectively session-scoped and an MCP server restart correctly
+drops it. But under a multiplexed transport — the streamable-HTTP session
+manager runs a single process serving every connected client — the one
+global is SHARED across all sessions. One client's ``pause()`` then turns
+writes into no-ops for every other session until ``resume()`` or the TTL
+elapses, and those sessions receive no signal. There is deliberately no
+per-session keying (bug-151); callers surface this blast radius via the ``scope``
+field the tool handlers add to the pause/resume/status responses, rather than
+this module pretending per-process implies per-session.
 
 Versioning: introduced in cloto-mcp-cscheduler 0.2.6 / cloto-mcp-cpersona
 2.4.19.
