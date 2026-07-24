@@ -90,3 +90,45 @@ jobs:
         run: uv sync --dev --python 3.13
       - name: Mutation proof (2.5.2 refactor seams)
         run: uv run --frozen python scripts/mutation-proof.py
+
+  mutation-diff:
+    # Goal #181 / Task #294 (L1): ADVISORY, non-blocking mutation testing scoped
+    # to the PR's production diff (cosmic-ray + cr-filter-git). It NEVER fails the
+    # build — the script always exits 0 and continue-on-error is a second belt —
+    # because this lane exists to MEASURE (survivor counts, noise rate, added CI
+    # time), not to gate. The blocking flip is a later, deliberate decision (#299
+    # / L6) fed by these numbers. Distinct from the mutation-proof job above,
+    # which runs hand-authored sentinel mutants and IS blocking.
+    #
+    # PR-only: a push to master has no meaningful diff base here, and the git
+    # filter needs the base branch to scope against.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    # cosmic-ray runs the suite once per in-scope mutant; the diff scope + the
+    # --cap in the script bound that. 20 minutes is a generous hang ceiling.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the git filter can diff against the base branch.
+          fetch-depth: 0
+      - name: Ensure base ref is present
+        run: git fetch --no-tags origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync dependencies (test toolchain + cosmic-ray)
+        run: uv sync --group dev --group mutation --python 3.13
+      - name: Mutation-diff (advisory)
+        env:
+          MUTATION_DIFF_BASE: origin/${{ github.base_ref }}
+        run: uv run python scripts/mutation-diff.py --json-out mutation-diff-report.json
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-diff-report
+          path: mutation-diff-report.json
+          if-no-files-found: warn

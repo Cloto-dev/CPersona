@@ -17,3 +17,10 @@ build/
 /trackb_results*/
 /lmeb_results*/
 /*.log
+
+# Advisory mutation-diff lane scratch (CSC #294): the cosmic-ray session dir and
+# the locally-written report. The session dir name avoids a *.sqlite suffix on
+# purpose (the local db-guard hook flags those); CI uploads the report as an
+# artifact rather than committing it.
+/.mutation-diff/
+/mutation-diff-report.json
