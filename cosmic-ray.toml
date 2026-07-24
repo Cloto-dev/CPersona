@@ -1,0 +1,50 @@
+# Advisory mutation-diff lane — cosmic-ray config (an earlier decision, an earlier decision / L1).
+#
+# This drives the NON-BLOCKING, PR-diff-scoped mutation run wired by
+# scripts/mutation-diff.py. It is deliberately distinct from the two other
+# mutation surfaces in this repo:
+#   - scripts/mutation-proof.py  — hand-authored sentinel mutants for the
+#     refactor-critical invariants (the L5 lane, always blocking).
+#   - tests/test_equivalence_252.py — behaviour-golden differential.
+# This file is the automatic, generated-mutant lane whose job is to MEASURE
+# (survivors, noise rate, added CI time), not yet to gate. The blocking flip is
+# a later, deliberate decision (#299 / L6) fed by these numbers.
+#
+# Ground truth for the schema below (verified against cosmic-ray 8.4.6 source,
+# 2026-07-24): load_config() returns the ["cosmic-ray"] table as its root, so
+# filters live under [cosmic-ray.filters.*]; the git filter runs
+# `git diff --relative -U0 <branch> .` and skips every mutant whose line range
+# does not intersect the changed lines.
+
+[cosmic-ray]
+module-path = "cpersona"
+# Per-mutant test-command timeout (seconds). The suite is hermetic and finishes
+# in ~12s locally; pytest-timeout=60 bounds any single hung test first, so this
+# is only a coarse backstop against a mutant that wedges the whole run.
+timeout = 120.0
+# Subtracted via glob.glob(pattern, recursive=True). The vendored mcp_common
+# snapshot is upstream-owned (changes belong in mgp-py, see AGENTS.md), and the
+# shipped agent skills are not runtime code — neither is ours to mutate here.
+excluded-modules = [
+    "cpersona/_vendored_mcp_common/**/*.py",
+    "cpersona/skills/**/*.py",
+]
+# --frozen keeps uv from re-resolving on every mutant (deterministic + fast);
+# -x aborts at the first failing test so a killed mutant returns quickly.
+test-command = "uv run --frozen pytest -x -q"
+
+[cosmic-ray.distributor]
+name = "local"
+
+[cosmic-ray.filters.git-filter]
+# The PR base. scripts/mutation-diff.py overrides this at runtime (--base) so the
+# diff it computes and the diff the filter applies always agree; the value here
+# is the CI default (PRs target master).
+branch = "origin/master"
+
+[cosmic-ray.filters.operators-filter]
+# Advisory stage ships with NO operators suppressed. The point of #294 is to
+# gather the noise data (#299 / L6) that tells us which operators are pure noise
+# for this codebase before excluding any — suppressing pre-emptively would bias
+# the very measurement this lane exists to take.
+exclude-operators = []
