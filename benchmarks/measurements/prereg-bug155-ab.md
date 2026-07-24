@@ -105,3 +105,34 @@ Results land under `benchmarks/measurements/` next to this document, with
 the pinned thresholds, run commands, and per-task tables. The summary quotes
 exactly the pre-registered metrics above, in that order, before any
 exploratory observation.
+
+## Amendment 1 (2026-07-24, before any decision run completed)
+
+Two corrections, recorded openly because the original text cannot be
+executed as written:
+
+1. **The cost-fallback rule was mis-specified.** "The six tasks of the
+   published latency-benchmark cells" does not exist: the latency benchmark's
+   six cells are (corpus size 1k/10k/100k) × (local/remote) measurement
+   points, not a task list. The fallback needed a replacement rule.
+2. **The fallback triggered.** The first full run stalled inside
+   LongMemEval's 237,655-doc store (~2 h for 24% of one corpus on one side);
+   the 4-run matrix projected far beyond the pre-registered ~24 h ceiling.
+
+**Replacement rule (objective, size-keyed):** the task set is reduced to
+every task whose total corpus (all subtasks, counted from
+`eval_data/*/corpus*.jsonl` line counts alone) is ≤ 50,000 documents —
+16 tasks: Proced_mem_bench, ReMe, Gorilla, MLDR, LMEB_SciFact, ESGReports,
+EPBench, CovidQA, LoCoMo, TMD, REALTALK, ToolBench, PeerQA, DeepPlanning,
+KnowMeBench, LooGLE. Excluded by size: QASPER (65k), NovelQA (79k),
+MemGovern (121k), LongMemEval (238k), ConvoMem (500k), MemBench (929k).
+
+**Disclosure of what had been seen when this amendment was written:** the
+ReMe pilot (both sides) and one-sided (master-only) partials for EPBench,
+KnowMeBench and LoCoMo. The replacement rule keys on corpus size measured
+from the dataset files — a property fixed before any run — and excludes
+nothing whose A/B outcome was known. Known coverage cost: QASPER (the
+strongest lexical-rescue task in the #153 model-dependence data) is
+excluded by size; if the MiniLM secondary triggers, it also runs the
+16-task set, and any QASPER-specific claim is out of scope for this
+measurement.
