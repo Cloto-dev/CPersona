@@ -47,7 +47,11 @@ import sqlite3
 import subprocess
 import sys
 import tomllib
+from datetime import date
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mutation_waivers  # noqa: E402  — sibling script, not an installable package
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = REPO / "cosmic-ray.toml"
@@ -64,19 +68,11 @@ EXCLUDED_PATHSPECS = (
     ":(exclude)cpersona/skills/*",
 )
 
-# Triage vocabulary for survivors, recorded in the artifact for the L2 waiver
-# step to consume. L1 does not assign these — a survivor leaves here with
-# classification=None. Kept here so producer and consumer share one list.
-SURVIVOR_CLASSIFICATIONS = (
-    "test_added",           # a new test should kill it (real gap, fix the test)
-    "code_changed",         # the mutated line is itself the intended change
-    "intentional_behavior", # the mutation describes an allowed behaviour
-    "redundant_defense",    # equivalent under a redundant guard (pair with a
-                            # structural gate / sentinel id — never "ignore")
-    "equivalent",           # observably indistinguishable from the original
-    "operator_noise",       # the operator is noise for this codebase
-    "infrastructure_error", # flaky/order-dependent test, not a real survivor
-)
+# Triage vocabulary for survivors — single source in mutation_waivers so the
+# producer (this lane) and the waiver registry cannot drift apart. An un-waived
+# survivor leaves here with classification=None; a waived one carries its
+# waiver's classification.
+SURVIVOR_CLASSIFICATIONS = mutation_waivers.CLASSIFICATIONS
 
 ENGINE_VERSION = "8.4.6"
 
@@ -184,11 +180,13 @@ def count_pending(session: Path) -> int:
         con.close()
 
 
-def classify(session: Path) -> dict:
+def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
     counts = {
         "skipped_by_filter": 0,
         "killed": 0,
         "survived": 0,
+        "survived_waived": 0,
+        "survived_unwaived": 0,
         "incompetent": 0,
         "worker_error": 0,
         "not_executed": 0,
@@ -208,13 +206,28 @@ def classify(session: Path) -> dict:
             counts["killed"] += 1
         elif t == "SURVIVED":
             counts["survived"] += 1
+            # Match the live survivor against approved waivers by content
+            # fingerprint (L2, #295). A waived survivor carries its waiver's
+            # classification; an un-waived one is the actionable set that L6
+            # (#299) will eventually gate on.
+            line_text = mutation_waivers.line_at(repo, module_path, line)
+            fp = (
+                mutation_waivers.fingerprint(module_path, function, operator, line_text)
+                if line_text is not None
+                else None
+            )
+            waiver = active.get(fp) if fp else None
+            counts["survived_waived" if waiver else "survived_unwaived"] += 1
             survivors.append(
                 {
                     "file": module_path,
                     "line": line,
                     "operator": operator,
                     "function": function,
-                    "classification": None,  # assigned at L2 triage, not here
+                    "fingerprint": fp,
+                    "waived": waiver is not None,
+                    "waiver_id": waiver["id"] if waiver else None,
+                    "classification": waiver["classification"] if waiver else None,
                 }
             )
         elif t == "INCOMPETENT":
@@ -246,20 +259,26 @@ def write_summary(report: dict, path: str | None) -> None:
         rate = report.get("survival_rate")
         rate_s = f"{rate:.1%}" if isinstance(rate, float) else "n/a"
         lines += [
-            "| generated | killed | survived | incompetent | worker-err | survival-rate |",
-            "|---|---|---|---|---|---|",
+            "| generated | killed | survived | survived (un-waived) | incompetent | worker-err | survival-rate |",
+            "|---|---|---|---|---|---|---|",
             f"| {report.get('in_scope', 0)} | {c.get('killed', 0)} | {c.get('survived', 0)} "
-            f"| {c.get('incompetent', 0)} | {c.get('worker_error', 0)} | {rate_s} |",
+            f"| {c.get('survived_unwaived', c.get('survived', 0))} | {c.get('incompetent', 0)} "
+            f"| {c.get('worker_error', 0)} | {rate_s} |",
             "",
         ]
-        survivors = report.get("survivors", [])
+        wv = report.get("waivers", {})
+        if wv:
+            lines += [f"_waivers: {wv.get('active', 0)} active of {wv.get('registry_waivers', 0)} in registry_", ""]
+        # Un-waived survivors first — those are the actionable set L6 will gate on.
+        survivors = sorted(report.get("survivors", []), key=lambda s: s.get("waived", False))
         if survivors:
             lines += ["<details><summary>Survivors (advisory — triage at L2)</summary>", ""]
-            lines += ["| file | line | operator | function |", "|---|---|---|---|"]
+            lines += ["| file | line | operator | function | waived |", "|---|---|---|---|---|"]
             for s in survivors[:50]:
-                lines.append(f"| `{s['file']}` | {s['line']} | `{s['operator']}` | {s['function'] or ''} |")
+                mark = f"✅ {s.get('waiver_id')}" if s.get("waived") else "—"
+                lines.append(f"| `{s['file']}` | {s['line']} | `{s['operator']}` | {s['function'] or ''} | {mark} |")
             if len(survivors) > 50:
-                lines.append(f"| … | | | _{len(survivors) - 50} more_ |")
+                lines.append(f"| … | | | | _{len(survivors) - 50} more_ |")
             lines += ["", "</details>"]
     lines += ["", "_This lane never fails the build; it measures. Blocking is a later decision (#299)._"]
     with open(path, "a", encoding="utf-8") as fh:
@@ -290,11 +309,22 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("MUTATION_DIFF_SESSION_DIR", str(REPO / ".mutation-diff")),
         help="Scratch dir for the cosmic-ray session (kept off the *.sqlite name so a local db-guard hook does not flag it).",
     )
+    parser.add_argument("--waivers", default=str(mutation_waivers.DEFAULT_REGISTRY))
     args = parser.parse_args(argv)
 
     config_path = Path(args.config)
     base = resolve_base(args.base, config_git_branch(config_path))
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+
+    # Approved waivers that currently suppress a survivor (L2, #295). Missing
+    # registry -> no waivers; this lane must never fall over because the file is
+    # absent.
+    waiver_path = Path(args.waivers)
+    if waiver_path.exists():
+        registry = mutation_waivers.load_registry(waiver_path)
+        active = mutation_waivers.active_waivers(REPO, registry, date.today())
+    else:
+        registry, active = {"waivers": []}, {}
 
     session_dir = Path(args.session_dir)
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -307,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         "cap": args.cap,
         "tool": {"engine": "cosmic-ray", "version": ENGINE_VERSION},
         "classification_vocabulary": list(SURVIVOR_CLASSIFICATIONS),
+        "waivers": {"registry_waivers": len(registry.get("waivers", [])), "active": len(active)},
     }
 
     changed = production_diff_files(base)
@@ -355,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     run(["cosmic-ray", "exec", str(config_path), str(session)])
-    result = classify(session)
+    result = classify(session, REPO, active)
     emit({**base_report, "status": "ok", **result}, args.json_out, summary_path)
     return 0
 

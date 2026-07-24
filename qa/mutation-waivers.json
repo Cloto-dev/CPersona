@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "description": "Advisory mutation-diff lane waivers (an earlier decision / L2, an earlier decision). Each waiver suppresses ONE survivor (one concrete operator, on one line-content, in one definition) from the advisory report's un-waived total. Identity is content-based, NOT line numbers: the fingerprint folds module + enclosing definition + operator + the normalized mutated line, so a waiver survives a function moving but dies when its line's content changes. Rules (checked by scripts/mutation_waivers.py): required fields, single concrete operator + file + definition (no wildcard/file-wide/operator-wide waivers), classification from the fixed vocabulary, mandatory reason + evidence, dated re-verification, pinned tool version. Approval is human-only: a waiver suppresses only when approved_by == 'human'; the AI submits with approved_by=null (pending) and never self-approves. Nothing here gates CI yet — enforcement is L6 (#299). See scripts/mutation_waivers.py for the authority.",
+  "tool_version": "cosmic-ray==8.4.6",
+  "waivers": [
+    {
+      "id": "waiver-001",
+      "fingerprint": "023f766c211b86e9",
+      "code_context_hash": "37afa7a264f5a64b",
+      "operator": "core/ReplaceBinaryOperator_BitOr_Add",
+      "location": {
+        "file": "cpersona/isolation.py",
+        "definition": "isolation_where",
+        "line_hint": 71
+      },
+      "classification": "operator_noise",
+      "reason": "The '|' being mutated is inside the type annotation `agent_id: str | None`. cpersona/isolation.py opens with `from __future__ import annotations`, so under PEP 563 every annotation is stored as an un-evaluated string and never executed. The BitOr->Add mutant (`str + None`) therefore has no runtime effect and no test can observe it — this is engine noise, not a missing test. The same annotation-`|` noise recurs on the sibling axes (project_id / channel) and across the codebase; it is the first candidate for an operators-filter exclusion once L6 (#299) weighs the noise rate.",
+      "evidence": "structural: `from __future__ import annotations` at the top of cpersona/isolation.py; PEP 563 makes all annotations non-evaluated strings",
+      "created": "2026-07-24",
+      "reverify_by": "2026-10-24",
+      "tool_version": "cosmic-ray==8.4.6",
+      "approved_by": null
+    }
+  ]
+}
