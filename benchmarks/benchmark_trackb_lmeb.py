@@ -180,7 +180,12 @@ def _patch_vector_search_gpu(server_mod, device: str):
 
     async def preload_gpu_cache(agent_id: str):
         """Load all embeddings from SQLite into GPU memory (called once after store)."""
-        db = await server_mod.get_db()
+        # v2.4.20+ package layout: get_db lives in cpersona.database and is NOT
+        # re-exported by cpersona.server (close_db is). Import at the call site
+        # so the harness keeps working against any checkout via CPERSONA_REPO.
+        from cpersona.database import get_db
+
+        db = await get_db()
         rows = await db.execute_fetchall(
             "SELECT id, msg_id, content, source, timestamp, embedding "
             "FROM memories WHERE agent_id = ? AND embedding IS NOT NULL",
@@ -435,8 +440,12 @@ async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], bat
     """
     import struct
 
+    # See preload_gpu_cache: get_db is not re-exported by cpersona.server on
+    # the v2.4.20+ package layout.
+    from cpersona.database import get_db
+
     total = len(corpus)
-    db = await server_mod.get_db()
+    db = await get_db()
     source_json = "{}"
     timestamp = "2026-01-01T00:00:00Z"
     metadata_json = "{}"
@@ -791,8 +800,11 @@ async def async_main(args):
     vector_mod._embedding_client = emb_client
     server_mod._embedding_client = emb_client
 
-    # Initialize the DB (creates schema, FTS5 tables, triggers)
-    await server_mod.get_db()
+    # Initialize the DB (creates schema, FTS5 tables, triggers). get_db is not
+    # re-exported by cpersona.server on the v2.4.20+ package layout.
+    from cpersona.database import get_db as _get_db
+
+    await _get_db()
     logger.info(f"cpersona DB initialized at {tmp_db_path}")
 
     # --unclamp_limit is obsolete since 2.5.0 (Task #190): do_recall's in-library
@@ -1002,8 +1014,10 @@ def main():
                         help="CPERSONA_VECTOR_MIN_SIMILARITY threshold")
     parser.add_argument("--auto_calibrate", action="store_true",
                         help="Auto-calibrate threshold per corpus (overrides --min_similarity)")
-    parser.add_argument("--recall_mode", default="cascade", choices=["cascade", "rrf"],
-                        help="CPERSONA_RECALL_MODE: cascade (sequential) or rrf (Reciprocal Rank Fusion)")
+    parser.add_argument("--recall_mode", default="cascade", choices=["cascade", "rrf", "rsf"],
+                        help="CPERSONA_RECALL_MODE: cascade (sequential), rrf (Reciprocal Rank "
+                             "Fusion) or rsf (Relative Score Fusion — the production ctools mode; "
+                             "requires a checkout that supports it, v2.4.4x+)")
     parser.add_argument("--subtasks", default=None,
                         help="Comma-separated subtask names to keep (ablation runs)")
     parser.add_argument("--budget_encode", action="store_true",
