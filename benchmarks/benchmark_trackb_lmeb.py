@@ -492,13 +492,33 @@ async def run_subtask(
     corpus_size: int,
     latencies_full: list[float] | None = None,
     latencies_limit10: list[float] | None = None,
+    recall_limit: int = 0,
+    dump_rankings_sink=None,
+    task_name: str = "",
 ) -> float:
     """Run a single subtask using cpersona's actual do_recall().
 
     When latency lists are provided, per-query wall-clock of the real
     do_recall() call is appended to them: `latencies_full` for the NDCG pass
-    (limit=corpus_size) and `latencies_limit10` for an extra production-shaped
-    pass (limit=10, the MCP default) over the same queries.
+    and `latencies_limit10` for an extra production-shaped pass (limit=10, the
+    MCP default) over the same queries.
+
+    ``recall_limit`` controls the ``limit`` passed to do_recall for the NDCG
+    pass:
+
+        0 (default)  legacy convention: ``limit=corpus_size`` so cpersona ranks
+                     ALL documents. Comparable to Track A's full-ranking scores.
+        N > 0        ``limit=N`` -- the production-realistic regime that mirrors
+                     an MCP recall (default 10, cap 100). Small limits change
+                     which rows survive the quality gate / autocut, so the
+                     ranking-only bugs (e.g. bug-155) show up here first.
+
+    ``dump_rankings_sink``, if provided, is a callable taking one JSONL record
+    per query with the full information needed to reason about a ranking bug
+    externally: task, query id, ordered returned doc ids (capped at 20), and
+    for each returned row whether ``match_reason`` carries a ``cosine`` plus
+    the confidence score. Everything the parent script needs to compute
+    ``cosine`` prevalence / disturbance without re-executing the recall.
     """
     queries_data = load_jsonl(subtask["queries"])
     qrels = load_qrels(subtask["qrels"])
@@ -513,6 +533,11 @@ async def run_subtask(
 
     results: dict[str, list[str]] = {}
     total_q = len(queries_data)
+    # 0 = legacy full-ranking convention (limit=corpus_size). >0 = production-
+    # realistic MCP-shaped limit (10 by default, cap 100). Kept default 0 so
+    # every existing command line reproduces the shipped NDCG numbers byte
+    # for byte.
+    effective_limit = recall_limit if recall_limit > 0 else corpus_size
 
     for i, q in enumerate(queries_data):
         qid = str(q["id"])  # Ensure string for consistent matching with qrels (CSV returns strings)
@@ -526,7 +551,7 @@ async def run_subtask(
         recall_result = await server_mod.do_recall(
             agent_id=AGENT_ID,
             query=qtext,
-            limit=corpus_size,
+            limit=effective_limit,
         )
         if latencies_full is not None:
             latencies_full.append((time.perf_counter() - t0) * 1000)
@@ -541,6 +566,32 @@ async def run_subtask(
             msg_id = msg.get("id", "")
             if msg_id:
                 doc_ids.append(msg_id)
+
+        # Optional per-query ranking dump (before candidate filtering, since a
+        # bug-155-style ranking bug affects the raw recall list, not the LMEB
+        # candidate-filtered one). Cap the returned rows at 20 to keep the file
+        # bounded; the confidence and match-reason.cosine fields let the parent
+        # script compute cosine prevalence + disturbance externally.
+        if dump_rankings_sink is not None:
+            rows_out = []
+            for msg in messages[:20]:
+                mr = msg.get("match_reason") or {}
+                conf = msg.get("confidence") or {}
+                rows_out.append({
+                    "id": msg.get("id", ""),
+                    "signal": mr.get("signal"),
+                    "has_cosine": "cosine" in mr,
+                    "cosine": mr.get("cosine"),
+                    "score": mr.get("score"),
+                    "confidence_score": conf.get("score"),
+                })
+            dump_rankings_sink({
+                "task": task_name,
+                "subtask": subtask.get("name", ""),
+                "query_id": qid,
+                "returned_ids": doc_ids[:20],
+                "rows": rows_out,
+            })
 
         # Filter by candidates (same as LMEB SubsetRetrieval)
         if candidates:
@@ -590,6 +641,8 @@ async def run_task(
     auto_calibrate: bool = False,
     subtask_filter: set[str] | None = None,
     skip_latency_pass: bool = False,
+    recall_limit: int = 0,
+    dump_rankings_sink=None,
 ) -> dict | None:
     task_dir = os.path.join(EVAL_DATA, TASK_MAP[task_name])
     if not os.path.isdir(task_dir):
@@ -652,6 +705,9 @@ async def run_task(
                 server_mod, emb_client, st_model, st, corpus_size=corpus_size,
                 latencies_full=latencies_full,
                 latencies_limit10=None if skip_latency_pass else latencies_limit10,
+                recall_limit=recall_limit,
+                dump_rankings_sink=dump_rankings_sink,
+                task_name=task_name,
             )
             eval_time = time.time() - eval_start
             subtask_results[st["name"]] = ndcg
@@ -802,6 +858,45 @@ async def async_main(args):
     if _DOC_ENCODE_KW or _QUERY_ENCODE_KW:
         logger.info(f"  Asymmetric prompts active: {st_prompts}")
 
+    # bug-155 investigation: the ranking dump writes one JSONL record per
+    # query with everything needed to compute cosine prevalence / disturbance
+    # externally. The header records the effective config (limit regime +
+    # whether CPERSONA_CONFIDENCE_ENABLED reached this process, see the
+    # environment / import check right below) so the parent script cannot
+    # misread a dump captured under one gate as if it were the other.
+    dump_fh = None
+    dump_sink = None
+    if getattr(args, "dump_rankings", None):
+        dump_fh = open(args.dump_rankings, "w", encoding="utf-8")
+        # Import-order check: cpersona.config reads CPERSONA_CONFIDENCE_ENABLED
+        # at import time. The harness sets its own env vars BEFORE importing
+        # cpersona, but this variable is INHERITED from the parent env (the
+        # harness does not overwrite it), so the observed value here IS what
+        # memory_handlers.CONFIDENCE_ENABLED currently holds. Log it and pin
+        # it in the dump header so the parent script cannot misread the
+        # results after the fact.
+        import cpersona.memory_handlers as _mh
+        effective_flag = bool(_mh.CONFIDENCE_ENABLED)
+        header = {
+            "header": True,
+            "recall_limit": args.recall_limit,
+            "recall_mode": args.recall_mode,
+            "min_similarity": args.min_similarity,
+            "confidence_enabled_effective": effective_flag,
+            "confidence_enabled_env": os.environ.get("CPERSONA_CONFIDENCE_ENABLED", ""),
+        }
+        dump_fh.write(json.dumps(header) + "\n")
+        dump_fh.flush()
+        logger.info(
+            f"  --dump_rankings active: writing to {args.dump_rankings} "
+            f"(CONFIDENCE_ENABLED={effective_flag}, recall_limit={args.recall_limit})"
+        )
+
+        def _sink(rec: dict) -> None:
+            dump_fh.write(json.dumps(rec) + "\n")
+
+        dump_sink = _sink
+
     # Run tasks
     task_names = [t.strip() for t in args.tasks.split(",")]
     all_results = []
@@ -838,9 +933,14 @@ async def async_main(args):
             args.output_dir, batch_size=args.batch_size, auto_calibrate=args.auto_calibrate,
             subtask_filter=set(args.subtasks.split(",")) if args.subtasks else None,
             skip_latency_pass=bool(args.fast),
+            recall_limit=args.recall_limit,
+            dump_rankings_sink=dump_sink,
         )
         if result:
             all_results.append(result)
+
+    if dump_fh is not None:
+        dump_fh.close()
 
     # Cleanup
     await server_mod.close_db()
@@ -934,6 +1034,19 @@ def main():
     parser.add_argument("--default_task", default=None,
                         help="default_task model kwarg for task-LoRA models "
                              "(jina v5: 'retrieval' — encoding fails without a task)")
+    parser.add_argument("--recall_limit", type=int, default=0,
+                        help="do_recall limit for the NDCG pass. 0 (default) = "
+                             "full-ranking convention (limit=corpus_size); N>0 = "
+                             "production-realistic MCP-shaped limit (e.g. 10). Small "
+                             "limits change which rows survive the quality gate / "
+                             "autocut, so ranking-only bugs (e.g. bug-155) show up first.")
+    parser.add_argument("--dump_rankings", default=None,
+                        help="Path to a JSONL file. Writes one record per query with "
+                             "task, subtask, query id, ordered returned doc ids (top-20), "
+                             "and per-row match_reason.cosine/signal/score + confidence "
+                             "score. The header line pins the effective config so a "
+                             "parent script can compute cosine prevalence / disturbance "
+                             "externally without re-running the recall.")
     args = parser.parse_args()
 
     asyncio.run(async_main(args))
