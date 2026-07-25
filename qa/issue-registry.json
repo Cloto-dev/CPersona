@@ -2612,7 +2612,6 @@
       "severity": "HIGH",
       "discovered": "2026-07-24T00:00:00Z",
       "version": "2.5.2a2",
-      "commit": "7f406da",
       "file": "cpersona/memory_handlers.py",
       "pattern": "bug-155",
       "expected": "present",
