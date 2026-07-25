@@ -2374,11 +2374,13 @@
       "discovered": "2026-07-25T00:00:00Z",
       "version": "2.5.2b1",
       "file": "tests/test_structural_gates.py",
-      "pattern": "PKG\\.glob",
+      "pattern": "_VENDORED_ERROR_SHAPE_WAIVER",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-coverage",
-      "note": "The vendored tree is a cross-consumer surface (cpersona-version-line-charter section 6), so the fix here is NOT to edit mcp_utils.py: it is to state the exception where the claim is made (bug-161 fix_note, README, SKILL.md) and either extend the gate's scan or record why the vendored seam is out of scope. Escalating the shape upstream is a separate clotohub-servers common bump. Update 2026-07-25: the current (defective) shape is now PINNED by tests/test_mcp_dispatch.py::test_an_unknown_tool_answers_the_outermost_shape and ::test_an_escaped_exception_answers_the_outermost_shape (bug-177), so it can no longer drift silently and the upstream fix has a test to invert. Those assertions must be inverted, not deleted, when the vendored wrapper is corrected."
+      "note": "The vendored tree is a cross-consumer surface (cpersona-version-line-charter section 6), so the fix here is NOT to edit mcp_utils.py: it is to state the exception where the claim is made (bug-161 fix_note, README, SKILL.md) and either extend the gate's scan or record why the vendored seam is out of scope. Escalating the shape upstream is a separate clotohub-servers common bump. Update 2026-07-25: the current (defective) shape is now PINNED by tests/test_mcp_dispatch.py::test_an_unknown_tool_answers_the_outermost_shape and ::test_an_escaped_exception_answers_the_outermost_shape (bug-177), so it can no longer drift silently and the upstream fix has a test to invert. Those assertions must be inverted, not deleted, when the vendored wrapper is corrected.",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "The investigation found the gate had TWO blind spots, and closing either alone catches nothing: the scan was non-recursive (PKG.glob) so the vendored tree was never opened, AND the rule only matched a dict RETURNED literally, so the actual offending shape — a dict serialised on the way out, `return [TextContent(text=json.dumps({...}))]` — stayed invisible even to a recursive scan. Measured: recursive-only catches 0, extended-rule-only catches 0, both together catch 5. The gate now walks PKG.rglob and also inspects dicts handed to json.dumps() inside a return. The five vendored sites (mcp_utils.py x2 = the bug-164 shape itself, llm_provider.py x3) are waived by EXACT INVENTORY rather than by narrowing the scan back down: a new violation in cpersona's own modules fails, and so does any change to the vendored counts — which is the correct outcome at re-vendor time, since it means the upstream shape moved. Editing the vendored tree here is still forbidden (cross-consumer, charter section 6); the behavioural pins live in tests/test_mcp_dispatch.py (bug-177) and must be inverted, not deleted, when upstream fixes the shape. Teeth: test_error_shape_gate_sees_a_serialised_body and test_error_shape_gate_reaches_the_vendored_tree."
     },
     {
       "id": "bug-165",
@@ -2447,11 +2449,13 @@
       "discovered": "2026-07-25T00:00:00Z",
       "version": "2.5.2b1",
       "file": "cpersona/server.py",
-      "pattern": "_oc_reject",
+      "pattern": "bug-169",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape-consistency",
-      "note": "Reaching it requires an operating-context sidecar plus an unknown project_id. tests/test_252b1_writepath.py pins only the handler-side path."
+      "note": "Reaching it requires an operating-context sidecar plus an unknown project_id. tests/test_252b1_writepath.py pins only the handler-side path.",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "do_archive_episode_boundary's operating-context refusal now returns {**_oc_reject(error), 'episode_id': None}, matching every other archive_episode failure (the handler's own refusal, the or_queue wrapper's, the paused no-op) and the field utils.error_response names as the archetype of what a failure still owes its caller. The read-only boundaries (recall / recall_with_context / list_*) were checked for the same asymmetry and do not have it: their handlers do not carry the collection field on failure either, so _oc_reject alone is consistent there."
     },
     {
       "id": "bug-170",
@@ -2459,12 +2463,14 @@
       "severity": "LOW",
       "discovered": "2026-07-25T00:00:00Z",
       "version": "2.5.2b1",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "keywords = _sanitize_content\\(keywords\\)",
+      "file": "tests/test_252b1_writepath.py",
+      "pattern": "test_episode_keywords_are_capped_too",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "note": "Mutation verified on a git-archive copy outside the working tree."
+      "note": "Mutation verified on a git-archive copy outside the working tree.",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "Two regressions cover the keywords half of the C12 episode cap — the truncation branch (len > MAX reports truncated:true and stores exactly MAX) and the sanitize branch (an annotation-only prefix is stripped). Both were the surviving mutations."
     },
     {
       "id": "bug-171",
@@ -2472,12 +2478,14 @@
       "severity": "LOW",
       "discovered": "2026-07-25T00:00:00Z",
       "version": "2.5.2b1",
-      "file": "cpersona/vector.py",
-      "pattern": "_ID_FETCH_CHUNK",
+      "file": "tests/test_252b1_writepath.py",
+      "pattern": "test_id_hydration_crosses_its_chunk_boundary",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "note": "Mutation verified on a git-archive copy outside the working tree. A test seeding >500 hits, or a temporarily lowered chunk size, closes it."
+      "note": "Mutation verified on a git-archive copy outside the working tree. A test seeding >500 hits, or a temporarily lowered chunk size, closes it.",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "The chunk size is monkeypatched down to 2 over 5 rows rather than seeding 500+ rows, so the multi-statement path runs in the same 0.2s the rest of the file takes. A second case pins duplicate-id collapse across the boundary. This kills the surviving mutation (restricting the loop to its first chunk)."
     },
     {
       "id": "bug-172",
@@ -2530,12 +2538,14 @@
       "severity": "LOW",
       "discovered": "2026-07-25T00:00:00Z",
       "version": "2.5.2b1",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "truncated = len\\(raw_content\\)",
+      "file": "cpersona/utils.py",
+      "pattern": "def sanitize_content_with_flag",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape-consistency",
-      "note": "Pre-existing in do_store; this branch copied the same expression into do_update_memory (admin_handlers.py). Compare the sanitized length instead."
+      "note": "Pre-existing in do_store; this branch copied the same expression into do_update_memory (admin_handlers.py). Compare the sanitized length instead.",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "The flag now comes back from the seam that does the cutting: sanitize_content_with_flag() returns (content, truncated) and _sanitize_content() delegates to it, so the answer cannot disagree with what was stored. All THREE copies of the old `len(raw_content) > MAX` expression were converted — do_store, do_update_memory (where this branch had just duplicated it), and the episode path in do_archive_episode, which computed the same thing from its own locals. Leaving any one behind would have re-seeded the drift. Regression: test_truncated_reports_a_cut_not_a_long_argument plus a positive control and an episode case."
     },
     {
       "id": "bug-176",
@@ -2543,12 +2553,14 @@
       "severity": "LOW",
       "discovered": "2026-07-25T00:00:00Z",
       "version": "2.5.2b1",
-      "file": "cpersona/admin_handlers.py",
-      "pattern": "async def do_import_memories",
+      "file": "cpersona/config.py",
+      "pattern": "bug-176",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "fail-open-write-path",
-      "note": "Faithful restore may be the intended semantics for import, in which case the claim's scope is what needs narrowing. checks.py's oversized_content detects the result after the fact, so impact is bounded."
+      "note": "Faithful restore may be the intended semantics for import, in which case the claim's scope is what needs narrowing. checks.py's oversized_content detects the result after the fact, so impact is bounded.",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "The claim's scope was narrowed rather than the caps extended. import_memories and merge_memories restore or move rows that were already accepted under some earlier cap, and silently truncating (or refusing) a user's own backup at restore time is worse than admitting an oversized row — so the boundary is AUTHORING seams bounded, replayed rows detected after the fact by check_health's oversized_content. The config comment now states that division instead of implying a cap that covers every write."
     },
     {
       "id": "bug-177",
@@ -2571,12 +2583,14 @@
       "severity": "LOW",
       "discovered": "2026-07-25T00:00:00Z",
       "version": "2.5.2b1",
-      "file": "qa/issue-registry.json",
-      "pattern": "issue-registry\\.schema\\.md",
+      "file": "qa/issue-registry.schema.md",
+      "pattern": "Issue registry schema",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "registry-hygiene",
-      "note": "Found by the parent agent while reading the registry format, not part of the diff review. Either add the schema doc or point at the ClotoCore original this mirrors."
+      "note": "Found by the parent agent while reading the registry format, not part of the diff review. Either add the schema doc or point at the ClotoCore original this mirrors.",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "The schema doc the $schema key pointed at now exists. It documents the entry fields, how `expected` flips across a fix (open entries anchor the DEFECT, fixed entries anchor the FIX), and the two pattern-selection traps hit twice while closing this batch: a pattern that is not unique in its file can never go absent, and the `file` field must follow the anchor when a fix lands somewhere other than where the report filed it."
     },
     {
       "id": "bug-179",

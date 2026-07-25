@@ -1034,6 +1034,34 @@ def test_shipped_skill_lists_every_registered_tool():
 # --------------------------------------------------------------------------------------
 
 
+# bug-164: the gate had TWO blind spots, and fixing either one alone catches
+# nothing. The scan was PKG.glob("*.py") — non-recursive, so _vendored_mcp_common/
+# was never opened — and the rule only matched a dict RETURNED literally, so a dict
+# serialised on the way out (`return [TextContent(text=json.dumps({...}))]`, which is
+# exactly how the outermost MCP dispatch answers) stayed invisible even to a
+# recursive scan. With both closed, five vendored sites surface.
+#
+# Those five are cross-consumer: _vendored_mcp_common/ is synced from
+# clotohub-servers by scripts/sync-vendored-mcp-common.sh and MUST NOT be edited
+# here, so they are waived by exact inventory rather than by narrowing the scan back
+# down. The inventory is deliberately strict — a new violation in cpersona's own
+# modules fails, and so does any CHANGE to the vendored counts, which is what should
+# happen when a re-vendor lands, because it means the upstream shape moved.
+_VENDORED_ERROR_SHAPE_WAIVER = {
+    # unknown tool name; escaped handler exception (the two bug-164 sites,
+    # pinned behaviourally in tests/test_mcp_dispatch.py)
+    "_vendored_mcp_common/mcp_utils.py": 2,
+    # provider transport failures
+    "_vendored_mcp_common/llm_provider.py": 3,
+}
+
+
+def _iter_package_files():
+    """Every module in the package, vendored tree included (bug-164)."""
+    for p in sorted(PKG.rglob("*.py")):
+        yield p
+
+
 def _returned_error_dicts_without_ok(tree):
     hits = []
     for node in ast.walk(tree):
@@ -1044,6 +1072,15 @@ def _returned_error_dicts_without_ok(tree):
             dicts.append(node.value)
         elif isinstance(node.value, ast.Tuple):
             dicts += [e for e in node.value.elts if isinstance(e, ast.Dict)]
+        # A dict handed to json.dumps() anywhere inside the returned expression is
+        # still a response body — it just leaves the process as text.
+        for sub in ast.walk(node):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "dumps"
+            ):
+                dicts += [a for a in sub.args if isinstance(a, ast.Dict)]
         for d in dicts:
             keys = {k.value for k in d.keys if isinstance(k, ast.Constant)}
             if "error" in keys and "ok" not in keys:
@@ -1053,13 +1090,28 @@ def _returned_error_dicts_without_ok(tree):
 
 def test_error_responses_carry_ok():
     violations = []
-    for path in _iter_module_files():
+    vendored_inventory: dict[str, int] = {}
+    for path in _iter_package_files():
+        rel = path.relative_to(PKG).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        violations += [f"{path.name}:{line}" for line in _returned_error_dicts_without_ok(tree)]
+        lines = _returned_error_dicts_without_ok(tree)
+        if not lines:
+            continue
+        if rel in _VENDORED_ERROR_SHAPE_WAIVER:
+            vendored_inventory[rel] = len(lines)
+        else:
+            violations += [f"{rel}:{line}" for line in lines]
     assert not violations, (
         "a returned error dict omits `ok` — a caller that branches on ok reads None and "
         "cannot tell failure from success (audit C23). Build it with "
         "utils.error_response():\n  " + "\n  ".join(violations)
+    )
+    assert vendored_inventory == _VENDORED_ERROR_SHAPE_WAIVER, (
+        "the vendored error-shape inventory moved (bug-164). These sites belong upstream "
+        "in clotohub-servers' common, so the fix is NOT to edit them here: re-check what "
+        "the re-vendor changed, update the waiver, and invert the pins in "
+        f"tests/test_mcp_dispatch.py if the shape was corrected.\n  found: {vendored_inventory}"
+        f"\n  waived: {_VENDORED_ERROR_SHAPE_WAIVER}"
     )
 
 
@@ -1068,6 +1120,22 @@ def test_error_shape_gate_has_teeth():
     assert _returned_error_dicts_without_ok(bad) == [2]
     good = ast.parse('def f():\n    return {"ok": False, "error": "nope"}\n')
     assert _returned_error_dicts_without_ok(good) == []
+
+
+def test_error_shape_gate_sees_a_serialised_body():
+    """bug-164: the shape that escaped the gate was a dict serialised on the way
+    out, not one returned literally."""
+    bad = ast.parse('def f():\n    return [T(text=json.dumps({"error": "nope"}))]\n')
+    assert _returned_error_dicts_without_ok(bad) == [2]
+    good = ast.parse('def f():\n    return [T(text=json.dumps({"ok": False, "error": "nope"}))]\n')
+    assert _returned_error_dicts_without_ok(good) == []
+
+
+def test_error_shape_gate_reaches_the_vendored_tree():
+    """The other half of bug-164: the scan must open the subdirectory the two
+    waived sites live in, or the inventory assertion is vacuous."""
+    scanned = {p.relative_to(PKG).as_posix() for p in _iter_package_files()}
+    assert _VENDORED_ERROR_SHAPE_WAIVER.keys() <= scanned, sorted(scanned)
     tupled = ast.parse('def f():\n    return None, {"error": "nope"}\n')
     assert _returned_error_dicts_without_ok(tupled) == [2], "tuple returns must be scanned too"
 

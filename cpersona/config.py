@@ -64,6 +64,14 @@ MAX_CONTENT_LENGTH = _parse_int("CPERSONA_MAX_CONTENT_LENGTH", 2000)
 # structured annotations, not payload: the cap is generous enough that no honest
 # producer meets it, and truncation is not an option because half a JSON document
 # is not a JSON document — the write is refused instead (result='rejected').
+#
+# bug-176: "the write path" here means the AUTHORING seams — store, update_memory
+# and the episode prepare. import_memories and merge_memories are deliberately
+# outside it: they restore or move rows that were already accepted under some
+# earlier cap, and silently truncating (or refusing) a user's own backup at
+# restore time is worse than admitting an oversized row. check_health's
+# oversized_content check reports those after the fact, which is the right
+# division — bound what is being authored, detect what is being replayed.
 MAX_METADATA_LENGTH = _parse_int("CPERSONA_MAX_METADATA_LENGTH", 8000)
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 

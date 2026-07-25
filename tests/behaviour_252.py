@@ -64,7 +64,7 @@ os.environ.setdefault("CPERSONA_OPERATING_CONTEXT", "off")
 
 import numpy as np  # noqa: E402
 
-from cpersona import admin_handlers, maintenance_handlers, memory_handlers, utils, vector  # noqa: E402
+from cpersona import admin_handlers, config, maintenance_handlers, memory_handlers, utils, vector  # noqa: E402
 from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
@@ -1145,7 +1145,10 @@ async def _(ctx):
 @scenario("store-truncated", "#362", "store: content > MAX_CONTENT_LENGTH — truncated:true AND the row stores the truncated body")
 async def _(ctx):
     install_local(ctx)
-    long_content = "y" * (memory_handlers.MAX_CONTENT_LENGTH + 1)
+    # Read the cap from where it is DEFINED, not from a module that happened to
+    # import it: bug-175 removed that re-export and this scenario went red for a
+    # reason that had nothing to do with the behaviour it pins.
+    long_content = "y" * (config.MAX_CONTENT_LENGTH + 1)
     return await memory_handlers.do_store(
         "s1", {"content": long_content, "timestamp": "2026-07-22T00:00:00+00:00"}
     )

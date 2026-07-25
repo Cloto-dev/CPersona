@@ -32,13 +32,17 @@ from cpersona.config import (
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
-    MAX_CONTENT_LENGTH,
     STORE_BLOB,
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
 )
 from cpersona.database import connection, read_snapshot, transaction
-from cpersona.utils import _clamp_limit, _sanitize_content, _try_parse_json, error_response
+from cpersona.utils import (
+    _clamp_limit,
+    _try_parse_json,
+    error_response,
+    sanitize_content_with_flag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -226,8 +230,9 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     # the uncapped string was then handed to embed() and pushed verbatim to the remote
     # /index as well, so the two write seams disagreed on what a stored row may contain.
     raw_content = content
-    content = _sanitize_content(raw_content)
-    truncated = len(raw_content) > MAX_CONTENT_LENGTH
+    # bug-175: same seam, same flag — the raw length counted the annotation this
+    # helper strips, so an update could report truncated:true without a cut.
+    content, truncated = sanitize_content_with_flag(raw_content)
     if not content:
         # _sanitize_content also strips [Memory from ...] annotations, so a body made of
         # nothing else is empty at the seam. Reject as the empty-input guard above does

@@ -92,6 +92,33 @@ async def test_episode_summary_is_capped_and_reported(clean_db):
 
 
 @pytest.mark.asyncio
+async def test_episode_keywords_are_capped_too(clean_db):
+    """bug-170: the C12 cap covers both episode text fields, but only `summary`
+    had a test — deleting the keywords sanitize call left the suite green."""
+    res = await memory_handlers.do_archive_episode(
+        "c12", [], summary="short", keywords="K" * (MAX_CONTENT_LENGTH + 300)
+    )
+    assert res["ok"] is True and res.get("truncated") is True, res
+    row = await clean_db.execute_fetchall(
+        "SELECT keywords FROM episodes WHERE id = ?", (res["episode_id"],)
+    )
+    assert len(row[0][0]) == MAX_CONTENT_LENGTH
+
+
+@pytest.mark.asyncio
+async def test_episode_keywords_are_sanitized_too(clean_db):
+    """The other half of the same call: annotations are stripped from keywords,
+    not just from summary."""
+    res = await memory_handlers.do_archive_episode(
+        "c12", [], summary="short", keywords="[Memory from foo] real keywords"
+    )
+    row = await clean_db.execute_fetchall(
+        "SELECT keywords FROM episodes WHERE id = ?", (res["episode_id"],)
+    )
+    assert row[0][0] == "real keywords", row
+
+
+@pytest.mark.asyncio
 async def test_episode_remote_index_receives_the_stored_text(clean_db, monkeypatch):
     """The vector and the row must describe the same text: indexing the
     caller's original after storing a capped copy would make recall score a
@@ -147,12 +174,93 @@ async def test_summary_that_survives_sanitization_still_stores(clean_db):
 
 
 @pytest.mark.asyncio
+async def test_truncated_reports_a_cut_not_a_long_argument(clean_db):
+    """bug-175: the flag was derived from the RAW length, which still counts the
+    annotation the sanitizer strips. Content that fits once stripped was reported
+    truncated even though the stored text is the caller's text."""
+    body = "x" * MAX_CONTENT_LENGTH
+    res = await memory_handlers.do_store("b175", {"content": f"[Memory from foo] {body}"})
+
+    assert res["result"] == "stored", res
+    assert res.get("truncated") is not True, "nothing was cut — the annotation was"
+    row = await clean_db.execute_fetchall(
+        "SELECT content FROM memories WHERE id = ?", (res["id"],)
+    )
+    assert row[0][0] == body, "the stored text is the caller's, in full"
+
+
+@pytest.mark.asyncio
+async def test_truncated_is_still_reported_when_the_cap_really_cuts(clean_db):
+    """The positive control: a genuine cut must keep saying so."""
+    res = await memory_handlers.do_store("b175", {"content": "y" * (MAX_CONTENT_LENGTH + 50)})
+    assert res["result"] == "stored" and res["truncated"] is True, res
+    row = await clean_db.execute_fetchall(
+        "SELECT content FROM memories WHERE id = ?", (res["id"],)
+    )
+    assert len(row[0][0]) == MAX_CONTENT_LENGTH
+
+
+@pytest.mark.asyncio
+async def test_episode_truncated_follows_the_same_definition(clean_db):
+    """The third copy of the expression lived on the episode path."""
+    res = await memory_handlers.do_archive_episode(
+        "b175", [], summary=f"[Memory from foo] {'z' * MAX_CONTENT_LENGTH}"
+    )
+    assert res["ok"] is True and res.get("truncated") is not True, res
+
+
+@pytest.mark.asyncio
 async def test_prepare_still_raises_for_the_queue_drain(clean_db):
     """The drain (tasks.py) routes a summary-less payload to retry/discard by
     catching this ValueError, so the shared seam must keep raising even though
     do_archive_episode now refuses earlier."""
     with pytest.raises(ValueError):
         await memory_handlers._prepare_episode_row("b162", [], summary="[Memory from foo]")
+
+
+@pytest.mark.asyncio
+async def test_id_hydration_crosses_its_chunk_boundary(clean_db, monkeypatch):
+    """bug-171: the batching added for bug-158 exists to stay under SQLite's
+    bound-variable ceiling, but no test ever produced more ids than one chunk —
+    restricting the loop to its first chunk left the suite green. Shrinking the
+    chunk reaches the multi-statement path without seeding 500 rows."""
+    for i in range(5):
+        await memory_handlers.do_store("b171", {"content": f"row {i}"})
+    rows = await clean_db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = 'b171' ORDER BY id"
+    )
+    ids = [r[0] for r in rows]
+    assert len(ids) == 5
+
+    monkeypatch.setattr(vector, "_ID_FETCH_CHUNK", 2)
+    fetched = await vector._fetch_rows_by_id(
+        clean_db,
+        "SELECT id, content FROM memories WHERE id IN ({ph}) AND agent_id = ?",
+        ids,
+        ("b171",),
+    )
+    assert sorted(fetched) == ids, "every id must survive the chunk boundary"
+    assert {r[1] for r in fetched.values()} == {f"row {i}" for i in range(5)}
+
+
+@pytest.mark.asyncio
+async def test_id_hydration_keeps_duplicate_ids_to_one_row(clean_db, monkeypatch):
+    """The map is keyed by id, so a repeated remote hit must not multiply the
+    statements it takes to resolve it."""
+    await memory_handlers.do_store("b171dup", {"content": "only row"})
+    rows = await clean_db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = 'b171dup'"
+    )
+    only = rows[0][0]
+
+    monkeypatch.setattr(vector, "_ID_FETCH_CHUNK", 2)
+    fetched = await vector._fetch_rows_by_id(
+        clean_db,
+        "SELECT id, content FROM memories WHERE id IN ({ph}) AND agent_id = ?",
+        [only, only, only],
+        ("b171dup",),
+    )
+    assert list(fetched) == [only], fetched
 
 
 # ---------------------------------------------------------------------------

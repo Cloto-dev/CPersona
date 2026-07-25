@@ -33,7 +33,6 @@ from cpersona.config import (
     EPISODE_DECAY_RATE,
     EPISODE_PENALTY_ENABLED,
     FTS_ENABLED,
-    MAX_CONTENT_LENGTH,
     MAX_MEMORIES,
     MAX_METADATA_LENGTH,
     RECALL_MODE,
@@ -52,6 +51,7 @@ from cpersona.utils import (
     _content_excluded,
     _parse_timestamp_utc,
     _sanitize_content,
+    sanitize_content_with_flag,
     _try_parse_json,
     error_response,
     normalize_source,
@@ -144,8 +144,9 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
                 f"{field_name} too large ({len(serialised)} chars, max {MAX_METADATA_LENGTH})"
             )
 
-    content = _sanitize_content(raw_content)
-    truncated = len(raw_content) > MAX_CONTENT_LENGTH
+    # bug-175: the flag comes back from the seam that does the cutting, so it
+    # cannot disagree with what was stored.
+    content, truncated = sanitize_content_with_flag(raw_content)
 
     if not content:
         return _store_rejected("empty after sanitization")
@@ -1550,8 +1551,10 @@ async def do_archive_episode(
         agent_id, [{"id": f"ep:{episode_id}", "text": row[2]}]
     )
     result = {"ok": True, "episode_id": episode_id}
-    if len(summary) > MAX_CONTENT_LENGTH or len(keywords) > MAX_CONTENT_LENGTH:
-        # Same signal do_store gives for capped content.
+    # Same signal do_store gives for capped content — and, since bug-175, the same
+    # definition: the flag reports whether the cap CUT, not whether the caller's
+    # raw string (annotation included) happened to exceed it.
+    if sanitize_content_with_flag(summary)[1] or sanitize_content_with_flag(keywords)[1]:
         result["truncated"] = True
     return result
 

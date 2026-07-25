@@ -58,6 +58,24 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     return False
 
 
+def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
+    """Sanitize, and report whether the cap actually cut anything.
+
+    bug-175: callers derived the ``truncated`` flag from ``len(raw) > cap``, but
+    the raw string still carries the ``[Memory from ...]`` annotation this
+    function strips. Content whose annotation alone pushed it over the cap was
+    therefore reported as truncated while the stored text had not been cut —
+    and update_memory's description promises the flag marks a real cap hit. The
+    decision belongs where the cut happens, so the flag is returned with it.
+    """
+    content = _MEMORY_ANNOTATION_PATTERN.sub("", content)
+    content = content.strip()
+    truncated = len(content) > MAX_CONTENT_LENGTH
+    if truncated:
+        content = content[:MAX_CONTENT_LENGTH]
+    return content, truncated
+
+
 def _sanitize_content(content: str) -> str:
     """Sanitize content before storing in memory.
 
@@ -65,11 +83,7 @@ def _sanitize_content(content: str) -> str:
     length limit. Discord-specific sanitization (mention stripping) is
     handled by the Discord bridge before content reaches CPersona.
     """
-    content = _MEMORY_ANNOTATION_PATTERN.sub("", content)
-    content = content.strip()
-    if len(content) > MAX_CONTENT_LENGTH:
-        content = content[:MAX_CONTENT_LENGTH]
-    return content
+    return sanitize_content_with_flag(content)[0]
 
 
 def generate_mem_key(agent_id: str, message: dict) -> str:

@@ -194,7 +194,12 @@ async def do_archive_episode_boundary(
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
-        return _oc_reject(error)
+        # bug-169: every OTHER archive_episode failure carries episode_id (the
+        # handler's own refusal, the or_queue wrapper's, the paused no-op), and
+        # utils.error_response names it as the archetypal field a failure still
+        # owes its caller. Only the gate refusal dropped it, so a caller reading
+        # resp["episode_id"] hit a KeyError on exactly one path.
+        return {**_oc_reject(error), "episode_id": None}
     result = await do_archive_episode_or_queue(
         agent_id,
         history,
