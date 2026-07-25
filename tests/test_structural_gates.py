@@ -853,3 +853,323 @@ def test_orphan_gate_has_teeth():
     assert _collect_orphan_repoints(too_late), (
         "orphan gate accepts a close that happens after the re-point"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 7 (C26 doc-drift class, 2.5.2b1): a rendered contract cannot go stale.
+#
+# The deep_check tool description tells callers which checks honour fix=True. It used to
+# say so in prose and named two of the four report-only checks — a caller passing
+# fix=True to the other two got a silent no-op. The description is now rendered from
+# checks.DEEP_FIX_CAPABLE, which moves the drift risk into that set: this gate pins the
+# set against what the functions actually do, so a check that gains (or loses) a repair
+# path fails CI until the set follows.
+# --------------------------------------------------------------------------------------
+
+
+def _deep_checks_referencing_fix():
+    """Names of deep checks whose body reads the ``fix`` parameter at all."""
+    from cpersona import checks as checks_module
+
+    tree = ast.parse((PKG / "checks.py").read_text(encoding="utf-8"), filename="checks.py")
+    reads_fix = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        if not node.name.startswith("deep_"):
+            continue
+        body_names = {
+            n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+        }
+        if "fix" in body_names:
+            reads_fix.add(node.name)
+    # Map function names back to registry keys (the registry is the public vocabulary).
+    return {
+        key
+        for key, fn in checks_module.DEEP_CHECKS.items()
+        if fn.__name__ in reads_fix
+    }
+
+
+def test_deep_fix_capable_matches_the_implementations():
+    from cpersona import checks as checks_module
+
+    actual = _deep_checks_referencing_fix()
+    declared = set(checks_module.DEEP_FIX_CAPABLE)
+    assert declared == actual, (
+        "checks.DEEP_FIX_CAPABLE disagrees with the code: it drives the deep_check tool "
+        "description, so a stale set publishes a false contract (audit C26).\n"
+        f"  declared but does not act on fix: {sorted(declared - actual)}\n"
+        f"  acts on fix but not declared:     {sorted(actual - declared)}"
+    )
+    assert declared, "gate collapsed — no deep check is declared fix-capable"
+
+
+def test_deep_fix_gate_has_teeth():
+    """The gate must fail when the declared set drifts from the implementations."""
+    actual = _deep_checks_referencing_fix()
+    drifted = actual | {"near_duplicate"}  # the historical wrong claim
+    assert drifted != actual, "fixture no longer represents drift"
+    assert "near_duplicate" not in actual, (
+        "near_duplicate started honouring fix — update DEEP_FIX_CAPABLE and this fixture"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 8 (C26 doc-drift class, 2.5.2b1): pause_persistence names every gated handler.
+#
+# The description tells an operator which tools go quiet under a pause. It listed eight
+# and the code gated fourteen, so four write tools were silently in scope and the
+# check_health / deep_check fix-downgrade was undocumented. The gate cannot verify the
+# prose is TRUE, but it can verify it is COMPLETE: every handler that consults
+# no_persist.is_paused() must be named.
+# --------------------------------------------------------------------------------------
+
+
+def _handlers_consulting_no_persist():
+    names = set()
+    for path in _iter_module_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            if not node.name.startswith("do_"):
+                continue
+            if "is_paused" in ast.dump(node):
+                tool = node.name[len("do_"):]
+                for suffix in ("_or_queue", "_boundary"):
+                    if tool.endswith(suffix):
+                        tool = tool[: -len(suffix)]
+                names.add(tool)
+    return names
+
+
+def test_pause_persistence_description_names_every_gated_tool():
+    from cpersona import server
+
+    description = next(
+        t.description for t in server.registry._tools if t.name == "pause_persistence"
+    )
+    gated = _handlers_consulting_no_persist()
+    assert len(gated) >= 14, f"gate collapsed — only found {sorted(gated)}"
+    missing = sorted(name for name in gated if name not in description)
+    assert not missing, (
+        "pause_persistence's description does not mention every tool whose handler "
+        f"consults no_persist.is_paused() (audit C26): {missing}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 9 (C26 doc-drift class, 2.5.2b1): every tool that RESOLVES @auto documents it.
+#
+# The sentinel is implemented in the six *_boundary wrappers, but only store's schema
+# mentioned it — so five tools accepted a value their published contract did not admit
+# existed. The gate ties the two together: a tool wired to a boundary that calls
+# operating_context.check_project_id must say so in its project_id description.
+# --------------------------------------------------------------------------------------
+
+
+def test_every_auto_resolving_tool_documents_the_sentinel():
+    from cpersona import server
+
+    tree = ast.parse((PKG / "server.py").read_text(encoding="utf-8"), filename="server.py")
+    boundaries_resolving_auto = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and node.name.endswith("_boundary")
+        and "check_project_id" in ast.dump(node)
+    }
+    assert len(boundaries_resolving_auto) >= 6, sorted(boundaries_resolving_auto)
+
+    documented = {
+        tool.name
+        for tool in server.registry._tools
+        if "@auto"
+        in tool.inputSchema.get("properties", {}).get("project_id", {}).get("description", "")
+    }
+    expected = {name[len("do_"):-len("_boundary")] for name in boundaries_resolving_auto}
+    missing = sorted(expected - documented)
+    assert not missing, (
+        "these tools resolve the @auto sentinel but their project_id description does "
+        f"not mention it (audit C26): {missing}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 10 (C26 doc-drift class, 2.5.2b1): the shipped agent skill lists every tool.
+#
+# skills/cpersona-memory/SKILL.md is installed on the user's disk with the package, so
+# its tool table is a published contract like the JSON Schemas are — and it had drifted
+# (it claimed 28 tools against 29 registered and omitted get_operating_context). Counts
+# were removed from the prose; the table itself is gated here.
+# --------------------------------------------------------------------------------------
+
+
+def test_shipped_skill_lists_every_registered_tool():
+    import re
+
+    from cpersona import server
+
+    skill = (PKG.parent / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
+    table = skill.split("## Tool reference")[1].split("Argument details")[0]
+    listed = set(re.findall(r"`([a-z_]+)`", table))
+    registered = {tool.name for tool in server.registry._tools}
+    assert len(registered) >= 25, "gate collapsed — registry looks empty"
+    missing = sorted(registered - listed)
+    assert not missing, (
+        "the shipped agent skill's tool table omits registered tools (audit C26 class): "
+        f"{missing}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 11 (C23, 2.5.2b1): every tool-level failure answers in one shape.
+#
+# The surface used to fail two ways: five sites returned {"ok": False, "error": ...} and
+# twenty-nine returned a bare {"error": ...}. A caller branching on `ok` — the obvious
+# field — got None for most failures, the same defect b1-1 fixed inside store. The gate
+# holds the line: a dict literal RETURNED with an "error" key must also carry "ok"
+# (utils.error_response() is the intended way to produce one).
+# --------------------------------------------------------------------------------------
+
+
+# bug-164: the gate had TWO blind spots, and fixing either one alone catches
+# nothing. The scan was PKG.glob("*.py") — non-recursive, so _vendored_mcp_common/
+# was never opened — and the rule only matched a dict RETURNED literally, so a dict
+# serialised on the way out (`return [TextContent(text=json.dumps({...}))]`, which is
+# exactly how the outermost MCP dispatch answers) stayed invisible even to a
+# recursive scan. With both closed, five vendored sites surface.
+#
+# Those five are cross-consumer: _vendored_mcp_common/ is synced from
+# clotohub-servers by scripts/sync-vendored-mcp-common.sh and MUST NOT be edited
+# here, so they are waived by exact inventory rather than by narrowing the scan back
+# down. The inventory is deliberately strict — a new violation in cpersona's own
+# modules fails, and so does any CHANGE to the vendored counts, which is what should
+# happen when a re-vendor lands, because it means the upstream shape moved.
+_VENDORED_ERROR_SHAPE_WAIVER = {
+    # unknown tool name; escaped handler exception (the two bug-164 sites,
+    # pinned behaviourally in tests/test_mcp_dispatch.py)
+    "_vendored_mcp_common/mcp_utils.py": 2,
+    # provider transport failures
+    "_vendored_mcp_common/llm_provider.py": 3,
+}
+
+
+def _iter_package_files():
+    """Every module in the package, vendored tree included (bug-164)."""
+    for p in sorted(PKG.rglob("*.py")):
+        yield p
+
+
+def _returned_error_dicts_without_ok(tree):
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Return) or node.value is None:
+            continue
+        dicts = []
+        if isinstance(node.value, ast.Dict):
+            dicts.append(node.value)
+        elif isinstance(node.value, ast.Tuple):
+            dicts += [e for e in node.value.elts if isinstance(e, ast.Dict)]
+        # A dict handed to json.dumps() anywhere inside the returned expression is
+        # still a response body — it just leaves the process as text.
+        for sub in ast.walk(node):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "dumps"
+            ):
+                dicts += [a for a in sub.args if isinstance(a, ast.Dict)]
+        for d in dicts:
+            keys = {k.value for k in d.keys if isinstance(k, ast.Constant)}
+            if "error" in keys and "ok" not in keys:
+                hits.append(node.lineno)
+    return hits
+
+
+def test_error_responses_carry_ok():
+    violations = []
+    vendored_inventory: dict[str, int] = {}
+    for path in _iter_package_files():
+        rel = path.relative_to(PKG).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        lines = _returned_error_dicts_without_ok(tree)
+        if not lines:
+            continue
+        if rel in _VENDORED_ERROR_SHAPE_WAIVER:
+            vendored_inventory[rel] = len(lines)
+        else:
+            violations += [f"{rel}:{line}" for line in lines]
+    assert not violations, (
+        "a returned error dict omits `ok` — a caller that branches on ok reads None and "
+        "cannot tell failure from success (audit C23). Build it with "
+        "utils.error_response():\n  " + "\n  ".join(violations)
+    )
+    assert vendored_inventory == _VENDORED_ERROR_SHAPE_WAIVER, (
+        "the vendored error-shape inventory moved (bug-164). These sites belong upstream "
+        "in clotohub-servers' common, so the fix is NOT to edit them here: re-check what "
+        "the re-vendor changed, update the waiver, and invert the pins in "
+        f"tests/test_mcp_dispatch.py if the shape was corrected.\n  found: {vendored_inventory}"
+        f"\n  waived: {_VENDORED_ERROR_SHAPE_WAIVER}"
+    )
+
+
+def test_error_shape_gate_has_teeth():
+    bad = ast.parse('def f():\n    return {"error": "nope"}\n')
+    assert _returned_error_dicts_without_ok(bad) == [2]
+    good = ast.parse('def f():\n    return {"ok": False, "error": "nope"}\n')
+    assert _returned_error_dicts_without_ok(good) == []
+
+
+def test_error_shape_gate_sees_a_serialised_body():
+    """bug-164: the shape that escaped the gate was a dict serialised on the way
+    out, not one returned literally."""
+    bad = ast.parse('def f():\n    return [T(text=json.dumps({"error": "nope"}))]\n')
+    assert _returned_error_dicts_without_ok(bad) == [2]
+    good = ast.parse('def f():\n    return [T(text=json.dumps({"ok": False, "error": "nope"}))]\n')
+    assert _returned_error_dicts_without_ok(good) == []
+
+
+def test_error_shape_gate_reaches_the_vendored_tree():
+    """The other half of bug-164: the scan must open the subdirectory the two
+    waived sites live in, or the inventory assertion is vacuous."""
+    scanned = {p.relative_to(PKG).as_posix() for p in _iter_package_files()}
+    assert _VENDORED_ERROR_SHAPE_WAIVER.keys() <= scanned, sorted(scanned)
+    tupled = ast.parse('def f():\n    return None, {"error": "nope"}\n')
+    assert _returned_error_dicts_without_ok(tupled) == [2], "tuple returns must be scanned too"
+
+
+# --------------------------------------------------------------------------------------
+# Gate 12 (C26 doc-drift class): README's advertised test count stays honest.
+#
+# It counts test FUNCTIONS, which is what a source scan can verify; the README states
+# the parametrised case count beside it for the reader, and the badge carries that.
+#
+# It sat at 435 while the suite grew past 600 — the same drift as the tool descriptions,
+# in the first thing a visitor reads. An exact match would fail on every commit that adds
+# a test, which would train people to edit the number without looking; a 10 % band fails
+# only once the claim is actually misleading.
+# --------------------------------------------------------------------------------------
+
+
+def test_readme_test_count_is_not_stale():
+    import re
+
+    readme = (PKG.parent / "README.md").read_text(encoding="utf-8")
+    claimed = int(re.search(r"\*\*([\d,]+) test functions\*\*", readme).group(1).replace(",", ""))
+
+    collected = 0
+    for path in sorted((PKG.parent / "tests").glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
+                "test_"
+            ):
+                collected += 1
+
+    drift = abs(collected - claimed) / max(collected, 1)
+    assert drift <= 0.10, (
+        f"README claims {claimed} tests; {collected} are defined ({drift:.0%} off). "
+        "Re-measure before shipping — this is the badge a visitor reads first."
+    )

@@ -63,7 +63,7 @@ async def test_store_success_returns_id_matching_db_row(clean_db):
     res = await memory_handlers.do_store(
         "a1", {"content": "first message", "source": {"type": "User"}, "timestamp": "2026-07-22T00:00:00+00:00"}
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     assert "id" in res, res
     row = await db.execute_fetchall("SELECT id, content FROM memories WHERE id = ?", (res["id"],))
     assert len(row) == 1 and row[0][1] == "first message"
@@ -79,7 +79,7 @@ async def test_store_embedded_false_under_mode_none(clean_db):
     res = await memory_handlers.do_store(
         "a1", {"content": "unembedded row", "source": {}, "timestamp": "t"}
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     assert res["embedded"] is False, res
 
 
@@ -92,7 +92,7 @@ async def test_store_embedded_true_when_local_blob_present(clean_db, fake_embedd
     res = await memory_handlers.do_store(
         "a1", {"content": "embedded row", "source": {}, "timestamp": "t"}
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     assert res["embedded"] is True, res
 
 
@@ -104,11 +104,11 @@ async def test_store_dedup_content_echoes_existing_id(clean_db):
     first = await memory_handlers.do_store(
         "a1", {"content": "shared content", "source": {}, "timestamp": "t"}
     )
-    assert first["ok"] and not first.get("skipped"), first
+    assert first["result"] == "stored", first
     dup = await memory_handlers.do_store(
         "a1", {"content": "shared content", "source": {}, "timestamp": "t"}
     )
-    assert dup.get("skipped") is True and dup.get("reason") == "duplicate content", dup
+    assert dup["result"] == "skipped" and dup.get("reason") == "duplicate content", dup
     assert dup.get("id") == first["id"], dup
 
 
@@ -118,11 +118,11 @@ async def test_store_dedup_msg_id_echoes_existing_id(clean_db):
     first = await memory_handlers.do_store(
         "a1", {"id": "m-1", "content": "row A", "source": {}, "timestamp": "t"}
     )
-    assert first["ok"] and not first.get("skipped"), first
+    assert first["result"] == "stored", first
     dup = await memory_handlers.do_store(
         "a1", {"id": "m-1", "content": "row B", "source": {}, "timestamp": "t"}
     )
-    assert dup.get("skipped") is True and dup.get("reason") == "duplicate msg_id", dup
+    assert dup["result"] == "skipped" and dup.get("reason") == "duplicate msg_id", dup
     assert dup.get("id") == first["id"], dup
 
 
@@ -285,3 +285,89 @@ async def test_recall_confidence_field_shape_unchanged(monkeypatch):
     conf = msg.get("confidence")
     assert isinstance(conf, dict) and "score" in conf, conf
     assert isinstance(conf["score"], (int, float)) and 0.0 <= conf["score"] <= 1.0, conf
+
+
+# ---------------------------------------------------------------------------
+# (b1-1, 2.5.2b1 CONTRACT BREAK) do_store returns a discriminated outcome
+#
+# Pre-b1 every branch returned ok=True and signalled non-writes with an
+# easily-missed ``skipped: true``; a refusal was indistinguishable from a
+# success for the caller who checks the obvious field. These tests pin the
+# replacement: ``result`` is present on every response, and ``ok`` tracks the
+# verdict.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_content_is_rejected_not_reported_ok(clean_db):
+    """The regression that motivated the break: a store that wrote nothing
+    used to answer ok=True."""
+    res = await memory_handlers.do_store("a1", {"content": "", "source": {}, "timestamp": "t"})
+    assert res["result"] == "rejected", res
+    assert res["ok"] is False, res
+    assert res["reason"] == "empty content"
+    assert "id" not in res, "a rejection must not hand back an id"
+    rows = await clean_db.execute_fetchall("SELECT COUNT(*) FROM memories")
+    assert rows[0][0] == 0
+
+
+@pytest.mark.asyncio
+async def test_content_that_sanitizes_to_empty_is_rejected(clean_db):
+    """Same verdict for content that survives the caller but not the sanitizer
+    — the row would have been empty, so nothing is written."""
+    res = await memory_handlers.do_store(
+        "a1", {"content": "[Memory from 2026-01-01] ", "source": {}, "timestamp": "t"}
+    )
+    assert res["result"] == "rejected" and res["ok"] is False, res
+    assert res["reason"] == "empty after sanitization"
+
+
+@pytest.mark.asyncio
+async def test_dedup_is_skipped_not_rejected(clean_db):
+    """Dedup is the third verdict, deliberately distinct from a rejection:
+    nothing was written and nothing is wrong, because the memory is already
+    there. ok stays True and the pre-existing id comes back."""
+    first = await memory_handlers.do_store(
+        "a1", {"content": "same", "source": {}, "timestamp": "t"}
+    )
+    dup = await memory_handlers.do_store(
+        "a1", {"content": "same", "source": {}, "timestamp": "t"}
+    )
+    assert first["result"] == "stored" and first["ok"] is True
+    assert dup["result"] == "skipped" and dup["ok"] is True, dup
+    assert dup["id"] == first["id"]
+
+
+@pytest.mark.asyncio
+async def test_paused_persistence_is_a_skip_distinguishable_by_persisted(clean_db):
+    """The no-persist branch is a skip too, so ``result`` alone cannot tell it
+    from a dedup hit — ``persisted`` is the discriminator, and it must stay."""
+    no_persist.pause(ttl_seconds=120)
+    try:
+        res = await memory_handlers.do_store("a1", {"content": "paused", "source": {}, "timestamp": "t"})
+    finally:
+        no_persist.resume()
+    assert res["result"] == "skipped", res
+    assert res["persisted"] is False, res
+    assert res["embedded"] is False
+
+
+@pytest.mark.asyncio
+async def test_every_store_outcome_carries_result(clean_db, monkeypatch):
+    """Totality: the discriminator is only useful if no branch omits it —
+    including the operating-context gate, which lives in the boundary layer
+    above the handler and used to answer in a shape of its own."""
+    from cpersona import operating_context, server
+
+    stored = await memory_handlers.do_store("a1", {"content": "row", "source": {}, "timestamp": "t"})
+    skipped = await memory_handlers.do_store("a1", {"content": "row", "source": {}, "timestamp": "t"})
+    rejected = await memory_handlers.do_store("a1", {"content": "", "source": {}, "timestamp": "t"})
+    assert [r["result"] for r in (stored, skipped, rejected)] == ["stored", "skipped", "rejected"]
+
+    monkeypatch.setattr(
+        operating_context, "check_project_id", lambda *a, **k: ("", None, "unknown project_id 'nope'")
+    )
+    gated = await server.do_store_boundary("a1", {"content": "row2"}, project_id="nope")
+    assert gated["result"] == "rejected" and gated["ok"] is False, gated
+    assert gated["reason"] == "unknown project_id 'nope'"
+    assert gated["error"] == gated["reason"], "the shared gate shape is kept alongside"

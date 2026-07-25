@@ -1889,6 +1889,127 @@
     "seam": "#287",
     "thresholds": {}
   },
+  "deep-check-anonymous-source-fix": {
+    "covers": "deep_check: fix=True with a recoverable anonymous-User row + [username] prefix — name recovered, source rewritten in db",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "d1",
+          "channel": "",
+          "content": "[bob] hello",
+          "created_at": "2026-01-01T00:00:00Z",
+          "embedding": "<blob 256B sha256:7db3835bb58c9593>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\": \"User\", \"id\": \"\", \"name\": \"bob\"}",
+          "timestamp": "2026-01-01T00:00:00Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "agent_id": "d1",
+      "checks_run": [
+        "anonymous_source",
+        "short_content",
+        "stale_profile",
+        "orphaned_episodes",
+        "calibration_staleness",
+        "near_duplicate"
+      ],
+      "fixed": true,
+      "results": {
+        "anonymous_source": {
+          "fixed": 1,
+          "recoverable": 1,
+          "samples": [
+            {
+              "id": 1,
+              "recovered_name": "bob"
+            }
+          ],
+          "unrecoverable": 0
+        },
+        "calibration_staleness": {
+          "reason": "no embedding client configured",
+          "status": "not_applicable"
+        },
+        "near_duplicate": {
+          "pairs": 0,
+          "rows_scanned": 1
+        },
+        "orphaned_episodes": {
+          "count": 0
+        },
+        "short_content": {
+          "count": 0,
+          "fixed": 0
+        },
+        "stale_profile": {
+          "count": 0,
+          "threshold_days": 30
+        }
+      }
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "deep-check-clean": {
+    "covers": "deep_check: envelope + zero shape of every subcheck on a clean agent (fix=False)",
+    "db": {
+      "episodes": [],
+      "memories": [],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "agent_id": "d1",
+      "checks_run": [
+        "anonymous_source",
+        "short_content",
+        "stale_profile",
+        "orphaned_episodes",
+        "calibration_staleness",
+        "near_duplicate"
+      ],
+      "fixed": false,
+      "results": {
+        "anonymous_source": {
+          "recoverable": 0,
+          "unrecoverable": 0
+        },
+        "calibration_staleness": {
+          "reason": "no embedding client configured",
+          "status": "not_applicable"
+        },
+        "near_duplicate": {
+          "pairs": 0,
+          "rows_scanned": 0
+        },
+        "orphaned_episodes": {
+          "count": 0
+        },
+        "short_content": {
+          "count": 0
+        },
+        "stale_profile": {
+          "count": 0,
+          "threshold_days": 30
+        }
+      }
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
   "export-roundtrip": {
     "covers": "export writes what import reads: the file survives its own reader",
     "db": {
@@ -2251,6 +2372,302 @@
     "seam": "#287",
     "thresholds": {}
   },
+  "health-clean": {
+    "covers": "check_health: clean corpus — full response shape (status='healthy', severity_summary zeros)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "h1",
+          "channel": "",
+          "content": "a perfectly ordinary memory",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:d194b537071cd45a>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "h1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "fixed": false,
+      "issues": [],
+      "severity_summary": {
+        "critical": 0,
+        "info": 0,
+        "warn": 0
+      },
+      "stats": {
+        "agent_episodes": 0,
+        "agent_memories": 1,
+        "axes": {
+          "channel": {
+            "(global)": 1
+          },
+          "project_id": {
+            "(global)": 1
+          }
+        },
+        "db_size_bytes": "<file-scoped, masked>",
+        "episodes": 0,
+        "memories": 1,
+        "pending_tasks": 0,
+        "profiles": 1
+      },
+      "status": "healthy",
+      "total_memories": 1
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "health-fix-repairs-warn": {
+    "covers": "check_health: fix=True on the warn corpus — fixed=True; bug-059 residual re-run yields status='healthy'; the survivor row is visible in db",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "h1",
+          "channel": "c1",
+          "content": "duplicated body",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:da896ea19607cfbf>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "h1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "fixed": true,
+      "issues": [],
+      "severity_summary": {
+        "critical": 0,
+        "info": 0,
+        "warn": 0
+      },
+      "stats": {
+        "agent_episodes": 0,
+        "agent_memories": 1,
+        "axes": {
+          "channel": {
+            "c1": 1
+          },
+          "project_id": {
+            "(global)": 1
+          }
+        },
+        "db_size_bytes": "<file-scoped, masked>",
+        "episodes": 0,
+        "memories": 1,
+        "pending_tasks": 0,
+        "profiles": 1
+      },
+      "status": "healthy",
+      "total_memories": 1
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "health-info-only-asymmetry": {
+    "covers": "check_health: info-only finding (memory_annotation) — status stays 'healthy' (the asymmetry the retired healthy boolean contradicted, motivating the b1 single verdict)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "h1",
+          "channel": "",
+          "content": "[Memory from bob] a note",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:ada28f4ae963a6c6>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "h1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "fixed": false,
+      "issues": [
+        {
+          "check": "memory_annotation",
+          "count": 1,
+          "severity": "info",
+          "type": "memory_annotation"
+        }
+      ],
+      "severity_summary": {
+        "critical": 0,
+        "info": 1,
+        "warn": 0
+      },
+      "stats": {
+        "agent_episodes": 0,
+        "agent_memories": 1,
+        "axes": {
+          "channel": {
+            "(global)": 1
+          },
+          "project_id": {
+            "(global)": 1
+          }
+        },
+        "db_size_bytes": "<file-scoped, masked>",
+        "episodes": 0,
+        "memories": 1,
+        "pending_tasks": 0,
+        "profiles": 1
+      },
+      "status": "healthy",
+      "total_memories": 1
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "health-warn-degraded": {
+    "covers": "check_health: warn finding (duplicate_content cross-channel, bug-014) — severity_summary.warn=1, status='degraded'",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "h1",
+          "channel": "c1",
+          "content": "duplicated body",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:da896ea19607cfbf>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "h1",
+          "channel": "c2",
+          "content": "duplicated body",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:da896ea19607cfbf>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "h1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "fixed": false,
+      "issues": [
+        {
+          "check": "duplicate_content",
+          "groups": 1,
+          "severity": "warn",
+          "total_extra": 1,
+          "type": "duplicate_content"
+        }
+      ],
+      "severity_summary": {
+        "critical": 0,
+        "info": 0,
+        "warn": 1
+      },
+      "stats": {
+        "agent_episodes": 0,
+        "agent_memories": 2,
+        "axes": {
+          "channel": {
+            "c1": 1,
+            "c2": 1
+          },
+          "project_id": {
+            "(global)": 2
+          }
+        },
+        "db_size_bytes": "<file-scoped, masked>",
+        "episodes": 0,
+        "memories": 2,
+        "pending_tasks": 0,
+        "profiles": 1
+      },
+      "status": "degraded",
+      "total_memories": 2
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
   "import-content-collision": {
     "covers": "import: duplicate content is absorbed by the UNIQUE index, not counted twice",
     "db": {
@@ -2527,7 +2944,8 @@
     "outbound": [],
     "raised": null,
     "result": {
-      "error": "File not found: <tmp>/nope.jsonl"
+      "error": "File not found: <tmp>/nope.jsonl",
+      "ok": false
     },
     "seam": "#287",
     "thresholds": {}
@@ -3481,7 +3899,8 @@
     "outbound": [],
     "raised": null,
     "result": {
-      "error": "source_agent_id and target_agent_id must differ"
+      "error": "source_agent_id and target_agent_id must differ",
+      "ok": false
     },
     "seam": "#287",
     "thresholds": {}
@@ -3761,6 +4180,1386 @@
       "target_agent_id": "dst"
     },
     "seam": "#287",
+    "thresholds": {}
+  },
+  "recall-basic-hits": {
+    "covers": "recall: seed_corpus hit set — messages, confidence, match_reason, refs; recall_count/last_recalled_at bumped (CONFIDENCE=on)",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "rrf": 0.0153846154,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples with no vector",
+          "match_reason": {
+            "rrf": 0.0163934426,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ]
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "recall-deep-no-decay-no-bump": {
+    "covers": "recall: deep=True disables time_decay/completion_factor AND skips the recall_count bump (CONFIDENCE=on)",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 1.0
+          },
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "rrf": 0.0153846154,
+            "score": 1.0,
+            "signal": "confidence"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 1.0
+          },
+          "content": "apples with no vector",
+          "match_reason": {
+            "rrf": 0.0163934426,
+            "score": 1.0,
+            "signal": "confidence"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ]
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "recall-empty-query-pure-recency": {
+    "covers": "recall: empty query bypasses the unscored volume rule (bug-125) — pure recency listing",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "advisory": {
+        "degraded": true,
+        "evidence": "mode=none / no embedding backend configured",
+        "reason": "embeddings disabled (mode=none); recall is keyword/FTS-only",
+        "runbook": "**Notify the user:** CPersona is running WITHOUT embeddings (mode=none), so recall is keyword/FTS-only — semantic similarity search is off. This is fine for a deliberate keyword-only setup, but differently-worded memories may not be found.\n\nTo enable semantic recall: set the embedding env (EMBEDDING_MODE=http + EMBEDDING_HTTP_URL, or run the cpersona bootstrap which configures a local embedding server) and restart CPersona.\n\nPlain version for the user: \"My memory search is in keyword-only mode — turning on the embedding service would let me recall by meaning, not just exact words.\"\n\nTo silence this advisory set CPERSONA_DEGRADED_ADVISORY=false.",
+        "severity": "hint"
+      },
+      "messages": [
+        {
+          "content": "apples in another project",
+          "ref": "mem:3",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "content": "apples discussed in chat",
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "content": "apples from a tagged user",
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "content": "apples with a ragged vector",
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "content": "apples with no vector",
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ]
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "recall-exclude-contents": {
+    "covers": "recall: exclude_contents drops a matching row before ranking (CONFIDENCE=on)",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "rrf": 0.0153846154,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples with no vector",
+          "match_reason": {
+            "rrf": 0.0163934426,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ]
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "recall-no-hits": {
+    "covers": "recall: a query matching no row returns messages=[] and does not touch recall_count",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": []
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-duplicate-content": {
+    "covers": "store: existing content — skipped 'duplicate content', echoes existing id",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "prior body",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:0d5d6bf66ba2a417>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "id": 1,
+      "ok": true,
+      "reason": "duplicate content",
+      "result": "skipped"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-duplicate-msg-id": {
+    "covers": "store: existing msg_id — skipped 'duplicate msg_id', echoes existing id (v2.5.2 additive)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "row under m-1",
+          "created_at": "2026-01-05T00:00:00Z",
+          "embedding": "<blob 256B sha256:3e6a9482103145bc>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "m-1",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-05T00:00:00Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "id": 1,
+      "ok": true,
+      "reason": "duplicate msg_id",
+      "result": "skipped"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-empty-content": {
+    "covers": "store: content missing or empty string — rejected 'empty content', no row",
+    "db": {
+      "episodes": [],
+      "memories": [],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "ok": false,
+      "reason": "empty content",
+      "result": "rejected"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-gamma-bucket-collides-global": {
+    "covers": "store: bucket write ('p1') collides with an identical global-pool row (bug-106 γ-visible scope)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "prior body",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:0d5d6bf66ba2a417>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "id": 1,
+      "ok": true,
+      "reason": "duplicate content",
+      "result": "skipped"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-gamma-global-not-collides-bucket": {
+    "covers": "store: global write does NOT collide with a bucket-only row (bug-106 γ-visible scope)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "isolated body",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:78c1b6676bd7df76>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "p1",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "isolated body",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:78c1b6676bd7df76>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-07-22T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 2,
+      "ok": true,
+      "result": "stored"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-local-basic": {
+    "covers": "store: fresh write, local mode — {ok, id, embedded:true}, row lands, no outbound",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "fresh entry",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:c7619c20439f66dc>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-07-22T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 1,
+      "ok": true,
+      "result": "stored"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-no-persist-paused": {
+    "covers": "store: no_persist paused — {id:'no-persist', persisted:false, dry_run:true, reason:'…30m left…'} shape (bug-141)",
+    "db": {
+      "episodes": [],
+      "memories": [],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "dry_run": true,
+      "embedded": false,
+      "id": "no-persist",
+      "ok": true,
+      "persisted": false,
+      "reason": "session no-persist mode active (30m left) — `store` skipped. Call `resume_persistence` to re-enable, or wait for TTL to elapse.",
+      "result": "skipped"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-remote-basic": {
+    "covers": "store: fresh write, remote mode — /index POST body (namespace/items), embedded:true",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "remote fresh entry",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:65d47b7337841d70>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-07-22T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [
+      {
+        "body": {
+          "items": [
+            {
+              "id": "mem:1",
+              "text": "remote fresh entry"
+            }
+          ],
+          "namespace": "cpersona:s1"
+        },
+        "kind": "http_post",
+        "timeout": 10.0,
+        "url": "http://embed.test/index"
+      }
+    ],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 1,
+      "ok": true,
+      "result": "stored"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-sanitized-empty": {
+    "covers": "store: content that sanitizes to empty ([Memory from …] only) — rejected 'empty after sanitization'",
+    "db": {
+      "episodes": [],
+      "memories": [],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "ok": false,
+      "reason": "empty after sanitization",
+      "result": "rejected"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-source-normalize-bare-alias": {
+    "covers": "store: source='assistant' bare-string alias — normalized to canonical Agent dict (an earlier decision)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "bare alias",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:c583ffd4b6e0e317>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\": \"Agent\", \"id\": \"\", \"name\": \"\"}",
+          "timestamp": "2026-07-22T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 1,
+      "ok": true,
+      "result": "stored"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-source-normalize-serde-tagged": {
+    "covers": "store: source={'User': 'u-1'} Rust serde form — normalized to canonical User dict (an earlier decision)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "serde tagged",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:d053c2ec0015ce2c>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\": \"User\", \"id\": \"u-1\", \"name\": \"u-1\"}",
+          "timestamp": "2026-07-22T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 1,
+      "ok": true,
+      "result": "stored"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-source-verbatim-bare-unknown": {
+    "covers": "store: source='claude-code' bare-string unknown — stored verbatim (an earlier decision anonymous-source contract)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "bare unknown",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:9952e3e674ea9214>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "\"claude-code\"",
+          "timestamp": "2026-07-22T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 1,
+      "ok": true,
+      "result": "stored"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-timestamp-default": {
+    "covers": "store: timestamp omitted — frozen datetime.now default lands as ISO-with-T in the row",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "unstamped",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:ab93a990e9fdb950>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2027-01-01T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 1,
+      "ok": true,
+      "result": "stored"
+    },
+    "seam": "#362",
+    "thresholds": {}
+  },
+  "store-truncated": {
+    "covers": "store: content > MAX_CONTENT_LENGTH — truncated:true AND the row stores the truncated body",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:0096de5cbbfb1807>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-07-22T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 1,
+      "ok": true,
+      "result": "stored",
+      "truncated": true
+    },
+    "seam": "#362",
     "thresholds": {}
   },
   "sv-local-basic": {

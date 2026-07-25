@@ -188,7 +188,7 @@ async def test_store_normalizes_lowercase_type_word(clean_db):
         "a1",
         {"content": "lowercase-type row", "source": {"type": "user", "id": "u1", "name": "Alice"}},
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     row = await db.execute_fetchall("SELECT source FROM memories WHERE id = ?", (res["id"],))
     parsed = json.loads(row[0][0])
     # Discriminator canonicalised, id / name preserved (would be destroyed by
@@ -204,7 +204,7 @@ async def test_store_normalizes_bare_string_assistant(clean_db):
     res = await memory_handlers.do_store(
         "a1", {"content": "bare assistant row", "source": "assistant"}
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     row = await db.execute_fetchall("SELECT source FROM memories WHERE id = ?", (res["id"],))
     assert json.loads(row[0][0]) == {"type": "Agent", "id": "", "name": ""}
 
@@ -220,7 +220,7 @@ async def test_store_leaves_unknown_source_verbatim(clean_db):
     res = await memory_handlers.do_store(
         "a1", {"content": "unknown-type row", "source": unknown}
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     row = await db.execute_fetchall("SELECT source FROM memories WHERE id = ?", (res["id"],))
     assert json.loads(row[0][0]) == unknown
 
@@ -371,3 +371,111 @@ async def test_fix_reports_locked_rows_it_cannot_touch(clean_db):
     assert (
         ran[0]["mapped"] + ran[0]["unmapped"] + ran[0]["locked"] == ran[0]["count"]
     )
+
+
+# ---------------------------------------------------------------------------
+# 2.5.2b1 (an earlier decision item b1-2): one definition of the enum, three surfaces
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_health_check_reads_the_shared_enum_not_its_own_literal(clean_db, monkeypatch):
+    """The check MUST derive its ``NOT IN`` set from ``CANONICAL_SOURCE_TYPES``.
+
+    Proof by substitution: widen the shared tuple at runtime and a row whose
+    type is only canonical under the widened tuple stops being an offender.
+    Against the pre-b1 code — which carried its own ``('User', 'Agent',
+    'System')`` SQL literal — the row stays flagged, so this test is red
+    exactly when the two definitions can drift apart again.
+    """
+    from cpersona import utils
+
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES ('enum1', 'ghost row', '{\"type\":\"Ghost\"}', 't')"
+    )
+    await db.commit()
+
+    flagged = await checks.check_invalid_source_type(db, "enum1", fix=False)
+    assert flagged and flagged[0]["count"] == 1, "baseline: Ghost is not canonical"
+
+    monkeypatch.setattr(
+        utils, "CANONICAL_SOURCE_TYPES", ("User", "Agent", "System", "Ghost")
+    )
+    assert await checks.check_invalid_source_type(db, "enum1", fix=False) == []
+
+
+def test_store_schema_publishes_the_shared_enum():
+    """The published JSON Schema is the contract's public face; it MUST render
+    the same tuple the write seam enforces (before b1 it had no enum at all,
+    so the only way to learn the vocabulary was to read checks.py)."""
+    from cpersona import server, utils
+
+    store_tool = next(t for t in server.registry._tools if t.name == "store")
+    source_schema = store_tool.inputSchema["properties"]["message"]["properties"]["source"]
+    type_schema = source_schema["properties"]["type"]
+    assert type_schema["enum"] == list(utils.CANONICAL_SOURCE_TYPES)
+    # The alias prose is generated from the same mapping the seam applies, so
+    # a new alias cannot be added without the description following it.
+    assert utils.source_type_alias_summary() in type_schema["description"]
+
+
+def test_alias_summary_tracks_the_mapping_table():
+    """Adding an alias changes the generated sentence — the C26 doc-drift
+    class (prose stating a rule the code stopped implementing) cannot recur
+    for this surface without the generator itself being bypassed."""
+    from cpersona import utils
+
+    baseline = utils.source_type_alias_summary()
+    assert "'assistant'" in baseline and "'Agent'" in baseline
+    assert "'user'" not in baseline  # case variants are implied, not enumerated
+
+
+# ---------------------------------------------------------------------------
+# Audit C24: the 2.5.2 branches that had no regression coverage
+#
+# Two paths shipped in a1 without a test: the fixer's per-row JSON-parse guard,
+# and the serde branch's non-dict / non-str inner value. Both are "leave it
+# alone" verdicts, which is exactly the kind of behaviour a later refactor
+# silently converts into "fabricate something".
+# ---------------------------------------------------------------------------
+
+
+def test_serde_inner_list_is_left_untouched():
+    """A single enum key whose value is neither dict nor str is NOT the serde
+    shape we recognise — normalising it would require inventing an id."""
+    src = {"Agent": ["a", "b"]}
+    out, mapped = normalize_source(src)
+    assert mapped is False and out is src
+
+
+def test_serde_inner_int_is_left_untouched():
+    src = {"User": 42}
+    out, mapped = normalize_source(src)
+    assert mapped is False and out is src
+
+
+@pytest.mark.asyncio
+async def test_fix_counts_unparseable_source_as_unmapped_not_mapped(clean_db):
+    """A row whose source is valid JSON to SQLite but not a JSON *object* the
+    mapper understands must land in `unmapped` and stay byte-identical —
+    check_invalid_json owns that row, and counting it as mapped would claim a
+    repair that never happened."""
+    from cpersona.database import transaction
+
+    async with transaction() as db_tx:
+        # A JSON number: json_valid() passes, json_extract('$.type') is NULL, so
+        # the check selects it — and normalize_source declines it (not dict/str).
+        await db_tx.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) "
+            "VALUES ('c24', 'numeric source', '17', 't')"
+        )
+        ran = await checks.check_invalid_source_type(db_tx, "c24", fix=True)
+
+    assert ran and ran[0]["count"] == 1, ran
+    assert ran[0]["mapped"] == 0 and ran[0]["unmapped"] == 1, ran
+    rows = await clean_db.execute_fetchall(
+        "SELECT source FROM memories WHERE agent_id = 'c24'"
+    )
+    assert rows[0][0] == "17", "an unrecognised source must survive the fixer verbatim"

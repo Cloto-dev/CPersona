@@ -73,7 +73,7 @@ async def test_store_embedding_is_observable_on_off(fake_embedding_client):
     embedding (bug-001) flips the enabled row to NULL and fails this test.
     """
     res = await _store(MEM_PI)
-    assert res.get("ok") and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     blob = await _embedding_of(MEM_PI)
     assert blob is not None, "embeddings enabled but stored row has no embedding"
     assert len(blob) == 64 * 4, "embedding blob dimension/packing changed unexpectedly"
@@ -84,7 +84,7 @@ async def test_store_writes_null_embedding_when_disabled():
     """Negative control (no fake client -> _embedding_client is None = embeddings off)."""
     assert vector._embedding_client is None
     res = await _store(MEM_PI)
-    assert res.get("ok") and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     assert await _embedding_of(MEM_PI) is None
 
 

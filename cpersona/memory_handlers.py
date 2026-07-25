@@ -33,9 +33,10 @@ from cpersona.config import (
     EPISODE_DECAY_RATE,
     EPISODE_PENALTY_ENABLED,
     FTS_ENABLED,
-    MAX_CONTENT_LENGTH,
     MAX_MEMORIES,
+    MAX_METADATA_LENGTH,
     RECALL_MODE,
+    REMOTE_INDEX_TIMEOUT_SECS,
     RRF_K,
     RRF_MAX_SCALE,
     RRF_THRESHOLD_FACTOR,
@@ -50,12 +51,52 @@ from cpersona.utils import (
     _content_excluded,
     _parse_timestamp_utc,
     _sanitize_content,
+    sanitize_content_with_flag,
     _try_parse_json,
+    error_response,
     normalize_source,
 )
 from cpersona.vector import _search_vector
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# store outcome contract (2.5.2b1, an earlier decision item b1-1)
+#
+# Every do_store return carries ``result`` — the discriminator that answers the
+# only question a caller actually has ("is my memory in the database?"):
+#
+#   stored    a new row was written; ``id`` and ``embedded`` describe it
+#   skipped   nothing was written and nothing is wrong — an equivalent row
+#             already exists (dedup), or persistence is paused
+#   rejected  nothing was written because the request did not satisfy the
+#             contract (empty content, or content that sanitizes to empty)
+#
+# ``ok`` now tracks that verdict instead of being unconditionally True: a
+# rejection reports ok=False. Until 2.5.2b1 every branch returned ok=True and
+# the only signal was an easily-missed ``skipped: true``, so a caller that
+# checked ``ok`` — the obvious thing to check — read "stored" for a write that
+# never happened. That is a contract break, deliberately taken on the 2.5.2
+# pre-release ladder (charter §3: RELEASE_LIFECYCLE_STANDARD §2.1 makes the
+# ladder mandatory, which is what we are on).
+#
+# ``reason`` is human-readable and NOT a stable machine token; branch on
+# ``result`` (and on ``persisted``, which the no-persist path adds).
+# ---------------------------------------------------------------------------
+
+
+def _store_rejected(reason: str) -> dict:
+    """The request was understood and refused. Nothing was written."""
+    return {"ok": False, "result": "rejected", "reason": reason}
+
+
+def _store_skipped(reason: str, mem_id: int | None = None) -> dict:
+    """Nothing was written, and that is the correct outcome for this request."""
+    body = {"ok": True, "result": "skipped", "reason": reason}
+    if mem_id is not None:
+        body["id"] = mem_id
+    return body
 
 
 async def do_store(agent_id: str, message: dict, channel: str = "", project_id: str = "") -> dict:
@@ -70,8 +111,11 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     if no_persist.is_paused():
         # bug-141: keep the no-persist shape aligned with the success contract
         # ({ok, id, embedded}) — nothing was persisted, so embedded is False.
+        # b1-1: it is a `skipped` outcome (deliberately not written, nothing
+        # wrong); the helper overwrites `reason` with its TTL message and adds
+        # persisted=False, which is the key to branch on for this branch alone.
         return no_persist.make_skipped_response(
-            {"ok": True, "id": 0, "embedded": False}, "store"
+            {"ok": True, "result": "skipped", "id": 0, "embedded": False}, "store"
         )
 
     msg_id = message.get("id", "")
@@ -88,13 +132,24 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     project_id = coerce_for_write(project_id)
 
     if not raw_content:
-        return {"ok": True, "skipped": True, "reason": "empty content"}
+        return _store_rejected("empty content")
 
-    content = _sanitize_content(raw_content)
-    truncated = len(raw_content) > MAX_CONTENT_LENGTH
+    # audit C12: content has been capped since 2.1, its JSON sidecars never were.
+    # A field that cannot be truncated (valid JSON has no valid prefix) and is not
+    # the payload gets refused rather than silently dropped — dropping would lose
+    # attribution / producer context while reporting success.
+    for field_name, serialised in (("source", source), ("metadata", metadata)):
+        if len(serialised) > MAX_METADATA_LENGTH:
+            return _store_rejected(
+                f"{field_name} too large ({len(serialised)} chars, max {MAX_METADATA_LENGTH})"
+            )
+
+    # bug-175: the flag comes back from the seam that does the cutting, so it
+    # cannot disagree with what was stored.
+    content, truncated = sanitize_content_with_flag(raw_content)
 
     if not content:
-        return {"ok": True, "skipped": True, "reason": "empty after sanitization"}
+        return _store_rejected("empty after sanitization")
 
     # bug-106: the dedup probes check the γ-VISIBLE scope, matching read semantics.
     # A bucket write ('X') collides with an identical row in the global pool —
@@ -119,7 +174,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
             if row:
                 # v2.5.2 additive: echo the existing row's id so callers can chain
                 # (e.g. update_memory) without a second lookup.
-                return {"ok": True, "skipped": True, "reason": "duplicate msg_id", "id": row[0][0]}
+                return _store_skipped("duplicate msg_id", row[0][0])
 
         # Deduplicate by exact content match (γ-visible scope).
         existing = await db.execute_fetchall(
@@ -129,7 +184,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
         )
         if existing:
             # v2.5.2 additive: same id echo as the msg_id branch above.
-            return {"ok": True, "skipped": True, "reason": "duplicate content", "id": existing[0][0]}
+            return _store_skipped("duplicate content", existing[0][0])
 
     embedding_blob = None
     if vector._embedding_client and (VECTOR_SEARCH_MODE == "local" or STORE_BLOB):
@@ -160,8 +215,8 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
         # INSERT (bug-010 TOCTOU), and a fresh SELECT to recover the id would
         # re-enter the same TOCTOU seam we deliberately closed — so this branch
         # stays id-less by design. Callers keying on `id` MUST treat it as
-        # optional under `skipped=True`.
-        return {"ok": True, "skipped": True, "reason": "duplicate (unique index)"}
+        # optional under `result="skipped"`.
+        return _store_skipped("duplicate (unique index)")
     # lastrowid comes from this cursor's INSERT, so a store interleaved on the
     # shared connection cannot shift it (bug-010: the previous max-id re-SELECT
     # could bind a different row's id to the remote vector entry, making recall
@@ -185,6 +240,10 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
                     "namespace": f"cpersona:{agent_id}",
                     "items": [{"id": f"mem:{mem_id}", "text": content}],
                 },
+                # #361 (6): state the deadline instead of inheriting the embed
+                # client's 30s default — this is the write hot path, and every
+                # sibling remote call (probe 3s, search 5s) names its own.
+                timeout=REMOTE_INDEX_TIMEOUT_SECS,
             )
             # bug-146: httpx does NOT raise on 4xx/5xx, so the discarded
             # response let a backend failure (bad namespace, expired auth, 500)
@@ -199,7 +258,12 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
         except Exception as e:
             logger.debug("Remote index failed (non-fatal): %s", e)
 
-    result = {"ok": True, "id": mem_id, "embedded": local_embedded or remote_embedded}
+    result = {
+        "ok": True,
+        "result": "stored",
+        "id": mem_id,
+        "embedded": local_embedded or remote_embedded,
+    }
     if truncated:
         result["truncated"] = True
     return result
@@ -770,6 +834,14 @@ async def _apply_recall_scoring(
         return results, time_range_hours, recall_counts
 
     if CONFIDENCE_ENABLED:
+        # #361 item (7): `recall_counts` is populated ONLY under this flag, and the
+        # recall-count bump in do_recall gates on that same dict being non-empty.
+        # So with CPERSONA_CONFIDENCE_ENABLED=false (the shipped default) the read
+        # path never records recall_count / last_recalled_at, and the recall-boost
+        # feedback loop in _compute_confidence is inert — an install running the
+        # default ranks on a different signal set than one with confidence on.
+        # Documented rather than changed: making the bump unconditional would move
+        # ranking state, which 2.5.2 deliberately holds still (charter §5).
         # bug-107: the temporal span is computed over the SAME isolation scope as
         # the recall — an agent-wide MIN/MAX let timestamps from unrelated
         # projects/channels scale a tightly-scoped recall's confidence curve.
@@ -1017,10 +1089,16 @@ async def do_recall(
             if r.get("_rsf_score") is not None:
                 match_reason["rsf"] = r["_rsf_score"]
             msg["match_reason"] = match_reason
+        # b1-4 residual: the response is built by allowlist above (`msg`), so these
+        # pops are hygiene on the internal row, not the thing that keeps private
+        # keys out of the payload. _rsf_score was missing from the list — harmless
+        # for that reason, and completed here so the set matches the keys the
+        # scoring layer actually attaches.
         r.pop("_rid", None)
         r.pop("_cosine", None)
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
+        r.pop("_rsf_score", None)
         r.pop("_resolved", None)
         messages.append(msg)
 
@@ -1076,6 +1154,22 @@ def _ctx_content(entry: object) -> str:
         return ""
     val = entry.get("content")
     return val.strip() if isinstance(val, str) else ""
+
+
+def _ctx_role(entry: object) -> str:
+    """Null/type-safe ``role`` extraction for external_context entries.
+
+    bug-163: the same schema gap bug-035 exposed on ``content`` also covers
+    ``role``. The C13 disclosure collects the roles into a set and sorts it, so a
+    non-string role was two separate faults: an unhashable value (dict/list) blew
+    up building the set, and a mixed int/str set blew up in ``sorted()`` — either
+    way aborting the whole ``recall_with_context`` into an opaque error. Coerce
+    here so the disclosure reports the malformed role instead of dying on it.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    val = entry.get("role", "")
+    return val if isinstance(val, str) else str(val)
 
 
 async def do_recall_with_context(
@@ -1140,6 +1234,25 @@ async def do_recall_with_context(
     messages.sort(key=_ts_sort_key)
 
     result: dict = {"messages": messages}
+    # audit C13: every context entry's content filters recall (exclude_list above
+    # is role-agnostic — correct, the caller already holds that text), but only
+    # user / assistant entries are merged into `messages`. So a system or tool
+    # entry can suppress a memory while being invisible in the response, and the
+    # caller sees a memory vanish with nothing explaining it. The filtering stays
+    # (it is the right semantics); the silence does not. Reported only when such
+    # entries exist, so the common case pays no payload.
+    filter_only_roles = sorted(
+        {
+            _ctx_role(e) or "(unset)"
+            for e in ctx
+            if _ctx_content(e) and _ctx_role(e) not in ("assistant", "user")
+        }
+    )
+    if filter_only_roles:
+        result["context_filter_only"] = {
+            "roles": filter_only_roles,
+            "note": "entries with these roles filtered recall but are not shown in messages",
+        }
     # Forward the advisory do_recall already produced — do NOT call maybe_advisory() again
     # here (that would flip the full template to the short one within one logical recall).
     advisory = recall_result.get("advisory")
@@ -1168,11 +1281,11 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
     abort the batch).
     """
     if not agent_id:
-        return {"error": "agent_id is required"}
+        return error_response("agent_id is required")
     if not isinstance(refs, list) or not refs:
-        return {"error": "refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' strings"}
+        return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' strings")
     if len(refs) > GET_CONTENTS_MAX_REFS:
-        return {"error": f"too many refs ({len(refs)}; max {GET_CONTENTS_MAX_REFS}) — split the fetch"}
+        return error_response(f"too many refs ({len(refs)}; max {GET_CONTENTS_MAX_REFS}) — split the fetch")
 
     items: list[dict] = []
     missing: list[str] = []
@@ -1404,7 +1517,14 @@ async def do_archive_episode(
             {"ok": True, "episode_id": None, "id": 0}, "archive_episode"
         )
 
-    if not summary:
+    # bug-162: judge the text that would actually be STORED. _sanitize_content
+    # strips [Memory from ...] annotations and whitespace, so an annotation-only
+    # summary is truthy here while being empty in the row — it cleared this guard
+    # and produced an empty-summary episode answering ok:true, the very input
+    # do_store refuses with result:'rejected'. Refusing here (rather than letting
+    # _prepare_episode_row raise) keeps the bug-006 response shape: the drain in
+    # tasks.py still depends on that ValueError, so the guard lives in both.
+    if not (_sanitize_content(summary) if isinstance(summary, str) else ""):
         # No server-side synthesis exists to fill this in, so an empty summary
         # cannot produce a stored episode. Return an explicit failure rather
         # than {ok:true, episode_id:None}, which read as success while writing
@@ -1425,10 +1545,18 @@ async def do_archive_episode(
     # connection.
     async with transaction() as db:
         episode_id = await _insert_episode_row(db, row)
+    # row[2] is the stored (capped) summary — index the text that actually landed,
+    # not the caller's original, so the remote vector and the row agree (C12).
     await vector.remote_index_upsert(
-        agent_id, [{"id": f"ep:{episode_id}", "text": summary}]
+        agent_id, [{"id": f"ep:{episode_id}", "text": row[2]}]
     )
-    return {"ok": True, "episode_id": episode_id}
+    result = {"ok": True, "episode_id": episode_id}
+    # Same signal do_store gives for capped content — and, since bug-175, the same
+    # definition: the flag reports whether the cap CUT, not whether the caller's
+    # raw string (annotation included) happened to exceed it.
+    if sanitize_content_with_flag(summary)[1] or sanitize_content_with_flag(keywords)[1]:
+        result["truncated"] = True
+    return result
 
 
 async def _prepare_episode_row(
@@ -1446,8 +1574,23 @@ async def _prepare_episode_row(
     its task-row delete in ONE transaction — the prepare half must stay outside
     because it performs the embedding HTTP round-trip (bug-072 class).
     Raises ValueError when the episode cannot be stored (empty summary)."""
+    # audit C12: the episode's text fields were the last unbounded write path.
+    # They are prose, so the memory rule applies verbatim — truncate to the same
+    # cap rather than refuse, and do it HERE (the shared prepare seam) so the
+    # queue drain is bounded by the same rule as the direct call. Capping before
+    # the embed below also keeps the oversized string out of the backend request.
+    #
+    # bug-162: sanitize BEFORE the emptiness guard reads it. The guard used to
+    # see the RAW value, so a summary that sanitizes to empty (an annotation-only
+    # string, or pure whitespace) cleared it and an empty-summary row was written
+    # with ok:true — the very input do_store refuses with result:'rejected'.
+    # Refuse on what would actually be stored, not on what was handed in. The
+    # isinstance guard keeps a non-string summary on the same ValueError path
+    # instead of letting _sanitize_content raise an opaque TypeError.
+    summary = _sanitize_content(summary) if isinstance(summary, str) else ""
     if not summary:
         raise ValueError("summary is required to archive an episode")
+    keywords = _sanitize_content(keywords)
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)
 

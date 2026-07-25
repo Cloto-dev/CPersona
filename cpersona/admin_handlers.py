@@ -37,7 +37,12 @@ from cpersona.config import (
     VECTOR_SEARCH_MODE,
 )
 from cpersona.database import connection, read_snapshot, transaction
-from cpersona.utils import _clamp_limit, _try_parse_json
+from cpersona.utils import (
+    _clamp_limit,
+    _try_parse_json,
+    error_response,
+    sanitize_content_with_flag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,9 +168,9 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
-        return {"error": f"Memory {memory_id} not found"}
+        return error_response(f"Memory {memory_id} not found")
     if rows[0][0]:
-        return {"error": f"Memory {memory_id} is locked and cannot be deleted"}
+        return error_response(f"Memory {memory_id} is locked and cannot be deleted")
     owner_agent_id = rows[0][1]
 
     # bug-024: fold `AND locked = 0` into the DML so a lock_memory that commits
@@ -182,7 +187,7 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
         else:
             cursor = await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (memory_id,))
     if cursor.rowcount == 0:
-        return {"error": f"Memory {memory_id} not found, not owned by agent, or locked"}
+        return error_response(f"Memory {memory_id} not found, not owned by agent, or locked")
 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         # bug-023: the row was indexed under its OWNER's namespace (cpersona:{owner}).
@@ -206,20 +211,33 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "updated_id": memory_id}, "update_memory")
     if not content or not content.strip():
-        return {"error": "Content cannot be empty"}
+        return error_response("Content cannot be empty")
     _warn_if_unscoped("do_update_memory", memory_id, agent_id)
 
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
-        return {"error": f"Memory {memory_id} not found"}
+        return error_response(f"Memory {memory_id} not found")
     row = rows[0]
     if row[0]:
-        return {"error": f"Memory {memory_id} is locked and cannot be edited"}
+        return error_response(f"Memory {memory_id} is locked and cannot be edited")
     if agent_id and row[1] != agent_id:
-        return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
+        return error_response(f"Memory {memory_id} not owned by agent {agent_id}")
 
-    content = content.strip()
+    # 2.5.2a2 audit (C12): the edit path enforces the SAME content policy as the write
+    # path, via the same helper. Before, this was a bare `.strip()`, so an update could
+    # grow a row past MAX_CONTENT_LENGTH — a cap do_store applies on every insert — and
+    # the uncapped string was then handed to embed() and pushed verbatim to the remote
+    # /index as well, so the two write seams disagreed on what a stored row may contain.
+    raw_content = content
+    # bug-175: same seam, same flag — the raw length counted the annotation this
+    # helper strips, so an update could report truncated:true without a cut.
+    content, truncated = sanitize_content_with_flag(raw_content)
+    if not content:
+        # _sanitize_content also strips [Memory from ...] annotations, so a body made of
+        # nothing else is empty at the seam. Reject as the empty-input guard above does
+        # rather than writing an empty row (do_store's "empty after sanitization").
+        return error_response("Content cannot be empty after sanitization")
 
     # bug-011: recompute the embedding for the new text with the same policy as
     # do_store. On failure (or no client) the BLOB is NULLed rather than left
@@ -248,7 +266,7 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
             (content, embedding_blob, memory_id),
         )
     if cursor.rowcount == 0:
-        return {"error": f"Memory {memory_id} is locked and cannot be edited"}
+        return error_response(f"Memory {memory_id} is locked and cannot be edited")
 
     # Keep the remote vector entry in step with the new text (same
     # namespace/id scheme as do_store; non-fatal).
@@ -265,7 +283,13 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
         except Exception as e:
             logger.debug("Remote index update failed (non-fatal): %s", e)
 
-    return {"ok": True, "updated_id": memory_id}
+    # `truncated` is additive and mirrors do_store's success shape (absent unless the
+    # cap actually bit), so a caller that edits a too-long body learns the row it now
+    # holds is a prefix instead of having to re-read it to find out.
+    result = {"ok": True, "updated_id": memory_id}
+    if truncated:
+        result["truncated"] = True
+    return result
 
 
 async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
@@ -276,16 +300,16 @@ async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
-        return {"error": f"Memory {memory_id} not found"}
+        return error_response(f"Memory {memory_id} not found")
     if agent_id and rows[0][0] != agent_id:
-        return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
+        return error_response(f"Memory {memory_id} not owned by agent {agent_id}")
 
     async with transaction() as db:  # bug-042/043: serialise write+commit
         cur = await db.execute("UPDATE memories SET locked = 1 WHERE id = ?", (memory_id,))
     if cur.rowcount == 0:
         # bug-099: the ownership pre-check and this UPDATE straddle an await — a
         # concurrent delete in between must not be acknowledged as a lock.
-        return {"error": f"Memory {memory_id} not found"}
+        return error_response(f"Memory {memory_id} not found")
     return {"ok": True, "locked_id": memory_id}
 
 
@@ -297,15 +321,15 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
-        return {"error": f"Memory {memory_id} not found"}
+        return error_response(f"Memory {memory_id} not found")
     if agent_id and rows[0][0] != agent_id:
-        return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
+        return error_response(f"Memory {memory_id} not owned by agent {agent_id}")
 
     async with transaction() as db:  # bug-042/043: serialise write+commit
         cur = await db.execute("UPDATE memories SET locked = 0 WHERE id = ?", (memory_id,))
     if cur.rowcount == 0:
         # bug-099: see do_lock_memory.
-        return {"error": f"Memory {memory_id} not found"}
+        return error_response(f"Memory {memory_id} not found")
     return {"ok": True, "unlocked_id": memory_id}
 
 
@@ -392,7 +416,7 @@ async def do_delete_agent_data(agent_id: str) -> dict:
             "delete_agent_data",
         )
     if not agent_id:
-        return {"error": "agent_id is required for bulk deletion"}
+        return error_response("agent_id is required for bulk deletion")
 
     # bug-042/043: transaction() serialises the multi-table delete + commit behind
     # the shared lock; its auto-rollback keeps a partial wipe from surviving as
@@ -1327,7 +1351,7 @@ async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM episodes WHERE id = ?", (episode_id,))
     if not rows:
-        return {"error": f"Episode {episode_id} not found or not owned by agent"}
+        return error_response(f"Episode {episode_id} not found or not owned by agent")
     owner_agent_id = rows[0][0]
     # bug-042/043: transaction() serialises the DELETE+commit behind the shared lock.
     async with transaction() as db:
@@ -1339,7 +1363,7 @@ async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
         else:
             cursor = await db.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
     if cursor.rowcount == 0:
-        return {"error": f"Episode {episode_id} not found or not owned by agent"}
+        return error_response(f"Episode {episode_id} not found or not owned by agent")
 
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
         # bug-023 sibling: episodes are pushed into the same remote index on create
@@ -1411,7 +1435,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     """Export memories, episodes, and profiles to a JSONL file."""
     confined = _confine_io_path(output_path)
     if confined is None:
-        return {"error": f"output_path rejected (path traversal or outside export dir): {output_path}"}
+        return error_response(f"output_path rejected (path traversal or outside export dir): {output_path}")
     output_path = confined
 
     iso = isolation_where(agent_id=agent_id or None)
@@ -1625,16 +1649,16 @@ def _validate_import_preconditions(input_path: str, dry_run: bool) -> tuple[str 
         )
     confined = _confine_io_path(input_path)
     if confined is None:
-        return None, {
-            "error": f"input_path rejected (path traversal or outside export dir): {input_path}"
-        }
+        return None, error_response(
+            f"input_path rejected (path traversal or outside export dir): {input_path}"
+        )
     if not os.path.exists(confined):
-        return None, {"error": f"File not found: {confined}"}
+        return None, error_response(f"File not found: {confined}")
     # bug-130: reject oversized imports before opening or reading the file.
     if os.path.getsize(confined) > config.MAX_IMPORT_BYTES:
-        return None, {
-            "error": f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {confined}"
-        }
+        return None, error_response(
+            f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {confined}"
+        )
     return confined, None
 
 
@@ -1836,7 +1860,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
         with open(input_path, encoding="utf-8") as f:
             lines = f.readlines()
     except OSError as e:
-        return {"error": f"could not read {input_path}: {e}"}
+        return error_response(f"could not read {input_path}: {e}")
 
     try:
         async with (connection() if dry_run else transaction()) as db:
@@ -2111,15 +2135,15 @@ async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, ta
 def _validate_merge_arguments(source_agent_id: str, target_agent_id: str, strategy: str, mode: str) -> dict | None:
     """Return an error response if the request is not a merge we can perform."""
     if not source_agent_id:
-        return {"error": "source_agent_id is required"}
+        return error_response("source_agent_id is required")
     if not target_agent_id:
-        return {"error": "target_agent_id is required"}
+        return error_response("target_agent_id is required")
     if source_agent_id == target_agent_id:
-        return {"error": "source_agent_id and target_agent_id must differ"}
+        return error_response("source_agent_id and target_agent_id must differ")
     if strategy != "skip":
-        return {"error": f"Unsupported strategy '{strategy}'. Currently supported: 'skip'"}
+        return error_response(f"Unsupported strategy '{strategy}'. Currently supported: 'skip'")
     if mode not in ("copy", "move"):
-        return {"error": f"Invalid mode '{mode}'. Supported: 'copy', 'move'"}
+        return error_response(f"Invalid mode '{mode}'. Supported: 'copy', 'move'")
     return None
 
 

@@ -71,9 +71,9 @@ async def test_store_dedup_is_project_scoped():
     r1 = await memory_handlers.do_store("agent-w", _msg("hello", msg_id="m1"), project_id="proj-a")
     r2 = await memory_handlers.do_store("agent-w", _msg("hello", msg_id="m1"), project_id="proj-b")
     r3 = await memory_handlers.do_store("agent-w", _msg("hello", msg_id="m1"), project_id="proj-a")
-    assert r1.get("ok") is True and not r1.get("skipped")
-    assert r2.get("ok") is True and not r2.get("skipped")  # different project → not a dup
-    assert r3.get("skipped") is True and r3.get("reason") == "duplicate msg_id"
+    assert r1["result"] == "stored"
+    assert r2["result"] == "stored"  # different project → not a dup
+    assert r3["result"] == "skipped" and r3.get("reason") == "duplicate msg_id"
     rows = await db.execute_fetchall(
         "SELECT project_id FROM memories WHERE agent_id = 'agent-w' AND msg_id = 'm1' ORDER BY project_id"
     )
@@ -204,7 +204,7 @@ async def test_dedup_channel_scope_is_write_side_not_read_side():
     await memory_handlers.do_store("agent-ch", _msg("shared text"), channel="discord")
     # A store into the global channel must still land: different channel bucket.
     res = await memory_handlers.do_store("agent-ch", _msg("shared text"))
-    assert res.get("skipped") is not True, (
+    assert res["result"] == "stored", (
         "global-channel store was deduped against a 'discord' row — the dedup probe "
         "adopted read-side channel semantics"
     )
@@ -217,4 +217,4 @@ async def test_dedup_channel_scope_is_write_side_not_read_side():
 
     # And the genuine duplicate — same content, same channel — is still caught.
     dup = await memory_handlers.do_store("agent-ch", _msg("shared text"), channel="discord")
-    assert dup.get("skipped") is True and dup.get("reason") == "duplicate content"
+    assert dup["result"] == "skipped" and dup.get("reason") == "duplicate content"
