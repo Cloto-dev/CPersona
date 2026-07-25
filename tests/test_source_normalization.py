@@ -188,7 +188,7 @@ async def test_store_normalizes_lowercase_type_word(clean_db):
         "a1",
         {"content": "lowercase-type row", "source": {"type": "user", "id": "u1", "name": "Alice"}},
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     row = await db.execute_fetchall("SELECT source FROM memories WHERE id = ?", (res["id"],))
     parsed = json.loads(row[0][0])
     # Discriminator canonicalised, id / name preserved (would be destroyed by
@@ -204,7 +204,7 @@ async def test_store_normalizes_bare_string_assistant(clean_db):
     res = await memory_handlers.do_store(
         "a1", {"content": "bare assistant row", "source": "assistant"}
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     row = await db.execute_fetchall("SELECT source FROM memories WHERE id = ?", (res["id"],))
     assert json.loads(row[0][0]) == {"type": "Agent", "id": "", "name": ""}
 
@@ -220,7 +220,7 @@ async def test_store_leaves_unknown_source_verbatim(clean_db):
     res = await memory_handlers.do_store(
         "a1", {"content": "unknown-type row", "source": unknown}
     )
-    assert res["ok"] is True and not res.get("skipped"), res
+    assert res["result"] == "stored", res
     row = await db.execute_fetchall("SELECT source FROM memories WHERE id = ?", (res["id"],))
     assert json.loads(row[0][0]) == unknown
 

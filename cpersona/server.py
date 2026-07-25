@@ -172,7 +172,11 @@ def _oc_reject(error: str) -> dict:
 async def do_store_boundary(agent_id: str, message: dict, channel: str = "", project_id: str = "") -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
-        return _oc_reject(error)
+        # b1-1: `result` is total over every store response, so the gate refusal
+        # speaks the same contract as the handler's own rejections — a caller
+        # branches on `result` alone and never has to know the gate exists.
+        # `error` is kept for the shape the other five gated tools share.
+        return {**_oc_reject(error), "result": "rejected", "reason": error}
     result = await do_store(agent_id, message, channel=channel, project_id=resolved)
     return _oc_annotate(result, project_id, resolved, warning)
 
@@ -473,15 +477,26 @@ registry.auto_tool(
 registry.auto_tool(
     "store",
     "Store a message in agent memory for future recall. "
-    "Success returns {ok:true, id:<row-id>, embedded:<bool>}; embedded is true iff a "
-    "local embedding blob was persisted or the remote index push succeeded (false under "
-    "EMBEDDING_MODE=none). Dedup skips return {ok:true, skipped:true, reason:..., id:<row-id>} "
-    "for the msg_id / content branches (echoing the pre-existing row); the OR IGNORE "
-    "fallback (reason='duplicate (unique index)') omits id by design (TOCTOU seam). "
+    # b1-1 (2.5.2b1, CONTRACT BREAK): `result` replaces the old `skipped` flag.
+    "Every response carries result — the one field to branch on: "
+    "'stored' (a new row was written; {ok:true, result:'stored', id:<row-id>, "
+    "embedded:<bool>}, embedded true iff a local blob was persisted or the remote "
+    "index push succeeded — false under EMBEDDING_MODE=none), "
+    "'skipped' (nothing written and nothing wrong: {ok:true, result:'skipped', "
+    "reason:...}; the msg_id / content dedup branches echo the pre-existing row's id, "
+    "the OR IGNORE fallback reason='duplicate (unique index)' omits id by design — "
+    "TOCTOU seam), or "
+    "'rejected' (nothing written because the request was refused: {ok:false, "
+    "result:'rejected', reason:...} — empty content, content that sanitizes to empty, "
+    "or an operating-context project_id refusal, which also carries error). "
+    "Note for pre-2.5.2b1 callers: ok is no longer unconditionally true, and "
+    "skipped:true is gone — a rejection used to look like a success. "
+    "reason is human-readable, not a stable machine token. "
     # bug-141: the no-persist branch has its own shape — document it so
     # consumers branch on `persisted`, not on key presence.
-    "Under pause_persistence the write is skipped and the response carries "
-    "persisted:false (id:'no-persist', embedded:false) — branch on persisted.",
+    "Under pause_persistence the write is skipped (result:'skipped') and the response "
+    "carries persisted:false (id:'no-persist', embedded:false) — branch on persisted "
+    "to tell a paused write apart from a dedup hit.",
     {
         "type": "object",
         "properties": {

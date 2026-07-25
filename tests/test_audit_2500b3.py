@@ -47,7 +47,7 @@ async def test_empty_query_recall_bypasses_unscored_volume_gate(clean_db, fake_e
             agent_id,
             {"content": content, "source": {"System": "test"}},
         )
-        assert stored["ok"] and not stored.get("skipped")
+        assert stored["result"] == "stored"
 
     recent = await memory_handlers.do_recall(agent_id, query="", limit=10)
     assert {message["content"] for message in recent["messages"]} == set(contents), (
@@ -402,7 +402,7 @@ async def test_profile_injection_shared_across_recall_strategies(
             "source": {"System": "test"},
         },
     )
-    assert stored["ok"] and not stored.get("skipped")
+    assert stored["result"] == "stored"
     await clean_db.execute(
         "INSERT INTO profiles (agent_id, user_id, content) VALUES (?, '', ?)",
         (agent_id, "persistent user context"),

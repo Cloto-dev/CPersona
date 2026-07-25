@@ -58,6 +58,44 @@ from cpersona.vector import _search_vector
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# store outcome contract (2.5.2b1, Task #291 item b1-1)
+#
+# Every do_store return carries ``result`` — the discriminator that answers the
+# only question a caller actually has ("is my memory in the database?"):
+#
+#   stored    a new row was written; ``id`` and ``embedded`` describe it
+#   skipped   nothing was written and nothing is wrong — an equivalent row
+#             already exists (dedup), or persistence is paused
+#   rejected  nothing was written because the request did not satisfy the
+#             contract (empty content, or content that sanitizes to empty)
+#
+# ``ok`` now tracks that verdict instead of being unconditionally True: a
+# rejection reports ok=False. Until 2.5.2b1 every branch returned ok=True and
+# the only signal was an easily-missed ``skipped: true``, so a caller that
+# checked ``ok`` — the obvious thing to check — read "stored" for a write that
+# never happened. That is a contract break, deliberately taken on the 2.5.2
+# pre-release ladder (charter §3: RELEASE_LIFECYCLE_STANDARD §2.1 makes the
+# ladder mandatory, which is what we are on).
+#
+# ``reason`` is human-readable and NOT a stable machine token; branch on
+# ``result`` (and on ``persisted``, which the no-persist path adds).
+# ---------------------------------------------------------------------------
+
+
+def _store_rejected(reason: str) -> dict:
+    """The request was understood and refused. Nothing was written."""
+    return {"ok": False, "result": "rejected", "reason": reason}
+
+
+def _store_skipped(reason: str, mem_id: int | None = None) -> dict:
+    """Nothing was written, and that is the correct outcome for this request."""
+    body = {"ok": True, "result": "skipped", "reason": reason}
+    if mem_id is not None:
+        body["id"] = mem_id
+    return body
+
+
 async def do_store(agent_id: str, message: dict, channel: str = "", project_id: str = "") -> dict:
     """Store a message in agent memory.
 
@@ -70,8 +108,11 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     if no_persist.is_paused():
         # bug-141: keep the no-persist shape aligned with the success contract
         # ({ok, id, embedded}) — nothing was persisted, so embedded is False.
+        # b1-1: it is a `skipped` outcome (deliberately not written, nothing
+        # wrong); the helper overwrites `reason` with its TTL message and adds
+        # persisted=False, which is the key to branch on for this branch alone.
         return no_persist.make_skipped_response(
-            {"ok": True, "id": 0, "embedded": False}, "store"
+            {"ok": True, "result": "skipped", "id": 0, "embedded": False}, "store"
         )
 
     msg_id = message.get("id", "")
@@ -88,13 +129,13 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     project_id = coerce_for_write(project_id)
 
     if not raw_content:
-        return {"ok": True, "skipped": True, "reason": "empty content"}
+        return _store_rejected("empty content")
 
     content = _sanitize_content(raw_content)
     truncated = len(raw_content) > MAX_CONTENT_LENGTH
 
     if not content:
-        return {"ok": True, "skipped": True, "reason": "empty after sanitization"}
+        return _store_rejected("empty after sanitization")
 
     # bug-106: the dedup probes check the γ-VISIBLE scope, matching read semantics.
     # A bucket write ('X') collides with an identical row in the global pool —
@@ -119,7 +160,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
             if row:
                 # v2.5.2 additive: echo the existing row's id so callers can chain
                 # (e.g. update_memory) without a second lookup.
-                return {"ok": True, "skipped": True, "reason": "duplicate msg_id", "id": row[0][0]}
+                return _store_skipped("duplicate msg_id", row[0][0])
 
         # Deduplicate by exact content match (γ-visible scope).
         existing = await db.execute_fetchall(
@@ -129,7 +170,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
         )
         if existing:
             # v2.5.2 additive: same id echo as the msg_id branch above.
-            return {"ok": True, "skipped": True, "reason": "duplicate content", "id": existing[0][0]}
+            return _store_skipped("duplicate content", existing[0][0])
 
     embedding_blob = None
     if vector._embedding_client and (VECTOR_SEARCH_MODE == "local" or STORE_BLOB):
@@ -160,8 +201,8 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
         # INSERT (bug-010 TOCTOU), and a fresh SELECT to recover the id would
         # re-enter the same TOCTOU seam we deliberately closed — so this branch
         # stays id-less by design. Callers keying on `id` MUST treat it as
-        # optional under `skipped=True`.
-        return {"ok": True, "skipped": True, "reason": "duplicate (unique index)"}
+        # optional under `result="skipped"`.
+        return _store_skipped("duplicate (unique index)")
     # lastrowid comes from this cursor's INSERT, so a store interleaved on the
     # shared connection cannot shift it (bug-010: the previous max-id re-SELECT
     # could bind a different row's id to the remote vector entry, making recall
@@ -199,7 +240,12 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
         except Exception as e:
             logger.debug("Remote index failed (non-fatal): %s", e)
 
-    result = {"ok": True, "id": mem_id, "embedded": local_embedded or remote_embedded}
+    result = {
+        "ok": True,
+        "result": "stored",
+        "id": mem_id,
+        "embedded": local_embedded or remote_embedded,
+    }
     if truncated:
         result["truncated"] = True
     return result

@@ -5122,7 +5122,7 @@
       "id": 1,
       "ok": true,
       "reason": "duplicate content",
-      "skipped": true
+      "result": "skipped"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5157,7 +5157,7 @@
       "id": 1,
       "ok": true,
       "reason": "duplicate msg_id",
-      "skipped": true
+      "result": "skipped"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5172,9 +5172,9 @@
     "outbound": [],
     "raised": null,
     "result": {
-      "ok": true,
+      "ok": false,
       "reason": "empty content",
-      "skipped": true
+      "result": "rejected"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5209,7 +5209,7 @@
       "id": 1,
       "ok": true,
       "reason": "duplicate content",
-      "skipped": true
+      "result": "skipped"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5259,7 +5259,8 @@
     "result": {
       "embedded": true,
       "id": 2,
-      "ok": true
+      "ok": true,
+      "result": "stored"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5293,7 +5294,8 @@
     "result": {
       "embedded": true,
       "id": 1,
-      "ok": true
+      "ok": true,
+      "result": "stored"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5313,7 +5315,8 @@
       "id": "no-persist",
       "ok": true,
       "persisted": false,
-      "reason": "session no-persist mode active (30m left) — `store` skipped. Call `resume_persistence` to re-enable, or wait for TTL to elapse."
+      "reason": "session no-persist mode active (30m left) — `store` skipped. Call `resume_persistence` to re-enable, or wait for TTL to elapse.",
+      "result": "skipped"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5362,7 +5365,8 @@
     "result": {
       "embedded": true,
       "id": 1,
-      "ok": true
+      "ok": true,
+      "result": "stored"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5377,9 +5381,9 @@
     "outbound": [],
     "raised": null,
     "result": {
-      "ok": true,
+      "ok": false,
       "reason": "empty after sanitization",
-      "skipped": true
+      "result": "rejected"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5413,7 +5417,8 @@
     "result": {
       "embedded": true,
       "id": 1,
-      "ok": true
+      "ok": true,
+      "result": "stored"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5447,7 +5452,8 @@
     "result": {
       "embedded": true,
       "id": 1,
-      "ok": true
+      "ok": true,
+      "result": "stored"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5481,7 +5487,8 @@
     "result": {
       "embedded": true,
       "id": 1,
-      "ok": true
+      "ok": true,
+      "result": "stored"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5515,7 +5522,8 @@
     "result": {
       "embedded": true,
       "id": 1,
-      "ok": true
+      "ok": true,
+      "result": "stored"
     },
     "seam": "#362",
     "thresholds": {}
@@ -5550,6 +5558,7 @@
       "embedded": true,
       "id": 1,
       "ok": true,
+      "result": "stored",
       "truncated": true
     },
     "seam": "#362",
