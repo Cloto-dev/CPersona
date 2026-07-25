@@ -64,7 +64,10 @@ from cpersona.config import (
     EMBEDDING_MODE,
     EMBEDDING_MODEL,
     EMBEDDING_URL,
+    STORE_BLOB,
     TASK_QUEUE_ENABLED,
+    VECTOR_SEARCH_MODE,
+    local_blobs_stored,
 )
 from cpersona import config
 from cpersona import operating_context
@@ -1580,6 +1583,18 @@ async def main():
         )
         await vector._embedding_client.initialize()
         logger.info("Embedding client ready (mode=%s)", EMBEDDING_MODE)
+        if not local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
+            # bug-180: state the trade at boot. In this configuration the local
+            # cosine scan — the fallback for a remote /search outage — has no rows
+            # to scan, and the degraded advisory watches the embed boundary only,
+            # so the first symptom would otherwise be recall quietly returning
+            # FTS/keyword hits alone. check_vector_fallback_config reports the same
+            # thing on the maintenance surface.
+            logger.info(
+                "Vector search mode=%s with CPERSONA_STORE_BLOB=false: memories keep no "
+                "local embedding, so a remote /search outage leaves recall with FTS/keyword only",
+                VECTOR_SEARCH_MODE,
+            )
     else:
         logger.info("Embedding disabled (mode=none), using FTS5 + keyword only")
 

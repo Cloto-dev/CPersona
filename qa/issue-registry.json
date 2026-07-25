@@ -2622,31 +2622,48 @@
     },
     {
       "id": "bug-180",
-      "summary": "(C15, OPEN) Under VECTOR_SEARCH_MODE=remote with STORE_BLOB=false the local cosine scan — the documented safety net for a remote /search outage — is structurally empty for memories: do_store skips the local blob for every row, so the scan's `embedding IS NOT NULL` predicate matches nothing. A /search fault with a working /embed then returns zero vector hits while health.observe_ok() marks the subsystem HEALTHY (the advisory observes the embed boundary only), so recall degrades to FTS/keyword silently in exactly the configuration that has no fallback.",
+      "summary": "(C15) Under VECTOR_SEARCH_MODE=remote with STORE_BLOB=false the local cosine scan — the documented safety net for a remote /search outage — is structurally empty for memories: do_store skips the local blob for every row, so the scan's `embedding IS NOT NULL` predicate matches nothing. A /search fault with a working /embed then returns zero vector hits while the degraded advisory stays silent (it observes the embed boundary only), so recall drops to FTS/keyword in exactly the configuration that has no fallback, with nothing saying so.",
       "severity": "LOW",
       "discovered": "2026-07-23T00:00:00Z",
       "version": "2.5.2a1",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "VECTOR_SEARCH_MODE == \"local\" or STORE_BLOB",
+      "file": "cpersona/checks.py",
+      "pattern": "no_local_vector_fallback",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "fail-open-config",
-      "fix_sketch": "Additive disclosure, not a behaviour change: a health check (and a startup log line) that flags the remote + STORE_BLOB=false combination as 'no local vector fallback', so the operator learns it from check_health rather than from a silent recall. Deliberately NOT extending the degraded-advisory to the /search boundary — health.py scopes itself to embed availability by design, and widening that contract during the 2.5.2 soak would blur behaviour change with regression. Episodes are unaffected (do_archive_episode's row prep has no STORE_BLOB gate, so episode blobs are always written) — the hole is memory-side only.",
-      "note": "Adjudicated 2026-07-25 under CSC #384 as (a) fix in 2.5.2, additive only. Not reachable in the operating deployment: bin/systemd/ctools/cpersona.service sets neither CPERSONA_VECTOR_SEARCH_MODE nor CPERSONA_STORE_BLOB, so it runs local mode with blobs stored. This is for external installs that adopt remote mode. Same family as bug-164 / bug-177 ('green but powerless') closed in 2.5.2b1. The two audit lenses split on this one: the refuting lens was right that the HEALTHY verdict matches health.py's stated contract, which is why the fix discloses the configuration instead of redefining health."
+      "note": "Adjudicated 2026-07-25 under CSC #384 as (a) fix in 2.5.2, additive only. Not reachable in the operating deployment: bin/systemd/ctools/cpersona.service sets neither CPERSONA_VECTOR_SEARCH_MODE nor CPERSONA_STORE_BLOB, so it runs local mode with blobs stored. Same family as bug-164 / bug-177 ('green but powerless') closed in 2.5.2b1. Implementing it surfaced bug-182, the sharper half of the same blind spot.",
+      "fixed_in": "2.5.2",
+      "fix_note": "Disclosure, not a behaviour change: the new report-only check `vector_fallback_config` (info) states the trade on the maintenance surface, and the boot path logs it once when an embedding client is configured. The advisory contract was deliberately NOT widened to the /search boundary — health.py scopes itself to embed availability by design, and redefining that mid-soak would blur a behaviour change with a regression. Severity is info because the configuration is legitimate (local disk traded for the remote index); b1's status verdict would otherwise park a correctly-configured deployment at 'degraded' forever. Counts are agent-scoped (the bug-062 rule) so the check cannot repeat C21's cross-agent disclosure. Regression: tests/test_252_blob_policy.py. Audit id: C15."
     },
     {
       "id": "bug-181",
-      "summary": "(C22, OPEN) Every wheel ships ~2,479 LOC of vendored code with no import path from any cpersona module: llm_provider.py (1609), mcp_stream_interceptor.py (233), mgp_utils.py (234), search.py (257), semantic_cache.py (146). cpersona imports only isolation / embedding_client / no_persist / mcp_utils (+ validation via mcp_utils), so the rest is unreachable by construction — yet it lands on every user's disk, enlarging the audited and supply-chain surface (llm_provider alone carries outbound third-party HTTP) for zero functional benefit.",
+      "summary": "(C22) Every wheel shipped ~2,479 LOC of vendored code with no import path from any cpersona module: llm_provider.py (1609), mcp_stream_interceptor.py (233), mgp_utils.py (234), search.py (257), semantic_cache.py (146). cpersona imports only isolation / embedding_client / no_persist / mcp_utils (+ validation via mcp_utils), so the rest was unreachable by construction — yet it landed on every user's disk, enlarging the audited and supply-chain surface (llm_provider alone carries outbound third-party HTTP) for zero functional benefit.",
       "severity": "LOW",
       "discovered": "2026-07-23T00:00:00Z",
       "version": "2.5.2a1",
       "file": "pyproject.toml",
-      "pattern": "^packages = \\[\"cpersona\"\\]$",
+      "pattern": "_vendored_mcp_common/llm_provider.py",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "packaging-surface",
-      "fix_sketch": "Exclude the unreachable modules from the WHEEL only (hatchling exclude / force-exclude), leaving the in-tree snapshot byte-faithful so scripts/sync-vendored-mcp-common.sh keeps rsync --delete-ing the whole upstream tree and the a2 post-sync reconciliation gate still compares like for like. Pair it with a structural gate that fails CI if any excluded module acquires an import path from cpersona (otherwise a future import ships a wheel that raises ImportError in the field) and an install-the-wheel-and-import smoke. When this lands, flip the anchor to the exclude stanza.",
-      "note": "Adjudicated 2026-07-25 under CSC #384 as (a) fix in 2.5.2, additive-safe. The refuting lens argued a wholesale vendored snapshot is standard practice — that objection is about the REPOSITORY, and excluding at the wheel boundary leaves the snapshot whole, so both hold. Charter §6 (cross-consumer vendored changes are expensive) does not apply: no vendored file content changes, so no clotohub-servers common bump or re-vendor is implied. Private path (leading underscore), so no public API is withdrawn."
+      "note": "Adjudicated 2026-07-25 under CSC #384 as (a) fix in 2.5.2, additive-safe. Charter §6 (cross-consumer vendored changes are expensive) does not apply: no vendored file content changes, so no clotohub-servers common bump or re-vendor is implied. Private path (leading underscore), so no public API is withdrawn.",
+      "fixed_in": "2.5.2",
+      "fix_note": "Excluded at the WHEEL boundary only (tool.hatch.build.targets.wheel.exclude), leaving the in-tree snapshot byte-faithful so sync-vendored-mcp-common.sh keeps rsync --delete-ing the whole upstream tree and the a2 post-sync reconciliation gate still compares like for like — the two objections (ship less / vendor faithfully) are about different artifacts and both hold. The anchor is the exclude entry itself. Guarded twice because the failure mode is invisible to a repo-run suite: Gate 13 (tests/test_structural_gates.py) recomputes the vendored import graph and fails if an excluded module ever becomes reachable, and the wheel-smoke CI job installs the built wheel into a clean environment outside the checkout and imports the server for real. Verified: the built wheel carries 6 vendored files (5 modules + __init__), and the installed package imports every handler module. Audit id: C22."
+    },
+    {
+      "id": "bug-182",
+      "summary": "(HIGH) The maintenance layer did not know that CPERSONA_STORE_BLOB=false is a storage POLICY, so under remote mode with that setting — where do_store deliberately writes no local embedding — check_null_embedding read every NULL memory row as a dead embedding pipeline. Two consequences on a correctly-configured deployment: it reported severity=critical permanently (>50% NULL by construction), and check_health(fix=true) re-embedded up to 500 memories per pass (HTTP round-trips in the unlocked prefetch) and wrote the very BLOBs the operator configured away — which the next store made NULL again, so every maintenance run repeated the whole re-embed.",
+      "severity": "HIGH",
+      "discovered": "2026-07-25T00:00:00Z",
+      "version": "2.5.2b1",
+      "file": "cpersona/checks.py",
+      "pattern": "blobs_expected",
+      "expected": "present",
+      "status": "fixed",
+      "category": "config-blind-maintenance",
+      "fixed_in": "2.5.2",
+      "fix_note": "The storage rule now has one definition, config.local_blobs_stored, called by the write gate (do_store / do_update_memory) and by the checks layer — it existed only as an inline condition on the write paths, which is how the maintenance layer came to disagree with the writer. The severity branch takes blobs_expected explicitly and MEMORIES ONLY pass the policy: _prepare_episode_row has no storage gate, so a NULL episode embedding stays critical and stays repairable in every configuration. The repair and the unlocked prefetch skip the memories table under the policy (the prefetch is where the HTTP burst lives), and the issue carries a `repair` line so a NULL count that never goes down reads as policy rather than as a fixer that keeps failing. Regression: tests/test_252_blob_policy.py, including the differential (same corpus, policy flipped, verdict critical again) and the episode case that fails if the guard is written too wide.",
+      "note": "Found 2026-07-25 while implementing bug-180 (CSC #387), which is the same blind spot seen from the recall side: bug-180 is 'the fallback is empty and nobody says so', bug-182 is 'the maintenance layer reads that emptiness as a failure and tries to fix it'. Rated HIGH rather than LOW because the fix path performed unbounded repeated work against a live embedding backend and wrote data the configuration forbade — unlike bug-180, which is a disclosure gap. Not reachable in the operating deployment (ctools runs local mode with blobs stored)."
     }
   ]
 }

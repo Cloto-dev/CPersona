@@ -33,6 +33,7 @@ from cpersona.config import (
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
     STORE_BLOB,
+    local_blobs_stored,
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
 )
@@ -244,7 +245,7 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     # stale, so recall stops matching the old wording and check_health's
     # null-embedding repair can re-embed the row later.
     embedding_blob = None
-    if vector._embedding_client and (VECTOR_SEARCH_MODE == "local" or STORE_BLOB):
+    if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
             embeddings = await vector._embedding_client.embed([content])
             if embeddings and embeddings[0]:
