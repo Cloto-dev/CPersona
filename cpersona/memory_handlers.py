@@ -807,6 +807,118 @@ def _is_episode_result(r: dict) -> bool:
     return isinstance(src, dict) and src.get("System") == "episode"
 
 
+async def _backfill_cosines(
+    db,
+    results: list[dict],
+    query: str,
+    project_id: str | None,
+    channel: str,
+) -> None:
+    """bug-155: backfill ``_cosine`` on rows that reached scoring cosine-less.
+
+    In the fusion recall paths (``_recall_rrf`` / ``_recall_rsf``) only the vector
+    channel populates ``_cosine`` — a row that hit only via the FTS / keyword
+    channels reaches ``_apply_recall_scoring`` with ``_cosine=None`` even when its
+    embedding blob sits in the DB (a ranking-window drop, not a coverage one).
+    ``_compute_confidence`` then takes its ``raw_cosine is None`` branch —
+    ``sqrt(time_decay) * completion_factor * recency_penalty`` — which is always
+    ≥ the cosine branch's ``sqrt(norm_cos * time_decay) * ...`` (``norm_cos <= 1``
+    by construction), so under CONFIDENCE_ENABLED the vector-less rows are
+    structurally promoted above rows that DO carry a real similarity signal.
+    That inverts the fusion intent (the docstring at ``_recall_rsf`` states the
+    keyword channel is supposed to help DOWN-rank lexical contaminants).
+
+    Fix: compute the real cosine from the row's stored blob so downstream scoring
+    sees a proper signal. Rows we CANNOT backfill (no blob, foreign width,
+    profile sentinel id=-1, non-integer id) are left at ``_cosine=None`` — they
+    keep today's elevated-branch behaviour, which the 2.6.0 scoring redesign owns.
+
+    Mutates rows in-place; caller sequences this BEFORE the episode-boundary
+    penalty so the penalty scales the backfilled cosines uniformly with the
+    native ones. Gate on ``CONFIDENCE_ENABLED`` at the call site: under
+    confidence-off nothing downstream reads ``_cosine`` in a way that would
+    change ordering, and materialising one here would (a) add a stray
+    ``match_reason.cosine`` on rows that never had one, (b) flip ``_gate_score``
+    on those rows from ``rrf``/``None`` to ``cosine`` — both silent perturbations.
+    """
+    if not query.strip():
+        return
+    client = vector._embedding_client
+    if client is None:
+        return
+
+    needy: list[tuple[dict, int, bool]] = []  # (row, id, is_episode)
+    for r in results:
+        if r.get("_cosine") is not None:
+            continue
+        rid = r.get("id")
+        if not isinstance(rid, int) or rid <= 0:
+            # Profile sentinel (id=-1) and any other non-positive/non-int id.
+            continue
+        needy.append((r, rid, _is_episode_result(r)))
+    if not needy:
+        return
+
+    embeddings = await client.embed([query])
+    if not embeddings or not embeddings[0]:
+        # Same failure semantics _search_vector applies: an empty embed of the
+        # query text is a genuine embed failure, and the vector channel handles
+        # its own health probe. Here we simply decline to backfill; the rows
+        # keep their None cosine and today's elevated-branch score.
+        return
+
+    import numpy as np
+
+    query_vec = np.array(embeddings[0], dtype=np.float32)
+    query_dim = int(query_vec.shape[0])
+    if query_dim <= 0:
+        return
+
+    # bug-040/041: memories and episodes id spaces AUTOINCREMENT independently, so
+    # an episode id N MUST NOT read memory id N's blob (and vice versa) — one
+    # IN(...) batch per table, embedding column only.
+    mem_ids = [rid for (_, rid, is_ep) in needy if not is_ep]
+    ep_ids = [rid for (_, rid, is_ep) in needy if is_ep]
+
+    async def _fetch_blobs(table: str, ids: list[int]) -> dict[int, bytes | None]:
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        rows = await db.execute_fetchall(
+            f"SELECT id, embedding FROM {table} WHERE id IN ({placeholders})",
+            ids,
+        )
+        return {row[0]: row[1] for row in rows}
+
+    mem_blobs = await _fetch_blobs("memories", mem_ids)
+    ep_blobs = await _fetch_blobs("episodes", ep_ids)
+
+    # Filter by matching width (bug-085 tolerance: a mid-flight model swap leaves
+    # ragged-dim rows behind; skip them rather than crashing the reshape). Rows
+    # with no blob at all are also skipped -- they keep today's None-cosine score.
+    batch_rows: list[dict] = []
+    batch_blobs: list[bytes] = []
+    for row, rid, is_ep in needy:
+        blob = (ep_blobs if is_ep else mem_blobs).get(rid)
+        if not blob or len(blob) != query_dim * 4:
+            continue
+        batch_rows.append(row)
+        batch_blobs.append(blob)
+    if not batch_rows:
+        return
+
+    try:
+        sims = vector._cosine_batch(query_vec, query_dim, batch_blobs)
+    except (ValueError, TypeError):
+        # Defensive: the width filter above should make this unreachable, but a
+        # bad blob still leaves every needy row at None (today's behaviour) rather
+        # than crashing the recall hot path.
+        return
+
+    for row, sim in zip(batch_rows, sims):
+        row["_cosine"] = float(sim)
+
+
 async def _apply_recall_scoring(
     db,
     agent_id: str,
@@ -814,6 +926,7 @@ async def _apply_recall_scoring(
     deep: bool,
     project_id: str | None = None,
     channel: str = "",
+    query: str = "",
 ) -> tuple[list[dict], float, dict]:
     """Post-recall scoring run before the quality gate: the episode-boundary penalty
     (L3, v2.4.14) and, when CONFIDENCE_ENABLED, the confidence score (which also
@@ -827,11 +940,26 @@ async def _apply_recall_scoring(
     computed once here. Order matters: the episode penalty scales ``_cosine`` before
     ``_compute_confidence`` reads it, so the confidence score reflects the penalised
     cosine (as in do_recall).
+
+    ``query`` (bug-155): the original query text, forwarded to ``_backfill_cosines``
+    so an FTS-only hit can be scored on its stored embedding rather than fall
+    into ``_compute_confidence``'s cosine-less branch. Empty string (the default,
+    preserved for existing call sites that predate the fix) disables backfill.
     """
     time_range_hours = 0.0
     recall_counts: dict[int, tuple[int, str]] = {}
     if not results:
         return results, time_range_hours, recall_counts
+
+    # bug-155: rows the fusion path admitted via FTS / keyword only arrive with
+    # `_cosine=None`. Backfill the true cosine BEFORE the episode-boundary
+    # penalty so the penalty scales backfilled and native cosines uniformly, and
+    # so the CONFIDENCE_ENABLED block below reads a real signal. Under
+    # confidence-off the backfill is a no-op — nothing downstream reads _cosine
+    # in a way that would change ordering, and materialising one would perturb
+    # `match_reason.cosine` and `_gate_score`.
+    if CONFIDENCE_ENABLED:
+        await _backfill_cosines(db, results, query, project_id, channel)
 
     if CONFIDENCE_ENABLED:
         # #361 item (7): `recall_counts` is populated ONLY under this flag, and the
@@ -1005,7 +1133,7 @@ async def do_recall(
         # time_range_hours / recall_counts are reused below for the response metadata + the
         # recall-count update, so they are returned rather than recomputed.
         results, time_range_hours, recall_counts = await _apply_recall_scoring(
-            db, agent_id, results, deep, project_id=project_id, channel=channel
+            db, agent_id, results, deep, project_id=project_id, channel=channel, query=query
         )
 
         memory_count = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent_id,)))[0][0]

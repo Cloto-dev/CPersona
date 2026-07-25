@@ -4368,6 +4368,72 @@
     "seam": "#362",
     "thresholds": {}
   },
+  "recall-cosine-backfill": {
+    "covers": "recall bug-155: FTS-only row whose stored blob is DISJOINT from the query gets a backfilled cosine (or is gated out) instead of out-scoring a real vector hit under CONFIDENCE_ENABLED",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "a374",
+          "channel": "",
+          "content": "apples orchard hit",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:6d49868410574361>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a374",
+          "channel": "",
+          "content": "apples zzz yyy www",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e2a3d1d658a8aed7>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.633,
+            "score": 0.8872
+          },
+          "content": "apples orchard hit",
+          "match_reason": {
+            "cosine": 0.6329541802,
+            "rrf": 0.0327868852,
+            "score": 0.8872,
+            "signal": "confidence"
+          },
+          "ref": "mem:1",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:01Z"
+        }
+      ]
+    },
+    "seam": "#374",
+    "thresholds": {}
+  },
   "recall-deep-no-decay-no-bump": {
     "covers": "recall: deep=True disables time_decay/completion_factor AND skips the recall_count bump (CONFIDENCE=on)",
     "db": {

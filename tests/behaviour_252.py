@@ -1326,6 +1326,66 @@ async def _(ctx):
     return await memory_handlers.do_recall("a1", "xyzzyxyzzy", 5)
 
 
+# --- bug-155 cosine backfill (an earlier decision) --------------------------------
+#
+# Pins the FTS-only-hit backfill path directly. A lexically-matching row is
+# kept out of the vector channel by packing its embedding blob from text
+# DISJOINT from the query -- the vector channel's min_similarity threshold
+# then excludes it, and only the FTS keyword channel admits it into the fused
+# set. Under the UNFIXED code that row reaches ``_apply_recall_scoring`` with
+# ``_cosine=None`` and ``_compute_confidence``'s None-branch scores it at
+# ``sqrt(time_decay)`` -- an upper bound on the cosine branch, so it
+# out-ranks a real vector hit.
+#
+# With the fix the row is backfilled from its stored blob (a low true
+# cosine) and either sinks below the vector hit or is dropped by the quality
+# gate. Either outcome is protected by this scenario: the golden captures
+# exact match_reason.cosine values and the wire ordering.
+#
+# The four existing recall scenarios above (recall-basic-hits,
+# recall-exclude-contents, recall-deep-no-decay-no-bump, and the two
+# confidence-off ones) are seeded from ``seed_corpus``, whose only cosine-
+# less rows on ``apples`` (mem:6 ragged-dim, mem:7 no-blob) are precisely
+# the two cases the backfill DELIBERATELY does NOT fix -- so this addition
+# is expected to leave those pins untouched.
+
+
+async def _seed_bug155_backfill(ctx: Ctx) -> None:
+    """One vector-strong row and one FTS-only row (blob DISJOINT from the
+    query token). The FTS-only row is what makes ``_cosine=None`` reach
+    ``_apply_recall_scoring`` deterministically under the local vector
+    channel's default min_similarity."""
+    db = ctx.db
+    # Row 1: content and blob share the ``apples`` token -> strong vector hit.
+    await _mem(db, agent="a374", content="apples orchard hit", seq=1)
+    # Row 2: FTS-matches on ``apples`` in the content, but the blob is packed
+    # from a text with no shared tokens -- vector cosine ~= dot of two
+    # unrelated random unit vectors ~ 0, well below the min_similarity gate.
+    await db.execute(
+        f"INSERT INTO memories ({_MEM_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "a374", "", "", "",
+            "apples zzz yyy www",
+            "{}",
+            "2026-01-01T00:00:02Z",
+            "{}",
+            pack("completely different unrelated content xxxx"),
+            0,
+            "2026-01-01T00:00:02Z",
+        ),
+    )
+    await db.commit()
+
+
+@scenario("recall-cosine-backfill", "#374",
+          "recall bug-155: FTS-only row whose stored blob is DISJOINT from the query gets a backfilled cosine (or is gated out) instead of out-scoring a real vector hit under CONFIDENCE_ENABLED",
+          seed=_seed_bug155_backfill)
+async def _(ctx):
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    return await memory_handlers.do_recall("a374", "apples", 5, deep=True)
+
+
 # --- do_check_health / do_deep_check (an earlier decision) ------------------------
 #
 # 2.5.2b1 drops `healthy` from the check_health response in favour of the
