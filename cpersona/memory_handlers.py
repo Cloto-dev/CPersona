@@ -41,6 +41,7 @@ from cpersona.config import (
     RRF_MAX_SCALE,
     RRF_THRESHOLD_FACTOR,
     STORE_BLOB,
+    local_blobs_stored,
     VECTOR_SEARCH_MODE,
 )
 from cpersona import config # for runtime-mutable VECTOR_MIN_SIMILARITY access
@@ -187,7 +188,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
             return _store_skipped("duplicate content", existing[0][0])
 
     embedding_blob = None
-    if vector._embedding_client and (VECTOR_SEARCH_MODE == "local" or STORE_BLOB):
+    if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
             embeddings = await vector._embedding_client.embed([content])
             if embeddings and embeddings[0]:
