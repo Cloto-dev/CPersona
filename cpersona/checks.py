@@ -1420,3 +1420,13 @@ DEEP_CHECKS: dict = {
 }
 
 DEEP_CHECK_NAMES = list(DEEP_CHECKS)
+
+# Which deep checks actually act on ``fix=True``. The rest are report-only: they
+# accept the flag (the runner signature is uniform) and ignore it, so a caller
+# passing fix=True gets a silent no-op. The deep_check tool description is
+# rendered from this set — audit C26 found the description naming only two of
+# the four report-only checks, which is exactly the drift a hand-maintained
+# sentence produces. tests/test_structural_gates.py asserts this set against the
+# AST, so a check that gains or loses a repair path cannot leave it stale.
+DEEP_FIX_CAPABLE = frozenset({"anonymous_source", "short_content"})
+DEEP_REPORT_ONLY = tuple(n for n in DEEP_CHECK_NAMES if n not in DEEP_FIX_CAPABLE)

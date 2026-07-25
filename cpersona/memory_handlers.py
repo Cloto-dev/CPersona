@@ -35,7 +35,9 @@ from cpersona.config import (
     FTS_ENABLED,
     MAX_CONTENT_LENGTH,
     MAX_MEMORIES,
+    MAX_METADATA_LENGTH,
     RECALL_MODE,
+    REMOTE_INDEX_TIMEOUT_SECS,
     RRF_K,
     RRF_MAX_SCALE,
     RRF_THRESHOLD_FACTOR,
@@ -130,6 +132,16 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
 
     if not raw_content:
         return _store_rejected("empty content")
+
+    # audit C12: content has been capped since 2.1, its JSON sidecars never were.
+    # A field that cannot be truncated (valid JSON has no valid prefix) and is not
+    # the payload gets refused rather than silently dropped — dropping would lose
+    # attribution / producer context while reporting success.
+    for field_name, serialised in (("source", source), ("metadata", metadata)):
+        if len(serialised) > MAX_METADATA_LENGTH:
+            return _store_rejected(
+                f"{field_name} too large ({len(serialised)} chars, max {MAX_METADATA_LENGTH})"
+            )
 
     content = _sanitize_content(raw_content)
     truncated = len(raw_content) > MAX_CONTENT_LENGTH
@@ -226,6 +238,10 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
                     "namespace": f"cpersona:{agent_id}",
                     "items": [{"id": f"mem:{mem_id}", "text": content}],
                 },
+                # #361 (6): state the deadline instead of inheriting the embed
+                # client's 30s default — this is the write hot path, and every
+                # sibling remote call (probe 3s, search 5s) names its own.
+                timeout=REMOTE_INDEX_TIMEOUT_SECS,
             )
             # bug-146: httpx does NOT raise on 4xx/5xx, so the discarded
             # response let a backend failure (bad namespace, expired auth, 500)
@@ -816,6 +832,14 @@ async def _apply_recall_scoring(
         return results, time_range_hours, recall_counts
 
     if CONFIDENCE_ENABLED:
+        # #361 item (7): `recall_counts` is populated ONLY under this flag, and the
+        # recall-count bump in do_recall gates on that same dict being non-empty.
+        # So with CPERSONA_CONFIDENCE_ENABLED=false (the shipped default) the read
+        # path never records recall_count / last_recalled_at, and the recall-boost
+        # feedback loop in _compute_confidence is inert — an install running the
+        # default ranks on a different signal set than one with confidence on.
+        # Documented rather than changed: making the bump unconditional would move
+        # ranking state, which 2.5.2 deliberately holds still (charter §5).
         # bug-107: the temporal span is computed over the SAME isolation scope as
         # the recall — an agent-wide MIN/MAX let timestamps from unrelated
         # projects/channels scale a tightly-scoped recall's confidence curve.
@@ -1186,6 +1210,26 @@ async def do_recall_with_context(
     messages.sort(key=_ts_sort_key)
 
     result: dict = {"messages": messages}
+    # audit C13: every context entry's content filters recall (exclude_list above
+    # is role-agnostic — correct, the caller already holds that text), but only
+    # user / assistant entries are merged into `messages`. So a system or tool
+    # entry can suppress a memory while being invisible in the response, and the
+    # caller sees a memory vanish with nothing explaining it. The filtering stays
+    # (it is the right semantics); the silence does not. Reported only when such
+    # entries exist, so the common case pays no payload.
+    filter_only_roles = sorted(
+        {
+            (e.get("role", "") if isinstance(e, dict) else "") or "(unset)"
+            for e in ctx
+            if _ctx_content(e)
+            and (not isinstance(e, dict) or e.get("role", "") not in ("assistant", "user"))
+        }
+    )
+    if filter_only_roles:
+        result["context_filter_only"] = {
+            "roles": filter_only_roles,
+            "note": "entries with these roles filtered recall but are not shown in messages",
+        }
     # Forward the advisory do_recall already produced — do NOT call maybe_advisory() again
     # here (that would flip the full template to the short one within one logical recall).
     advisory = recall_result.get("advisory")
@@ -1471,10 +1515,16 @@ async def do_archive_episode(
     # connection.
     async with transaction() as db:
         episode_id = await _insert_episode_row(db, row)
+    # row[2] is the stored (capped) summary — index the text that actually landed,
+    # not the caller's original, so the remote vector and the row agree (C12).
     await vector.remote_index_upsert(
-        agent_id, [{"id": f"ep:{episode_id}", "text": summary}]
+        agent_id, [{"id": f"ep:{episode_id}", "text": row[2]}]
     )
-    return {"ok": True, "episode_id": episode_id}
+    result = {"ok": True, "episode_id": episode_id}
+    if len(summary) > MAX_CONTENT_LENGTH or len(keywords) > MAX_CONTENT_LENGTH:
+        # Same signal do_store gives for capped content.
+        result["truncated"] = True
+    return result
 
 
 async def _prepare_episode_row(
@@ -1494,6 +1544,13 @@ async def _prepare_episode_row(
     Raises ValueError when the episode cannot be stored (empty summary)."""
     if not summary:
         raise ValueError("summary is required to archive an episode")
+    # audit C12: the episode's text fields were the last unbounded write path.
+    # They are prose, so the memory rule applies verbatim — truncate to the same
+    # cap rather than refuse, and do it HERE (the shared prepare seam) so the
+    # queue drain is bounded by the same rule as the direct call. Capping before
+    # the embed below also keeps the oversized string out of the backend request.
+    summary = _sanitize_content(summary)
+    keywords = _sanitize_content(keywords)
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)
 

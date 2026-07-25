@@ -69,10 +69,13 @@ the certification date**, then reaches EOL.
 - The clock anchors on the certification event and is **not** reset by patch
   releases inside the window.
 - Fixes for issues accepted within the window may ship after it closes.
-- Line transitions so far preserve the database schema and the MCP tool
-  contract, which makes rollback and roll-forward free. If a future
-  transition ever requires a schema or data migration, the maintainer SHOULD
-  extend the grace window before certifying the successor.
+- Line transitions preserve the database schema, so rollback and roll-forward
+  are free on the data. They do **not** guarantee the MCP tool contract: 2.5.2
+  changes the `store` response shape and drops `check_health`'s `healthy`
+  boolean (see the release notes for the migration). Contract changes ship
+  through the pre-release ladder, never straight to a final release.
+- If a future transition ever requires a schema or data migration, the
+  maintainer SHOULD extend the grace window before certifying the successor.
 
 ### EOL
 

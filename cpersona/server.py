@@ -77,6 +77,7 @@ from cpersona.memory_handlers import (
     do_recall_with_context,
     do_store,
 )
+from cpersona import checks as checks_module
 from cpersona.checks import HEALTH_CHECK_NAMES
 from cpersona.utils import CANONICAL_SOURCE_TYPES, source_type_alias_summary
 
@@ -316,6 +317,14 @@ async def do_recall_with_context_boundary(
 
 
 # =============================================================================
+# C26 (d): '@auto' is accepted by every project_id-taking tool (the six
+# *_boundary wrappers above), but it used to be documented only on store —
+# so five of the six schemas hid a sentinel the server implements. One
+# clause, appended everywhere it is true.
+_AUTO_PROJECT_ID_CLAUSE = (
+    "v2.5.1: pass '@auto' to resolve this agent's default from the server's operating context (the resolution is echoed as resolved_project_id; an unmapped agent yields operating_context_warning)."
+)
+
 # MCP Tool Registry — 29 tools
 # =============================================================================
 
@@ -359,11 +368,17 @@ async def do_persistence_status() -> dict:
 registry.auto_tool(
     "pause_persistence",
     "Pause write operations on this MCP server for an opt-in TTL window. While "
-    "paused, all write tools (store, archive_episode, update/delete/lock/unlock_memory, "
-    "update_profile, import_memories, merge_memories, calibrate_threshold) return "
-    'no-op responses with `persisted: false` and `id: "no-persist"` instead of '
-    "writing to the database. Read tools (recall, list_*, get_profile, etc.) are "
-    "unaffected. **The pause is PROCESS-WIDE, not per-session (response `scope`: "
+    # C26 (c): the list was four tools short and omitted the fix-downgrade.
+    "paused, every write tool — store, archive_episode, update_memory, delete_memory, "
+    "delete_episode, delete_agent_data, lock_memory, unlock_memory, update_profile, "
+    "import_memories, merge_memories, calibrate_threshold, set_recall_precision, "
+    "migrate_channel_axis — returns a no-op response with `persisted: false` and "
+    '`id: "no-persist"` instead of writing to the database. check_health and '
+    "deep_check are not blocked but downgrade to fix=false (they answer with "
+    "repairs_skipped: true). Read tools (recall, list_*, get_profile, etc.) still "
+    "answer normally, except that recall suppresses its recall_count / "
+    "last_recalled_at bump — a write that would otherwise move ranking state during "
+    "a paused session. **The pause is PROCESS-WIDE, not per-session (response `scope`: "
     '"process"): the flag is one module-global on the server process. On a '
     "streamable-HTTP deployment a single process serves every connected client, so "
     "pausing here silences writes for ALL connected sessions until resume or TTL "
@@ -482,7 +497,8 @@ registry.auto_tool(
     "Every response carries result — the one field to branch on: "
     "'stored' (a new row was written; {ok:true, result:'stored', id:<row-id>, "
     "embedded:<bool>}, embedded true iff a local blob was persisted or the remote "
-    "index push succeeded — false under EMBEDDING_MODE=none), "
+    "index push succeeded — false under EMBEDDING_MODE=none; the response also "
+    "carries truncated:true when content exceeded the length cap and was shortened), "
     "'skipped' (nothing written and nothing wrong: {ok:true, result:'skipped', "
     "reason:...}; the msg_id / content dedup branches echo the pre-existing row's id, "
     "the OR IGNORE fallback reason='duplicate (unique index)' omits id by design — "
@@ -539,7 +555,13 @@ registry.auto_tool(
                                 # utils.CANONICAL_SOURCE_TYPES / _TYPE_ALIASES, so the
                                 # published contract cannot drift from the write seam.
                                 "enum": list(CANONICAL_SOURCE_TYPES),
-                                "description": "Producer role. " + source_type_alias_summary() + ".",
+                                "description": (
+                                    "Producer role — this enum IS the contract; send one of "
+                                    "these. Legacy producers that cannot are folded server-side "
+                                    "at the write seam (" + source_type_alias_summary() + "), "
+                                    "and shapes outside that table are stored verbatim for "
+                                    "check_health(invalid_source_type) to surface."
+                                ),
                             },
                             "id": {
                                 "type": "string",
@@ -562,7 +584,14 @@ registry.auto_tool(
                     },
                     "metadata": {
                         "type": "object",
-                        "description": "Free-form JSON object for producer-specific context. Empty when unused.",
+                        "description": (
+                            "Free-form JSON object for producer-specific context. Empty when unused. "
+                            # audit C12: the sidecars are bounded as of 2.5.2b1.
+                            f"Serialised size is capped at {config.MAX_METADATA_LENGTH} characters "
+                            "(same cap for source); an oversized field is refused with "
+                            "result='rejected' rather than truncated, because a truncated JSON "
+                            "document is not a JSON document."
+                        ),
                     },
                 },
             },
@@ -576,8 +605,7 @@ registry.auto_tool(
                     "v2.4.17 isolation axis. Optional — omit or pass '' to "
                     "store in the global pool. Reads via γ semantics: a "
                     "recall with project_id='X' returns 'X' rows + global pool. "
-                    "v2.5.1: pass '@auto' to resolve this agent's default from "
-                    "the server's operating context (echoed as resolved_project_id)."
+                    + _AUTO_PROJECT_ID_CLAUSE
                 ),
             },
         },
@@ -629,7 +657,8 @@ registry.auto_tool(
                 "description": (
                     "v2.4.17 γ filter. Omit → no filter (all projects). "
                     "'' → global pool only. 'X' → 'X' bucket ∪ global pool. "
-                    "Threaded through cascade / RRF / vector / FTS / keyword paths."
+                    "Threaded through cascade / RRF / vector / FTS / keyword paths. "
+                    + _AUTO_PROJECT_ID_CLAUSE
                 ),
             },
             "source_id": {
@@ -639,7 +668,11 @@ registry.auto_tool(
                     "Non-empty = prefix match against json_extract(source, '$.id'), "
                     "e.g. 'discord:12345' to restrict to one Discord user, or "
                     "'discord:' to scope to all Discord-sourced memories. "
-                    "Episodes are skipped when set (no per-user source tagging)."
+                    # C26 (e): the exception is real behaviour, not an edge case —
+                    # the session-start grounding path relies on it.
+                    "Episodes carry no per-user source tagging, so they are skipped "
+                    "when this is set — UNLESS channel is also set, which scopes "
+                    "episodes to one conversation and re-admits them."
                 ),
                 "default": "",
             },
@@ -676,7 +709,13 @@ registry.auto_tool(
     "Recall memories and merge with external conversation context. "
     "Automatically deduplicates, sorts chronologically, and returns a unified list. "
     "Replaces separate recall + manual merge in the caller. "
-    "Content is preview-tiered by default — see recall's full_content / get_contents.",
+    "Content is preview-tiered by default — see recall's full_content / get_contents. "
+    # audit C13: disclose the asymmetry instead of leaving it invisible.
+    "Every external_context entry's content filters the recall (the caller already "
+    "holds that text), but only role=user / role=assistant entries are merged into "
+    "messages. When entries of other roles are present the response carries "
+    "context_filter_only={roles:[...]} — those entries suppressed matching memories "
+    "without appearing in the output.",
     {
         "type": "object",
         "properties": {
@@ -698,7 +737,7 @@ registry.auto_tool(
             "deep": {"type": "boolean", "description": "Disable time decay", "default": False},
             "project_id": {
                 "type": "string",
-                "description": "v2.4.17 γ filter — passed through to recall. Same semantics as in `recall`.",
+                "description": "v2.4.17 γ filter — passed through to recall. Same semantics as in `recall`. " + _AUTO_PROJECT_ID_CLAUSE,
             },
             "source_id": {
                 "type": "string",
@@ -815,7 +854,7 @@ registry.auto_tool(
             },
             "project_id": {
                 "type": "string",
-                "description": "v2.4.17 isolation axis. Omit or pass '' for the global pool.",
+                "description": "v2.4.17 isolation axis. Omit or pass '' for the global pool. " + _AUTO_PROJECT_ID_CLAUSE,
             },
             "channel": {
                 "type": "string",
@@ -855,7 +894,7 @@ registry.auto_tool(
             "limit": {"type": "integer", "description": "Max memories to return", "default": 100},
             "project_id": {
                 "type": "string",
-                "description": "v2.4.17 γ filter. Omit → no filter; '' → global pool only; 'X' → 'X' ∪ global pool.",
+                "description": "v2.4.17 γ filter. Omit → no filter; '' → global pool only; 'X' → 'X' ∪ global pool. " + _AUTO_PROJECT_ID_CLAUSE,
             },
         },
         "required": [],
@@ -875,7 +914,7 @@ registry.auto_tool(
             "limit": {"type": "integer", "description": "Max episodes to return", "default": 50},
             "project_id": {
                 "type": "string",
-                "description": "v2.4.17 γ filter. Same semantics as list_memories.",
+                "description": "v2.4.17 γ filter. Same semantics as list_memories. " + _AUTO_PROJECT_ID_CLAUSE,
             },
         },
         "required": [],
@@ -1246,10 +1285,14 @@ registry.auto_tool(
     "Deep heuristic analysis of memory data quality. Detects issues requiring "
     "recovery or judgment (anonymous sources, short/trivial content, stale "
     "profiles, orphaned episodes, stale threshold calibration, embedding-space "
-    "near-duplicate pairs as merge candidates). near_duplicate and "
-    "calibration_staleness are report-only: apply decisions via merge_memories / "
-    "delete_memory / calibrate_threshold. Set fix=true to apply repairs. Use "
-    "checks parameter to select specific checks.",
+    "near-duplicate pairs as merge candidates). "
+    # C26: rendered from checks.DEEP_FIX_CAPABLE — the prose named only two of
+    # the four report-only checks, so fix=true silently no-opped on the others.
+    f"fix=true applies repairs for: {', '.join(sorted(checks_module.DEEP_FIX_CAPABLE))}. "
+    f"Report-only (fix is accepted and ignored): {', '.join(checks_module.DEEP_REPORT_ONLY)} "
+    "— apply those decisions via merge_memories / delete_memory / "
+    "calibrate_threshold / update_profile. Use checks parameter to select "
+    "specific checks.",
     {
         "type": "object",
         "properties": {

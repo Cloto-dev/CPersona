@@ -853,3 +853,146 @@ def test_orphan_gate_has_teeth():
     assert _collect_orphan_repoints(too_late), (
         "orphan gate accepts a close that happens after the re-point"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 7 (C26 doc-drift class, 2.5.2b1): a rendered contract cannot go stale.
+#
+# The deep_check tool description tells callers which checks honour fix=True. It used to
+# say so in prose and named two of the four report-only checks — a caller passing
+# fix=True to the other two got a silent no-op. The description is now rendered from
+# checks.DEEP_FIX_CAPABLE, which moves the drift risk into that set: this gate pins the
+# set against what the functions actually do, so a check that gains (or loses) a repair
+# path fails CI until the set follows.
+# --------------------------------------------------------------------------------------
+
+
+def _deep_checks_referencing_fix():
+    """Names of deep checks whose body reads the ``fix`` parameter at all."""
+    from cpersona import checks as checks_module
+
+    tree = ast.parse((PKG / "checks.py").read_text(encoding="utf-8"), filename="checks.py")
+    reads_fix = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        if not node.name.startswith("deep_"):
+            continue
+        body_names = {
+            n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+        }
+        if "fix" in body_names:
+            reads_fix.add(node.name)
+    # Map function names back to registry keys (the registry is the public vocabulary).
+    return {
+        key
+        for key, fn in checks_module.DEEP_CHECKS.items()
+        if fn.__name__ in reads_fix
+    }
+
+
+def test_deep_fix_capable_matches_the_implementations():
+    from cpersona import checks as checks_module
+
+    actual = _deep_checks_referencing_fix()
+    declared = set(checks_module.DEEP_FIX_CAPABLE)
+    assert declared == actual, (
+        "checks.DEEP_FIX_CAPABLE disagrees with the code: it drives the deep_check tool "
+        "description, so a stale set publishes a false contract (audit C26).\n"
+        f"  declared but does not act on fix: {sorted(declared - actual)}\n"
+        f"  acts on fix but not declared:     {sorted(actual - declared)}"
+    )
+    assert declared, "gate collapsed — no deep check is declared fix-capable"
+
+
+def test_deep_fix_gate_has_teeth():
+    """The gate must fail when the declared set drifts from the implementations."""
+    from cpersona import checks as checks_module
+
+    actual = _deep_checks_referencing_fix()
+    drifted = actual | {"near_duplicate"}  # the historical wrong claim
+    assert drifted != actual, "fixture no longer represents drift"
+    assert "near_duplicate" not in actual, (
+        "near_duplicate started honouring fix — update DEEP_FIX_CAPABLE and this fixture"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 8 (C26 doc-drift class, 2.5.2b1): pause_persistence names every gated handler.
+#
+# The description tells an operator which tools go quiet under a pause. It listed eight
+# and the code gated fourteen, so four write tools were silently in scope and the
+# check_health / deep_check fix-downgrade was undocumented. The gate cannot verify the
+# prose is TRUE, but it can verify it is COMPLETE: every handler that consults
+# no_persist.is_paused() must be named.
+# --------------------------------------------------------------------------------------
+
+
+def _handlers_consulting_no_persist():
+    names = set()
+    for path in _iter_module_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            if not node.name.startswith("do_"):
+                continue
+            if "is_paused" in ast.dump(node):
+                tool = node.name[len("do_"):]
+                for suffix in ("_or_queue", "_boundary"):
+                    if tool.endswith(suffix):
+                        tool = tool[: -len(suffix)]
+                names.add(tool)
+    return names
+
+
+def test_pause_persistence_description_names_every_gated_tool():
+    from cpersona import server
+
+    description = next(
+        t.description for t in server.registry._tools if t.name == "pause_persistence"
+    )
+    gated = _handlers_consulting_no_persist()
+    assert len(gated) >= 14, f"gate collapsed — only found {sorted(gated)}"
+    missing = sorted(name for name in gated if name not in description)
+    assert not missing, (
+        "pause_persistence's description does not mention every tool whose handler "
+        f"consults no_persist.is_paused() (audit C26): {missing}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 9 (C26 doc-drift class, 2.5.2b1): every tool that RESOLVES @auto documents it.
+#
+# The sentinel is implemented in the six *_boundary wrappers, but only store's schema
+# mentioned it — so five tools accepted a value their published contract did not admit
+# existed. The gate ties the two together: a tool wired to a boundary that calls
+# operating_context.check_project_id must say so in its project_id description.
+# --------------------------------------------------------------------------------------
+
+
+def test_every_auto_resolving_tool_documents_the_sentinel():
+    from cpersona import server
+
+    tree = ast.parse((PKG / "server.py").read_text(encoding="utf-8"), filename="server.py")
+    boundaries_resolving_auto = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and node.name.endswith("_boundary")
+        and "check_project_id" in ast.dump(node)
+    }
+    assert len(boundaries_resolving_auto) >= 6, sorted(boundaries_resolving_auto)
+
+    documented = {
+        tool.name
+        for tool in server.registry._tools
+        if "@auto"
+        in tool.inputSchema.get("properties", {}).get("project_id", {}).get("description", "")
+    }
+    expected = {name[len("do_"):-len("_boundary")] for name in boundaries_resolving_auto}
+    missing = sorted(expected - documented)
+    assert not missing, (
+        "these tools resolve the @auto sentinel but their project_id description does "
+        f"not mention it (audit C26): {missing}"
+    )

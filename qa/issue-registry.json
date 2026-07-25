@@ -2252,6 +2252,62 @@
       "category": "ci-mutation-gate",
       "fixed_in": "2.5.2a2",
       "fix_note": "Wired scripts/mutation-proof.py into CI as a new additive, blocking mutation-proof job pinned to Python 3.13 (uv sync --dev then uv run --frozen python scripts/mutation-proof.py, with a 15-minute hang ceiling). No separate behaviour-golden step was added because capture-behaviour.py --check is already gated by the existing pytest job via tests/test_equivalence_252.py. No existing job or step semantics were changed. Test-first is waived (workflow-config wiring, no product code to regression-test); verified by capturing exit 0 for both wired scripts."
+    },
+    {
+      "id": "bug-156",
+      "summary": "(LOW) Write-path size caps were incomplete: do_update_memory bypassed the MAX_CONTENT_LENGTH cap do_store enforces (an edited row could grow past it and the uncapped string was sent verbatim to the embedding backend), and the JSON sidecars source / metadata plus the episode summary / keywords had no bound at all — one call could park an arbitrarily large blob per row with no health check to surface it.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "content has been capped since 2.1, its JSON sidecars never were",
+      "expected": "present",
+      "status": "fixed",
+      "category": "write-path-bounds",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "source / metadata are bounded by MAX_METADATA_LENGTH and an oversized field is REFUSED (result='rejected') rather than truncated, because a truncated JSON document is not a JSON document. The episode's prose fields follow the memory rule instead — capped via _sanitize_content in the shared _prepare_episode_row seam (so the queue drain is bounded by the same rule) with truncated:true reported, and the remote index receives the stored text rather than the caller's original. do_update_memory enforces the same content cap as do_store. Regression: tests/test_252b1_writepath.py + tests/test_252b1_audit.py. Audit id: C12."
+    },
+    {
+      "id": "bug-157",
+      "summary": "(LOW) recall_with_context built its recall exclude-filter from EVERY external_context entry but merged only role=user / role=assistant entries into the response, so a system or tool entry could suppress a matching memory while being absent from the output — the memory vanished with nothing in the response explaining why.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "The filtering stays",
+      "expected": "present",
+      "status": "fixed",
+      "category": "silent-suppression",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "The filtering is kept (the caller does hold that text, so excluding it is correct); the silence is not. When entries whose role is not merged into `messages` are present, the response carries context_filter_only={roles:[...]} and the tool description states the asymmetry. Regression: tests/test_252b1_writepath.py. Audit id: C13."
+    },
+    {
+      "id": "bug-159",
+      "summary": "(LOW) The /index push on the store WRITE hot path passed no timeout and inherited the embedding client's 30s DEFAULT_TIMEOUT_SECS, while every sibling remote call states a short dedicated deadline (health probe 3s, remote search 5s since bug-033) — a hung endpoint therefore blocked each store for ~30s, leaving the write path less protected than the read path against the same failure.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "timeout=REMOTE_INDEX_TIMEOUT_SECS",
+      "expected": "present",
+      "status": "fixed",
+      "category": "unbounded-remote-call",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "CPERSONA_REMOTE_INDEX_TIMEOUT_SECS (default 10s) is stated explicitly on the POST. Longer than the 5s search deadline because indexing does the embedding work server-side and a failure here is non-fatal (embedded=false) rather than a retriever fallback. Regression: tests/test_252b1_writepath.py. Audit id: #361 item (6)."
+    },
+    {
+      "id": "bug-160",
+      "summary": "(LOW) Several registered tool descriptions had drifted from the behaviour an MCP client sees: check_health claimed a 20-check registry against 23 implemented checks, deep_check said fix=true applies repairs while four of its six checks ignore the flag, pause_persistence listed 8 of the 14 write tools it silences and omitted the check_health/deep_check fix-downgrade, the @auto project_id sentinel was documented only on store though six tools resolve it, recall's source_id omitted the channel-scoped episode exception, and store's success shape omitted truncated.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "file": "cpersona/server.py",
+      "pattern": "_AUTO_PROJECT_ID_CLAUSE",
+      "expected": "present",
+      "status": "fixed",
+      "category": "tool-description-drift",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "Counts and lists are RENDERED from the code they describe (HEALTH_CHECK_NAMES, checks.DEEP_FIX_CAPABLE, the shared @auto clause) rather than restated in prose, and three structural gates in tests/test_structural_gates.py (Gates 7-9) fail CI when the declared set, the pause list or the @auto documentation falls behind the implementation. Audit id: C26."
     }
   ]
 }
