@@ -2605,6 +2605,34 @@
       "category": "lint-drift",
       "fixed_in": "2.5.2b1",
       "fix_note": "Dropped the unused import and the extraneous f prefix. Found by the parent agent while running the CI gates against the fixes for bug-162/163 — the code review that produced bug-162..bug-178 ran pytest, verify-issues and mutation-proof but not ruff, so a red gate sat under a report that read as green. Isolated against a master worktree copy before attributing it to the branch. Registry anchor note: the unused import cannot serve as the absent-pattern — two OTHER test functions in the same file import checks_module and use it — so the anchor is the f-string violation, which the fix removed and which occurs once."
+    },
+    {
+      "id": "bug-180",
+      "summary": "(C15, OPEN) Under VECTOR_SEARCH_MODE=remote with STORE_BLOB=false the local cosine scan — the documented safety net for a remote /search outage — is structurally empty for memories: do_store skips the local blob for every row, so the scan's `embedding IS NOT NULL` predicate matches nothing. A /search fault with a working /embed then returns zero vector hits while health.observe_ok() marks the subsystem HEALTHY (the advisory observes the embed boundary only), so recall degrades to FTS/keyword silently in exactly the configuration that has no fallback.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "VECTOR_SEARCH_MODE == \"local\" or STORE_BLOB",
+      "expected": "present",
+      "status": "open",
+      "category": "fail-open-config",
+      "fix_sketch": "Additive disclosure, not a behaviour change: a health check (and a startup log line) that flags the remote + STORE_BLOB=false combination as 'no local vector fallback', so the operator learns it from check_health rather than from a silent recall. Deliberately NOT extending the degraded-advisory to the /search boundary — health.py scopes itself to embed availability by design, and widening that contract during the 2.5.2 soak would blur behaviour change with regression. Episodes are unaffected (do_archive_episode's row prep has no STORE_BLOB gate, so episode blobs are always written) — the hole is memory-side only.",
+      "note": "Adjudicated 2026-07-25 under an earlier decision as (a) fix in 2.5.2, additive only. Not reachable in the operating deployment: bin/systemd/ctools/cpersona.service sets neither CPERSONA_VECTOR_SEARCH_MODE nor CPERSONA_STORE_BLOB, so it runs local mode with blobs stored. This is for external installs that adopt remote mode. Same family as bug-164 / bug-177 ('green but powerless') closed in 2.5.2b1. The two audit lenses split on this one: the refuting lens was right that the HEALTHY verdict matches health.py's stated contract, which is why the fix discloses the configuration instead of redefining health."
+    },
+    {
+      "id": "bug-181",
+      "summary": "(C22, OPEN) Every wheel ships ~2,479 LOC of vendored code with no import path from any cpersona module: llm_provider.py (1609), mcp_stream_interceptor.py (233), mgp_utils.py (234), search.py (257), semantic_cache.py (146). cpersona imports only isolation / embedding_client / no_persist / mcp_utils (+ validation via mcp_utils), so the rest is unreachable by construction — yet it lands on every user's disk, enlarging the audited and supply-chain surface (llm_provider alone carries outbound third-party HTTP) for zero functional benefit.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "file": "pyproject.toml",
+      "pattern": "^packages = \\[\"cpersona\"\\]$",
+      "expected": "present",
+      "status": "open",
+      "category": "packaging-surface",
+      "fix_sketch": "Exclude the unreachable modules from the WHEEL only (hatchling exclude / force-exclude), leaving the in-tree snapshot byte-faithful so scripts/sync-vendored-mcp-common.sh keeps rsync --delete-ing the whole upstream tree and the a2 post-sync reconciliation gate still compares like for like. Pair it with a structural gate that fails CI if any excluded module acquires an import path from cpersona (otherwise a future import ships a wheel that raises ImportError in the field) and an install-the-wheel-and-import smoke. When this lands, flip the anchor to the exclude stanza.",
+      "note": "Adjudicated 2026-07-25 under an earlier decision as (a) fix in 2.5.2, additive-safe. The refuting lens argued a wholesale vendored snapshot is standard practice — that objection is about the REPOSITORY, and excluding at the wheel boundary leaves the snapshot whole, so both hold. Charter §6 (cross-consumer vendored changes are expensive) does not apply: no vendored file content changes, so no clotohub-servers common bump or re-vendor is implied. Private path (leading underscore), so no public API is withdrawn."
     }
   ]
 }
