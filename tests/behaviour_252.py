@@ -52,6 +52,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 # Mirror conftest's hermetic pins so the capture script gets the same environment
@@ -63,7 +64,7 @@ os.environ.setdefault("CPERSONA_OPERATING_CONTEXT", "off")
 
 import numpy as np  # noqa: E402
 
-from cpersona import admin_handlers, vector  # noqa: E402
+from cpersona import admin_handlers, config, maintenance_handlers, memory_handlers, utils, vector  # noqa: E402
 from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
@@ -107,6 +108,96 @@ def fake_embed_one(text: str) -> list[float]:
 
 def pack(text: str) -> bytes:
     return EmbeddingClient.pack_embedding(fake_embed_one(text))
+
+
+# ---------------------------------------------------------------------------
+# Frozen wall clock (CSC Task #362, part 1)
+# ---------------------------------------------------------------------------
+#
+# do_store and do_recall both read the wall clock, and the raw values leak into
+# the observation in two different ways -- neither of them collapsed by the
+# `_GENERATED_TS` space-format regex above:
+#
+#   memory_handlers.do_store            timestamp = message.get("timestamp",
+#                                          datetime.now(timezone.utc).isoformat())
+#       -- the default is ISO-with-T ("2027-01-01T00:00:00+00:00"), not the
+#       space form SQLite `datetime('now')` produces, so a raw wall clock lands
+#       verbatim in the stored row's timestamp column.
+#
+#   utils._compute_confidence          now = datetime.now(timezone.utc)
+#       -- age_hours = (now - stored_timestamp).total_seconds() / 3600, and the
+#       returned score = sqrt(norm_cos * time_decay) * ... derives from it.
+#       Seeded rows carry Jan-1-2026 timestamps; without a freeze the score
+#       moves every day.
+#
+#   _vendored_mcp_common.no_persist._now() = datetime.now(UTC)
+#       -- feeds the "reason" string's TTL-remaining suffix ("30m left") that
+#       make_skipped_response embeds in the store no-persist response.
+#
+# Marking those output fields `Scenario.volatile` would work but is exactly the
+# wrong shape for #362: `confidence.score` and the no-persist response body are
+# what 2.5.2b1 must be shown NOT to disturb, and hiding them behind
+# "<volatile>" would silently unprotect the pin. Freezing the clock at the
+# source keeps the numbers real AND deterministic.
+#
+# Fixed instant: chosen strictly after every seeded corpus timestamp (the seed
+# helpers go up to 2026-02-02) so age_hours is a clearly-artificial round
+# number (a Jan-1-2026 row → ~8760h → visibly a year), and BEFORE any
+# store-scenario `timestamp` literal so the scenario literals and the frozen
+# default are easy to tell apart when eyeballing the diff.
+FROZEN_INSTANT = datetime(2027, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+
+class _FrozenDatetime(datetime):
+    """A datetime subclass whose wall-clock reads return FROZEN_INSTANT.
+
+    Subclassing (not monkeypatching the free function) is deliberate: the same
+    modules that call ``datetime.now(...)`` also call ``datetime.fromisoformat``,
+    ``datetime.strptime`` and subtract datetimes to get timedeltas. The subclass
+    inherits every one of those unchanged, so a code path that stamps 'now' AND
+    parses a stored timestamp does not fall over the substitution -- only the
+    wall clock is stopped.
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            # A caller that asked for naive local time gets naive UTC. No
+            # covered call site uses this branch today; it exists so a future
+            # scenario that does won't get a real wall clock silently.
+            return FROZEN_INSTANT.replace(tzinfo=None)
+        return FROZEN_INSTANT.astimezone(tz)
+
+    @classmethod
+    def utcnow(cls):
+        return FROZEN_INSTANT.replace(tzinfo=None)
+
+
+def _install_frozen_clock(ctx: Ctx) -> None:
+    """Patch every module on the do_store / do_recall path that reads the clock.
+
+    The three modules below were located by grep for ``datetime.now`` /
+    ``datetime.utcnow`` over the whole package and then narrowing to the ones
+    a store or recall scenario can actually reach:
+
+      cpersona.memory_handlers            do_store's timestamp default (line 86)
+      cpersona.utils                       _compute_confidence's `now` (line 145)
+      cpersona._vendored_mcp_common.no_persist  _now() → TTL label in the
+                                          no-persist skipped-response body
+
+    admin_handlers.py also uses ``datetime.now`` (calibration sidecar / export
+    header), but those values are written to files, not into the observation
+    dict any scenario returns, and existing golden entries do NOT contain
+    them -- so patching admin_handlers is unnecessary and left out to keep the
+    patch surface minimal.
+
+    Installed unconditionally in observe() so every scenario sees the same
+    frozen environment, including the existing 41 (which cannot reach the
+    covered call sites in the first place, so the patch is a no-op for them).
+    """
+    ctx.patch(memory_handlers, "datetime", _FrozenDatetime)
+    ctx.patch(utils, "datetime", _FrozenDatetime)
+    ctx.patch(no_persist, "datetime", _FrozenDatetime)
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +396,11 @@ async def observe(scenario: Scenario) -> dict:
             ctx.out.record("remote_index_upsert", agent_id=agent_id, items=items)
 
         ctx.patch(vector, "remote_index_upsert", _fake_upsert)
+        # Task #362: freeze the wall clock so the do_store timestamp default
+        # and every _compute_confidence age_hours/score is deterministic. See
+        # the module-level `_install_frozen_clock` docstring for why this is a
+        # subclass swap rather than a per-field `volatile` mark.
+        _install_frozen_clock(ctx)
 
         try:
             if scenario.seed:
@@ -943,3 +1039,542 @@ async def _(ctx):
         line_types = [json.loads(line).get("_type") for line in f if line.strip()]
     reimported = await admin_handlers.do_import_memories(path, target_agent_id="roundtrip")
     return {"exported": exported, "line_types": line_types, "reimported": reimported}
+
+
+# --- do_store (CSC Task #362) -----------------------------------------------
+#
+# 2.5.2b1 breaks the store contract at this layer, and the mutation harness
+# (`scripts/mutation-proof.py`) does not touch `do_store` / `do_recall` / the
+# memory-handlers path at all -- verified `grep -cE 'do_store|do_recall|
+# memory_handlers' tests/behaviour_252.py scripts/mutation-proof.py` was 0 / 0
+# before this file added the pins below. The scenarios here are recordings of
+# pre-break behaviour, one branch each, in the same style as the #286/#287
+# blocks above.
+
+
+async def _seed_store_target(ctx: Ctx) -> None:
+    """A minimal pre-existing row so a store-scenario can collide with it.
+
+    Kept intentionally small: one memory for `s1`, no msg_id, no source. The
+    scenarios that need a msg_id collision plant their own seed row inline so
+    the pin includes the msg_id text.
+    """
+    db = ctx.db
+    await _mem(db, agent="s1", content="prior body", seq=1)
+    await db.commit()
+
+
+@scenario("store-local-basic", "#362", "store: fresh write, local mode — {ok, id, embedded:true}, row lands, no outbound")
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store(
+        "s1", {"content": "fresh entry", "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+# The remote push is fire-and-forget in production but the payload it carries
+# is the whole point of a "remote mode" store contract, so we pin the body
+# (namespace / items) AND the timeout kwargs the handler chose to pass. Note
+# `install_remote` only patches `vector.VECTOR_SEARCH_MODE`; do_store reads the
+# same name off the `cpersona.config` binding it imported into
+# `memory_handlers` at module load, so the second patch below is what actually
+# takes the remote branch.
+@scenario("store-remote-basic", "#362", "store: fresh write, remote mode — /index POST body (namespace/items), embedded:true")
+async def _(ctx):
+    install_remote(ctx, {})
+    ctx.patch(memory_handlers, "VECTOR_SEARCH_MODE", "remote")
+    return await memory_handlers.do_store(
+        "s1", {"content": "remote fresh entry", "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+# Missing and empty content both hit `raw_content = message.get("content", "")`
+# and produce the same skipped-response, so one scenario pins both.
+@scenario("store-empty-content", "#362", "store: content missing or empty string — rejected 'empty content', no row")
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store("s1", {"content": ""})
+
+
+# `_sanitize_content` strips the `[Memory from ...]` annotation, leaving an
+# empty string that trips the SECOND skip branch. Whitespace-only after strip
+# hits the same branch; picking the annotation form so a reader can see WHICH
+# sanitizer step reduced it.
+@scenario("store-sanitized-empty", "#362", "store: content that sanitizes to empty ([Memory from …] only) — rejected 'empty after sanitization'")
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store(
+        "s1", {"content": "[Memory from x] ", "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+# v2.5.2 additive: the skip response echoes the pre-existing row's id so a
+# caller can chain (e.g. update_memory) without a second SELECT. The msg_id
+# branch pins that echo AND the "duplicate msg_id" reason string.
+@scenario("store-duplicate-msg-id", "#362", "store: existing msg_id — skipped 'duplicate msg_id', echoes existing id (v2.5.2 additive)")
+async def _(ctx):
+    install_local(ctx)
+    # Plant a row that carries a msg_id (the standard _mem helper leaves it "").
+    await ctx.db.execute(
+        f"INSERT INTO memories ({_MEM_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "s1", "", "", "m-1", "row under m-1", "{}",
+            "2026-01-05T00:00:00Z", "{}", pack("row under m-1"), 0,
+            "2026-01-05T00:00:00Z",
+        ),
+    )
+    await ctx.db.commit()
+    return await memory_handlers.do_store(
+        "s1",
+        {"id": "m-1", "content": "different body under same msg_id",
+         "timestamp": "2026-07-22T00:00:00+00:00"},
+    )
+
+
+@scenario("store-duplicate-content", "#362", "store: existing content — skipped 'duplicate content', echoes existing id", seed=_seed_store_target)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store(
+        "s1", {"content": "prior body", "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+# MAX_CONTENT_LENGTH is 2000 by default (config.py). The truncation flag is
+# derived from the RAW length, but the STORED content is the sanitized/truncated
+# body -- pin both so a code move that swaps the two orders is caught.
+@scenario("store-truncated", "#362", "store: content > MAX_CONTENT_LENGTH — truncated:true AND the row stores the truncated body")
+async def _(ctx):
+    install_local(ctx)
+    # Read the cap from where it is DEFINED, not from a module that happened to
+    # import it: bug-175 removed that re-export and this scenario went red for a
+    # reason that had nothing to do with the behaviour it pins.
+    long_content = "y" * (config.MAX_CONTENT_LENGTH + 1)
+    return await memory_handlers.do_store(
+        "s1", {"content": long_content, "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+# No timestamp on the message: `message.get("timestamp", datetime.now(...)
+# .isoformat())` fires and the frozen 2027-01-01 lands verbatim in the row. The
+# ISO-with-T shape is NOT collapsed by _GENERATED_TS so a code move that changes
+# the default source (e.g. drops the tz suffix) shifts the pinned literal.
+@scenario("store-timestamp-default", "#362", "store: timestamp omitted — frozen datetime.now default lands as ISO-with-T in the row")
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store("s1", {"content": "unstamped"})
+
+
+# Task #282 seam (source normalization at the write path). Three scenarios pin
+# three distinct classes of the mapping table -- the ones b1-2 rewrites:
+#   (a) bare-string alias    "assistant" → {"type":"Agent","id":"","name":""}
+#   (b) bare-string UNKNOWN  "claude-code" → stored verbatim (JSON string).
+#       This is what the "anonymous_source" contract calls out: unknown shapes
+#       are NOT fabricated a type for. The task brief listed "claude-code" as
+#       an example of a normalized bare string; on the current code it lands
+#       in the verbatim class instead (`_BARE_STRING_ALIASES` only covers
+#       user/assistant/ai). The recording matches the CODE, not the brief.
+#   (c) Rust serde tagged    {"User": "u-1"} → {"type":"User", ...}
+@scenario("store-source-normalize-bare-alias", "#362", "store: source='assistant' bare-string alias — normalized to canonical Agent dict (Task #282)")
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store(
+        "s1", {"content": "bare alias", "source": "assistant",
+               "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+@scenario("store-source-verbatim-bare-unknown", "#362", "store: source='claude-code' bare-string unknown — stored verbatim (Task #282 anonymous-source contract)")
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store(
+        "s1", {"content": "bare unknown", "source": "claude-code",
+               "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+@scenario("store-source-normalize-serde-tagged", "#362", "store: source={'User': 'u-1'} Rust serde form — normalized to canonical User dict (Task #282)")
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store(
+        "s1", {"content": "serde tagged", "source": {"User": "u-1"},
+               "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+# bug-106: dedup probes the γ-VISIBLE scope, matching read semantics. A bucket
+# write ('p1') sees X ∪ '' and so collides with an identical global-pool row;
+# a global write probes '' only and does NOT collide with a bucket copy. The
+# two scenarios below are the mirror pair the comment at memory_handlers.py:99
+# specifies. Both use `_seed_store_target` (global "prior body") plus an
+# inline bucket seed where needed, so the collision axis is the only thing
+# changing between them.
+@scenario("store-gamma-bucket-collides-global", "#362", "store: bucket write ('p1') collides with an identical global-pool row (bug-106 γ-visible scope)", seed=_seed_store_target)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store(
+        "s1", {"content": "prior body", "timestamp": "2026-07-22T00:00:00+00:00"},
+        project_id="p1",
+    )
+
+
+@scenario("store-gamma-global-not-collides-bucket", "#362", "store: global write does NOT collide with a bucket-only row (bug-106 γ-visible scope)")
+async def _(ctx):
+    install_local(ctx)
+    # Plant a bucket-only row (no global copy).
+    await _mem(ctx.db, agent="s1", project="p1", content="isolated body", seq=1)
+    await ctx.db.commit()
+    return await memory_handlers.do_store(
+        "s1", {"content": "isolated body", "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+# `_reset` calls `no_persist.resume()` before the scenario body runs, so the
+# pause() below always fires on a clean state. Frozen clock makes the "reason"
+# TTL suffix deterministic ("30m left" for ttl=1800).
+@scenario("store-no-persist-paused", "#362", "store: no_persist paused — {id:'no-persist', persisted:false, dry_run:true, reason:'…30m left…'} shape (bug-141)")
+async def _(ctx):
+    install_local(ctx)
+    no_persist.pause(1800)
+    return await memory_handlers.do_store(
+        "s1", {"content": "should not persist", "timestamp": "2026-07-22T00:00:00+00:00"}
+    )
+
+
+# --- do_recall (CSC Task #362) ----------------------------------------------
+#
+# do_recall is the read hot path but it also WRITES: it bumps recall_count and
+# last_recalled_at on every returned memory (see memory_handlers.py:1050).
+# Under the DEFAULT config (`CONFIDENCE_ENABLED=false`) that write never fires
+# -- `_apply_recall_scoring` only populates `recall_counts` inside `if
+# CONFIDENCE_ENABLED:`, and the bump is gated on `recall_counts`. So the pin
+# for the read-path write, AND the pin for the `confidence` dict in messages,
+# both require the confidence branch. Two flavours below:
+#
+#   recall-basic-hits / recall-exclude-contents / recall-deep-no-decay-no-bump
+#       CONFIDENCE_ENABLED=True — full match_reason (signal="confidence"),
+#       confidence dict in messages, recall_count bump captured in the db dump.
+#
+#   recall-empty-query-pure-recency / recall-no-hits
+#       CONFIDENCE_ENABLED=False (module default) — the branches they pin are
+#       pre-scoring (empty-query volume-rule bypass, no-hits early return),
+#       so enabling confidence would only add noise.
+#
+# _install_confidence_on is preferred over env-poking because config.py reads
+# the env at import time and rebinds nothing after; memory_handlers imports
+# CONFIDENCE_ENABLED by value, so the patch is a module-attribute swap.
+
+
+def _install_confidence_on(ctx: Ctx) -> None:
+    ctx.patch(memory_handlers, "CONFIDENCE_ENABLED", True)
+
+
+@scenario("recall-basic-hits", "#362", "recall: seed_corpus hit set — messages, confidence, match_reason, refs; recall_count/last_recalled_at bumped (CONFIDENCE=on)", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    return await memory_handlers.do_recall("a1", "apples", 5)
+
+
+# bug-125: an empty query is a pure-recency listing with no relevance signal,
+# so the unscored volume rule is bypassed. Without the bypass, session-start
+# recall would return [] for every agent with < 100 memories.
+@scenario("recall-empty-query-pure-recency", "#362", "recall: empty query bypasses the unscored volume rule (bug-125) — pure recency listing", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall("a1", "", 5)
+
+
+# The exclude filter is normalized (`c.strip().lower()`) so an exclude entry
+# with different casing must still match; using the exact seed body avoids
+# baking that separate invariant into this scenario -- one branch per
+# scenario, in the existing file's style. Confidence on so the pin includes
+# the `confidence` dict on every SURVIVING message.
+@scenario("recall-exclude-contents", "#362", "recall: exclude_contents drops a matching row before ranking (CONFIDENCE=on)", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    return await memory_handlers.do_recall(
+        "a1", "apples", 5,
+        exclude_contents=["apples and pears in the orchard"],
+    )
+
+
+# deep=True disables BOTH time_decay and the completion_factor in
+# _compute_confidence, AND skips the recall_count bump at the tail of
+# do_recall. Pinning both effects in one scenario -- the score change is in
+# `result` (via the confidence dict), the bump-skip is in `db`.
+#
+# With confidence=on, `recall_counts` populates from the SELECT so the
+# skip-under-deep branch is the one being exercised; under default config the
+# bump is skipped for a DIFFERENT reason (recall_counts empty). Confidence-on
+# is what makes this scenario specifically pin the "deep skips the bump" wire.
+@scenario("recall-deep-no-decay-no-bump", "#362", "recall: deep=True disables time_decay/completion_factor AND skips the recall_count bump (CONFIDENCE=on)", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    return await memory_handlers.do_recall("a1", "apples", 5, deep=True)
+
+
+# Query with no lexical or vector matches on the seeded corpus. The rrf mode
+# vector branch will still produce candidate cosines below the threshold; the
+# FTS branch returns 0 rows for the nonsense trigram. Fused score is empty,
+# so `messages: []` and no recall_count bump. Default confidence: the empty-
+# result branch is what's under test, no need to enable scoring on it.
+@scenario("recall-no-hits", "#362", "recall: a query matching no row returns messages=[] and does not touch recall_count", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall("a1", "xyzzyxyzzy", 5)
+
+
+# --- do_check_health / do_deep_check (CSC Task #362) ------------------------
+#
+# 2.5.2b1 drops `healthy` from the check_health response in favour of the
+# three-valued `status` (they currently COEXIST — commit 448acd4 added
+# `status` additively). The mutation harness (`scripts/mutation-proof.py`) and
+# this matrix's other scenarios do not touch check_health or deep_check at
+# all -- `grep -c check_health` on both files was 0 before these pins. Without
+# a golden entry that deletion could land unobserved.
+#
+# The scenarios below record, one branch each:
+#
+#   * `total_memories`, `issues`, `severity_summary`, `status`, `healthy`,
+#     `fixed` and `stats` on a clean corpus (health-clean).
+#   * the info-only asymmetry `maintenance_handlers.py:136` documents: an
+#     info-only DB reports `status='healthy'` AND `healthy=False`, because
+#     the boolean is `len(issues) == 0` while the status follows the gate
+#     rule "info never degrades" (health-info-only-asymmetry). This is the
+#     stated motivation for the b1 change, so both halves of the current
+#     contract are on the record before it moves.
+#   * a warn finding drives `status='degraded'` (health-warn-degraded).
+#   * `fix=True` -- the bug-059 residual re-run derives healthy/status from
+#     the post-commit state, and the survivor row is visible in the db dump
+#     (health-fix-repairs-warn).
+#   * `do_deep_check` on a clean agent -- the dispatch envelope
+#     (agent_id / checks_run / results / fixed) and every subcheck's zero
+#     shape (deep-check-clean).
+#   * `do_deep_check(fix=True)` on a recoverable anonymous-source row --
+#     the recovery counts and the rewritten source in the db dump
+#     (deep-check-anonymous-source-fix). deep_check shares only the do_*
+#     dispatch envelope with check_health (each subcheck's dict is its own
+#     contract), but the same "envelope stability before the split"
+#     argument applies -- 2.5.2b1 refactors both handlers.
+#
+# WALL CLOCK REACH. `_install_frozen_clock` (installed unconditionally by
+# `observe`) already covers memory_handlers / utils / no_persist. The health
+# checks read the clock only via:
+#
+#   * SQL `datetime('now', ...)` in check_stale_pending_tasks and in
+#     deep_stale_profile. The seeds below insert nothing into
+#     pending_memory_tasks (empty -> count=0 -> the branch never renders a
+#     timestamp) and never insert a profile with user_id=''  for the deep
+#     agent (empty -> count=0 -> `last_updated` is not written). Both are
+#     dormant, so the SQL wall clock does not reach the observation.
+#
+#   * Python `datetime.datetime.now(...)` in deep_calibration_staleness.
+#     The subcheck short-circuits at `if not vector._embedding_client:
+#     return {"status": "not_applicable", ...}` BEFORE any clock read, and
+#     these scenarios deliberately do NOT install a client. So the clock
+#     read is unreachable in practice.
+#
+# Extending `_install_frozen_clock` to `cpersona.checks` was considered and
+# NOT done: the only Python clock read there is deep_calibration_staleness
+# and it never fires under these scenarios. Adding a patch on a call site
+# that no covered path reaches would enlarge the frozen-clock surface for
+# no observable gain.
+
+
+_HEALTH_AGENT = "h1"
+_DEEP_AGENT = "d1"
+# invalid_source_type / anonymous_source both fire on the module-default
+# `source='{}'`; a proper User dict is the shape both checks treat as clean.
+_HEALTH_SOURCE = '{"type":"User","id":"u","name":"n"}'
+
+
+def _mask_health_stats(result: dict) -> dict:
+    """Blank the file-level stats field that isn't per-scenario reproducible.
+
+    `stats.db_size_bytes` is `PRAGMA page_count * page_size`. Page count is a
+    file-scoped counter that grows monotonically with cumulative inserts and
+    never shrinks (DELETE frees pages back into the freelist but does not
+    truncate the file), so its value at any given scenario reflects
+    everything the DB ever held under this process -- and the exact history
+    differs between contexts:
+
+    * capture-behaviour.py: one process, ONLY the SCENARIOS matrix, its own
+      tmpdir DB. Reproducible run-to-run there.
+    * pytest / test_equivalence_252.py: the DB is conftest's tmpdir, shared
+      with every other test in the suite. Whatever ran first shaped the
+      page count that this scenario sees, and pytest's collection order
+      changes with any addition to the suite.
+
+    Every OTHER stats field is agent-scoped (bug-058/bug-062) and therefore
+    reproducible: `memories`, `episodes`, `profiles`, `pending_tasks`,
+    `axes`, and (for a specific agent_id) `agent_memories` /
+    `agent_episodes`. Only db_size_bytes needs masking. Setting it to a
+    literal sentinel (rather than marking the whole `stats` key volatile
+    through Scenario.volatile) keeps the surrounding stats fields pinned:
+    the equivalence test compares against the literal, so an unrelated
+    stats field going wrong is still surfaced.
+    """
+    stats = result.get("stats")
+    if isinstance(stats, dict) and "db_size_bytes" in stats:
+        stats["db_size_bytes"] = "<file-scoped, masked>"
+    return result
+
+
+async def _seed_health_profile(ctx: Ctx) -> None:
+    """A profile row for _HEALTH_AGENT (kept explicit so `updated_at` isn't
+    filled by SQLite's `datetime('now')` default -- that literal would leak
+    a wall clock into the profiles dump).
+
+    Every seed below composes on top of this: without a profile row the
+    check_health response also carries a missing_profile info finding, and
+    that would blur "one branch per scenario" for the info-only asymmetry
+    scenario in particular.
+    """
+    await ctx.db.execute(
+        "INSERT INTO profiles (agent_id, content, updated_at) "
+        "VALUES (?, 'profile body', '2026-01-01T00:00:00Z')",
+        (_HEALTH_AGENT,),
+    )
+    await ctx.db.commit()
+
+
+async def _seed_health_clean(ctx: Ctx) -> None:
+    """A single well-formed memory + a profile -- no health check trips."""
+    await _mem(
+        ctx.db, agent=_HEALTH_AGENT,
+        content="a perfectly ordinary memory",
+        source=_HEALTH_SOURCE, seq=1,
+    )
+    await _seed_health_profile(ctx)
+
+
+async def _seed_health_info(ctx: Ctx) -> None:
+    """One `[Memory from …]` memory -- check_memory_annotation
+    (base_severity=info) is the only check that fires."""
+    await _mem(
+        ctx.db, agent=_HEALTH_AGENT,
+        content="[Memory from bob] a note",
+        source=_HEALTH_SOURCE, seq=1,
+    )
+    await _seed_health_profile(ctx)
+
+
+async def _seed_health_warn(ctx: Ctx) -> None:
+    """Two rows sharing `(agent_id, project_id, content)` across channels --
+    the cross-channel duplicate check_duplicate_content owns (bug-014).
+
+    The v12 UNIQUE index keys on `(agent_id, project_id, channel, content)`,
+    so identical content in DIFFERENT channels passes the write-time index
+    yet still lands in one health-check duplicate group.
+    """
+    await _mem(ctx.db, agent=_HEALTH_AGENT, channel="c1",
+               content="duplicated body", source=_HEALTH_SOURCE, seq=1)
+    await _mem(ctx.db, agent=_HEALTH_AGENT, channel="c2",
+               content="duplicated body", source=_HEALTH_SOURCE, seq=2)
+    await _seed_health_profile(ctx)
+
+
+async def _seed_deep_anonymous_source(ctx: Ctx) -> None:
+    """A memory whose source is anonymous (`User/id=''/name=''`) and whose
+    content matches `_USERNAME_PREFIX_PATTERN` -- the fix-capable branch of
+    `deep_anonymous_source`.
+
+    Not `[Memory from …]` (that would also trip check_memory_annotation);
+    `[bob] …` matches `^\\[(.+?)\\]\\s` without matching
+    `_MEMORY_ANNOTATION_PATTERN`, so the row surfaces cleanly through
+    deep_check alone.
+    """
+    anon_source = '{"type":"User","id":"","name":""}'
+    await ctx.db.execute(
+        f"INSERT INTO memories ({_MEM_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            _DEEP_AGENT, "", "", "", "[bob] hello", anon_source,
+            "2026-01-01T00:00:00Z", "{}", pack("[bob] hello"), 0,
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    await ctx.db.commit()
+
+
+@scenario("health-clean", "#362",
+          "check_health: clean corpus — full response shape (status='healthy', severity_summary zeros)",
+          seed=_seed_health_clean)
+async def _(ctx):
+    return _mask_health_stats(
+        await maintenance_handlers.do_check_health(agent_id=_HEALTH_AGENT)
+    )
+
+
+# Info counts are observations, not gate signals (checks.py:1183). An
+# info-only finding therefore leaves status='healthy' while healthy=False
+# (len(issues)==0 is falsified) -- the asymmetry maintenance_handlers.py:136
+# calls out. That's the concrete pre-b1 contract this scenario pins.
+@scenario("health-info-only-asymmetry", "#362",
+          "check_health: info-only finding (memory_annotation) — status stays 'healthy' (the asymmetry the retired healthy boolean contradicted, motivating the b1 single verdict)",
+          seed=_seed_health_info)
+async def _(ctx):
+    return _mask_health_stats(
+        await maintenance_handlers.do_check_health(agent_id=_HEALTH_AGENT)
+    )
+
+
+# The cross-channel duplicate is a warn finding, so status='degraded' and
+# healthy=False -- both come from the (issues, severity_summary) round trip
+# through health_status(). Fix=False keeps the observation to detection
+# only; the fix scenario below handles the mutation half.
+@scenario("health-warn-degraded", "#362",
+          "check_health: warn finding (duplicate_content cross-channel, bug-014) — severity_summary.warn=1, status='degraded'",
+          seed=_seed_health_warn)
+async def _(ctx):
+    return _mask_health_stats(
+        await maintenance_handlers.do_check_health(agent_id=_HEALTH_AGENT)
+    )
+
+
+# fix=True triggers the bug-059 residual re-run, which recomputes
+# (issues, severity_summary) from the POST-commit state. The duplicate is
+# gone so the residual sees no findings, and healthy/status flip to
+# healthy=True/'healthy'. The survivor row and the deleted collider are
+# visible in the observation's `db` dump.
+@scenario("health-fix-repairs-warn", "#362",
+          "check_health: fix=True on the warn corpus — fixed=True; bug-059 residual re-run yields status='healthy'; the survivor row is visible in db",
+          seed=_seed_health_warn)
+async def _(ctx):
+    return _mask_health_stats(
+        await maintenance_handlers.do_check_health(agent_id=_HEALTH_AGENT, fix=True)
+    )
+
+
+# The deep_check envelope (`agent_id`, `checks_run`, `results`, `fixed`)
+# and each subcheck's zero shape:
+#   anonymous_source     {'recoverable':0,'unrecoverable':0}
+#   short_content        {'count':0}
+#   stale_profile        {'count':0,'threshold_days':30}
+#   orphaned_episodes    {'count':0}
+#   calibration_staleness{'status':'not_applicable',
+#                        'reason':'no embedding client configured'}
+#   near_duplicate       {'pairs':0,'rows_scanned':0}
+# `fix` is absent from the individual result dicts under fix=False (the
+# `if fix:` blocks in each runner gate it), which is the difference between
+# this scenario and the fix-True one below.
+@scenario("deep-check-clean", "#362",
+          "deep_check: envelope + zero shape of every subcheck on a clean agent (fix=False)")
+async def _(ctx):
+    return await maintenance_handlers.do_deep_check(_DEEP_AGENT)
+
+
+# A single recoverable anonymous-source row under fix=True:
+#   deep_anonymous_source: {'recoverable':1,'unrecoverable':0,'fixed':1,
+#                           'samples':[{'id':1,'recovered_name':'bob'}]}
+# and the source column in the db dump is rewritten to
+# `{"type":"User","id":"","name":"bob"}` -- the row-level pin.
+# The other five subchecks report their zero shape (`fixed:0` for
+# short_content since fix is now True); the envelope's `fixed:True` reflects
+# the effective fix flag.
+@scenario("deep-check-anonymous-source-fix", "#362",
+          "deep_check: fix=True with a recoverable anonymous-User row + [username] prefix — name recovered, source rewritten in db",
+          seed=_seed_deep_anonymous_source)
+async def _(ctx):
+    return await maintenance_handlers.do_deep_check(_DEEP_AGENT, fix=True)

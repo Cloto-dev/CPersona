@@ -77,6 +77,9 @@ from cpersona.memory_handlers import (
     do_recall_with_context,
     do_store,
 )
+from cpersona import checks as checks_module
+from cpersona.checks import HEALTH_CHECK_NAMES
+from cpersona.utils import CANONICAL_SOURCE_TYPES, error_response, source_type_alias_summary
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +174,11 @@ def _oc_reject(error: str) -> dict:
 async def do_store_boundary(agent_id: str, message: dict, channel: str = "", project_id: str = "") -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
-        return _oc_reject(error)
+        # b1-1: `result` is total over every store response, so the gate refusal
+        # speaks the same contract as the handler's own rejections — a caller
+        # branches on `result` alone and never has to know the gate exists.
+        # `error` is kept for the shape the other five gated tools share.
+        return {**_oc_reject(error), "result": "rejected", "reason": error}
     result = await do_store(agent_id, message, channel=channel, project_id=resolved)
     return _oc_annotate(result, project_id, resolved, warning)
 
@@ -187,7 +194,12 @@ async def do_archive_episode_boundary(
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
-        return _oc_reject(error)
+        # bug-169: every OTHER archive_episode failure carries episode_id (the
+        # handler's own refusal, the or_queue wrapper's, the paused no-op), and
+        # utils.error_response names it as the archetypal field a failure still
+        # owes its caller. Only the gate refusal dropped it, so a caller reading
+        # resp["episode_id"] hit a KeyError on exactly one path.
+        return {**_oc_reject(error), "episode_id": None}
     result = await do_archive_episode_or_queue(
         agent_id,
         history,
@@ -310,6 +322,14 @@ async def do_recall_with_context_boundary(
 
 
 # =============================================================================
+# C26 (d): '@auto' is accepted by every project_id-taking tool (the six
+# *_boundary wrappers above), but it used to be documented only on store —
+# so five of the six schemas hid a sentinel the server implements. One
+# clause, appended everywhere it is true.
+_AUTO_PROJECT_ID_CLAUSE = (
+    "v2.5.1: pass '@auto' to resolve this agent's default from the server's operating context (the resolution is echoed as resolved_project_id; an unmapped agent yields operating_context_warning)."
+)
+
 # MCP Tool Registry — 29 tools
 # =============================================================================
 
@@ -326,7 +346,7 @@ async def do_pause_persistence(ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS
     try:
         result = no_persist.pause(ttl_seconds=ttl_seconds)
     except ValueError as e:
-        return {"error": str(e)}
+        return error_response(str(e))
     # C2: the no-persist flag is a single process-global attribute, not
     # per-session. Under the streamable-HTTP transport one process serves every
     # connected client, so a pause here silences writes for all of them. Surface
@@ -353,11 +373,28 @@ async def do_persistence_status() -> dict:
 registry.auto_tool(
     "pause_persistence",
     "Pause write operations on this MCP server for an opt-in TTL window. While "
-    "paused, all write tools (store, archive_episode, update/delete/lock/unlock_memory, "
-    "update_profile, import_memories, merge_memories, calibrate_threshold) return "
-    'no-op responses with `persisted: false` and `id: "no-persist"` instead of '
-    "writing to the database. Read tools (recall, list_*, get_profile, etc.) are "
-    "unaffected. **The pause is PROCESS-WIDE, not per-session (response `scope`: "
+    # C26 (c): the list was four tools short and omitted the fix-downgrade.
+    # bug-166: it also promised a uniform no-op body that only two tools return.
+    # `persisted: false` is the one field every skipped write carries, so it is
+    # the field to branch on; the id sentinel and the dry-run downgrade are
+    # per-tool details, stated here as such rather than as a blanket rule.
+    "paused, every write tool — store, archive_episode, update_memory, delete_memory, "
+    "delete_episode, delete_agent_data, lock_memory, unlock_memory, update_profile, "
+    "import_memories, merge_memories, calibrate_threshold, set_recall_precision — "
+    "returns a no-op response carrying `persisted: false`, `dry_run: true` and a "
+    "`reason` (with the TTL remaining) instead of writing to the database. "
+    "`persisted: false` is the authoritative signal: branch on it, not on an id. "
+    'Where the success shape has an `id`, it reads `"no-persist"` (store, '
+    "archive_episode); action-specific id keys (deleted_id / updated_id / "
+    "locked_id / unlocked_id / episode_id) are blanked to null so a truthy echo "
+    "cannot read as success. migrate_channel_axis is gated differently — it is "
+    "forced to dry_run and reports repairs_skipped rather than returning a "
+    "skipped-response, so it carries no `persisted` key. check_health and "
+    "deep_check are not blocked but downgrade to fix=false (they answer with "
+    "repairs_skipped: true). Read tools (recall, list_*, get_profile, etc.) still "
+    "answer normally, except that recall suppresses its recall_count / "
+    "last_recalled_at bump — a write that would otherwise move ranking state during "
+    "a paused session. **The pause is PROCESS-WIDE, not per-session (response `scope`: "
     '"process"): the flag is one module-global on the server process. On a '
     "streamable-HTTP deployment a single process serves every connected client, so "
     "pausing here silences writes for ALL connected sessions until resume or TTL "
@@ -472,15 +509,27 @@ registry.auto_tool(
 registry.auto_tool(
     "store",
     "Store a message in agent memory for future recall. "
-    "Success returns {ok:true, id:<row-id>, embedded:<bool>}; embedded is true iff a "
-    "local embedding blob was persisted or the remote index push succeeded (false under "
-    "EMBEDDING_MODE=none). Dedup skips return {ok:true, skipped:true, reason:..., id:<row-id>} "
-    "for the msg_id / content branches (echoing the pre-existing row); the OR IGNORE "
-    "fallback (reason='duplicate (unique index)') omits id by design (TOCTOU seam). "
+    # b1-1 (2.5.2b1, CONTRACT BREAK): `result` replaces the old `skipped` flag.
+    "Every response carries result — the one field to branch on: "
+    "'stored' (a new row was written; {ok:true, result:'stored', id:<row-id>, "
+    "embedded:<bool>}, embedded true iff a local blob was persisted or the remote "
+    "index push succeeded — false under EMBEDDING_MODE=none; the response also "
+    "carries truncated:true when content exceeded the length cap and was shortened), "
+    "'skipped' (nothing written and nothing wrong: {ok:true, result:'skipped', "
+    "reason:...}; the msg_id / content dedup branches echo the pre-existing row's id, "
+    "the OR IGNORE fallback reason='duplicate (unique index)' omits id by design — "
+    "TOCTOU seam), or "
+    "'rejected' (nothing written because the request was refused: {ok:false, "
+    "result:'rejected', reason:...} — empty content, content that sanitizes to empty, "
+    "or an operating-context project_id refusal, which also carries error). "
+    "Note for pre-2.5.2b1 callers: ok is no longer unconditionally true, and "
+    "skipped:true is gone — a rejection used to look like a success. "
+    "reason is human-readable, not a stable machine token. "
     # bug-141: the no-persist branch has its own shape — document it so
     # consumers branch on `persisted`, not on key presence.
-    "Under pause_persistence the write is skipped and the response carries "
-    "persisted:false (id:'no-persist', embedded:false) — branch on persisted.",
+    "Under pause_persistence the write is skipped (result:'skipped') and the response "
+    "carries persisted:false (id:'no-persist', embedded:false) — branch on persisted "
+    "to tell a paused write apart from a dedup hit.",
     {
         "type": "object",
         "properties": {
@@ -501,7 +550,10 @@ registry.auto_tool(
                     },
                     "content": {
                         "type": "string",
-                        "description": "The text to store. Empty content is skipped.",
+                        # bug-168: "skipped" means ok:true in this tool's own
+                        # vocabulary, so the old wording told callers to treat a
+                        # refusal as a harmless no-op.
+                        "description": "The text to store. Content that is empty — or that sanitizes to empty — is refused with ok:false, result:'rejected'.",
                     },
                     "source": {
                         "type": "object",
@@ -518,10 +570,16 @@ registry.auto_tool(
                         "properties": {
                             "type": {
                                 "type": "string",
-                                "enum": ["User", "Agent", "System"],
+                                # b1-2: enum and alias prose both derive from
+                                # utils.CANONICAL_SOURCE_TYPES / _TYPE_ALIASES, so the
+                                # published contract cannot drift from the write seam.
+                                "enum": list(CANONICAL_SOURCE_TYPES),
                                 "description": (
-                                    "Producer role. 'Assistant' / 'ai' are normalized to "
-                                    "'Agent'; 'session' is normalized to 'System'."
+                                    "Producer role — this enum IS the contract; send one of "
+                                    "these. Legacy producers that cannot are folded server-side "
+                                    "at the write seam (" + source_type_alias_summary() + "), "
+                                    "and shapes outside that table are stored verbatim for "
+                                    "check_health(invalid_source_type) to surface."
                                 ),
                             },
                             "id": {
@@ -545,7 +603,14 @@ registry.auto_tool(
                     },
                     "metadata": {
                         "type": "object",
-                        "description": "Free-form JSON object for producer-specific context. Empty when unused.",
+                        "description": (
+                            "Free-form JSON object for producer-specific context. Empty when unused. "
+                            # audit C12: the sidecars are bounded as of 2.5.2b1.
+                            f"Serialised size is capped at {config.MAX_METADATA_LENGTH} characters "
+                            "(same cap for source); an oversized field is refused with "
+                            "result='rejected' rather than truncated, because a truncated JSON "
+                            "document is not a JSON document."
+                        ),
                     },
                 },
             },
@@ -559,8 +624,7 @@ registry.auto_tool(
                     "v2.4.17 isolation axis. Optional — omit or pass '' to "
                     "store in the global pool. Reads via γ semantics: a "
                     "recall with project_id='X' returns 'X' rows + global pool. "
-                    "v2.5.1: pass '@auto' to resolve this agent's default from "
-                    "the server's operating context (echoed as resolved_project_id)."
+                    + _AUTO_PROJECT_ID_CLAUSE
                 ),
             },
         },
@@ -612,7 +676,8 @@ registry.auto_tool(
                 "description": (
                     "v2.4.17 γ filter. Omit → no filter (all projects). "
                     "'' → global pool only. 'X' → 'X' bucket ∪ global pool. "
-                    "Threaded through cascade / RRF / vector / FTS / keyword paths."
+                    "Threaded through cascade / RRF / vector / FTS / keyword paths. "
+                    + _AUTO_PROJECT_ID_CLAUSE
                 ),
             },
             "source_id": {
@@ -622,7 +687,11 @@ registry.auto_tool(
                     "Non-empty = prefix match against json_extract(source, '$.id'), "
                     "e.g. 'discord:12345' to restrict to one Discord user, or "
                     "'discord:' to scope to all Discord-sourced memories. "
-                    "Episodes are skipped when set (no per-user source tagging)."
+                    # C26 (e): the exception is real behaviour, not an edge case —
+                    # the session-start grounding path relies on it.
+                    "Episodes carry no per-user source tagging, so they are skipped "
+                    "when this is set — UNLESS channel is also set, which scopes "
+                    "episodes to one conversation and re-admits them."
                 ),
                 "default": "",
             },
@@ -659,7 +728,16 @@ registry.auto_tool(
     "Recall memories and merge with external conversation context. "
     "Automatically deduplicates, sorts chronologically, and returns a unified list. "
     "Replaces separate recall + manual merge in the caller. "
-    "Content is preview-tiered by default — see recall's full_content / get_contents.",
+    "Content is preview-tiered by default — see recall's full_content / get_contents. "
+    # audit C13: disclose the asymmetry instead of leaving it invisible.
+    "Every external_context entry's content filters the recall (the caller already "
+    "holds that text), but only role=user / role=assistant entries are merged into "
+    "messages. When entries of other roles are present the response carries "
+    # bug-172: the disclosure fires whenever such entries carry content, without
+    # checking that a memory was in fact dropped — claiming suppression happened
+    # overstated it. It reports what CAN filter invisibly, not what did.
+    "context_filter_only={roles:[...]} — those entries filtered the recall without "
+    "appearing in the output, whether or not they dropped a memory this time.",
     {
         "type": "object",
         "properties": {
@@ -667,7 +745,17 @@ registry.auto_tool(
             "query": {"type": "string", "description": "Search query"},
             "external_context": {
                 "type": "array",
-                "items": {"type": "object"},
+                # bug-163: the item shape was advertised in prose only, so a
+                # caller had no schema-level statement that role / content are
+                # strings. The server coerces either way (_ctx_role/_ctx_content);
+                # this states the intent the handler assumes.
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "role": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                },
                 "description": "Conversation history entries [{role, name?, user_id?, content, timestamp?}, ...]",
             },
             "limit": {
@@ -681,7 +769,7 @@ registry.auto_tool(
             "deep": {"type": "boolean", "description": "Disable time decay", "default": False},
             "project_id": {
                 "type": "string",
-                "description": "v2.4.17 γ filter — passed through to recall. Same semantics as in `recall`.",
+                "description": "v2.4.17 γ filter — passed through to recall. Same semantics as in `recall`. " + _AUTO_PROJECT_ID_CLAUSE,
             },
             "source_id": {
                 "type": "string",
@@ -798,7 +886,7 @@ registry.auto_tool(
             },
             "project_id": {
                 "type": "string",
-                "description": "v2.4.17 isolation axis. Omit or pass '' for the global pool.",
+                "description": "v2.4.17 isolation axis. Omit or pass '' for the global pool. " + _AUTO_PROJECT_ID_CLAUSE,
             },
             "channel": {
                 "type": "string",
@@ -838,7 +926,7 @@ registry.auto_tool(
             "limit": {"type": "integer", "description": "Max memories to return", "default": 100},
             "project_id": {
                 "type": "string",
-                "description": "v2.4.17 γ filter. Omit → no filter; '' → global pool only; 'X' → 'X' ∪ global pool.",
+                "description": "v2.4.17 γ filter. Omit → no filter; '' → global pool only; 'X' → 'X' ∪ global pool. " + _AUTO_PROJECT_ID_CLAUSE,
             },
         },
         "required": [],
@@ -858,7 +946,7 @@ registry.auto_tool(
             "limit": {"type": "integer", "description": "Max episodes to return", "default": 50},
             "project_id": {
                 "type": "string",
-                "description": "v2.4.17 γ filter. Same semantics as list_memories.",
+                "description": "v2.4.17 γ filter. Same semantics as list_memories. " + _AUTO_PROJECT_ID_CLAUSE,
             },
         },
         "required": [],
@@ -1011,7 +1099,13 @@ registry.auto_tool(
 
 registry.auto_tool(
     "update_memory",
-    "Update memory content by ID. Rejects if memory is locked. Ownership enforced when agent_id provided.",
+    "Update memory content by ID. Rejects if memory is locked. Ownership enforced when "
+    # bug-156 (C12): the edit path now applies the write path's content policy, so
+    # state it here — the two seams used to disagree silently.
+    "agent_id provided. The new content passes through the same sanitizer as store: "
+    "it is capped at the content length limit (the response carries truncated:true "
+    "when the cap bit) and [Memory from ...] annotations are stripped, so content "
+    "consisting only of those is refused rather than written as an empty row.",
     {
         "type": "object",
         "properties": {
@@ -1182,7 +1276,9 @@ registry.auto_tool(
 
 registry.auto_tool(
     "check_health",
-    "Check memory database health (20-check registry, each issue tagged with "
+    # C26 doc-drift class: the count is rendered from the registry, not typed
+    # in prose (it said 20 while the registry held 23).
+    f"Check memory database health ({len(HEALTH_CHECK_NAMES)}-check registry, each issue tagged with "
     "severity critical/warn/info). Detects contamination, duplicates, oversized "
     "content, embedding issues, FTS integrity (count + content-level), schema "
     "version/object drift (missing UNIQUE indexes or FTS triggers), SQLite file "
@@ -1191,9 +1287,12 @@ registry.auto_tool(
     "invalid/anonymous sources. Returns storage stats incl. project_id/channel "
     "distributions. Set fix=true to auto-repair (agent-scoped, locked-safe); "
     "critical file-integrity findings are report-only. Use checks parameter to "
-    "run a subset. Response includes a three-level status "
-    "(healthy/degraded/unhealthy) derived from severity counts (info never "
-    "degrades) alongside the legacy healthy boolean (len(issues) == 0).",
+    # b1-3 (2.5.2b1, CONTRACT BREAK): one verdict, not two.
+    "run a subset. The verdict is `status`: healthy / degraded / unhealthy, "
+    "derived from severity counts (info never degrades). The pre-2.5.2b1 "
+    "`healthy` boolean (len(issues) == 0) is gone — it reported False for an "
+    "info-only database that `status` called healthy; read `issues` / "
+    "`severity_summary` for the underlying counts.",
     {
         "type": "object",
         "properties": {
@@ -1224,10 +1323,14 @@ registry.auto_tool(
     "Deep heuristic analysis of memory data quality. Detects issues requiring "
     "recovery or judgment (anonymous sources, short/trivial content, stale "
     "profiles, orphaned episodes, stale threshold calibration, embedding-space "
-    "near-duplicate pairs as merge candidates). near_duplicate and "
-    "calibration_staleness are report-only: apply decisions via merge_memories / "
-    "delete_memory / calibrate_threshold. Set fix=true to apply repairs. Use "
-    "checks parameter to select specific checks.",
+    "near-duplicate pairs as merge candidates). "
+    # C26: rendered from checks.DEEP_FIX_CAPABLE — the prose named only two of
+    # the four report-only checks, so fix=true silently no-opped on the others.
+    f"fix=true applies repairs for: {', '.join(sorted(checks_module.DEEP_FIX_CAPABLE))}. "
+    f"Report-only (fix is accepted and ignored): {', '.join(checks_module.DEEP_REPORT_ONLY)} "
+    "— apply those decisions via merge_memories / delete_memory / "
+    "calibrate_threshold / update_profile. Use checks parameter to select "
+    "specific checks.",
     {
         "type": "object",
         "properties": {

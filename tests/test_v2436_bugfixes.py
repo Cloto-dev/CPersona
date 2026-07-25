@@ -110,7 +110,7 @@ async def test_msg_id_unique_is_partial():
     # ...while a real msg_id is deduped
     await memory_handlers.do_store("agent-u", _msg("third row", msg_id="m-1"))
     dup = await memory_handlers.do_store("agent-u", _msg("changed wording", msg_id="m-1"))
-    assert dup.get("skipped") is True
+    assert dup["result"] == "skipped"
 
 
 def test_do_store_uses_lastrowid_not_reselect():

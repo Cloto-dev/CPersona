@@ -69,12 +69,12 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
             async with transaction() as db:
                 await checks_registry.apply_embedding_cache(db, second_pass)
 
-    # bug-059: after a fix run, re-derive healthy/severity_summary from the RESIDUAL
+    # bug-059: after a fix run, re-derive status/severity_summary from the RESIDUAL
     # state (read-only, post-commit) rather than from the issues that were FOUND.
     # Runners are inconsistent about stamping issue['fixed'] (schema_object_drift
     # does, stale_pending_tasks deletes without a marker), so filtering on 'fixed'
     # is unreliable; a fix=False re-run reports true residual uniformly, so a clean
-    # auto-repair is no longer reported healthy=False (and the checkup CLI no longer
+    # auto-repair is no longer reported as unhealthy (and the checkup CLI no longer
     # exits nonzero after a successful fix).
     if fix:
         async with connection() as db:
@@ -133,15 +133,17 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
                 )
             )[0][0]
 
-    # ``status`` follows gate semantics (info never degrades), whereas the
-    # legacy ``healthy`` boolean is ``len(issues) == 0``. Both are exposed
-    # deliberately: an info-only DB is healthy=False but status='healthy'.
+    # 2.5.2b1 (Task #291 item b1-3): ``status`` is the only verdict. The legacy
+    # ``healthy`` boolean was ``len(issues) == 0``, which reported False for an
+    # info-only database — an observation, not a defect (the bug-009 lesson) —
+    # while ``status`` already said 'healthy' for the same run. Two verdicts
+    # disagreeing by construction is worse than one, and a caller wanting the
+    # old meaning still has ``issues`` and ``severity_summary`` verbatim.
     result = {
         "total_memories": total,
         "issues": issues,
         "severity_summary": severity_summary,
         "status": checks_registry.health_status(severity_summary),
-        "healthy": len(issues) == 0,
         "fixed": fix,
         "stats": stats,
     }

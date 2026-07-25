@@ -44,7 +44,12 @@ from cpersona import health, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import FTS_ENABLED, MAX_CONTENT_LENGTH
 from cpersona.database import SCHEMA_VERSION
-from cpersona.utils import _MEMORY_ANNOTATION_PATTERN, _MENTION_PATTERN, normalize_source
+from cpersona.utils import (
+    _MEMORY_ANNOTATION_PATTERN,
+    _MENTION_PATTERN,
+    canonical_source_types_sql,
+    normalize_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -959,12 +964,17 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     # SQLite short-circuits AND left-to-right, so json_valid(source)=0 stops the
     # row before json_extract is ever evaluated (a guard placed last still
     # throws). The outer except stays as a last-resort backstop.
+    # 2.5.2b1 (b1-2): the enum comes from utils.CANONICAL_SOURCE_TYPES, the same
+    # tuple the store JSON Schema publishes and normalize_source enforces at the
+    # write seam. It used to be an inline literal here, which made checks.py the
+    # de-facto (and unpublished) home of the contract.
+    canonical_types = canonical_source_types_sql()
     try:
         bad = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
                     WHERE json_valid(source)
-                    AND (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
+                    AND (json_extract(source, '$.type') NOT IN {canonical_types}
                     OR json_extract(source, '$.type') IS NULL){iso.and_clause}""",
                 iso.params,
             )
@@ -982,7 +992,7 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
         rows = await db.execute_fetchall(
             f"""SELECT id, source FROM memories
                 WHERE json_valid(source)
-                AND (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
+                AND (json_extract(source, '$.type') NOT IN {canonical_types}
                 OR json_extract(source, '$.type') IS NULL) AND locked = 0{iso.and_clause}""",
             iso.params,
         )
@@ -1186,9 +1196,11 @@ def health_status(summary: dict) -> str:
     critical -> ``unhealthy``; otherwise warn -> ``degraded``; otherwise
     ``healthy``. Info counts are observations, not gate signals — the same
     stance ``exit_code`` takes when it returns 0 for an info-only summary — so
-    an info-only DB reports ``status='healthy'`` even though the caller-visible
-    ``healthy`` boolean (``len(issues) == 0``) may be False. Colocated with
-    ``exit_code`` so the two gate mappings evolve together.
+    an info-only DB reports ``status='healthy'`` with a non-empty ``issues``
+    list. Since 2.5.2b1 this is check_health's only verdict (the ``healthy``
+    boolean it used to sit beside said False for exactly that case, which is
+    why it was dropped). Colocated with ``exit_code`` so the two gate mappings
+    evolve together.
     """
     if summary.get("critical"):
         return "unhealthy"
@@ -1408,3 +1420,13 @@ DEEP_CHECKS: dict = {
 }
 
 DEEP_CHECK_NAMES = list(DEEP_CHECKS)
+
+# Which deep checks actually act on ``fix=True``. The rest are report-only: they
+# accept the flag (the runner signature is uniform) and ignore it, so a caller
+# passing fix=True gets a silent no-op. The deep_check tool description is
+# rendered from this set — audit C26 found the description naming only two of
+# the four report-only checks, which is exactly the drift a hand-maintained
+# sentence produces. tests/test_structural_gates.py asserts this set against the
+# AST, so a check that gains or loses a repair path cannot leave it stale.
+DEEP_FIX_CAPABLE = frozenset({"anonymous_source", "short_content"})
+DEEP_REPORT_ONLY = tuple(n for n in DEEP_CHECK_NAMES if n not in DEEP_FIX_CAPABLE)

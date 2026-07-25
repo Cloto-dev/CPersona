@@ -256,14 +256,16 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 
 ### Maintenance (low frequency)
 
-- `check_health(agent_id, fix=true)` — 16-point integrity check + auto-repair.
+- `check_health(agent_id, fix=true)` — deterministic integrity-check registry
+  + auto-repair. The tool description states the current check count and which
+  findings gate; the verdict is `status` (healthy / degraded / unhealthy).
 - `deep_check(agent_id, fix=true)` — semantic quality pass.
 - `export_memories` / `import_memories` — JSONL portability (idempotent import).
 - `merge_memories` — atomically fold one agent's data into another, de-duped.
 
 ---
 
-## Tool reference (28)
+## Tool reference
 
 | Group | Tools |
 |-------|-------|
@@ -275,8 +277,11 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 | Portability | `export_memories`, `import_memories`, `merge_memories` |
 | Channels / multi-user | `migrate_channel_axis` (and the `channel` / `source_id` args on `store` / `recall`) |
 | Health | `check_health`, `deep_check`, `get_queue_status` |
+| Operator context | `get_operating_context` |
 
 Argument details live in each tool's MCP description.
+
+**Failures** — every tool answers a refused call with `ok: false`, so `ok` is the field to branch on. The explanation travels in `error`, except on `store`, which explains a refusal in `reason` alongside `result` (`stored` / `skipped` / `rejected`): a dedup hit or a paused session is a `skipped`, not a failure, while a refusal is a `rejected` carrying `reason`.
 
 ---
 

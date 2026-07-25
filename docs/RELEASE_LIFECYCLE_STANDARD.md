@@ -100,7 +100,8 @@ EOL.
   window do NOT reset it.
 - Fixes for issues accepted within the window may ship after it closes.
 - If a transition requires a database schema or data migration (cpersona
-  line transitions so far preserve the DB schema and MCP tool contract),
+  line transitions preserve the DB schema; the MCP tool contract is not
+  preserved unconditionally — 2.5.2 broke it under the ladder of §2.1),
   the maintainer SHOULD extend the window before certifying the successor.
 
 ### 2.5 EOL

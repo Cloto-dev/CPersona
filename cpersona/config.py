@@ -58,6 +58,21 @@ MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
 # Benchmarks on larger corpora raise it via the env var instead of patching code.
 MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
 MAX_CONTENT_LENGTH = _parse_int("CPERSONA_MAX_CONTENT_LENGTH", 2000)
+# 2.5.2b1 (audit C12): the JSON sidecar fields — source and metadata — reach the
+# row with no bound at all, so one call could park an arbitrarily large blob per
+# memory (content has been capped since 2.1; these never were). They are cheap
+# structured annotations, not payload: the cap is generous enough that no honest
+# producer meets it, and truncation is not an option because half a JSON document
+# is not a JSON document — the write is refused instead (result='rejected').
+#
+# bug-176: "the write path" here means the AUTHORING seams — store, update_memory
+# and the episode prepare. import_memories and merge_memories are deliberately
+# outside it: they restore or move rows that were already accepted under some
+# earlier cap, and silently truncating (or refusing) a user's own backup at
+# restore time is worse than admitting an oversized row. check_health's
+# oversized_content check reports those after the fact, which is the right
+# division — bound what is being authored, detect what is being replayed.
+MAX_METADATA_LENGTH = _parse_int("CPERSONA_MAX_METADATA_LENGTH", 8000)
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the
@@ -107,6 +122,14 @@ VECTOR_SEARCH_MODE = os.environ.get("CPERSONA_VECTOR_SEARCH_MODE", "local")
 # so a hung/flapping endpoint blocks every recall ~30s before falling back to local.
 # Short enough to fail over fast, long enough for a healthy remote search.
 REMOTE_SEARCH_TIMEOUT_SECS = _parse_float("CPERSONA_REMOTE_SEARCH_TIMEOUT_SECS", 5.0)
+# #361 item (6): the sibling of the above for the /index POST on the WRITE hot
+# path. Every other remote call states its own short deadline (probe 3s, search
+# 5s); the index push was the one that silently inherited the embed client's 30s
+# default, so the read path was better protected than the write path against the
+# same hung endpoint. Slightly longer than search: indexing does the embedding
+# work server-side, and a failure here is non-fatal (embedded=false) rather than
+# a fallback to another retriever.
+REMOTE_INDEX_TIMEOUT_SECS = _parse_float("CPERSONA_REMOTE_INDEX_TIMEOUT_SECS", 10.0)
 STORE_BLOB = os.environ.get("CPERSONA_STORE_BLOB", "true").lower() == "true"
 
 AUTO_CALIBRATE = os.environ.get("CPERSONA_AUTO_CALIBRATE", "false").lower() == "true"
