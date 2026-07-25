@@ -53,6 +53,7 @@ from cpersona.utils import (
     _parse_timestamp_utc,
     _sanitize_content,
     _try_parse_json,
+    error_response,
     normalize_source,
 )
 from cpersona.vector import _search_vector
@@ -1264,11 +1265,11 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
     abort the batch).
     """
     if not agent_id:
-        return {"error": "agent_id is required"}
+        return error_response("agent_id is required")
     if not isinstance(refs, list) or not refs:
-        return {"error": "refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' strings"}
+        return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' strings")
     if len(refs) > GET_CONTENTS_MAX_REFS:
-        return {"error": f"too many refs ({len(refs)}; max {GET_CONTENTS_MAX_REFS}) — split the fetch"}
+        return error_response(f"too many refs ({len(refs)}; max {GET_CONTENTS_MAX_REFS}) — split the fetch")
 
     items: list[dict] = []
     missing: list[str] = []

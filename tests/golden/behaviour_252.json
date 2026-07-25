@@ -2944,7 +2944,8 @@
     "outbound": [],
     "raised": null,
     "result": {
-      "error": "File not found: <tmp>/nope.jsonl"
+      "error": "File not found: <tmp>/nope.jsonl",
+      "ok": false
     },
     "seam": "#287",
     "thresholds": {}
@@ -3898,7 +3899,8 @@
     "outbound": [],
     "raised": null,
     "result": {
-      "error": "source_agent_id and target_agent_id must differ"
+      "error": "source_agent_id and target_agent_id must differ",
+      "ok": false
     },
     "seam": "#287",
     "thresholds": {}

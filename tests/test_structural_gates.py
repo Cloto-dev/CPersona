@@ -1023,3 +1023,52 @@ def test_shipped_skill_lists_every_registered_tool():
         "the shipped agent skill's tool table omits registered tools (audit C26 class): "
         f"{missing}"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 11 (C23, 2.5.2b1): every tool-level failure answers in one shape.
+#
+# The surface used to fail two ways: five sites returned {"ok": False, "error": ...} and
+# twenty-nine returned a bare {"error": ...}. A caller branching on `ok` — the obvious
+# field — got None for most failures, the same defect b1-1 fixed inside store. The gate
+# holds the line: a dict literal RETURNED with an "error" key must also carry "ok"
+# (utils.error_response() is the intended way to produce one).
+# --------------------------------------------------------------------------------------
+
+
+def _returned_error_dicts_without_ok(tree):
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Return) or node.value is None:
+            continue
+        dicts = []
+        if isinstance(node.value, ast.Dict):
+            dicts.append(node.value)
+        elif isinstance(node.value, ast.Tuple):
+            dicts += [e for e in node.value.elts if isinstance(e, ast.Dict)]
+        for d in dicts:
+            keys = {k.value for k in d.keys if isinstance(k, ast.Constant)}
+            if "error" in keys and "ok" not in keys:
+                hits.append(node.lineno)
+    return hits
+
+
+def test_error_responses_carry_ok():
+    violations = []
+    for path in _iter_module_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        violations += [f"{path.name}:{line}" for line in _returned_error_dicts_without_ok(tree)]
+    assert not violations, (
+        "a returned error dict omits `ok` — a caller that branches on ok reads None and "
+        "cannot tell failure from success (audit C23). Build it with "
+        f"utils.error_response():\n  " + "\n  ".join(violations)
+    )
+
+
+def test_error_shape_gate_has_teeth():
+    bad = ast.parse('def f():\n    return {"error": "nope"}\n')
+    assert _returned_error_dicts_without_ok(bad) == [2]
+    good = ast.parse('def f():\n    return {"ok": False, "error": "nope"}\n')
+    assert _returned_error_dicts_without_ok(good) == []
+    tupled = ast.parse('def f():\n    return None, {"error": "nope"}\n')
+    assert _returned_error_dicts_without_ok(tupled) == [2], "tuple returns must be scanned too"

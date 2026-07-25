@@ -281,6 +281,8 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 
 Argument details live in each tool's MCP description.
 
+**Failures** — every tool answers a refused call with `{ok: false, error: "..."}`, so `ok` is the field to branch on. `store` additionally reports `result` (`stored` / `skipped` / `rejected`): a dedup hit or a paused session is a `skipped`, not a failure.
+
 ---
 
 ## Troubleshooting

@@ -2322,6 +2322,20 @@
       "category": "recall-hot-path-n-plus-1",
       "fixed_in": "2.5.2b1",
       "fix_note": "_fetch_rows_by_id issues one IN() statement per row type (ids bound, never interpolated, chunked at 500 to stay under SQLite's bound-variable ceiling that a large limit could otherwise breach). Remote score order is preserved by replaying a separate `ordered` list rather than trusting IN() row order, and a hit whose row is gone is still skipped silently (stale remote index entry, pinned by the sv-remote-stale-id golden scenario). Measured 102 round trips -> 2 for 102 hits. Regression: tests/test_252b1_audit.py. Audit id: C16."
+    },
+    {
+      "id": "bug-161",
+      "summary": "(LOW) The tool surface answered failures in two shapes: 5 sites returned {ok:false, error} while 29 returned a bare {error} with no ok key, so a caller branching on `ok` — the field every other response carries — read None for most failures and could not distinguish a refused call from a successful one. Same defect class as the store response contract (bug-156/b1-1), spread across delete/update/lock/unlock_memory, delete_episode, delete_agent_data, export/import/merge_memories, get_contents, set_recall_precision and the pause_persistence validation path.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "file": "cpersona/utils.py",
+      "pattern": "def error_response",
+      "expected": "present",
+      "status": "fixed",
+      "category": "response-shape-consistency",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "utils.error_response(message, **extra) is the single constructor for a tool-level failure: it always carries ok=False and error, and **extra keeps the per-tool fields a failure still owes its caller (archive_episode's episode_id, import's errors list). All 31 sites converted. Gate 11 in tests/test_structural_gates.py fails CI on any returned dict literal carrying 'error' without 'ok' (tuple returns scanned too), so the shape cannot fork again. Regression: tests/test_252b1_writepath.py. Audit id: C23."
     }
   ]
 }

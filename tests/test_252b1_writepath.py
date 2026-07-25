@@ -199,3 +199,38 @@ async def test_store_index_push_states_its_timeout(clean_db, monkeypatch):
     assert res["result"] == "stored", res
     assert captured["url"].endswith("/index")
     assert captured["kwargs"].get("timeout") == REMOTE_INDEX_TIMEOUT_SECS, captured["kwargs"]
+
+
+# ---------------------------------------------------------------------------
+# C23: one failure shape across the tool surface
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_representative_failures_all_answer_ok_false(clean_db):
+    """Spot-check across three modules — an ownership/lookup failure, a
+    validation failure and an argument failure. Before b1 each of these
+    returned a bare {'error': ...}, so `resp.get("ok")` was None for all of
+    them while a successful call returned True."""
+    from cpersona import admin_handlers, memory_handlers
+
+    failures = [
+        await admin_handlers.do_delete_memory(999_999, agent_id="c23"),
+        await admin_handlers.do_update_memory(999_999, "new text", agent_id="c23"),
+        await admin_handlers.do_merge_memories("same", "same"),
+        await memory_handlers.do_get_contents("", ["mem:1"]),
+        await memory_handlers.do_get_contents("c23", []),
+    ]
+    for resp in failures:
+        assert resp["ok"] is False, resp
+        assert resp["error"], resp
+
+
+@pytest.mark.asyncio
+async def test_error_helper_keeps_the_per_tool_fields(clean_db):
+    """Unification must not flatten failures that owe their caller more than a
+    message — archive_episode's caller keys on episode_id."""
+    from cpersona import server
+
+    resp = await server.do_archive_episode_or_queue("c23", [], summary="")
+    assert resp["ok"] is False and resp["episode_id"] is None, resp

@@ -250,7 +250,8 @@ async def test_import_rejects_unconfined_and_oversized_paths(clean_db, monkeypat
     traversal = str(tmp_path / "child" / ".." / "import.jsonl")
     result = await admin_handlers.do_import_memories(traversal)
     assert result == {
-        "error": f"input_path rejected (path traversal or outside export dir): {traversal}"
+        "ok": False,
+        "error": f"input_path rejected (path traversal or outside export dir): {traversal}",
     }
 
     export_root = tmp_path / "confined"
@@ -258,7 +259,8 @@ async def test_import_rejects_unconfined_and_oversized_paths(clean_db, monkeypat
     monkeypatch.setattr(config, "EXPORT_DIR", str(export_root))
     result = await admin_handlers.do_import_memories(str(import_file))
     assert result == {
-        "error": f"input_path rejected (path traversal or outside export dir): {import_file}"
+        "ok": False,
+        "error": f"input_path rejected (path traversal or outside export dir): {import_file}",
     }
 
     inside = export_root / "large.jsonl"
@@ -270,7 +272,8 @@ async def test_import_rejects_unconfined_and_oversized_paths(clean_db, monkeypat
     )
     result = await admin_handlers.do_import_memories(str(inside))
     assert result == {
-        "error": f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {inside}"
+        "ok": False,
+        "error": f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {inside}",
     }
 
     rows = await clean_db.execute_fetchall("SELECT content FROM memories WHERE agent_id = 'unsafe'")

@@ -191,6 +191,24 @@ def _compute_confidence(
     return confidence
 
 
+def error_response(message: str, **extra) -> dict:
+    """The one shape a tool answers with when the call could not be carried out.
+
+    2.5.2b1 (audit C23): the surface used to answer failures two ways — five
+    sites returned ``{"ok": False, "error": ...}`` and twenty-nine returned a
+    bare ``{"error": ...}`` with no ``ok`` key at all. A caller checking ``ok``
+    therefore read ``None`` for most failures, which is the same defect b1-1
+    fixed inside ``store``: the obvious field did not answer the obvious
+    question. Every tool-level failure now carries both — ``ok`` for the
+    caller that branches on a boolean, ``error`` for the one that wants the
+    reason.
+
+    ``extra`` carries the per-tool fields a specific failure still owes its
+    caller (``episode_id=None``, an ``errors`` list, a rollback flag).
+    """
+    return {"ok": False, "error": message, **extra}
+
+
 def _try_parse_json(s: str) -> dict:
     """Try to parse a string as JSON, return empty dict on failure."""
     try:

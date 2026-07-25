@@ -79,7 +79,7 @@ from cpersona.memory_handlers import (
 )
 from cpersona import checks as checks_module
 from cpersona.checks import HEALTH_CHECK_NAMES
-from cpersona.utils import CANONICAL_SOURCE_TYPES, source_type_alias_summary
+from cpersona.utils import CANONICAL_SOURCE_TYPES, error_response, source_type_alias_summary
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +341,7 @@ async def do_pause_persistence(ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS
     try:
         result = no_persist.pause(ttl_seconds=ttl_seconds)
     except ValueError as e:
-        return {"error": str(e)}
+        return error_response(str(e))
     # C2: the no-persist flag is a single process-global attribute, not
     # per-session. Under the streamable-HTTP transport one process serves every
     # connected client, so a pause here silences writes for all of them. Surface
