@@ -1196,9 +1196,11 @@ def health_status(summary: dict) -> str:
     critical -> ``unhealthy``; otherwise warn -> ``degraded``; otherwise
     ``healthy``. Info counts are observations, not gate signals — the same
     stance ``exit_code`` takes when it returns 0 for an info-only summary — so
-    an info-only DB reports ``status='healthy'`` even though the caller-visible
-    ``healthy`` boolean (``len(issues) == 0``) may be False. Colocated with
-    ``exit_code`` so the two gate mappings evolve together.
+    an info-only DB reports ``status='healthy'`` with a non-empty ``issues``
+    list. Since 2.5.2b1 this is check_health's only verdict (the ``healthy``
+    boolean it used to sit beside said False for exactly that case, which is
+    why it was dropped). Colocated with ``exit_code`` so the two gate mappings
+    evolve together.
     """
     if summary.get("critical"):
         return "unhealthy"

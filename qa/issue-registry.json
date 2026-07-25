@@ -912,14 +912,14 @@
       "discovered": "2026-07-06T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "re-derive healthy/severity_summary from the RESIDUAL",
+      "pattern": "re-derive status/severity_summary from the RESIDUAL",
       "expected": "present",
       "status": "fixed",
       "category": "health-check-misreports-pass-fail",
       "fix_sketch": "After a fix run, re-derive healthy/severity_summary from unresolved issues only (exclude entries where issue.get('fixed') is True), or re-run the affected checks post-commit to report residual state, so a successful auto-repair is not reported as unhealthy/gating.",
       "note": "v2.4.39 audit (task#150-style multi-finder x adversarial verify). A DB whose only defect is a fixable critical: check_health(fix=True) repairs it and stamps issue['fixed']=True but still returns the issue, so run_health_checks counts severity_summary['critical']=1 and do_check_health sets healthy=False. Via python -m cpersona.checkup --fix, exit_code(severity_summary) returns 2 ('critical always gates') even though the repair succeeded, so a repair cron/CI reads exit 2 = failure after a clean fix.",
       "fixed_in": "2.4.39",
-      "fix_note": "After a fix run, healthy/severity_summary are re-derived from a read-only fix=False re-run (residual state), so a successful auto-repair is not reported unhealthy/gating."
+      "fix_note": "After a fix run, the verdict and severity_summary are re-derived from a read-only fix=False re-run (residual state), so a successful auto-repair is not reported as gating. 2.5.2b1 renamed the surface: the `healthy` boolean was dropped and `status` (healthy/degraded/unhealthy) is the sole verdict — the residual re-derivation itself is unchanged, and the anchor pattern tracks the renamed comment."
     },
     {
       "id": "bug-061",

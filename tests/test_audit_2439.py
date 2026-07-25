@@ -215,7 +215,9 @@ async def test_check_health_stats_are_agent_scoped(clean_db):
 
 
 # ---------------------------------------------------------------------------
-# bug-059: a --fix run that fully repairs must report healthy=True (residual).
+# bug-059: a --fix run that fully repairs must report the residual, not the
+# pre-fix state. Since 2.5.2b1 the verdict is `status` (the `healthy` boolean
+# is gone), so the residual assertion reads it plus the critical count.
 # ---------------------------------------------------------------------------
 
 
@@ -223,13 +225,13 @@ async def test_check_health_stats_are_agent_scoped(clean_db):
 async def test_check_health_fix_reports_residual_healthy(clean_db):
     db = clean_db
     # Break a load-bearing object: drop the content dedup UNIQUE index (a fixable
-    # critical). schema_object_drift repairs it; healthy must reflect the residual.
+    # critical). schema_object_drift repairs it; status must reflect the residual.
     await db.execute("DROP INDEX IF EXISTS idx_memories_dedup_content")
     await db.commit()
     unfixed = await maintenance_handlers.do_check_health(fix=False)
-    assert unfixed["healthy"] is False
+    assert unfixed["status"] == "unhealthy"
     fixed = await maintenance_handlers.do_check_health(fix=True)
-    assert fixed["healthy"] is True, fixed["issues"]
+    assert fixed["status"] == "healthy", fixed["issues"]
     assert fixed["severity_summary"]["critical"] == 0
 
 

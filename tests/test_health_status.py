@@ -121,7 +121,7 @@ async def test_do_check_health_degraded_on_warn_only():
     assert result["severity_summary"]["critical"] == 0
     assert result["severity_summary"]["warn"] >= 1
     assert result["status"] == "degraded"
-    assert result["healthy"] is False
+    assert "healthy" not in result, "the legacy boolean was dropped in 2.5.2b1"
 
 
 @pytest.mark.asyncio
@@ -136,16 +136,16 @@ async def test_do_check_health_unhealthy_on_critical():
     result = await maintenance_handlers.do_check_health(agent_id="agent-h")
     assert result["severity_summary"]["critical"] >= 1
     assert result["status"] == "unhealthy"
-    assert result["healthy"] is False
+    assert "healthy" not in result, "the legacy boolean was dropped in 2.5.2b1"
 
 
 @pytest.mark.asyncio
-async def test_do_check_health_info_only_is_healthy_but_not_healthy_bool():
+async def test_do_check_health_info_only_is_healthy_with_issues_listed():
     # Under CPERSONA_EMBEDDING_MODE=none, null_embedding is info (NULL is the
-    # expected steady state — see test_null_embedding_severity_ladder). So the
-    # response should carry status='healthy' (info doesn't gate) while the
-    # legacy healthy bool is False (issues list is non-empty). This pins the
-    # deliberate split between the two fields.
+    # expected steady state — see test_null_embedding_severity_ladder), so the
+    # run carries status='healthy' AND a non-empty issues list. This is the
+    # case the dropped `healthy` boolean called False (b1-3): one verdict now,
+    # with the observations still fully visible underneath it.
     db = await get_db()
     await _insert(db, content="row without vector")
     await db.commit()
@@ -156,4 +156,5 @@ async def test_do_check_health_info_only_is_healthy_but_not_healthy_bool():
     info_count = result["severity_summary"]["info"]
     assert info_count >= 1
     assert result["status"] == "healthy"
-    assert result["healthy"] is False  # len(issues) != 0
+    assert "healthy" not in result, "the legacy boolean was dropped in 2.5.2b1"
+    assert result["issues"], "info findings stay visible under a healthy status"

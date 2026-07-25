@@ -77,6 +77,7 @@ from cpersona.memory_handlers import (
     do_recall_with_context,
     do_store,
 )
+from cpersona.checks import HEALTH_CHECK_NAMES
 from cpersona.utils import CANONICAL_SOURCE_TYPES, source_type_alias_summary
 
 logger = logging.getLogger(__name__)
@@ -1198,7 +1199,9 @@ registry.auto_tool(
 
 registry.auto_tool(
     "check_health",
-    "Check memory database health (20-check registry, each issue tagged with "
+    # C26 doc-drift class: the count is rendered from the registry, not typed
+    # in prose (it said 20 while the registry held 23).
+    f"Check memory database health ({len(HEALTH_CHECK_NAMES)}-check registry, each issue tagged with "
     "severity critical/warn/info). Detects contamination, duplicates, oversized "
     "content, embedding issues, FTS integrity (count + content-level), schema "
     "version/object drift (missing UNIQUE indexes or FTS triggers), SQLite file "
@@ -1207,9 +1210,12 @@ registry.auto_tool(
     "invalid/anonymous sources. Returns storage stats incl. project_id/channel "
     "distributions. Set fix=true to auto-repair (agent-scoped, locked-safe); "
     "critical file-integrity findings are report-only. Use checks parameter to "
-    "run a subset. Response includes a three-level status "
-    "(healthy/degraded/unhealthy) derived from severity counts (info never "
-    "degrades) alongside the legacy healthy boolean (len(issues) == 0).",
+    # b1-3 (2.5.2b1, CONTRACT BREAK): one verdict, not two.
+    "run a subset. The verdict is `status`: healthy / degraded / unhealthy, "
+    "derived from severity counts (info never degrades). The pre-2.5.2b1 "
+    "`healthy` boolean (len(issues) == 0) is gone — it reported False for an "
+    "info-only database that `status` called healthy; read `issues` / "
+    "`severity_summary` for the underlying counts.",
     {
         "type": "object",
         "properties": {

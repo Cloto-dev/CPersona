@@ -2409,7 +2409,6 @@
     "raised": null,
     "result": {
       "fixed": false,
-      "healthy": true,
       "issues": [],
       "severity_summary": {
         "critical": 0,
@@ -2476,7 +2475,6 @@
     "raised": null,
     "result": {
       "fixed": true,
-      "healthy": true,
       "issues": [],
       "severity_summary": {
         "critical": 0,
@@ -2543,7 +2541,6 @@
     "raised": null,
     "result": {
       "fixed": false,
-      "healthy": false,
       "issues": [
         {
           "check": "memory_annotation",
@@ -2633,7 +2630,6 @@
     "raised": null,
     "result": {
       "fixed": false,
-      "healthy": false,
       "issues": [
         {
           "check": "duplicate_content",
