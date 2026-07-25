@@ -77,6 +77,7 @@ from cpersona.memory_handlers import (
     do_recall_with_context,
     do_store,
 )
+from cpersona.utils import CANONICAL_SOURCE_TYPES, source_type_alias_summary
 
 logger = logging.getLogger(__name__)
 
@@ -518,11 +519,11 @@ registry.auto_tool(
                         "properties": {
                             "type": {
                                 "type": "string",
-                                "enum": ["User", "Agent", "System"],
-                                "description": (
-                                    "Producer role. 'Assistant' / 'ai' are normalized to "
-                                    "'Agent'; 'session' is normalized to 'System'."
-                                ),
+                                # b1-2: enum and alias prose both derive from
+                                # utils.CANONICAL_SOURCE_TYPES / _TYPE_ALIASES, so the
+                                # published contract cannot drift from the write seam.
+                                "enum": list(CANONICAL_SOURCE_TYPES),
+                                "description": "Producer role. " + source_type_alias_summary() + ".",
                             },
                             "id": {
                                 "type": "string",

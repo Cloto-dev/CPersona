@@ -44,7 +44,12 @@ from cpersona import health, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import FTS_ENABLED, MAX_CONTENT_LENGTH
 from cpersona.database import SCHEMA_VERSION
-from cpersona.utils import _MEMORY_ANNOTATION_PATTERN, _MENTION_PATTERN, normalize_source
+from cpersona.utils import (
+    _MEMORY_ANNOTATION_PATTERN,
+    _MENTION_PATTERN,
+    canonical_source_types_sql,
+    normalize_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -959,12 +964,17 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     # SQLite short-circuits AND left-to-right, so json_valid(source)=0 stops the
     # row before json_extract is ever evaluated (a guard placed last still
     # throws). The outer except stays as a last-resort backstop.
+    # 2.5.2b1 (b1-2): the enum comes from utils.CANONICAL_SOURCE_TYPES, the same
+    # tuple the store JSON Schema publishes and normalize_source enforces at the
+    # write seam. It used to be an inline literal here, which made checks.py the
+    # de-facto (and unpublished) home of the contract.
+    canonical_types = canonical_source_types_sql()
     try:
         bad = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
                     WHERE json_valid(source)
-                    AND (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
+                    AND (json_extract(source, '$.type') NOT IN {canonical_types}
                     OR json_extract(source, '$.type') IS NULL){iso.and_clause}""",
                 iso.params,
             )
@@ -982,7 +992,7 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
         rows = await db.execute_fetchall(
             f"""SELECT id, source FROM memories
                 WHERE json_valid(source)
-                AND (json_extract(source, '$.type') NOT IN ('User', 'Agent', 'System')
+                AND (json_extract(source, '$.type') NOT IN {canonical_types}
                 OR json_extract(source, '$.type') IS NULL) AND locked = 0{iso.and_clause}""",
             iso.params,
         )

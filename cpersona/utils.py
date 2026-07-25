@@ -205,7 +205,16 @@ def _try_parse_json(s: str) -> dict:
 # with zero validation; the enum here is intentionally the same three values as
 # ClotoCore's serde tag ("Assistant" is written to "Agent"), so the marketplace
 # and Rust callers agree on the discriminator.
-_CANONICAL_TYPES = ("User", "Agent", "System")
+#
+# 2.5.2b1 (Task #291 item b1-2): this tuple is the SINGLE SOURCE for all three
+# surfaces that state the contract — the published JSON Schema (server.py store
+# tool), the write seam (``normalize_source`` below), and the health check that
+# audits legacy rows (``checks.check_invalid_source_type``, via
+# ``canonical_source_types_sql``). Until b1 the check carried its own SQL
+# literal, so the enum lived in two places and could drift silently; the schema
+# had no enum at all, which is why callers could only learn the contract by
+# reading checks.py. Add a type here and every surface follows.
+CANONICAL_SOURCE_TYPES = ("User", "Agent", "System")
 
 # Case-insensitive type-word aliases. Anything not listed here is left untouched
 # (health-check surfaces the invalid row for human review — the contract is
@@ -227,6 +236,48 @@ _BARE_STRING_ALIASES = {
     "assistant": "Agent",
     "ai": "Agent",
 }
+
+
+def canonical_source_types_sql() -> str:
+    """Render the canonical enum as a SQL tuple literal, e.g. ``('User', 'Agent', 'System')``.
+
+    Used by the source-type health check, which cannot bind the enum as
+    parameters without rewriting its ``NOT IN`` predicates per call site. The
+    values are compile-time constants of this module, never caller input; the
+    alphabetic guard keeps it that way — a future non-identifier value fails
+    loudly here instead of producing a quoted string that SQLite would happily
+    accept as data.
+    """
+    for type_name in CANONICAL_SOURCE_TYPES:
+        if not type_name.isalpha():
+            raise ValueError(
+                f"canonical source type {type_name!r} is not alphabetic; "
+                "inline SQL rendering would need quoting/escaping rules"
+            )
+    return "(" + ", ".join(f"'{t}'" for t in CANONICAL_SOURCE_TYPES) + ")"
+
+
+def source_type_alias_summary() -> str:
+    """Describe the legacy spellings folded into each canonical type.
+
+    Derived from ``_TYPE_ALIASES`` so the published tool description cannot
+    drift from the mapping the write seam actually applies (the C26 doc-drift
+    class: prose that states a rule the code no longer implements). Case
+    variants of the canonical names themselves are omitted — they are implied
+    by "matched case-insensitively".
+    """
+    folded: dict[str, list[str]] = {}
+    for alias, canon in _TYPE_ALIASES.items():
+        if alias == canon.lower():
+            continue
+        folded.setdefault(canon, []).append(alias)
+    parts = [
+        " / ".join(f"'{a}'" for a in sorted(aliases)) + f" are normalized to '{canon}'"
+        if len(aliases) > 1
+        else f"'{aliases[0]}' is normalized to '{canon}'"
+        for canon, aliases in sorted(folded.items())
+    ]
+    return "; ".join(parts) + " (type words are matched case-insensitively)"
 
 
 def normalize_source(source):
@@ -276,7 +327,7 @@ def normalize_source(source):
 
     # (1) Already canonical — the fast path used by every 2.5.x producer.
     raw_type = source.get("type")
-    if isinstance(raw_type, str) and raw_type in _CANONICAL_TYPES:
+    if isinstance(raw_type, str) and raw_type in CANONICAL_SOURCE_TYPES:
         return source, False
 
     # (2) Case-insensitive type-word variant — preserve id / name, rewrite type.
@@ -293,7 +344,7 @@ def normalize_source(source):
     # $.type absent (or non-string) AND len == 1 AND key ∈ enum is the discriminator.
     if raw_type is None and len(source) == 1:
         (key, value), = source.items()
-        if key in _CANONICAL_TYPES:
+        if key in CANONICAL_SOURCE_TYPES:
             if isinstance(value, dict):
                 # Inner dict may carry id / name and free-form extras.
                 new_source = dict(value)

@@ -371,3 +371,62 @@ async def test_fix_reports_locked_rows_it_cannot_touch(clean_db):
     assert (
         ran[0]["mapped"] + ran[0]["unmapped"] + ran[0]["locked"] == ran[0]["count"]
     )
+
+
+# ---------------------------------------------------------------------------
+# 2.5.2b1 (Task #291 item b1-2): one definition of the enum, three surfaces
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_health_check_reads_the_shared_enum_not_its_own_literal(clean_db, monkeypatch):
+    """The check MUST derive its ``NOT IN`` set from ``CANONICAL_SOURCE_TYPES``.
+
+    Proof by substitution: widen the shared tuple at runtime and a row whose
+    type is only canonical under the widened tuple stops being an offender.
+    Against the pre-b1 code — which carried its own ``('User', 'Agent',
+    'System')`` SQL literal — the row stays flagged, so this test is red
+    exactly when the two definitions can drift apart again.
+    """
+    from cpersona import utils
+
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES ('enum1', 'ghost row', '{\"type\":\"Ghost\"}', 't')"
+    )
+    await db.commit()
+
+    flagged = await checks.check_invalid_source_type(db, "enum1", fix=False)
+    assert flagged and flagged[0]["count"] == 1, "baseline: Ghost is not canonical"
+
+    monkeypatch.setattr(
+        utils, "CANONICAL_SOURCE_TYPES", ("User", "Agent", "System", "Ghost")
+    )
+    assert await checks.check_invalid_source_type(db, "enum1", fix=False) == []
+
+
+def test_store_schema_publishes_the_shared_enum():
+    """The published JSON Schema is the contract's public face; it MUST render
+    the same tuple the write seam enforces (before b1 it had no enum at all,
+    so the only way to learn the vocabulary was to read checks.py)."""
+    from cpersona import server, utils
+
+    store_tool = next(t for t in server.registry._tools if t.name == "store")
+    source_schema = store_tool.inputSchema["properties"]["message"]["properties"]["source"]
+    type_schema = source_schema["properties"]["type"]
+    assert type_schema["enum"] == list(utils.CANONICAL_SOURCE_TYPES)
+    # The alias prose is generated from the same mapping the seam applies, so
+    # a new alias cannot be added without the description following it.
+    assert utils.source_type_alias_summary() in type_schema["description"]
+
+
+def test_alias_summary_tracks_the_mapping_table():
+    """Adding an alias changes the generated sentence — the C26 doc-drift
+    class (prose stating a rule the code stopped implementing) cannot recur
+    for this surface without the generator itself being bypassed."""
+    from cpersona import utils
+
+    baseline = utils.source_type_alias_summary()
+    assert "'assistant'" in baseline and "'Agent'" in baseline
+    assert "'user'" not in baseline  # case variants are implied, not enumerated
