@@ -2637,17 +2637,18 @@
     },
     {
       "id": "bug-181",
-      "summary": "(C22, OPEN) Every wheel ships ~2,479 LOC of vendored code with no import path from any cpersona module: llm_provider.py (1609), mcp_stream_interceptor.py (233), mgp_utils.py (234), search.py (257), semantic_cache.py (146). cpersona imports only isolation / embedding_client / no_persist / mcp_utils (+ validation via mcp_utils), so the rest is unreachable by construction — yet it lands on every user's disk, enlarging the audited and supply-chain surface (llm_provider alone carries outbound third-party HTTP) for zero functional benefit.",
+      "summary": "(C22) Every wheel shipped ~2,479 LOC of vendored code with no import path from any cpersona module: llm_provider.py (1609), mcp_stream_interceptor.py (233), mgp_utils.py (234), search.py (257), semantic_cache.py (146). cpersona imports only isolation / embedding_client / no_persist / mcp_utils (+ validation via mcp_utils), so the rest was unreachable by construction — yet it landed on every user's disk, enlarging the audited and supply-chain surface (llm_provider alone carries outbound third-party HTTP) for zero functional benefit.",
       "severity": "LOW",
       "discovered": "2026-07-23T00:00:00Z",
       "version": "2.5.2a1",
       "file": "pyproject.toml",
-      "pattern": "^packages = \\[\"cpersona\"\\]$",
+      "pattern": "_vendored_mcp_common/llm_provider.py",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "packaging-surface",
-      "fix_sketch": "Exclude the unreachable modules from the WHEEL only (hatchling exclude / force-exclude), leaving the in-tree snapshot byte-faithful so scripts/sync-vendored-mcp-common.sh keeps rsync --delete-ing the whole upstream tree and the a2 post-sync reconciliation gate still compares like for like. Pair it with a structural gate that fails CI if any excluded module acquires an import path from cpersona (otherwise a future import ships a wheel that raises ImportError in the field) and an install-the-wheel-and-import smoke. When this lands, flip the anchor to the exclude stanza.",
-      "note": "Adjudicated 2026-07-25 under CSC #384 as (a) fix in 2.5.2, additive-safe. The refuting lens argued a wholesale vendored snapshot is standard practice — that objection is about the REPOSITORY, and excluding at the wheel boundary leaves the snapshot whole, so both hold. Charter §6 (cross-consumer vendored changes are expensive) does not apply: no vendored file content changes, so no clotohub-servers common bump or re-vendor is implied. Private path (leading underscore), so no public API is withdrawn."
+      "note": "Adjudicated 2026-07-25 under CSC #384 as (a) fix in 2.5.2, additive-safe. Charter §6 (cross-consumer vendored changes are expensive) does not apply: no vendored file content changes, so no clotohub-servers common bump or re-vendor is implied. Private path (leading underscore), so no public API is withdrawn.",
+      "fixed_in": "2.5.2",
+      "fix_note": "Excluded at the WHEEL boundary only (tool.hatch.build.targets.wheel.exclude), leaving the in-tree snapshot byte-faithful so sync-vendored-mcp-common.sh keeps rsync --delete-ing the whole upstream tree and the a2 post-sync reconciliation gate still compares like for like — the two objections (ship less / vendor faithfully) are about different artifacts and both hold. The anchor is the exclude entry itself. Guarded twice because the failure mode is invisible to a repo-run suite: Gate 13 (tests/test_structural_gates.py) recomputes the vendored import graph and fails if an excluded module ever becomes reachable, and the wheel-smoke CI job installs the built wheel into a clean environment outside the checkout and imports the server for real. Verified: the built wheel carries 6 vendored files (5 modules + __init__), and the installed package imports every handler module. Audit id: C22."
     },
     {
       "id": "bug-182",

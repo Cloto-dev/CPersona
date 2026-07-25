@@ -1173,3 +1173,67 @@ def test_readme_test_count_is_not_stale():
         f"README claims {claimed} tests; {collected} are defined ({drift:.0%} off). "
         "Re-measure before shipping — this is the badge a visitor reads first."
     )
+
+
+# Gate 13 (bug-181, 2.5.2): nothing the wheel drops may be reachable from cpersona.
+#
+# The wheel excludes the vendored modules no cpersona module imports. That exclusion is
+# safe only while it stays true: if a future import reaches one of them, the suite would
+# still pass (the repo has the file) and the failure would surface as an ImportError on a
+# user's machine. So the excluded set is checked against the ACTUAL import graph, computed
+# by walking from cpersona's own imports through the vendored modules' imports of each
+# other. The gate is one-directional on purpose — a newly unreachable module is not an
+# error, it just keeps shipping until someone excludes it.
+# --------------------------------------------------------------------------------------
+
+
+def _vendored_refs(path):
+    """Vendored module names referenced by one file (import + from-import)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    out = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and "_vendored_mcp_common" in node.module:
+            tail = node.module.split(".")[-1]
+            if tail != "_vendored_mcp_common":
+                out.add(tail)
+            out.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if "_vendored_mcp_common" in alias.name:
+                    out.add(alias.name.split(".")[-1])
+    return out
+
+
+def test_excluded_vendored_modules_are_unreachable():
+    import tomllib
+
+    vendored_dir = PKG / "_vendored_mcp_common"
+    modules = {p.stem for p in vendored_dir.glob("*.py")} - {"__init__"}
+
+    reachable = set()
+    frontier = set()
+    for path in sorted(PKG.glob("*.py")):
+        frontier |= _vendored_refs(path) & modules
+    frontier |= _vendored_refs(vendored_dir / "__init__.py") & modules
+    while frontier:
+        name = frontier.pop()
+        if name in reachable:
+            continue
+        reachable.add(name)
+        module_path = vendored_dir / f"{name}.py"
+        if module_path.exists():
+            frontier |= (_vendored_refs(module_path) & modules) - reachable
+
+    config = tomllib.loads((PKG.parent / "pyproject.toml").read_text(encoding="utf-8"))
+    excluded_paths = config["tool"]["hatch"]["build"]["targets"]["wheel"]["exclude"]
+    excluded = {p.rsplit("/", 1)[-1].removesuffix(".py") for p in excluded_paths}
+
+    missing = {p for p in excluded_paths if not (PKG.parent / p).exists()}
+    assert not missing, f"the wheel excludes paths that do not exist: {sorted(missing)}"
+
+    leaked = excluded & reachable
+    assert not leaked, (
+        f"the wheel excludes {sorted(leaked)}, which cpersona imports — the published "
+        "package would raise ImportError where the test suite (running from the repo) "
+        "cannot see it. Drop it from the exclude list, or remove the import."
+    )
