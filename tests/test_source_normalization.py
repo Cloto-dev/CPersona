@@ -430,3 +430,52 @@ def test_alias_summary_tracks_the_mapping_table():
     baseline = utils.source_type_alias_summary()
     assert "'assistant'" in baseline and "'Agent'" in baseline
     assert "'user'" not in baseline  # case variants are implied, not enumerated
+
+
+# ---------------------------------------------------------------------------
+# Audit C24: the 2.5.2 branches that had no regression coverage
+#
+# Two paths shipped in a1 without a test: the fixer's per-row JSON-parse guard,
+# and the serde branch's non-dict / non-str inner value. Both are "leave it
+# alone" verdicts, which is exactly the kind of behaviour a later refactor
+# silently converts into "fabricate something".
+# ---------------------------------------------------------------------------
+
+
+def test_serde_inner_list_is_left_untouched():
+    """A single enum key whose value is neither dict nor str is NOT the serde
+    shape we recognise — normalising it would require inventing an id."""
+    src = {"Agent": ["a", "b"]}
+    out, mapped = normalize_source(src)
+    assert mapped is False and out is src
+
+
+def test_serde_inner_int_is_left_untouched():
+    src = {"User": 42}
+    out, mapped = normalize_source(src)
+    assert mapped is False and out is src
+
+
+@pytest.mark.asyncio
+async def test_fix_counts_unparseable_source_as_unmapped_not_mapped(clean_db):
+    """A row whose source is valid JSON to SQLite but not a JSON *object* the
+    mapper understands must land in `unmapped` and stay byte-identical —
+    check_invalid_json owns that row, and counting it as mapped would claim a
+    repair that never happened."""
+    from cpersona.database import transaction
+
+    async with transaction() as db_tx:
+        # A JSON number: json_valid() passes, json_extract('$.type') is NULL, so
+        # the check selects it — and normalize_source declines it (not dict/str).
+        await db_tx.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) "
+            "VALUES ('c24', 'numeric source', '17', 't')"
+        )
+        ran = await checks.check_invalid_source_type(db_tx, "c24", fix=True)
+
+    assert ran and ran[0]["count"] == 1, ran
+    assert ran[0]["mapped"] == 0 and ran[0]["unmapped"] == 1, ran
+    rows = await clean_db.execute_fetchall(
+        "SELECT source FROM memories WHERE agent_id = 'c24'"
+    )
+    assert rows[0][0] == "17", "an unrecognised source must survive the fixer verbatim"
