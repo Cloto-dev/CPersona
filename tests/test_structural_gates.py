@@ -996,3 +996,30 @@ def test_every_auto_resolving_tool_documents_the_sentinel():
         "these tools resolve the @auto sentinel but their project_id description does "
         f"not mention it (audit C26): {missing}"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 10 (C26 doc-drift class, 2.5.2b1): the shipped agent skill lists every tool.
+#
+# skills/cpersona-memory/SKILL.md is installed on the user's disk with the package, so
+# its tool table is a published contract like the JSON Schemas are — and it had drifted
+# (it claimed 28 tools against 29 registered and omitted get_operating_context). Counts
+# were removed from the prose; the table itself is gated here.
+# --------------------------------------------------------------------------------------
+
+
+def test_shipped_skill_lists_every_registered_tool():
+    import re
+
+    from cpersona import server
+
+    skill = (PKG.parent / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
+    table = skill.split("## Tool reference")[1].split("Argument details")[0]
+    listed = set(re.findall(r"`([a-z_]+)`", table))
+    registered = {tool.name for tool in server.registry._tools}
+    assert len(registered) >= 25, "gate collapsed — registry looks empty"
+    missing = sorted(registered - listed)
+    assert not missing, (
+        "the shipped agent skill's tool table omits registered tools (audit C26 class): "
+        f"{missing}"
+    )
