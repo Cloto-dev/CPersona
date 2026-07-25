@@ -369,11 +369,22 @@ registry.auto_tool(
     "pause_persistence",
     "Pause write operations on this MCP server for an opt-in TTL window. While "
     # C26 (c): the list was four tools short and omitted the fix-downgrade.
+    # bug-166: it also promised a uniform no-op body that only two tools return.
+    # `persisted: false` is the one field every skipped write carries, so it is
+    # the field to branch on; the id sentinel and the dry-run downgrade are
+    # per-tool details, stated here as such rather than as a blanket rule.
     "paused, every write tool — store, archive_episode, update_memory, delete_memory, "
     "delete_episode, delete_agent_data, lock_memory, unlock_memory, update_profile, "
-    "import_memories, merge_memories, calibrate_threshold, set_recall_precision, "
-    "migrate_channel_axis — returns a no-op response with `persisted: false` and "
-    '`id: "no-persist"` instead of writing to the database. check_health and '
+    "import_memories, merge_memories, calibrate_threshold, set_recall_precision — "
+    "returns a no-op response carrying `persisted: false`, `dry_run: true` and a "
+    "`reason` (with the TTL remaining) instead of writing to the database. "
+    "`persisted: false` is the authoritative signal: branch on it, not on an id. "
+    'Where the success shape has an `id`, it reads `"no-persist"` (store, '
+    "archive_episode); action-specific id keys (deleted_id / updated_id / "
+    "locked_id / unlocked_id / episode_id) are blanked to null so a truthy echo "
+    "cannot read as success. migrate_channel_axis is gated differently — it is "
+    "forced to dry_run and reports repairs_skipped rather than returning a "
+    "skipped-response, so it carries no `persisted` key. check_health and "
     "deep_check are not blocked but downgrade to fix=false (they answer with "
     "repairs_skipped: true). Read tools (recall, list_*, get_profile, etc.) still "
     "answer normally, except that recall suppresses its recall_count / "
@@ -534,7 +545,10 @@ registry.auto_tool(
                     },
                     "content": {
                         "type": "string",
-                        "description": "The text to store. Empty content is skipped.",
+                        # bug-168: "skipped" means ok:true in this tool's own
+                        # vocabulary, so the old wording told callers to treat a
+                        # refusal as a harmless no-op.
+                        "description": "The text to store. Content that is empty — or that sanitizes to empty — is refused with ok:false, result:'rejected'.",
                     },
                     "source": {
                         "type": "object",
@@ -714,8 +728,11 @@ registry.auto_tool(
     "Every external_context entry's content filters the recall (the caller already "
     "holds that text), but only role=user / role=assistant entries are merged into "
     "messages. When entries of other roles are present the response carries "
-    "context_filter_only={roles:[...]} — those entries suppressed matching memories "
-    "without appearing in the output.",
+    # bug-172: the disclosure fires whenever such entries carry content, without
+    # checking that a memory was in fact dropped — claiming suppression happened
+    # overstated it. It reports what CAN filter invisibly, not what did.
+    "context_filter_only={roles:[...]} — those entries filtered the recall without "
+    "appearing in the output, whether or not they dropped a memory this time.",
     {
         "type": "object",
         "properties": {
@@ -723,7 +740,17 @@ registry.auto_tool(
             "query": {"type": "string", "description": "Search query"},
             "external_context": {
                 "type": "array",
-                "items": {"type": "object"},
+                # bug-163: the item shape was advertised in prose only, so a
+                # caller had no schema-level statement that role / content are
+                # strings. The server coerces either way (_ctx_role/_ctx_content);
+                # this states the intent the handler assumes.
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "role": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                },
                 "description": "Conversation history entries [{role, name?, user_id?, content, timestamp?}, ...]",
             },
             "limit": {

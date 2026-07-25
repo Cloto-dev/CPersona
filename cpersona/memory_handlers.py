@@ -1155,6 +1155,22 @@ def _ctx_content(entry: object) -> str:
     return val.strip() if isinstance(val, str) else ""
 
 
+def _ctx_role(entry: object) -> str:
+    """Null/type-safe ``role`` extraction for external_context entries.
+
+    bug-163: the same schema gap bug-035 exposed on ``content`` also covers
+    ``role``. The C13 disclosure collects the roles into a set and sorts it, so a
+    non-string role was two separate faults: an unhashable value (dict/list) blew
+    up building the set, and a mixed int/str set blew up in ``sorted()`` — either
+    way aborting the whole ``recall_with_context`` into an opaque error. Coerce
+    here so the disclosure reports the malformed role instead of dying on it.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    val = entry.get("role", "")
+    return val if isinstance(val, str) else str(val)
+
+
 async def do_recall_with_context(
     agent_id: str,
     query: str,
@@ -1226,10 +1242,9 @@ async def do_recall_with_context(
     # entries exist, so the common case pays no payload.
     filter_only_roles = sorted(
         {
-            (e.get("role", "") if isinstance(e, dict) else "") or "(unset)"
+            _ctx_role(e) or "(unset)"
             for e in ctx
-            if _ctx_content(e)
-            and (not isinstance(e, dict) or e.get("role", "") not in ("assistant", "user"))
+            if _ctx_content(e) and _ctx_role(e) not in ("assistant", "user")
         }
     )
     if filter_only_roles:
@@ -1501,7 +1516,14 @@ async def do_archive_episode(
             {"ok": True, "episode_id": None, "id": 0}, "archive_episode"
         )
 
-    if not summary:
+    # bug-162: judge the text that would actually be STORED. _sanitize_content
+    # strips [Memory from ...] annotations and whitespace, so an annotation-only
+    # summary is truthy here while being empty in the row — it cleared this guard
+    # and produced an empty-summary episode answering ok:true, the very input
+    # do_store refuses with result:'rejected'. Refusing here (rather than letting
+    # _prepare_episode_row raise) keeps the bug-006 response shape: the drain in
+    # tasks.py still depends on that ValueError, so the guard lives in both.
+    if not (_sanitize_content(summary) if isinstance(summary, str) else ""):
         # No server-side synthesis exists to fill this in, so an empty summary
         # cannot produce a stored episode. Return an explicit failure rather
         # than {ok:true, episode_id:None}, which read as success while writing
@@ -1549,14 +1571,22 @@ async def _prepare_episode_row(
     its task-row delete in ONE transaction — the prepare half must stay outside
     because it performs the embedding HTTP round-trip (bug-072 class).
     Raises ValueError when the episode cannot be stored (empty summary)."""
-    if not summary:
-        raise ValueError("summary is required to archive an episode")
     # audit C12: the episode's text fields were the last unbounded write path.
     # They are prose, so the memory rule applies verbatim — truncate to the same
     # cap rather than refuse, and do it HERE (the shared prepare seam) so the
     # queue drain is bounded by the same rule as the direct call. Capping before
     # the embed below also keeps the oversized string out of the backend request.
-    summary = _sanitize_content(summary)
+    #
+    # bug-162: sanitize BEFORE the emptiness guard reads it. The guard used to
+    # see the RAW value, so a summary that sanitizes to empty (an annotation-only
+    # string, or pure whitespace) cleared it and an empty-summary row was written
+    # with ok:true — the very input do_store refuses with result:'rejected'.
+    # Refuse on what would actually be stored, not on what was handed in. The
+    # isinstance guard keeps a non-string summary on the same ValueError path
+    # instead of letting _sanitize_content raise an opaque TypeError.
+    summary = _sanitize_content(summary) if isinstance(summary, str) else ""
+    if not summary:
+        raise ValueError("summary is required to archive an episode")
     keywords = _sanitize_content(keywords)
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)

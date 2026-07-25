@@ -1090,7 +1090,7 @@ async def _(ctx):
 
 # Missing and empty content both hit `raw_content = message.get("content", "")`
 # and produce the same skipped-response, so one scenario pins both.
-@scenario("store-empty-content", "#362", "store: content missing or empty string — skipped 'empty content', no row")
+@scenario("store-empty-content", "#362", "store: content missing or empty string — rejected 'empty content', no row")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store("s1", {"content": ""})
@@ -1100,7 +1100,7 @@ async def _(ctx):
 # empty string that trips the SECOND skip branch. Whitespace-only after strip
 # hits the same branch; picking the annotation form so a reader can see WHICH
 # sanitizer step reduced it.
-@scenario("store-sanitized-empty", "#362", "store: content that sanitizes to empty ([Memory from …] only) — skipped 'empty after sanitization'")
+@scenario("store-sanitized-empty", "#362", "store: content that sanitizes to empty ([Memory from …] only) — rejected 'empty after sanitization'")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store(
@@ -1496,7 +1496,7 @@ async def _seed_deep_anonymous_source(ctx: Ctx) -> None:
 
 
 @scenario("health-clean", "#362",
-          "check_health: clean corpus — full response shape (healthy=True, status='healthy', severity_summary zeros)",
+          "check_health: clean corpus — full response shape (status='healthy', severity_summary zeros)",
           seed=_seed_health_clean)
 async def _(ctx):
     return _mask_health_stats(
@@ -1509,7 +1509,7 @@ async def _(ctx):
 # (len(issues)==0 is falsified) -- the asymmetry maintenance_handlers.py:136
 # calls out. That's the concrete pre-b1 contract this scenario pins.
 @scenario("health-info-only-asymmetry", "#362",
-          "check_health: info-only finding (memory_annotation) — healthy=False AND status='healthy' (info-only asymmetry, motivating the b1 3-valued gate)",
+          "check_health: info-only finding (memory_annotation) — status stays 'healthy' (the asymmetry the retired healthy boolean contradicted, motivating the b1 single verdict)",
           seed=_seed_health_info)
 async def _(ctx):
     return _mask_health_stats(
@@ -1522,7 +1522,7 @@ async def _(ctx):
 # through health_status(). Fix=False keeps the observation to detection
 # only; the fix scenario below handles the mutation half.
 @scenario("health-warn-degraded", "#362",
-          "check_health: warn finding (duplicate_content cross-channel, bug-014) — severity_summary.warn=1, status='degraded', healthy=False",
+          "check_health: warn finding (duplicate_content cross-channel, bug-014) — severity_summary.warn=1, status='degraded'",
           seed=_seed_health_warn)
 async def _(ctx):
     return _mask_health_stats(
@@ -1536,7 +1536,7 @@ async def _(ctx):
 # healthy=True/'healthy'. The survivor row and the deleted collider are
 # visible in the observation's `db` dump.
 @scenario("health-fix-repairs-warn", "#362",
-          "check_health: fix=True on the warn corpus — fixed=True; bug-059 residual re-run yields healthy=True/status='healthy'; the survivor row is visible in db",
+          "check_health: fix=True on the warn corpus — fixed=True; bug-059 residual re-run yields status='healthy'; the survivor row is visible in db",
           seed=_seed_health_warn)
 async def _(ctx):
     return _mask_health_stats(

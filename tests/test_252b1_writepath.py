@@ -111,6 +111,50 @@ async def test_episode_remote_index_receives_the_stored_text(clean_db, monkeypat
     assert pushed and pushed[0]["text"] == row[0][0]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "summary",
+    ["[Memory from foo]", "   ", "\n\t "],
+    ids=["annotation-only", "spaces", "whitespace"],
+)
+async def test_summary_that_sanitizes_to_empty_is_refused(clean_db, summary):
+    """bug-162: the guard read the RAW summary, so text that sanitizes to empty
+    cleared it and an empty-summary episode was written answering ok:true — the
+    same input do_store refuses with result:'rejected'. The refusal must keep
+    bug-006's shape (an explicit failure), not raise out of the handler."""
+    res = await memory_handlers.do_archive_episode("b162", [], summary=summary)
+
+    assert res["ok"] is False, res
+    assert res["episode_id"] is None, res
+    rows = await clean_db.execute_fetchall(
+        "SELECT COUNT(*) FROM episodes WHERE agent_id = 'b162'"
+    )
+    assert rows[0][0] == 0, "a refused archive must leave no row"
+
+
+@pytest.mark.asyncio
+async def test_summary_that_survives_sanitization_still_stores(clean_db):
+    """The boundary refuses only what sanitizes away: an annotation carrying
+    real prose keeps the prose, and that episode must still be archived."""
+    res = await memory_handlers.do_archive_episode(
+        "b162", [], summary="[Memory from foo] the actual summary"
+    )
+    assert res["ok"] is True, res
+    row = await clean_db.execute_fetchall(
+        "SELECT summary FROM episodes WHERE id = ?", (res["episode_id"],)
+    )
+    assert row[0][0] == "the actual summary"
+
+
+@pytest.mark.asyncio
+async def test_prepare_still_raises_for_the_queue_drain(clean_db):
+    """The drain (tasks.py) routes a summary-less payload to retry/discard by
+    catching this ValueError, so the shared seam must keep raising even though
+    do_archive_episode now refuses earlier."""
+    with pytest.raises(ValueError):
+        await memory_handlers._prepare_episode_row("b162", [], summary="[Memory from foo]")
+
+
 # ---------------------------------------------------------------------------
 # C13: a context entry that filters recall without appearing in the response
 # ---------------------------------------------------------------------------
@@ -157,6 +201,43 @@ async def test_entry_without_a_role_is_disclosed_as_unset(clean_db):
     ctx = [{"content": "orphan note", "timestamp": "2026-07-01T09:00:00+00:00"}]
     res = await memory_handlers.do_recall_with_context("c13", query="", external_context=ctx)
     assert res["context_filter_only"]["roles"] == ["(unset)"], res
+
+
+@pytest.mark.asyncio
+async def test_mixed_type_roles_do_not_abort_the_recall(clean_db):
+    """bug-163: the disclosure collects the roles into a set and sorts it, so an
+    int role beside a string one raised TypeError and took the entire call down —
+    the bug-035 class (a malformed entry turning the tool into an opaque error),
+    re-entered through `role`. Report the malformed role instead of dying on it."""
+    ctx = [
+        {"role": "system", "content": "sys note", "timestamp": "2026-07-01T09:00:00+00:00"},
+        {"role": 7, "content": "numeric role", "timestamp": "2026-07-01T09:00:01+00:00"},
+    ]
+    res = await memory_handlers.do_recall_with_context("b163", query="", external_context=ctx)
+    assert res["context_filter_only"]["roles"] == ["7", "system"], res
+
+
+@pytest.mark.asyncio
+async def test_unhashable_role_does_not_abort_the_recall(clean_db):
+    """The same coercion covers the other half: a dict/list role is unhashable,
+    so it broke while the set was being built, one step before sorted()."""
+    ctx = [
+        {"role": {"nested": "d"}, "content": "unhashable", "timestamp": "2026-07-01T09:00:00+00:00"},
+    ]
+    res = await memory_handlers.do_recall_with_context("b163", query="", external_context=ctx)
+    assert res["context_filter_only"]["roles"] == ["{'nested': 'd'}"], res
+
+
+@pytest.mark.asyncio
+async def test_a_non_string_role_is_never_read_as_conversational(clean_db):
+    """Coercion must not open a second door: the merge path admits only the
+    literal strings, so a stringified role stays filter-only and out of messages."""
+    ctx = [
+        {"role": ["user"], "content": "list role", "timestamp": "2026-07-01T09:00:00+00:00"},
+    ]
+    res = await memory_handlers.do_recall_with_context("b163", query="", external_context=ctx)
+    assert res["messages"] == [], res
+    assert res["context_filter_only"]["roles"] == ["['user']"], res
 
 
 # ---------------------------------------------------------------------------

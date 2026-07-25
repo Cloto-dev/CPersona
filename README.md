@@ -9,7 +9,7 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
-[![Tests](https://img.shields.io/badge/tests-646-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)]()
 
 [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
 
@@ -20,7 +20,7 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
-> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.40, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is the **Current** line (latest: v2.5.1) — an internal stabilization line that has passed the full release gate and is where all fixes land, pending production-soak certification; the DB schema is preserved across the line, and feature development resumes in 2.6. The 2.5.2 pre-releases change three things about MCP tool responses — `store` reports its outcome in `result` (stored / skipped / rejected) instead of an always-true `ok`, `check_health` reports the single `status` verdict without the `healthy` boolean, and every tool-level failure now carries `ok: false` alongside `error` (most used to return `error` alone). Tiers and support windows: [Release Channels & Support](#release-channels--support).
+> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.40, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is the **Current** line (latest: v2.5.1) — an internal stabilization line that has passed the full release gate and is where all fixes land, pending production-soak certification; the DB schema is preserved across the line, and feature development resumes in 2.6. The 2.5.2 pre-releases change three things about MCP tool responses — `store` reports its outcome in `result` (stored / skipped / rejected) instead of an always-true `ok`, `check_health` reports the single `status` verdict without the `healthy` boolean, and every tool-level failure now carries `ok: false` (most used to return `error` alone, with no `ok` to branch on; the explanation still travels in `error`, except on `store`, which puts it in `reason`). Tiers and support windows: [Release Channels & Support](#release-channels--support).
 
 ## The Problem
 
@@ -173,7 +173,7 @@ That's it. Claude now has persistent memory. Ask it to `store` something and `re
 - JSONL export/import — full memory portability between environments
 - Agent-to-agent memory merge — atomic copy/move with deduplication
 - Auto-calibration — statistical threshold tuning via null distribution z-score (no labels needed)
-- Health check — a 20-check registry with severity-tagged issues (`critical`/`warn`/`info`) and auto-repair (contamination, duplicates, FTS integrity, embedding dimension drift, schema objects, isolation-axis hygiene, stale tasks, invalid data), plus a `python -m cpersona.checkup` CLI for CI gating
+- Health check — a check registry with severity-tagged issues (`critical`/`warn`/`info`) and auto-repair (contamination, duplicates, FTS integrity, embedding dimension drift, schema objects, isolation-axis hygiene, stale tasks, invalid data), plus a `python -m cpersona.checkup` CLI for CI gating
 - Deep check — semantic data quality analysis (anonymous source recovery, short content, stale profiles, orphaned episodes)
 - Memory protection — lock/unlock to prevent accidental deletion or editing
 - Recent recall penalty — suppresses echo chamber effect for frequently recalled memories
@@ -314,7 +314,7 @@ marketplace catalog and the Quick Start use the generic names.
 
 - **~10,100 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **550 test functions** across 50 test modules — 646 cases once the
+- **561 test functions** across 51 test modules — 660 cases once the
   behavioural matrix is parametrised (~15,400 LOC, more test code than server
   code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)

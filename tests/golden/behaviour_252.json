@@ -2373,7 +2373,7 @@
     "thresholds": {}
   },
   "health-clean": {
-    "covers": "check_health: clean corpus — full response shape (healthy=True, status='healthy', severity_summary zeros)",
+    "covers": "check_health: clean corpus — full response shape (status='healthy', severity_summary zeros)",
     "db": {
       "episodes": [],
       "memories": [
@@ -2439,7 +2439,7 @@
     "thresholds": {}
   },
   "health-fix-repairs-warn": {
-    "covers": "check_health: fix=True on the warn corpus — fixed=True; bug-059 residual re-run yields healthy=True/status='healthy'; the survivor row is visible in db",
+    "covers": "check_health: fix=True on the warn corpus — fixed=True; bug-059 residual re-run yields status='healthy'; the survivor row is visible in db",
     "db": {
       "episodes": [],
       "memories": [
@@ -2505,7 +2505,7 @@
     "thresholds": {}
   },
   "health-info-only-asymmetry": {
-    "covers": "check_health: info-only finding (memory_annotation) — healthy=False AND status='healthy' (info-only asymmetry, motivating the b1 3-valued gate)",
+    "covers": "check_health: info-only finding (memory_annotation) — status stays 'healthy' (the asymmetry the retired healthy boolean contradicted, motivating the b1 single verdict)",
     "db": {
       "episodes": [],
       "memories": [
@@ -2578,7 +2578,7 @@
     "thresholds": {}
   },
   "health-warn-degraded": {
-    "covers": "check_health: warn finding (duplicate_content cross-channel, bug-014) — severity_summary.warn=1, status='degraded', healthy=False",
+    "covers": "check_health: warn finding (duplicate_content cross-channel, bug-014) — severity_summary.warn=1, status='degraded'",
     "db": {
       "episodes": [],
       "memories": [
@@ -5161,7 +5161,7 @@
     "thresholds": {}
   },
   "store-empty-content": {
-    "covers": "store: content missing or empty string — skipped 'empty content', no row",
+    "covers": "store: content missing or empty string — rejected 'empty content', no row",
     "db": {
       "episodes": [],
       "memories": [],
@@ -5370,7 +5370,7 @@
     "thresholds": {}
   },
   "store-sanitized-empty": {
-    "covers": "store: content that sanitizes to empty ([Memory from …] only) — skipped 'empty after sanitization'",
+    "covers": "store: content that sanitizes to empty ([Memory from …] only) — rejected 'empty after sanitization'",
     "db": {
       "episodes": [],
       "memories": [],

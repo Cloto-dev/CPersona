@@ -907,8 +907,6 @@ def test_deep_fix_capable_matches_the_implementations():
 
 def test_deep_fix_gate_has_teeth():
     """The gate must fail when the declared set drifts from the implementations."""
-    from cpersona import checks as checks_module
-
     actual = _deep_checks_referencing_fix()
     drifted = actual | {"near_duplicate"}  # the historical wrong claim
     assert drifted != actual, "fixture no longer represents drift"
@@ -1061,7 +1059,7 @@ def test_error_responses_carry_ok():
     assert not violations, (
         "a returned error dict omits `ok` — a caller that branches on ok reads None and "
         "cannot tell failure from success (audit C23). Build it with "
-        f"utils.error_response():\n  " + "\n  ".join(violations)
+        "utils.error_response():\n  " + "\n  ".join(violations)
     )
 
 
