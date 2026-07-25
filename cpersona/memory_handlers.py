@@ -1087,10 +1087,16 @@ async def do_recall(
             if r.get("_rsf_score") is not None:
                 match_reason["rsf"] = r["_rsf_score"]
             msg["match_reason"] = match_reason
+        # b1-4 residual: the response is built by allowlist above (`msg`), so these
+        # pops are hygiene on the internal row, not the thing that keeps private
+        # keys out of the payload. _rsf_score was missing from the list — harmless
+        # for that reason, and completed here so the set matches the keys the
+        # scoring layer actually attaches.
         r.pop("_rid", None)
         r.pop("_cosine", None)
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
+        r.pop("_rsf_score", None)
         r.pop("_resolved", None)
         messages.append(msg)
 
