@@ -32,12 +32,13 @@ from cpersona.config import (
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
+    MAX_CONTENT_LENGTH,
     STORE_BLOB,
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
 )
 from cpersona.database import connection, read_snapshot, transaction
-from cpersona.utils import _clamp_limit, _try_parse_json
+from cpersona.utils import _clamp_limit, _sanitize_content, _try_parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +220,19 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     if agent_id and row[1] != agent_id:
         return {"error": f"Memory {memory_id} not owned by agent {agent_id}"}
 
-    content = content.strip()
+    # 2.5.2a2 audit (C12): the edit path enforces the SAME content policy as the write
+    # path, via the same helper. Before, this was a bare `.strip()`, so an update could
+    # grow a row past MAX_CONTENT_LENGTH — a cap do_store applies on every insert — and
+    # the uncapped string was then handed to embed() and pushed verbatim to the remote
+    # /index as well, so the two write seams disagreed on what a stored row may contain.
+    raw_content = content
+    content = _sanitize_content(raw_content)
+    truncated = len(raw_content) > MAX_CONTENT_LENGTH
+    if not content:
+        # _sanitize_content also strips [Memory from ...] annotations, so a body made of
+        # nothing else is empty at the seam. Reject as the empty-input guard above does
+        # rather than writing an empty row (do_store's "empty after sanitization").
+        return {"error": "Content cannot be empty after sanitization"}
 
     # bug-011: recompute the embedding for the new text with the same policy as
     # do_store. On failure (or no client) the BLOB is NULLed rather than left
@@ -265,7 +278,13 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
         except Exception as e:
             logger.debug("Remote index update failed (non-fatal): %s", e)
 
-    return {"ok": True, "updated_id": memory_id}
+    # `truncated` is additive and mirrors do_store's success shape (absent unless the
+    # cap actually bit), so a caller that edits a too-long body learns the row it now
+    # holds is a prefix instead of having to re-read it to find out.
+    result = {"ok": True, "updated_id": memory_id}
+    if truncated:
+        result["truncated"] = True
+    return result
 
 
 async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:

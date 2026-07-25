@@ -688,7 +688,7 @@
       "discovered": "2026-07-06T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/vector.py",
-      "pattern": "FROM episodes WHERE id = \\?\\{iso_ep_fetch.and_clause\\}",
+      "pattern": "\\{iso_ep_fetch\\.and_clause\\}",
       "expected": "present",
       "status": "fixed",
       "category": "read-path-drops-channel-axis",
@@ -1123,7 +1123,7 @@
       "discovered": "2026-07-08T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/vector.py",
-      "pattern": "SELECT summary, start_time, resolved FROM episodes WHERE id = \\?",
+      "pattern": "SELECT id, summary, start_time, resolved FROM episodes WHERE id IN",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
@@ -2308,6 +2308,20 @@
       "category": "tool-description-drift",
       "fixed_in": "2.5.2b1",
       "fix_note": "Counts and lists are RENDERED from the code they describe (HEALTH_CHECK_NAMES, checks.DEEP_FIX_CAPABLE, the shared @auto clause) rather than restated in prose, and three structural gates in tests/test_structural_gates.py (Gates 7-9) fail CI when the declared set, the pause list or the @auto documentation falls behind the implementation. Audit id: C26."
+    },
+    {
+      "id": "bug-158",
+      "summary": "(LOW) Remote-mode vector recall re-hydrated every hit with its own awaited SELECT ... WHERE id = ?, so a limit=100 recall paid 100 sequential SQLite round trips on the read hot path (aiosqlite funnels every statement through one background thread). Measured: 102 execute_fetchall calls for 102 hits.",
+      "severity": "LOW",
+      "discovered": "2026-07-23T00:00:00Z",
+      "version": "2.5.2a1",
+      "file": "cpersona/vector.py",
+      "pattern": "ONE query per row type instead of",
+      "expected": "present",
+      "status": "fixed",
+      "category": "recall-hot-path-n-plus-1",
+      "fixed_in": "2.5.2b1",
+      "fix_note": "_fetch_rows_by_id issues one IN() statement per row type (ids bound, never interpolated, chunked at 500 to stay under SQLite's bound-variable ceiling that a large limit could otherwise breach). Remote score order is preserved by replaying a separate `ordered` list rather than trusting IN() row order, and a hit whose row is gone is still skipped silently (stale remote index entry, pinned by the sv-remote-stale-id golden scenario). Measured 102 round trips -> 2 for 102 hits. Regression: tests/test_252b1_audit.py. Audit id: C16."
     }
   ]
 }

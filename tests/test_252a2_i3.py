@@ -55,9 +55,16 @@ class _RecordingHttpClient:
     def __init__(self, status: int):
         self.status = status
         self.post_calls: list[tuple[str, dict]] = []
+        self.post_kwargs: list[dict] = []
 
-    async def post(self, url, json=None):
+    # 2.5.2b1: **kwargs, because the production call now names its own timeout
+    # (bug-159) and a double whose signature is narrower than the call site does
+    # not fail as "the double is stale" — it fails as "the branch never ran",
+    # which is what happened here (post_calls stayed empty and the assertion
+    # blamed the feature).
+    async def post(self, url, json=None, **kwargs):
         self.post_calls.append((url, json))
+        self.post_kwargs.append(kwargs)
         return httpx.Response(status_code=self.status, request=httpx.Request("POST", url))
 
 

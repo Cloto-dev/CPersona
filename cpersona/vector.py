@@ -133,6 +133,41 @@ async def _probe_embedding_health() -> tuple[bool, str | None]:
         return False, f"mode={client.mode} / POST {client._http_url} failed: {e}"
 
 
+# One batched hydration statement stays well under SQLite's bound-variable ceiling
+# (999 on older builds) with room for the isolation/source parameters riding along.
+_ID_FETCH_CHUNK = 500
+
+
+async def _fetch_rows_by_id(
+    db: aiosqlite.Connection,
+    sql_template: str,
+    ids: list[int],
+    extra_params: tuple,
+) -> dict[int, tuple]:
+    """Fetch the rows named by `ids` in batches, keyed by id.
+
+    `sql_template` carries a literal ``{ph}`` where the placeholder list belongs and
+    must SELECT the id column first; the ids are BOUND into those placeholders and
+    never interpolated into the string. Chunking keeps each statement under the
+    bound-variable ceiling that a large `limit` would otherwise breach — the per-hit
+    loop this replaces could not reach that ceiling, and an exception raised here
+    would silently demote the whole remote search to a local scan.
+
+    Duplicate ids collapse for the query but not for the caller: the caller indexes
+    this map per hit, so a repeated remote hit still yields a repeated result row.
+    """
+    if not ids:
+        return {}
+    unique = list(dict.fromkeys(ids))
+    out: dict[int, tuple] = {}
+    for start in range(0, len(unique), _ID_FETCH_CHUNK):
+        chunk = unique[start : start + _ID_FETCH_CHUNK]
+        sql = sql_template.replace("{ph}", ",".join("?" * len(chunk)))
+        for row in await db.execute_fetchall(sql, (*chunk, *extra_params)):
+            out[row[0]] = row
+    return out
+
+
 async def _search_vector_remote(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -184,53 +219,78 @@ async def _search_vector_remote(
         )
         resp.raise_for_status()
         data = resp.json()
-        results = []
+
+        # 2.5.2a2 audit (C16): hydrate the hits with ONE query per row type instead of
+        # one per hit. aiosqlite funnels every statement through a single background
+        # thread, so the old per-hit SELECT made a limit=100 recall pay 100 sequential
+        # round trips on the hot path. Parsing stays in this pass (a malformed id still
+        # raises inside the try and falls back to the local scan, as before).
+        ordered: list[tuple[str, int, float]] = []
         for hit in data.get("results", []):
             raw_id = hit["id"]
             score = hit["score"]
             if raw_id.startswith("mem:"):
-                mem_id = int(raw_id[4:])
-                # ''=global (knob2 v2): a stored channel of '' is global
-                # and matches every channel-scoped recall, so old/global
-                # memories are never orphaned by per-channel filing.
-                row = await db.execute_fetchall(
-                    f"SELECT msg_id, content, source, timestamp FROM memories "
-                    f"WHERE id = ?{iso_fetch.and_clause}{src_clause}",
-                    (mem_id, *iso_fetch.params, *src_params),
-                )
-                if row:
-                    results.append(
-                        {
-                            "id": mem_id,
-                            "_rid": ("mem", mem_id),
-                            "_cosine": score,
-                            "msg_id": row[0][0],
-                            "content": row[0][1],
-                            "source": row[0][2],
-                            "timestamp": row[0][3],
-                        }
-                    )
+                ordered.append(("mem", int(raw_id[4:]), score))
             elif raw_id.startswith("ep:"):
                 # Episodes lack per-user source. A channel filter makes them
                 # safe on the session-start grounding path (bug-046/075),
                 # matching the local branch's bug-080 contract.
                 if src_like and not channel:
                     continue
-                ep_id = int(raw_id[3:])
-                row = await db.execute_fetchall(
-                    f"SELECT summary, start_time, resolved FROM episodes WHERE id = ?{iso_ep_fetch.and_clause}",
-                    (ep_id, *iso_ep_fetch.params),
-                )
-                if row:
+                ordered.append(("ep", int(raw_id[3:]), score))
+
+        # ''=global (knob2 v2): a stored channel of '' is global and matches every
+        # channel-scoped recall, so old/global memories are never orphaned by
+        # per-channel filing. Both fetches keep every isolation axis they carried
+        # per hit (bug-100) — the batching changes the statement's arity, nothing else.
+        mem_rows = await _fetch_rows_by_id(
+            db,
+            f"SELECT id, msg_id, content, source, timestamp FROM memories WHERE id IN ({{ph}})"
+            f"{iso_fetch.and_clause}{src_clause}",
+            [i for kind, i, _ in ordered if kind == "mem"],
+            (*iso_fetch.params, *src_params),
+        )
+        ep_rows = await _fetch_rows_by_id(
+            db,
+            f"SELECT id, summary, start_time, resolved FROM episodes WHERE id IN ({{ph}})"
+            f"{iso_ep_fetch.and_clause}",
+            [i for kind, i, _ in ordered if kind == "ep"],
+            iso_ep_fetch.params,
+        )
+
+        # Re-order to the remote's score order: the IN() rows come back in whatever
+        # order SQLite chose, but the service already ranked the hits and the caller
+        # consumes that ranking. A hit with no row is skipped silently, exactly as the
+        # per-hit `if row:` did — a stale remote index entry is not an error
+        # (`sv-remote-stale-id` in the behavioural snapshot).
+        results = []
+        for kind, row_id, score in ordered:
+            if kind == "mem":
+                row = mem_rows.get(row_id)
+                if row is not None:
                     results.append(
                         {
-                            "id": ep_id,
-                            "_rid": ("ep", ep_id),
+                            "id": row_id,
+                            "_rid": ("mem", row_id),
                             "_cosine": score,
-                            "content": f"[Episode] {row[0][0]}",
+                            "msg_id": row[1],
+                            "content": row[2],
+                            "source": row[3],
+                            "timestamp": row[4],
+                        }
+                    )
+            else:
+                row = ep_rows.get(row_id)
+                if row is not None:
+                    results.append(
+                        {
+                            "id": row_id,
+                            "_rid": ("ep", row_id),
+                            "_cosine": score,
+                            "content": f"[Episode] {row[1]}",
                             "source": {"System": "episode"},
-                            "timestamp": row[0][1] or "",
-                            "_resolved": bool(row[0][2]),
+                            "timestamp": row[2] or "",
+                            "_resolved": bool(row[3]),
                         }
                     )
         return results

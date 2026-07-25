@@ -1067,7 +1067,13 @@ registry.auto_tool(
 
 registry.auto_tool(
     "update_memory",
-    "Update memory content by ID. Rejects if memory is locked. Ownership enforced when agent_id provided.",
+    "Update memory content by ID. Rejects if memory is locked. Ownership enforced when "
+    # bug-156 (C12): the edit path now applies the write path's content policy, so
+    # state it here — the two seams used to disagree silently.
+    "agent_id provided. The new content passes through the same sanitizer as store: "
+    "it is capped at the content length limit (the response carries truncated:true "
+    "when the cap bit) and [Memory from ...] annotations are stripped, so content "
+    "consisting only of those is refused rather than written as an empty row.",
     {
         "type": "object",
         "properties": {

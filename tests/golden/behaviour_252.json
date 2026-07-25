@@ -5353,7 +5353,7 @@
           "namespace": "cpersona:s1"
         },
         "kind": "http_post",
-        "timeout": null,
+        "timeout": 10.0,
         "url": "http://embed.test/index"
       }
     ],
