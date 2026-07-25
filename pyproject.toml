@@ -96,6 +96,23 @@ build-backend = "hatchling.build"
 # scripts/sync-vendored-mcp-common.sh). The root server.py is a shim for the
 # git-clone / marketplace path and is deliberately excluded from the wheel.
 packages = ["cpersona"]
+# bug-181: the vendored snapshot is taken wholesale from upstream mgp-py
+# (sync-vendored-mcp-common.sh rsyncs the tree with --delete, and the a2
+# reconciliation gate compares it byte for byte), but cpersona imports only part
+# of it. The unimported remainder — ~2,479 lines, including an LLM provider that
+# makes outbound third-party calls — has no import path from any cpersona module,
+# so it can only enlarge the audited and supply-chain surface on every user's disk.
+# Excluding it HERE and not in the tree keeps the snapshot byte-faithful, so the
+# sync contract and its gate are untouched. Gate 13 in tests/test_structural_gates.py
+# fails CI if any excluded module ever becomes reachable (a wheel missing an imported
+# module would raise ImportError in the field, not in our suite).
+exclude = [
+  "cpersona/_vendored_mcp_common/llm_provider.py",
+  "cpersona/_vendored_mcp_common/mcp_stream_interceptor.py",
+  "cpersona/_vendored_mcp_common/mgp_utils.py",
+  "cpersona/_vendored_mcp_common/search.py",
+  "cpersona/_vendored_mcp_common/semantic_cache.py",
+]
 
 [tool.hatch.build.targets.wheel.force-include]
 # Ship the agent skills with the PyPI artifact (2.5.0b1): pip users previously

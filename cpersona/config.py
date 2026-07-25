@@ -132,6 +132,23 @@ REMOTE_SEARCH_TIMEOUT_SECS = _parse_float("CPERSONA_REMOTE_SEARCH_TIMEOUT_SECS",
 REMOTE_INDEX_TIMEOUT_SECS = _parse_float("CPERSONA_REMOTE_INDEX_TIMEOUT_SECS", 10.0)
 STORE_BLOB = os.environ.get("CPERSONA_STORE_BLOB", "true").lower() == "true"
 
+
+def local_blobs_stored(vector_search_mode: str, store_blob: bool) -> bool:
+    """Whether a write leaves an embedding BLOB in the local row.
+
+    bug-182: this rule used to exist only as an inline condition on the write
+    paths, so the maintenance layer had no way to know that a NULL embedding was
+    the *configured* steady state rather than a failed pipeline — it read the
+    NULLs as a broken embedding pipeline and re-embedded the corpus on every
+    fix run. One definition now, called by the write gate and by the checks that
+    interpret its result.
+
+    Takes the two values as arguments rather than reading the module globals so
+    each caller passes the copy it actually stores by (and a test that patches
+    one module's copy still steers that module alone).
+    """
+    return vector_search_mode == "local" or store_blob
+
 AUTO_CALIBRATE = os.environ.get("CPERSONA_AUTO_CALIBRATE", "false").lower() == "true"
 CALIBRATE_SAMPLE_SIZE = _parse_int("CPERSONA_CALIBRATE_SAMPLE_SIZE", 200)
 # bug-053: hard upper bound on the calibration sample. sample_size is a

@@ -42,7 +42,13 @@ import sqlite3
 
 from cpersona import health, operating_context, vector
 from cpersona.isolation import isolation_where
-from cpersona.config import FTS_ENABLED, MAX_CONTENT_LENGTH
+from cpersona.config import (
+    FTS_ENABLED,
+    MAX_CONTENT_LENGTH,
+    STORE_BLOB,
+    VECTOR_SEARCH_MODE,
+    local_blobs_stored,
+)
 from cpersona.database import SCHEMA_VERSION
 from cpersona.utils import (
     _MEMORY_ANNOTATION_PATTERN,
@@ -242,9 +248,28 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cach
         return []
 
 
-def _null_embedding_severity(null_count: int, total: int) -> str:
+def _blobs_are_stored() -> bool:
+    """bug-182: does this configuration keep a local embedding BLOB per row?
+
+    Reads the module-level copies at call time (so a test patching
+    ``checks.STORE_BLOB`` steers this) and defers the rule itself to
+    ``config.local_blobs_stored``, which the write gate calls with its own copies.
+    """
+    return local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB)
+
+
+def _null_embedding_severity(null_count: int, total: int, *, blobs_expected: bool = True) -> str:
     if not vector._embedding_client:
         return "info"  # mode=none: NULL is the expected steady state
+    if not blobs_expected:
+        # bug-182: remote search with CPERSONA_STORE_BLOB=false never writes a
+        # local BLOB for a memory, so every memory row is NULL *by configuration*.
+        # Reading that as a dead embedding pipeline reported a correctly-configured
+        # deployment as critical forever — the same "rare is not wrong" mistake
+        # bug-009 fixed for the global channel. Episodes pass blobs_expected=True:
+        # _prepare_episode_row has no storage gate, so a NULL episode embedding is
+        # a real failure in every configuration.
+        return "info"
     if total > 0 and null_count / total > NULL_EMBEDDING_CRITICAL_RATIO:
         return "critical"  # pipeline is effectively down
     return "warn"
@@ -282,7 +307,14 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     if health.is_faulted():
         return out
     iso = isolation_where(agent_id=agent_id or None)
-    for table, text_col in (("memories", "content"), ("episodes", "summary")):
+    tables = [("memories", "content"), ("episodes", "summary")]
+    if not _blobs_are_stored():
+        # bug-182: a memory BLOB is not written in this configuration, so nothing
+        # downstream may apply one — computing them is one embed round-trip per
+        # NULL row (up to 500) burned on every fix run. Episodes stay: they carry
+        # a BLOB regardless of the storage policy.
+        tables = [t for t in tables if t[0] != "memories"]
+    for table, text_col in tables:
         rows = await db.execute_fetchall(
             f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT 500", iso.params
         )
@@ -379,12 +411,17 @@ async def check_null_embedding(db, agent_id: str, fix: bool, embedding_cache=Non
     total = (
         await db.execute_fetchall(f"SELECT COUNT(*) FROM memories WHERE 1=1{iso.and_clause}", iso.params)
     )[0][0]
+    blobs_expected = _blobs_are_stored()
     issue = {
         "type": "null_embedding",
         "count": null_count,
-        "severity": _null_embedding_severity(null_count, total),
+        "severity": _null_embedding_severity(null_count, total, blobs_expected=blobs_expected),
     }
-    if fix and vector._embedding_client:
+    if not blobs_expected:
+        # bug-182: say why the repair does not run, so a NULL count that is never
+        # going down reads as policy rather than as a fixer that keeps failing.
+        issue["repair"] = "skipped: this configuration stores no local memory embeddings"
+    elif fix and vector._embedding_client:
         re_embedded = await _reembed_null_rows(db, "memories", "content", iso, embedding_cache)
         if re_embedded > 0:
             issue["re_embedded"] = re_embedded
@@ -1091,6 +1128,51 @@ async def check_operating_context_size(db, agent_id: str = "", fix: bool = False
     return []
 
 
+async def check_vector_fallback_config(db, agent_id: str = "", fix: bool = False) -> list[dict]:
+    """bug-180: remote vector search with no local BLOBs has no fallback, and
+    nothing said so.
+
+    ``_search_vector`` treats the local cosine scan as the safety net for a remote
+    ``/search`` outage: the remote answer of ``None`` means "not answered", and the
+    scan runs. That scan reads ``embedding IS NOT NULL``, so under remote mode with
+    ``CPERSONA_STORE_BLOB=false`` it matches nothing — the net is empty by
+    construction. A ``/search`` fault while ``/embed`` still answers therefore
+    returns zero vector hits, and the degraded advisory stays silent because it
+    observes the embed boundary only (``health`` scopes itself there by design;
+    widening that contract is a separate decision, not this check's job).
+
+    Report-only, ``info``: the configuration is legitimate — it trades local disk
+    for the remote index. What was missing is the operator being able to see the
+    trade from the maintenance surface instead of from a recall that quietly lost
+    its vector arm. The counts are agent-scoped like every other data figure here
+    (the bug-062 rule), so this never discloses another agent's corpus size.
+    """
+    if _blobs_are_stored():
+        return []
+    iso = isolation_where(agent_id=agent_id or None)
+    total = (
+        await db.execute_fetchall(f"SELECT COUNT(*) FROM memories WHERE 1=1{iso.and_clause}", iso.params)
+    )[0][0]
+    with_blob = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM memories WHERE embedding IS NOT NULL{iso.and_clause}", iso.params
+        )
+    )[0][0]
+    return [
+        {
+            "type": "no_local_vector_fallback",
+            "vector_search_mode": VECTOR_SEARCH_MODE,
+            "store_blob": STORE_BLOB,
+            "memories": total,
+            "memories_with_local_embedding": with_blob,
+            "hint": (
+                "a remote /search outage leaves recall with FTS/keyword only; "
+                "set CPERSONA_STORE_BLOB=true to arm the local scan"
+            ),
+        }
+    ]
+
+
 class Check:
     """A registered health check: metadata + runner (see module docstring)."""
 
@@ -1135,6 +1217,7 @@ HEALTH_CHECKS: list[Check] = [
     Check("empty_content", "warn", True, check_empty_content),
     Check("invalid_source_type", "warn", True, check_invalid_source_type),
     Check("anonymous_source", "info", False, check_anonymous_source),
+    Check("vector_fallback_config", "info", False, check_vector_fallback_config),
     Check("operating_context_parse", "warn", False, check_operating_context_parse),
     Check("operating_context_size", "info", False, check_operating_context_size),
 ]
