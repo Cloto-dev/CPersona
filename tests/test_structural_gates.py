@@ -1072,3 +1072,38 @@ def test_error_shape_gate_has_teeth():
     assert _returned_error_dicts_without_ok(good) == []
     tupled = ast.parse('def f():\n    return None, {"error": "nope"}\n')
     assert _returned_error_dicts_without_ok(tupled) == [2], "tuple returns must be scanned too"
+
+
+# --------------------------------------------------------------------------------------
+# Gate 12 (C26 doc-drift class): README's advertised test count stays honest.
+#
+# It counts test FUNCTIONS, which is what a source scan can verify; the README states
+# the parametrised case count beside it for the reader, and the badge carries that.
+#
+# It sat at 435 while the suite grew past 600 — the same drift as the tool descriptions,
+# in the first thing a visitor reads. An exact match would fail on every commit that adds
+# a test, which would train people to edit the number without looking; a 10 % band fails
+# only once the claim is actually misleading.
+# --------------------------------------------------------------------------------------
+
+
+def test_readme_test_count_is_not_stale():
+    import re
+
+    readme = (PKG.parent / "README.md").read_text(encoding="utf-8")
+    claimed = int(re.search(r"\*\*([\d,]+) test functions\*\*", readme).group(1).replace(",", ""))
+
+    collected = 0
+    for path in sorted((PKG.parent / "tests").glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
+                "test_"
+            ):
+                collected += 1
+
+    drift = abs(collected - claimed) / max(collected, 1)
+    assert drift <= 0.10, (
+        f"README claims {claimed} tests; {collected} are defined ({drift:.0%} off). "
+        "Re-measure before shipping — this is the badge a visitor reads first."
+    )
