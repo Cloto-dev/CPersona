@@ -7,15 +7,22 @@
 # cpersona/_vendored_mcp_common/ to keep cpersona installable from a tarball
 # without any transitive git+url dependency (Sandbox install path).
 #
-# CAUTION — the vendored copy carries cpersona-local patches that are NOT yet
-# upstream in mgp-py (bug-019: has_default arity in mcp_utils.py; bug-103/bug-104
-# single-clock + action-id nulling in no_persist.py). This is a blind
-# `rsync -a --delete` mirror, so syncing from an unpatched upstream silently
-# reverts them plus the version. The patches must be pushed upstream to mgp-py
-# so the sync source stops being a downgrade; until then a sync must be
-# reconciled. The post-sync gate below runs verify-issues.sh + the pinned
+# The three formerly cpersona-local patches are now UPSTREAM in mgp-py as of
+# 2026-07-26 (mgp-py PR #11, commit a5b3fc1): bug-019 has_default arity in
+# mcp_utils.py, and bug-103/bug-104 single-clock + action-id nulling in
+# no_persist.py. Their marker strings were kept verbatim upstream so the gate
+# below still recognises them. A sync from an mgp-py checkout at or after that
+# commit is therefore no longer a downgrade for those three.
+#
+# CAUTION — this is still a blind `rsync -a --delete` mirror. Any future local
+# edit to cpersona/_vendored_mcp_common/ is reverted by the next sync unless it
+# is pushed upstream first, and a sync from an mgp-py checkout OLDER than
+# a5b3fc1 reverts the three patches above. Note also that the vendored copy
+# carries __version__ = "0.5.2" while upstream reads "0.5.1" (upstream's own
+# pyproject says 0.6.0 — a pre-existing drift there), so a sync moves that
+# string. The post-sync gate below runs verify-issues.sh + the pinned
 # regression tests and fails this script non-zero if a patch was reverted, so
-# the downgrade is caught here immediately instead of on the next CI push.
+# a downgrade is caught here immediately instead of on the next CI push.
 set -euo pipefail
 
 MGP_PY="${1:-../mgp-py}"
