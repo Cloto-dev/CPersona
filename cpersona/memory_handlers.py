@@ -918,6 +918,13 @@ async def _backfill_cosines(
 
     for row, sim in zip(batch_rows, sims):
         row["_cosine"] = float(sim)
+        # bug-183: mark the rows whose gate verdict this backfill can change. Before
+        # b2 these reached the gate cosine-less and passed by construction (the
+        # `raw_cosine is None` branch is an upper bound on the cosine branch); now they
+        # are ordinary gate candidates. do_recall's empty-result rescue keys on this
+        # marker so it restores ONLY the membership b2 removed — a row that always
+        # carried a native cosine was gated on unchanged grounds and stays gated.
+        row["_cosine_backfilled"] = True
 
 
 async def _apply_recall_scoring(
@@ -1151,6 +1158,7 @@ async def do_recall(
         gate = vector._get_fused_gate(agent_id)
         if gate is not None and deep:
             gate = gate * 0.5  # mirror the deep relaxation of min_score
+    pre_gate = results
     results = _apply_quality_gate(
         results,
         effective_min,
@@ -1160,7 +1168,73 @@ async def do_recall(
         pure_recency=pure_recency,
     )
 
-    if AUTOCUT_ENABLED:
+    # bug-183 (2.5.2): the gate is a filter with no floor, so a query whose every hit is
+    # lexical-but-semantically-distant (identifier/hash lookup, cross-lingual, a needle in
+    # a long note) can lose ALL of them and return nothing — the caller cannot tell "no
+    # such memory" from "the gate rejected the exact match". The b2 cosine backfill made
+    # this reachable: those rows used to reach the gate cosine-less and pass by
+    # construction, and now carry a real (low) cosine.
+    #
+    # Two bounds, both deliberate:
+    #
+    # (1) Only the EMPTY case. A mixed result is left exactly as the gate decided —
+    #     demoting instead of dropping there would reopen the bug-155 inversion (weak
+    #     lexical rows re-entering every ranked set) and would perturb the b2 soak on
+    #     every query, where this perturbs only queries that today return nothing.
+    # (2) Only the rows the backfill MOVED (`_cosine_backfilled`). A row that always
+    #     carried a native cosine was gated on grounds b2 did not change, and returning
+    #     it here would overturn a standing decision that a below-gate single-channel
+    #     vector candidate is not an answer (tests/test_audit_2500b3.py's
+    #     `test_empty_query_recall_bypasses_unscored_volume_gate`, and the
+    #     `recall-no-hits` golden).
+    #
+    # What (2) is NOT: an exact reconstruction of pre-b2 membership. Under the pool-size
+    # heuristic gate (the common case) the two coincide — a cosine-less row scored
+    # sqrt(time_decay) and cleared it. Under a HIGH calibrated gate (say 0.80) that same
+    # row scored ~0.55 and was blocked pre-b2 too, so this rescue can return a row b2 did
+    # not remove. Considered and accepted: the alternative — gate the rescue on a
+    # recomputed pre-b2 score — would switch the rescue OFF precisely where the gate is
+    # strictest, which is the identifier/hash lookup this exists for, and would make
+    # recall's membership depend on a second, shadow scoring function nothing else uses.
+    # The property being defended is not "b2 parity" but "an exact lexical match is never
+    # silently invisible"; `gate_fallback` is what keeps that honest by marking the rows
+    # as below-gate rather than passing them off as hits.
+    #
+    # Reachability: `_cosine_backfilled` is only ever set under CONFIDENCE_ENABLED (any
+    # fusion mode — cascade included — since the backfill is gated at the call site, not
+    # by mode), so the DEFAULT config can never set gate_fallback; and an empty-query
+    # pure-recency listing never reaches it either, because the backfill returns early on
+    # a blank query and marks nothing.
+    #
+    # The rescued rows keep _apply_recall_scoring's confidence order; `gate_fallback`
+    # tells the caller these are below-gate rows rather than ordinary hits. The profile
+    # sentinel keeps the gate's own verdict — its rule is corpus size (memory_count >= 50),
+    # not relevance — and is never backfilled (the backfill skips id <= 0).
+    gate_fallback = False
+    if not any(r.get("id") != -1 for r in results) and any(
+        r.get("_cosine_backfilled") for r in pre_gate
+    ):
+        gate_fallback = True
+        profile_passed = any(r.get("id") == -1 for r in results)
+        results = [
+            r
+            for r in pre_gate
+            if r.get("_cosine_backfilled") or (r.get("id") == -1 and profile_passed)
+        ]
+        logger.debug(
+            "quality_gate: every non-profile row blocked (in=%d); restoring %d "
+            "backfilled row(s) with gate_fallback=true (bug-183)",
+            len(pre_gate),
+            len(results),
+        )
+
+    # bug-183: autocut is a RELEVANCE-gap heuristic — it assumes the list is ordered by a
+    # meaningful score and cuts at the largest break. The rescued set is deliberately made
+    # of below-gate rows, so that assumption does not hold, and with a profile row present
+    # (confidence 1.0) the gap between it and the rescued rows is the whole scale: autocut
+    # cuts at index 1 and the response says gate_fallback=true while containing nothing but
+    # the profile row. Skip it whenever the rescue fired; the gate already did the cutting.
+    if AUTOCUT_ENABLED and not gate_fallback:
         results = _autocut(results)
 
     results = results[:limit]
@@ -1225,6 +1299,7 @@ async def do_recall(
         # scoring layer actually attaches.
         r.pop("_rid", None)
         r.pop("_cosine", None)
+        r.pop("_cosine_backfilled", None)  # bug-183 marker — same hygiene rule
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
         r.pop("_rsf_score", None)
@@ -1236,7 +1311,14 @@ async def do_recall(
     # is readOnlyHint=true and deliberately not one of the write-gated tools —
     # otherwise a benchmark/AB session in no-persist mode still mutates ranking
     # state, the exact contamination no-persist exists to prevent.
-    if not deep and recall_counts and not no_persist.is_paused():
+    #
+    # bug-183: rescued rows are excluded for the same reason. recall_count raises the
+    # decay floor in _compute_confidence, so crediting a below-gate row would let a row
+    # that keeps being returned BECAUSE nothing else passed drift upward until it starts
+    # passing the gate on unrelated queries — a feedback loop straight back into the
+    # lexical contamination bug-155 closed. A rescue is a disclosure ("this is all there
+    # was, and it is weak"), not a confirmed hit, so it earns no ranking credit.
+    if not deep and not gate_fallback and recall_counts and not no_persist.is_paused():
         # bug-040: exclude episode rows — their id collides with a memory id, so
         # bumping `WHERE id IN (...)` on the memories table would falsely increment
         # an unrelated memory's recall_count and falsify its last_recalled_at.
@@ -1263,6 +1345,10 @@ async def do_recall(
                 logger.warning("recall_count bump failed (non-fatal): %s", e)
 
     result: dict = {"messages": messages}
+    # bug-183: present ONLY when the rescue fired. A `false` on every other recall would
+    # change the payload of the whole surface (and every recorded golden) to say nothing.
+    if gate_fallback:
+        result["gate_fallback"] = True
     advisory = health.maybe_advisory()
     if advisory is not None:
         result["advisory"] = advisory
@@ -1382,6 +1468,12 @@ async def do_recall_with_context(
             "roles": filter_only_roles,
             "note": "entries with these roles filtered recall but are not shown in messages",
         }
+    # bug-183: this entry point delegates the retrieval to do_recall but builds its own
+    # response dict, so the rescue flag has to be forwarded like `advisory` below —
+    # otherwise the merged-context caller is the one caller that cannot tell a
+    # gate-rescued result from an ordinary one. Absent unless it fired (same contract).
+    if recall_result.get("gate_fallback"):
+        result["gate_fallback"] = True
     # Forward the advisory do_recall already produced — do NOT call maybe_advisory() again
     # here (that would flip the full template to the short one within one logical recall).
     advisory = recall_result.get("advisory")

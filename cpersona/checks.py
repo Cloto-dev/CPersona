@@ -51,6 +51,7 @@ from cpersona.config import (
 )
 from cpersona.database import SCHEMA_VERSION
 from cpersona.utils import (
+    SCORING_VERSION,
     _MEMORY_ANNOTATION_PATTERN,
     _MENTION_PATTERN,
     canonical_source_types_sql,
@@ -1402,9 +1403,20 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
     """Report when threshold calibration is absent or old (report-only).
 
     Deterministic signals only: sidecar missing while embeddings are active on
-    a non-trivial corpus, or ``calibrated_at`` older than
-    ``CALIBRATION_STALE_DAYS``. (Corpus-growth-since-calibration would need a
-    corpus-size field in the sidecar — a v2.4.38+ candidate.)
+    a non-trivial corpus, a ``scoring_version`` the runtime no longer produces, or
+    ``calibrated_at`` older than ``CALIBRATION_STALE_DAYS``.
+    (Corpus-growth-since-calibration would need a corpus-size field in the
+    sidecar — a v2.4.38+ candidate.)
+
+    bug-184 (2.5.2): the scoring mismatch is checked BEFORE the age test because a
+    sidecar calibrated yesterday on the previous scoring function is stale despite a
+    fresh ``calibrated_at`` — age answers a different question. ``ensure_calibrated_on_startup``
+    normally repairs this at boot, so what this reports is the case where it could NOT:
+    a startup calibration that returned ok=False (too few embedded rows, an embedding
+    backend that was down at boot), or recalibration disabled by config (AUTO_CALIBRATE
+    and CALIBRATE_ON_MODEL_CHANGE both off — the guard then declines to restore and
+    leaves the gate uncalibrated). Either way the condition is visible to an operator
+    instead of living only in one boot-time log line.
     """
     from cpersona.admin_handlers import _load_calibration_state
 
@@ -1425,6 +1437,19 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
                 "hint": "run calibrate_threshold",
             }
         return {"status": "ok", "reason": f"corpus too small to matter ({embedded} embedded rows)"}
+    sidecar_scoring_version = state.get("scoring_version")
+    if sidecar_scoring_version != SCORING_VERSION:
+        return {
+            "status": "stale_scoring_version",
+            "sidecar_scoring_version": sidecar_scoring_version,
+            "runtime_scoring_version": SCORING_VERSION,
+            # Deliberately NOT "run calibrate_threshold": this status fires precisely when
+            # nothing was restored, and a single-agent calibration then rewrites the whole
+            # sidecar from empty in-memory state, dropping every other agent's thresholds
+            # and gates (bug-189). A restart takes the startup guard's path, which
+            # recalibrates every agent in one pass.
+            "hint": "restart the server (it recalibrates automatically on boot)",
+        }
     calibrated_at = state.get("calibrated_at")
     try:
         age_days = (
