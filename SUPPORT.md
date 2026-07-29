@@ -93,6 +93,26 @@ Certification and EOL dates are recorded in this table as they occur.
 
 ## Known issues
 
+- **v2.5.2 and earlier — `check_health` reports `degraded` for memories stored
+  without a source (bug-187, MEDIUM).** `store` accepts an omitted or null
+  `source` and records it as the anonymous `{}`; that is documented, supported,
+  and the shape the write path normalises to. The `invalid_source_type` check
+  counts every row whose `source.type` is absent, which includes that anonymous
+  shape, and it carries `warn` severity — so the single `status` verdict lands
+  on `degraded` and stays there. `check_health(fix=true)` cannot clear it:
+  there is no canonical producer type to rewrite `{}` into without inventing
+  attribution, so the fixer correctly leaves those rows alone.
+  **The data is fine; the verdict is wrong.** Nothing else is affected —
+  recall, store, and the remaining checks behave normally, and no repair runs
+  against those rows. Until it is fixed, read the `issues` list or
+  `severity_summary` rather than `status` alone: an `invalid_source_type`
+  finding whose count matches your anonymous-source rows is this, not a real
+  defect. Attributed writes (`source` with a `type` of `User` / `Agent` /
+  `System`) are unaffected. Tracked as bug-187 in `qa/issue-registry.json`; the
+  fix is queued for the next patch release, because correcting a health verdict
+  changes behaviour and does not belong in a release already through its
+  promotion gate.
+
 - **v2.4.39 and earlier — vector recall scan window too narrow (bug-085,
   HIGH).** The vector retriever ranked only the newest
   `min(MAX_MEMORIES, max(limit * 10, 100))` rows, so a default recall reached
