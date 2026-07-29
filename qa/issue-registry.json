@@ -2335,7 +2335,7 @@
       "status": "fixed",
       "category": "response-shape-consistency",
       "fixed_in": "2.5.2b1",
-      "fix_note": "utils.error_response(message, **extra) is the single constructor for a tool-level failure: it always carries ok=False and error, and **extra keeps the per-tool fields a failure still owes its caller (archive_episode's episode_id, import's errors list). All 31 sites converted. Gate 11 in tests/test_structural_gates.py fails CI on any returned dict literal carrying 'error' without 'ok' (tuple returns scanned too), so the shape cannot fork again. Regression: tests/test_252b1_writepath.py. Audit id: C23."
+      "fix_note": "utils.error_response(message, **extra) is the single constructor for a tool-level failure: it always carries ok=False and error, and **extra keeps the per-tool fields a failure still owes its caller (archive_episode's episode_id, import's errors list). All 31 sites converted. Gate 11 in tests/test_structural_gates.py fails CI on any returned dict literal carrying 'error' without 'ok' (tuple returns scanned too), so the shape cannot fork again. Regression: tests/test_252b1_writepath.py. Audit id: C23. Qualified 2026-07-29 (bug-185): \"All 31 sites converted\" describes the HANDLER surface only. The outermost MCP dispatch — vendored, cross-consumer — still answers an unknown tool name and an escaped handler exception with a bare {error} and no ok, and successful read tools carry no ok either, so the shape has not been made universal and this note should not be read as claiming it was."
     },
     {
       "id": "bug-162",
@@ -2378,7 +2378,7 @@
       "expected": "present",
       "status": "fixed",
       "category": "gate-coverage",
-      "note": "The vendored tree is a cross-consumer surface (cpersona-version-line-charter section 6), so the fix here is NOT to edit mcp_utils.py: it is to state the exception where the claim is made (bug-161 fix_note, README, SKILL.md) and either extend the gate's scan or record why the vendored seam is out of scope. Escalating the shape upstream is a separate clotohub-servers common bump. Update 2026-07-25: the current (defective) shape is now PINNED by tests/test_mcp_dispatch.py::test_an_unknown_tool_answers_the_outermost_shape and ::test_an_escaped_exception_answers_the_outermost_shape (bug-177), so it can no longer drift silently and the upstream fix has a test to invert. Those assertions must be inverted, not deleted, when the vendored wrapper is corrected.",
+      "note": "The vendored tree is a cross-consumer surface (cpersona-version-line-charter section 6), so the fix here is NOT to edit mcp_utils.py: it is to state the exception where the claim is made (bug-161 fix_note, README, SKILL.md) and either extend the gate's scan or record why the vendored seam is out of scope. Escalating the shape upstream is a separate clotohub-servers common bump. Update 2026-07-25: the current (defective) shape is now PINNED by tests/test_mcp_dispatch.py::test_an_unknown_tool_answers_the_outermost_shape and ::test_an_escaped_exception_answers_the_outermost_shape (bug-177), so it can no longer drift silently and the upstream fix has a test to invert. Those assertions must be inverted, not deleted, when the vendored wrapper is corrected. Update 2026-07-29: the remaining half of this prescription — stating the exception in bug-161 fix_note, README and SKILL.md — landed as bug-185.",
       "fixed_in": "2.5.2b1",
       "fix_note": "The investigation found the gate had TWO blind spots, and closing either alone catches nothing: the scan was non-recursive (PKG.glob) so the vendored tree was never opened, AND the rule only matched a dict RETURNED literally, so the actual offending shape — a dict serialised on the way out, `return [TextContent(text=json.dumps({...}))]` — stayed invisible even to a recursive scan. Measured: recursive-only catches 0, extended-rule-only catches 0, both together catch 5. The gate now walks PKG.rglob and also inspects dicts handed to json.dumps() inside a return. The five vendored sites (mcp_utils.py x2 = the bug-164 shape itself, llm_provider.py x3) are waived by EXACT INVENTORY rather than by narrowing the scan back down: a new violation in cpersona's own modules fails, and so does any change to the vendored counts — which is the correct outcome at re-vendor time, since it means the upstream shape moved. Editing the vendored tree here is still forbidden (cross-consumer, charter section 6); the behavioural pins live in tests/test_mcp_dispatch.py (bug-177) and must be inverted, not deleted, when upstream fixes the shape. Teeth: test_error_shape_gate_sees_a_serialised_body and test_error_shape_gate_reaches_the_vendored_tree."
     },
@@ -2704,12 +2704,15 @@
       "discovered": "2026-07-29T00:00:00Z",
       "version": "2.5.2b1",
       "file": "README.md",
-      "pattern": "every tool-level failure now carries",
+      "pattern": "Two shapes stay outside that rule",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "commit": "7c9dbfb",
-      "fix_sketch": "One-clause qualifier in README Project status + SKILL.md error-handling section: scope the ok:false claim to handler-level failures, name the escaped-exception shape ({error} only, absent result = failure) and note read successes carry no ok. Annotate bug-164 fix_note with the same caveat and re-anchor server.py:516. Ships with the 2.5.2 final doc sync."
+      "fix_sketch": "One-clause qualifier in README Project status + SKILL.md error-handling section: scope the ok:false claim to handler-level failures, name the escaped-exception shape ({error} only, absent result = failure) and note read successes carry no ok. Annotate bug-164 fix_note with the same caveat and re-anchor server.py:516. Ships with the 2.5.2 final doc sync.",
+      "fixed_in": "2.5.2",
+      "fix_note": "Doc-only: the code is correct, the published claim was not. bug-164 prescribed stating the exception in three places and only the gate half landed; all three are now written. README.md narrows the claim to what a HANDLER returns and names both shapes that carry no ok — the outermost dispatch answering an unknown tool name or an escaped exception with a bare error (vendored from the library shared with the other Cloto servers, so it is corrected upstream, not here), and successful reads. skills/cpersona-memory/SKILL.md, which ships inside the wheel, gets the same qualifier plus the branching rule that follows from it: ok:false means failure, a response carrying error means failure whether or not ok is present, and a missing ok on its own means nothing. bug-161 fix_note is annotated so the ledger stops asserting the universal shape. Verified against the implementation rather than the audit text: the four read tools return their payload with no ok (memory_handlers.py:1559, admin_handlers.py:69/130/157) and both bare-error dispatch sites are still there (_vendored_mcp_common/mcp_utils.py:169,181). The pattern anchor moved because the fix rewrote the sentence the old one matched.",
+      "note": "Registry pattern re-anchored: the previous anchor was the very sentence this fix rewrote, so leaving it would have reported STALE the moment the fix landed."
     },
     {
       "id": "bug-186",
@@ -2718,12 +2721,14 @@
       "discovered": "2026-07-29T00:00:00Z",
       "version": "2.5.2b1",
       "file": "cpersona/server.py",
-      "pattern": "_AUTO_PROJECT_ID_CLAUSE",
+      "pattern": "bug-186: resolution requires a configured operating context",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "commit": "7c9dbfb",
-      "fix_sketch": "Qualify the clause: state that '@auto' resolves only when an operating context is loaded and passes through verbatim otherwise. Either gate the clause text on context presence being impossible (static schema), or add an operating_context_warning when the sentinel survives unresolved. Wording fix ships with 2.5.2 final; the warning variant is 2.5.3 scope (behavior change)."
+      "fix_sketch": "Qualify the clause: state that '@auto' resolves only when an operating context is loaded and passes through verbatim otherwise. Either gate the clause text on context presence being impossible (static schema), or add an operating_context_warning when the sentinel survives unresolved. Wording fix ships with 2.5.2 final; the warning variant is 2.5.3 scope (behavior change).",
+      "fixed_in": "2.5.2",
+      "fix_note": "Wording, not behaviour. The dormant pass-through is deliberate and tested (operating-context design section 9-1, test_operating_context.py); the defect was that the schema clause advertised resolution unconditionally, so a caller following the published contract could file a row under the literal bucket @auto and never see it again through an explicit project_id read. _AUTO_PROJECT_ID_CLAUSE now states that resolution requires a configured operating context, that the default (and a sidecar that fails to parse) leaves the sentinel unresolved and stored/filtered literally, and that resolved_project_id is the field to read before relying on it. All six schemas carrying the clause inherit the correction. Gate 9 keeps passing because it asserts the description mentions @auto, which it still does. Deliberately NOT done here: emitting operating_context_warning on an unresolved sentinel would be additive and would close the silence, but it is a behaviour change and this is the final doc sync — recorded as the follow-up option rather than slipped in."
     },
     {
       "id": "bug-187",
