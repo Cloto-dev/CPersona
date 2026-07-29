@@ -40,9 +40,9 @@ manager runs a single process serving every connected client — the one
 global is SHARED across all sessions. One client's ``pause()`` then turns
 writes into no-ops for every other session until ``resume()`` or the TTL
 elapses, and those sessions receive no signal. There is deliberately no
-per-session keying (bug-151); callers surface this blast radius via the ``scope``
-field the tool handlers add to the pause/resume/status responses, rather than
-this module pretending per-process implies per-session.
+per-session keying; callers surface this blast radius via a ``scope``
+field in the pause/resume/status responses their tool handlers return,
+rather than this module pretending per-process implies per-session.
 
 Versioning: introduced in cloto-mcp-cscheduler 0.2.6 / cloto-mcp-cpersona
 2.4.19.
@@ -66,6 +66,17 @@ __all__ = [
 DEFAULT_TTL_SECONDS = 1800  # 30 minutes
 MAX_TTL_SECONDS = 86400  # 1 day — clamp upper bound
 
+# Action-specific id keys write tools return alongside (or instead of) a plain
+# ``id``. ``make_skipped_response`` nulls every one of them so no consumer can
+# read a skipped write as a completed one (bug-104).
+_ACTION_ID_KEYS = (
+    "deleted_id",
+    "updated_id",
+    "locked_id",
+    "unlocked_id",
+    "episode_id",
+)
+
 _no_persist_until: datetime | None = None
 
 
@@ -73,13 +84,16 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _decay(now=None) -> None:
+def _decay(now: datetime | None = None) -> None:
     """Lazily clear the flag if its TTL has elapsed.
 
-    ``now`` lets status() evaluate the clock exactly once across the decay
-    check and the remaining-TTL subtraction (bug-103)."""
+    ``now`` lets a caller evaluate the clock exactly once across the decay
+    check and whatever it computes from the deadline afterwards (bug-103).
+    """
     global _no_persist_until
-    if _no_persist_until is not None and (now or _now()) >= _no_persist_until:
+    if now is None:
+        now = _now()
+    if _no_persist_until is not None and now >= _no_persist_until:
         _no_persist_until = None
 
 
@@ -173,7 +187,8 @@ def make_skipped_response(
     Starts from ``default_body`` (the shape the caller would normally
     return on success), replaces any ``id`` key with the string sentinel
     ``"no-persist"`` (truthy, unambiguous, won't collide with real IDs),
-    and merges in:
+    nulls every action-specific id key (``_ACTION_ID_KEYS``) so a skipped
+    write cannot be read as a completed one, and merges in:
 
     - ``persisted: False``
     - ``dry_run: True``
@@ -193,7 +208,7 @@ def make_skipped_response(
     # bug-104: action-specific id keys must not echo the caller-supplied id —
     # a truthy deleted_id/updated_id read as success to consumers that branch
     # on the id field instead of the authoritative `persisted: false`.
-    for key in ("deleted_id", "updated_id", "locked_id", "unlocked_id", "episode_id"):
+    for key in _ACTION_ID_KEYS:
         if key in body:
             body[key] = None
     body["persisted"] = False

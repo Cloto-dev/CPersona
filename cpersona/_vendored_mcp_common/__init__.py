@@ -1,7 +1,8 @@
 """Common utilities shared across Magic Gateway Protocol (MGP) Python servers.
 
 Foundation layer (Phase 2 Step 2-α) ported from
-``cloto-mcp-servers/servers/common/``:
+``cloto-mcp-servers/servers/common/`` (the monorepo has since been
+renamed ``clotohub-servers``):
 
 - :mod:`mcp_common.validation` — graceful-degradation argument validators
   (``validate_bool`` / ``validate_str`` / ``validate_int`` / ``validate_dict`` /
@@ -61,4 +62,4 @@ Phase 2 module migration from ``cloto-mcp-servers/servers/common/`` is
 complete with this sub-PR.
 """
 
-__version__ = "0.5.2"
+__version__ = "0.5.1"
