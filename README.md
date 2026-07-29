@@ -396,7 +396,7 @@ vulnerabilities are the one exception: please report those privately via
 
 - [Zenn Book (Japanese)](https://zenn.dev/cloto/books/claude-memory-mcp-server) — Full design walkthrough and setup guide
 - [Replacing /compact with external memory (Japanese)](https://zenn.dev/cloto/articles/claude-code-compact-external-memory) — Measured token economics of the session-end → `/clear` → `recall` workflow
-- [Memory System Design](https://github.com/Cloto-dev/ClotoCore/blob/main/docs/CPERSONA_MEMORY_DESIGN.md) — Technical specification
+- [Memory System Design](https://github.com/Cloto-dev/ClotoCore/blob/master/docs/CPERSONA_MEMORY_DESIGN.md) — Technical specification
 - [ClotoCore](https://github.com/Cloto-dev/ClotoCore) — The AI agent platform
 
 ## License
