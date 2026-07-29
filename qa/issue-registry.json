@@ -240,7 +240,7 @@
       "status": "fixed",
       "category": "security",
       "fix_sketch": "Fail closed: refuse to start the HTTP transport when auth_token is empty, default CPERSONA_HTTP_HOST to 127.0.0.1, and log loudly whenever auth is disabled.",
-      "fix_note": "v2.4.38: HTTP transport fails closed — CPERSONA_HTTP_HOST defaults to 127.0.0.1 and _assert_safe_http_bind refuses an unauthenticated non-loopback bind (SystemExit); a loopback bind without a token warns loudly. The BearerTokenMiddleware `if auth_token:` gate is unchanged (still correct when a token is set); the exposure was the empty-token + public-bind startup, now guarded. Regression: test_v2438_hardening.py HTTP-bind tests.",
+      "fix_note": "v2.4.38: HTTP transport fails closed — CPERSONA_HTTP_HOST defaults to 127.0.0.1 and _assert_safe_http_bind refuses an unauthenticated non-loopback bind (SystemExit); a loopback bind without a token warns loudly. The BearerTokenMiddleware `if auth_token:` gate is unchanged (still correct when a token is set); the exposure was the empty-token + public-bind startup, now guarded. Regression: test_v2438_hardening.py HTTP-bind tests. SUPERSEDED by bug-198 (v2.5.3): the loopback allowance in this fix was itself fail-open -- a bind address never established that nothing could reach the port.",
       "fixed_in": "2.4.38"
     },
     {
@@ -2884,6 +2884,22 @@
       "note": "bug-180/181/182 carry fixed_in \"2.5.2\", a version that does not exist yet. That is the charter's intended pending-final marking, not a defect, and it becomes accurate at the final cut — deliberately left alone.",
       "fixed_in": "2.5.2",
       "fix_note": "bug-155 fixed_in set to 2.5.2b2. The value was verified against git rather than against the audit's assertion: `git tag --contains 4567f90` answers v2.5.2b2, so that is the first released artifact carrying the fix. fixed_in is optional in the schema and unread by verify-issues.sh, and qa/ ships in neither wheel nor sdist, so no installed user could see the wrong value — the audience is a maintainer reading the ledger on GitHub, and for them it was simply false."
+    },
+    {
+      "id": "bug-198",
+      "summary": "(HIGH) The bug-017 guard decides with the bind address, and a bind address does not determine reachability. _assert_safe_http_bind refused an unauthenticated non-loopback bind but ALLOWED an unauthenticated loopback bind, logging \"bound to loopback 127.0.0.1 only\" -- wording that reads as an all-clear. Tunnels (cloudflared, ngrok), reverse proxies, kubectl port-forward and published container ports all forward to loopback, so the allowed case is world-reachable-and-unauthenticated. Measured impact: this deployment served publicly reachable, fully unauthenticated for 13.0 days (2026-07-06T03:52 - 07-19T03:06, 1554 memories / 372 episodes in scope, no third-party access observed) while bound to 127.0.0.1 the whole time. Shipped to every downstream user via PyPI, so it is not closed by setting a token here.",
+      "severity": "HIGH",
+      "discovered": "2026-07-19T00:00:00Z",
+      "version": "2.5.2",
+      "commit": "43a5e74",
+      "file": "cpersona/server.py",
+      "pattern": "CPERSONA_ALLOW_UNAUTHENTICATED_HTTP",
+      "expected": "present",
+      "status": "fixed",
+      "category": "security",
+      "fix_sketch": "Stop deciding with the bind address. Without a token, refuse to start wherever the server binds; allow the no-auth case only when the operator states the intent via CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true. Rewrite the refusal and opt-in warning so neither implies loopback is containment, and report reachability the process has actually observed (a forwarding header or a non-local peer) instead of inferring it from an address.",
+      "fix_note": "v2.5.3: _assert_safe_http_bind no longer branches on host -- an empty token raises SystemExit regardless of bind address unless CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true is set, and host is kept only to name the attempt in the message. BearerTokenMiddleware warns once per process when an unauthenticated request arrives carrying x-forwarded-for/forwarded/x-real-ip/cf-connecting-ip or from a non-loopback peer (observational -- it never changes the response). Behaviour change: an HTTP deployment running without a token stops starting on upgrade; the migration is to set CPERSONA_AUTH_TOKEN or opt in explicitly. Regression: test_v2438_hardening.py HTTP-bind tests (the loopback case is inverted on purpose) + tests/test_253_reachability.py. Mutation-checked: reverting the guard to loopback-allowed, accepting any truthy opt-in value, dropping the once-per-process flag, and ignoring forwarding headers are each killed by a test.",
+      "fixed_in": "2.5.3"
     }
   ]
 }
