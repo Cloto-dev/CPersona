@@ -562,13 +562,13 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "if not deep and recall_counts and not no_persist\\.is_paused\\(\\):",
+      "pattern": "and not no_persist\\.is_paused\\(\\):",
       "expected": "present",
       "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Skip the recall_count/last_recalled_at bump when no_persist.is_paused() (and reconsider readOnlyHint) so a no-persist session leaves ranking state unmutated.",
       "fixed_in": "2.4.38",
-      "fix_note": "v2.4.38: the recall_count/last_recalled_at bump is gated on `not no_persist.is_paused()`, so a no-persist (benchmark/AB) session no longer mutates confidence-ranking state on recall. The bump statement itself legitimately remains (normal sessions still bump), so the fix marker is the gate condition, not the statement's absence. Landed in ec91303 as the 11th task#171-approved fix; this registry flip was initially missed (the code + regression test shipped without it). Regression: test_v2438_hardening.py::test_recall_does_not_bump_recall_count_under_no_persist."
+      "fix_note": "v2.4.38: the recall_count/last_recalled_at bump is gated on `not no_persist.is_paused()`, so a no-persist (benchmark/AB) session no longer mutates confidence-ranking state on recall. The bump statement itself legitimately remains (normal sessions still bump), so the fix marker is the gate condition, not the statement's absence. Landed in ec91303 as the 11th task#171-approved fix; this registry flip was initially missed (the code + regression test shipped without it). Regression: test_v2438_hardening.py::test_recall_does_not_bump_recall_count_under_no_persist. 2.5.2: bug-183 added `not gate_fallback` to the same condition (a rescued row must not accrue rank credit), which invalidated the old whole-line pattern. Re-anchored to the gate clause alone — it is unique in the file (the other two no_persist checks are standalone `if` guards, not `and` clauses) and keeps its teeth: deleting the no-persist gate from the bump still makes it STALE, while an unrelated clause added to the same `if` no longer does."
     },
     {
       "id": "bug-039",
@@ -2673,11 +2673,13 @@
       "version": "2.5.2b2",
       "file": "cpersona/memory_handlers.py",
       "pattern": "gate_fallback",
-      "expected": "absent",
-      "status": "open",
+      "expected": "present",
+      "status": "fixed",
       "category": "recall-gate-membership",
       "commit": "4567f90",
-      "fix_sketch": "Empty-after-gate fallback: when the quality gate blocks every non-profile row but the pre-gate fused list was non-empty, return the confidence-sorted pre-gate rows (capped at limit) with an additive gate_fallback:true response field. Non-empty gated results are untouched (no ranking change, no soak muddying); the mixed-result drop remains designed behavior, revisited in the 2.6.0 scoring redesign (membership-preserving fusion)."
+      "fixed_in": "2.5.2",
+      "fix_sketch": "Empty-after-gate fallback: when the quality gate blocks every non-profile row but the pre-gate fused list was non-empty, return the confidence-sorted pre-gate rows (capped at limit) with an additive gate_fallback:true response field. Non-empty gated results are untouched (no ranking change, no soak muddying); the mixed-result drop remains designed behavior, revisited in the 2.6.0 scoring redesign (membership-preserving fusion).",
+      "fix_note": "do_recall rescues the EMPTY case, and only the rows the backfill moved: _backfill_cosines marks every row it fills (_cosine_backfilled — the rows that used to reach the gate cosine-less and pass by construction, since _compute_confidence's raw_cosine-is-None branch is an upper bound on its cosine branch), and when the gate leaves zero non-profile rows those marked rows come back in their confidence order with an additive gate_fallback:true. The key is ABSENT rather than false otherwise, so no other response — and no recorded golden — moves; do_recall_with_context builds its own response dict and forwards the flag explicitly, like advisory; the profile sentinel keeps the gate's own verdict (its rule is corpus size, memory_count >= 50, not relevance) and is never marked, because the backfill skips id <= 0. Two alternatives were rejected. Exempting backfilled rows from the gate outright readmits weak lexical rows to EVERY ranked set — the inversion bug-155's backfill exists to close — and perturbs the b2 soak on every query, where an empty-case rescue perturbs only queries that today return nothing. Rescuing the whole pre-gate list (the original sketch) additionally resurrects rows that carry a NATIVE cosine, whose gate verdict b2 never changed: that overturns a standing decision, pinned by test_audit_2500b3.py's test_empty_query_recall_bypasses_unscored_volume_gate ('a meaningful single-channel match in a small corpus must still be quality-gated') and by the recall-no-hits golden, both of which went red on that version of the patch — a nonsense query would start answering with its nearest below-gate neighbour. The mixed-result drop likewise stays designed behavior; a demotion tier belongs to the 2.6.0 membership-preserving scoring redesign, not to a b2 patch. What this is NOT is exact pre-b2 parity, and the distinction is deliberate rather than incidental: under the pool-size heuristic gate (the common case) the rescued set equals what pre-b2 returned, because a cosine-less row scored sqrt(time_decay) and cleared that gate — but under a HIGH calibrated gate (0.80, say) the same row scored ~0.55 and was blocked pre-b2 too, so the rescue can return a row b2 did not remove. The strict-parity alternative (recompute each row's pre-b2 cosine-less score and rescue only rows that would have passed) was rejected: it switches the rescue OFF exactly where the gate is strictest, which is the identifier/hash lookup the rescue exists for, and it makes recall membership depend on a second shadow scoring function no other code path uses. The property being defended is 'an exact lexical match is never silently invisible', not 'b2 parity'; gate_fallback is what keeps that honest, marking the rows as below-gate rather than passing them off as hits. Two consequences of that framing are enforced in code: autocut is skipped when the rescue fires (its relevance-gap heuristic is meaningless on a deliberately below-gate set, and with a profile row present it cut the rescued rows away and left a gate_fallback:true response containing only the profile), and the recall_count/last_recalled_at bump is skipped too — recall_count raises the decay floor, so crediting a rescued row would let it drift upward until it passes the gate on unrelated queries, a feedback loop back into the contamination bug-155 closed. Still uncovered by design, because it is not a b2 regression: a cross-session episode that hits through the VECTOR channel and is blocked by the x0.5 penalty was blocked identically pre-b2. Regression: tests/test_gate_remediation.py, which pins the rescue, the native-cosine row that must NOT be rescued, the blocked profile that must not ride along, the profile-passed trigger, the autocut interaction, the skipped rank credit, and the deliberate mixed-case drop (a later change that starts demoting weak rows fails a test instead of sliding in unremarked)."
     },
     {
       "id": "bug-184",
@@ -2687,11 +2689,13 @@
       "version": "2.5.2b2",
       "file": "cpersona/admin_handlers.py",
       "pattern": "scoring_version",
-      "expected": "absent",
-      "status": "open",
+      "expected": "present",
+      "status": "fixed",
       "category": "calibration-staleness",
       "commit": "4567f90",
-      "fix_sketch": "Stamp utils.SCORING_VERSION into the sidecar payload at calibrate time; in ensure_calibrated_on_startup treat a scoring_version mismatch (or absence = pre-b2 sidecar) exactly like an embedding-dimension change: skip the restore and force recalibration even with AUTO_CALIBRATE off. Extend deep_calibration_staleness to report the mismatch when startup recalibration could not run (no embedding client). Additive and rollback-safe: old code ignores the key, new code reads absence as stale."
+      "fixed_in": "2.5.2",
+      "fix_sketch": "Stamp utils.SCORING_VERSION into the sidecar payload at calibrate time; in ensure_calibrated_on_startup treat a scoring_version mismatch (or absence = pre-b2 sidecar) exactly like an embedding-dimension change: skip the restore and force recalibration even with AUTO_CALIBRATE off. Extend deep_calibration_staleness to report the mismatch when startup recalibration could not run (no embedding client). Additive and rollback-safe: old code ignores the key, new code reads absence as stale.",
+      "fix_note": "utils.SCORING_VERSION ('252b2-cosine-backfill') fingerprints the confidence/score function next to _compute_confidence, with the invariant stated where it must be maintained: the calibrated gate may only be restored for the scoring function it was calibrated on, so the string is bumped by any change that shifts the distribution. _save_calibration_state stamps it, and ensure_calibrated_on_startup treats a mismatch — absence included, which is exactly what every pre-b2 sidecar looks like — on the identical path as an embedding-dimension change: no restore, recalibrate even with AUTO_CALIBRATE off, action recalibrated_scoring and scoring_stale in the status dict so the trigger stays distinguishable in the boot log. Chosen over emitting a warning a human must notice: the failure mode is silent over-filtering on ~99.9 % of rsf queries, and the guard already owns this staleness class for dimensions — a second, weaker mechanism for the same class IS the drift. Two seams that a narrower patch would have missed: _purge_agent_calibration passes the STORED fingerprint through instead of re-stamping (it rewrites a payload, it does not measure one — otherwise deleting an agent launders a stale sidecar into looking freshly calibrated), and checks.deep_calibration_staleness reports stale_scoring_version BEFORE the age test, because a sidecar written yesterday against the old scoring function is stale despite a fresh calibrated_at; that report covers the case startup could not repair (no embedding client, or a calibration returning ok=False). Additive and rollback-safe: older code ignores the key. Regression: tests/test_gate_remediation.py."
     },
     {
       "id": "bug-185",
@@ -2746,6 +2750,20 @@
       "status": "open",
       "category": "fail-open-write-path",
       "fix_sketch": "Apply the store/update_memory treatment: sanitize first, reject sanitize-then-empty (whitespace no longer destroys a profile), cap at MAX_CONTENT_LENGTH with a truncated flag, and extend check_oversized_content to the profiles table. Correct the memory_handlers.py:1706 comment in the 2.5.2 final; the behavioral fix ships in 2.5.3."
+    },
+    {
+      "id": "bug-189",
+      "summary": "(MEDIUM, pre-existing — not in the 2.5.2 range) The calibration sidecar is written as a full snapshot of in-process state (do_calibrate_threshold passes dict(vector._agent_thresholds) / dict(vector._agent_fused_gates) / dict(vector._agent_betas) to _save_calibration_state), so any calibration performed while the sidecar was NOT restored persists only the agents calibrated in that process and silently drops every other agent's thresholds, gates and betas. Reachable whenever the startup restore is skipped or failed: a stale-sidecar boot with recalibration disabled by config, a startup calibration that returned ok=False, or a plain per-agent calibrate_threshold called early — after which the next restart restores the truncated sidecar and the unlisted agents fall back to the global default threshold with no gate, which is silent over/under-recall rather than an error.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.4.29",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "agent_fused_gates=dict",
+      "expected": "present",
+      "status": "open",
+      "category": "calibration-staleness",
+      "fix_sketch": "Merge-on-save: _save_calibration_state reads the existing sidecar and overlays only the fields this calibration actually measured (the calibrated agent's threshold/gate, the global threshold when scope is global, the fingerprints), leaving entries for agents this process never touched intact. Same temp-file + os.replace write (bug-095). Ships in 2.5.3 — the write path is shared by every calibration caller, so it wants its own regression set rather than a ride-along in the 2.5.2 gate work.",
+      "note": "Filed 2026-07-29 out of the bug-184 review: it is why deep_calibration_staleness's stale_scoring_version hint says 'restart the server' rather than 'run calibrate_threshold' — that status fires precisely in the not-restored state, where a single-agent calibration would truncate the sidecar. The bug-184 fix narrows the exposure: the startup guard now preloads agent_betas from the existing sidecar on EVERY path that recalibrates without restoring (stale fingerprint, dimension change, and AUTO_CALIBRATE alike — the last one wipes them on every boot, not just an upgrade boot), and it recalibrates every agent in one pass. The remaining window is a manual calibrate_threshold run before, or without, a successful startup guard — the betas survive that too now, but the other agents' thresholds and gates do not."
     },
     {
       "id": "bug-190",
