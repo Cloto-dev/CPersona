@@ -289,7 +289,9 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 
 Argument details live in each tool's MCP description.
 
-**Failures** — every tool answers a refused call with `ok: false`, so `ok` is the field to branch on. The explanation travels in `error`, except on `store`, which explains a refusal in `reason` alongside `result` (`stored` / `skipped` / `rejected`): a dedup hit or a paused session is a `skipped`, not a failure, while a refusal is a `rejected` carrying `reason`.
+**Failures** — a tool answers a refused call with `ok: false`. The explanation travels in `error`, except on `store`, which explains a refusal in `reason` alongside `result` (`stored` / `skipped` / `rejected`): a dedup hit or a paused session is a `skipped`, not a failure, while a refusal is a `rejected` carrying `reason`.
+
+Branch on failure, not on the absence of success — two shapes carry no `ok` at all. The outermost MCP dispatch answers an unknown tool name, or an exception escaping a handler, with a bare `{"error": ...}`; that layer is vendored from a library shared with the other Cloto servers, so it is corrected upstream rather than here. And a successful read (`get_contents`, `list_memories`, `list_episodes`, `get_profile`) returns its payload without `ok`. So: `ok: false` means failure, a response carrying `error` means failure whether or not `ok` is there, and a missing `ok` on its own means nothing.
 
 ---
 

@@ -330,7 +330,8 @@ async def do_recall_with_context_boundary(
 # so five of the six schemas hid a sentinel the server implements. One
 # clause, appended everywhere it is true.
 _AUTO_PROJECT_ID_CLAUSE = (
-    "v2.5.1: pass '@auto' to resolve this agent's default from the server's operating context (the resolution is echoed as resolved_project_id; an unmapped agent yields operating_context_warning)."
+    "v2.5.1: pass '@auto' to resolve this agent's default from the server's operating context (the resolution is echoed as resolved_project_id; an unmapped agent yields operating_context_warning). "
+    "bug-186: resolution requires a configured operating context. With none — the default, and equally the outcome of a sidecar that fails to parse — the sentinel is NOT resolved: it is stored and filtered as the literal project_id '@auto', resolved_project_id echoes '@auto', and no warning is raised. Read resolved_project_id before relying on the resolution."
 )
 
 # MCP Tool Registry — 29 tools
