@@ -7,11 +7,12 @@
 Give Claude persistent memory across sessions.
 Single SQLite file. 29 tools. Zero LLM dependency.
 
+[![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/)
+[![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)]()
 
-[Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
+[Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [PyPI](https://pypi.org/project/cpersona/) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
 
 </div>
 
