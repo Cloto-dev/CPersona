@@ -79,6 +79,36 @@ async def test_metadata_at_the_cap_still_stores(clean_db):
 
 
 @pytest.mark.asyncio
+async def test_metadata_exactly_at_the_cap_is_accepted(clean_db):
+    """bug-191: the test above named the boundary but never reached it — its
+    payload serialises to ~115 chars, so flipping the guard to ``>=`` (an
+    off-by-one that refuses a metadata document of exactly MAX_METADATA_LENGTH)
+    left the suite green. The cap is inclusive: only what EXCEEDS it is refused.
+
+    The padding is computed from the serialised overhead and the exact length is
+    asserted here, so the fixture cannot drift off the boundary if the write
+    path's json.dumps call (or the cap) ever changes shape.
+    """
+    # Match the write path verbatim: json.dumps(message.get("metadata", {})),
+    # i.e. default separators (', ' / ': ') and no indent.
+    overhead = len(json.dumps({"blob": ""}))
+    payload = {"blob": "x" * (MAX_METADATA_LENGTH - overhead)}
+    assert len(json.dumps(payload)) == MAX_METADATA_LENGTH, (
+        "fixture drifted off the boundary it exists to protect"
+    )
+
+    res = await memory_handlers.do_store(
+        "c12", {"content": "exactly at the cap", "metadata": payload}
+    )
+    assert res["result"] == "stored", res
+    row = await clean_db.execute_fetchall(
+        "SELECT metadata FROM memories WHERE id = ?", (res["id"],)
+    )
+    assert json.loads(row[0][0]) == payload
+    assert len(row[0][0]) == MAX_METADATA_LENGTH, "the row must round-trip the full document"
+
+
+@pytest.mark.asyncio
 async def test_episode_summary_is_capped_and_reported(clean_db):
     """Episode text is prose, so it follows the memory rule: truncate to the
     content cap and say so — the same `truncated` signal do_store gives."""
@@ -116,6 +146,39 @@ async def test_episode_keywords_are_sanitized_too(clean_db):
         "SELECT keywords FROM episodes WHERE id = ?", (res["episode_id"],)
     )
     assert row[0][0] == "real keywords", row
+
+
+@pytest.mark.asyncio
+async def test_non_string_keywords_do_not_raise(clean_db):
+    """bug-195: a list of keywords is the natural caller mistake, and it used to
+    escape as an opaque TypeError from the regex inside _sanitize_content.
+
+    ``summary`` has been guarded since bug-162 precisely so a non-string lands on
+    the structured path instead; ``keywords`` is optional, so the same treatment
+    means coercing to "" rather than refusing the archive. The guard is needed at
+    BOTH sites this call traverses — _prepare_episode_row's sanitize (also the
+    queue drain's entry point) and do_archive_episode's own `truncated` line,
+    which still holds the caller's original value. Removing either one puts the
+    TypeError back, so this test exercises the whole call and then the prepare
+    seam directly.
+    """
+    res = await memory_handlers.do_archive_episode(
+        "c12", [], summary="valid summary", keywords=["a", "b"]
+    )
+    assert res["ok"] is True, res
+    assert isinstance(res.get("episode_id"), int), res
+    row = await clean_db.execute_fetchall(
+        "SELECT summary, keywords FROM episodes WHERE id = ?", (res["episode_id"],)
+    )
+    assert row[0][0] == "valid summary", row
+    assert row[0][1] == "", "an unusable keywords value is stored as no keywords"
+
+    # The drain seam: tasks.py calls the prepare directly, so it must hold the
+    # same guard rather than inheriting one from do_archive_episode.
+    prepared = await memory_handlers._prepare_episode_row(
+        "c12", [], summary="valid summary", keywords={"not": "a string"}
+    )
+    assert prepared[3] == "", prepared
 
 
 @pytest.mark.asyncio

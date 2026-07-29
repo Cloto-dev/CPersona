@@ -323,10 +323,18 @@ async def test_bug155_confidence_off_never_backfills(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("query", ["", "   "])
 @pytest.mark.asyncio
-async def test_bug155_empty_query_declines_to_backfill(monkeypatch):
+async def test_bug155_empty_query_declines_to_backfill(monkeypatch, query):
     """Empty query is a pure-recency listing (bug-125). The backfill must
     decline and issue no embed call for the empty text.
+
+    bug-193: the guard is ``if not query.strip()`` and only ``""`` was covered,
+    so weakening it to ``if not query`` survived. A whitespace-only query takes
+    the SAME pure-recency route through the fusion paths (they all test
+    ``query.strip()``), so it must reach the same zero-embed outcome — under the
+    weakened guard the backfill instead embeds ``["   "]``, a text with no
+    relevance signal, and materialises cosines from it.
     """
     client = _Counting()
     monkeypatch.setattr(V, "_embedding_client", client)
@@ -338,7 +346,7 @@ async def test_bug155_empty_query_declines_to_backfill(monkeypatch):
         blob=_pack_of("apples zzz yyy www"),
     )
 
-    out = await M.do_recall(AGENT, "", limit=5)
+    out = await M.do_recall(AGENT, query, limit=5)
     assert out["messages"], "empty-query pure-recency listing returned no messages"
 
     # The backfill must not have called embed([]) or embed([""]); the vector
