@@ -22,8 +22,8 @@
       "environmentVariables": [
         {
           "name": "CPERSONA_DB_PATH",
-          "description": "SQLite database path. Defaults to ./cpersona.db, which follows the client's working directory — set it explicitly to keep one memory across sessions.",
-          "default": "./cpersona.db"
+          "description": "SQLite database path. Defaults to data/cpersona.db, which follows the client's working directory — set it to an absolute path to keep one memory across sessions.",
+          "default": "data/cpersona.db"
         },
         {
           "name": "CPERSONA_EMBEDDING_MODE",
