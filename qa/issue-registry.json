@@ -2757,7 +2757,7 @@
       "status": "fixed",
       "category": "fail-open-write-path",
       "fix_sketch": "Apply the store/update_memory treatment: sanitize first, reject sanitize-then-empty (whitespace no longer destroys a profile), cap at MAX_CONTENT_LENGTH with a truncated flag, and extend check_oversized_content to the profiles table. Correct the memory_handlers.py:1706 comment in the 2.5.2 final; the behavioral fix ships in 2.5.3.",
-      "fix_note": "v2.5.3: do_update_profile goes through the same seam as store — sanitize_content_with_flag — so a profile that sanitises to empty is refused as a no-op with a reason instead of blanking a useful profile while reporting profiles_updated:1, and an oversized profile is truncated to MAX_CONTENT_LENGTH with truncated:true rather than being stored verbatim and injected whole into every recall response via the id=-1 sentinel. RESIDUAL: this bounds the write path only. A profile stored oversized by an earlier version keeps its size until it is rewritten, and check_oversized_content still scans memories only, so there is no detector for one. Regression: tests/test_253_silent_failures.py.",
+      "fix_note": "v2.5.3: do_update_profile goes through the same seam as store — sanitize_content_with_flag — so a profile that sanitises to empty is refused as a no-op with a reason instead of blanking a useful profile while reporting profiles_updated:1, and an oversized profile is truncated to MAX_CONTENT_LENGTH with truncated:true rather than being stored verbatim and injected whole into every recall response via the id=-1 sentinel. The residual noted when this landed — bounding the write path does nothing for a profile an earlier version already stored oversized, and check_oversized_content scans memories only — is closed in the same release by check_oversized_profile (warn, fix-capable, truncates to MAX_CONTENT_LENGTH under the isolation filter). Kept separate from check_oversized_content because the repair differs: an oversized memory routes through _rewrite_or_delete_on_collision for the dedup index, a profile has no such index. Regression: tests/test_253_silent_failures.py.",
       "fixed_in": "2.5.3"
     },
     {
@@ -2905,6 +2905,22 @@
       "category": "security",
       "fix_sketch": "Stop deciding with the bind address. Without a token, refuse to start wherever the server binds; allow the no-auth case only when the operator states the intent via CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true. Rewrite the refusal and opt-in warning so neither implies loopback is containment, and report reachability the process has actually observed (a forwarding header or a non-local peer) instead of inferring it from an address.",
       "fix_note": "v2.5.3: _assert_safe_http_bind no longer branches on host -- an empty token raises SystemExit regardless of bind address unless CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true is set, and host is kept only to name the attempt in the message. BearerTokenMiddleware warns once per process when an unauthenticated request arrives carrying x-forwarded-for/forwarded/x-real-ip/cf-connecting-ip or from a non-loopback peer (observational -- it never changes the response). Behaviour change: an HTTP deployment running without a token stops starting on upgrade; the migration is to set CPERSONA_AUTH_TOKEN or opt in explicitly. Regression: test_v2438_hardening.py HTTP-bind tests (the loopback case is inverted on purpose) + tests/test_253_reachability.py. Mutation-checked: reverting the guard to loopback-allowed, accepting any truthy opt-in value, dropping the once-per-process flag, and ignoring forwarding headers are each killed by a test.",
+      "fixed_in": "2.5.3"
+    },
+    {
+      "id": "bug-199",
+      "summary": "(MEDIUM) install_mgp_validation_filter() attached the filter to the root LOGGER, which never sees records propagated from the mcp.* loggers it targets — the function reported success and suppressed nothing. Compounded here by cpersona never calling it at all: this server has its own main loop (it also serves HTTP) and so does not go through run_mcp_server, which is the only caller.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.2",
+      "commit": "8ec5d74",
+      "file": "cpersona/_vendored_mcp_common/mcp_utils.py",
+      "pattern": "for handler in root\\.handlers",
+      "expected": "present",
+      "status": "fixed",
+      "category": "silent-no-op",
+      "fix_sketch": "Attach the filter to the root logger's handlers as well as the logger, and call it from this server's own startup path after logging.basicConfig.",
+      "fix_note": "v2.5.3: install_mgp_validation_filter adds the filter to every handler on the root logger (keeping the root-logger filter, which still catches anything logged directly on root), and cpersona.server.main calls it after basicConfig and before any transport is entered. MEASURED, not deduced: a filter on a logger runs only for records logged through that logger — a record a child logger propagates reaches the ancestor's handlers without consulting the ancestor's filters, so the old attachment let every 'Failed to validate request:' warning through. NOTE the filter is a blanket drop of that message class, so a genuinely malformed client request is silenced along with the kernel's cloto/* probes; that is upstream behaviour and unchanged here. The same defect exists in the upstream copy (clotohub-servers servers/common/mcp_utils.py) and is being fixed there separately — the two copies converge rather than diverge. Regression: tests/test_253_followups.py.",
       "fixed_in": "2.5.3"
     }
   ]
