@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.Cloto-dev/cpersona -->
+
 <div align="center">
 
 # CPersona
