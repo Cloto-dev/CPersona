@@ -282,13 +282,14 @@ All settings via environment variables with sensible defaults:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CPERSONA_DB_PATH` | `./cpersona.db` | SQLite database path |
+| `CPERSONA_DB_PATH` | `data/cpersona.db` | SQLite database path, relative to the client's working directory — set it to an absolute path to keep one memory across sessions |
 | `CPERSONA_EMBEDDING_MODE` | `none` | Embedding mode (`http` or `none`) |
 | `CPERSONA_EMBEDDING_URL` | *(unset)* | Embedding server URL, e.g. `http://127.0.0.1:8401/embed` |
 | `CPERSONA_VECTOR_SEARCH_MODE` | `local` | Vector search execution (`local` in-process cosine, or `remote` offload) |
 | `CPERSONA_RECALL_MODE` | `rrf` | Recall fusion strategy (`rrf`, `rsf`, or `cascade`) |
 | `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | Preview tier: max content chars returned by the recall tools (`0` disables; `full_content=true` / `get_contents` fetch full text) |
 | `CPERSONA_RRF_K` | `60` | RRF smoothing parameter |
+| `CPERSONA_MAX_CONTENT_LENGTH` | `2000` | Max characters per stored memory and per profile. Longer writes are truncated; `check_health(fix=true)` also cuts existing rows above the cap, so lowering it shortens data that was already stored |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | Background task queue (DB-persisted, crash-recoverable) |
@@ -397,13 +398,22 @@ critical fixes only), **Current** (newest release line, all fixes land here),
 and **Experimental** (alpha/beta pre-releases, opt-in). When a new line is
 certified Stable, the previous one keeps critical-fix support for 30 more
 days, then reaches EOL. Current status: **2.4.x is the Stable line**
-(latest v2.4.40) and **2.5.x is the Current line** (latest v2.5.1), where all
+(latest v2.4.40) and **2.5.x is the Current line** (latest v2.5.2), where all
 fixes land while it awaits production-soak certification.
 
 > **Known issue:** v2.4.39 and earlier under-scan vector recall on corpora
 > beyond a few hundred rows (bug-085; v2.4.38–v2.4.39 are the most affected —
 > the limit clamp closed the only workaround). Fixed in v2.4.40; upgrading is
 > strongly recommended. See [SUPPORT.md § Known issues](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues).
+
+> **Known issue (Stable line):** the 2.4.x line starts the HTTP transport
+> **unauthenticated** when `CPERSONA_AUTH_TOKEN` is unset and the bind is a
+> loopback address (bug-198, HIGH). A loopback bind does not bound
+> reachability — tunnels, reverse proxies, `kubectl port-forward` and published
+> container ports all forward to `127.0.0.1`. **If you serve 2.4.x over HTTP,
+> set `CPERSONA_AUTH_TOKEN`.** The startup enforcement that makes a missing
+> token refuse to boot wherever it binds is in the Current line (v2.5.3); the
+> Stable line only warns.
 
 Full policy:
 [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) · specification:
