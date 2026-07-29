@@ -30,7 +30,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
-from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry
+from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
 
 from cpersona import tasks
 from cpersona import vector
@@ -1684,6 +1684,16 @@ async def main():
         await tasks._task_queue.start()
     else:
         logger.info("Task queue disabled")
+
+    # The vendored run_mcp_server installs this itself, but this server has its
+    # own main loop (it also serves HTTP) and therefore never goes through it —
+    # so the filter has to be installed here, exactly as mcp_utils documents for
+    # custom loops. Without it every kernel handshake probe (cloto/*) logs a
+    # 31-line pydantic ValidationError for a method the MCP schema does not know,
+    # which is noise, not a fault: the probe is answered correctly either way.
+    # The sibling servers in clotohub-servers got this in a1386b7; this repo was
+    # extracted before that and never received the port.
+    install_mgp_validation_filter()
 
     try:
         transport = os.environ.get("CPERSONA_TRANSPORT", "stdio")

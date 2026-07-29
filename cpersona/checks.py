@@ -185,6 +185,47 @@ async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[2] for r in rows)}]
 
 
+async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
+    """Detect (and truncate) profiles longer than the content cap.
+
+    bug-188 residual. The write path is bounded now — ``do_update_profile`` runs
+    the text through ``store``'s sanitising seam — but that only governs new
+    writes. A profile stored oversized by an earlier version keeps its size, and
+    ``check_oversized_content`` scans ``memories`` only, so nothing looked at the
+    one row that is injected into EVERY recall response. A cap on the write path
+    with no detector behind it leaves the expensive case exactly where it was.
+
+    Separate from ``check_oversized_content`` rather than folded into it: the
+    repair differs. An oversized memory is truncated through
+    ``_rewrite_or_delete_on_collision`` because shortening content can collide
+    with the dedup index; a profile has no such index and is simply cut. Merging
+    them would also merge their counts, and "3 oversized rows" that means two
+    memories and a profile tells an operator less than either number alone.
+    """
+    iso = isolation_where(agent_id=agent_id or None)
+    rows = await db.execute_fetchall(
+        f"""SELECT agent_id, user_id, length(content) AS len FROM profiles
+            WHERE length(content) > ?{iso.and_clause}""",
+        (MAX_CONTENT_LENGTH, *iso.params),
+    )
+    if not rows:
+        return []
+    if fix:
+        for row_agent_id, user_id, _ in rows:
+            await db.execute(
+                """UPDATE profiles SET content = substr(content, 1, ?)
+                   WHERE agent_id = ? AND user_id = ?""",
+                (MAX_CONTENT_LENGTH, row_agent_id, user_id),
+            )
+    return [
+        {
+            "type": "oversized_profile",
+            "count": len(rows),
+            "max_len": max(r[2] for r in rows),
+        }
+    ]
+
+
 async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
     if not vector._embedding_client:
         return []
@@ -1248,6 +1289,7 @@ HEALTH_CHECKS: list[Check] = [
     Check("missing_profile", "info", False, check_missing_profile),
     Check("empty_content", "warn", True, check_empty_content),
     Check("invalid_source_type", "warn", True, check_invalid_source_type),
+    Check("oversized_profile", "warn", True, check_oversized_profile),
     Check("anonymous_source", "info", False, check_anonymous_source),
     Check("vector_fallback_config", "info", False, check_vector_fallback_config),
     Check("operating_context_parse", "warn", False, check_operating_context_parse),

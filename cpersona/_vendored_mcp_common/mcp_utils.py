@@ -43,16 +43,34 @@ _MGP_FILTER_INSTALLED = False
 
 
 def install_mgp_validation_filter() -> None:
-    """Install the MGP validation log filter on the root logger.
+    """Install the MGP validation log filter so the SDK's noise is dropped.
 
     Called automatically by ``run_mcp_server``. Servers with a custom
     main loop (e.g. ones that also serve HTTP) should call this
     explicitly before entering ``stdio_server``.
+
+    The filter goes on the root logger's HANDLERS, not only on the root logger.
+    A filter attached to a logger runs only for records logged *through that
+    logger*; records that a child logger emits and propagates upward reach the
+    ancestor's handlers without ever consulting the ancestor's filters. The
+    noise this targets comes from the SDK's own ``mcp.*`` loggers, so the
+    original root-logger-only attachment never saw it — the function reported
+    success and suppressed nothing (measured, not deduced: a root filter lets a
+    propagated record through, a handler filter drops it).
+
+    Call this AFTER ``logging.basicConfig`` (or whatever installs handlers).
+    Handlers added later are not covered, which is why the root-logger filter is
+    kept as well — it costs nothing and still catches anything logged directly
+    on root.
     """
     global _MGP_FILTER_INSTALLED
     if _MGP_FILTER_INSTALLED:
         return
-    logging.getLogger().addFilter(_MgpValidationFilter())
+    log_filter = _MgpValidationFilter()
+    root = logging.getLogger()
+    root.addFilter(log_filter)
+    for handler in root.handlers:
+        handler.addFilter(log_filter)
     _MGP_FILTER_INSTALLED = True
 
 
