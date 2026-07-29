@@ -2617,8 +2617,8 @@
       "expected": "present",
       "status": "fixed",
       "category": "recall-ranking",
-      "fixed_in": "unreleased",
-      "fix_note": "Added memory_handlers._backfill_cosines, invoked from _apply_recall_scoring after the empty-results early return and BEFORE the episode-boundary penalty (so the penalty scales backfilled cosines uniformly with native ones), gated on CONFIDENCE_ENABLED so confidence-off deployments stay byte-for-byte identical. For each row that reaches scoring with _cosine=None, a positive integer id, and is not a profile sentinel (id=-1), the fix re-embeds the query (cache hit against the vector-channel call), fetches the embedding blob from the correct table per row kind (bug-040/041: memories and episodes AUTOINCREMENT independently so their integer ids collide and an episode id N must not read memory id N's blob), filters ragged widths (bug-085 tolerance), and materialises the true cosine on r['_cosine'] so downstream confidence scoring, episode-penalty scaling and the b1-4 match_reason.cosine surface it naturally. The batched cosine math is shared with the local scanners via a new vector._cosine_batch helper so the two paths cannot silently drift. The raw_cosine=None branch of _compute_confidence is unchanged: rows with genuinely no/ragged blob keep today's elevated score (production count is zero), deferred to the 2.6.0 scoring redesign. Regression: tests/test_bug155_cosine_backfill.py + tests/behaviour_252.py::recall-cosine-backfill."
+      "fixed_in": "2.5.2b2",
+      "fix_note": "Added memory_handlers._backfill_cosines, invoked from _apply_recall_scoring after the empty-results early return and BEFORE the episode-boundary penalty (so the penalty scales backfilled cosines uniformly with native ones), gated on CONFIDENCE_ENABLED so confidence-off deployments stay byte-for-byte identical. For each row that reaches scoring with _cosine=None, a positive integer id, and is not a profile sentinel (id=-1), the fix re-embeds the query (cache hit against the vector-channel call), fetches the embedding blob from the correct table per row kind (bug-040/041: memories and episodes AUTOINCREMENT independently so their integer ids collide and an episode id N must not read memory id N's blob), filters ragged widths (bug-085 tolerance), and materialises the true cosine on r['_cosine'] so downstream confidence scoring, episode-penalty scaling and the b1-4 match_reason.cosine surface it naturally. The batched cosine math is shared with the local scanners via a new vector._cosine_batch helper so the two paths cannot silently drift. The raw_cosine=None branch of _compute_confidence is unchanged: rows with genuinely no/ragged blob keep today's elevated score (production count is zero), deferred to the 2.6.0 scoring redesign. Regression: tests/test_bug155_cosine_backfill.py + tests/behaviour_252.py::recall-cosine-backfill. Ledger hygiene 2026-07-29 (bug-197): fixed_in read \"unreleased\" while v2.5.2b2 was tagged and on PyPI — and this is the fix that release note leads with, so an operator grepping the ledger for the ranking inversion would conclude no upgrade existed."
     },
     {
       "id": "bug-180",
@@ -2855,6 +2855,35 @@
       "note": "The guard is required at BOTH call sites, which is what made this more than a one-liner: _prepare_episode_row rebinds keywords locally, so do_archive_episode's `truncated` line still holds the caller's original value. Guarding only the prepare moves the TypeError to the response line — after the episode has already been committed — rather than removing it. Confirmed empirically by mutating each site separately.",
       "fixed_in": "2.5.2",
       "fix_note": "Both sites now mirror the summary idiom. keywords is COERCED to \"\" rather than raising, unlike summary's ValueError: summary is required and keywords is optional, so an unusable keywords value is simply no keywords. Test drives the whole call (do_archive_episode with a list) and then the drain seam (_prepare_episode_row directly with a dict), so it fails if either guard is removed. Verified independently at both granularities: removing the prepare guard raises TypeError from utils.py's regex; removing the response-line guard raises the same TypeError one frame later, at the truncated line — the two mutations are distinct and both are killed. Out of scope: whether do_update_memory / import_memories carry sibling unguarded sanitize calls was not surveyed."
+    },
+    {
+      "id": "bug-196",
+      "summary": "(LOW, audit 252b1b2 contract-3, in-range) tests/test_health_status.py described the response as carrying status \"alongside the legacy healthy boolean\" and headed its integration section the same way, while its own assertions at lines 159 and 174 required healthy to be ABSENT. A test module whose prose contradicts its assertions teaches the wrong contract to the next reader, and this one is the file a maintainer opens to learn what check_health answers.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.2b2",
+      "file": "tests/test_health_status.py",
+      "pattern": "bug-196",
+      "expected": "present",
+      "status": "fixed",
+      "category": "stale-prose",
+      "fixed_in": "2.5.2",
+      "fix_note": "Docstring and section heading rewritten to describe the surviving field: status is the single verdict since 2.5.2b1, and the info-only case (status healthy with a non-empty issues list) is stated as the REASON the boolean was dropped rather than as a split the file pins. Prose-only; no assertion changed, so the file's teeth are untouched. Not distributed — tests/ ships in neither wheel nor sdist — so the audience is a maintainer, which is exactly who a test module's prose is for. The second stale site (the integration section header at line 99) was found by grepping for the same claim rather than by trusting the finding's file:line, and is corrected in the same change."
+    },
+    {
+      "id": "bug-197",
+      "summary": "(LOW, audit 252b1b2 rel-5, in-range) At v2.5.2b2 — tagged and published — bug-155 still carried fixed_in \"unreleased\", and it is the fix the b2 release note leads with. An operator hitting the vector-less-row ranking inversion on b1 and grepping the ledger for bug-155 would read \"unreleased\" and conclude no upgrade was available, while v2.5.2b2 was already on PyPI.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.2b2",
+      "file": "qa/issue-registry.json",
+      "pattern": "\"fixed_in\": \"2.5.2b2\"",
+      "expected": "present",
+      "status": "fixed",
+      "category": "ledger-hygiene",
+      "note": "bug-180/181/182 carry fixed_in \"2.5.2\", a version that does not exist yet. That is the charter's intended pending-final marking, not a defect, and it becomes accurate at the final cut — deliberately left alone.",
+      "fixed_in": "2.5.2",
+      "fix_note": "bug-155 fixed_in set to 2.5.2b2. The value was verified against git rather than against the audit's assertion: `git tag --contains 4567f90` answers v2.5.2b2, so that is the first released artifact carrying the fix. fixed_in is optional in the schema and unread by verify-issues.sh, and qa/ ships in neither wheel nor sdist, so no installed user could see the wrong value — the audience is a maintainer reading the ledger on GitHub, and for them it was simply false."
     }
   ]
 }
