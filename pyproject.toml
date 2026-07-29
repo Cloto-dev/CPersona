@@ -35,7 +35,14 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "mcp>=1.26.0",
+    # Capped below 2.0: the SDK's 2.0.0 (2026-07-28) removed the decorator
+    # surface — Server.list_tools / Server.call_tool — that
+    # _vendored_mcp_common/mcp_utils.py binds against, so an unbounded floor
+    # resolves a release that fails at import. The cap is the constraint the
+    # code actually satisfies, not a freeze: lifting it is the migration to
+    # the 2.0 handler API, and that lives upstream in the shared mcp_common
+    # this package vendors, not here.
+    "mcp>=1.26.0,<2",
     "aiosqlite>=0.20.0",
     "httpx>=0.27.0",
     "numpy>=1.24.0",

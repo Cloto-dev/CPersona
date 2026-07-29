@@ -2746,6 +2746,21 @@
       "status": "open",
       "category": "fail-open-write-path",
       "fix_sketch": "Apply the store/update_memory treatment: sanitize first, reject sanitize-then-empty (whitespace no longer destroys a profile), cap at MAX_CONTENT_LENGTH with a truncated flag, and extend check_oversized_content to the profiles table. Correct the memory_handlers.py:1706 comment in the 2.5.2 final; the behavioral fix ships in 2.5.3."
+    },
+    {
+      "id": "bug-190",
+      "summary": "(HIGH, pre-existing — the dependency floor has been unbounded since the first release) The distribution declared mcp>=1.26.0 with no upper bound while _vendored_mcp_common/mcp_utils.py binds the SDK's decorator surface (Server.list_tools / Server.call_tool). mcp 2.0.0 (2026-07-28 13:45Z) removed that surface in favour of add_request_handler, so from that moment every fresh install of the published package — including cpersona 2.5.1, whose requires_dist is frozen on PyPI and cannot be corrected — resolved a release that raises AttributeError: 'Server' object has no attribute 'list_tools' at import of cpersona.server. Invisible to the locked jobs: test / mutation-proof run --frozen against uv.lock (mcp 1.28.1) and stayed green; only wheel-smoke, which installs the built wheel with an unlocked resolution, went red (master f3a54cf, 2026-07-28T18:25Z).",
+      "severity": "HIGH",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.1",
+      "file": "pyproject.toml",
+      "pattern": "mcp>=1.26.0,<2",
+      "expected": "present",
+      "status": "fixed",
+      "category": "dependency-bound",
+      "note": "Numbered 190, not 189: bug-189 (sidecar rewrite-from-memory) is already claimed by the concurrently open promotion-gate branch, so the ledger carries a gap on master until that lands. The id is canonicalized before the fix, per the numbering discipline that a work-in-flight id is never reassigned.",
+      "fixed_in": "2.5.2",
+      "fix_note": "Cap the runtime dependency at the major boundary the vendored code actually satisfies: mcp>=1.26.0,<2. This is not a version freeze — the 1.x line keeps flowing, and the fresh unlocked resolution the fix was verified against picked 1.29.0 (released the same day as 2.0.0), a version NEWER than the lock's 1.28.1, which is precisely the drift wheel-smoke exists to catch. uv.lock records only the changed specifier; the resolved version is unmoved at 1.28.1, so no locked job's behaviour changes and the b2 soak is undisturbed. Lifting the cap is the migration to the 2.0 handler API, and that work does not belong to this repository: mcp_utils.py is a vendored snapshot of clotohub-servers/servers/common, shared with every other MCP server, so migrating here alone would fork the snapshot and break the a2 post-sync reconciliation gate. Verified by rebuilding the wheel, installing it into a clean environment outside the checkout, and running the wheel-smoke import script verbatim: exit 0, 6 vendored modules shipped, 24 checks registered. The gate that catches a regression is wheel-smoke itself — an unlocked install is the only job that resolves what a user resolves — which is why the failure surfaced there and nowhere else."
     }
   ]
 }
