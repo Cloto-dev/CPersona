@@ -2,11 +2,18 @@
 
 The mapping lives in ``checks.health_status`` (colocated with ``exit_code`` so
 gate semantics evolve together) and is surfaced on ``do_check_health``'s
-response as ``status`` alongside the legacy ``healthy`` boolean.
+response as ``status`` — the single verdict, and since 2.5.2b1 the only one.
 
 Info is an observation, not a gate signal: an info-only DB reports
-``status='healthy'`` even though ``healthy=False`` (``len(issues) == 0`` is
-False). Both fields are exposed deliberately — this file pins that split.
+``status='healthy'`` with a non-empty ``issues`` list. That case is exactly why
+the ``healthy`` boolean was dropped rather than kept alongside ``status``: it
+read False there (``len(issues) == 0``), contradicting the verdict. This file
+pins the surviving field, and asserts the dropped one stays gone.
+
+bug-196 (audit contract-3): this docstring described ``healthy`` as still
+present, while the assertions below already required its absence — a test file
+whose prose and its own assertions disagree teaches the wrong contract to the
+next reader.
 """
 
 import os
@@ -89,7 +96,7 @@ def test_health_status_all_zero_is_healthy():
 
 
 # --------------------------------------------------------------------------
-# integration: do_check_health surfaces status alongside legacy healthy bool
+# integration: do_check_health surfaces status, and no longer the healthy bool
 # --------------------------------------------------------------------------
 
 
