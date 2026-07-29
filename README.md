@@ -23,7 +23,7 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
-> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.40, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is the **Current** line (latest: v2.5.1) — an internal stabilization line that has passed the full release gate and is where all fixes land, pending production-soak certification; the DB schema is preserved across the line, and feature development resumes in 2.6. The 2.5.2 pre-releases change three things about MCP tool responses — `store` reports its outcome in `result` (stored / skipped / rejected) instead of an always-true `ok`, `check_health` reports the single `status` verdict without the `healthy` boolean, and every tool-level failure a handler returns now carries `ok: false` (most used to return `error` alone, with no `ok` to branch on; the explanation still travels in `error`, except on `store`, which puts it in `reason`). Two shapes stay outside that rule and always did: the outermost MCP dispatch answers an unknown tool name, or an exception escaping a handler, with a bare `error` and no `ok` — that layer is vendored from a library shared with the other Cloto servers, so correcting it is an upstream change rather than a local edit — and a successful read (`get_contents`, `list_memories`, `list_episodes`, `get_profile`) returns its payload with no `ok` either. Branch on `ok is false`, and treat a response carrying `error` as a failure whether or not `ok` is present. Tiers and support windows: [Release Channels & Support](#release-channels--support).
+> **Project status (July 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.40, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is the **Current** line (latest: v2.5.2) — an internal stabilization line that has passed the full release gate and is where all fixes land, pending production-soak certification; the DB schema is preserved across the line, and feature development resumes in 2.6. **v2.5.2 changes three things about MCP tool responses** — `store` reports its outcome in `result` (stored / skipped / rejected) instead of an always-true `ok`, `check_health` reports the single `status` verdict without the `healthy` boolean, and every tool-level failure a handler returns now carries `ok: false` (most used to return `error` alone, with no `ok` to branch on; the explanation still travels in `error`, except on `store`, which puts it in `reason`). Two shapes stay outside that rule and always did: the outermost MCP dispatch answers an unknown tool name, or an exception escaping a handler, with a bare `error` and no `ok` — that layer is vendored from a library shared with the other Cloto servers, so correcting it is an upstream change rather than a local edit — and a successful read (`get_contents`, `list_memories`, `list_episodes`, `get_profile`) returns its payload with no `ok` either. Branch on `ok is false`, and treat a response carrying `error` as a failure whether or not `ok` is present. Tiers and support windows: [Release Channels & Support](#release-channels--support).
 
 ## The Problem
 
@@ -315,10 +315,10 @@ marketplace catalog and the Quick Start use the generic names.
 
 ## Stats
 
-- **~10,100 LOC** Python across focused modules, plus a 3,300-line vendored MCP
+- **~10,700 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **561 test functions** across 51 test modules — 660 cases once the
-  behavioural matrix is parametrised (~15,400 LOC, more test code than server
+- **608 test functions** across 54 test modules — 710 cases once the
+  behavioural matrix is parametrised (~17,800 LOC, more test code than server
   code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)
 - **MIT License**
