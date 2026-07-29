@@ -982,6 +982,40 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "empty_content", "count": empty}]
 
 
+def invalid_source_type_where(canonical_types: str) -> str:
+    """The predicate for "this source carries a type we do not recognise".
+
+    Written once because it has two callers — the COUNT that reports the finding
+    and the SELECT the fixer repairs from — and they must agree. A row the check
+    counts but the fixer will not select is a finding that never clears; a row
+    the fixer rewrites but the check never counted is a silent mutation. bug-195
+    is the same class of defect (see also bug-198's shared-guard note).
+
+    bug-187: the anonymous shapes are excluded. ``store`` accepts an omitted or
+    null ``source`` and records it as ``{}`` — the write path's own normalisation
+    (memory_handlers) and a documented, supported way to say "producer unknown".
+    Counting it as an invalid type made the check ``warn``, which made the single
+    health ``status`` verdict ``degraded``, permanently: ``normalize_source``
+    correctly refuses to invent a discriminator for ``{}``, so ``fix=true`` could
+    never clear what the check kept reporting. A DB whose only sin was storing
+    memories without attribution read as unhealthy forever.
+
+    A stored JSON ``null`` is folded in for the same reason: the write seam
+    treats null and ``{}`` as one anonymous shape, so a legacy row that predates
+    that normalisation carries the same information and is equally unrepairable.
+
+    Excluded here means *not a type defect* — not invisible. An object that has
+    keys but no recognised ``$.type`` (``{"id":"x"}``, ``{"type":"assistant"}``)
+    is still counted: something claimed a producer and got the contract wrong.
+    """
+    return f"""json_valid(source)
+                    AND (json_extract(source, '$.type') NOT IN {canonical_types}
+                    OR json_extract(source, '$.type') IS NULL)
+                    AND json_type(source) IS NOT 'null'
+                    AND NOT (json_type(source) = 'object'
+                             AND (SELECT COUNT(*) FROM json_each(memories.source)) = 0)"""
+
+
 async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     """Detect and (optionally) canonicalise legacy source shapes (Task #282, 1b).
 
@@ -1011,9 +1045,7 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
         bad = (
             await db.execute_fetchall(
                 f"""SELECT COUNT(*) FROM memories
-                    WHERE json_valid(source)
-                    AND (json_extract(source, '$.type') NOT IN {canonical_types}
-                    OR json_extract(source, '$.type') IS NULL){iso.and_clause}""",
+                    WHERE {invalid_source_type_where(canonical_types)}{iso.and_clause}""",
                 iso.params,
             )
         )[0][0]
@@ -1029,9 +1061,8 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
         # current source, not a single canonical sentinel.
         rows = await db.execute_fetchall(
             f"""SELECT id, source FROM memories
-                WHERE json_valid(source)
-                AND (json_extract(source, '$.type') NOT IN {canonical_types}
-                OR json_extract(source, '$.type') IS NULL) AND locked = 0{iso.and_clause}""",
+                WHERE {invalid_source_type_where(canonical_types)}
+                AND locked = 0{iso.and_clause}""",
             iso.params,
         )
         mapped = 0
