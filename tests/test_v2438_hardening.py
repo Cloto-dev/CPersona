@@ -51,15 +51,74 @@ def test_http_bind_external_ip_without_token_refuses_to_start():
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
-def test_http_bind_loopback_without_token_is_allowed(host):
-    """Loopback bind without a token is a local-dev convenience — allowed (warns)."""
-    server._assert_safe_http_bind("", host)  # must not raise
+def test_http_bind_loopback_without_token_now_refuses_to_start(host):
+    """2.5.3 inverts this: a loopback bind is no longer a reason to allow no auth.
+
+    This assertion used to say the opposite, and that is the point — the old
+    behaviour is the defect. A tunnel or reverse proxy forwards to loopback, so
+    "bound to loopback" never implied "unreachable"; the deployment that ran
+    publicly reachable and unauthenticated for 13 days was bound to 127.0.0.1
+    the whole time.
+    """
+    with pytest.raises(SystemExit):
+        server._assert_safe_http_bind("", host, allow_unauthenticated=False)
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.0.10", "127.0.0.1"])
 def test_http_bind_with_token_is_allowed_anywhere(host):
     """With a token set, any bind is fine — auth is enforced by the middleware."""
     server._assert_safe_http_bind("s3cret", host)  # must not raise
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0"])
+def test_http_bind_without_token_allowed_only_by_explicit_opt_in(host):
+    """The escape hatch is a stated intent, and it is not bind-address-shaped.
+
+    Note the 0.0.0.0 case: opting in allows a public unauthenticated bind too.
+    That is deliberate — the operator said so in as many words, which is more
+    than the old guard ever asked for.
+    """
+    server._assert_safe_http_bind("", host, allow_unauthenticated=True)  # must not raise
+
+
+def test_http_bind_opt_in_is_read_from_the_environment(monkeypatch):
+    """The default must come from the env, not from the caller passing it."""
+    monkeypatch.delenv("CPERSONA_ALLOW_UNAUTHENTICATED_HTTP", raising=False)
+    with pytest.raises(SystemExit):
+        server._assert_safe_http_bind("", "127.0.0.1")
+    monkeypatch.setenv("CPERSONA_ALLOW_UNAUTHENTICATED_HTTP", "true")
+    server._assert_safe_http_bind("", "127.0.0.1")  # must not raise
+    # Anything that is not "true" leaves the guard closed — a truthy-looking
+    # value like "1" or "yes" must not silently disable authentication.
+    for value in ("1", "yes", "TRUE ", "false", ""):
+        monkeypatch.setenv("CPERSONA_ALLOW_UNAUTHENTICATED_HTTP", value)
+        with pytest.raises(SystemExit):
+            server._assert_safe_http_bind("", "127.0.0.1")
+
+
+def test_http_bind_refusal_does_not_call_loopback_safe(caplog):
+    """Wording regression: the guidance must not imply loopback is containment.
+
+    The 13-day exposure was not caused by the branch alone — the log line said
+    "bound to loopback 127.0.0.1 only", which reads as an all-clear. Pin the
+    absence of that reassurance in both the refusal and the opt-in warning.
+    """
+    reassurances = ("only", "safe", "not exposed", "local only")
+
+    with pytest.raises(SystemExit) as excinfo:
+        server._assert_safe_http_bind("", "127.0.0.1", allow_unauthenticated=False)
+    refusal = str(excinfo.value).lower()
+    assert "loopback" in refusal, "the refusal should still explain the loopback trap"
+    assert "tunnel" in refusal or "proxy" in refusal
+
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        server._assert_safe_http_bind("", "127.0.0.1", allow_unauthenticated=True)
+    warning = caplog.text.lower()
+    assert "unauthenticated" in warning
+    for phrase in reassurances:
+        assert f"loopback {phrase}" not in warning
+        assert f"loopback address {phrase}" not in warning
 
 
 # ---------------------------------------------------------------------------
