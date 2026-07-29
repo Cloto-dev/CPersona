@@ -1,8 +1,9 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Security vulnerability
-    url: https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md
-    about: Please report vulnerabilities privately, not as a public issue.
+  # No security entry here on purpose: GitHub's built-in private vulnerability
+  # reporting is enabled for this repository, so the chooser already offers
+  # "Report a security vulnerability" and links SECURITY.md from it. A second
+  # link of our own showed up beside it and read as two different procedures.
   - name: Support policy and known issues
     url: https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md
     about: Release tiers, support windows, and currently known defects.
