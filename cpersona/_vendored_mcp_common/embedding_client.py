@@ -1,4 +1,4 @@
-"""Shared embedding client for cloto-mcp-servers.
+"""Shared embedding client for Cloto MCP servers.
 
 Extracted from cpersona/server.py:146-301 in CScheduler v0.2 to allow
 multiple MCP servers (CPersona, CScheduler, ...) to share a single
