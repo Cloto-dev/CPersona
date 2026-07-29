@@ -105,9 +105,10 @@ Certification and EOL dates are recorded in this table as they occur.
   `delete_agent_data` and the file-reading/writing `export_memories` /
   `import_memories`. **If you serve CPersona over HTTP, set
   `CPERSONA_AUTH_TOKEN` now** — the stdio transport is unaffected, and so is any
-  HTTP deployment that already sets a token. Fixed in v2.5.3, which refuses to
-  start without a token wherever it binds; see [README](README.md#remote-http-transport)
+  HTTP deployment that already sets a token. **Fixed in v2.5.3**, which refuses
+  to start without a token wherever it binds; see [README](README.md#remote-http-transport)
   for the migration if you are deliberately running without authentication.
+  Details: `qa/issue-registry.json` (bug-198).
 
 - **v2.5.2 and earlier — `check_health` reports `degraded` for memories stored
   without a source (bug-187, MEDIUM).** `store` accepts an omitted or null
@@ -120,7 +121,7 @@ Certification and EOL dates are recorded in this table as they occur.
   attribution, so the fixer correctly leaves those rows alone.
   **The data is fine; the verdict is wrong.** Nothing else is affected —
   recall, store, and the remaining checks behave normally, and no repair runs
-  against those rows. Until it is fixed, read the `issues` list or
+  against those rows. On v2.5.2 and earlier, read the `issues` list or
   `severity_summary` rather than `status` alone: an `invalid_source_type`
   finding whose count matches your anonymous-source rows is this, not a real
   defect. Attributed writes (`source` with a `type` of `User` / `Agent` /
