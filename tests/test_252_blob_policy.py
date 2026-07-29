@@ -31,7 +31,9 @@ import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
 from cpersona import checks  # noqa: E402
+from cpersona import memory_handlers  # noqa: E402
 from cpersona import vector  # noqa: E402
+from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona.config import local_blobs_stored  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
@@ -134,6 +136,71 @@ def test_write_gate_and_checks_read_the_same_rule():
             "config.local_blobs_stored"
         )
         assert "local_blobs_stored(" in src
+
+
+# ============================================================
+# bug-191..195 audit, bug-192 — the WRITE gate itself, through the real writer
+#
+# Everything above reads the predicate or hand-inserts rows, so the one caller
+# that actually decides whether a BLOB reaches the disk — do_store's embed
+# branch — was never executed under this configuration. Replacing its argument
+# with a literal (``local_blobs_stored(VECTOR_SEARCH_MODE, True)``) left the
+# whole file green while the policy was silently defeated in production.
+# ============================================================
+
+
+def _writer_policy(monkeypatch, mode: str, store_blob: bool):
+    """Set the policy the WRITER reads.
+
+    ``memory_handlers`` binds its own module-level copies of both settings at
+    import time, so patching ``checks`` (as ``_no_local_blobs`` above does) does
+    not reach the write gate.
+    """
+    monkeypatch.setattr(memory_handlers, "VECTOR_SEARCH_MODE", mode)
+    monkeypatch.setattr(memory_handlers, "STORE_BLOB", store_blob)
+
+
+async def _store_and_read_blob(content: str) -> tuple[dict, bytes | None]:
+    """Drive the real do_store and return its response plus the stored BLOB."""
+    no_persist.resume()
+    res = await memory_handlers.do_store(AGENT, {"content": content, "timestamp": "t"})
+    assert res["result"] == "stored", res
+    db = await get_db()
+    row = await db.execute_fetchall("SELECT embedding FROM memories WHERE id = ?", (res["id"],))
+    return res, row[0][0]
+
+
+@pytest.mark.asyncio
+async def test_remote_store_blob_false_leaves_no_local_blob(monkeypatch, fake_embedding_client):
+    """bug-192: the configured policy must survive the actual write.
+
+    The embedding client is working (the fake from conftest), so the embed
+    branch WOULD produce a BLOB if the gate let it through — the NULL column is
+    therefore evidence about the gate, not about a broken embedder. The positive
+    counterpart below proves the same fixture does write a BLOB when the policy
+    allows one, so this assertion cannot pass vacuously.
+    """
+    _writer_policy(monkeypatch, "remote", False)
+
+    res, blob = await _store_and_read_blob("remote policy, no local blob")
+
+    assert blob is None, "the writer stored a local BLOB the configuration disabled"
+    assert res["embedded"] is False, res
+
+
+@pytest.mark.asyncio
+async def test_remote_store_blob_true_still_writes_the_local_blob(
+    monkeypatch, fake_embedding_client
+):
+    """The differential for the test above: only the policy changes. Without it
+    a broken embedder (or a guard written too wide) would satisfy the NULL
+    assertion for entirely the wrong reason."""
+    _writer_policy(monkeypatch, "remote", True)
+
+    res, blob = await _store_and_read_blob("remote policy, blob requested")
+
+    assert blob is not None, "the writer dropped a BLOB the configuration asked for"
+    assert res["embedded"] is True, res
 
 
 # ============================================================

@@ -22,6 +22,8 @@ Two areas covered:
     unchanged (2.6.0 owns any scoring reshape per charter §5).
 """
 
+import contextlib
+
 import pytest
 import pytest_asyncio
 
@@ -124,6 +126,68 @@ async def test_store_dedup_msg_id_echoes_existing_id(clean_db):
     )
     assert dup["result"] == "skipped" and dup.get("reason") == "duplicate msg_id", dup
     assert dup.get("id") == first["id"], dup
+
+
+@pytest.mark.asyncio
+async def test_concurrent_unique_index_loser_reports_skipped(clean_db, monkeypatch):
+    """bug-194: the third dedup outcome — the OR IGNORE / rowcount==0 backstop.
+
+    The two branches above answer from a SELECT probe, so they can echo the
+    existing id. This one fires only when another writer landed the same row
+    AFTER those probes ran and BEFORE this INSERT (the bug-010 TOCTOU window),
+    and it stays id-less by design: recovering the id would need a fresh SELECT
+    through the very window that was just lost. That asymmetry is a contract
+    callers key on ("id is optional under result='skipped'"), and nothing
+    exercised it — the SELECT probes are WIDER than the UNIQUE indexes (γ-visible
+    vs exact-bucket, bug-106), so no ordinary input can reach this branch.
+
+    So the race is simulated: the first entry into do_store's write seam commits
+    the colliding row through a separate transaction, then hands the real seam
+    back. do_store's own INSERT OR IGNORE then genuinely finds the row present
+    and reports rowcount 0 — the real statement, against the real index.
+    """
+    db = clean_db
+    indexes = await db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_memories_dedup_content'"
+    )
+    assert indexes, "the v12 dedup UNIQUE index is missing; this branch cannot be reached"
+
+    content = "the row that loses the insert race"
+    real_transaction = memory_handlers.transaction
+    entries = {"n": 0}
+
+    @contextlib.asynccontextmanager
+    async def racing_transaction():
+        if entries["n"] == 0:
+            entries["n"] = 1
+            # The write lock is not reentrant, so the interloper's write has to
+            # complete in its own scope before do_store's begins.
+            async with real_transaction() as racer:
+                await racer.execute(
+                    "INSERT INTO memories (agent_id, project_id, msg_id, content, source,"
+                    " timestamp, metadata, channel) VALUES (?, '', '', ?, '{}', 't', '{}', '')",
+                    ("a1", content),
+                )
+        async with real_transaction() as inner:
+            yield inner
+
+    monkeypatch.setattr(memory_handlers, "transaction", racing_transaction)
+    res = await memory_handlers.do_store(
+        "a1", {"content": content, "source": {}, "timestamp": "t"}
+    )
+
+    assert entries["n"] == 1, "the race was never armed — do_store did not take the write seam"
+    assert res.get("result") == "skipped", res
+    assert res.get("ok") is True, res
+    assert "unique index" in res.get("reason", ""), res
+    assert "id" not in res, (
+        "the OR IGNORE fallback must stay id-less — echoing an id here would mean "
+        "re-entering the TOCTOU window this branch exists to absorb"
+    )
+    rows = await db.execute_fetchall(
+        "SELECT COUNT(*) FROM memories WHERE agent_id = 'a1' AND content = ?", (content,)
+    )
+    assert rows[0][0] == 1, "the losing INSERT must not have duplicated the row"
 
 
 # ---------------------------------------------------------------------------

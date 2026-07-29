@@ -2779,6 +2779,77 @@
       "note": "Numbered 190, not 189: bug-189 (sidecar rewrite-from-memory) is already claimed by the concurrently open promotion-gate branch, so the ledger carries a gap on master until that lands. The id is canonicalized before the fix, per the numbering discipline that a work-in-flight id is never reassigned.",
       "fixed_in": "2.5.2",
       "fix_note": "Cap the runtime dependency at the major boundary the vendored code actually satisfies: mcp>=1.26.0,<2. This is not a version freeze — the 1.x line keeps flowing, and the fresh unlocked resolution the fix was verified against picked 1.29.0 (released the same day as 2.0.0), a version NEWER than the lock's 1.28.1, which is precisely the drift wheel-smoke exists to catch. uv.lock records only the changed specifier; the resolved version is unmoved at 1.28.1, so no locked job's behaviour changes and the b2 soak is undisturbed. Lifting the cap is the migration to the 2.0 handler API, and that work does not belong to this repository: mcp_utils.py is a vendored snapshot of clotohub-servers/servers/common, shared with every other MCP server, so migrating here alone would fork the snapshot and break the a2 post-sync reconciliation gate. Verified by rebuilding the wheel, installing it into a clean environment outside the checkout, and running the wheel-smoke import script verbatim: exit 0, 6 vendored modules shipped, 24 checks registered. The gate that catches a regression is wheel-smoke itself — an unlocked install is the only job that resolves what a user resolves — which is why the failure surfaced there and nowhere else."
+    },
+    {
+      "id": "bug-191",
+      "summary": "(LOW, audit 252b1b2 teeth-2, test-teeth) test_metadata_at_the_cap_still_stores named the C12 sidecar cap boundary but never reached it: its payload serialises to ~115 characters while the cap is MAX_METADATA_LENGTH, and every other case exceeds the cap by 100. The acceptance boundary was therefore mutation-equivalent — flipping memory_handlers.py's `len(serialised) > MAX_METADATA_LENGTH` to `>=` (an off-by-one that refuses a document of exactly the cap, which the documented policy accepts) left the whole suite green.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.2b2",
+      "file": "tests/test_252b1_writepath.py",
+      "pattern": "def test_metadata_exactly_at_the_cap_is_accepted",
+      "expected": "present",
+      "status": "fixed",
+      "category": "test-teeth",
+      "fixed_in": "2.5.2",
+      "fix_note": "New test that constructs a metadata document whose json.dumps length is EXACTLY MAX_METADATA_LENGTH, computing the padding from the serialised overhead and asserting the exact equality in the test body so the fixture cannot drift off the boundary it exists to protect (a fixture that quietly stops touching the boundary is the same defect again). Serialisation matches the write path verbatim — default separators, no indent. Verified independently of the implementer: applying `>` -> `>=` at memory_handlers.py:143 fails the new test with result 'rejected' (reason 'metadata too large (8000 chars, max 8000)'), and the tree restores byte-identically."
+    },
+    {
+      "id": "bug-192",
+      "summary": "(LOW, audit 252b1b2 teeth-3, test-teeth) The blob-policy suite proved the predicate and the read side but never drove the WRITER under the policy: _seed_memory hand-inserts rows with NULL embeddings, and the coupling test only greps the source for 'local_blobs_stored('. do_store's embed branch — the one caller that decides whether a BLOB reaches the disk — was never executed with remote mode plus CPERSONA_STORE_BLOB=false, so replacing its argument with a literal (`local_blobs_stored(VECTOR_SEARCH_MODE, True)`) defeated the policy in production while the file stayed green.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.2b2",
+      "file": "tests/test_252_blob_policy.py",
+      "pattern": "def test_remote_store_blob_false_leaves_no_local_blob",
+      "expected": "present",
+      "status": "fixed",
+      "category": "test-teeth",
+      "fixed_in": "2.5.2",
+      "fix_note": "Functional test through the real do_store with a working fake embedding client, so a NULL embedding column is evidence about the gate rather than about a broken embedder — plus the positive counterpart (remote + STORE_BLOB true) so the NULL assertion cannot pass vacuously. The policy is patched on memory_handlers' own module-level copies: it binds VECTOR_SEARCH_MODE / STORE_BLOB at import, so the pre-existing helper that patches `checks` never reached the write gate, which is the same blind spot that let the hole open. Verified independently: the `True` literal mutation fails the negative test ('the writer stored a local BLOB the configuration disabled') while the positive one still passes, as a differential should."
+    },
+    {
+      "id": "bug-193",
+      "summary": "(LOW, audit 252b1b2 teeth-5, test-teeth) The b2 cosine-backfill guard is `if not query.strip()`, but only query=\"\" was covered, so weakening it to `if not query` survived the suite. Under the weakened guard a whitespace-only query — which every fusion path treats as a pure-recency listing, since they all test query.strip() — would instead embed [\"   \"], materialise cosines from a text with no relevance signal, and confidence-sort a request the rest of do_recall treats as an unranked listing.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.2b2",
+      "file": "tests/test_bug155_cosine_backfill.py",
+      "pattern": "bug-193",
+      "expected": "present",
+      "status": "fixed",
+      "category": "test-teeth",
+      "fixed_in": "2.5.2",
+      "fix_note": "Parametrised the existing decline test over \"\" and \"   \" rather than adding a second test, so the two inputs cannot drift apart. Verified independently: `query.strip()` -> `query` leaves the empty-string case passing and fails the whitespace case with 'embed was called with an empty query: [[\\'   \\']]' — the asymmetry is the point, a single-input test could not distinguish the two guards. Six sibling .strip() guards in the same file share the untested property and predate this range; they are not covered here."
+    },
+    {
+      "id": "bug-194",
+      "summary": "(LOW, audit 252b1b2 contract-2, test-teeth) store has three dedup outcomes but only two were pinned. The INSERT OR IGNORE / rowcount==0 backstop — the branch that absorbs a writer landing the same row between the SELECT probes and the INSERT (bug-010 TOCTOU) — had no test, leaving its response contract unpinned: result='skipped' with ok true and, by design, NO id (recovering one would mean re-entering the window just lost). Ordinary data cannot reach the branch because the SELECT probes are γ-visible and therefore WIDER than the exact-bucket UNIQUE indexes.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.2b2",
+      "file": "tests/test_store_recall_surface.py",
+      "pattern": "def test_concurrent_unique_index_loser_reports_skipped",
+      "expected": "present",
+      "status": "fixed",
+      "category": "test-teeth",
+      "fixed_in": "2.5.2",
+      "fix_note": "The race is simulated rather than faked: memory_handlers.transaction is wrapped so the first entry commits the colliding row through its own transaction (the write lock is not reentrant, so the interloper must finish before do_store's scope begins) and then delegates to the real seam. do_store's own INSERT OR IGNORE then genuinely reports rowcount 0 against the real UNIQUE index — no _store_skipped call, no stubbed rowcount. The test asserts the race was actually armed and that the dedup index exists, so it fails loudly rather than passing silently if either precondition disappears. Verified independently: returning the legacy {ok, skipped} shape from the fallback fails the test."
+    },
+    {
+      "id": "bug-195",
+      "summary": "(LOW, audit 252b1b2 sec-4) bug-162 added `_sanitize_content(summary) if isinstance(summary, str) else \"\"` specifically so a non-string summary lands on the structured refusal path 'instead of letting _sanitize_content raise an opaque TypeError' — and the next line called _sanitize_content(keywords) with no such guard, reintroducing exactly that TypeError for the adjacent field. do_archive_episode's response line carried the same unguarded call on the caller's original value. A library or drain caller passing keywords=['a','b'] got a bare {error: \"expected string or bytes-like object...\"} with no ok and no episode_id — the pre-C23 shape the range standardised away. Not reachable through MCP, where validate_str coerces.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.2b2",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "isinstance\\(keywords, str\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "response-contract",
+      "note": "The guard is required at BOTH call sites, which is what made this more than a one-liner: _prepare_episode_row rebinds keywords locally, so do_archive_episode's `truncated` line still holds the caller's original value. Guarding only the prepare moves the TypeError to the response line — after the episode has already been committed — rather than removing it. Confirmed empirically by mutating each site separately.",
+      "fixed_in": "2.5.2",
+      "fix_note": "Both sites now mirror the summary idiom. keywords is COERCED to \"\" rather than raising, unlike summary's ValueError: summary is required and keywords is optional, so an unusable keywords value is simply no keywords. Test drives the whole call (do_archive_episode with a list) and then the drain seam (_prepare_episode_row directly with a dict), so it fails if either guard is removed. Verified independently at both granularities: removing the prepare guard raises TypeError from utils.py's regex; removing the response-line guard raises the same TypeError one frame later, at the truncated line — the two mutations are distinct and both are killed. Out of scope: whether do_update_memory / import_memories carry sibling unguarded sanitize calls was not surveyed."
     }
   ]
 }
