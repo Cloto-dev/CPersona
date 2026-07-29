@@ -139,6 +139,12 @@ class ToolRegistry:
         Each entry in *params* is ``(key, type)`` or ``(key, type, default)``.
         Supported types: ``str``, ``int``, ``dict``, ``list``.
         The extracted values are passed positionally to *handler*.
+
+        A three-element spec always forwards its default to the validator,
+        ``None`` included: ``(key, typ)`` means "no default, the validator
+        picks one" while ``(key, typ, None)`` means "the default IS None"
+        — the two are distinguished by spec arity, not by the default's
+        truthiness.
         """
 
         async def _handler(arguments: dict) -> dict:
