@@ -1296,7 +1296,11 @@ registry.auto_tool(
     "format drift, stale tasks, missing profiles, empty content, "
     "invalid/anonymous sources. Returns storage stats incl. project_id/channel "
     "distributions. Set fix=true to auto-repair (agent-scoped, locked-safe); "
-    "critical file-integrity findings are report-only. Use checks parameter to "
+    "critical file-integrity findings are report-only. Two repairs are lossy and "
+    "irreversible: oversized memories AND the agent's profile row are cut to "
+    "CPERSONA_MAX_CONTENT_LENGTH (default 2000 characters), keeping the start. "
+    "Lower that cap and a fix run shortens rows that were within the old one. "
+    "Use checks parameter to "
     # b1-3 (2.5.2b1, CONTRACT BREAK): one verdict, not two.
     "run a subset. The verdict is `status`: healthy / degraded / unhealthy, "
     "derived from severity counts (info never degrades). The pre-2.5.2b1 "
@@ -1565,35 +1569,29 @@ def _resolve_embedding_timeout() -> int:
     return config.parse_int("CPERSONA_EMBEDDING_TIMEOUT_SECS", 30)
 
 
-async def _run_http_server():
-    """Run CPersona as a Streamable HTTP MCP server with Bearer token auth."""
-    import contextlib
-    from collections.abc import AsyncIterator
+def _build_http_app(auth_token: str, mcp_endpoint, lifespan):
+    """Assemble the Starlette app the HTTP transport serves, middleware included.
 
-    import uvicorn
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    Factored out of ``_run_http_server`` so the wiring itself is testable. A
+    middleware that is written and unit-tested but never mounted is
+    indistinguishable at runtime from one that was never written: dropping the
+    ``BearerTokenMiddleware`` entry below serves every tool without credentials
+    AND silences the bug-198 reachability warning, while every test that
+    constructs the middleware directly keeps passing. tests/
+    test_253_middleware_wiring.py therefore builds this app and drives real
+    ASGI requests through it, so the mounting — not just the class — is pinned.
+
+    Order is load-bearing: CORS is outermost so a browser preflight (which
+    carries no Authorization header) is answered before authentication runs,
+    and BearerTokenMiddleware sits in front of the MCP mounts so no
+    unauthenticated request can reach a tool.
+    """
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
     from starlette.middleware.cors import CORSMiddleware
     from starlette.routing import Mount
 
-    auth_token = os.environ.get("CPERSONA_AUTH_TOKEN", "")
-
-    session_manager = StreamableHTTPSessionManager(
-        app=registry.server,
-        stateless=True,
-    )
-
-    async def mcp_endpoint(scope, receive, send):
-        await session_manager.handle_request(scope, receive, send)
-
-    @contextlib.asynccontextmanager
-    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
-        async with session_manager.run():
-            logger.info("CPersona Streamable HTTP server ready")
-            yield
-
-    app = Starlette(
+    return Starlette(
         routes=[Mount("/mcp", app=mcp_endpoint), Mount("/", app=mcp_endpoint)],
         middleware=[
             Middleware(
@@ -1614,8 +1612,39 @@ async def _run_http_server():
         lifespan=lifespan,
     )
 
-    # Secure by default: bind loopback unless an operator opts into a wider
-    # interface. A public bind additionally requires CPERSONA_AUTH_TOKEN (bug-017).
+
+async def _run_http_server():
+    """Run CPersona as a Streamable HTTP MCP server with Bearer token auth."""
+    import contextlib
+    from collections.abc import AsyncIterator
+
+    import uvicorn
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.applications import Starlette
+
+    auth_token = os.environ.get("CPERSONA_AUTH_TOKEN", "")
+
+    session_manager = StreamableHTTPSessionManager(
+        app=registry.server,
+        stateless=True,
+    )
+
+    async def mcp_endpoint(scope, receive, send):
+        await session_manager.handle_request(scope, receive, send)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+        async with session_manager.run():
+            logger.info("CPersona Streamable HTTP server ready")
+            yield
+
+    app = _build_http_app(auth_token, mcp_endpoint, lifespan)
+
+    # The bind address is chosen here, but it is NOT what makes the port safe
+    # (bug-198): tunnels, reverse proxies and published container ports all
+    # forward to loopback. The guard below therefore requires a token wherever
+    # this binds, and the old "a public bind additionally requires a token"
+    # rule (bug-017) is withdrawn — do not reintroduce it.
     host = os.environ.get("CPERSONA_HTTP_HOST", "127.0.0.1")
     port = _resolve_http_port()
     _assert_safe_http_bind(auth_token, host)

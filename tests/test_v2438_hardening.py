@@ -6,6 +6,7 @@ absent" and these behavioural assertions move together.
 """
 
 import json
+import re
 
 import pytest
 import pytest_asyncio
@@ -96,6 +97,31 @@ def test_http_bind_opt_in_is_read_from_the_environment(monkeypatch):
             server._assert_safe_http_bind("", "127.0.0.1")
 
 
+# The all-clear the 13-day exposure was reported under. The reassurance is not
+# adjacent to the word "loopback": the message that shipped in 2.5.2 was
+# "(bound to loopback %s only)", so the host is interpolated in between and a
+# literal "loopback only" / "loopback address only" match never fires — that
+# blind spot is why this test passed against the exact wording its docstring
+# names. Allow a short gap (long enough for an address or a noun or two, short
+# enough that it cannot reach across a sentence into an unrelated "only", as in
+# "for local development only") and match on the pair.
+_LOOPBACK_ALL_CLEAR = re.compile(
+    r"loopback\b.{0,40}?\b(only|safe|not exposed|local only)\b", re.DOTALL
+)
+
+
+def _assert_no_loopback_all_clear(text, where):
+    match = _LOOPBACK_ALL_CLEAR.search(text)
+    assert match is None, (
+        f"{where} presents loopback as containment ({match.group(0)!r} in {text!r}); "
+        "a tunnel, reverse proxy or published container port forwards to loopback, "
+        "so this reads as an all-clear for a port that may be world-reachable"
+    )
+    assert "bound to loopback" not in text, (
+        f"{where} reintroduced the 2.5.2 'bound to loopback ... only' wording"
+    )
+
+
 def test_http_bind_refusal_does_not_call_loopback_safe(caplog):
     """Wording regression: the guidance must not imply loopback is containment.
 
@@ -103,22 +129,22 @@ def test_http_bind_refusal_does_not_call_loopback_safe(caplog):
     "bound to loopback 127.0.0.1 only", which reads as an all-clear. Pin the
     absence of that reassurance in both the refusal and the opt-in warning.
     """
-    reassurances = ("only", "safe", "not exposed", "local only")
-
     with pytest.raises(SystemExit) as excinfo:
         server._assert_safe_http_bind("", "127.0.0.1", allow_unauthenticated=False)
     refusal = str(excinfo.value).lower()
     assert "loopback" in refusal, "the refusal should still explain the loopback trap"
     assert "tunnel" in refusal or "proxy" in refusal
+    # The pre-2.5.3 refusal offered "set CPERSONA_HTTP_HOST to a loopback
+    # address (127.0.0.1) for local-only use" as the way out — the same
+    # all-clear, phrased as advice. It must not come back either.
+    _assert_no_loopback_all_clear(refusal, "the refusal")
 
     caplog.clear()
     with caplog.at_level("WARNING"):
         server._assert_safe_http_bind("", "127.0.0.1", allow_unauthenticated=True)
     warning = caplog.text.lower()
     assert "unauthenticated" in warning
-    for phrase in reassurances:
-        assert f"loopback {phrase}" not in warning
-        assert f"loopback address {phrase}" not in warning
+    _assert_no_loopback_all_clear(warning, "the opt-in warning")
 
 
 # ---------------------------------------------------------------------------
