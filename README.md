@@ -299,6 +299,35 @@ The generic aliases `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL`
 are also accepted (the `CPERSONA_`-prefixed form wins when both are set) — the
 marketplace catalog and the Quick Start use the generic names.
 
+### Remote (HTTP) transport
+
+The default transport is stdio, where the MCP client owns the process and no
+network is involved. Set `CPERSONA_TRANSPORT=streamable-http` to serve over HTTP
+instead — one server, several clients, reachable over a network.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_TRANSPORT` | `stdio` | `stdio`, or `streamable-http` to serve over HTTP |
+| `CPERSONA_HTTP_HOST` | `127.0.0.1` | Bind address |
+| `CPERSONA_HTTP_PORT` | `8402` | Bind port |
+| `CPERSONA_AUTH_TOKEN` | *(unset)* | Bearer token required on every request |
+| `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP` | `false` | Run the HTTP transport with no authentication at all |
+
+**A loopback bind is not a security boundary.** Tunnels (cloudflared, ngrok),
+reverse proxies, `kubectl port-forward` and published container ports all forward
+to `127.0.0.1`, so binding there says nothing about who can reach the port. Every
+tool is exposed to whoever can — including `delete_agent_data` and the
+file-reading/writing `export_memories` / `import_memories`. Set
+`CPERSONA_AUTH_TOKEN` whenever the process is not something only you can talk to.
+
+Since v2.5.3 the server enforces that: with `CPERSONA_TRANSPORT=streamable-http`
+and no `CPERSONA_AUTH_TOKEN`, it refuses to start. **If you are upgrading from
+2.5.2 or earlier and run the HTTP transport without a token, it will not start**
+— set `CPERSONA_AUTH_TOKEN`, or set `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true` to
+state that you really do want no authentication (local development only).
+Earlier versions allowed an unauthenticated loopback bind and logged that it was
+"bound to loopback only", which read as an all-clear and was not one.
+
 ### Recall fusion mode (`CPERSONA_RECALL_MODE`)
 
 - **`rrf`** (default) — Reciprocal Rank Fusion: merges the vector + FTS channels by

@@ -1409,9 +1409,17 @@ registry.auto_tool(
 # Streamable HTTP transport (Bearer auth, CORS)
 # =============================================================================
 
-# Hosts that only accept connections from the local machine. An unauthenticated
-# bind to one of these is a local-dev convenience, not a network exposure.
+# Addresses that belong to the local machine. Note what this set does NOT mean:
+# binding here does not make the server unreachable from the network. A tunnel
+# (cloudflared, ngrok), a reverse proxy, `kubectl port-forward`, or a published
+# Docker port all forward to a loopback address. The set is only used to tell a
+# local peer from a remote one when a request actually arrives.
 _LOOPBACK_HTTP_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+# Headers a reverse proxy or tunnel adds on the way in. Their presence is
+# evidence that the request did not originate on this machine, whatever the
+# socket peer says.
+_FORWARDED_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "cf-connecting-ip")
 
 
 class BearerTokenMiddleware:
@@ -1424,6 +1432,34 @@ class BearerTokenMiddleware:
     def __init__(self, app, auth_token: str = ""):
         self.app = app
         self.auth_token = auth_token
+        self._exposure_warned = False
+
+    def _warn_once_if_remotely_reached(self, request) -> None:
+        """Report observed reachability while running without authentication.
+
+        The startup guard can only reason about the bind address, and a bind
+        address does not determine who can reach the process. An arriving
+        request does: a forwarding header, or a peer that is not this machine,
+        is proof that something outside the host is talking to an
+        unauthenticated server. Warn once per process — this is a standing
+        condition, not a per-request event, and one line per request would bury
+        it in the very log an operator is scanning.
+        """
+        if self._exposure_warned:
+            return
+        via = next((h for h in _FORWARDED_HEADERS if h in request.headers), "")
+        peer = (request.scope.get("client") or ("", 0))[0]
+        remote_peer = bool(peer) and peer not in _LOOPBACK_HTTP_HOSTS
+        if not via and not remote_peer:
+            return
+        self._exposure_warned = True
+        logger.warning(
+            "CPersona is serving requests that reach it from outside this machine "
+            "while UNAUTHENTICATED (%s). Every tool is callable by whoever can reach "
+            "this endpoint, including delete_agent_data and export/import file access. "
+            "Set CPERSONA_AUTH_TOKEN and restart.",
+            f"proxy header {via!r}" if via else f"peer {peer}",
+        )
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -1433,6 +1469,8 @@ class BearerTokenMiddleware:
         if request.method == "OPTIONS":
             await self.app(scope, receive, send)
             return
+        if not self.auth_token:
+            self._warn_once_if_remotely_reached(request)
         if self.auth_token:
             header = request.headers.get("authorization", "")
             token = header[7:] if header.startswith("Bearer ") else ""
@@ -1451,30 +1489,56 @@ class BearerTokenMiddleware:
         await self.app(scope, receive, send)
 
 
-def _assert_safe_http_bind(auth_token: str, host: str) -> None:
-    """Fail closed before the HTTP transport binds (bug-017).
+def _assert_safe_http_bind(
+    auth_token: str, host: str, *, allow_unauthenticated: bool | None = None
+) -> None:
+    """Fail closed before the HTTP transport binds (bug-017, reworked in 2.5.3).
 
     ``auth_token`` defaults to '' and ``BearerTokenMiddleware`` only enforces
-    credentials when it is truthy, so an unset token turns auth into a no-op.
-    Combined with a public bind that silently exposes every tool — including
-    ``delete_agent_data`` and the file-reading/writing ``import``/``export`` —
-    to the whole network. Refuse to start an unauthenticated server on a
-    non-loopback interface; a loopback bind (the default) stays usable for local
-    development but is logged loudly so the missing auth is never a surprise.
+    credentials when it is truthy, so an unset token turns auth into a no-op,
+    leaving every tool — including ``delete_agent_data`` and the
+    file-reading/writing ``import``/``export`` — callable by anyone who can
+    reach the port.
+
+    Until 2.5.3 this guard decided using the bind address: a non-loopback bind
+    without a token was refused, a loopback bind was allowed with a warning
+    saying it was "bound to loopback only". That premise does not hold. A
+    tunnel, a reverse proxy, ``kubectl port-forward``, or a published container
+    port all forward to loopback, so a loopback bind can be world-reachable —
+    and the reassuring wording is what let this deployment run publicly
+    reachable and unauthenticated for 13 days without anyone noticing. The
+    guard believed it was failing closed while it was failing open.
+
+    So the bind address no longer decides anything. Without a token the server
+    refuses to start, wherever it binds. Local development that genuinely wants
+    no auth opts in explicitly via ``CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true``,
+    which states the intent that an address never could. ``host`` is still taken
+    so the error can name what was being attempted; it is not part of the
+    decision. ``allow_unauthenticated`` is read from the environment when not
+    passed — it is a parameter so tests can drive both branches directly.
     """
     if auth_token:
         return
-    if host not in _LOOPBACK_HTTP_HOSTS:
+    if allow_unauthenticated is None:
+        allow_unauthenticated = (
+            os.environ.get("CPERSONA_ALLOW_UNAUTHENTICATED_HTTP", "false").lower() == "true"
+        )
+    if not allow_unauthenticated:
         raise SystemExit(
             f"CPersona: refusing to start the HTTP transport on {host!r} without "
-            "CPERSONA_AUTH_TOKEN. An unauthenticated non-loopback bind exposes every "
-            "tool (delete_agent_data, export/import file access) to the network. Set "
-            "CPERSONA_AUTH_TOKEN, or set CPERSONA_HTTP_HOST to a loopback address "
-            "(127.0.0.1) for local-only use."
+            "CPERSONA_AUTH_TOKEN. Every tool (delete_agent_data, export/import file "
+            "access) would be callable without credentials by anything that can reach "
+            "the port — and a loopback bind does not mean nothing can: tunnels, reverse "
+            "proxies, port-forwards and published container ports all forward to it. "
+            "Set CPERSONA_AUTH_TOKEN. If you really want no authentication (local "
+            "development only), set CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true to say so."
         )
     logger.warning(
-        "CPERSONA_AUTH_TOKEN is unset — the HTTP transport is UNAUTHENTICATED "
-        "(bound to loopback %s only). Set CPERSONA_AUTH_TOKEN to require a bearer token.",
+        "CPERSONA_ALLOW_UNAUTHENTICATED_HTTP is set — the HTTP transport on %s is "
+        "UNAUTHENTICATED and every tool is callable without credentials. Binding to a "
+        "loopback address does not contain this: tunnels, reverse proxies and "
+        "port-forwards reach it. Use this for local development only; set "
+        "CPERSONA_AUTH_TOKEN anywhere else.",
         host,
     )
 

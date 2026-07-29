@@ -93,6 +93,22 @@ Certification and EOL dates are recorded in this table as they occur.
 
 ## Known issues
 
+- **v2.5.2 and earlier — the HTTP transport starts unauthenticated on a loopback
+  bind (bug-198, HIGH).** With `CPERSONA_TRANSPORT=streamable-http` and no
+  `CPERSONA_AUTH_TOKEN`, these versions refuse to start only on a *non-loopback*
+  bind. A loopback bind starts and logs that it is "bound to loopback 127.0.0.1
+  only" — which reads as an all-clear, and is not one. **A loopback bind does not
+  bound reachability**: tunnels (cloudflared, ngrok), reverse proxies,
+  `kubectl port-forward` and published container ports all forward to
+  `127.0.0.1`. If any of those sits in front of the process, every tool is
+  callable with no credentials by anyone who can reach the front door, including
+  `delete_agent_data` and the file-reading/writing `export_memories` /
+  `import_memories`. **If you serve CPersona over HTTP, set
+  `CPERSONA_AUTH_TOKEN` now** — the stdio transport is unaffected, and so is any
+  HTTP deployment that already sets a token. Fixed in v2.5.3, which refuses to
+  start without a token wherever it binds; see [README](README.md#remote-http-transport)
+  for the migration if you are deliberately running without authentication.
+
 - **v2.5.2 and earlier — `check_health` reports `degraded` for memories stored
   without a source (bug-187, MEDIUM).** `store` accepts an omitted or null
   `source` and records it as the anonymous `{}`; that is documented, supported,
@@ -151,4 +167,4 @@ diagnosis already exists and may already be fixed in a later release.
 **Security vulnerabilities are the exception.** Do not open a public issue for
 them; follow [SECURITY.md](SECURITY.md) instead.
 
-*Last updated: 2026-07-20*
+*Last updated: 2026-07-29*
