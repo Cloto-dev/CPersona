@@ -81,6 +81,74 @@ _fused_gate_signal: str | None = None
 _agent_betas: dict[str, float] = {}
 
 
+# --- calibration authority (bug-189 follow-up) ------------------------------
+#
+# The sidecar is written by merging the dicts above over the stored file, so the
+# writer has to tell two identical-looking absences apart:
+#
+#   not authoritative   the dict has no entry because this process never learned
+#                       one. The stored entry MUST be carried forward, or
+#                       calibrating one agent deletes every other agent's
+#                       threshold, gate and beta from the file (bug-189).
+#   authoritative       the dict has no entry because this process REMOVED it.
+#                       The stored entry MUST be dropped, or set_recall_precision's
+#                       clear (and delete_agent_data's purge) come back on the next
+#                       restart and the ``cleared: true`` the tool returned was a lie.
+#
+# A process becomes authoritative for an entry by loading it (the startup restore
+# read the whole payload) or by writing it (a measurement, an override, a purge).
+#
+# Authority is tracked per AXIS, not per agent, because the two are genuinely
+# independent: ensure_calibrated_on_startup deliberately preloads agent_betas
+# while refusing to preload the thresholds and gates it is about to re-measure
+# (bug-184), so a process legitimately owns an agent's beta while knowing nothing
+# about that same agent's threshold. Collapsing the axes would make that boot drop
+# stored thresholds it never looked at.
+_CALIBRATION_AGENT_AXES = ("agent_thresholds", "agent_fused_gates", "agent_betas")
+_CALIBRATION_GLOBAL_AXES = ("global_threshold", "global_fused_gate", "fused_gate_signal")
+
+_calibration_authority: dict[str, set[str]] = {axis: set() for axis in _CALIBRATION_AGENT_AXES}
+_global_calibration_authority: set[str] = set()
+
+
+def _claim_agent_calibration(agent_id: str, *axes: str) -> None:
+    """Record that this process owns *agent_id*'s entry on each named per-agent axis.
+
+    An unknown axis raises ``KeyError`` on the spot: a silently mistyped axis would
+    leave the entry non-authoritative forever, which reads as "carry the stored
+    value" — i.e. a deletion that never reaches disk, the exact failure this
+    bookkeeping exists to prevent.
+    """
+    for axis in axes:
+        _calibration_authority[axis].add(agent_id)
+
+
+def _release_agent_calibration(agent_id: str, *axes: str) -> None:
+    """Give up ownership of *agent_id*'s entry on each named per-agent axis.
+
+    Used when a write is rolled back to a state this process never loaded: after
+    the rollback the dict's silence means "unknown" again, so the stored entry must
+    be carried rather than dropped.
+    """
+    for axis in axes:
+        _calibration_authority[axis].discard(agent_id)
+
+
+def _claim_global_calibration(*axes: str) -> None:
+    """Record that this process owns the named global calibration axes."""
+    for axis in axes:
+        if axis not in _CALIBRATION_GLOBAL_AXES:
+            raise KeyError(axis)
+        _global_calibration_authority.add(axis)
+
+
+def _reset_calibration_authority() -> None:
+    """Forget every claim — the companion of clearing the dicts above (tests)."""
+    for owned in _calibration_authority.values():
+        owned.clear()
+    _global_calibration_authority.clear()
+
+
 def _get_vector_threshold(agent_id: str) -> float:
     """Return the per-agent threshold when available, otherwise the global default."""
     return _agent_thresholds.get(agent_id, config.VECTOR_MIN_SIMILARITY)
