@@ -70,12 +70,33 @@ async def do_get_profile(agent_id: str) -> dict:
 
 
 async def do_update_profile(agent_id: str, profile: str = "") -> dict:
-    """Update agent profile with pre-computed content."""
+    """Update agent profile with pre-computed content.
+
+    bug-188: the profile write used to be the one text path with no bounding at
+    all — no sanitisation, no cap, and a raw truthiness test for "empty". Two
+    consequences, both silent. A whitespace-only profile (``"   "``) is truthy,
+    so it overwrote a useful profile with blanks and reported
+    ``profiles_updated: 1``: destruction reported as success. And an arbitrarily
+    large profile was stored verbatim, then injected into every recall response
+    through the id=-1 sentinel row, which bypasses the scoring gate and the
+    preview trimming that bound every other row.
+
+    Both now go through the same seam ``store`` uses. Text that sanitises to
+    empty is refused as the no-op it should always have been (``skipped``, with
+    a reason, rather than a destructive write), and oversized text is truncated
+    with the flag the caller needs to know it happened. Note this bounds the
+    write path only — a profile stored oversized by an earlier version stays
+    that size until it is rewritten.
+    """
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "profiles_updated": 0}, "update_profile")
 
     if not profile:
-        return {"ok": True, "profiles_updated": 0}
+        return {"ok": True, "profiles_updated": 0, "reason": "empty profile"}
+
+    profile, truncated = sanitize_content_with_flag(profile)
+    if not profile:
+        return {"ok": True, "profiles_updated": 0, "reason": "empty after sanitization"}
 
     # bug-042/043: transaction() serialises the write+commit behind the shared lock
     # so this commit cannot flush a concurrent import/merge's partial transaction.
@@ -88,7 +109,10 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
                    updated_at = excluded.updated_at""",
             (agent_id, profile),
         )
-    return {"ok": True, "profiles_updated": 1}
+    result = {"ok": True, "profiles_updated": 1}
+    if truncated:
+        result["truncated"] = True
+    return result
 
 
 async def do_list_memories(agent_id: str, limit: int, project_id: str | None = None) -> dict:
@@ -639,6 +663,42 @@ def _calibration_sidecar_path() -> str:
     return config.DB_PATH + ".calibration.json"
 
 
+def _stored_agent_maps_to_carry(embedding_dim: int) -> dict[str, dict]:
+    """Per-agent sidecar entries this process did not measure but must not drop.
+
+    bug-189: the sidecar is written as a snapshot of process state
+    (``dict(vector._agent_thresholds)`` and friends), so it records only the
+    agents the writing process happens to hold. Whenever the startup restore did
+    not run — ``AUTO_CALIBRATE`` on, a stale-fingerprint boot, or a bare
+    ``calibrate_threshold`` call early in a process — calibrating one agent
+    rewrites the file without every other agent's threshold, gate and beta. The
+    loss is silent: the next start restores the truncated sidecar and the missing
+    agents fall back to the global default. No error, just quietly wrong recall
+    breadth for agents nobody touched.
+
+    So carry the stored entries forward. The caller overlays what it measured on
+    top, because a fresh measurement is the better value for an agent this
+    process actually calibrated.
+
+    Returns ``{}`` when the stored payload must NOT be carried — a different
+    embedding dimension or scoring version means those numbers describe a
+    quantity the runtime no longer produces, which is exactly what bug-184
+    refuses to restore. Preserving them here would launder them back in through
+    the write path after the read path declined them.
+    """
+    state = _load_calibration_state()
+    if not state:
+        return {}
+    if state.get("embedding_dim") != embedding_dim:
+        return {}
+    if state.get("scoring_version") != SCORING_VERSION:
+        return {}
+    return {
+        key: dict(state.get(key) or {})
+        for key in ("agent_thresholds", "agent_fused_gates", "agent_betas")
+    }
+
+
 def _save_calibration_state(
     embedding_dim: int,
     embedding_model: str,
@@ -1063,15 +1123,23 @@ async def do_calibrate_threshold(
     # bug-095: surface a failed sidecar write — the in-memory calibration applied,
     # but a restart would restore the PREVIOUS sidecar, so the caller must not be
     # told the save was durable.
+    # bug-189: overlay this process's measurements on the stored per-agent
+    # entries instead of replacing them, so calibrating one agent cannot silently
+    # delete the thresholds of agents this process never loaded. The helper
+    # returns {} when the stored numbers are stale, so nothing invalid survives.
+    carried = _stored_agent_maps_to_carry(embedding_dim)
     sidecar_persisted = _save_calibration_state(
         embedding_dim,
         config.EMBEDDING_MODEL,
         config.VECTOR_MIN_SIMILARITY,
-        dict(vector._agent_thresholds),
+        {**carried.get("agent_thresholds", {}), **dict(vector._agent_thresholds)},
         global_fused_gate=vector._global_fused_gate,
-        agent_fused_gates=dict(vector._agent_fused_gates),
+        agent_fused_gates={
+            **carried.get("agent_fused_gates", {}),
+            **dict(vector._agent_fused_gates),
+        },
         fused_gate_signal=vector._fused_gate_signal,
-        agent_betas=dict(vector._agent_betas),
+        agent_betas={**carried.get("agent_betas", {}), **dict(vector._agent_betas)},
     )
 
     result = {

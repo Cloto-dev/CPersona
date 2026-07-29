@@ -124,10 +124,11 @@ Certification and EOL dates are recorded in this table as they occur.
   `severity_summary` rather than `status` alone: an `invalid_source_type`
   finding whose count matches your anonymous-source rows is this, not a real
   defect. Attributed writes (`source` with a `type` of `User` / `Agent` /
-  `System`) are unaffected. Tracked as bug-187 in `qa/issue-registry.json`; the
-  fix is queued for the next patch release, because correcting a health verdict
-  changes behaviour and does not belong in a release already through its
-  promotion gate.
+  `System`) are unaffected. **Fixed in v2.5.3** — the anonymous shapes are no
+  longer counted as type defects, so an unattributed corpus reports `healthy`,
+  while a source that claims a producer and gets the contract wrong is still
+  reported. No schema change and no data is rewritten; upgrading is enough.
+  Details: `qa/issue-registry.json` (bug-187).
 
 - **v2.4.39 and earlier — vector recall scan window too narrow (bug-085,
   HIGH).** The vector retriever ranked only the newest

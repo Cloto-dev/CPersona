@@ -2737,11 +2737,13 @@
       "discovered": "2026-07-29T00:00:00Z",
       "version": "2.5.1",
       "file": "cpersona/checks.py",
-      "pattern": "OR json_extract\\(source, '\\$\\.type'\\) IS NULL",
+      "pattern": "invalid_source_type_where",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "config-blind-maintenance",
-      "fix_sketch": "Teach the check the storage policy: a json_valid source with no $.type and no other keys ({}) is the documented anonymous form, not corruption — exclude it from the invalid count (or count it under a separate informational anonymous_sources stat). Reclassification flips existing strict gates, so this ships in 2.5.3 as a deliberate cut, not in the 2.5.2 final."
+      "fix_sketch": "Teach the check the storage policy: a json_valid source with no $.type and no other keys ({}) is the documented anonymous form, not corruption — exclude it from the invalid count (or count it under a separate informational anonymous_sources stat). Reclassification flips existing strict gates, so this ships in 2.5.3 as a deliberate cut, not in the 2.5.2 final.",
+      "fix_note": "v2.5.3: the predicate moved into checks.invalid_source_type_where() — one definition for its two callers (the COUNT that reports and the SELECT the fixer repairs from), so they cannot drift — and it now excludes the anonymous shapes: an empty JSON object and a stored JSON null. Those are what the write path normalises an omitted/null source to, they are documented and supported, and normalize_source correctly refuses to invent a discriminator for them — so counting them made status=degraded permanent and unfixable. An object that has keys but no recognised $.type ({'id':'x'}, {'type':'assistant'}) is still counted: that claimed a producer and got the contract wrong. Regression: tests/test_253_source_type_verdict.py pins both directions plus the mapped+unmapped+locked==count reconciliation that exposes a fixer drift. Mutation-checked: removing the exclusion, over-broadening it to every type-less object, and reverting the fixer's SELECT to the inline clause are each killed.",
+      "fixed_in": "2.5.3"
     },
     {
       "id": "bug-188",
@@ -2750,11 +2752,13 @@
       "discovered": "2026-07-29T00:00:00Z",
       "version": "2.5.1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "if not profile:",
+      "pattern": "sanitize_content_with_flag\\(profile\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "fail-open-write-path",
-      "fix_sketch": "Apply the store/update_memory treatment: sanitize first, reject sanitize-then-empty (whitespace no longer destroys a profile), cap at MAX_CONTENT_LENGTH with a truncated flag, and extend check_oversized_content to the profiles table. Correct the memory_handlers.py:1706 comment in the 2.5.2 final; the behavioral fix ships in 2.5.3."
+      "fix_sketch": "Apply the store/update_memory treatment: sanitize first, reject sanitize-then-empty (whitespace no longer destroys a profile), cap at MAX_CONTENT_LENGTH with a truncated flag, and extend check_oversized_content to the profiles table. Correct the memory_handlers.py:1706 comment in the 2.5.2 final; the behavioral fix ships in 2.5.3.",
+      "fix_note": "v2.5.3: do_update_profile goes through the same seam as store — sanitize_content_with_flag — so a profile that sanitises to empty is refused as a no-op with a reason instead of blanking a useful profile while reporting profiles_updated:1, and an oversized profile is truncated to MAX_CONTENT_LENGTH with truncated:true rather than being stored verbatim and injected whole into every recall response via the id=-1 sentinel. RESIDUAL: this bounds the write path only. A profile stored oversized by an earlier version keeps its size until it is rewritten, and check_oversized_content still scans memories only, so there is no detector for one. Regression: tests/test_253_silent_failures.py.",
+      "fixed_in": "2.5.3"
     },
     {
       "id": "bug-189",
@@ -2763,12 +2767,14 @@
       "discovered": "2026-07-29T00:00:00Z",
       "version": "2.4.29",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "agent_fused_gates=dict",
+      "pattern": "_stored_agent_maps_to_carry",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration-staleness",
       "fix_sketch": "Merge-on-save: _save_calibration_state reads the existing sidecar and overlays only the fields this calibration actually measured (the calibrated agent's threshold/gate, the global threshold when scope is global, the fingerprints), leaving entries for agents this process never touched intact. Same temp-file + os.replace write (bug-095). Ships in 2.5.3 — the write path is shared by every calibration caller, so it wants its own regression set rather than a ride-along in the 2.5.2 gate work.",
-      "note": "Filed 2026-07-29 out of the bug-184 review: it is why deep_calibration_staleness's stale_scoring_version hint says 'restart the server' rather than 'run calibrate_threshold' — that status fires precisely in the not-restored state, where a single-agent calibration would truncate the sidecar. The bug-184 fix narrows the exposure: the startup guard now preloads agent_betas from the existing sidecar on EVERY path that recalibrates without restoring (stale fingerprint, dimension change, and AUTO_CALIBRATE alike — the last one wipes them on every boot, not just an upgrade boot), and it recalibrates every agent in one pass. The remaining window is a manual calibrate_threshold run before, or without, a successful startup guard — the betas survive that too now, but the other agents' thresholds and gates do not."
+      "note": "Filed 2026-07-29 out of the bug-184 review: it is why deep_calibration_staleness's stale_scoring_version hint says 'restart the server' rather than 'run calibrate_threshold' — that status fires precisely in the not-restored state, where a single-agent calibration would truncate the sidecar. The bug-184 fix narrows the exposure: the startup guard now preloads agent_betas from the existing sidecar on EVERY path that recalibrates without restoring (stale fingerprint, dimension change, and AUTO_CALIBRATE alike — the last one wipes them on every boot, not just an upgrade boot), and it recalibrates every agent in one pass. The remaining window is a manual calibrate_threshold run before, or without, a successful startup guard — the betas survive that too now, but the other agents' thresholds and gates do not.",
+      "fix_note": "v2.5.3: do_calibrate_threshold overlays its measurements on the stored per-agent maps (_stored_agent_maps_to_carry) instead of replacing the file with process state, so calibrating one agent no longer deletes the thresholds, gates and betas of agents this process never loaded. The carry is gated on the stored payload still being valid for this runtime — same embedding_dim AND same scoring_version — because bug-184 declines to RESTORE stale measurements and the write path must not launder them back in. _purge_agent_calibration deliberately does NOT carry (it rewrites the payload it just read); carrying there would make dropping an agent impossible, and a test pins that. Regression: tests/test_253_silent_failures.py.",
+      "fixed_in": "2.5.3"
     },
     {
       "id": "bug-190",
