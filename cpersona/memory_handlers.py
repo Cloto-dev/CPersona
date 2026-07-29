@@ -1775,7 +1775,14 @@ async def do_archive_episode(
     # Same signal do_store gives for capped content — and, since bug-175, the same
     # definition: the flag reports whether the cap CUT, not whether the caller's
     # raw string (annotation included) happened to exceed it.
-    if sanitize_content_with_flag(summary)[1] or sanitize_content_with_flag(keywords)[1]:
+    #
+    # bug-195: the isinstance guard has to exist HERE as well as in
+    # _prepare_episode_row. This line runs in do_archive_episode's own scope, so
+    # it still holds the CALLER's original keywords — the prepare's coercion is
+    # local to the prepare. Guarding only there would move the opaque TypeError
+    # from the row build to this response line, after the episode was committed.
+    keywords_truncated = isinstance(keywords, str) and sanitize_content_with_flag(keywords)[1]
+    if sanitize_content_with_flag(summary)[1] or keywords_truncated:
         result["truncated"] = True
     return result
 
@@ -1811,7 +1818,14 @@ async def _prepare_episode_row(
     summary = _sanitize_content(summary) if isinstance(summary, str) else ""
     if not summary:
         raise ValueError("summary is required to archive an episode")
-    keywords = _sanitize_content(keywords)
+    # bug-195: keywords gets the same isinstance guard as summary above. A caller
+    # that hands a list (the natural mistake — the tool's own description talks
+    # about keywords in the plural) hit an opaque TypeError from the regex inside
+    # _sanitize_content instead of the structured refusal path. Coerce rather than
+    # raise: unlike summary, keywords is optional, so an unusable value is simply
+    # no keywords. The sibling guard on the response line in do_archive_episode is
+    # required too — that scope never sees this local rebinding.
+    keywords = _sanitize_content(keywords) if isinstance(keywords, str) else ""
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)
 
