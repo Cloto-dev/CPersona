@@ -1,0 +1,45 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Cloto-dev/cpersona",
+  "title": "CPersona",
+  "description": "Persistent AI memory in one SQLite file: 3-layer hybrid search, confidence scoring, 29 tools.",
+  "version": "2.5.2",
+  "websiteUrl": "https://github.com/Cloto-dev/cpersona#readme",
+  "repository": {
+    "url": "https://github.com/Cloto-dev/cpersona",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "cpersona",
+      "version": "2.5.2",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CPERSONA_DB_PATH",
+          "description": "SQLite database path. Defaults to ./cpersona.db, which follows the client's working directory — set it explicitly to keep one memory across sessions.",
+          "default": "./cpersona.db"
+        },
+        {
+          "name": "CPERSONA_EMBEDDING_MODE",
+          "description": "Embedding mode: 'http' to use an embedding server for vector search, 'none' for lexical layers only.",
+          "default": "none"
+        },
+        {
+          "name": "CPERSONA_EMBEDDING_URL",
+          "description": "Embedding server endpoint, e.g. http://127.0.0.1:8401/embed. Required when CPERSONA_EMBEDDING_MODE=http."
+        },
+        {
+          "name": "CPERSONA_RECALL_MODE",
+          "description": "Recall fusion strategy: 'rrf' (default), 'rsf', or 'cascade'.",
+          "default": "rrf"
+        }
+      ]
+    }
+  ]
+}
