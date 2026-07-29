@@ -136,6 +136,22 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
         return None
 
 
+# bug-184: fingerprint of the scoring function below. The calibrated recall gate is an
+# operating point measured ON a specific score distribution, so it may only be restored
+# for the scoring function it was calibrated on — restoring it across a scoring change
+# gates a different quantity than was measured and silently over-filters. The calibration
+# sidecar stamps this string; ``ensure_calibrated_on_startup`` treats a mismatch (or an
+# absent key — every pre-2.5.2b2 sidecar) exactly like an embedding-dimension change and
+# forces recalibration.
+#
+# BUMP THIS whenever a change shifts the confidence/score distribution: the branch
+# structure of ``_compute_confidence``, its constants (COSINE_FLOOR/CEIL, the decay
+# rates), the episode penalty, or which rows reach scoring carrying a cosine at all. The
+# 2.5.2b2 cosine backfill (bug-155) is the first such change — it moved FTS-only rows off
+# the cosine-less ``sqrt(time_decay)`` branch, lowering their scores by construction.
+SCORING_VERSION = "252b2-cosine-backfill"
+
+
 def _compute_confidence(
     raw_cosine: float | None,
     timestamp_str: str,

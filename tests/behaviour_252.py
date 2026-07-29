@@ -1377,8 +1377,16 @@ async def _seed_bug155_backfill(ctx: Ctx) -> None:
     await db.commit()
 
 
+# The recorded result keeps ONE of the two seeded rows: the backfilled FTS-only row
+# falls below the quality gate and is dropped. That drop is designed behaviour for a
+# MIXED result and stays that way (bug-183 fix_note; the 2.6.0 membership-preserving
+# scoring redesign owns any demotion tier). Only an ALL-blocked result is rescued, by
+# the bug-183 `gate_fallback` path — which cannot fire here, because the vector-strong
+# row survives. The rescue itself is pinned in tests/test_gate_remediation.py rather
+# than by a new golden: a golden recorded after the change it guards agrees with the
+# code by construction (see the header of tests/test_equivalence_252.py).
 @scenario("recall-cosine-backfill", "#374",
-          "recall bug-155: FTS-only row whose stored blob is DISJOINT from the query gets a backfilled cosine (or is gated out) instead of out-scoring a real vector hit under CONFIDENCE_ENABLED",
+          "recall bug-155: FTS-only row whose stored blob is DISJOINT from the query gets a backfilled cosine (or is gated out) instead of out-scoring a real vector hit under CONFIDENCE_ENABLED — the drop recorded here is DESIGNED for a mixed result (bug-183); an all-blocked result is rescued instead by the gate_fallback path",
           seed=_seed_bug155_backfill)
 async def _(ctx):
     install_local(ctx)

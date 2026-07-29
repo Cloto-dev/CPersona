@@ -4369,7 +4369,7 @@
     "thresholds": {}
   },
   "recall-cosine-backfill": {
-    "covers": "recall bug-155: FTS-only row whose stored blob is DISJOINT from the query gets a backfilled cosine (or is gated out) instead of out-scoring a real vector hit under CONFIDENCE_ENABLED",
+    "covers": "recall bug-155: FTS-only row whose stored blob is DISJOINT from the query gets a backfilled cosine (or is gated out) instead of out-scoring a real vector hit under CONFIDENCE_ENABLED — the drop recorded here is DESIGNED for a mixed result (bug-183); an all-blocked result is rescued instead by the gate_fallback path",
     "db": {
       "episodes": [],
       "memories": [

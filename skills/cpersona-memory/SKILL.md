@@ -246,6 +246,14 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
   one policy choice.
 - **`calibrate_threshold(agent_id)`** — re-tune the vector threshold from the
   corpus (no labels needed) after the corpus changes a lot or recall feels off.
+  The calibration is fingerprinted to the scoring function and to the embedding
+  dimension; after an upgrade that changes either, the server recalibrates
+  itself at first boot (v2.5.2).
+- **`gate_fallback: true`** on a recall response (absent otherwise, v2.5.2) —
+  every candidate fell below the quality gate and the below-gate lexical
+  matches were returned instead of an empty result. Treat them as
+  low-confidence: likely for identifier/hash lookups whose exact match is
+  semantically distant from the query.
 
 ### Memory types
 

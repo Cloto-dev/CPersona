@@ -39,6 +39,7 @@ from cpersona.config import (
 )
 from cpersona.database import connection, read_snapshot, transaction
 from cpersona.utils import (
+    SCORING_VERSION,
     _clamp_limit,
     _try_parse_json,
     error_response,
@@ -384,6 +385,10 @@ def _purge_agent_calibration(agent_id: str) -> bool:
                 agent_fused_gates=state.get("agent_fused_gates") or {},
                 fused_gate_signal=state.get("fused_gate_signal"),
                 agent_betas=state.get("agent_betas") or {},
+                # bug-184: this rewrite drops one agent's entries, it does not
+                # re-measure anything — carry the stored fingerprint (None for a
+                # pre-2.5.2b2 sidecar) so the startup guard still sees the staleness.
+                scoring_version=state.get("scoring_version"),
             )
     return removed_cal
 
@@ -643,6 +648,7 @@ def _save_calibration_state(
     agent_fused_gates: dict | None = None,
     fused_gate_signal: str | None = None,
     agent_betas: dict | None = None,
+    scoring_version: str | None = SCORING_VERSION,
 ) -> bool:
     """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
 
@@ -658,10 +664,21 @@ def _save_calibration_state(
     and, with auto-calibration off, all agents silently fall back to the global
     default threshold). Returns False when persistence failed so callers can
     surface it instead of reporting the calibration as durably saved.
+
+    bug-184 (2.5.2): the payload also carries ``scoring_version`` — the embedding
+    fingerprint answers "was this measured on the same vectors?", the scoring
+    fingerprint answers "was it measured on the same score?". Additive and
+    rollback-safe: older code ignores the key, newer code reads its absence as stale.
+    It defaults to the live ``utils.SCORING_VERSION`` because every caller that
+    MEASURES thresholds measures them on the running scoring function; the one caller
+    that only REWRITES an existing payload (``_purge_agent_calibration``) passes the
+    stored value through, so dropping an agent cannot launder a stale sidecar into
+    looking freshly calibrated.
     """
     payload = {
         "embedding_dim": embedding_dim,
         "embedding_model": embedding_model,
+        "scoring_version": scoring_version,
         "global_threshold": global_threshold,
         "agent_thresholds": agent_thresholds,
         "global_fused_gate": global_fused_gate,
@@ -1285,15 +1302,24 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
     jina 768d -> bge-m3 1024d swap), even when ``AUTO_CALIBRATE`` is off. A stale
     threshold calibrated for a previous embedding model is a known cause of recall
     contamination. Returns a small status dict for logging.
+
+    bug-184 (2.5.2): a scoring-function change is the same staleness class as a
+    dimension change — the sidecar's thresholds were measured on a score distribution
+    the runtime no longer produces — so ``scoring_stale`` takes the identical path:
+    skip the restore, recalibrate even with ``AUTO_CALIBRATE`` off. An absent
+    ``scoring_version`` counts as stale: that is exactly the pre-2.5.2b2 sidecar the
+    cosine backfill invalidated. Both triggers are reported in the status dict; the
+    action names whichever fired (dimension first — it also implies new vectors).
     """
     state = _load_calibration_state()
     live_dim = await _corpus_embedding_dim()
     dim_changed = (
         state is not None and live_dim is not None and state.get("embedding_dim") != live_dim
     )
+    scoring_stale = state is not None and state.get("scoring_version") != SCORING_VERSION
 
     restored = False
-    if state and not dim_changed and not auto_calibrate:
+    if state and not dim_changed and not scoring_stale and not auto_calibrate:
         _restore_calibration_state(state)
         restored = True
         # A pre-v2.4.27 sidecar (or one never gate-calibrated) restores the vector
@@ -1306,8 +1332,45 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             return {"action": "restored", "embedding_dim": state.get("embedding_dim")}
         logger.info("Calibration sidecar has no recall-gate signal; calibrating the gate.")
 
-    if not restored and not (auto_calibrate or (on_model_change and (state is None or dim_changed))):
+    if not restored and not (
+        auto_calibrate
+        or (on_model_change and (state is None or dim_changed or scoring_stale))
+    ):
+        if scoring_stale:
+            # bug-184: not restoring is the safe half (a gate measured on another scoring
+            # function must not be applied), but with CALIBRATE_ON_MODEL_CHANGE off there
+            # is no repair either, and nothing else in the boot path says so. Without this
+            # line the condition is silent and permanent — every boot leaves the gate
+            # uncalibrated and every deep_check keeps reporting stale_scoring_version.
+            logger.warning(
+                "bug-184: calibration sidecar was written for scoring version %r, runtime "
+                "is %r, but recalibration is disabled by config (AUTO_CALIBRATE and "
+                "CALIBRATE_ON_MODEL_CHANGE both off). The stale gate is NOT applied; the "
+                "gate stays uncalibrated and deep_check will keep reporting "
+                "stale_scoring_version until calibration is enabled or run manually.",
+                state.get("scoring_version"),
+                SCORING_VERSION,
+            )
         return {"action": "noop"}
+
+    # bug-184 follow-on: skipping the restore drops the operator's knob-3 precision
+    # overrides along with the measurements, and the recalibration below then (a) measures
+    # every gate at the DEFAULT beta instead of the configured one and (b) persists an
+    # empty agent_betas — so the boot would silently and permanently delete a setting the
+    # operator chose. Betas are not measurements: they are policy INPUTS the measurement
+    # consumes (_calibrate_fused_gate reads _get_precision_beta), and neither a scoring
+    # change, an embedding change, nor auto-calibration invalidates a stated preference.
+    # Thresholds and gates are deliberately NOT preloaded here — those are exactly the
+    # stale measurements being re-derived.
+    #
+    # The condition is "we are about to recalibrate and nothing was restored", not a list
+    # of triggers: the three ways to get here (stale fingerprint, dimension change,
+    # AUTO_CALIBRATE) all bypass _restore_calibration_state, and AUTO_CALIBRATE is the
+    # worst of them — it wipes the overrides on EVERY boot, not just an upgrade one.
+    # Keying on the triggers would make the invariant hold or fail depending on an
+    # unrelated config flag.
+    if not restored and state is not None:
+        vector._agent_betas.update(state.get("agent_betas") or {})
 
     if dim_changed:
         logger.warning(
@@ -1315,6 +1378,14 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             "A stale threshold from a previous embedding model causes recall contamination.",
             state.get("embedding_dim"),
             live_dim,
+        )
+    if scoring_stale:
+        logger.warning(
+            "bug-184: calibration sidecar was written for scoring version %r, runtime is %r; "
+            "recalibrating. A gate restored across a scoring change gates a different "
+            "quantity than it was calibrated on and silently over-filters recall.",
+            state.get("scoring_version"),
+            SCORING_VERSION,
         )
 
     global_result = await do_calibrate_threshold(agent_id="")
@@ -1336,10 +1407,12 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         "action": (
             "gate_calibrated" if restored
             else "recalibrated" if dim_changed
+            else "recalibrated_scoring" if scoring_stale
             else "auto" if auto_calibrate
             else "initial"
         ),
         "dim_changed": dim_changed,
+        "scoring_stale": scoring_stale,
         "global_ok": bool(global_result.get("ok")),
         "agents": agents,
     }

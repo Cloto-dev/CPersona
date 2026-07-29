@@ -646,7 +646,10 @@ registry.auto_tool(
     "v2.5.2 additive: each scored message carries match_reason={signal, score, ...} where "
     "signal is the branch the ranking / quality gate keyed on (confidence > rsf > cosine > rrf) "
     "and the remaining keys (cosine / rrf / rsf) surface the internal per-retriever "
-    "contributions present on that row. Unscored rows (cascade FTS/keyword) omit match_reason.",
+    "contributions present on that row. Unscored rows (cascade FTS/keyword) omit match_reason. "
+    "A response carrying gate_fallback=true (absent otherwise) means every candidate fell below "
+    "the quality gate and the below-gate lexical matches were returned instead of an empty "
+    "result — treat them as low-confidence.",
     {
         "type": "object",
         "properties": {
@@ -740,7 +743,10 @@ registry.auto_tool(
     # checking that a memory was in fact dropped — claiming suppression happened
     # overstated it. It reports what CAN filter invisibly, not what did.
     "context_filter_only={roles:[...]} — those entries filtered the recall without "
-    "appearing in the output, whether or not they dropped a memory this time.",
+    "appearing in the output, whether or not they dropped a memory this time. "
+    "gate_fallback=true (absent otherwise) is forwarded from the underlying recall: every "
+    "candidate fell below the quality gate and the below-gate lexical matches were returned "
+    "instead of an empty result — treat them as low-confidence.",
     {
         "type": "object",
         "properties": {
