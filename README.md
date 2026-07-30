@@ -332,6 +332,16 @@ days, then reaches EOL. Current status: **2.4.x is the Stable line**
 > beyond a few hundred rows (bug-085; v2.4.38–v2.4.39 are the most affected —
 > the limit clamp closed the only workaround). Fixed in v2.4.40; upgrading is
 > strongly recommended. See [SUPPORT.md § Known issues](SUPPORT.md#known-issues).
+>
+> **Known issue (not fixed on this line):** with `CPERSONA_AUTH_TOKEN` unset,
+> all 2.4.x serve the HTTP transport unauthenticated on a loopback bind
+> (bug-198) — and a loopback bind does not limit reach, since tunnels, reverse
+> proxies, port-forwards and published container ports all forward to it.
+> v2.4.41 corrects the warnings and reports observed remote reach; it does not
+> change the behaviour. Enforcement is on the Current line (v2.5.3 refuses to
+> start without a token wherever it binds). **If you serve cpersona over HTTP,
+> set `CPERSONA_AUTH_TOKEN`.** See [SUPPORT.md §
+> Known issues](SUPPORT.md#known-issues).
 
 Full policy:
 [SUPPORT.md](SUPPORT.md) · specification:
