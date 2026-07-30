@@ -87,6 +87,41 @@ Certification and EOL dates are recorded in this table as they occur.
 
 ## Known issues
 
+- **All 2.4.x — an unauthenticated HTTP transport is allowed on a loopback bind
+  (bug-198, HIGH). Not fixed on this line; warned about.** When
+  `CPERSONA_AUTH_TOKEN` is unset, the Streamable HTTP transport refuses to start
+  on a non-loopback address but does start on a loopback one, serving every tool
+  — including `delete_agent_data` and the file-reading/writing
+  `export_memories` / `import_memories` — without credentials. A loopback bind
+  does not limit who can reach the port: tunnels (cloudflared, ngrok), reverse
+  proxies, `kubectl port-forward`, `ssh -L` and published container ports all
+  forward to 127.0.0.1, so such a deployment can be reachable from anywhere.
+  **What v2.4.41 changes is the description, not the behaviour**: the startup
+  warning no longer presents a loopback bind as containment, and the server now
+  warns once when a request actually arrives through a forwarding proxy or from
+  a remote peer while unauthenticated. It still starts, and it still serves
+  those requests. **Enforcement is on the Current line: v2.5.3 drops the bind
+  address from the decision and refuses to start without a token wherever it
+  binds** (opt out with `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true`). Behaviour
+  preservation is why this was not backported — see [SECURITY.md § What a
+  Stable fix may be](SECURITY.md#what-a-stable-fix-may-be). If you serve
+  cpersona over HTTP, set `CPERSONA_AUTH_TOKEN`; do not rely on the bind
+  address. Details: bug-198 in `qa/issue-registry.json`, which carries it as
+  `open` on this line — open by decision rather than by oversight, and the
+  entry records that decision. It also carries the advisory covering the
+  affected range across both lines: GHSA-64ff-m49g-qxm9.
+
+- **v2.4.40 and earlier — a fresh install fails to start against mcp 2.x.**
+  These releases declare `mcp>=1.26.0` with no upper bound. The MCP SDK
+  released 2.0.0 on 2026-07-28, which removed `Server.list_tools`; the tool
+  registry binds that at import time, so the server raises `AttributeError`
+  before it can start. Nothing is wrong with an existing environment — this
+  bites a *new* resolution, where a resolver takes the newest SDK it is allowed
+  to take. **v2.4.41 adds the `<2` bound**, so upgrading (or pinning
+  `mcp<2` yourself) is enough; no code or configuration changes. Migrating to
+  the 2.x request-handler API is a behaviour change and is tracked on the
+  Current line, not here.
+
 - **v2.4.39 and earlier — vector recall scan window too narrow (bug-085,
   HIGH).** The vector retriever ranked only the newest
   `min(MAX_MEMORIES, max(limit * 10, 100))` rows, so a default recall reached
@@ -101,4 +136,4 @@ Certification and EOL dates are recorded in this table as they occur.
   Upgrading is strongly recommended; no schema change is involved. Details:
   `qa/issue-registry.json` (bug-085).
 
-*Last updated: 2026-07-10*
+*Last updated: 2026-07-29*

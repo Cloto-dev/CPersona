@@ -1257,6 +1257,20 @@
       "category": "retrieval-window",
       "fixed_in": "2.4.40",
       "fix_note": "Scan breadth decoupled from response size: _search_vector now fetches and ranks the newest MAX_MEMORIES rows regardless of the caller's limit, and the MAX_MEMORIES default is raised 500 -> 10000 (CPERSONA_MAX_MEMORIES env for larger corpora, e.g. benchmarks). The bug-032 response clamp is unchanged and correct. The LIKE fallback needs no change: its LIMIT applies after the content predicate, capping matched rows rather than scanned rows, so old rows were always reachable there. test_scan_window.py pins both contracts (window decoupling, 10000 default, LIKE reachability)."
+    },
+    {
+      "id": "bug-198",
+      "summary": "(HIGH) The HTTP transport starts unauthenticated when CPERSONA_AUTH_TOKEN is unset and the bind is a loopback address. _assert_safe_http_bind refuses only a non-loopback bind, treating a loopback bind as containment; it is not one. Tunnels (cloudflared, ngrok), reverse proxies, kubectl port-forward, ssh -L and published container ports all forward to 127.0.0.1, so anything in front of the process makes every tool callable with no credentials, including delete_agent_data and the file-reading/writing export_memories / import_memories. The stdio transport is unaffected.",
+      "severity": "HIGH",
+      "discovered": "2026-07-19T00:00:00Z",
+      "version": "2.4.40",
+      "file": "cpersona/server.py",
+      "pattern": "if host not in _LOOPBACK_HTTP_HOSTS:",
+      "expected": "present",
+      "status": "open",
+      "category": "auth-guard-fails-open-on-bind-address",
+      "fix_sketch": "Drop the bind address from the decision, as the 2.5.x Current line does in 2.5.3: require CPERSONA_AUTH_TOKEN wherever the transport binds, and let a deployment that genuinely wants no authentication opt in explicitly via CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true. Deliberately NOT applied here: reversing a startup default would break the behaviour preservation the Stable line promises, so 2.4.x carries the disclosure instead of the enforcement.",
+      "note": "Open on this line by decision, not by oversight (2026-07-29). v2.4.41 corrects the wording that presented a loopback bind as containment (both the refusal and the unauthenticated-start warning) and adds _warn_once_if_remotely_reached, which reports observed reachability - a forwarding header or a non-local peer - without blocking the request. The control flow of this guard is unchanged, so the pattern above still matches. Enforcement lives in 2.5.3. Published as GHSA-64ff-m49g-qxm9 (High) on 2026-07-30, affected >= 2.4.34 < 2.5.3, patched 2.5.3 only - 2.4.41 is deliberately NOT listed as a patched version, because it does not enforce. Regression tests: test_v2441_bind_warning.py."
     }
   ]
 }

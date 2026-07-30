@@ -1,11 +1,17 @@
 [project]
 name = "cpersona"
-version = "2.4.40"
+version = "2.4.41"
 description = "CPersona — Persistent AI memory server with 3-layer hybrid search, confidence scoring, and 27 tools. MIT licensed."
 requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = [
-    "mcp>=1.26.0",
+    # Upper bound added in 2.4.41. mcp 2.0.0 (2026-07-28) removed
+    # Server.list_tools, which the vendored mcp_common registry binds at import
+    # time — so an unpinned install of this line raises AttributeError before
+    # the server can start. The floor was open-ended, which meant a resolver
+    # picked 2.0.0 the day it appeared. Migrating to the 2.x request-handler API
+    # is a behaviour change and belongs on the Current line, not on Stable.
+    "mcp>=1.26.0,<2",
     "aiosqlite>=0.20.0",
     "httpx>=0.27.0",
     "numpy>=1.24.0",
