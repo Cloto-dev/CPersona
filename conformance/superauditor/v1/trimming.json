@@ -1,0 +1,170 @@
+{
+  "standard": "SuperAuditor Standard v1",
+  "section": "5.2, 6 — trimming, honest caps, derived counts",
+  "note": "Each case is a pure function of (severity_map, per_kind_limit, detector_output). An implementation conforms when feeding detector_output through its own delivery path produces expect. Payload keys beyond kind are opaque here on purpose: the standard does not define them.",
+  "cases": [
+    {
+      "name": "empty",
+      "why": "No findings is a normal state, not an error. capped_kinds is present and empty.",
+      "severity_map": { "stale_pending": "info" },
+      "per_kind_limit": 5,
+      "detector_output": [],
+      "expect": {
+        "findings": [],
+        "total": 0,
+        "counts_by_kind": {},
+        "counts_by_severity": {},
+        "capped_kinds": []
+      }
+    },
+    {
+      "name": "below_cap",
+      "why": "Nothing is trimmed and nothing is reported as capped.",
+      "severity_map": { "stale_pending": "info", "duplicate_pending": "warn" },
+      "per_kind_limit": 5,
+      "detector_output": [
+        { "kind": "duplicate_pending", "task_id": 219 },
+        { "kind": "stale_pending", "task_id": 6 },
+        { "kind": "stale_pending", "task_id": 7 }
+      ],
+      "expect": {
+        "findings": [
+          { "kind": "duplicate_pending", "severity": "warn", "task_id": 219 },
+          { "kind": "stale_pending", "severity": "info", "task_id": 6 },
+          { "kind": "stale_pending", "severity": "info", "task_id": 7 }
+        ],
+        "total": 3,
+        "counts_by_kind": { "duplicate_pending": 1, "stale_pending": 2 },
+        "counts_by_severity": { "warn": 1, "info": 2 },
+        "capped_kinds": []
+      }
+    },
+    {
+      "name": "exactly_at_cap",
+      "why": "THE boundary case. A kind with exactly per_kind_limit findings is NOT capped. An implementation that infers capping from count == limit fails here.",
+      "severity_map": { "stale_pending": "info" },
+      "per_kind_limit": 3,
+      "detector_output": [
+        { "kind": "stale_pending", "task_id": 1 },
+        { "kind": "stale_pending", "task_id": 2 },
+        { "kind": "stale_pending", "task_id": 3 }
+      ],
+      "expect": {
+        "findings": [
+          { "kind": "stale_pending", "severity": "info", "task_id": 1 },
+          { "kind": "stale_pending", "severity": "info", "task_id": 2 },
+          { "kind": "stale_pending", "severity": "info", "task_id": 3 }
+        ],
+        "total": 3,
+        "counts_by_kind": { "stale_pending": 3 },
+        "counts_by_severity": { "info": 3 },
+        "capped_kinds": []
+      }
+    },
+    {
+      "name": "one_over_cap",
+      "why": "One row past the limit is the minimum evidence of truncation; the extra row is dropped and the kind is named.",
+      "severity_map": { "stale_pending": "info" },
+      "per_kind_limit": 3,
+      "detector_output": [
+        { "kind": "stale_pending", "task_id": 1 },
+        { "kind": "stale_pending", "task_id": 2 },
+        { "kind": "stale_pending", "task_id": 3 },
+        { "kind": "stale_pending", "task_id": 4 }
+      ],
+      "expect": {
+        "findings": [
+          { "kind": "stale_pending", "severity": "info", "task_id": 1 },
+          { "kind": "stale_pending", "severity": "info", "task_id": 2 },
+          { "kind": "stale_pending", "severity": "info", "task_id": 3 }
+        ],
+        "total": 3,
+        "counts_by_kind": { "stale_pending": 3 },
+        "counts_by_severity": { "info": 3 },
+        "capped_kinds": ["stale_pending"]
+      }
+    },
+    {
+      "name": "mixed_kinds_partial_cap",
+      "why": "Capping is per kind, not per response: one kind is truncated while another below the limit is untouched. Counts describe the returned set, never the true totals.",
+      "severity_map": {
+        "stale_pending": "info",
+        "duplicate_pending": "warn",
+        "accepted_lease_gone": "warn"
+      },
+      "per_kind_limit": 2,
+      "detector_output": [
+        { "kind": "duplicate_pending", "task_id": 219 },
+        { "kind": "stale_pending", "task_id": 1 },
+        { "kind": "stale_pending", "task_id": 2 },
+        { "kind": "stale_pending", "task_id": 3 },
+        { "kind": "accepted_lease_gone", "task_id": 40 },
+        { "kind": "accepted_lease_gone", "task_id": 41 },
+        { "kind": "accepted_lease_gone", "task_id": 42 }
+      ],
+      "expect": {
+        "findings": [
+          { "kind": "duplicate_pending", "severity": "warn", "task_id": 219 },
+          { "kind": "stale_pending", "severity": "info", "task_id": 1 },
+          { "kind": "stale_pending", "severity": "info", "task_id": 2 },
+          { "kind": "accepted_lease_gone", "severity": "warn", "task_id": 40 },
+          { "kind": "accepted_lease_gone", "severity": "warn", "task_id": 41 }
+        ],
+        "total": 5,
+        "counts_by_kind": {
+          "duplicate_pending": 1,
+          "stale_pending": 2,
+          "accepted_lease_gone": 2
+        },
+        "counts_by_severity": { "warn": 3, "info": 2 },
+        "capped_kinds": ["stale_pending", "accepted_lease_gone"]
+      }
+    },
+    {
+      "name": "interleaved_order_preserved",
+      "why": "Trimming keeps the first per_kind_limit of each kind in detector order, even when kinds interleave. Fixtures elsewhere depend on this determinism (standard 6).",
+      "severity_map": { "a_kind": "info", "b_kind": "warn" },
+      "per_kind_limit": 2,
+      "detector_output": [
+        { "kind": "a_kind", "n": 1 },
+        { "kind": "b_kind", "n": 1 },
+        { "kind": "a_kind", "n": 2 },
+        { "kind": "b_kind", "n": 2 },
+        { "kind": "a_kind", "n": 3 },
+        { "kind": "b_kind", "n": 3 }
+      ],
+      "expect": {
+        "findings": [
+          { "kind": "a_kind", "severity": "info", "n": 1 },
+          { "kind": "b_kind", "severity": "warn", "n": 1 },
+          { "kind": "a_kind", "severity": "info", "n": 2 },
+          { "kind": "b_kind", "severity": "warn", "n": 2 }
+        ],
+        "total": 4,
+        "counts_by_kind": { "a_kind": 2, "b_kind": 2 },
+        "counts_by_severity": { "info": 2, "warn": 2 },
+        "capped_kinds": ["a_kind", "b_kind"]
+      }
+    },
+    {
+      "name": "unmapped_kind_falls_back_to_info",
+      "why": "A probe that reached production without a severity entry reports as the weakest severity; it must not be able to manufacture an alarm (standard 4, rule 2). Implementations with no fallback may skip this case, but must fail a test at the registry level instead (C6).",
+      "severity_map": { "stale_pending": "info" },
+      "per_kind_limit": 5,
+      "detector_output": [
+        { "kind": "stale_pending", "task_id": 6 },
+        { "kind": "brand_new_probe", "task_id": 7 }
+      ],
+      "expect": {
+        "findings": [
+          { "kind": "stale_pending", "severity": "info", "task_id": 6 },
+          { "kind": "brand_new_probe", "severity": "info", "task_id": 7 }
+        ],
+        "total": 2,
+        "counts_by_kind": { "stale_pending": 1, "brand_new_probe": 1 },
+        "counts_by_severity": { "info": 2 },
+        "capped_kinds": []
+      }
+    }
+  ]
+}
