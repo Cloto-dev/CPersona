@@ -42,6 +42,8 @@ Two tracks are measured:
 | `LMEB_DIR` | `~/lmeb` (launcher) | LMEB framework + `eval_data` location |
 | `EMB_CACHE_DIR` | `~/lmeb/embcache` (launcher) | pre-computed embedding cache; makes re-runs encode-free |
 | `EMB_CACHE_MODEL` | `$MODEL_PATH` | model label for cache keys |
+| `EMB_BUDGET_SQ` | `6.5e7` | token-budget batching: sequence-squared budget per batch. Lower it to survive MPS OOM on large models (see "Wall-clock cost") |
+| `EMB_MAX_BATCH` | `128` | token-budget batching: hard cap on batch size. Lower it together with `EMB_BUDGET_SQ` |
 
 **Embedding cache — never share a cache directory between models.** Cache
 keys include the model label, but a misconfigured label silently serves
@@ -77,6 +79,64 @@ model (e.g. `embcache`, `embcache_minilm`) is the safe pattern.
    equivalence gate and monitored during runs via `--selfcheck_rate`
    sampling. It is safe for exploration and regression hunting; for final
    published numbers, prefer a run without `--fast`.
+
+   **Two full runs cannot validate the accelerator.** Diffing a `--fast`
+   run against a no-accel run of the same model does not isolate the
+   accelerator, because calibration item 3 puts ±1–2 pt of run-to-run
+   noise on every task mean — the accelerator's effect and the noise
+   arrive in the same number and cannot be separated afterwards. Only
+   `mps_accel_equivalence_gate.py` can decide it: it holds one
+   in-process calibration state across both code paths, so the
+   randomness is shared instead of resampled. Run the gate for the
+   verdict; a fast-vs-no-accel run diff is a sanity check on top of it,
+   never a substitute.
+5. **Verify coverage, not the exit code.** `benchmark_lmeb.py` catches
+   per-task exceptions and continues, so the process exits 0 after
+   partial runs. Always count what actually landed:
+   `jq '.per_task | length' <results>/_summary.json` — it must be 22.
+   Anything less means the per-model mean is computed over a different
+   task subset than the model you are comparing it to, which silently
+   shifts the comparison. When subsets differ, re-run the missing tasks
+   (`--tasks A,B,C` reuses the cache for the rest) or restrict every
+   model to the intersection before comparing.
+
+## Wall-clock cost (measured 2026-08-03..06, Apple M5, 22 tasks)
+
+Budget the run before starting it — a six-model sweep is days, not hours.
+
+| Stage | Per model | Notes |
+| --- | --- | --- |
+| Track A, 33M–568M models | 0.4–7.7 h | dominated by corpus encode; the cache makes re-runs far cheaper |
+| Track A, 0.6B models | up to 17 h | encode-bound, and the tasks most likely to OOM (below) |
+| Track B, no acceleration | **~24 h** | dominated by per-query full-table blob scans, not by encode |
+| Track B, `--fast` | far below the above | `mps_accel` replaces those scans with one resident matrix per corpus group |
+
+Track B being *slower* than Track A is expected: Track A pays encode once
+per corpus, Track B pays a full-table scan per query. That scan is exactly
+what `--fast` removes, which is why acceleration matters much more on
+Track B than on Track A. A single heavy task can dominate a run —
+MemGovern alone took over 10 h on bge-m3 without acceleration.
+
+**MPS out-of-memory on large models.** On a 42 GiB MPS budget, 0.6B models
+OOM on the largest-corpus tasks (observed: LongMemEval, MLDR, Gorilla,
+QASPER). The failure is per-task and non-fatal, so the run still exits 0 —
+see measurement-regime item 5. Re-run just those tasks with a smaller
+budget:
+
+```bash
+EMB_BUDGET_SQ=3.0e7 EMB_MAX_BATCH=32 \
+LMEB_DIR=~/lmeb python benchmarks/benchmark_lmeb.py \
+    --model_path <model> --tasks Gorilla,LongMemEval,MLDR,QASPER \
+    --budget_encode --device mps
+```
+
+Long sweeps should be launched detached and kept awake — a host sleep or
+reboot kills the chain, and completed tasks are only recovered because the
+result directory and embedding cache survive:
+
+```bash
+nohup caffeinate -is bash your_chain.sh > chain.log 2>&1 &
+```
 
 ## Usage
 
