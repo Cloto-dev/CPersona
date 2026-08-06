@@ -96,7 +96,12 @@ async def gate(args):
     emb_client = LookupEmbeddingClient()
     vector_mod._embedding_client = emb_client
     server_mod._embedding_client = emb_client
-    db = await server_mod.get_db()
+    # v2.4.20+ package layout: get_db lives in cpersona.database and is NOT
+    # re-exported by cpersona.server (close_db is). Same import-at-call-site
+    # note as benchmark_trackb_lmeb.py.
+    from cpersona.database import get_db
+
+    db = await get_db()
 
     from sentence_transformers import SentenceTransformer
     st_model = SentenceTransformer(args.model_path, device=args.device)
