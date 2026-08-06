@@ -80,7 +80,14 @@ class FastVectorSearch:
         this list therefore match what the original's own LIMIT would fetch.
         """
         self._reset_cache()
-        db = await self.server_mod.get_db()
+        # v2.4.20+ package layout: get_db lives in cpersona.database and is NOT
+        # re-exported by cpersona.server (close_db is). Importing it here rather
+        # than off self.server_mod keeps this working across that move — the
+        # stale attribute access made every preload raise, which silently cost
+        # the whole point of --fast.
+        from cpersona.database import get_db
+
+        db = await get_db()
         max_mem = getattr(self.vector_mod, "MAX_MEMORIES")
 
         rows = await db.execute_fetchall(
