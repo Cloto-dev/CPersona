@@ -240,7 +240,7 @@ Two tracks isolate the pipeline's contribution:
 | all-MiniLM-L6-v2 | 22M | 384 | 43.67 | **50.10** | +6.43 |
 | bge-m3 | 568M | 1024 | 56.83 | **57.66** | +0.83 |
 
-cpersona's hybrid pipeline outranks the raw embedding on both models (Track B > Track A) — the fusion layers add signal rather than merely persisting vectors. The weaker the embedding, the larger the pipeline's contribution: the FTS5/keyword layers rescue queries the vector search alone misses. Methodology, the measurement harness, and the reproduction regime live in [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
+On both models measured here, Track B lands at or above Track A — the fusion layers add signal rather than merely persisting vectors. The size of that contribution depends on the embedding: the FTS5/keyword layers rescue queries the vector search alone misses, so a weaker embedding gains more (+6.43 on all-MiniLM-L6-v2), while a strong one moves within the harness's run-to-run noise (+0.83 on bge-m3, against ±1–2 pt per task mean). Read the deltas as "the pipeline does not cost ranking quality, and recovers a lot of it on weaker embeddings" rather than as a uniform gain. Methodology, the measurement harness, the noise envelope, and the reproduction regime live in [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
 
 ## All Tools
 
