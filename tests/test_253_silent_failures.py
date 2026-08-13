@@ -124,6 +124,105 @@ async def test_ordinary_profile_is_stored_unchanged(db):
 
 
 # ---------------------------------------------------------------------------
+# bug-188, second call site — the import path writes profiles too
+#
+# The original fix bounded do_update_profile and described the change as putting
+# both writers through store's seam. _import_profile_record was not touched, so
+# every defect above stayed reachable through import: a whitespace profile in a
+# file overwrote a good one and the run reported profile_updated: true. These
+# tests are the write-path tests above, aimed at the other door.
+# ---------------------------------------------------------------------------
+
+
+def _import_file(tmp_path, monkeypatch, *records) -> str:
+    """Write a JSONL import file inside a confined EXPORT_DIR and return its path."""
+    export_root = tmp_path / "confined"
+    export_root.mkdir(exist_ok=True)
+    monkeypatch.setattr(config, "EXPORT_DIR", str(export_root))
+    path = export_root / "import.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return str(path)
+
+
+def _profile_record(content: str) -> dict:
+    return {"_type": "profile", "agent_id": AGENT, "user_id": "", "content": content}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank", ["   ", "\n\n", "\t "])
+async def test_whitespace_profile_in_an_import_does_not_destroy_the_stored_one(
+    db, tmp_path, monkeypatch, blank
+):
+    """The defect, through the door the fix did not cover: ok:true, profile gone."""
+    await admin_handlers.do_update_profile(AGENT, "a genuinely useful profile")
+    path = _import_file(tmp_path, monkeypatch, _profile_record(blank))
+
+    result = await admin_handlers.do_import_memories(path)
+
+    assert result["ok"] is True
+    assert result["profile_updated"] is False
+    assert await _profile_of(db, AGENT) == "a genuinely useful profile"
+    assert any("Line 1" in e and "kept" in e for e in result["errors"]), result.get("errors")
+
+
+@pytest.mark.asyncio
+async def test_oversized_profile_in_an_import_is_truncated_to_the_cap(db, tmp_path, monkeypatch):
+    """Pinned to the cap exactly and to the leading characters, like the write path.
+
+    ``<=`` would accept any amount of destruction: a cut to 100 characters, or one
+    that keeps the tail, both satisfy it. The import path is where content from a
+    foreign DB arrives, so it is the last place to hold to a weaker rule than the
+    writer next to it.
+    """
+    head = "Prefers terse answers.\n"
+    path = _import_file(
+        tmp_path, monkeypatch, _profile_record(head + "z" * (MAX_CONTENT_LENGTH + 5_000))
+    )
+
+    result = await admin_handlers.do_import_memories(path)
+
+    assert result["profile_updated"] is True
+    stored = await _profile_of(db, AGENT)
+    assert len(stored) == MAX_CONTENT_LENGTH
+    assert stored.startswith(head)
+    assert any("truncated" in e for e in result["errors"]), result.get("errors")
+
+
+@pytest.mark.asyncio
+async def test_ordinary_profile_import_is_stored_unchanged(db, tmp_path, monkeypatch):
+    """The paired direction — bounding must not mangle a legitimate restore."""
+    text = "Prefers terse answers.\n\nWorks in Rust and Python."
+    path = _import_file(tmp_path, monkeypatch, _profile_record(text))
+
+    result = await admin_handlers.do_import_memories(path)
+
+    assert result["profile_updated"] is True
+    assert "errors" not in result
+    assert await _profile_of(db, AGENT) == text
+
+
+@pytest.mark.asyncio
+async def test_import_preview_reports_the_same_profile_decision_as_a_real_run(
+    db, tmp_path, monkeypatch
+):
+    """bug-056/070's contract: a preview's counts must equal the run it previews.
+
+    A guard added on the write side only would make dry_run claim an update that
+    the real run then refuses — the preview lying in the safe direction is still
+    the preview lying.
+    """
+    await admin_handlers.do_update_profile(AGENT, "a genuinely useful profile")
+    path = _import_file(tmp_path, monkeypatch, _profile_record("   "))
+
+    preview = await admin_handlers.do_import_memories(path, dry_run=True)
+    real = await admin_handlers.do_import_memories(path)
+
+    assert preview["profile_updated"] == real["profile_updated"] is False
+    assert preview["errors"] == real["errors"]
+    assert await _profile_of(db, AGENT) == "a genuinely useful profile"
+
+
+# ---------------------------------------------------------------------------
 # bug-189 — calibrating one agent must not delete the others from the sidecar
 # ---------------------------------------------------------------------------
 
