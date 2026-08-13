@@ -1488,6 +1488,15 @@ async def do_recall_with_context(
 # reopen the context-explosion hole the preview exists to close.
 GET_CONTENTS_MAX_REFS = 20
 
+# CSC #680: the ref count alone stopped bounding this response. When the write
+# cap was 2000 characters, 20 refs could not exceed ~40,000; raising the cap to
+# 16,000 would have carried the same call to ~320,000 without a line of this
+# file changing. A relaxation of the WRITE bound must not enlarge the READ blast
+# radius, so the budget is stated here in characters and pinned at what the
+# worst case used to be. It is deliberately not derived from MAX_CONTENT_LENGTH:
+# raise that cap to any value and one response stays the size it is today.
+GET_CONTENTS_MAX_CHARS = 40000
+
 
 async def do_get_contents(agent_id: str, refs: list) -> dict:
     """Resolve recall preview refs back to full, untrimmed rows (2.5.0, Task #193).
@@ -1510,8 +1519,10 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
 
     items: list[dict] = []
     missing: list[str] = []
+    deferred: list[str] = []
+    used = 0
     async with connection() as db:
-        for ref in refs:
+        for position, ref in enumerate(refs):
             kind, _, raw = str(ref).partition(":")
             try:
                 row_id = int(raw)
@@ -1537,7 +1548,6 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     item["timestamp"] = timestamp
                 if msg_id:
                     item["id"] = msg_id
-                items.append(item)
             else:
                 rows = await db.execute_fetchall(
                     "SELECT summary, start_time, resolved FROM episodes WHERE id = ? AND agent_id = ?",
@@ -1547,16 +1557,34 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     missing.append(ref)
                     continue
                 summary, start_time, resolved = rows[0]
-                items.append(
-                    {
-                        "ref": ref,
-                        "content": f"[Episode] {summary}",
-                        "source": {"System": "episode"},
-                        "timestamp": start_time or "",
-                        "resolved": bool(resolved),
-                    }
-                )
-    return {"items": items, "missing": missing, "count": len(items)}
+                item = {
+                    "ref": ref,
+                    "content": f"[Episode] {summary}",
+                    "source": {"System": "episode"},
+                    "timestamp": start_time or "",
+                    "resolved": bool(resolved),
+                }
+            # CSC #680: whole rows only — the budget never cuts a content
+            # string. get_contents is the ONLY path back to full text, so a
+            # trimmed answer here would be indistinguishable from the preview it
+            # was called to escape (the bug-117 failure mode: content with no
+            # remaining handle). The first row is therefore admitted whatever
+            # its size — one row must never become unreachable — and once the
+            # budget is spent the REST of the batch is deferred rather than
+            # partially served, so the caller re-fetches on a boundary it can
+            # see instead of guessing which refs were dropped.
+            if items and used + len(item["content"]) > GET_CONTENTS_MAX_CHARS:
+                deferred = [str(r) for r in refs[position:]]
+                break
+            used += len(item["content"])
+            items.append(item)
+    result: dict = {"items": items, "missing": missing, "count": len(items)}
+    if deferred:
+        # Absent unless the budget actually stopped the batch: a caller that
+        # never meets it sees the same response shape as before.
+        result["deferred"] = deferred
+        result["budget_chars"] = GET_CONTENTS_MAX_CHARS
+    return result
 
 
 # CJK codepoint ranges: hiragana, katakana, CJK unified + ext-A, halfwidth katakana.

@@ -289,7 +289,7 @@ All settings via environment variables with sensible defaults:
 | `CPERSONA_RECALL_MODE` | `rrf` | Recall fusion strategy (`rrf`, `rsf`, or `cascade`) |
 | `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | Preview tier: max content chars returned by the recall tools (`0` disables; `full_content=true` / `get_contents` fetch full text) |
 | `CPERSONA_RRF_K` | `60` | RRF smoothing parameter |
-| `CPERSONA_MAX_CONTENT_LENGTH` | `2000` | Max characters per stored memory or episode. Longer writes are truncated; `check_health(fix=true)` also cuts existing rows above the cap, so lowering it shortens data that was already stored |
+| `CPERSONA_MAX_CONTENT_LENGTH` | `16000` | Max characters per stored memory or episode. Longer writes are truncated; `check_health(fix=true)` also cuts existing rows above the cap, so lowering it shortens data that was already stored. Raised from `2000` in 2.5.4a2 — text past the embedding window is still searchable through the keyword channel, which indexes the stored row in full |
 | `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | Max characters per profile row, capped separately from memories: the profile is injected into every recall response and is never preview-trimmed, so this cap is the only thing bounding it |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |

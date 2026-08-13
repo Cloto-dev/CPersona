@@ -814,7 +814,13 @@ registry.auto_tool(
     "get_contents",
     "Fetch full, untrimmed content for recall preview refs. Use after a preview-tier "
     "recall to expand only the rows that matter instead of opting the whole recall "
-    "out with full_content=true.",
+    "out with full_content=true. Bounded twice: at most 20 refs per call, and a "
+    "40,000-character budget across the batch (2.5.4a2) that does not move when "
+    "CPERSONA_MAX_CONTENT_LENGTH does. Rows are never cut to fit — when the budget "
+    "is spent the remaining refs come back in `deferred` (absent otherwise) "
+    "alongside `budget_chars`; re-fetch them in a second call. A single row larger "
+    "than the budget is still returned in full, because this tool is the only path "
+    "back to a row's complete text.",
     {
         "type": "object",
         "properties": {
@@ -1299,8 +1305,8 @@ registry.auto_tool(
     "distributions. Set fix=true to auto-repair (agent-scoped, locked-safe); "
     "critical file-integrity findings are report-only. Two repairs are lossy and "
     "irreversible, each against its own cap: oversized memories are cut to "
-    "CPERSONA_MAX_CONTENT_LENGTH and the agent's profile row to "
-    "CPERSONA_MAX_PROFILE_LENGTH (both default 2000 characters), keeping the "
+    "CPERSONA_MAX_CONTENT_LENGTH (default 16000 since 2.5.4a2) and the agent's "
+    "profile row to CPERSONA_MAX_PROFILE_LENGTH (default 2000), keeping the "
     "start. Lower either cap and a fix run shortens rows that were within the "
     "old one. "
     "Use checks parameter to "
