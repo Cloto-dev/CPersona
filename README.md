@@ -347,7 +347,7 @@ Earlier versions allowed an unauthenticated loopback bind and logged that it was
 
 - **~10,700 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **684 test functions** across 59 test modules — 832 cases once the
+- **689 test functions** across 60 test modules — 838 cases once the
   behavioural matrix is parametrised (~17,800 LOC, more test code than server
   code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)
