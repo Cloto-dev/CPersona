@@ -43,9 +43,18 @@ dependencies = [
     # the 2.0 handler API, and that lives upstream in the shared mcp_common
     # this package vendors, not here.
     "mcp>=1.26.0,<2",
-    "aiosqlite>=0.20.0",
-    "httpx>=0.27.0",
-    "numpy>=1.24.0",
+    # The other three carry the same kind of cap for the same reason, arrived at
+    # the other way round: `mcp` got one after an unbounded floor had already
+    # resolved a breaking release, and a published wheel's `requires_dist` is
+    # not editable afterwards. So the bound is a ceiling on a major that does
+    # not exist yet, not a claim about a version anyone has tested. aiosqlite
+    # and httpx are pre-1.0, where 1.0 is where each project has said the
+    # breaking changes go; numpy's 2.0 removed public API, so <3 is the same
+    # bet one major later. Raising any of them is a normal change: widen the
+    # cap, let wheel-smoke resolve it unlocked, ship.
+    "aiosqlite>=0.20.0,<1.0",
+    "httpx>=0.27.0,<1.0",
+    "numpy>=1.24.0,<3",
 ]
 
 [project.urls]
