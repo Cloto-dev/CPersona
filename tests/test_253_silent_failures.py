@@ -26,7 +26,7 @@ import pytest_asyncio
 from cpersona import admin_handlers, config, vector
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
-from cpersona.config import MAX_CONTENT_LENGTH
+from cpersona.config import MAX_PROFILE_LENGTH
 from cpersona.database import get_db
 from cpersona.utils import SCORING_VERSION
 
@@ -88,13 +88,13 @@ async def test_oversized_profile_is_truncated_and_says_so(db):
     path held to a weaker rule than the repair that cleans up after it cannot be
     trusted to be the reason the repair finds nothing.
     """
-    result = await admin_handlers.do_update_profile(AGENT, "x" * (MAX_CONTENT_LENGTH + 5_000))
+    result = await admin_handlers.do_update_profile(AGENT, "x" * (MAX_PROFILE_LENGTH + 5_000))
 
     assert result["profiles_updated"] == 1
     assert result.get("truncated") is True
     stored = await _profile_of(db, AGENT)
-    assert len(stored) == MAX_CONTENT_LENGTH
-    assert stored == "x" * MAX_CONTENT_LENGTH
+    assert len(stored) == MAX_PROFILE_LENGTH
+    assert stored == "x" * MAX_PROFILE_LENGTH
 
 
 @pytest.mark.asyncio
@@ -102,13 +102,13 @@ async def test_truncation_keeps_the_start_of_the_profile(db):
     """The cut must drop the tail, not the head — a profile's first line is its point."""
     head = "Prefers terse answers. Works in Rust and Python.\n"
     result = await admin_handlers.do_update_profile(
-        AGENT, head + "z" * (MAX_CONTENT_LENGTH + 5_000)
+        AGENT, head + "z" * (MAX_PROFILE_LENGTH + 5_000)
     )
 
     assert result.get("truncated") is True
     stored = await _profile_of(db, AGENT)
     assert stored.startswith(head)
-    assert len(stored) == MAX_CONTENT_LENGTH
+    assert len(stored) == MAX_PROFILE_LENGTH
 
 
 @pytest.mark.asyncio
@@ -176,14 +176,14 @@ async def test_oversized_profile_in_an_import_is_truncated_to_the_cap(db, tmp_pa
     """
     head = "Prefers terse answers.\n"
     path = _import_file(
-        tmp_path, monkeypatch, _profile_record(head + "z" * (MAX_CONTENT_LENGTH + 5_000))
+        tmp_path, monkeypatch, _profile_record(head + "z" * (MAX_PROFILE_LENGTH + 5_000))
     )
 
     result = await admin_handlers.do_import_memories(path)
 
     assert result["profile_updated"] is True
     stored = await _profile_of(db, AGENT)
-    assert len(stored) == MAX_CONTENT_LENGTH
+    assert len(stored) == MAX_PROFILE_LENGTH
     assert stored.startswith(head)
     assert any("truncated" in e for e in result["errors"]), result.get("errors")
 

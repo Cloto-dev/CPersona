@@ -45,6 +45,7 @@ from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
     MAX_CONTENT_LENGTH,
+    MAX_PROFILE_LENGTH,
     STORE_BLOB,
     VECTOR_SEARCH_MODE,
     local_blobs_stored,
@@ -190,7 +191,7 @@ async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
-    """Detect (and truncate) profiles longer than the content cap.
+    """Detect (and truncate) profiles longer than the profile cap.
 
     bug-188 residual. The write path is bounded now — ``do_update_profile`` runs
     the text through ``store``'s sanitising seam — but that only governs new
@@ -205,12 +206,16 @@ async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
     with the dedup index; a profile has no such index and is simply cut. Merging
     them would also merge their counts, and "3 oversized rows" that means two
     memories and a profile tells an operator less than either number alone.
+
+    an earlier decision: the threshold is MAX_PROFILE_LENGTH, the same constant the profile
+    write path caps at — detection, repair and the writer read one number. When
+    the memory cap moves (the 2.6 tree) this check does not move with it.
     """
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
         f"""SELECT agent_id, user_id, length(content) AS len FROM profiles
             WHERE length(content) > ?{iso.and_clause}""",
-        (MAX_CONTENT_LENGTH, *iso.params),
+        (MAX_PROFILE_LENGTH, *iso.params),
     )
     if not rows:
         return []
@@ -219,7 +224,7 @@ async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
             await db.execute(
                 """UPDATE profiles SET content = substr(content, 1, ?)
                    WHERE agent_id = ? AND user_id = ?""",
-                (MAX_CONTENT_LENGTH, row_agent_id, user_id),
+                (MAX_PROFILE_LENGTH, row_agent_id, user_id),
             )
     return [
         {
