@@ -2938,6 +2938,68 @@
       "fix_sketch": "Route _import_profile_record through the same seam as the write path (sanitize, refuse sanitize-then-empty instead of overwriting, cap with a reported truncation), and check the third writer (_merge_profile_rows) rather than assuming it.",
       "fix_note": "v2.5.4: the import path sanitizes, refuses content that sanitizes to empty (the stored profile is kept and the run says so, per line, instead of reporting a destructive write as an update), and truncates at MAX_CONTENT_LENGTH with a per-line notice. The decision is taken before the dry_run branch so a preview reports what the real run will do (bug-056/070's contract). The third writer, _merge_profile_rows, was checked and deliberately left verbatim: it copies rows that were bounded on their own way in and never overwrites — a target that already has a profile is skipped — so neither defect can occur there; the exemption is written into its docstring rather than left implicit. Class: a shared invariant applied at one call site and described as applied at all of them. Regression: tests/test_253_silent_failures.py, including a preview/real-run parity test that fails if the guard is added on the write branch only.",
       "fixed_in": "2.5.4"
+    },
+    {
+      "id": "bug-201",
+      "summary": "(MEDIUM+LOW) The bug-198 reachability detector had three holes. (1) It fires only on a forwarding header OR a non-loopback peer, so a relay that egresses from loopback and adds no headers — ssh -L, socat, kubectl port-forward, a bare nginx proxy_pass — is served with exposure warning emitted: False (measured with a real TCP relay). (2) _FORWARDED_HEADERS omitted RFC 7230's Via, and the x-forwarded-proto / -host pair a proxy sends when it rewrites the URL but not the client address: Via: 1.1 nginx warned nothing. (3) _LOOPBACK_HTTP_HOSTS was a string set, so ::ffff:127.0.0.1 — the peer a dual-stack listener reports for a same-host IPv4 client — counted as remote; since the warning latches after one hit, that false positive spends the process's only warning on a local request and the genuine remote arrival afterwards is never reported.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.3",
+      "commit": "2e816e1",
+      "file": "cpersona/server.py",
+      "pattern": "def _peer_is_remote",
+      "expected": "present",
+      "status": "fixed",
+      "category": "detector-blind-spot",
+      "fix_sketch": "Add the missing headers; decide the peer arithmetically (ipaddress, IPv4-mapped unwrapped, is_loopback) instead of by string membership; and state the headerless-relay limit where an operator reads it, rather than widening a detector that cannot see that case in principle.",
+      "fix_note": "v2.5.4: _peer_is_remote parses the peer and asks is_loopback after unwrapping any IPv4-mapped form, so ::ffff:127.0.0.1 and 127.0.0.53 are local and an unparseable peer errs loud (remote). via / x-forwarded-proto / x-forwarded-host / true-client-ip join the header list. Hole 1 is NOT closed and was not treated as closable: the information needed to tell a headerless loopback relay from a local client is not present at this layer, so the docstring stops claiming an arriving request decides the question, the opt-in warning states that silence is not evidence and names the tools it cannot see, and a test pins the blind spot as a recorded property instead of leaving a gap that reads as coverage. Regression: tests/test_253_reachability.py.",
+      "fixed_in": "2.5.4"
+    },
+    {
+      "id": "bug-202",
+      "summary": "(LOW) BearerTokenMiddleware forwarded every non-http ASGI scope to the app unauthenticated: `if scope[\"type\"] != \"http\": await self.app(...)`. The branch is needed for lifespan, but websocket scopes went through it too, so the stated contract — no unauthenticated request reaches a tool — held only because neither websockets nor wsproto is installed, i.e. by accident of the dependency list rather than by the code.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.3",
+      "file": "cpersona/server.py",
+      "pattern": "websocket\\.close",
+      "expected": "present",
+      "status": "fixed",
+      "category": "auth-bypass-surface",
+      "fix_sketch": "Pass lifespan explicitly, and refuse any other non-http scope when a token is configured (websocket gets a 1008 close) instead of treating 'not http' as 'not a request'.",
+      "fix_note": "v2.5.4: lifespan is passed through by name, a websocket is closed with 1008 when a token is set, and any other future scope type is dropped rather than forwarded. With no token configured the non-http path matches the http path and passes through, since there is nothing to check. Regression: tests/test_253_reachability.py.",
+      "fixed_in": "2.5.4"
+    },
+    {
+      "id": "bug-203",
+      "summary": "(LOW) The fail-closed HTTP auth guard ran at the END of startup — main() initialised the embedding client, opened and migrated the database, ran startup calibration and started the task queue before _run_http_server called _assert_safe_http_bind. The guard's only inputs are two environment variables. On the production unit (Restart=always, RestartSec=10, EnvironmentFile — verified on the deployment) a token that fails to load therefore made every restart pay a DB open+migrate and, with CALIBRATE_ON_MODEL_CHANGE defaulting on, an HTTP call to the embedding backend, before exiting 1, once every ten seconds.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.3",
+      "file": "cpersona/server.py",
+      "pattern": "def _preflight_http_auth",
+      "expected": "present",
+      "status": "fixed",
+      "category": "startup-ordering",
+      "fix_sketch": "Run the env-only decision at the top of main() for the HTTP transport, keeping the existing call in _run_http_server for direct entry, and suppress the duplicate opt-in warning with a warn=False flag rather than process state.",
+      "fix_note": "v2.5.4: _preflight_http_auth runs first in main() and refuses before any resource is touched; _run_http_server keeps its own call because it is also entered directly, and _assert_safe_http_bind grew warn=False so the opt-in paragraph is not printed twice. The security outcome was already correct — this is about what reaching it cost. Regression: tests/test_253_reachability.py, including a test that drives main() with spies on init_db/close_db and fails if any startup work runs before the refusal (every other test in the file passes with the call site deleted).",
+      "fixed_in": "2.5.4"
+    },
+    {
+      "id": "bug-204",
+      "summary": "(LOW) scripts/sync-vendored-mcp-common.sh documented the vendored/upstream __version__ relationship backwards after commit c3b80b0: the header says the vendored copy carries 0.5.2 while upstream reads 0.5.1, when the sync had moved the vendored string DOWN to 0.5.1 (matching upstream's module) while moving the code forward with the mgp-py PR #14 filter fix. A maintainer applying the parent CLAUDE.md's 'bump when common changes' rule by comparing this string against another server's copy gets the wrong answer.",
+      "severity": "LOW",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.3",
+      "commit": "c3b80b0",
+      "file": "scripts/sync-vendored-mcp-common.sh",
+      "pattern": "DO NOT read __version__ as a freshness signal",
+      "expected": "present",
+      "status": "fixed",
+      "category": "doc-drift",
+      "fix_sketch": "Rewrite the paragraph to the measured state and say what the string cannot be used for.",
+      "fix_note": "v2.5.4: measured against the sibling checkout — mcp_common.__version__ is 0.5.1 both vendored and upstream, while upstream's own pyproject says 0.6.0 (a drift belonging to mgp-py). The header now records that the number went backwards across a strict improvement and that commits, not this string, answer which copy is newer. It also notes that the paragraph described the pre-sync state, so the same failure is recognisable next time.",
+      "fixed_in": "2.5.4"
     }
   ]
 }

@@ -21,6 +21,7 @@ This shell:
 
 import asyncio
 import hmac
+import ipaddress
 import logging
 import os
 
@@ -1413,17 +1414,57 @@ registry.auto_tool(
 # Streamable HTTP transport (Bearer auth, CORS)
 # =============================================================================
 
-# Addresses that belong to the local machine. Note what this set does NOT mean:
-# binding here does not make the server unreachable from the network. A tunnel
-# (cloudflared, ngrok), a reverse proxy, `kubectl port-forward`, or a published
-# Docker port all forward to a loopback address. The set is only used to tell a
-# local peer from a remote one when a request actually arrives.
-_LOOPBACK_HTTP_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+# Peer names that belong to the local machine but are not IP literals, so
+# _peer_is_remote cannot decide them arithmetically. Note what this does NOT
+# mean: binding to loopback does not make the server unreachable from the
+# network. A tunnel (cloudflared, ngrok), a reverse proxy, `kubectl
+# port-forward`, or a published Docker port all forward to a loopback address.
+# This is only used to tell a local peer from a remote one once a request has
+# actually arrived.
+_LOOPBACK_HTTP_HOSTS = frozenset({"localhost"})
 
 # Headers a reverse proxy or tunnel adds on the way in. Their presence is
 # evidence that the request did not originate on this machine, whatever the
-# socket peer says.
-_FORWARDED_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "cf-connecting-ip")
+# socket peer says. `via` is the RFC 7230 one and was missing; the
+# x-forwarded-proto / -host pair is what a proxy configured to rewrite the URL
+# but not the client address sends, which is a common nginx snippet.
+_FORWARDED_HEADERS = (
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "forwarded",
+    "via",
+    "x-real-ip",
+    "true-client-ip",
+    "cf-connecting-ip",
+)
+
+
+def _peer_is_remote(peer: str) -> bool:
+    """Is this socket peer somewhere other than this machine?
+
+    Decided arithmetically rather than by string membership. The set-based
+    version missed ``::ffff:127.0.0.1`` — the form a dual-stack listener
+    (``CPERSONA_HTTP_HOST=::``) reports for an IPv4 client on the same host —
+    and called it remote. That direction of error is the expensive one here:
+    the warning latches after the first hit, so one false positive on a purely
+    local request means the genuine remote arrival later in the same process is
+    never reported. A detector whose noise silences its own signal is worse
+    than no detector, and suppressing repeats is the reason this one exists.
+
+    An unparseable peer is treated as remote. Erring loud is right for a
+    warning: the cost is a line in the log, and the alternative is a silent
+    miss of exactly the case nobody anticipated.
+    """
+    if not peer or peer in _LOOPBACK_HTTP_HOSTS:
+        return False
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        return True
+    # An IPv4-mapped IPv6 address is that IPv4 address; ask the mapped one.
+    address = getattr(address, "ipv4_mapped", None) or address
+    return not address.is_loopback
 
 
 class BearerTokenMiddleware:
@@ -1443,17 +1484,32 @@ class BearerTokenMiddleware:
 
         The startup guard can only reason about the bind address, and a bind
         address does not determine who can reach the process. An arriving
-        request does: a forwarding header, or a peer that is not this machine,
-        is proof that something outside the host is talking to an
-        unauthenticated server. Warn once per process — this is a standing
-        condition, not a per-request event, and one line per request would bury
-        it in the very log an operator is scanning.
+        request is better evidence — a forwarding header, or a peer that is not
+        this machine, proves something outside the host is talking to an
+        unauthenticated server — but only in one direction. Read what this
+        cannot do:
+
+        A relay that egresses from loopback and adds no HTTP headers is
+        indistinguishable, from inside this process, from a local client. That
+        is ``ssh -L``, ``socat``, ``kubectl port-forward``, and a bare nginx
+        ``proxy_pass`` with no ``proxy_set_header`` — measured with a real TCP
+        relay: the request is served, and nothing here fires. The peer this
+        code observes IS loopback and there are no headers to read, so the
+        information needed to decide is not present at this layer at any price.
+        Silence from this detector is therefore not evidence of a local-only
+        deployment. The conditions below are sufficient, never necessary, and
+        the opt-in warning in ``_assert_safe_http_bind`` says so where an
+        operator reading it is still in a position to act.
+
+        Warn once per process — this is a standing condition, not a per-request
+        event, and one line per request would bury it in the very log an
+        operator is scanning.
         """
         if self._exposure_warned:
             return
         via = next((h for h in _FORWARDED_HEADERS if h in request.headers), "")
         peer = (request.scope.get("client") or ("", 0))[0]
-        remote_peer = bool(peer) and peer not in _LOOPBACK_HTTP_HOSTS
+        remote_peer = _peer_is_remote(peer)
         if not via and not remote_peer:
             return
         self._exposure_warned = True
@@ -1466,7 +1522,23 @@ class BearerTokenMiddleware:
         )
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            # Startup/shutdown, not a request: there is nobody to authenticate
+            # and refusing it would stop the server from starting.
+            await self.app(scope, receive, send)
+            return
         if scope["type"] != "http":
+            # Anything else — websocket today — used to be forwarded
+            # unauthenticated, because "not http" was read as "not a request".
+            # It is a request; it just carries its credentials somewhere this
+            # middleware does not look. Reach is limited (no websockets/wsproto
+            # is installed, so uvicorn never completes the upgrade) but the
+            # contract "no unauthenticated request reaches a tool" has to hold
+            # as written, not as far as the dependency list happens to allow.
+            if self.auth_token:
+                if scope["type"] == "websocket":
+                    await send({"type": "websocket.close", "code": 1008})
+                return
             await self.app(scope, receive, send)
             return
         request = Request(scope, receive)
@@ -1494,7 +1566,7 @@ class BearerTokenMiddleware:
 
 
 def _assert_safe_http_bind(
-    auth_token: str, host: str, *, allow_unauthenticated: bool | None = None
+    auth_token: str, host: str, *, allow_unauthenticated: bool | None = None, warn: bool = True
 ) -> None:
     """Fail closed before the HTTP transport binds (bug-017, reworked in 2.5.3).
 
@@ -1520,6 +1592,11 @@ def _assert_safe_http_bind(
     so the error can name what was being attempted; it is not part of the
     decision. ``allow_unauthenticated`` is read from the environment when not
     passed — it is a parameter so tests can drive both branches directly.
+
+    ``warn=False`` performs the refusal without logging the opt-in warning, so
+    the pre-flight in ``main()`` can fail closed before the process opens the
+    database or calls the embedding backend without printing the same paragraph
+    twice.
     """
     if auth_token:
         return
@@ -1537,12 +1614,17 @@ def _assert_safe_http_bind(
             "Set CPERSONA_AUTH_TOKEN. If you really want no authentication (local "
             "development only), set CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true to say so."
         )
+    if not warn:
+        return
     logger.warning(
         "CPERSONA_ALLOW_UNAUTHENTICATED_HTTP is set — the HTTP transport on %s is "
         "UNAUTHENTICATED and every tool is callable without credentials. Binding to a "
         "loopback address does not contain this: tunnels, reverse proxies and "
-        "port-forwards reach it. Use this for local development only; set "
-        "CPERSONA_AUTH_TOKEN anywhere else.",
+        "port-forwards reach it. This server warns if it observes a request arriving "
+        "from outside the host, but it CANNOT see a relay that forwards from loopback "
+        "without adding headers (ssh -L, socat, a plain nginx proxy_pass), so silence "
+        "is not evidence that nothing outside can reach this port. Use this for local "
+        "development only; set CPERSONA_AUTH_TOKEN anywhere else.",
         host,
     )
 
@@ -1647,12 +1729,46 @@ async def _run_http_server():
     # rule (bug-017) is withdrawn — do not reintroduce it.
     host = os.environ.get("CPERSONA_HTTP_HOST", "127.0.0.1")
     port = _resolve_http_port()
+    # main() has already run this check (see _preflight_http_auth); it stays
+    # here because _run_http_server is also entered directly by tests and by
+    # anything embedding the transport, and a guard that only one caller
+    # reaches is a guard one refactor away from being absent.
     _assert_safe_http_bind(auth_token, host)
     logger.info("Starting Streamable HTTP on %s:%d", host, port)
 
-    config = uvicorn.Config(app, host=host, port=port, log_level="info")
-    server = uvicorn.Server(config)
+    # Not named `config`: that is the module this file imports, and shadowing it
+    # here is a loaded gun for the next edit — any config.* read added to this
+    # function would raise UnboundLocalError before the assignment below and
+    # take the whole HTTP transport down at startup.
+    uvicorn_config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    server = uvicorn.Server(uvicorn_config)
     await server.serve()
+
+
+def _preflight_http_auth() -> None:
+    """Refuse an unauthenticated HTTP start before anything expensive happens.
+
+    The guard's inputs are two environment variables; nothing it decides needs
+    the database, the embedding client, or the task queue. Those were all
+    initialised first anyway, because the only call site was inside
+    ``_run_http_server`` at the end of ``main()``. Under the production unit —
+    ``Restart=always``, ``RestartSec=10``, ``EnvironmentFile`` (verified on the
+    deployment) — a token that fails to load turns every restart into: open and
+    migrate the database, then, with CALIBRATE_ON_MODEL_CHANGE defaulting on,
+    an HTTP round-trip to the embedding backend, then start and stop the queue,
+    then exit 1. Every ten seconds. The security outcome was already right; the
+    cost of reaching it was not.
+
+    Runs for the HTTP transport only, and silently for stdio, which has no bind
+    and no token.
+    """
+    if os.environ.get("CPERSONA_TRANSPORT", "stdio") != "streamable-http":
+        return
+    _assert_safe_http_bind(
+        os.environ.get("CPERSONA_AUTH_TOKEN", ""),
+        os.environ.get("CPERSONA_HTTP_HOST", "127.0.0.1"),
+        warn=False,
+    )
 
 
 # =============================================================================
@@ -1665,6 +1781,10 @@ async def main():
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    # Before the database, the embedding backend and the queue — see the
+    # docstring for what a restart loop costs when this runs last instead.
+    _preflight_http_auth()
 
     if EMBEDDING_MODE != "none":
         # _vendored_mcp_common.EmbeddingClient takes env-derived config via constructor
