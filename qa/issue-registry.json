@@ -2757,7 +2757,7 @@
       "status": "fixed",
       "category": "fail-open-write-path",
       "fix_sketch": "Apply the store/update_memory treatment: sanitize first, reject sanitize-then-empty (whitespace no longer destroys a profile), cap at MAX_CONTENT_LENGTH with a truncated flag, and extend check_oversized_content to the profiles table. Correct the memory_handlers.py:1706 comment in the 2.5.2 final; the behavioral fix ships in 2.5.3.",
-      "fix_note": "v2.5.3: do_update_profile goes through the same seam as store — sanitize_content_with_flag — so a profile that sanitises to empty is refused as a no-op with a reason instead of blanking a useful profile while reporting profiles_updated:1, and an oversized profile is truncated to MAX_CONTENT_LENGTH with truncated:true rather than being stored verbatim and injected whole into every recall response via the id=-1 sentinel. The residual noted when this landed — bounding the write path does nothing for a profile an earlier version already stored oversized, and check_oversized_content scans memories only — is closed in the same release by check_oversized_profile (warn, fix-capable, truncates to MAX_CONTENT_LENGTH under the isolation filter). Kept separate from check_oversized_content because the repair differs: an oversized memory routes through _rewrite_or_delete_on_collision for the dedup index, a profile has no such index. Regression: tests/test_253_silent_failures.py.",
+      "fix_note": "v2.5.3: do_update_profile goes through the same seam as store — sanitize_content_with_flag — so a profile that sanitises to empty is refused as a no-op with a reason instead of blanking a useful profile while reporting profiles_updated:1, and an oversized profile is truncated to MAX_CONTENT_LENGTH with truncated:true rather than being stored verbatim and injected whole into every recall response via the id=-1 sentinel. The residual noted when this landed — bounding the write path does nothing for a profile an earlier version already stored oversized, and check_oversized_content scans memories only — is closed in the same release by check_oversized_profile (warn, fix-capable, truncates to MAX_CONTENT_LENGTH under the isolation filter). Kept separate from check_oversized_content because the repair differs: an oversized memory routes through _rewrite_or_delete_on_collision for the dedup index, a profile has no such index. Regression: tests/test_253_silent_failures.py. PARTIAL, corrected in 2.5.4: this closed do_update_profile only — the import path (_import_profile_record) carried the same three defects until bug-200.",
       "fixed_in": "2.5.3"
     },
     {
@@ -2922,6 +2922,22 @@
       "fix_sketch": "Attach the filter to the root logger's handlers as well as the logger, and call it from this server's own startup path after logging.basicConfig.",
       "fix_note": "v2.5.3: install_mgp_validation_filter adds the filter to every handler on the root logger (keeping the root-logger filter, which still catches anything logged directly on root), and cpersona.server.main calls it after basicConfig and before any transport is entered. MEASURED, not deduced: a filter on a logger runs only for records logged through that logger — a record a child logger propagates reaches the ancestor's handlers without consulting the ancestor's filters, so the old attachment let every 'Failed to validate request:' warning through. NOTE the filter is a blanket drop of that message class, so a genuinely malformed client request is silenced along with the kernel's cloto/* probes; that is upstream behaviour and unchanged here. The same defect exists in the upstream copy (clotohub-servers servers/common/mcp_utils.py) and is being fixed there separately — the two copies converge rather than diverge. Regression: tests/test_253_followups.py.",
       "fixed_in": "2.5.3"
+    },
+    {
+      "id": "bug-200",
+      "summary": "(MEDIUM) bug-188's fix reached one of the two profile writers. do_update_profile went through store's seam, but _import_profile_record — the write behind import_memories — kept the raw-truthiness emptiness test, no sanitizer and no cap, over an ON CONFLICT DO UPDATE. So a whitespace-only profile in an import file still overwrote a useful profile with blanks and the run reported ok:true / profile_updated:true, and an oversized profile was still stored verbatim (measured: 7000 characters against a 2000 cap). No detector covers it either: check_empty_content scans memories only, and check_oversized_profile catches the size after the fact but never the blanking. The commit message for the original fix stated that both writers now went through the seam.",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.3",
+      "commit": "8ec5d74",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "profile is empty after sanitisation; the existing profile was kept",
+      "expected": "present",
+      "status": "fixed",
+      "category": "fail-open-write-path",
+      "fix_sketch": "Route _import_profile_record through the same seam as the write path (sanitize, refuse sanitize-then-empty instead of overwriting, cap with a reported truncation), and check the third writer (_merge_profile_rows) rather than assuming it.",
+      "fix_note": "v2.5.4: the import path sanitizes, refuses content that sanitizes to empty (the stored profile is kept and the run says so, per line, instead of reporting a destructive write as an update), and truncates at MAX_CONTENT_LENGTH with a per-line notice. The decision is taken before the dry_run branch so a preview reports what the real run will do (bug-056/070's contract). The third writer, _merge_profile_rows, was checked and deliberately left verbatim: it copies rows that were bounded on their own way in and never overwrites — a target that already has a profile is skipped — so neither defect can occur there; the exemption is written into its docstring rather than left implicit. Class: a shared invariant applied at one call site and described as applied at all of them. Regression: tests/test_253_silent_failures.py, including a preview/real-run parity test that fails if the guard is added on the write branch only.",
+      "fixed_in": "2.5.4"
     }
   ]
 }

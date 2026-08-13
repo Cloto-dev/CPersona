@@ -32,6 +32,7 @@ from cpersona.config import (
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
+    MAX_CONTENT_LENGTH,
     STORE_BLOB,
     local_blobs_stored,
     TASK_QUEUE_ENABLED,
@@ -2041,11 +2042,46 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     tally.imported_episodes += 1
 
 
-async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally) -> None:
-    """Upsert one profile row, keyed on (agent_id, user_id)."""
+async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
+    """Upsert one profile row, keyed on (agent_id, user_id).
+
+    bug-188's second call site. That fix bounded the profile write — sanitiser,
+    cap, and a real emptiness test instead of raw truthiness — but only in
+    ``do_update_profile``; the commit described both writers as going "through
+    store's seam" while this one still had the original three defects. So a
+    whitespace-only profile in an import file kept doing what the write path no
+    longer allowed: overwriting a useful profile with blanks, through an
+    ON CONFLICT DO UPDATE, and reporting ``profile_updated: true``. Destruction
+    reported as success, and no health check looks for it — ``check_empty_content``
+    covers memories only.
+
+    Import is the stricter of the two paths, not the looser one: this content
+    arrives from a file that may have been produced by another DB, an older
+    version, or a hand edit, and the row it lands on is one the operator already
+    has. Both outcomes are now reported per line rather than inferred from a
+    silent counter — a skip says the existing profile was kept, a truncation
+    says the stored text is shorter than the file's.
+
+    The third writer, ``_merge_profile_rows``, is deliberately left verbatim: it
+    copies rows that were already bounded on their own way in, and it never
+    overwrites — a target that already has a profile is skipped — so neither
+    defect this fixes can occur there.
+    """
     content = record.get("content", "")
     if not content:
+        tally.errors.append(f"Line {line_num}: profile has no content; the existing profile was kept")
         return
+
+    content, truncated = sanitize_content_with_flag(content)
+    if not content:
+        tally.errors.append(
+            f"Line {line_num}: profile is empty after sanitisation; the existing profile was kept"
+        )
+        return
+    if truncated:
+        tally.errors.append(
+            f"Line {line_num}: profile exceeded {MAX_CONTENT_LENGTH} characters and was truncated"
+        )
 
     if not tally.dry_run:
         await db.execute(
@@ -2155,7 +2191,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                     if not aid:
                         tally.errors.append(f"Line {line_num}: profile missing agent_id")
                         continue
-                    await _import_profile_record(db, record, aid, tally)
+                    await _import_profile_record(db, record, aid, tally, line_num)
 
                 else:
                     if rtype:
@@ -2357,7 +2393,15 @@ async def _merge_episode_rows(db, source_agent_id: str, target_agent_id: str, ta
 
 
 async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
-    """Copy the source agent's profiles, leaving any the target already has."""
+    """Copy the source agent's profiles, leaving any the target already has.
+
+    Verbatim on purpose (bug-188's third call site, checked and exempt): every
+    row here was bounded by the write path that stored it, the copy never
+    overwrites — a target that already has the profile is skipped, above — and
+    re-sanitising an intra-DB move would silently rewrite content the operator
+    did not edit. The import path, which takes content from outside this DB and
+    does overwrite, goes through the seam instead.
+    """
     rows = await db.execute_fetchall(
         "SELECT user_id, content, project_id FROM profiles WHERE agent_id = ?",
         (source_agent_id,),
