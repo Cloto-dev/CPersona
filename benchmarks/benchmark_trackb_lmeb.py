@@ -852,6 +852,20 @@ async def async_main(args):
     if args.trust_remote_code:
         model_kwargs["trust_remote_code"] = True
     st_model = SentenceTransformer(args.model_path, device=args.device, **model_kwargs)
+    if args.max_seq_len:
+        # Set before install_budget_batching: the bucket padding reads
+        # get_max_seq_length() once, at install time.
+        st_model.max_seq_length = args.max_seq_len
+        # The disk cache is keyed by sha256(model_label + text) and knows nothing
+        # about the window, so two window arms sharing one cache dir would serve
+        # each other's vectors — silently, and in the direction that erases the
+        # effect being measured. Namespace the label whenever the window is
+        # overridden; a run without this flag keeps the historical keyspace, so
+        # the existing caches stay valid.
+        label = os.environ.get("EMB_CACHE_MODEL", "BAAI/bge-m3")
+        os.environ["EMB_CACHE_MODEL"] = f"{label}@ms{args.max_seq_len}"
+        logger.info(f"  max_seq_length overridden: {args.max_seq_len} "
+                    f"(cache label: {os.environ['EMB_CACHE_MODEL']})")
     if args.budget_encode:
         from budget_batching import install_budget_batching
         install_budget_batching(st_model)
@@ -1024,6 +1038,13 @@ def main():
                         help="Token-budget dynamic batching (required for long-context tasks on MPS)")
     parser.add_argument("--dtype", default="float32", choices=["float16", "float32"],
                         help="model dtype (float16 recommended on MPS)")
+    parser.add_argument("--max_seq_len", type=int, default=None,
+                        help="Override the model's tokenization window (default: the model's "
+                             "own, e.g. 8192 for bge-m3 — NOT the deployment's, which for the "
+                             "ONNX service is ONNX_MAX_SEQ_LEN). Set this to measure a "
+                             "deployed window. Documents at or below the window embed "
+                             "identically at any larger setting, so a window comparison only "
+                             "moves on corpora that exceed it")
     parser.add_argument("--force", action="store_true",
                         help="Re-measure all tasks even if results exist (archives previous results)")
     parser.add_argument("--fast", action="store_true",
