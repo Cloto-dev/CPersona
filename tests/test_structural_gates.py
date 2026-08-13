@@ -1237,3 +1237,34 @@ def test_excluded_vendored_modules_are_unreachable():
         "package would raise ImportError where the test suite (running from the repo) "
         "cannot see it. Drop it from the exclude list, or remove the import."
     )
+
+
+def test_every_runtime_dependency_carries_an_upper_bound():
+    """Gate: no runtime requirement may be published with an open-ended ceiling.
+
+    bug-190's class. The locked jobs in CI cannot see this: uv.lock pins exact
+    versions, so an upstream major that breaks the package resolves for nobody
+    here and for everybody installing from PyPI. The asymmetry that makes it a
+    gate rather than a review note is that a wheel's ``requires_dist`` is frozen
+    at upload — by the time the breakage is observed, the only repair is a new
+    release, and every existing one stays broken.
+
+    The bound the gate demands is a ``<`` specifier, not a specific number:
+    picking the ceiling is a judgement (see the comments in pyproject), keeping
+    one is not. ``!=`` exclusions and ``~=`` compatible-release pins do not
+    count — the first bounds nothing above it, and the second is a floor with a
+    prefix, not a stated maximum.
+    """
+    import tomllib
+
+    config = tomllib.loads((PKG.parent / "pyproject.toml").read_text(encoding="utf-8"))
+    deps = config["project"]["dependencies"]
+    assert deps, "pyproject declares no runtime dependencies — did the table move?"
+
+    unbounded = [d for d in deps if "<" not in d]
+    assert not unbounded, (
+        f"runtime dependencies with no upper bound: {unbounded}. A published wheel's "
+        "requires_dist cannot be edited, so an unbounded floor hands every future "
+        "install to whatever upstream ships next. Add a ceiling (and say in a comment "
+        "what it is betting on); widen it deliberately when the next major is tested."
+    )

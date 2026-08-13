@@ -10,6 +10,18 @@ on:
   push:
     branches: [master]
   pull_request:
+  # Every job below except wheel-smoke resolves dependencies from uv.lock, so an
+  # upstream release that breaks one of this package's requirements is invisible
+  # to them by construction. wheel-smoke is the only job that resolves the way a
+  # user installing from PyPI does — and it runs on push, which means a quiet
+  # repository stops checking exactly when it can no longer fix the problem: a
+  # published wheel's `requires_dist` cannot be edited after the fact. Weekly, so
+  # the delay between "upstream broke the install" and "we know" is bounded by
+  # the calendar instead of by commit cadence. (Scheduled workflows are disabled
+  # by GitHub after 60 days without repository activity; that is acceptable here,
+  # since a repository nobody touches for 60 days is also not shipping wheels.)
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -22,6 +34,13 @@ jobs:
   lint:
     # 2.5.0b1: the pre-b1 audit found lint drift that had accumulated invisibly
     # because CI ran pytest only — ruff is now a gate alongside the suite.
+    #
+    # Skipped on the weekly schedule: this job (like verify-issues, test and
+    # mutation-proof below) reads a pinned toolchain and a locked dependency
+    # set, so a scheduled run re-answers a question already answered on the
+    # last push. Only wheel-smoke resolves unlocked, and that is the whole
+    # point of the schedule — see the trigger block above.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +55,7 @@ jobs:
     # bug-122 (2.5.0b1 audit C02): the issue registry is the regression contract —
     # 113+ documented patterns pinned to files. It was verified only by hand, so a
     # refactor could silently strip a fix marker (stale pin) without CI noticing.
+    if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +68,7 @@ jobs:
         run: python3 scripts/mutation_waivers.py
 
   test:
+    if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
     # bug-124: the full suite finishes in seconds; a leaked non-daemon thread once
     # kept the step alive to the 6-HOUR default job limit (burning runner time and
@@ -120,6 +141,7 @@ jobs:
     # Pinned to 3.13 only to bound cost: the mutations exercise handler logic, not
     # stdlib version edges, so a second Python version would add runtime without
     # adding signal.
+    if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
     # The script runs the suite up to ~13 times, but caught mutants fail fast (-x)
     # and every test is bounded by the 60s per-test timeout; local wall time is
