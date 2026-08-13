@@ -32,7 +32,6 @@ from cpersona.config import (
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
-    MAX_CONTENT_LENGTH,
     STORE_BLOB,
     local_blobs_stored,
     TASK_QUEUE_ENABLED,
@@ -45,6 +44,7 @@ from cpersona.utils import (
     _try_parse_json,
     error_response,
     sanitize_content_with_flag,
+    sanitize_profile_with_flag,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,10 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
     with the flag the caller needs to know it happened. Note this bounds the
     write path only — a profile stored oversized by an earlier version stays
     that size until it is rewritten.
+
+    CSC #677: the seam is shared, the ceiling is not. This path caps at
+    MAX_PROFILE_LENGTH, which is the row's only bound because the recall
+    injection never preview-trims it.
     """
     if no_persist.is_paused():
         return no_persist.make_skipped_response({"ok": True, "profiles_updated": 0}, "update_profile")
@@ -95,7 +99,7 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
     if not profile:
         return {"ok": True, "profiles_updated": 0, "reason": "empty profile"}
 
-    profile, truncated = sanitize_content_with_flag(profile)
+    profile, truncated = sanitize_profile_with_flag(profile)
     if not profile:
         return {"ok": True, "profiles_updated": 0, "reason": "empty after sanitization"}
 
@@ -2072,15 +2076,19 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
         tally.errors.append(f"Line {line_num}: profile has no content; the existing profile was kept")
         return
 
-    content, truncated = sanitize_content_with_flag(content)
+    content, truncated = sanitize_profile_with_flag(content)
     if not content:
         tally.errors.append(
             f"Line {line_num}: profile is empty after sanitisation; the existing profile was kept"
         )
         return
     if truncated:
+        # CSC #677: the number comes from the text that was actually kept, not
+        # from a second read of the constant. A message that quotes its own cap
+        # can disagree with the cut; len(content) after a truncation IS the cap.
         tally.errors.append(
-            f"Line {line_num}: profile exceeded {MAX_CONTENT_LENGTH} characters and was truncated"
+            f"Line {line_num}: profile exceeded the {len(content)}-character profile cap "
+            "and was truncated"
         )
 
     if not tally.dry_run:

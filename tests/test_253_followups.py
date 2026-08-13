@@ -13,7 +13,7 @@ import pytest_asyncio
 
 from cpersona import checks, maintenance_handlers, server
 from cpersona._vendored_mcp_common import mcp_utils, no_persist
-from cpersona.config import MAX_CONTENT_LENGTH
+from cpersona.config import MAX_PROFILE_LENGTH
 from cpersona.database import get_db
 
 AGENT = "followup-agent"
@@ -131,50 +131,50 @@ def test_the_filter_actually_suppresses_a_cloto_probe_validation_error(caplog):
 
 @pytest.mark.asyncio
 async def test_oversized_profile_is_detected(db):
-    await _set_profile(db, "x" * (MAX_CONTENT_LENGTH + 1_000))
+    await _set_profile(db, "x" * (MAX_PROFILE_LENGTH + 1_000))
 
     found = await checks.check_oversized_profile(db, AGENT, fix=False)
 
     assert len(found) == 1
     assert found[0]["type"] == "oversized_profile"
     assert found[0]["count"] == 1
-    assert found[0]["max_len"] == MAX_CONTENT_LENGTH + 1_000
+    assert found[0]["max_len"] == MAX_PROFILE_LENGTH + 1_000
 
 
 @pytest.mark.asyncio
 async def test_profile_at_the_cap_is_not_reported(db):
     """Boundary: the cap is the allowed size, not the first rejected one."""
-    await _set_profile(db, "x" * MAX_CONTENT_LENGTH)
+    await _set_profile(db, "x" * MAX_PROFILE_LENGTH)
 
     assert await checks.check_oversized_profile(db, AGENT, fix=False) == []
 
 
 @pytest.mark.asyncio
 async def test_fix_truncates_to_the_cap(db):
-    await _set_profile(db, "y" * (MAX_CONTENT_LENGTH + 5_000))
+    await _set_profile(db, "y" * (MAX_PROFILE_LENGTH + 5_000))
 
     await checks.check_oversized_profile(db, AGENT, fix=True)
 
     rows = await db.execute_fetchall(
         "SELECT length(content) FROM profiles WHERE agent_id = ?", (AGENT,)
     )
-    assert rows[0][0] == MAX_CONTENT_LENGTH
+    assert rows[0][0] == MAX_PROFILE_LENGTH
     assert await checks.check_oversized_profile(db, AGENT, fix=False) == []
 
 
 @pytest.mark.asyncio
 async def test_fix_leaves_another_agents_profile_alone(db):
     """The repair is scoped by the isolation filter, like every sibling fixer."""
-    await _set_profile(db, "a" * (MAX_CONTENT_LENGTH + 100), agent_id=AGENT)
-    await _set_profile(db, "b" * (MAX_CONTENT_LENGTH + 100), agent_id="other-agent")
+    await _set_profile(db, "a" * (MAX_PROFILE_LENGTH + 100), agent_id=AGENT)
+    await _set_profile(db, "b" * (MAX_PROFILE_LENGTH + 100), agent_id="other-agent")
 
     await checks.check_oversized_profile(db, AGENT, fix=True)
 
     rows = dict(
         await db.execute_fetchall("SELECT agent_id, length(content) FROM profiles")
     )
-    assert rows[AGENT] == MAX_CONTENT_LENGTH
-    assert rows["other-agent"] == MAX_CONTENT_LENGTH + 100
+    assert rows[AGENT] == MAX_PROFILE_LENGTH
+    assert rows["other-agent"] == MAX_PROFILE_LENGTH + 100
 
 
 @pytest.mark.asyncio
@@ -182,7 +182,7 @@ async def test_check_is_registered_and_surfaces_in_health(db):
     """Registration is the part that makes it reachable — pin it end to end."""
     assert "oversized_profile" in checks.HEALTH_CHECK_NAMES
 
-    await _set_profile(db, "z" * (MAX_CONTENT_LENGTH + 10))
+    await _set_profile(db, "z" * (MAX_PROFILE_LENGTH + 10))
     health = await maintenance_handlers.do_check_health(agent_id=AGENT, fix=False)
 
     assert "oversized_profile" in [issue["type"] for issue in health["issues"]]
