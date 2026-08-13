@@ -3000,6 +3000,21 @@
       "fix_sketch": "Rewrite the paragraph to the measured state and say what the string cannot be used for.",
       "fix_note": "v2.5.4: measured against the sibling checkout — mcp_common.__version__ is 0.5.1 both vendored and upstream, while upstream's own pyproject says 0.6.0 (a drift belonging to mgp-py). The header now records that the number went backwards across a strict improvement and that commits, not this string, answer which copy is newer. It also notes that the paragraph described the pre-sync state, so the same failure is recognisable next time.",
       "fixed_in": "2.5.4"
+    },
+    {
+      "id": "bug-205",
+      "summary": "(MEDIUM) bug-187 closed one route to a permanently degraded verdict; the class stayed open. store's `source` object declares no required key, so {\"id\":\"discord:1\",\"name\":\"bob\"} is a schema-conforming write that invalid_source_type counts and normalize_source refuses to map — measured: check_health(fix=True) reports status=degraded with invalid_source_type count 1 on run 1 and run 2, never converging. Bare strings outside user/assistant/ai (an agent id such as \"claude-code\") behave the same; the production corpus carries 495 such rows, 443 of them that one string. A warn no repair can clear pins the single status verdict, which is where a new warning goes to be ignored — the exact complaint bug-187 was filed for. Separately, invalid_source_type_where's docstring claimed the anonymous shapes it excludes were 'not invisible' while {} appeared on no health surface at all (measured: a corpus of three {} rows produced only missing_profile and null_embedding).",
+      "severity": "MEDIUM",
+      "discovered": "2026-07-29T00:00:00Z",
+      "version": "2.5.3",
+      "file": "cpersona/checks.py",
+      "pattern": "needs_human_review",
+      "expected": "present",
+      "status": "fixed",
+      "category": "verdict-never-clears",
+      "fix_sketch": "Make severity follow what a fix run would actually do, asking normalize_source rather than re-deriving mappability in SQL, and give the excluded anonymous shapes a home on the health surface.",
+      "fix_note": "v2.5.4: check_invalid_source_type classifies the offending unlocked rows through normalize_source itself — no second copy of the mapping rule — and reports warn when a fix run would rewrite at least one row, info + needs_human_review + a hint when it would rewrite none. The finding stays counted and listed either way; what stops is the gating. Locked-only corpora get the same downgrade with a hint naming the unlock, since bug-098 keeps the fixer off them. Classification is capped (INVALID_SOURCE_CLASSIFY_CAP, mirroring NEAR_DUPLICATE_ROW_CAP) and an incomplete sample declines to downgrade itself. `locked` is now an independent COUNT instead of count - len(rows): the subtraction made mapped+unmapped+locked==count an identity that held under any predicate (a C5 mutant produced locked=-2 and the sum still matched), and it breaks outright under the cap. check_anonymous_source now also counts the anonymous {} / JSON-null rows, split out as `unattributed` because the deep_check name-recovery hint does not apply to them. NOT done, deliberately: adding required:[\"type\"] to the store schema would break clients that legitimately send bare-string sources today and would not touch the existing rows, so intake tightening is left as a 2.6.0 decision. Regression: tests/test_253_source_type_verdict.py, including a property test asserting severity==warn iff the fix run maps at least one row.",
+      "fixed_in": "2.5.4"
     }
   ]
 }
