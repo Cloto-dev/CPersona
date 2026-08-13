@@ -67,6 +67,10 @@ NULL_EMBEDDING_CRITICAL_RATIO = 0.5
 FTS_DESYNC_CRITICAL_RATIO = 0.05
 NEAR_DUPLICATE_COSINE = 0.97
 NEAR_DUPLICATE_ROW_CAP = 1000
+# Offending source rows classified per check_invalid_source_type run. Bounds the
+# JSON parsing a plain check_health does; past it the sample is incomplete and
+# the check declines to downgrade its own severity.
+INVALID_SOURCE_CLASSIFY_CAP = 1000
 CALIBRATION_STALE_DAYS = 90
 
 _USERNAME_PREFIX_PATTERN = re.compile(r"^\[(.+?)\]\s")
@@ -1045,9 +1049,12 @@ def invalid_source_type_where(canonical_types: str) -> str:
     treats null and ``{}`` as one anonymous shape, so a legacy row that predates
     that normalisation carries the same information and is equally unrepairable.
 
-    Excluded here means *not a type defect* — not invisible. An object that has
-    keys but no recognised ``$.type`` (``{"id":"x"}``, ``{"type":"assistant"}``)
-    is still counted: something claimed a producer and got the contract wrong.
+    Excluded here means *not a type defect*. An object that has keys but no
+    recognised ``$.type`` (``{"id":"x"}``, ``{"type":"assistant"}``) is still
+    counted: something claimed a producer and got the contract wrong. The
+    anonymous shapes are reported by ``check_anonymous_source`` instead, which
+    2.5.4 widened to include them — until then this docstring said "not
+    invisible" while ``{}`` appeared on no health surface at all.
     """
     return f"""json_valid(source)
                     AND (json_extract(source, '$.type') NOT IN {canonical_types}
@@ -1066,6 +1073,31 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     shapes (see ``normalize_source`` for the exhaustive table) and updates only
     rows we can rewrite without fabricating a discriminator. Rows we don't
     recognise stay untouched so the finding remains visible on the next run.
+
+    2.5.4 — severity follows what a fix can actually do. bug-187 closed one
+    instance of "a warn ``fix=true`` cannot clear pins ``status=degraded``
+    forever"; the class stayed open, because a schema-conformant ``source``
+    still reaches it. ``{"id":"discord:1","name":"bob"}`` has no ``type`` and
+    the store schema has no ``required``, so it is accepted, counted here, and
+    refused by ``normalize_source`` — measured on the production corpus as 495
+    rows, 443 of them the bare string ``"claude-code"`` from a producer that
+    stopped writing in 2026-07. No number of fix runs converges.
+
+    Deciding it by shape (bare string vs dict, known vocabulary vs not) would
+    put a second copy of the mapping rule in this file, next to the one in
+    ``normalize_source``, and the two would drift. So the check asks the mapper
+    itself and reports what that answer means:
+
+    - at least one offending row a fix run would rewrite -> ``warn``. There is
+      an action, and the operator can take it.
+    - none -> ``info`` plus ``needs_human_review``. Still counted, still listed,
+      no longer holding the verdict down. Deciding that ``"claude-code"`` means
+      ``{"type":"Agent","id":"claude-code"}`` is a migration someone must
+      authorise; a monthly maintenance run is not that someone.
+
+    Classification is capped (``INVALID_SOURCE_CLASSIFY_CAP``) like the
+    near-duplicate scan. Past the cap the sample is incomplete, so the check
+    stays at ``warn`` — an unknown is not evidence that nothing can be done.
     """
     iso = isolation_where(agent_id=agent_id or None)
     # bug-144: json_extract raises OperationalError 'malformed JSON' (not NULL) on
@@ -1095,47 +1127,104 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     if bad == 0:
         return []
     issue: dict = {"type": "invalid_source_type", "count": bad}
+
+    # locked = 0 mirrors every sibling fixer (bug-098 invariant), and the same
+    # rows are read whether or not this run repairs them: the severity below
+    # depends on what a fix WOULD do, so a check that only looked when fixing
+    # would report a different verdict on alternate calls over identical data.
+    rows = await db.execute_fetchall(
+        f"""SELECT id, source FROM memories
+            WHERE {invalid_source_type_where(canonical_types)}
+            AND locked = 0{iso.and_clause}
+            LIMIT ?""",
+        (*iso.params, INVALID_SOURCE_CLASSIFY_CAP),
+    )
+    repairs: list[tuple[int, dict]] = []
+    unmapped = 0
+    for row_id, raw in rows:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except (json.JSONDecodeError, TypeError):
+            # invalid_json handles the surrounding case; leave the row
+            # so that check surfaces it, and don't count it as mapped.
+            unmapped += 1
+            continue
+        new_source, was_mapped = normalize_source(parsed)
+        if not was_mapped:
+            unmapped += 1
+            continue
+        repairs.append((row_id, new_source))
+
     if fix:
-        # locked = 0 mirrors every sibling fixer (bug-098 invariant). We do the
-        # rewrite per-row rather than in one UPDATE because the mapping is
-        # value-dependent — the shape a row lands on is a function of its
-        # current source, not a single canonical sentinel.
-        rows = await db.execute_fetchall(
-            f"""SELECT id, source FROM memories
-                WHERE {invalid_source_type_where(canonical_types)}
-                AND locked = 0{iso.and_clause}""",
-            iso.params,
-        )
-        mapped = 0
-        unmapped = 0
-        for row_id, raw in rows:
-            try:
-                parsed = json.loads(raw) if isinstance(raw, str) else raw
-            except (json.JSONDecodeError, TypeError):
-                # invalid_json handles the surrounding case; leave the row
-                # so that check surfaces it, and don't count it as mapped.
-                unmapped += 1
-                continue
-            new_source, was_mapped = normalize_source(parsed)
-            if not was_mapped:
-                unmapped += 1
-                continue
+        # Per-row rather than one UPDATE because the mapping is value-dependent
+        # — the shape a row lands on is a function of its current source, not a
+        # single canonical sentinel.
+        for row_id, new_source in repairs:
             await db.execute(
                 "UPDATE memories SET source = ? WHERE id = ? AND locked = 0",
                 (json.dumps(new_source), row_id),
             )
-            mapped += 1
-        issue["mapped"] = mapped
+        issue["mapped"] = len(repairs)
         issue["unmapped"] = unmapped
-        # bug-139: `count` spans every offending row, but the fix loop only
-        # sees locked = 0 rows (bug-098 invariant). Surface the remainder so
+        # bug-139: `count` spans every offending row, but the repair only
+        # touches locked = 0 rows (bug-098 invariant). Surface the remainder so
         # mapped + unmapped + locked reconciles with count instead of reading
         # as "found N, processed 0" when the offenders are locked.
-        issue["locked"] = bad - len(rows)
+        #
+        # Counted, not derived as `bad - len(rows)`: subtraction made the
+        # reconciliation an identity that held for any predicate, so the test
+        # asserting it could not fail (a C5 mutant produced locked = -2 and the
+        # sum still matched). An independent COUNT is also the only form that
+        # survives the classification cap.
+        issue["locked"] = (
+            await db.execute_fetchall(
+                f"""SELECT COUNT(*) FROM memories
+                    WHERE {invalid_source_type_where(canonical_types)}
+                    AND locked = 1{iso.and_clause}""",
+                iso.params,
+            )
+        )[0][0]
+
+    classified_all = len(rows) < INVALID_SOURCE_CLASSIFY_CAP
+    if not classified_all:
+        issue["classified"] = len(rows)
+    if not repairs and classified_all:
+        # Nothing a fix run would change: report it, stop gating on it.
+        issue["severity"] = "info"
+        issue["needs_human_review"] = True
+        issue["hint"] = (
+            "No offending row can be canonicalised without inventing a producer "
+            "discriminator (see normalize_source). Repair is a reviewed migration, "
+            "not a maintenance action"
+            + (
+                "; every offending row is locked, so unlock them first"
+                if not rows and bad
+                else ""
+            )
+        )
     return [issue]
 
 
 async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
+    """Memories with no producer attribution (info: a gap, not a defect).
+
+    Two shapes, reported together because they mean the same thing and split
+    because only one of them can be repaired:
+
+    - the ``{"type":"User","id":"","name":""}`` sentinel, whose name deep_check
+      can sometimes recover from a ``[name] `` content prefix;
+    - the anonymous ``{}`` (and its legacy JSON ``null`` twin), which is what
+      ``store`` records for an omitted source.
+
+    The second was reported by nothing at all until 2.5.4. bug-187 removed it
+    from ``invalid_source_type`` — correctly, since a documented way to say
+    "producer unknown" is not a contract violation — and the removal left it in
+    no other check, while ``invalid_source_type_where``'s docstring said the
+    exclusion did not make it invisible. Measured: a corpus of three ``{}`` rows
+    produced issue types ``['missing_profile', 'null_embedding']`` and nothing
+    else. It is counted here rather than given its own check because an operator
+    asking "how much of this corpus has no attribution?" wants one number.
+    """
     iso = isolation_where(agent_id=agent_id or None)
     # bug-144: same malformed-JSON hazard as check_invalid_source_type — a single
     # non-JSON source row makes json_extract raise and the outer except reports
@@ -1153,17 +1242,29 @@ async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
                 iso.params,
             )
         )[0][0]
+        unattributed = (
+            await db.execute_fetchall(
+                f"""SELECT COUNT(*) FROM memories
+                    WHERE json_valid(source)
+                    AND (json_type(source) IS 'null'
+                         OR (json_type(source) = 'object'
+                             AND (SELECT COUNT(*) FROM json_each(memories.source)) = 0))
+                    {iso.and_clause}""",
+                iso.params,
+            )
+        )[0][0]
     except Exception:
         return []
-    if anon == 0:
+    if anon == 0 and unattributed == 0:
         return []
-    return [
-        {
-            "type": "anonymous_source",
-            "count": anon,
-            "hint": "Use deep_check with fix=true to recover names from content",
-        }
-    ]
+    issue: dict = {"type": "anonymous_source", "count": anon + unattributed}
+    if unattributed:
+        # Split out because the hint below does not apply to them: there is no
+        # name to recover into a shape that never claimed one.
+        issue["unattributed"] = unattributed
+    if anon:
+        issue["hint"] = "Use deep_check with fix=true to recover names from content"
+    return [issue]
 
 
 async def check_operating_context_parse(db, agent_id: str = "", fix: bool = False) -> list[dict]:

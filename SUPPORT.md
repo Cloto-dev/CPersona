@@ -131,6 +131,23 @@ Certification and EOL dates are recorded in this table as they occur.
   reported. No schema change and no data is rewritten; upgrading is enough.
   Details: `qa/issue-registry.json` (bug-187).
 
+- **v2.5.3 and earlier — `check_health` reports `degraded` for legacy `source`
+  shapes no repair can clear (bug-205, MEDIUM).** The same failure as bug-187,
+  one class wider. `store`'s `source` object declares no required key, so
+  `{"id":"discord:1","name":"bob"}` is a conforming write; it is counted by
+  `invalid_source_type`, and `normalize_source` refuses to guess a producer type
+  for it. Bare strings that are not `user` / `assistant` / `ai` — an agent id
+  such as `"claude-code"` — behave the same way. Those rows carry `warn`, `warn`
+  decides `status`, and no number of `fix=true` runs converges. On a corpus
+  carrying legacy attribution this leaves `status` pinned at `degraded`, which
+  is where a *new* warning goes to be ignored. **Fixed in v2.5.4** — severity
+  now follows whether a fix run would change anything: rows the mapper can
+  rewrite still `warn`, rows only a human migration can settle report `info`
+  with `needs_human_review: true` and stay in the `issues` list. Nothing is
+  hidden and no data is rewritten. On v2.5.3 and earlier, read `issues` rather
+  than `status` alone, as for bug-187. Details: `qa/issue-registry.json`
+  (bug-205).
+
 - **v2.4.39 and earlier — vector recall scan window too narrow (bug-085,
   HIGH).** The vector retriever ranked only the newest
   `min(MAX_MEMORIES, max(limit * 10, 100))` rows, so a default recall reached
