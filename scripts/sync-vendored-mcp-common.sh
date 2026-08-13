@@ -17,10 +17,19 @@
 # CAUTION — this is still a blind `rsync -a --delete` mirror. Any future local
 # edit to cpersona/_vendored_mcp_common/ is reverted by the next sync unless it
 # is pushed upstream first, and a sync from an mgp-py checkout OLDER than
-# a5b3fc1 reverts the three patches above. Note also that the vendored copy
-# carries __version__ = "0.5.2" while upstream reads "0.5.1" (upstream's own
-# pyproject says 0.6.0 — a pre-existing drift there), so a sync moves that
-# string. The post-sync gate below runs verify-issues.sh + the pinned
+# a5b3fc1 reverts the three patches above.
+#
+# DO NOT read __version__ as a freshness signal, in either direction. The
+# vendored copy carries "0.5.1" and so does upstream's module — but upstream's
+# own pyproject says "0.6.0", a drift that predates this repo and belongs to
+# mgp-py. The sync in c3b80b0 moved the vendored string DOWN, 0.5.2 -> 0.5.1,
+# while moving the code FORWARD (it brought in the mgp-py PR #14 filter fix),
+# so the number went backwards across a strict improvement. A maintainer
+# comparing this string against another server's copy to decide which is newer
+# will get the wrong answer; compare commits. (This paragraph said the opposite
+# until 2.5.4 — it described the state before the sync it is attached to.)
+#
+# The post-sync gate below runs verify-issues.sh + the pinned
 # regression tests and fails this script non-zero if a patch was reverted, so
 # a downgrade is caught here immediately instead of on the next CI push.
 set -euo pipefail
