@@ -58,6 +58,21 @@ MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
 # Benchmarks on larger corpora raise it via the env var instead of patching code.
 MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
 MAX_CONTENT_LENGTH = _parse_int("CPERSONA_MAX_CONTENT_LENGTH", 2000)
+# CSC #677: the profile owns its ceiling, because the two rows are bounded for
+# different reasons and only one of them is bounded by its cap alone.
+#
+# A memory is preview-trimmed on the way out (RECALL_PREVIEW_CHARS) and its full
+# text stays reachable through `ref` + get_contents, so its cap governs what is
+# stored, not what a recall response costs. The profile is injected as the id=-1
+# sentinel row, and _apply_preview deliberately skips rows with no `ref` —
+# trimming them would make their full content permanently unreachable (bug-117).
+# So the profile's cap is the ONLY thing bounding it, and it is paid in EVERY
+# recall response.
+#
+# Sharing one constant meant a future relaxation of the memory cap (the 2.6 tree,
+# CSC #680) would silently unbound the profile too. The number is unchanged —
+# 2000 is right for the profile, and small is the point — only its ownership is.
+MAX_PROFILE_LENGTH = _parse_int("CPERSONA_MAX_PROFILE_LENGTH", 2000)
 # 2.5.2b1 (audit C12): the JSON sidecar fields — source and metadata — reach the
 # row with no bound at all, so one call could park an arbitrarily large blob per
 # memory (content has been capped since 2.1; these never were). They are cheap

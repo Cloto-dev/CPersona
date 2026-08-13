@@ -18,6 +18,7 @@ from cpersona.config import (
     DECAY_FLOOR,
     DECAY_RATE,
     MAX_CONTENT_LENGTH,
+    MAX_PROFILE_LENGTH,
     MIN_TIME_RANGE_HOURS,
     RECALL_BOOST,
     RECENT_RECALL_PENALTY,
@@ -58,8 +59,8 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     return False
 
 
-def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
-    """Sanitize, and report whether the cap actually cut anything.
+def _sanitize_with_cap(content: str, cap: int) -> tuple[str, bool]:
+    """Strip the annotation and whitespace, then apply ``cap``.
 
     bug-175: callers derived the ``truncated`` flag from ``len(raw) > cap``, but
     the raw string still carries the ``[Memory from ...]`` annotation this
@@ -70,10 +71,26 @@ def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
     """
     content = _MEMORY_ANNOTATION_PATTERN.sub("", content)
     content = content.strip()
-    truncated = len(content) > MAX_CONTENT_LENGTH
+    truncated = len(content) > cap
     if truncated:
-        content = content[:MAX_CONTENT_LENGTH]
+        content = content[:cap]
     return content, truncated
+
+
+def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
+    """Sanitize a memory/episode write, and report whether the cap cut anything."""
+    return _sanitize_with_cap(content, MAX_CONTENT_LENGTH)
+
+
+def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
+    """Sanitize a profile write against the profile's own cap (CSC #677).
+
+    Same seam as ``sanitize_content_with_flag`` — the two paths differ only in
+    which ceiling applies. The profile row is injected into every recall response
+    and is never preview-trimmed (bug-117), so its bound cannot be inherited from
+    a constant that a later line intends to relax; see config.MAX_PROFILE_LENGTH.
+    """
+    return _sanitize_with_cap(profile, MAX_PROFILE_LENGTH)
 
 
 def _sanitize_content(content: str) -> str:
