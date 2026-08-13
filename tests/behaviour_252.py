@@ -64,7 +64,7 @@ os.environ.setdefault("CPERSONA_OPERATING_CONTEXT", "off")
 
 import numpy as np  # noqa: E402
 
-from cpersona import admin_handlers, config, maintenance_handlers, memory_handlers, utils, vector  # noqa: E402
+from cpersona import admin_handlers, maintenance_handlers, memory_handlers, utils, vector  # noqa: E402
 from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
@@ -1139,16 +1139,30 @@ async def _(ctx):
     )
 
 
-# MAX_CONTENT_LENGTH is 2000 by default (config.py). The truncation flag is
-# derived from the RAW length, but the STORED content is the sanitized/truncated
-# body -- pin both so a code move that swaps the two orders is caught.
+# The truncation flag is derived from the RAW length, but the STORED content is
+# the sanitized/truncated body -- pin both so a code move that swaps the two
+# orders is caught.
+#
+# an earlier decision: the cap is now an explicit input rather than whatever config says
+# today. It used to be read live (config.MAX_CONTENT_LENGTH + 1), which made the
+# cap's VALUE an unrecorded input to a recorded observation: raising the default
+# from 2000 to 16000 changed the stored body and its embedding, and the scenario
+# went red for a reason that has nothing to do with the code move it guards. The
+# golden cannot be regenerated to match (it is the pre-refactor record, and a
+# golden captured after the code it checks agrees by construction), so the input
+# is pinned to the cap the recording was made under instead. Changing the
+# default cap must not silently rewrite what "unchanged behaviour" means.
+_GOLDEN_CONTENT_CAP = 2000
+
+
 @scenario("store-truncated", "#362", "store: content > MAX_CONTENT_LENGTH — truncated:true AND the row stores the truncated body")
 async def _(ctx):
     install_local(ctx)
-    # Read the cap from where it is DEFINED, not from a module that happened to
-    # import it: bug-175 removed that re-export and this scenario went red for a
-    # reason that had nothing to do with the behaviour it pins.
-    long_content = "y" * (config.MAX_CONTENT_LENGTH + 1)
+    # Patch where the cap is READ (utils holds its own binding), not where it is
+    # defined: bug-175 removed the re-export config -> utils, so setting it on
+    # config alone would leave the sanitiser on the live default.
+    ctx.patch(utils, "MAX_CONTENT_LENGTH", _GOLDEN_CONTENT_CAP)
+    long_content = "y" * (_GOLDEN_CONTENT_CAP + 1)
     return await memory_handlers.do_store(
         "s1", {"content": long_content, "timestamp": "2026-07-22T00:00:00+00:00"}
     )

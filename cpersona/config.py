@@ -57,7 +57,30 @@ MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
 # vector retriever, so the default must comfortably exceed a real corpus.
 # Benchmarks on larger corpora raise it via the env var instead of patching code.
 MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
-MAX_CONTENT_LENGTH = _parse_int("CPERSONA_MAX_CONTENT_LENGTH", 2000)
+# an earlier decision: 16000, raised from 2000, because the old cap was destroying the part
+# of a memory that is worth the most. Long records put the conclusion first and
+# the hard-won detail last, so cutting the tail on every write removed exactly
+# what nothing else records — and no later line can restore it (the 2.6 tree
+# splits what is stored; it cannot recover what was never stored). A measurement
+# of the live corpus found 124 of 1625 rows (7.6%) sitting exactly at 2000
+# characters: scars, not coincidences.
+#
+# The number is derived, not picked: 1.5x the longest record that ever existed
+# (a 10,432-character episode) and 8x the old cap, while no row in the corpus
+# exceeds 8000 — so it refuses no honest write, and still stops a runaway blob
+# with 60x of headroom. The read side does NOT follow it up: get_contents keeps
+# a fixed character budget (GET_CONTENTS_MAX_CHARS, 40000 — what the worst case
+# used to be at 20 refs x 2000) that is not derived from this constant, so a
+# batch cannot grow just because this number did. The one documented exception
+# is a single row that alone exceeds the budget, which is still returned whole
+# rather than made unreachable; at this default no such row can exist.
+#
+# The embedding window is unchanged (512 tokens), so text past the window is
+# still invisible to the vector retriever. It is NOT invisible to search: the
+# FTS triggers index the stored content in full, so the tail becomes reachable
+# through the lexical channel the moment it is stored. Closing the vector gap is
+# the 2.6 tree's job (an earlier decision).
+MAX_CONTENT_LENGTH = _parse_int("CPERSONA_MAX_CONTENT_LENGTH", 16000)
 # an earlier decision: the profile owns its ceiling, because the two rows are bounded for
 # different reasons and only one of them is bounded by its cap alone.
 #
