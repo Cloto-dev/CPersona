@@ -18,6 +18,7 @@ flags, so it rarely ran at all).
    closes that gap. See ``test_embedding_path.py``.
 """
 import hashlib
+import logging
 import os
 import tempfile
 
@@ -87,6 +88,47 @@ def fake_embedding_client(monkeypatch):
     client = FakeEmbeddingClient()
     monkeypatch.setattr(vector, "_embedding_client", client)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_mgp_log_filter():
+    """Fail the test that leaves an MGP validation filter on a live log handler.
+
+    ``install_mgp_validation_filter`` attaches to the root logger AND to each of
+    its handlers. A teardown that only clears the logger side leaves the filter
+    on pytest's capture handlers for the rest of the session, where it silently
+    drops every later "Failed to validate request:" record — a test disabling
+    other tests' assertions, in exactly the failure class the filtered code is
+    about. Measured once: after the 2.5.3 follow-up test ran, the filter was
+    live on _LiveLoggingNullHandler, _FileHandler and LogCaptureHandler, and a
+    probe from an unrelated logger came back invisible.
+
+    Checked here rather than as a standalone test because a standalone one can
+    only fail if it happens to run after the leak, and it names the victim
+    instead of the culprit. This fixture runs after every test and reports the
+    one that leaked.
+
+    It also detaches what it found, so exactly one test fails. Left in place,
+    the dirty state makes every subsequent test fail too, and a wall of errors
+    is read as "the suite is broken" rather than "this test leaked" — the first
+    name in the list is the only one that means anything, and it is the easiest
+    to miss.
+    """
+    yield
+    leaked = [
+        (handler, f)
+        for handler in logging.getLogger().handlers
+        for f in handler.filters
+        if type(f).__name__ == "_MgpValidationFilter"
+    ]
+    for handler, log_filter in leaked:
+        handler.removeFilter(log_filter)
+    leaked = [(type(h).__name__, type(f).__name__) for h, f in leaked]
+    assert not leaked, (
+        f"this test left an MGP validation filter on a live handler ({leaked}); it will "
+        "swallow 'Failed to validate request:' records for every test after it. Remove "
+        "the filter from root.handlers as well as from the root logger in teardown."
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)
