@@ -41,8 +41,8 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     """Check if content matches any excluded string (starts-with, normalized).
 
     Handles truncation asymmetry: conversation_context entries may be truncated
-    to 500 chars while stored memories can be up to 2000 chars. The starts_with
-    check in both directions accounts for this.
+    to 500 chars while a stored memory runs to MAX_CONTENT_LENGTH. The
+    starts_with check in both directions accounts for this.
     """
     if not exclude_set:
         return False
