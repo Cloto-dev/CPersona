@@ -165,8 +165,12 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
 # structure of ``_compute_confidence``, its constants (COSINE_FLOOR/CEIL, the decay
 # rates), the episode penalty, or which rows reach scoring carrying a cosine at all. The
 # 2.5.2b2 cosine backfill (bug-155) is the first such change — it moved FTS-only rows off
-# the cosine-less ``sqrt(time_decay)`` branch, lowering their scores by construction.
-SCORING_VERSION = "252b2-cosine-backfill"
+# the cosine-less ``sqrt(time_decay)`` branch, lowering their scores by construction. The
+# 2.5.5a1 unknown-age imputation (bug-207) is the second: a row whose timestamp does not
+# parse no longer takes the ``time_decay`` of 1.0 reserved for a row written this instant,
+# so every undated row scores lower than the sidecar was calibrated against — two thirds
+# of the episodes on this project's deployment.
+SCORING_VERSION = "255a1-unknown-age"
 
 
 def _compute_confidence(
@@ -190,11 +194,27 @@ def _compute_confidence(
     not recalled again, converging back to DECAY_FLOOR.
     """
     now = datetime.now(timezone.utc)
-    age_hours = 0.0
 
     parsed = _parse_timestamp_utc(timestamp_str)
-    if parsed:
-        age_hours = max(0.0, (now - parsed).total_seconds() / 3600)
+    # bug-207: an unparseable or empty timestamp used to leave age_hours at 0.0. That is
+    # not "unknown" — it is the exact age of a row written this instant, so the rows whose
+    # age nobody knows took the full time_decay of 1.0 that no dated row can reach, and
+    # outranked every row whose age IS known. Measured on this project's deployment: all
+    # 2,221 memories carry a timestamp, while 333 of 500 episodes have no start_time, and
+    # _search_episodes_fts passes that straight through as "". Two thirds of the episodes
+    # were therefore ranked above every dated memory on the time axis.
+    #
+    # An unknown age is now placed at the middle of the corpus's own span: neutral rather
+    # than newest, deterministic, derived from a value the caller already computed
+    # (time_range_hours), and it never writes a fabricated timestamp back to the row. The
+    # caller is told, via age_unknown, that the age it is reading was imputed.
+    effective_range = max(MIN_TIME_RANGE_HOURS, time_range_hours)
+    age_unknown = parsed is None
+    age_hours = (
+        max(0.0, (now - parsed).total_seconds() / 3600)
+        if parsed
+        else effective_range / 2.0
+    )
 
     raw_boost = math.log(1 + recall_count) * RECALL_BOOST
     if raw_boost > 0 and last_recalled_at_str:
@@ -208,7 +228,6 @@ def _compute_confidence(
     if deep:
         time_decay = 1.0
     elif time_range_hours > 0:
-        effective_range = max(MIN_TIME_RANGE_HOURS, time_range_hours)
         effective_rate = DECAY_RATE / max(1.0, effective_range / REFERENCE_HOURS)
         time_decay = max(effective_floor, 1.0 / (1.0 + age_hours * effective_rate))
     else:
@@ -224,6 +243,10 @@ def _compute_confidence(
                 recency_penalty = RECENT_RECALL_PENALTY
 
     confidence: dict = {"age_hours": round(age_hours, 1)}
+    if age_unknown:
+        # bug-207: age_hours above is imputed, not observed. Saying so is the difference
+        # between a caller reading a measurement and a caller reading a default.
+        confidence["age_unknown"] = True
     if resolved:
         confidence["resolved"] = True
 
