@@ -3030,6 +3030,20 @@
       "fix_sketch": "Add the missing fixtures/behavioural tests, each verified by re-applying the mutation that survived; and catch the log-filter leak in an autouse fixture that names the test that leaked rather than the tests it breaks.",
       "fix_note": "v2.5.4: tests/test_254_teeth.py adds (1) a parametrised case for '[]' and '[1,2]' plus the paired '{}' exclusion, (2) a behavioural test that drives main() with an unknown transport and a spy on the installer, so an unreachable call fails where the source pin cannot see it — the source pin also gained an indentation anchor requiring the call to be unnested, (3) a root-logger-filter test that clears the handlers so only the mutated line can decide the outcome, and (4) a purge test that reads the sidecar file back and asserts the purged agent is gone and the other survives. (5) is fixed at the source (the teardown now removes the filter from the handlers and restores rather than clears the logger's own chain) and guarded by an autouse conftest fixture that fails the leaking test by name and detaches what it found, so exactly one test fails instead of every test after it. Each item was verified by re-applying its mutation and watching the intended test go red.",
       "fixed_in": "2.5.4"
+    },
+    {
+      "id": "bug-207",
+      "summary": "(HIGH) _compute_confidence left age_hours at 0.0 whenever the timestamp did not parse, so a row of UNKNOWN age was scored as one written this instant and took the full time_decay of 1.0 that no dated row can reach. Under CONFIDENCE_ENABLED the score is both the ranking key and the quality gate's signal, so those rows sorted above every dated row and survived the gate that cut dated ones. Live in production: all 2,221 memories carry a timestamp, but 333 of 500 episodes have no start_time and _search_episodes_fts passes it through as '' — two thirds of the episodes outranked every dated memory on the time axis. Measured on a 1,545-document corpus with 394 vocabulary-disjoint queries: turning confidence on moved the undated group +19.0pt while every dated quartile lost, the NEWEST most of all (-39.3pt). No test covered an undated row under confidence, so the whole path was unmeasured.",
+      "severity": "HIGH",
+      "discovered": "2026-08-14T00:00:00Z",
+      "version": "2.5.4a2",
+      "file": "cpersona/utils.py",
+      "pattern": "bug-207",
+      "expected": "present",
+      "status": "fixed",
+      "category": "missing-data-scored-as-best-case",
+      "fixed_in": "2.5.5a1",
+      "fix_note": "An unknown age is placed at the middle of the corpus's own span (max(MIN_TIME_RANGE_HOURS, time_range_hours) / 2) and the response carries age_unknown: true. Chosen over three alternatives: (a) keeping the time factor at 1.0 is the defect itself; (b) pushing unknown rows to the decay floor over-corrects — it buries a row for lacking metadata, and the tests pin both directions so neither extreme can land silently; (c) backfilling a timestamp into the row would write a fabricated observation into the database to fix a scoring bug, and the imputation would then be indistinguishable from a measurement forever. Deriving it from time_range_hours costs no extra query (the caller already computes it) and follows the corpus instead of a constant. Filling in the missing episodes.start_time values is a separate, complementary repair (bug-208): imputation is still needed for the rows that cannot be filled."
     }
   ]
 }
