@@ -666,10 +666,10 @@ async def test_temporal_span_is_scoped_to_recall_axes(clean_db, monkeypatch):
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
 
     row = {"id": 1, "content": "recent one", "source": "{}", "timestamp": "2026-01-01T00:00:00+00:00"}
-    _, scoped_hours, _ = await memory_handlers._apply_recall_scoring(
+    _, scoped_hours, _, _ = await memory_handlers._apply_recall_scoring(
         db, "ts", [dict(row)], False, channel="b"
     )
-    _, agentwide_hours, _ = await memory_handlers._apply_recall_scoring(
+    _, agentwide_hours, _, _ = await memory_handlers._apply_recall_scoring(
         db, "ts", [dict(row)], False
     )
     assert scoped_hours < agentwide_hours, (

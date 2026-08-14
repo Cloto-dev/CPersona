@@ -92,7 +92,7 @@ async def test_episode_penalty_resorts_fusion_results(clean_db, monkeypatch):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "_rrf_score": 0.045,
     }
-    results, _, _ = await memory_handlers._apply_recall_scoring(
+    results, _, _, _ = await memory_handlers._apply_recall_scoring(
         clean_db, "pen-agent", [dict(old_row), dict(new_row)], deep=False
     )
     assert results[0]["id"] == 2, (
@@ -116,7 +116,7 @@ async def test_episode_penalty_keeps_cascade_stage_order(clean_db, monkeypatch):
         {"id": 1, "content": "vector stage", "timestamp": "2026-01-01T00:00:00+00:00", "_cosine": 0.9},
         {"id": 2, "content": "keyword stage", "timestamp": "2026-01-01T00:00:00+00:00"},
     ]
-    results, _, _ = await memory_handlers._apply_recall_scoring(
+    results, _, _, _ = await memory_handlers._apply_recall_scoring(
         clean_db, "pen-agent2", rows, deep=False
     )
     assert [r["id"] for r in results] == [1, 2], "cascade stage order must be preserved"

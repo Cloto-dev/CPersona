@@ -160,7 +160,7 @@ async def test_bug147_boundary_scoped_to_recall_project():
     await _insert_episode(db, project_id="A", channel="", created_at="2026-07-23 08:00:00")
 
     results = [_memory_row(0.50, "2026-07-20T09:00:00+00:00")]
-    out, _range, _rc = await M._apply_recall_scoring(
+    out, _range, _rc, _ = await M._apply_recall_scoring(
         db, AGENT, results, deep=False, project_id="B", channel=""
     )
 
@@ -178,7 +178,7 @@ async def test_bug147_boundary_scoped_to_recall_channel():
     await _insert_episode(db, project_id="", channel="chatA", created_at="2026-07-23 08:00:00")
 
     results = [_memory_row(0.50, "2026-07-20T09:00:00+00:00")]
-    out, _range, _rc = await M._apply_recall_scoring(
+    out, _range, _rc, _ = await M._apply_recall_scoring(
         db, AGENT, results, deep=False, project_id=None, channel="chatB"
     )
 
@@ -196,7 +196,7 @@ async def test_bug147_in_scope_episode_still_penalises():
     await _insert_episode(db, project_id="A", channel="", created_at="2026-07-23 08:00:00")
 
     results = [_memory_row(0.50, "2026-07-20T09:00:00+00:00")]
-    out, _range, _rc = await M._apply_recall_scoring(
+    out, _range, _rc, _ = await M._apply_recall_scoring(
         db, AGENT, results, deep=False, project_id="A", channel=""
     )
 

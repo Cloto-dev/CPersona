@@ -296,7 +296,7 @@ async def test_episode_confidence_ignores_colliding_memory_recall_count(clean_db
             "_resolved": False,
         },
     ]
-    scored, time_range_hours, recall_counts = await memory_handlers._apply_recall_scoring(
+    scored, time_range_hours, recall_counts, _ = await memory_handlers._apply_recall_scoring(
         db, "a1", results, deep=False
     )
     assert recall_counts.get(mem_id, (0, ""))[0] == 50  # the memory's own data is intact
