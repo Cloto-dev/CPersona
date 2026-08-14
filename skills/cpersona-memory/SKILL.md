@@ -240,6 +240,10 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
   `rsf` (relative-score fusion; **recommended for Japanese / CJK or
   topic-drift-prone** corpora, where keyword score magnitude is the
   discriminating signal RRF flattens) / `cascade` (legacy sequential).
+  **Only in effect when `CPERSONA_CONFIDENCE_ENABLED` is off (the default).**
+  With confidence on, the fusion mode still selects the candidates, but the
+  result set is re-sorted by the confidence score before it is returned — so
+  the mode changes what is considered, not the order you see.
 - **`set_recall_precision(agent_id, precision)`** — `strict` (fewer wrong hits,
   more misses) / `balanced` (default) / `lenient`. Read it back with
   `get_recall_precision`. The threshold curve is auto-calibrated; this is the
