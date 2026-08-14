@@ -104,7 +104,7 @@ async def test_episode_penalty_resorts_with_profile_row(clean_db):
         },
     ]
 
-    results, _, _ = await memory_handlers._apply_recall_scoring(
+    results, _, _, _ = await memory_handlers._apply_recall_scoring(
         clean_db, agent_id, rows, deep=False
     )
     assert [row["id"] for row in results] == [2, 1, -1], (

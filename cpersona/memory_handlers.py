@@ -935,7 +935,7 @@ async def _apply_recall_scoring(
     project_id: str | None = None,
     channel: str = "",
     query: str = "",
-) -> tuple[list[dict], float, dict]:
+) -> tuple[list[dict], float, dict, float | None]:
     """Post-recall scoring run before the quality gate: the episode-boundary penalty
     (L3, v2.4.14) and, when CONFIDENCE_ENABLED, the confidence score (which also
     re-sorts by it). Factored out of do_recall (v2.4.27) so the gate calibration
@@ -943,9 +943,14 @@ async def _apply_recall_scoring(
     gate keys on — including confidence, which takes precedence over the fused score and
     so owns the gate in confidence-enabled deployments. Mutates ``results``.
 
-    Returns ``(results, time_range_hours, recall_counts)`` — do_recall reuses the latter
-    two for the response confidence metadata and the recall-count update, so they are
-    computed once here. Order matters: the episode penalty scales ``_cosine`` before
+    Returns ``(results, time_range_hours, recall_counts, newest_age_hours)`` — do_recall
+    reuses the latter three for the response confidence metadata and the recall-count
+    update, so they are computed once here. ``newest_age_hours`` (bug-207) is how old the
+    scope's newest timestamp is right now; it anchors the imputed age of a row whose own
+    timestamp will not parse, which half the corpus width alone cannot do once the newest
+    row is itself old. ``None`` means no span was computable (empty scope) and
+    ``_compute_confidence`` falls back to its unanchored form. Order matters: the episode
+    penalty scales ``_cosine`` before
     ``_compute_confidence`` reads it, so the confidence score reflects the penalised
     cosine (as in do_recall).
 
@@ -955,9 +960,10 @@ async def _apply_recall_scoring(
     preserved for existing call sites that predate the fix) disables backfill.
     """
     time_range_hours = 0.0
+    newest_age_hours: float | None = None
     recall_counts: dict[int, tuple[int, str]] = {}
     if not results:
-        return results, time_range_hours, recall_counts
+        return results, time_range_hours, recall_counts, newest_age_hours
 
     # bug-155: rows the fusion path admitted via FTS / keyword only arrive with
     # `_cosine=None`. Backfill the true cosine BEFORE the episode-boundary
@@ -992,6 +998,12 @@ async def _apply_recall_scoring(
             newest = _parse_timestamp_utc(range_row[0][1])
             if oldest and newest:
                 time_range_hours = max(0.0, (newest - oldest).total_seconds() / 3600)
+                # bug-207: the span above is the corpus's internal width; this is where it
+                # sits relative to now. Both are needed to place a row of unknown age
+                # inside the dated range instead of ahead of it.
+                newest_age_hours = max(
+                    0.0, (datetime.now(timezone.utc) - newest).total_seconds() / 3600
+                )
 
         # bug-041: exclude episode rows — their id collides with a memory id and
         # would otherwise pull that unrelated memory's recall_count/last_recalled_at
@@ -1062,12 +1074,13 @@ async def _apply_recall_scoring(
                 resolved=is_resolved,
                 deep=deep,
                 time_range_hours=time_range_hours,
+                newest_age_hours=newest_age_hours,
                 recall_count=rc_data[0],
                 last_recalled_at_str=rc_data[1],
             )["score"]
         results.sort(key=lambda r: r.get("_confidence_score", 0), reverse=True)
 
-    return results, time_range_hours, recall_counts
+    return results, time_range_hours, recall_counts, newest_age_hours
 
 
 async def do_recall(
@@ -1140,7 +1153,7 @@ async def do_recall(
         # produces the exact same per-row gate score the runtime gate keys on — Goal #132).
         # time_range_hours / recall_counts are reused below for the response metadata + the
         # recall-count update, so they are returned rather than recomputed.
-        results, time_range_hours, recall_counts = await _apply_recall_scoring(
+        results, time_range_hours, recall_counts, newest_age_hours = await _apply_recall_scoring(
             db, agent_id, results, deep, project_id=project_id, channel=channel, query=query
         )
 
@@ -1270,6 +1283,7 @@ async def do_recall(
                 resolved=is_resolved,
                 deep=deep,
                 time_range_hours=time_range_hours,
+                newest_age_hours=newest_age_hours,
                 recall_count=rc_data[0],
                 last_recalled_at_str=rc_data[1],
             )

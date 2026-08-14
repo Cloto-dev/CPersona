@@ -166,11 +166,11 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
 # rates), the episode penalty, or which rows reach scoring carrying a cosine at all. The
 # 2.5.2b2 cosine backfill (bug-155) is the first such change — it moved FTS-only rows off
 # the cosine-less ``sqrt(time_decay)`` branch, lowering their scores by construction. The
-# 2.5.5a1 unknown-age imputation (bug-207) is the second: a row whose timestamp does not
+# 2.5.4a3 unknown-age imputation (bug-207) is the second: a row whose timestamp does not
 # parse no longer takes the ``time_decay`` of 1.0 reserved for a row written this instant,
 # so every undated row scores lower than the sidecar was calibrated against — two thirds
 # of the episodes on this project's deployment.
-SCORING_VERSION = "255a1-unknown-age"
+SCORING_VERSION = "254a3-unknown-age"
 
 
 def _compute_confidence(
@@ -180,6 +180,7 @@ def _compute_confidence(
     resolved: bool = False,
     deep: bool = False,
     time_range_hours: float = 0.0,
+    newest_age_hours: float | None = None,
     recall_count: int = 0,
     last_recalled_at_str: str = "",
 ) -> dict:
@@ -204,17 +205,32 @@ def _compute_confidence(
     # _search_episodes_fts passes that straight through as "". Two thirds of the episodes
     # were therefore ranked above every dated memory on the time axis.
     #
-    # An unknown age is now placed at the middle of the corpus's own span: neutral rather
-    # than newest, deterministic, derived from a value the caller already computed
-    # (time_range_hours), and it never writes a fabricated timestamp back to the row. The
-    # caller is told, via age_unknown, that the age it is reading was imputed.
+    # An unknown age is now placed in the middle of the corpus's own AGE range: neutral
+    # rather than newest, deterministic, derived from values the caller already computed,
+    # and it never writes a fabricated timestamp back to the row. The caller is told, via
+    # age_unknown, that the age it is reading was imputed.
+    #
+    # The anchor matters. time_range_hours is the corpus's internal WIDTH (MAX - MIN of
+    # the timestamps), while every dated row's age is measured from now, so half the width
+    # is only a midpoint when the newest row is roughly now. On a scope whose newest row
+    # is itself old, half the width is YOUNGER than every dated row and the defect returns
+    # intact: with oldest 51d / newest 21d (width 720h) an imputed 360h outscores the 504h
+    # newest. Anchoring on the newest row's age fixes both ends —
+    # newest_age + width/2 == ((now - newest) + (now - oldest)) / 2 — and it collapses to
+    # the newest row's own age when the scope holds a single timestamp (width 0), which
+    # ties rather than wins.
     effective_range = max(MIN_TIME_RANGE_HOURS, time_range_hours)
     age_unknown = parsed is None
-    age_hours = (
-        max(0.0, (now - parsed).total_seconds() / 3600)
-        if parsed
-        else effective_range / 2.0
-    )
+    if parsed:
+        age_hours = max(0.0, (now - parsed).total_seconds() / 3600)
+    elif newest_age_hours is not None:
+        age_hours = max(0.0, newest_age_hours) + max(0.0, time_range_hours) / 2.0
+    else:
+        # No anchor: the caller scored rows without computing a corpus span at all (the
+        # gate-calibration path, or a scope whose memories table is empty). Half the
+        # floored width is the pre-anchor behaviour, and it still assumes a live corpus —
+        # the one case this fix cannot reach, kept explicit rather than silently correct.
+        age_hours = effective_range / 2.0
 
     raw_boost = math.log(1 + recall_count) * RECALL_BOOST
     if raw_boost > 0 and last_recalled_at_str:

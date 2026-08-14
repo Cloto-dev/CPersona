@@ -929,7 +929,7 @@ async def _calibrate_fused_gate(
         # backfilled cosines exactly like the runtime recall path does — otherwise
         # the calibration curve would be built on a signal shape (cosine-less
         # confidence branch) the runtime no longer produces.
-        results, _, _ = await _apply_recall_scoring(db, agent_id, results, False, query=qcontent)
+        results, _, _, _ = await _apply_recall_scoring(db, agent_id, results, False, query=qcontent)
         queries_run += 1
         for r in results:
             rid = r.get("id")
