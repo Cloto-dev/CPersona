@@ -160,12 +160,14 @@ That's it. Claude now has persistent memory. Ask it to `store` something and `re
 - **Episodic memory** — Conversation summaries archived via `archive_episode`
 - **Profile memory** — Accumulated user/project attributes via `update_profile`
 
-**Confidence Scoring** — Each recalled memory gets a confidence score combining:
+**Confidence Scoring** (`CPERSONA_CONFIDENCE_ENABLED`, off by default) — when enabled, each recalled memory gets a confidence score combining:
 
 - Cosine similarity (semantic relevance)
 - Dynamic time decay (adapts to corpus time range — a 1-year-old corpus and a 1-day-old corpus use different decay curves)
-- Recall boost (frequently useful memories surface more easily, with natural fade-out)
+- Recall boost (raises the decay *floor* for frequently recalled memories, with natural fade-out — so it changes a score only where time decay would otherwise fall below that floor, which does not happen on a corpus spanning a few months)
 - Completion factor (resolved topics decay faster)
+
+**Enabling it does more than add metadata.** The score becomes the ranking key — the result set is re-sorted by it — and the quality gate keys on it too. See [Recall fusion mode](#recall-fusion-mode-cpersona_recall_mode) for how that interacts with the fusion strategy.
 
 **Zero LLM Dependency** — cpersona is a pure data server. It never calls an LLM internally. All summarization and extraction is performed by the calling agent. This means zero API costs from cpersona itself, deterministic behavior, and no hidden latency.
 
@@ -291,7 +293,7 @@ All settings via environment variables with sensible defaults:
 | `CPERSONA_RRF_K` | `60` | RRF smoothing parameter |
 | `CPERSONA_MAX_CONTENT_LENGTH` | `16000` | Max characters per stored memory or episode. Longer writes are truncated; `check_health(fix=true)` also cuts existing rows above the cap, so lowering it shortens data that was already stored. Raised from `2000` in 2.5.4a2 — text past the embedding window is still searchable through the keyword channel, which indexes the stored row in full |
 | `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | Max characters per profile row, capped separately from memories: the profile is injected into every recall response and is never preview-trimmed, so this cap is the only thing bounding it |
-| `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results |
+| `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results — and make it the ranking key: the result set is re-sorted by the score, and the quality gate keys on it. With this on, `CPERSONA_RECALL_MODE` no longer decides the returned order (see below) |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | Background task queue (DB-persisted, crash-recoverable) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | Penalty for recently recalled memories |
@@ -343,6 +345,15 @@ Earlier versions allowed an unauthenticated loopback bind and logged that it was
   can over-cut small, closely-scored result sets when `autocut` is enabled — `rrf`
   remains the default until that interaction is hardened.
 - **`cascade`** — Sequential channel fill (legacy).
+
+**With `CPERSONA_CONFIDENCE_ENABLED=true`, the fusion mode does not decide the order you
+get back.** Fusion selects which candidates enter the result set; confidence scoring then
+re-sorts that set, and the quality gate keys on the confidence score rather than on the
+fused one. Measured on a 1,545-document corpus with 394 queries: with confidence on,
+`rsf` and `rrf` returned the same rows in the same order for **all 394** queries; with it
+off, the two agreed on fewer than 10%. So if you set a fusion mode expecting a ranking
+change, either leave confidence off, or expect the mode to affect which memories are
+considered and not the order they come back in.
 
 ## Stats
 
