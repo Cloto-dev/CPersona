@@ -165,8 +165,12 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
 # structure of ``_compute_confidence``, its constants (COSINE_FLOOR/CEIL, the decay
 # rates), the episode penalty, or which rows reach scoring carrying a cosine at all. The
 # 2.5.2b2 cosine backfill (bug-155) is the first such change — it moved FTS-only rows off
-# the cosine-less ``sqrt(time_decay)`` branch, lowering their scores by construction.
-SCORING_VERSION = "252b2-cosine-backfill"
+# the cosine-less ``sqrt(time_decay)`` branch, lowering their scores by construction. The
+# 2.5.5a1 unknown-age imputation (bug-207) is the second: a row whose timestamp does not
+# parse no longer takes the ``time_decay`` of 1.0 reserved for a row written this instant,
+# so every undated row scores lower than the sidecar was calibrated against — two thirds
+# of the episodes on this project's deployment.
+SCORING_VERSION = "255a1-unknown-age"
 
 
 def _compute_confidence(
