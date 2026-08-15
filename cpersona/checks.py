@@ -32,6 +32,47 @@ deterministic escalation rule (numeric thresholds only — no model judgment):
 has no safe automatic repair, while cosmetic ``memory_annotation`` is info and
 fully fixable. Fixes are always agent-scoped where the data is agent-scoped
 and never touch ``locked`` rows (the bug-007 invariant).
+
+The ``repairable`` contract (2.5.5, Goal #234)
+----------------------------------------------
+The escalation rules above are the only way a runner used to move its own
+severity. This is the one systematic *de-escalation*: a finding whose repair
+cannot touch a single row should not hold a gate down forever.
+
+Every issue emitted by a ``fix_capable`` check MUST carry::
+
+    issue["repairable"] = N      # rows/objects THIS run's fix would write
+    issue["repairable"] = None   # this run could not determine it
+
+Three properties make it load-bearing, and each has cost the project a bug:
+
+1. **Computed independently of the ``fix`` argument.** A count that only ran
+   when repairing would give the same data two different verdicts depending on
+   how it was asked (``check_invalid_source_type`` carries the original note).
+2. **Rows written, not rows considered.** Every fixer here is guarded by
+   ``locked = 0``, so "rows matching the predicate" overcounts by the locked
+   remainder, and a severity resting on that number answers "I changed 902
+   rows" for a run that changed none (the ``timestamp_format_drift``
+   ``normalized`` defect this contract was introduced with).
+3. **``None`` is not zero.** ``check_invalid_source_type`` classifies at most
+   ``INVALID_SOURCE_CLASSIFY_CAP`` rows; past the cap an empty repair set means
+   "unknown", and an unknown is not evidence that nothing can be done. Only a
+   determined zero de-escalates.
+
+``run_health_checks`` owns the policy — the dispatcher cannot count rows, so
+the counting stays in the runner and only the verdict moves:
+
+- ``repairable == 0`` -> ``needs_human_review`` plus a hint, and a ``warn``
+  drops to ``info``. There is nothing an operator can run; keeping the DB
+  ``degraded`` says only that the check still holds an opinion.
+- ``critical`` is NOT de-escalated. Severity there means the read contract is
+  broken *right now* (see above), which is a statement about reads, not about
+  repairs — an unfixable ``embedding_dimension`` mismatch is more urgent than a
+  fixable one, not less. It is marked for review and keeps its gate.
+- A missing declaration never de-escalates and is surfaced on the issue itself
+  (``repairable_undeclared``), because a rule that silently exempts whoever
+  forgot it is opt-in wearing a contract's clothes. The binding enforcement is
+  the meta-test over the registry, not this fallback.
 """
 
 import datetime
@@ -72,6 +113,10 @@ NEAR_DUPLICATE_ROW_CAP = 1000
 # JSON parsing a plain check_health does; past it the sample is incomplete and
 # the check declines to downgrade its own severity.
 INVALID_SOURCE_CLASSIFY_CAP = 1000
+# NULL-embedding rows one run re-embeds (prefetch and repair read the same
+# number, and `repairable` is bounded by it — a fixer that reaches 500 rows must
+# not report 5,000 as repairable).
+REEMBED_ROW_CAP = 500
 CALIBRATION_STALE_DAYS = 90
 
 _USERNAME_PREFIX_PATTERN = re.compile(r"^\[(.+?)\]\s")
@@ -106,32 +151,47 @@ async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> 
         await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
 
 
+# The three content-rewriting checks below share one shape: match a pattern,
+# rewrite through _rewrite_or_delete_on_collision. That helper carries
+# `locked = 0`, so a locked match is read, iterated and written past — the
+# statement no-ops. Selecting `locked` and filtering here instead makes the fix
+# loop and the `repairable` count the same set by construction, rather than two
+# expressions of one invariant that can drift apart
+# ([[feedback-one-invariant-one-implementation]]).
+def _unlocked(rows: list) -> list[tuple[int, str]]:
+    """(id, content) for rows the content-rewriting fixers can actually write."""
+    return [(r[0], r[1]) for r in rows if not r[2]]
+
+
 async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, content FROM memories WHERE content LIKE '%[Memory from%'{iso.and_clause}", iso.params
+        f"SELECT id, content, locked FROM memories WHERE content LIKE '%[Memory from%'{iso.and_clause}",
+        iso.params,
     )
     if not rows:
         return []
+    writable = _unlocked(rows)
     if fix:
-        for row_id, content in rows:
+        for row_id, content in writable:
             cleaned = _MEMORY_ANNOTATION_PATTERN.sub("", content).strip()
             await _rewrite_or_delete_on_collision(db, row_id, cleaned)
-    return [{"type": "memory_annotation", "count": len(rows)}]
+    return [{"type": "memory_annotation", "count": len(rows), "repairable": len(writable)}]
 
 
 async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, content FROM memories WHERE content LIKE '%<@%'{iso.and_clause}", iso.params
+        f"SELECT id, content, locked FROM memories WHERE content LIKE '%<@%'{iso.and_clause}", iso.params
     )
     if not rows:
         return []
+    writable = _unlocked(rows)
     if fix:
-        for row_id, content in rows:
+        for row_id, content in writable:
             cleaned = _MENTION_PATTERN.sub("", content).strip()
             await _rewrite_or_delete_on_collision(db, row_id, cleaned)
-    return [{"type": "discord_mention", "count": len(rows)}]
+    return [{"type": "discord_mention", "count": len(rows), "repairable": len(writable)}]
 
 
 async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
@@ -157,37 +217,62 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     if not dup_rows:
         return []
     total_dupes = sum(r[1] - 1 for r in dup_rows)
-    if fix:
-        # Agent-scoped, locked-safe (bug-007): remove only unlocked
-        # non-survivors within scope. The survivor grouping MUST match the
-        # detection grouping above (bug-014).
-        # bug-128: prefer the channel='' shared row so cross-channel dedup never
-        # deletes the broadest-visibility copy; otherwise keep the MIN(id).
-        await db.execute(
-            f"""DELETE FROM memories
+    # Agent-scoped, locked-safe (bug-007): only unlocked non-survivors within
+    # scope. The survivor grouping MUST match the detection grouping above
+    # (bug-014). bug-128: prefer the channel='' shared row so cross-channel dedup
+    # never deletes the broadest-visibility copy; otherwise keep the MIN(id).
+    #
+    # One fragment, two verbs: the COUNT that reports `repairable` and the DELETE
+    # that performs the repair have to select the same rows, and a count that
+    # disagrees with its own delete is the defect the contract exists to catch
+    # (the reasoning behind ``invalid_source_type_where``). Local rather than a
+    # module constant so the isolation predicate stays inside the statement the
+    # agent-scoping gate reads.
+    surplus = f"""FROM memories
                 WHERE locked = 0
                   AND id NOT IN (
                       SELECT COALESCE(MIN(CASE WHEN channel = '' THEN id END), MIN(id))
                       FROM memories GROUP BY agent_id, project_id, content
                   )
-                 {iso.and_clause}""",
-            iso.params,
-        )
-    return [{"type": "duplicate_content", "groups": len(dup_rows), "total_extra": total_dupes}]
+                 {iso.and_clause}"""
+    # Counted from the fixer's own predicate, not derived from `total_extra`: a
+    # group whose every non-survivor is locked contributes to total_extra and to
+    # nothing a fix can write (bug-139's lesson, applied before the repair
+    # rather than after it).
+    deletable = (await db.execute_fetchall(f"SELECT COUNT(*) {surplus}", iso.params))[0][0]
+    if fix:
+        await db.execute(f"DELETE {surplus}", iso.params)
+    return [
+        {
+            "type": "duplicate_content",
+            "groups": len(dup_rows),
+            "total_extra": total_dupes,
+            "repairable": deletable,
+        }
+    ]
 
 
 async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, content, length(content) as len FROM memories WHERE length(content) > ?{iso.and_clause}",
+        f"""SELECT id, content, locked, length(content) as len FROM memories
+            WHERE length(content) > ?{iso.and_clause}""",
         (MAX_CONTENT_LENGTH, *iso.params),
     )
     if not rows:
         return []
+    writable = _unlocked(rows)
     if fix:
-        for row_id, content, _ in rows:
+        for row_id, content in writable:
             await _rewrite_or_delete_on_collision(db, row_id, content[:MAX_CONTENT_LENGTH])
-    return [{"type": "oversized_content", "count": len(rows), "max_len": max(r[2] for r in rows)}]
+    return [
+        {
+            "type": "oversized_content",
+            "count": len(rows),
+            "repairable": len(writable),
+            "max_len": max(r[3] for r in rows),
+        }
+    ]
 
 
 async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
@@ -231,6 +316,10 @@ async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
             "type": "oversized_profile",
             "count": len(rows),
             "max_len": max(r[2] for r in rows),
+            # `profiles` has no `locked` column (the invariant is bug-098's, and
+            # it is defined over authored memory rows), so the truncation reaches
+            # every profile the scan found.
+            "repairable": len(rows),
         }
     ]
 
@@ -292,6 +381,12 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cach
                 "memories": mismatched_mem,
                 "episodes": mismatched_ep,
                 "expected_dim": expected_dim,
+                # Every mismatched row is writable: this fixer NULLs a BLOB
+                # rather than rewriting caller data, so it carries no locked = 0
+                # guard (bug-098 protects authored content, and a wrong-length
+                # vector is not that). The declaration is still required — and
+                # `critical` is never de-escalated regardless.
+                "repairable": mismatched,
             }
         ]
     except Exception as e:
@@ -324,6 +419,16 @@ def _null_embedding_severity(null_count: int, total: int, *, blobs_expected: boo
     if total > 0 and null_count / total > NULL_EMBEDDING_CRITICAL_RATIO:
         return "critical"  # pipeline is effectively down
     return "warn"
+
+
+def _reembeddable(null_count: int, *, blobs_expected: bool = True) -> int:
+    """Rows the NULL-embedding repair would write this run (the `repairable`
+    contract). Zero when the repair cannot run at all — no embedding client
+    (``mode=none``), or a configuration that stores no local BLOB (bug-182) —
+    because in both cases the count is a steady state, not a backlog."""
+    if not vector._embedding_client or not blobs_expected:
+        return 0
+    return min(null_count, REEMBED_ROW_CAP)
 
 
 async def probe_embedding_dim() -> int | None:
@@ -367,7 +472,7 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
         tables = [t for t in tables if t[0] != "memories"]
     for table, text_col in tables:
         rows = await db.execute_fetchall(
-            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT 500", iso.params
+            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT ?", (*iso.params, REEMBED_ROW_CAP)
         )
         for start in range(0, len(rows), 32):
             chunk = rows[start : start + 32]
@@ -423,7 +528,7 @@ async def _reembed_null_rows(db, table: str, text_col: str, iso, embedding_cache
     tests, no lock held) keeps the live path."""
     cache = (embedding_cache or {}).get(table, {})
     rows = await db.execute_fetchall(
-        f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT 500", iso.params
+        f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT ?", (*iso.params, REEMBED_ROW_CAP)
     )
     re_embedded = 0
     for row_id, text in rows:
@@ -467,6 +572,10 @@ async def check_null_embedding(db, agent_id: str, fix: bool, embedding_cache=Non
         "type": "null_embedding",
         "count": null_count,
         "severity": _null_embedding_severity(null_count, total, blobs_expected=blobs_expected),
+        # Bounded by the fixer's own per-run reach, not by the finding: a corpus
+        # with 5,000 NULL rows is repaired 500 at a time, and claiming 5,000 here
+        # would describe work this run will not do.
+        "repairable": _reembeddable(null_count, blobs_expected=blobs_expected),
     }
     if not blobs_expected:
         # bug-182: say why the repair does not run, so a NULL count that is never
@@ -495,6 +604,9 @@ async def check_null_episode_embedding(db, agent_id: str, fix: bool, embedding_c
         "type": "null_episode_embedding",
         "count": null_count,
         "severity": _null_embedding_severity(null_count, total),
+        # blobs_expected=True: _prepare_episode_row has no storage gate, so an
+        # episode carries a BLOB in every configuration (bug-182).
+        "repairable": _reembeddable(null_count),
     }
     if fix and vector._embedding_client:
         re_embedded = await _reembed_null_rows(db, "episodes", "summary", iso, embedding_cache)
@@ -535,7 +647,15 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
             corrupt = True
         if not corrupt:
             continue
-        issue = {"type": "fts_integrity_failure", "table": table, "severity": "critical"}
+        # Object-scoped, not row-scoped: the repair is one whole-index rebuild,
+        # always attempted, with no locked subset to fall short of. 1 = "there is
+        # an action" (whether it succeeds is reported separately as `fixed`).
+        issue = {
+            "type": "fts_integrity_failure",
+            "table": table,
+            "severity": "critical",
+            "repairable": 1,
+        }
         if fix:
             await db.execute(rebuild)
             # bug-069: mirror the detection fallback ladder. The enhanced rank=1 verify is
@@ -709,6 +829,9 @@ async def check_schema_objects(db, agent_id: str, fix: bool) -> list[dict]:
             "kind": spec["kind"],
             "state": state,
             "severity": spec["severity"],
+            # Object-scoped like fts_integrity: the DROP/CREATE is always
+            # attempted. Whether it succeeds is `fixed` / `fix_error`.
+            "repairable": 1,
         }
         if fix:
             try:
@@ -759,6 +882,10 @@ async def check_dedup_msg_id_index(db, agent_id: str, fix: bool) -> list[dict]:
     issue: dict = {
         "type": "dedup_msg_id_index_missing",
         "object": "idx_memories_dedup_msg_id",
+        # Object-scoped: the collision resolution + CREATE is always attempted.
+        # A locked collider that blocks the CREATE surfaces as `fix_error`, not
+        # as repairable=0 — the action exists, it is the outcome that fails.
+        "repairable": 1,
     }
     if fix:
         # Same collision resolution as the v12 migration (database.py): keep the
@@ -878,6 +1005,17 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
         return []
     if bad_source + bad_metadata == 0:
         return []
+    # Before the repair, or it would count what it just cleared. One row can be
+    # bad on both columns, so this is a row count and not bad_source +
+    # bad_metadata — the question the policy asks is "is there a row to write".
+    repairable = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+                WHERE (json_valid(source) = 0 OR json_valid(metadata) = 0)
+                AND locked = 0{iso.and_clause}""",
+            iso.params,
+        )
+    )[0][0]
     if fix:
         # bug-098: every fixer that rewrites row fields carries locked = 0 —
         # check_health(fix=true) must never alter a locked memory (same guard on
@@ -890,7 +1028,14 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
             f"UPDATE memories SET metadata = '{{}}' WHERE json_valid(metadata) = 0 AND locked = 0{iso.and_clause}",
             iso.params,
         )
-    return [{"type": "invalid_json", "bad_source": bad_source, "bad_metadata": bad_metadata}]
+    return [
+        {
+            "type": "invalid_json",
+            "bad_source": bad_source,
+            "bad_metadata": bad_metadata,
+            "repairable": repairable,
+        }
+    ]
 
 
 async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
@@ -903,12 +1048,22 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     )[0][0]
     if bad_ts == 0:
         return []
+    # Before the repair (it rewrites the very rows this counts), and with the
+    # fixer's own locked = 0 guard so the two agree.
+    repairable = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+                WHERE datetime(timestamp) IS NULL AND timestamp != ''
+                AND locked = 0{iso.and_clause}""",
+            iso.params,
+        )
+    )[0][0]
     if fix:
         await db.execute(
             f"UPDATE memories SET timestamp = created_at WHERE datetime(timestamp) IS NULL AND timestamp != '' AND locked = 0{iso.and_clause}",
             iso.params,
         )
-    return [{"type": "invalid_timestamp", "count": bad_ts}]
+    return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
 
 
 def _classify_timestamp(ts: str) -> str:
@@ -937,34 +1092,61 @@ async def check_timestamp_format_drift(db, agent_id: str, fix: bool) -> list[dic
     """
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT id, timestamp FROM memories WHERE timestamp != ''{iso.and_clause}", iso.params
+        f"SELECT id, timestamp, locked FROM memories WHERE timestamp != ''{iso.and_clause}", iso.params
     )
     counts = {"utc": 0, "aware": 0, "naive": 0}
-    aware_rows: list[tuple[int, str]] = []
-    for row_id, ts in rows:
+    aware_rows: list[tuple[int, str, int]] = []
+    for row_id, ts, locked in rows:
         cls = _classify_timestamp(ts)
         counts[cls] += 1
         if cls == "aware":
-            aware_rows.append((row_id, ts))
+            aware_rows.append((row_id, ts, locked))
     present = [k for k, v in counts.items() if v > 0]
     if len(present) <= 1 and not aware_rows:
         return []
     issue = {"type": "timestamp_format_drift", **counts}
-    if fix and aware_rows:
+
+    # The repair set is built whether or not this run repairs (the `repairable`
+    # contract): the verdict must not depend on how the check was called.
+    #
+    # bug-212: `locked` is selected and filtered HERE rather than left to the
+    # UPDATE's own `AND locked = 0`. Deferring it is what made the old
+    # `normalized` count attempts instead of writes — it incremented on
+    # `canon != ts` while the statement silently wrote nothing, so a run that
+    # changed no row reported that it had normalised 902 of them, and any
+    # severity resting on that number inherited the lie.
+    repairs: list[tuple[int, str]] = []
+    locked_aware = 0
+    for row_id, ts, locked in aware_rows:
+        try:
+            parsed = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        canon = parsed.astimezone(datetime.timezone.utc).isoformat()
+        if canon == ts:
+            continue
+        if locked:
+            locked_aware += 1  # bug-098: the fixer may not touch it
+            continue
+        repairs.append((row_id, canon))
+    issue["repairable"] = len(repairs)
+    if fix and repairs:
         normalized = 0
-        for row_id, ts in aware_rows:
-            try:
-                parsed = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                canon = parsed.astimezone(datetime.timezone.utc).isoformat()
-                if canon != ts:
-                    await db.execute(
-                        "UPDATE memories SET timestamp = ? WHERE id = ? AND locked = 0",
-                        (canon, row_id),
-                    )
-                    normalized += 1
-            except ValueError:
-                pass
+        for row_id, canon in repairs:
+            cur = await db.execute(
+                "UPDATE memories SET timestamp = ? WHERE id = ? AND locked = 0",
+                (canon, row_id),
+            )
+            # Counted from the write, not from the intent: the predicate is
+            # re-evaluated by the statement and a row locked since the scan above
+            # must not be counted as normalised.
+            if getattr(cur, "rowcount", 0) == 1:
+                normalized += 1
         issue["normalized"] = normalized
+    if locked_aware:
+        # So aware = normalisable + locked reconciles instead of reading as
+        # "found N aware rows, normalised fewer, no reason given".
+        issue["unfixable_locked"] = locked_aware
     if counts["naive"]:
         issue["unfixable_naive"] = counts["naive"]
     return [issue]
@@ -991,7 +1173,10 @@ async def check_stale_pending_tasks(db, agent_id: str, fix: bool) -> list[dict]:
             f"DELETE FROM pending_memory_tasks WHERE created_at < datetime('now', '-1 hour'){iso.and_clause}",
             iso.params,
         )
-    return [{"type": "stale_pending_tasks", "count": stale}]
+    # pending_memory_tasks has no `locked` column — these are un-drained queue
+    # entries, not authored memories, so the DELETE reaches every row it finds
+    # and the finding and the repair are the same set.
+    return [{"type": "stale_pending_tasks", "count": stale, "repairable": stale}]
 
 
 async def check_missing_profile(db, agent_id: str, fix: bool) -> list[dict]:
@@ -1024,12 +1209,21 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
     )[0][0]
     if empty == 0:
         return []
+    # Before the DELETE, with the DELETE's own locked = 0 guard.
+    repairable = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+                WHERE (TRIM(content) = '' OR content IS NULL)
+                AND locked = 0{iso.and_clause}""",
+            iso.params,
+        )
+    )[0][0]
     if fix:
         await db.execute(
             f"DELETE FROM memories WHERE (TRIM(content) = '' OR content IS NULL) AND locked = 0{iso.and_clause}",
             iso.params,
         )
-    return [{"type": "empty_content", "count": empty}]
+    return [{"type": "empty_content", "count": empty, "repairable": repairable}]
 
 
 def invalid_source_type_where(canonical_types: str) -> str:
@@ -1193,10 +1387,15 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     classified_all = len(rows) < INVALID_SOURCE_CLASSIFY_CAP
     if not classified_all:
         issue["classified"] = len(rows)
+    # 2.5.5 (Goal #234): this check's local de-escalation became the registry-wide
+    # `repairable` contract, so it now only reports what a fix would write and
+    # run_health_checks owns the verdict. None past the classification cap: the
+    # sample is incomplete, and an unknown is not evidence that nothing can be
+    # done (the reason the local rule stayed at warn there too).
+    issue["repairable"] = len(repairs) if classified_all else None
     if not repairs and classified_all:
-        # Nothing a fix run would change: report it, stop gating on it.
-        issue["severity"] = "info"
-        issue["needs_human_review"] = True
+        # The generic dispatcher hint is true but says less than this one, and
+        # the policy only setdefaults, so the specific text wins.
         issue["hint"] = (
             "No offending row can be canonicalised without inventing a producer "
             "discriminator (see normalize_source). Repair is a reviewed migration, "
@@ -1438,9 +1637,45 @@ async def run_health_checks(
         for issue in found:
             issue.setdefault("severity", check.base_severity)
             issue.setdefault("check", check.name)
+            if check.fix_capable:
+                _apply_repairable_policy(issue, check)
             summary[issue["severity"]] += 1
             issues.append(issue)
     return issues, summary
+
+
+_UNREPAIRABLE_HINT = (
+    "Nothing this check's fix can write: every offending row is out of its "
+    "reach (locked, or a shape it refuses to rewrite). Repair is an operator "
+    "decision, not a maintenance run"
+)
+
+
+def _apply_repairable_policy(issue: dict, check: "Check") -> None:
+    """The one de-escalation rule (see module docstring). Policy only — the row
+    counting belongs to the runner, which is the only layer that can see rows.
+
+    Mutates ``issue`` in place. Runners keep their own ``hint`` when they have a
+    better one to give than the generic text above.
+    """
+    if "repairable" not in issue:
+        # Never silently exempt: no de-escalation, and say so where the operator
+        # is already looking rather than only in a log nobody reads.
+        issue["repairable_undeclared"] = True
+        logger.warning(
+            "health check %s is fix_capable but emitted an issue without "
+            "'repairable' (type=%s); the de-escalation rule cannot apply",
+            check.name,
+            issue.get("type"),
+        )
+        return
+    if issue["repairable"] != 0:
+        # Non-zero, or None = undetermined. Only a determined zero de-escalates.
+        return
+    issue["needs_human_review"] = True
+    issue.setdefault("hint", _UNREPAIRABLE_HINT)
+    if issue["severity"] == "warn":
+        issue["severity"] = "info"
 
 
 def exit_code(summary: dict, strict: bool = False) -> int:
