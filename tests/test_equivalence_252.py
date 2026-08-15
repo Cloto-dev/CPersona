@@ -47,6 +47,41 @@ GOLDEN = Path(__file__).parent / "golden" / "behaviour_252.json"
 _COMPARE_ABS_TOL = 1e-5
 _DIFF_FLOAT_PLACES = 6
 
+# Keys that did not exist when the golden was recorded.
+#
+# The golden's claim is "the 2.5.2 split changed nothing". A field added
+# deliberately by a LATER version is not that refactor changing behaviour, but it
+# still lands in this diff. The two ways out are not equivalent:
+#
+#   - Re-record the golden. One command, and it makes the file agree with the
+#     code by construction -- which is what the file exists NOT to do. It would
+#     also discard the evidence behind every earlier equivalence claim, not just
+#     this scenario's.
+#   - Name the new key here. The golden keeps every value it recorded under full
+#     comparison, and admitting a key stays a visible, reviewed edit.
+#
+# So: additions are listed, never absorbed. Anything that changes a value the
+# golden already holds still fails, which is the whole point.
+#
+# repairable (2.5.5, Goal #234): every fix_capable check now declares how many
+# rows its fix would write. Additive -- severity, status and counts are
+# unchanged, as this diff itself showed. Guarded by
+# tests/test_255_repairable_contract.py, which is where its behaviour is pinned.
+_KEYS_ADDED_SINCE_GOLDEN = {"repairable"}
+
+
+def _drop_keys_added_since_golden(obj: Any) -> Any:
+    """Recursively remove post-golden keys so the comparison stays value-exact."""
+    if isinstance(obj, dict):
+        return {
+            k: _drop_keys_added_since_golden(v)
+            for k, v in obj.items()
+            if k not in _KEYS_ADDED_SINCE_GOLDEN
+        }
+    if isinstance(obj, list):
+        return [_drop_keys_added_since_golden(v) for v in obj]
+    return obj
+
 
 def _structures_equal(a: Any, b: Any, *, abs_tol: float = _COMPARE_ABS_TOL) -> bool:
     """Deep-compare two JSON-shaped structures with float tolerance.
@@ -107,7 +142,7 @@ async def test_behaviour_matches_the_pre_refactor_golden(scenario, golden):
             "construction and proves nothing."
         )
 
-    observed = await observe(scenario)
+    observed = _drop_keys_added_since_golden(await observe(scenario))
     expected = golden[scenario.id]
 
     if not _structures_equal(observed, expected):

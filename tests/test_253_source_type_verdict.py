@@ -184,6 +184,21 @@ async def test_fix_leaves_anonymous_rows_untouched(db):
 UNREPAIRABLE = ['"claude-code"', '{"id":"discord:1","name":"bob"}', '{"type":123}', '{"type":null}']
 
 
+async def _verdict(db, agent_id: str = AGENT) -> dict:
+    """The issue as an operator actually receives it.
+
+    2.5.5 (Goal #234) promoted this check's local rule to the registry-wide
+    ``repairable`` contract: the runner reports what a fix would write, and
+    ``run_health_checks`` turns that into the severity. Asserting on the runner
+    alone would now pin only half the behaviour — and would keep passing if the
+    policy were deleted from the dispatcher.
+    """
+    issues, _ = await checks.run_health_checks(
+        db, agent_id=agent_id, fix=False, checks=["invalid_source_type"]
+    )
+    return issues[0]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", UNREPAIRABLE)
 async def test_an_unrepairable_defect_reports_but_stops_gating(db, source):
@@ -195,12 +210,13 @@ async def test_an_unrepairable_defect_reports_but_stops_gating(db, source):
     """
     await _insert(db, source, f"unrepairable via {source}")
 
-    found = await checks.check_invalid_source_type(db, AGENT, fix=False)
+    issue = await _verdict(db)
 
-    assert found[0]["count"] == 1, "the defect must still be reported"
-    assert found[0]["severity"] == "info"
-    assert found[0]["needs_human_review"] is True
-    assert "migration" in found[0]["hint"]
+    assert issue["count"] == 1, "the defect must still be reported"
+    assert issue["repairable"] == 0, "and the reason must be the declared one"
+    assert issue["severity"] == "info"
+    assert issue["needs_human_review"] is True
+    assert "migration" in issue["hint"]
 
 
 @pytest.mark.asyncio
@@ -209,10 +225,11 @@ async def test_a_repairable_defect_still_warns(db):
     be the detector switched off."""
     await _insert(db, '{"type":"assistant"}', "mappable legacy")
 
-    found = await checks.check_invalid_source_type(db, AGENT, fix=False)
+    issue = await _verdict(db)
 
-    assert found[0].get("severity") is None, "no override: the registry default (warn) stands"
-    assert "needs_human_review" not in found[0]
+    assert issue["repairable"] == 1
+    assert issue["severity"] == "warn", "the registry default stands"
+    assert "needs_human_review" not in issue
 
 
 @pytest.mark.asyncio
@@ -221,11 +238,12 @@ async def test_one_unrepairable_row_does_not_mask_a_repairable_one(db):
     await _insert(db, '"claude-code"', "unrepairable")
     await _insert(db, '{"type":"assistant"}', "mappable legacy")
 
-    found = await checks.check_invalid_source_type(db, AGENT, fix=False)
+    issue = await _verdict(db)
 
-    assert found[0]["count"] == 2
-    assert found[0].get("severity") is None
-    assert "needs_human_review" not in found[0]
+    assert issue["count"] == 2
+    assert issue["repairable"] == 1, "one of the two is writable"
+    assert issue["severity"] == "warn"
+    assert "needs_human_review" not in issue
 
 
 @pytest.mark.asyncio
@@ -249,10 +267,10 @@ async def test_severity_is_warn_exactly_when_a_fix_would_change_something(db, co
     for i, source in enumerate(corpus):
         await _insert(db, source, f"row {i}")
 
-    reported = (await checks.check_invalid_source_type(db, AGENT, fix=False))[0]
+    reported = await _verdict(db)
     repaired = (await checks.check_invalid_source_type(db, AGENT, fix=True))[0]
 
-    gates = reported.get("severity") != "info"
+    gates = reported["severity"] != "info"
     assert gates is (repaired["mapped"] > 0), (
         f"severity says gates={gates}, but the fix run mapped {repaired['mapped']} rows"
     )
@@ -270,11 +288,12 @@ async def test_offenders_that_are_all_locked_say_so(db):
     await db.execute("UPDATE memories SET locked = 1 WHERE agent_id = ?", (AGENT,))
     await db.commit()
 
-    found = await checks.check_invalid_source_type(db, AGENT, fix=False)
+    issue = await _verdict(db)
 
-    assert found[0]["count"] == 1
-    assert found[0]["severity"] == "info"
-    assert "unlock" in found[0]["hint"]
+    assert issue["count"] == 1
+    assert issue["repairable"] == 0, "the fixer may not touch a locked row (bug-098)"
+    assert issue["severity"] == "info"
+    assert "unlock" in issue["hint"]
 
 
 @pytest.mark.asyncio
@@ -295,6 +314,10 @@ async def test_locked_is_counted_not_inferred_from_the_sample(db, monkeypatch):
     assert found["count"] == 2
     assert found["locked"] == 0, "no row here is locked; subtraction would say 1"
     assert found["classified"] == 1, "the sample was capped and the report says so"
+    assert found["repairable"] is None, (
+        "an incomplete sample is an unknown, not a determined zero — declaring 0 "
+        "here would let the dispatcher downgrade on the strength of a truncated scan"
+    )
     assert found.get("severity") is None, "an incomplete sample must not downgrade itself"
 
 
