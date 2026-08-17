@@ -107,13 +107,14 @@ MAX_PROFILE_LENGTH = _parse_int("CPERSONA_MAX_PROFILE_LENGTH", 2000)
 # producer meets it, and truncation is not an option because half a JSON document
 # is not a JSON document — the write is refused instead (result='rejected').
 #
-# bug-176: "the write path" here means the AUTHORING seams — store, update_memory
-# and the episode prepare. import_memories and merge_memories are deliberately
-# outside it: they restore or move rows that were already accepted under some
-# earlier cap, and silently truncating (or refusing) a user's own backup at
-# restore time is worse than admitting an oversized row. check_health's
-# oversized_content check reports those after the fact, which is the right
-# division — bound what is being authored, detect what is being replayed.
+# bug-176: "the write path" here means the seams that accept content from OUTSIDE
+# this database — store, update_memory, the episode prepare, and (bug-221) the
+# import, whose file may have been produced by another DB, an older version or a
+# hand edit. merge_memories stays outside it: it moves rows that this database
+# already accepted under some earlier cap, and re-sanitising an intra-DB move would
+# silently rewrite content the operator never edited. check_health's
+# oversized_content check reports those after the fact, which is the right division
+# — bound what arrives from outside, detect what is being moved within.
 MAX_METADATA_LENGTH = _parse_int("CPERSONA_MAX_METADATA_LENGTH", 8000)
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 
@@ -207,6 +208,11 @@ CALIBRATE_FLOOR = _parse_float("CPERSONA_CALIBRATE_FLOOR", 0.05)
 # Both place the floor ABOVE the null mean so unrelated pairs are rejected — the
 # pre-2.4.24 zscore formula subtracted (mean - z*std), placing the floor below
 # the null mean and admitting the majority of unrelated pairs (topic drift).
+# bug-231: one definition of the method enum. The handler validates against it and the
+# calibrate_threshold JSON Schema publishes it, so a spelling the schema advertises and
+# the handler rejects (or the reverse) cannot drift into existence — the same
+# single-definition treatment CANONICAL_SOURCE_TYPES got for the store schema.
+CALIBRATE_METHODS = ("separation", "percentile", "zscore")
 CALIBRATE_METHOD = os.environ.get("CPERSONA_CALIBRATE_METHOD", "separation")
 CALIBRATE_PERCENTILE = _parse_float("CPERSONA_CALIBRATE_PERCENTILE", 0.95)
 # v2.4.24 — method="separation" positive proxy: memories stored within this window

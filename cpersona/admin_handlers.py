@@ -9,9 +9,11 @@ Accesses `vector._embedding_client` (remote vector index sync) and
 
 import base64
 import contextlib
+import glob
 import json
 import logging
 import os
+import stat
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -28,6 +30,7 @@ from cpersona.config import (
     CALIBRATE_FLOOR,
     CALIBRATE_MAX_SAMPLE,
     CALIBRATE_METHOD,
+    CALIBRATE_METHODS,
     CALIBRATE_PERCENTILE,
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
@@ -833,6 +836,29 @@ def _load_calibration_state() -> dict | None:
         return None
 
 
+_CALIBRATION_BACKUP_KEEP = 5
+
+
+def _prune_calibration_backups(path: str) -> None:
+    """Keep the newest _CALIBRATION_BACKUP_KEEP sidecar backups, drop the rest (bug-246).
+
+    The per-version guard above already stops the identical-copy-per-boot growth; this
+    bounds the case where the version tag itself keeps moving. Newest by mtime, with the
+    filename as the tiebreak (the stamp has one-second resolution). Best-effort: a
+    failure here must not surface as a failed backup.
+    """
+    backups = glob.glob(f"{glob.escape(path)}.before-*")
+    if len(backups) <= _CALIBRATION_BACKUP_KEEP:
+        return
+    try:
+        ordered = sorted(backups, key=lambda p: (os.path.getmtime(p), p), reverse=True)
+    except OSError:
+        return
+    for stale in ordered[_CALIBRATION_BACKUP_KEEP:]:
+        with contextlib.suppress(OSError):
+            os.remove(stale)
+
+
 def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
     """Copy the sidecar aside before a staleness recalibration replaces it (Task #707).
 
@@ -846,13 +872,33 @@ def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
     The name mirrors the manual convention already in the field:
     ``<sidecar>.before-<old_scoring_version>-<UTC>``. Failure is reported and swallowed
     — a backup must never block the recalibration it is evidence for.
+
+    bug-246: one backup per superseded scoring version, not one per boot. The staleness
+    flag only clears when a successful recalibration rewrites the sidecar, so a
+    deployment where calibration cannot succeed (fewer than 10 embeddings, or the
+    no-persist early return) is stale again on the next boot and copied the same file
+    again — indefinitely, and every copy byte-identical, so the evidence value of the
+    Nth is zero. An existing backup for the same version is the evidence; it is
+    returned rather than duplicated. The retention sweep bounds the directory even when
+    the version tag does move (a boot loop across an upgrade cycle).
     """
     path = _calibration_sidecar_path()
+    version_tag = old_scoring_version or "unversioned"
+    existing = sorted(glob.glob(f"{glob.escape(path)}.before-{glob.escape(version_tag)}-*"))
+    if existing:
+        logger.debug(
+            "Task #707 / bug-246: the calibration sidecar for scoring version %r is "
+            "already backed up at %s; not writing another copy.",
+            version_tag,
+            existing[-1],
+        )
+        return existing[-1]
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    backup = f"{path}.before-{old_scoring_version or 'unversioned'}-{stamp}"
+    backup = f"{path}.before-{version_tag}-{stamp}"
     try:
         with open(path, "rb") as src, open(backup, "wb") as dst:
             dst.write(src.read())
+        _prune_calibration_backups(path)
         return backup
     except OSError as exc:
         logger.warning(
@@ -1105,6 +1151,15 @@ async def do_calibrate_threshold(
     if not (0.0 < cal_percentile <= 1.0):
         return {"ok": False, "error": f"percentile must be in (0, 1] (or a percent 1-100), got {percentile}"}
     z = max(-10.0, min(10.0, z))
+    # bug-231: an unrecognised method fell through _threshold_from_sims' else branch to
+    # percentile while the response echoed the caller's spelling back, so 'z-score' was
+    # answered with a percentile threshold — persisted to the sidecar and applied to
+    # vector._agent_thresholds — in a payload self-consistent enough that nothing
+    # prompted a re-run. A bad enum value is refused, as merge_memories refuses its own.
+    if cal_method not in CALIBRATE_METHODS:
+        return error_response(
+            f"Invalid method '{cal_method}'. Supported: {', '.join(sorted(CALIBRATE_METHODS))}"
+        )
 
     # bug-119 (bug-111 sibling class): the old skeleton carried a phantom
     # `sample_size` key and none of the real payload's keys, so no-persist
@@ -1947,6 +2002,10 @@ class _ImportTally:
     imported_memories: int = 0
     skipped_memories: int = 0
     imported_episodes: int = 0
+    # bug-220: episodes are deduplicated now, so they have a skip count like memories —
+    # a re-import that reports 0 imported / N skipped is the tool being idempotent, not
+    # a failure.
+    skipped_episodes: int = 0
     profile_updated: bool = False
     errors: list[str] = field(default_factory=list)
     # bug-091: track the header and the per-type record counts actually present in
@@ -1964,6 +2023,8 @@ class _ImportTally:
     # indexes) so the preview matches a real run. Populated only on the dry_run path.
     seen_msgid: set = field(default_factory=set)
     seen_content: set = field(default_factory=set)
+    # bug-220: the episode axis of the same preview problem (bug-071's import twin).
+    seen_episode: set = field(default_factory=set)
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: dict[str, list[dict]] = field(default_factory=dict)
 
@@ -1990,6 +2051,7 @@ def _validate_import_preconditions(input_path: str, dry_run: bool) -> tuple[str 
                 "imported_memories": 0,
                 "skipped_memories": 0,
                 "imported_episodes": 0,
+                "skipped_episodes": 0,
                 "profile_updated": False,
             },
             "import_memories",
@@ -1999,17 +2061,25 @@ def _validate_import_preconditions(input_path: str, dry_run: bool) -> tuple[str 
         return None, error_response(
             f"input_path rejected (path traversal or outside export dir): {input_path}"
         )
-    if not os.path.exists(confined):
-        return None, error_response(f"File not found: {confined}")
     # bug-130: reject oversized imports before opening or reading the file.
-    if os.path.getsize(confined) > config.MAX_IMPORT_BYTES:
+    # bug-241: the size guard only bounds a REGULAR file. os.path.getsize reports 0 for
+    # a character device, a FIFO and most /proc entries, so the cap passed exactly the
+    # inputs that have no size and the readlines() below ran unbounded (/dev/zero grows
+    # a string until the allocator gives out). One stat answers both questions.
+    try:
+        st = os.stat(confined)
+    except OSError:
+        return None, error_response(f"File not found: {confined}")
+    if not stat.S_ISREG(st.st_mode):
+        return None, error_response(f"input_path is not a regular file: {confined}")
+    if st.st_size > config.MAX_IMPORT_BYTES:
         return None, error_response(
             f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {confined}"
         )
     return confined, None
 
 
-async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally) -> None:
+async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
     """Import one memory row, or account for why it was skipped.
 
     The two paths are asymmetric by necessity, not by accident: a real run lets
@@ -2017,11 +2087,31 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally)
     `rowcount`, while a preview has no INSERT to learn from and has to probe for
     the same collisions by hand. Keeping the previewed counts equal to a real
     run's is the whole contract (bug-056 / bug-070).
+
+    bug-221: the content goes through the write path's own sanitiser first, like
+    ``_import_profile_record`` does (bug-188 / CSC #677). This file may have been
+    produced by another DB, an older version or a hand edit, so import is the
+    stricter of the two seams, not the looser one — a body that ``do_store``
+    would refuse (empty after sanitisation) must not enter through the restore,
+    and one it would cut must not enter longer than the cap it publishes.
     """
     content = record.get("content", "")
     if not content:
         tally.skipped_memories += 1
         return
+
+    content, truncated = sanitize_content_with_flag(content)
+    if not content:
+        tally.skipped_memories += 1
+        tally.errors.append(f"Line {line_num}: memory is empty after sanitisation; it was not imported")
+        return
+    if truncated:
+        # The number is the text that was actually kept, not a second read of the
+        # constant (CSC #677): len(content) after a truncation IS the cap.
+        tally.errors.append(
+            f"Line {line_num}: memory content exceeded the {len(content)}-character cap "
+            "and was truncated"
+        )
 
     msg_id = record.get("msg_id", "")
     pid = record.get("project_id", "")
@@ -2099,11 +2189,32 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally)
     tally.imported_memories += 1
 
 
-async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally) -> None:
-    """Import one episode row. Episodes have no dedup index, so every one lands."""
+async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
+    """Import one episode row, or account for why it was skipped.
+
+    bug-220: episodes carry no uniqueness index, so this probe — the same
+    (agent_id, project_id, channel, summary) identity ``_merge_episode_rows``
+    uses (bug-076) — is the only dedup gate there is. Without it a re-import
+    multiplied every episode while the tool advertised ``idempotentHint=True``,
+    which is exactly what a host retrying a lost response acts on.
+
+    bug-221: the summary goes through the write path's sanitiser first, like the
+    memory and profile records above it.
+    """
     summary = record.get("summary", "")
     if not summary:
         return
+
+    summary, truncated = sanitize_content_with_flag(summary)
+    if not summary:
+        tally.skipped_episodes += 1
+        tally.errors.append(f"Line {line_num}: episode summary is empty after sanitisation; it was not imported")
+        return
+    if truncated:
+        tally.errors.append(
+            f"Line {line_num}: episode summary exceeded the {len(summary)}-character cap "
+            "and was truncated"
+        )
 
     # bug-094: coerce field types on BOTH paths — a JSON-array
     # keywords value (the natural hand-authored format) reached
@@ -2116,6 +2227,21 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     else:
         keywords = str(keywords or "")
 
+    ep_pid = record.get("project_id", "")
+    ep_chan = record.get("channel", "")
+    # bug-220: dedup against what is already stored. The dry_run arm carries the
+    # within-file set for the same reason the memory path does (bug-070): a
+    # preview has no INSERT of its own to collide against, while a real run sees
+    # its own uncommitted rows on the shared connection.
+    existing = await db.execute_fetchall(
+        "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
+        " AND summary = ? LIMIT 1",
+        (aid, ep_pid, ep_chan, summary),
+    )
+    if existing or (tally.dry_run and (aid, ep_pid, ep_chan, summary) in tally.seen_episode):
+        tally.skipped_episodes += 1
+        return
+
     if not tally.dry_run:
         cur = await db.execute(
             "INSERT INTO episodes"
@@ -2124,8 +2250,8 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
             (
                 aid,
-                record.get("project_id", ""),
-                record.get("channel", ""),
+                ep_pid,
+                ep_chan,
                 summary,
                 keywords,
                 record.get("start_time"),
@@ -2136,6 +2262,8 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
             ),
         )
         tally.queue_remote(aid, f"ep:{cur.lastrowid}", summary)
+    else:
+        tally.seen_episode.add((aid, ep_pid, ep_chan, summary))
     tally.imported_episodes += 1
 
 
@@ -2185,13 +2313,23 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
         )
 
     if not tally.dry_run:
+        # bug-223: carry the record's own updated_at, as memories and episodes carry
+        # created_at (bug-092). A restore that re-stamps every profile with import time
+        # disarms deep_stale_profile — its sole input — for _STALE_PROFILE_DAYS.
+        # `excluded.updated_at` on the conflict path IS this bound value.
         await db.execute(
             "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
-            " VALUES (?, ?, ?, ?, datetime('now'))"
+            " VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')))"
             " ON CONFLICT(agent_id, user_id) DO UPDATE SET"
             "   content = excluded.content,"
             "   updated_at = excluded.updated_at",
-            (aid, record.get("project_id", ""), record.get("user_id", ""), content),
+            (
+                aid,
+                record.get("project_id", ""),
+                record.get("user_id", ""),
+                content,
+                record.get("updated_at"),
+            ),
         )
     tally.profile_updated = True
 
@@ -2245,7 +2383,11 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     try:
         with open(input_path, encoding="utf-8") as f:
             lines = f.readlines()
-    except OSError as e:
+    # bug-242: a file that is not valid UTF-8 fails on CONTENT, not on the OS call —
+    # UnicodeDecodeError derives from ValueError, so it escaped this handler entirely
+    # and the registry wrapper answered a bare {"error": ...} with no `ok` and none of
+    # the tally keys. Every import refusal returns the one documented shape.
+    except (OSError, UnicodeDecodeError) as e:
         return error_response(f"could not read {input_path}: {e}")
 
     try:
@@ -2276,7 +2418,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                     if not aid:
                         tally.errors.append(f"Line {line_num}: memory missing agent_id")
                         continue
-                    await _import_memory_record(db, record, aid, tally)
+                    await _import_memory_record(db, record, aid, tally, line_num)
 
                 elif rtype == "episode":
                     tally.file_episodes += 1
@@ -2284,7 +2426,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
                     if not aid:
                         tally.errors.append(f"Line {line_num}: episode missing agent_id")
                         continue
-                    await _import_episode_record(db, record, aid, tally)
+                    await _import_episode_record(db, record, aid, tally, line_num)
 
                 elif rtype == "profile":
                     tally.file_profiles += 1
@@ -2314,6 +2456,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
             "imported_memories": 0,
             "skipped_memories": tally.skipped_memories,
             "imported_episodes": 0,
+            "skipped_episodes": tally.skipped_episodes,
             "profile_updated": False,
         }
         if tally.errors:
@@ -2332,6 +2475,7 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
         "imported_memories": tally.imported_memories,
         "skipped_memories": tally.skipped_memories,
         "imported_episodes": tally.imported_episodes,
+        "skipped_episodes": tally.skipped_episodes,
         "profile_updated": tally.profile_updated,
     }
     if tally.errors:
@@ -2363,6 +2507,14 @@ class _MergeTally:
     # the dry_run preview matches (memories don't need this — the source's own UNIQUE
     # indexes already make intra-batch content/msg_id collisions impossible).
     seen_summary: set = field(default_factory=set)
+    # bug-218/bug-222: the SOURCE ids this merge actually copied. mode='move' deletes
+    # exactly these, so a row the copy pass skipped — a profile the target already holds
+    # under the same user_id (profiles have no content-equivalence key, unlike the
+    # memory msg_id/content and episode summary probes), a locked memory whose content
+    # collided — stays where it is instead of being wiped with the agent.
+    copied_memory_ids: list[int] = field(default_factory=list)
+    copied_episode_ids: list[int] = field(default_factory=list)
+    copied_profile_ids: list[int] = field(default_factory=list)
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: list[dict] = field(default_factory=list)
 
@@ -2376,13 +2528,16 @@ class _MergeTally:
 async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
     """Copy the source agent's memory rows into the target, skipping collisions."""
     rows = await db.execute_fetchall(
-        "SELECT project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
+        "SELECT id, project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
         " created_at, recall_count, last_recalled_at"
         " FROM memories WHERE agent_id = ?",
         (source_agent_id,),
     )
     # bug-131: preserve the ranking metadata used by confidence and decay.
+    # bug-222: the source id rides along so mode='move' can delete the copied rows
+    # only — a skipped row (locked, or colliding on msg_id/content) is not ours to drop.
     for (
+        src_id,
         project_id,
         msg_id,
         content,
@@ -2435,6 +2590,7 @@ async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tal
             if cur.rowcount == 0:
                 tally.skipped_memories += 1
                 continue
+            tally.copied_memory_ids.append(src_id)
             tally.queue_remote(f"mem:{cur.lastrowid}", content)
         else:
             # bug-057: in dry_run the INSERT OR IGNORE rowcount==0 skip never
@@ -2454,12 +2610,30 @@ async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tal
 
 async def _merge_episode_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
     """Copy the source agent's episodes. No uniqueness index — the probe is the gate."""
+    # bug-219: created_at is carried through, like _merge_memory_rows carries it
+    # (bug-131) and the import path does (bug-092). Re-stamping a merged episode with
+    # merge time moves the episode-boundary timestamp _get_episode_boundary_ts derives
+    # from MAX(created_at) — every memory the target already held then scores as
+    # prior-session — and becomes the episode's own recall timestamp whenever
+    # start_time is NULL (bug-213).
     rows = await db.execute_fetchall(
-        "SELECT summary, keywords, start_time, end_time, resolved, project_id, channel, embedding"
+        "SELECT id, summary, keywords, start_time, end_time, resolved, project_id, channel, embedding,"
+        " created_at"
         " FROM episodes WHERE agent_id = ?",
         (source_agent_id,),
     )
-    for summary, keywords, start_time, end_time, resolved, ep_project_id, ep_channel, ep_embedding in rows:
+    for (
+        src_id,
+        summary,
+        keywords,
+        start_time,
+        end_time,
+        resolved,
+        ep_project_id,
+        ep_channel,
+        ep_embedding,
+        created_at,
+    ) in rows:
         if not summary:
             continue
         # bug-076: scope the episode dedup probe by the γ isolation axes, exactly
@@ -2483,10 +2657,23 @@ async def _merge_episode_rows(db, source_agent_id: str, target_agent_id: str, ta
         if not tally.dry_run:
             cur = await db.execute(
                 "INSERT INTO episodes"
-                " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, embedding)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (target_agent_id, ep_project_id, ep_channel, summary, keywords, start_time, end_time, resolved, ep_embedding),
+                " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
+                "  embedding, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+                (
+                    target_agent_id,
+                    ep_project_id,
+                    ep_channel,
+                    summary,
+                    keywords,
+                    start_time,
+                    end_time,
+                    resolved,
+                    ep_embedding,
+                    created_at,
+                ),
             )
+            tally.copied_episode_ids.append(src_id)
             tally.queue_remote(f"ep:{cur.lastrowid}", summary)
         else:
             tally.seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
@@ -2504,12 +2691,16 @@ async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, ta
     does overwrite, goes through the seam instead.
     """
     rows = await db.execute_fetchall(
-        "SELECT user_id, content, project_id FROM profiles WHERE agent_id = ?",
+        "SELECT id, user_id, content, project_id FROM profiles WHERE agent_id = ?",
         (source_agent_id,),
     )
-    for user_id, content, prof_project_id in rows:
+    for src_id, user_id, content, prof_project_id in rows:
         if not content:
             continue
+        # bug-218: this probe is pure existence on (agent_id, user_id) — profiles have
+        # no equivalence key, so "the target already has one" says nothing about the two
+        # documents being the same. A skipped source profile therefore exists nowhere
+        # else, and mode='move' must leave it where it is (_delete_merged_source_rows).
         existing = await db.execute_fetchall(
             "SELECT id FROM profiles WHERE agent_id = ? AND user_id = ? LIMIT 1",
             (target_agent_id, user_id),
@@ -2523,7 +2714,79 @@ async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, ta
                 " VALUES (?, ?, ?, ?, datetime('now'))",
                 (target_agent_id, prof_project_id, user_id, content),
             )
+            tally.copied_profile_ids.append(src_id)
         tally.profile_copied = True
+
+
+# One statement stays well under SQLite's bound-variable ceiling (999 on older
+# builds) with the agent_id parameter riding along. The ids are BOUND into the
+# ``{ph}`` placeholders and never interpolated (the vector._fetch_rows_by_id
+# convention).
+_MOVE_DELETE_CHUNK = 500
+
+_MOVE_DELETE_SQL = (
+    ("deleted_memories", "DELETE FROM memories WHERE agent_id = ? AND id IN ({ph})"),
+    ("deleted_profiles", "DELETE FROM profiles WHERE agent_id = ? AND id IN ({ph})"),
+    ("deleted_episodes", "DELETE FROM episodes WHERE agent_id = ? AND id IN ({ph})"),
+)
+
+_MOVE_LEFT_SQL = (
+    ("memories", "SELECT COUNT(*) FROM memories WHERE agent_id = ?"),
+    ("episodes", "SELECT COUNT(*) FROM episodes WHERE agent_id = ?"),
+    ("profiles", "SELECT COUNT(*) FROM profiles WHERE agent_id = ?"),
+)
+
+
+async def _delete_merged_source_rows(db, source_agent_id: str, tally: _MergeTally) -> tuple[dict, dict]:
+    """Move phase: remove exactly the rows this merge copied (bug-218 / bug-222).
+
+    A move used to hand the whole source agent to ``_delete_agent_rows``, which wiped
+    rows the copy pass had SKIPPED — and a skip is not evidence that the data survives
+    in the target. The profile probe is pure existence on (agent_id, user_id), so two
+    entirely different documents count as a collision; the memory probes carry no
+    ``locked = 0`` guard, so a memory the user locked against deletion was dropped while
+    the surviving target row (written by some earlier, unrelated path) may be unlocked.
+    Both destroyed data that had been copied nowhere, under ok:true.
+
+    So the delete is keyed on the ids that were actually inserted. Whatever stays is
+    reported as ``left_at_source``, counted from the tables rather than from the skip
+    tallies so rows the copy pass never considered (empty content) are visible too.
+
+    The crash-recovery queue is per agent, not per row (bug-093): it is drained only
+    when the move leaves the source with nothing at all — the wiped-agent case that
+    guard was written for.
+    """
+    ids_for = {
+        "deleted_memories": tally.copied_memory_ids,
+        "deleted_profiles": tally.copied_profile_ids,
+        "deleted_episodes": tally.copied_episode_ids,
+    }
+    deleted: dict = {}
+    for key, sql in _MOVE_DELETE_SQL:
+        ids = ids_for[key]
+        count = 0
+        for start in range(0, len(ids), _MOVE_DELETE_CHUNK):
+            chunk = ids[start : start + _MOVE_DELETE_CHUNK]
+            cur = await db.execute(
+                sql.replace("{ph}", ",".join("?" * len(chunk))),
+                (source_agent_id, *chunk),
+            )
+            count += cur.rowcount
+        deleted[key] = count
+
+    left = {}
+    for kind, sql in _MOVE_LEFT_SQL:
+        rows = await db.execute_fetchall(sql, (source_agent_id,))
+        left[kind] = rows[0][0]
+
+    if any(left.values()):
+        deleted["deleted_pending_tasks"] = 0
+    else:
+        cur = await db.execute(
+            "DELETE FROM pending_memory_tasks WHERE agent_id = ?", (source_agent_id,)
+        )
+        deleted["deleted_pending_tasks"] = cur.rowcount
+    return deleted, left
 
 
 def _validate_merge_arguments(source_agent_id: str, target_agent_id: str, strategy: str, mode: str) -> dict | None:
@@ -2593,8 +2856,12 @@ async def do_merge_memories(
             await _merge_profile_rows(db, source_agent_id, target_agent_id, tally)
 
             move_counts = None
+            left_at_source = None
             if mode == "move" and not dry_run:
-                move_counts = await _delete_agent_rows(db, source_agent_id)
+                # bug-218/bug-222: a move deletes what it copied, not the agent.
+                move_counts, left_at_source = await _delete_merged_source_rows(
+                    db, source_agent_id, tally
+                )
 
     except Exception as e:
         return {
@@ -2619,8 +2886,12 @@ async def do_merge_memories(
     await vector.remote_index_upsert(target_agent_id, tally.remote_items)
     move_result = None
     if move_counts is not None:
-        _purge_agent_calibration(source_agent_id)
-        await _purge_agent_remote_namespace(source_agent_id)
+        # bug-218/bug-222: the agent-level teardown (its calibration, its remote
+        # namespace) belongs to a move that emptied the source. With rows left behind,
+        # the agent is still live — purging would de-index memories it still holds.
+        if not any(left_at_source.values()):
+            _purge_agent_calibration(source_agent_id)
+            await _purge_agent_remote_namespace(source_agent_id)
         move_result = {"ok": True, "agent_id": source_agent_id, **move_counts}
 
     result: dict = {
@@ -2639,6 +2910,9 @@ async def do_merge_memories(
     }
     if move_result:
         result["source_deleted"] = move_result
+        # bug-218/bug-222: the residue is part of the answer — a caller that reads
+        # "moved" as "the source is empty now" must be able to see otherwise.
+        result["left_at_source"] = left_at_source
 
     logger.info(
         "Merge %s → %s (%s, %s): %d memories (+%d skipped), %d episodes (+%d skipped), profile=%s%s",

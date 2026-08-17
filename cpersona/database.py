@@ -103,6 +103,14 @@ async def read_snapshot():
     boundary; the DEFERRED snapshot is established at the first read (the COUNT)
     and held until rollback. Read-only, so exit always rolls back. The connection
     is closed on exit so its worker thread is joined (bug-124)."""
+    # bug-235: ":memory:" shares the write connection, exactly as _get_read_db does —
+    # a second connect(":memory:") opens a DIFFERENT, empty database, so the streaming
+    # export would read a schema-less file instead of the live corpus. The shared
+    # connection gets no private BEGIN/ROLLBACK (that boundary belongs to the write
+    # seam) and is never closed here (it is the process's only database).
+    if DB_PATH == ":memory:":
+        yield await get_db()
+        return
     db = await aiosqlite.connect(DB_PATH, isolation_level=None)
     try:
         await db.execute("PRAGMA busy_timeout=5000")
