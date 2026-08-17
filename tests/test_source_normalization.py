@@ -406,19 +406,46 @@ async def test_health_check_reads_the_shared_enum_not_its_own_literal(clean_db, 
     assert await checks.check_invalid_source_type(db, "enum1", fix=False) == []
 
 
-def test_store_schema_publishes_the_shared_enum():
-    """The published JSON Schema is the contract's public face; it MUST render
-    the same tuple the write seam enforces (before b1 it had no enum at all,
-    so the only way to learn the vocabulary was to read checks.py)."""
-    from cpersona import server, utils
+def _store_source_type_schema():
+    from cpersona import server
 
     store_tool = next(t for t in server.registry._tools if t.name == "store")
     source_schema = store_tool.inputSchema["properties"]["message"]["properties"]["source"]
-    type_schema = source_schema["properties"]["type"]
-    assert type_schema["enum"] == list(utils.CANONICAL_SOURCE_TYPES)
-    # The alias prose is generated from the same mapping the seam applies, so
-    # a new alias cannot be added without the description following it.
+    return source_schema["properties"]["type"]
+
+
+def test_store_schema_publishes_the_shared_vocabulary_without_an_enum():
+    """bug-233: the canonical list is published as PROSE, never as an ``enum``.
+
+    The MCP SDK validates every call against ``inputSchema`` before dispatch, so an
+    enum of the canonical spellings rejected exactly the legacy producers the adjacent
+    sentence promises to fold — the write was lost at the schema instead of normalized,
+    with no ``result:'rejected'`` envelope and no row for check_health to migrate later.
+    The vocabulary still has to be visible (that is why b1 published it at all), and the
+    alias prose is still generated from the mapping the seam applies, so a new alias
+    cannot be added without the description following it.
+    """
+    from cpersona import utils
+
+    type_schema = _store_source_type_schema()
+    assert "enum" not in type_schema, (
+        "the enum is back — it pre-empts normalize_source and the fold becomes unreachable"
+    )
+    for canonical in utils.CANONICAL_SOURCE_TYPES:
+        assert f"'{canonical}'" in type_schema["description"]
     assert utils.source_type_alias_summary() in type_schema["description"]
+
+
+def test_store_schema_accepts_the_legacy_shapes_the_seam_folds():
+    """bug-233: the published schema must let the documented legacy calls through."""
+    jsonschema = pytest.importorskip("jsonschema")
+    from cpersona import server
+
+    store_schema = next(t for t in server.registry._tools if t.name == "store").inputSchema
+    legacy = {"agent_id": "a", "message": {"content": "hi", "source": {"type": "user", "id": "u1"}}}
+    jsonschema.validate(instance=legacy, schema=store_schema)  # raised before the fix
+    folded, mapped = normalize_source(legacy["message"]["source"])
+    assert mapped and folded["type"] == "User"
 
 
 def test_alias_summary_tracks_the_mapping_table():

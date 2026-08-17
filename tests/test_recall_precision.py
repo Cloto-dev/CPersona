@@ -120,8 +120,31 @@ async def test_set_named_precision(_stub_calibrate, level, beta):
 async def test_raw_beta_overrides_named(_stub_calibrate):
     res = await admin_handlers.do_set_recall_precision("alice", precision="strict", beta=1.5)
     assert res["beta"] == 1.5
-    assert res["precision"] == "strict"  # the label is preserved, beta wins
+    # bug-234: the beta wins, so the LABEL follows the beta. Echoing the name the caller
+    # sent described a persisted state that is not 'strict' (strict is beta 2.0).
+    assert res["precision"] == "custom"
     assert vector._agent_betas["alice"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_raw_beta_that_hits_a_named_level_gets_that_name(_stub_calibrate):
+    """bug-234: the label is derived, so a raw beta equal to a level reads as that level."""
+    res = await admin_handlers.do_set_recall_precision("alice", beta=2.0)
+    assert res["beta"] == 2.0 and res["precision"] == "strict"
+
+
+@pytest.mark.asyncio
+async def test_set_and_get_agree_on_a_raw_beta_override(_stub_calibrate):
+    """bug-234: the write tool and its read-back companion must label one state once.
+
+    The reported divergence: set(precision='strict', beta=3.0) answered 'strict' (so a
+    UI rendered the strict pill as selected) while get() derived 'custom' from the stored
+    beta — the pill changed on reload with nobody having changed the setting.
+    """
+    written = await admin_handlers.do_set_recall_precision("alice", precision="strict", beta=3.0)
+    read_back = await admin_handlers.do_get_recall_precision("alice")
+    assert written["beta"] == read_back["beta"] == 3.0
+    assert written["precision"] == read_back["precision"] == "custom"
 
 
 @pytest.mark.asyncio
