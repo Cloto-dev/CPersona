@@ -833,6 +833,36 @@ def _load_calibration_state() -> dict | None:
         return None
 
 
+def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
+    """Copy the sidecar aside before a staleness recalibration replaces it (Task #707).
+
+    A staleness-triggered recalibration (scoring change, dimension change) overwrites
+    the only record of the gate values that were effective until this boot. Twice in
+    production the previous values survived only because someone had copied the file
+    by hand — and the second time (the 2026-08-17 fused-gate collapse to 0.1544) that
+    manual copy was the entire evidence base for diagnosing the estimator instability.
+    This makes the copy a property of the code path instead of of the operator.
+
+    The name mirrors the manual convention already in the field:
+    ``<sidecar>.before-<old_scoring_version>-<UTC>``. Failure is reported and swallowed
+    — a backup must never block the recalibration it is evidence for.
+    """
+    path = _calibration_sidecar_path()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    backup = f"{path}.before-{old_scoring_version or 'unversioned'}-{stamp}"
+    try:
+        with open(path, "rb") as src, open(backup, "wb") as dst:
+            dst.write(src.read())
+        return backup
+    except OSError as exc:
+        logger.warning(
+            "Task #707: could not back up the calibration sidecar before "
+            "recalibration; the previous gate values will not survive: %s",
+            exc,
+        )
+        return None
+
+
 async def _corpus_embedding_dim() -> int | None:
     """Return the float32 dimension of one stored embedding, or None when empty."""
     async with connection() as db:
@@ -1548,6 +1578,23 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         for stored_agent_id in state.get("agent_betas") or {}:
             vector._claim_agent_calibration(stored_agent_id, "agent_betas")
 
+    # Task #707: a staleness recalibration is about to replace the only record of the
+    # values that gated recall until this boot. Back the sidecar up first (evidence for
+    # the before/after comparison the log below reports), and remember what was stored
+    # so the report can distinguish it from the runtime default that
+    # ``do_calibrate_threshold`` will log as its "from" value — with the restore
+    # skipped, that "from" is config, not anything that ever gated a query.
+    sidecar_backup = None
+    replaced = None
+    if state is not None and (dim_changed or scoring_stale):
+        sidecar_backup = _backup_calibration_sidecar(state.get("scoring_version"))
+        replaced = {
+            "stored_global_threshold": state.get("global_threshold"),
+            "runtime_default_threshold": vector._get_vector_threshold(""),
+            "stored_agent_thresholds": dict(state.get("agent_thresholds") or {}),
+            "stored_agent_fused_gates": dict(state.get("agent_fused_gates") or {}),
+        }
+
     if dim_changed:
         logger.warning(
             "Embedding dimension changed (%s -> %s); recalibrating vector threshold. "
@@ -1579,6 +1626,48 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             r = await do_calibrate_threshold(agent_id=aid)
             if r.get("ok"):
                 agents.append(aid)
+
+    if replaced is not None:
+        # Task #707 (b): the per-calibration log lines above each printed
+        # "old -> new" where old is the runtime default, because the stale restore
+        # was skipped. This is the line that reports the quantity an operator
+        # actually needs after an upgrade boot: what gated recall until now
+        # (stored), what the process booted with instead (runtime default), and
+        # what gates it from here (new) — for the cosine threshold AND the fused
+        # gates, which the per-calibration lines never mention at all (the
+        # 2026-08-17 fused-gate collapse produced zero log lines).
+        replaced["new_global_threshold"] = vector._get_vector_threshold("")
+        replaced["new_agent_thresholds"] = dict(vector._agent_thresholds)
+        replaced["new_agent_fused_gates"] = dict(vector._agent_fused_gates)
+        agent_ids = sorted(
+            set(replaced["stored_agent_thresholds"])
+            | set(replaced["new_agent_thresholds"])
+            | set(replaced["stored_agent_fused_gates"])
+            | set(replaced["new_agent_fused_gates"])
+        )
+
+        def _fmt(value: float | None) -> str:
+            return "none" if value is None else f"{value:.4f}"
+
+        per_agent = "; ".join(
+            f"[{aid}] threshold {_fmt(replaced['stored_agent_thresholds'].get(aid))}"
+            f" -> {_fmt(replaced['new_agent_thresholds'].get(aid))},"
+            f" fused_gate {_fmt(replaced['stored_agent_fused_gates'].get(aid))}"
+            f" -> {_fmt(replaced['new_agent_fused_gates'].get(aid))}"
+            for aid in agent_ids
+        )
+        logger.warning(
+            "Task #707: staleness recalibration replaced the stored calibration "
+            "(backup: %s). Global cosine threshold: stored=%s (effective until this "
+            "boot; not applied, stale), runtime_default=%s, new=%s. Per-agent "
+            "(stored -> new): %s",
+            sidecar_backup or "FAILED",
+            _fmt(replaced["stored_global_threshold"]),
+            _fmt(replaced["runtime_default_threshold"]),
+            _fmt(replaced["new_global_threshold"]),
+            per_agent or "none",
+        )
+
     return {
         "action": (
             "gate_calibrated" if restored
@@ -1591,6 +1680,10 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         "scoring_stale": scoring_stale,
         "global_ok": bool(global_result.get("ok")),
         "agents": agents,
+        # Task #707: machine-readable form of the replacement report above; None on
+        # the boots (initial, plain auto-calibrate) that replace nothing stale.
+        "sidecar_backup": sidecar_backup,
+        "calibration_replaced": replaced,
     }
 
 
