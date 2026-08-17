@@ -1381,8 +1381,11 @@ registry.auto_tool(
     "with a re-run hint has NOT converged — run fix again until `remaining` "
     "stops decreasing. "
     "Use checks parameter to "
+    # bug-230: an unrecognised name used to select nothing and answer 'healthy'.
+    "run a subset — an unknown name is rejected (ok=false) rather than silently "
+    "running nothing, and every response echoes `checks_run`. "
     # b1-3 (2.5.2b1, CONTRACT BREAK): one verdict, not two.
-    "run a subset. The verdict is `status`: healthy / degraded / unhealthy, "
+    "The verdict is `status`: healthy / degraded / unhealthy, "
     "derived from severity counts (info never degrades). The pre-2.5.2b1 "
     "`healthy` boolean (len(issues) == 0) is gone — it reported False for an "
     "info-only database that `status` called healthy; read `issues` / "

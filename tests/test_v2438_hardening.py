@@ -351,7 +351,8 @@ async def test_merge_preserves_project_locked_and_skips_collision(clean_db):
 
 
 # ---------------------------------------------------------------------------
-# v2.4.38 batch #2 (task#171): the 11 MEDIUM/LOW fixes 博士 approved for 2.4.38.
+# v2.4.38 batch #2 (task#171): the 11 MEDIUM/LOW fixes approved by the maintainer
+# for 2.4.38.
 # Each test pins one landed fix.
 # ---------------------------------------------------------------------------
 

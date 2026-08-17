@@ -163,6 +163,23 @@ def _unlocked(rows: list) -> list[tuple[int, str]]:
     return [(r[0], r[1]) for r in rows if not r[2]]
 
 
+# bug-226: the SQL LIKE that DETECTS is wider than the regex that REPAIRS
+# ('[Memory from' with no closing bracket, a Discord role mention '<@&1>'), so a
+# matched row can rewrite to itself. The old fix wrote that identical text back
+# with `embedding = NULL` on every run: the row never left the finding, and each
+# maintenance pass destroyed a vector for a text that did not change (under
+# EMBEDDING_MODE=none, permanently). Only rows the regex actually changes are
+# repairable, and only those are written.
+def _rewritable(rows: list, pattern: re.Pattern) -> list[tuple[int, str]]:
+    """(id, cleaned) for the unlocked rows whose rewrite is not a no-op."""
+    out = []
+    for row_id, content in _unlocked(rows):
+        cleaned = pattern.sub("", content).strip()
+        if cleaned != content:
+            out.append((row_id, cleaned))
+    return out
+
+
 async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
@@ -171,10 +188,9 @@ async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     )
     if not rows:
         return []
-    writable = _unlocked(rows)
+    writable = _rewritable(rows, _MEMORY_ANNOTATION_PATTERN)
     if fix:
-        for row_id, content in writable:
-            cleaned = _MEMORY_ANNOTATION_PATTERN.sub("", content).strip()
+        for row_id, cleaned in writable:
             await _rewrite_or_delete_on_collision(db, row_id, cleaned)
     return [{"type": "memory_annotation", "count": len(rows), "repairable": len(writable)}]
 
@@ -186,10 +202,9 @@ async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
     )
     if not rows:
         return []
-    writable = _unlocked(rows)
+    writable = _rewritable(rows, _MENTION_PATTERN)
     if fix:
-        for row_id, content in writable:
-            cleaned = _MENTION_PATTERN.sub("", content).strip()
+        for row_id, cleaned in writable:
             await _rewrite_or_delete_on_collision(db, row_id, cleaned)
     return [{"type": "discord_mention", "count": len(rows), "repairable": len(writable)}]
 
@@ -801,6 +816,51 @@ def _normalize_sql(sql: str) -> str:
     return _SQL_NORMALIZE.sub(" ", s).upper()
 
 
+_UNIQUE_INDEX_SQL = re.compile(
+    r"CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+ON\s+(\w+)\s*\(([^)]*)\)\s*(?:WHERE\s+(.+))?$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+async def _unique_index_blocked_by(db, sql: str) -> str | None:
+    """Why the canonical UNIQUE index cannot be created, or None when it can.
+
+    bug-224: asked BEFORE the drifted object is dropped. The corpus is the only
+    thing that can refuse a UNIQUE index (duplicate rows the index cannot
+    admit), and a duplicate can be locked — the very case the fixer must never
+    force. Answering after the DROP is what left the database with no index at
+    all.
+    """
+    match = _UNIQUE_INDEX_SQL.match(_SQL_NORMALIZE.sub(" ", sql.strip()))
+    if match is None:
+        # Unparseable canonical DDL: refuse rather than drop on a guess.
+        return "cannot verify uniqueness before the drop: unrecognised index DDL"
+    table, columns, predicate = match.group(1), match.group(2), match.group(3)
+    # An index is a global schema object: a duplicate under ANY agent blocks the
+    # CREATE, so this is a DELIBERATE cross-agent scan, spelled
+    # isolation_where(agent_id=None) (empty and_clause) exactly as
+    # check_dedup_msg_id_index spells its own.
+    iso = isolation_where(agent_id=None)
+    where = f"WHERE {predicate}" if predicate else "WHERE 1=1"
+    try:
+        dupes = (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM (SELECT 1 FROM {table} {where}{iso.and_clause} "
+                f"GROUP BY {columns} HAVING COUNT(*) > 1)",
+                iso.params,
+            )
+        )[0][0]
+    except Exception as e:  # a scan that cannot run is not a licence to drop
+        return f"cannot verify uniqueness before the drop: {e}"
+    if dupes:
+        return (
+            f"{dupes} duplicate group(s) in {table} violate the canonical UNIQUE "
+            "index; the drifted object is left in place (dropping it would remove "
+            "the guarantee entirely). Collapse the duplicates, then re-run fix"
+        )
+    return None
+
+
 async def check_schema_objects(db, agent_id: str, fix: bool) -> list[dict]:
     """Compare load-bearing indexes/triggers against their canonical DDL.
 
@@ -834,16 +894,40 @@ async def check_schema_objects(db, agent_id: str, fix: bool) -> list[dict]:
             "repairable": 1,
         }
         if fix:
+            # bug-224: the repair must never end with FEWER objects than it
+            # found. The old order (DROP, then CREATE, then swallow the CREATE's
+            # failure) deleted a drifted UNIQUE index the corpus could not
+            # re-admit and committed that — the write-time dedup guarantee this
+            # check calls `critical` was destroyed by its own fix.
+            previous_sql = actual.get(name) or ""
+            blocked = None
+            if state == "definition_drift" and "UNIQUE" in expected_norm:
+                blocked = await _unique_index_blocked_by(db, spec["sql"])
+            if blocked:
+                # Refuse: keep the drifted object, say why (the locked row wins,
+                # same doctrine as the migration).
+                issue["fixed"] = False
+                issue["fix_error"] = blocked
+                issues.append(issue)
+                continue
             try:
                 if state == "definition_drift":
                     await db.execute(f"DROP {spec['kind'].upper()} IF EXISTS {name}")
                 await db.execute(spec["sql"])
                 issue["fixed"] = True
             except Exception as e:
-                # e.g. UNIQUE index blocked by a locked duplicate row — surface,
-                # never force (the locked row wins, same doctrine as the migration).
                 issue["fixed"] = False
                 issue["fix_error"] = str(e)
+                if state == "definition_drift" and previous_sql:
+                    # The CREATE failed after the DROP: put back what was there,
+                    # and record BOTH errors — a restore that also fails is the
+                    # one outcome an operator must not have to infer.
+                    try:
+                        await db.execute(previous_sql)
+                    except Exception as restore_error:
+                        issue["restore_error"] = str(restore_error)
+                    else:
+                        issue["restored"] = True
         issues.append(issue)
     return issues
 
@@ -952,12 +1036,16 @@ async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
     is deliberately *not* server knowledge. Distribution itself is not an
     issue (rare != wrong); it is exposed via axis_distribution() in stats.
     """
-    # The project-distribution audit is corpus-wide by design (naming drift is a
-    # cross-bucket phenomenon); the typed no-filter helper call replaces the old
-    # waiver comment (Task #180).
-    iso = isolation_where(agent_id=None)
+    # bug-243: the emitted clusters are the requesting agent's own buckets. The
+    # audit stays corpus-wide for the CLI global sweep (empty agent_id), where
+    # cross-bucket drift belongs, but a per-agent call named every OTHER agent's
+    # project_id and row count in `issues` — the disclosure bug-062 closed one
+    # function below in `stats.axes`, still open here. Same boundary as
+    # axis_distribution: scoped call -> own buckets, global sweep -> corpus.
+    iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
-        f"SELECT project_id, COUNT(*) FROM memories WHERE project_id != ''{iso.and_clause} GROUP BY project_id"
+        f"SELECT project_id, COUNT(*) FROM memories WHERE project_id != ''{iso.and_clause} GROUP BY project_id",
+        iso.params,
     )
     clusters: dict[str, list] = {}
     for pid, count in rows:
@@ -1049,18 +1137,31 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     if bad_ts == 0:
         return []
     # Before the repair (it rewrites the very rows this counts), and with the
-    # fixer's own locked = 0 guard so the two agree.
+    # fixer's own locked = 0 / parseable-created_at guards so the two agree.
     repairable = (
         await db.execute_fetchall(
             f"""SELECT COUNT(*) FROM memories
                 WHERE datetime(timestamp) IS NULL AND timestamp != ''
+                AND datetime(created_at) IS NOT NULL
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
     )[0][0]
     if fix:
+        # bug-229: write the CANONICAL AWARE form, not created_at verbatim.
+        # created_at is SQLite-native `YYYY-MM-DD HH:MM:SS` (naive) while the
+        # write path stores `...T...+00:00`, so copying it minted a `naive`
+        # timestamp_format_drift finding the very next check refuses to repair
+        # ("their intended zone is unknowable") — one repair manufacturing a
+        # permanent one. created_at is UTC by the bug-114 invariant, so the
+        # conversion adds no information. datetime(created_at) IS NOT NULL keeps
+        # the strftime from evaluating to NULL against the NOT NULL column.
         await db.execute(
-            f"UPDATE memories SET timestamp = created_at WHERE datetime(timestamp) IS NULL AND timestamp != '' AND locked = 0{iso.and_clause}",
+            f"""UPDATE memories
+                SET timestamp = strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at)
+                WHERE datetime(timestamp) IS NULL AND timestamp != ''
+                AND datetime(created_at) IS NOT NULL
+                AND locked = 0{iso.and_clause}""",
             iso.params,
         )
     return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
@@ -1110,8 +1211,17 @@ async def check_missing_episode_start_time(db, agent_id: str, fix: bool) -> list
         )
     )[0][0]
     if fix:
+        # bug-245: the same canonical aware form check_invalid_timestamp writes
+        # (bug-229). Copying created_at verbatim left `start_time` holding two
+        # lexical conventions at once — a genuinely recorded value is caller
+        # ISO-8601 with an offset, created_at is SQLite-native and naive, and
+        # ' ' < 'T' so every backfilled row sorts before every recorded one
+        # regardless of date. No detector covers episodes (
+        # check_timestamp_format_drift reads `memories` only), so the drift
+        # would be undetectable as well as unrepaired.
         await db.execute(
-            f"""UPDATE episodes SET start_time = created_at
+            f"""UPDATE episodes
+                SET start_time = strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at)
                 WHERE (start_time IS NULL OR start_time = '')
                 AND datetime(created_at) IS NOT NULL{iso.and_clause}""",
             iso.params,
@@ -1266,11 +1376,20 @@ async def check_missing_profile(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "missing_profile", "count": len(agents), "agents": agents}]
 
 
+# bug-236: ONE predicate string for the count, the repairable count and the
+# DELETE. Unparenthesised in the count, AND bound tighter than OR, so it parsed
+# as `TRIM(content) = '' OR (content IS NULL AND agent_id = ?)` — and content is
+# TEXT NOT NULL, so the isolation predicate was inert and the count went
+# corpus-wide while the repair stayed agent-scoped. A scoped fix run could then
+# never drive its own finding to zero (the bug-031/bug-055 scope-leak class).
+_EMPTY_CONTENT_WHERE = "(TRIM(content) = '' OR content IS NULL)"
+
+
 async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     empty = (
         await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM memories WHERE TRIM(content) = '' OR content IS NULL{iso.and_clause}",
+            f"SELECT COUNT(*) FROM memories WHERE {_EMPTY_CONTENT_WHERE}{iso.and_clause}",
             iso.params,
         )
     )[0][0]
@@ -1280,14 +1399,14 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
     repairable = (
         await db.execute_fetchall(
             f"""SELECT COUNT(*) FROM memories
-                WHERE (TRIM(content) = '' OR content IS NULL)
+                WHERE {_EMPTY_CONTENT_WHERE}
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
     )[0][0]
     if fix:
         await db.execute(
-            f"DELETE FROM memories WHERE (TRIM(content) = '' OR content IS NULL) AND locked = 0{iso.and_clause}",
+            f"DELETE FROM memories WHERE {_EMPTY_CONTENT_WHERE} AND locked = 0{iso.and_clause}",
             iso.params,
         )
     return [{"type": "empty_content", "count": empty, "repairable": repairable}]
@@ -1817,9 +1936,17 @@ def health_status(summary: dict) -> str:
 
 
 async def deep_anonymous_source(db, agent_id: str, fix: bool) -> dict:
+    # bug-227: `json_valid(source)` leads the predicate, as it does in
+    # check_invalid_source_type and check_anonymous_source (the bug-144 guard).
+    # json_extract RAISES 'malformed JSON' on a legacy non-JSON source instead of
+    # returning NULL, so one such row aborted the whole scan; do_deep_check then
+    # recorded {"error": ...}, which the checkup finding filter prints as
+    # nothing — an operator saw a clean deep report and no row was repaired.
+    # bug-228: `locked` is selected here so the reported `fixed` counts writes.
     rows = await db.execute_fetchall(
-        """SELECT id, content FROM memories
+        """SELECT id, content, locked FROM memories
            WHERE agent_id = ?
+           AND json_valid(source)
            AND json_extract(source, '$.type') = 'User'
            AND json_extract(source, '$.id') = ''
            AND json_extract(source, '$.name') = ''""",
@@ -1827,24 +1954,39 @@ async def deep_anonymous_source(db, agent_id: str, fix: bool) -> dict:
     )
     recoverable = []
     unrecoverable = []
-    for row_id, content in rows:
+    locked_ids: set[int] = set()
+    for row_id, content, locked in rows:
         match = _USERNAME_PREFIX_PATTERN.match(content)
         if match:
             recoverable.append({"id": row_id, "recovered_name": match.group(1)})
+            if locked:
+                locked_ids.add(row_id)  # bug-098: the fixer may not touch it
         else:
             unrecoverable.append({"id": row_id, "content_preview": content[:60]})
     fixed_count = 0
     if fix and recoverable:
         for item in recoverable:
+            if item["id"] in locked_ids:
+                continue
             new_source = json.dumps({"type": "User", "id": "", "name": item["recovered_name"]})
-            await db.execute(
+            cur = await db.execute(
                 "UPDATE memories SET source = ? WHERE id = ? AND locked = 0",
                 (new_source, item["id"]),
             )
-        fixed_count = len(recoverable)
+            # bug-228: counted from the write, not from the intent — the scan
+            # carries no `locked` filter but the UPDATE does, so `len(recoverable)`
+            # reported locked rows as repaired while the statement no-opped
+            # (the defect bug-212 removed from check_timestamp_format_drift).
+            if getattr(cur, "rowcount", 0) == 1:
+                fixed_count += 1
     result = {"recoverable": len(recoverable), "unrecoverable": len(unrecoverable)}
     if fix:
         result["fixed"] = fixed_count
+    # So recoverable = fixed + locked reconciles instead of reading as "found N,
+    # recovered fewer, no reason given" (bug-212's shape).
+    unfixable_locked = len(recoverable) - fixed_count if fix else len(locked_ids)
+    if unfixable_locked:
+        result["unfixable_locked"] = unfixable_locked
     if recoverable:
         result["samples"] = recoverable[:5]
     if unrecoverable:

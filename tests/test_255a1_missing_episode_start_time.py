@@ -97,13 +97,18 @@ async def test_fix_copies_created_at_and_drives_the_count_to_zero(db):
     issues = await _run(db, fix=True)
     assert issues[0]["count"] == 2
 
-    # The repaired rows carry their created_at, byte for byte.
+    # The repaired rows carry their created_at, in the canonical aware spelling
+    # (bug-245: created_at is SQLite-native and naive, a recorded start_time is
+    # caller ISO-8601 with an offset, and ' ' < 'T' — copying it verbatim left
+    # the column holding two lexical conventions with no detector for either).
     rows = await db.execute_fetchall(
         "SELECT summary, start_time, created_at FROM episodes ORDER BY id"
     )
     by_summary = {r[0]: (r[1], r[2]) for r in rows}
-    assert by_summary["null start"][0] == by_summary["null start"][1] == "2026-08-10 12:00:00"
-    assert by_summary["empty start"][0] == by_summary["empty start"][1] == "2026-08-11 06:30:00"
+    assert by_summary["null start"][0] == "2026-08-10T12:00:00+00:00"
+    assert by_summary["null start"][1] == "2026-08-10 12:00:00"
+    assert by_summary["empty start"][0] == "2026-08-11T06:30:00+00:00"
+    assert by_summary["empty start"][1] == "2026-08-11 06:30:00"
     # The genuine row was not touched.
     assert by_summary["genuine start"][0] == GENUINE_TS
 
@@ -124,7 +129,7 @@ async def test_unparseable_created_at_is_counted_but_not_repaired(db):
 
     rows = await db.execute_fetchall("SELECT summary, start_time FROM episodes ORDER BY id")
     by_summary = dict(rows)
-    assert by_summary["healable"] == "2026-08-10 12:00:00"
+    assert by_summary["healable"] == "2026-08-10T12:00:00+00:00"
     assert by_summary["unhealable"] is None, (
         "copying an unparseable created_at trades 'no timestamp' for 'garbage timestamp'"
     )
