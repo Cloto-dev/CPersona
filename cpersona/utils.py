@@ -37,12 +37,25 @@ _MENTION_PATTERN = re.compile(r"<@!?\d+>")
 _MEMORY_ANNOTATION_PATTERN = re.compile(r"\[Memory from [^\]]+\]\s*")
 
 
+# bug-217 (bug-121's class, one step up in length): the bidirectional prefix test
+# below exists ONLY to absorb the truncation asymmetry between a preview/context
+# echo and the full stored row, which cannot arise for a short entry. Without a
+# floor, a 2-character acknowledgement arriving through recall_with_context's
+# external_context ("ok", "yes", "はい") prefix-matched every memory that starts
+# with it and removed them from the candidate set before ranking — silently, since
+# the exclusion happens inside the retrievers and nothing in the response reports
+# it. Entries below this length must therefore match exactly.
+EXCLUDE_PREFIX_MIN_CHARS = 32
+
+
 def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     """Check if content matches any excluded string (starts-with, normalized).
 
     Handles truncation asymmetry: conversation_context entries may be truncated
     to 500 chars while a stored memory runs to MAX_CONTENT_LENGTH. The
-    starts_with check in both directions accounts for this.
+    starts_with check in both directions accounts for this — but only for entries
+    of at least ``EXCLUDE_PREFIX_MIN_CHARS`` (bug-217); a shorter entry has to be
+    an exact (case-insensitive) match to exclude anything.
     """
     if not exclude_set:
         return False
@@ -54,6 +67,10 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     if not normalized:
         return False
     for excl in exclude_set:
+        if len(excl) < EXCLUDE_PREFIX_MIN_CHARS:
+            if normalized == excl:  # bug-217: exact match only below the floor
+                return True
+            continue
         if normalized.startswith(excl) or excl.startswith(normalized):
             return True
     return False

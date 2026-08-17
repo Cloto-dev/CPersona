@@ -270,3 +270,44 @@ async def test_the_scoring_pass_computes_and_hands_over_the_anchor(clean_db, mon
     assert all(a is not None for a in seen), (
         f"a call site scored a row without the anchor: {seen}"
     )
+
+
+@pytest.mark.asyncio
+async def test_one_empty_timestamp_does_not_collapse_the_anchor(clean_db, monkeypatch) -> None:
+    """bug-237: a single empty-string timestamp must not disable the anchor for the scope.
+
+    ``memories.timestamp`` is TEXT NOT NULL but freely allows '' (import_memories defaults
+    a missing field to it), and SQLite's MIN() over TEXT returns '' as soon as one in-scope
+    row carries one. The falsy guard on MIN/MAX then skipped the whole block, so the scope
+    lost its span AND its anchor and every undated row fell back to
+    MIN_TIME_RANGE_HOURS / 2 = 12h — "written half a day ago", the exact inversion bug-207
+    removed. UNFIXED, span is 0.0 and the anchor is None below.
+    """
+    from cpersona import memory_handlers
+
+    for days, text in ((51, "the oldest row"), (21, "the newest row")):
+        res = await memory_handlers.do_store(
+            "bug237-agent", {"content": text, "timestamp": _iso(days)}
+        )
+        assert res["result"] == "stored", res
+    undated = await memory_handlers.do_store(
+        "bug237-agent", {"content": "an imported row with no timestamp", "timestamp": ""}
+    )
+    assert undated["result"] == "stored", undated
+    premise = await clean_db.execute_fetchall(
+        "SELECT MIN(timestamp) FROM memories WHERE agent_id = 'bug237-agent'"
+    )
+    assert premise[0][0] == "", "premise: '' sorts first, so MIN() collapses onto it"
+
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    rows = [{"id": 1, "content": "the oldest row", "timestamp": _iso(51), "_cosine": COSINE}]
+    _, span, _, anchor = await memory_handlers._apply_recall_scoring(
+        clean_db, "bug237-agent", rows, False
+    )
+
+    assert span == pytest.approx(30 * 24.0, abs=1.0), (
+        f"the dated rows still span 30 days; got {span}"
+    )
+    assert anchor is not None and anchor == pytest.approx(21 * 24.0, abs=1.0), (
+        f"the bug-207 anchor must survive one bogus timestamp, got {anchor}"
+    )

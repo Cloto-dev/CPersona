@@ -317,5 +317,10 @@ def test_content_excluded_empty_content_not_dropped():
 
 
 def test_content_excluded_still_matches():
-    assert _content_excluded("Some Filter and more", {"some filter"}) is True
+    # bug-217: prefix matching now needs an entry at or above the length floor —
+    # a short one (the old "some filter") must match exactly. Both are pinned.
+    long_entry = "some filter long enough to be a truncated echo"
+    assert len(long_entry) >= 32
+    assert _content_excluded(long_entry.title() + " and more", {long_entry}) is True
+    assert _content_excluded("Some Filter", {"some filter"}) is True
     assert _content_excluded("anything", set()) is False

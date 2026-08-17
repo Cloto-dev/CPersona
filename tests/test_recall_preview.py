@@ -211,10 +211,16 @@ async def test_get_contents_input_validation():
 # CSC #680 raised the write cap 2000 -> 16000 and bounded the read side only at
 # get_contents; recall(full_content=true) bypassed _apply_preview entirely, so
 # its worst case grew 8x (limit 100 x 16000 = 1.6M chars). The budget mirrors
-# get_contents' discipline: whole rows only, first row admitted whatever its
-# size, rows past the budget DEGRADE to the preview tier (never dropped —
-# recall's contract is the ranked list), refless rows are never trimmed
-# (bug-117), and the marker is absent unless the budget actually bit.
+# get_contents' discipline: whole rows only, rows past the budget DEGRADE to the
+# preview tier (never dropped — recall's contract is the ranked list), refless
+# rows are never trimmed (bug-117), and the marker is absent unless the budget
+# actually bit.
+#
+# bug-214: the budget is spent from the END of the list backwards. Both callers
+# put their most valuable row LAST (do_recall reverses the ranked list; recall
+# _with_context sorts chronologically), so a front-to-back spend admitted the
+# weakest rows whole and degraded the strongest ones. The last row is therefore
+# the one admitted whatever its size, and the HEAD is what degrades.
 
 
 def _rows(*contents, ref=True):
@@ -226,27 +232,29 @@ def _rows(*contents, ref=True):
     }
 
 
-def test_full_content_budget_degrades_the_tail_to_preview(monkeypatch):
+def test_full_content_budget_degrades_the_head_to_preview(monkeypatch):
+    """bug-214: the budget is spent from the tail (the strongest rows) backwards."""
     monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
     monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
     out = S._apply_full_content_budget(_rows("a" * 60, "b" * 60, "c" * 60))
     first, second, third = out["messages"]
-    assert first["content"] == "a" * 60 and "content_truncated" not in first
+    assert third["content"] == "c" * 60 and "content_truncated" not in third
     assert second["content"] == "b" * 10 and second["content_truncated"] is True
     assert second["content_len"] == 60
-    assert third["content"] == "c" * 10 and third["content_truncated"] is True
+    assert first["content"] == "a" * 10 and first["content_truncated"] is True
     assert out["full_content_budget_chars"] == 100
 
 
-def test_full_content_budget_admits_the_first_row_whatever_its_size(monkeypatch):
+def test_full_content_budget_admits_the_last_row_whatever_its_size(monkeypatch):
+    """bug-214: the row admitted unconditionally is the LAST one (top-ranked)."""
     monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
     monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
-    out = S._apply_full_content_budget(_rows("g" * 500, "h" * 60))
-    giant, tail = out["messages"]
+    out = S._apply_full_content_budget(_rows("h" * 60, "g" * 500))
+    head, giant = out["messages"]
     assert giant["content"] == "g" * 500 and "content_truncated" not in giant, (
         "a single giant row must stay reachable, not be made unreadable by its own length"
     )
-    assert tail["content"] == "h" * 10 and tail["content_truncated"] is True
+    assert head["content"] == "h" * 10 and head["content_truncated"] is True
     assert out["full_content_budget_chars"] == 100
 
 
@@ -263,7 +271,10 @@ def test_full_content_budget_never_trims_refless_rows(monkeypatch):
     out = S._apply_full_content_budget(result)
     profile = out["messages"][1]
     assert profile["content"].endswith("p" * 200) and "content_truncated" not in profile
-    assert out["messages"][2]["content_truncated"] is True
+    # bug-214: the tail row is admitted first, so the HEAD row is the one degraded.
+    assert out["messages"][2]["content"] == "b" * 60
+    assert "content_truncated" not in out["messages"][2]
+    assert out["messages"][0]["content_truncated"] is True
 
 
 def test_full_content_budget_is_inert_when_preview_tier_is_disabled(monkeypatch):
@@ -295,8 +306,9 @@ async def test_recall_boundary_applies_the_budget_on_full_content(monkeypatch):
 
     monkeypatch.setattr(S, "do_recall", fake_do_recall)
     out = await S.do_recall_boundary("a", "q", 5, False, "", [], None, "", full_content=True)
-    assert out["messages"][0]["content"] == "a" * 90
-    assert out["messages"][1]["content"] == "b" * 10
+    # bug-214: the tail row (do_recall's top-ranked hit) is the one kept whole.
+    assert out["messages"][1]["content"] == "b" * 90
+    assert out["messages"][0]["content"] == "a" * 10
     assert out["full_content_budget_chars"] == 100
 
 
@@ -312,5 +324,51 @@ async def test_recall_with_context_boundary_applies_the_budget_too(monkeypatch):
     out = await S.do_recall_with_context_boundary(
         "a", "q", [], 5, "", False, None, "", full_content=True
     )
-    assert out["messages"][1]["content_truncated"] is True
+    # bug-214: chronological order — the newest (last) row keeps its full text.
+    assert out["messages"][0]["content_truncated"] is True
+    assert "content_truncated" not in out["messages"][1]
     assert out["full_content_budget_chars"] == 100
+
+
+# bug-214: the unit tests above drive the helper on a hand-built list, which is
+# exactly why the inversion was invisible — do_recall emits its ranked list
+# REVERSED (most relevant last), so a front-to-back spend fed the budget to the
+# weakest rows and previewed the best ones. This one goes through the real
+# store -> rank -> reverse -> boundary path and pins the premise (the response's
+# match_reason scores ascend) in the same test that asserts the outcome.
+
+BUDGET_AGENT = "agent.bug214"
+_BUDGET_TOP = "deployment rollback checklist " * 30
+_BUDGET_MID = "deployment rollback checklist bakery " * 30
+_BUDGET_LOW = "deployment rollback checklist bakery gardening " * 30
+
+
+@pytest.mark.asyncio
+async def test_full_content_budget_keeps_the_top_ranked_row_whole_end_to_end(
+    monkeypatch, fake_embedding_client
+):
+    """bug-214: the budget must degrade the WEAKEST rows of a real ranked recall."""
+    for content in (_BUDGET_TOP, _BUDGET_MID, _BUDGET_LOW):
+        stored = await M.do_store(BUDGET_AGENT, {"content": content, "source": {"System": "t"}})
+        assert stored["result"] == "stored", stored
+
+    # Room for the top-ranked row alone: every other row must degrade.
+    monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", len(_BUDGET_TOP.strip()) + 1)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 50)
+    out = await S.do_recall_boundary(
+        BUDGET_AGENT, "deployment rollback checklist", 10, False, "", [], None, "",
+        full_content=True,
+    )
+    messages = out["messages"]
+    assert len(messages) == 3, f"expected the whole corpus back: {messages}"
+
+    scores = [m["match_reason"]["score"] for m in messages]
+    assert scores == sorted(scores), (
+        f"premise broken: do_recall emits the ranked list most-relevant-LAST ({scores})"
+    )
+    best, weakest = messages[-1], messages[0]
+    assert best["content"] == _BUDGET_TOP.strip(), "the top-ranked row was degraded"
+    assert "content_truncated" not in best
+    assert weakest["content_truncated"] is True, "the budget never bit the weak rows"
+    assert weakest["content"] == _BUDGET_LOW.strip()[:50]
+    assert out["full_content_budget_chars"] == len(_BUDGET_TOP.strip()) + 1

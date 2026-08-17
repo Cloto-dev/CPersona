@@ -219,7 +219,11 @@ async def do_archive_episode_boundary(
 async def do_list_memories_boundary(agent_id: str, limit: int, project_id: str | None = None) -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
-        return _oc_reject(error)
+        # bug-232 (the bug-169 class, on the read side): every OTHER failure mode of
+        # this tool keeps its collection, so a caller reading resp["memories"] hit a
+        # KeyError on exactly the gate-refusal path. A failure still owes its caller
+        # the shape it documents.
+        return {**_oc_reject(error), "memories": [], "count": 0}
     result = await do_list_memories(agent_id, limit, project_id=resolved)
     return _oc_annotate(result, project_id, resolved, warning)
 
@@ -227,7 +231,7 @@ async def do_list_memories_boundary(agent_id: str, limit: int, project_id: str |
 async def do_list_episodes_boundary(agent_id: str, limit: int, project_id: str | None = None) -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
-        return _oc_reject(error)
+        return {**_oc_reject(error), "episodes": [], "count": 0}  # bug-232
     result = await do_list_episodes(agent_id, limit, project_id=resolved)
     return _oc_annotate(result, project_id, resolved, warning)
 
@@ -286,11 +290,21 @@ def _apply_full_content_budget(result: dict) -> dict:
     recall returns the RANKED LIST, so rows past the budget are not dropped or
     deferred — they DEGRADE to the preview tier (pure prefix + content_len +
     content_truncated + ref), exactly what the caller would have seen without
-    full_content, and get_contents fetches them whole. Whole rows only: the
-    budget never cuts a row that fits, and the first row is admitted whatever
-    its size (a single giant row must stay reachable, not be made unreadable by
-    its own length). Rows without a ref are never trimmed (bug-117 — no handle
-    would remain to the lost tail) but still spend the budget they occupy.
+    full_content, and get_contents fetches them whole.
+
+    bug-214: the budget is spent from the END of `messages` backwards, because
+    the tail is the valuable end in BOTH callers — do_recall reverses its ranked
+    list before emitting it (most relevant LAST, memory_handlers.do_recall's
+    `results.reverse()`), and do_recall_with_context sorts chronologically
+    (newest last). Spending front-to-back admitted the weakest rows whole and
+    degraded the strongest ones, i.e. the caller that paid for full_content got
+    the full text of the rows it cares about least.
+
+    Whole rows only: the budget never cuts a row that fits, and the LAST row is
+    admitted whatever its size (the top-ranked row must stay reachable, not be
+    made unreadable by its own length). Rows without a ref are never trimmed
+    (bug-117 — no handle would remain to the lost tail) but still spend the
+    budget they occupy.
 
     When the budget bites, the response carries full_content_budget_chars —
     absent otherwise, so a caller that never meets it sees the same shape as
@@ -303,7 +317,8 @@ def _apply_full_content_budget(result: dict) -> dict:
         return result
     used = 0
     over_budget = False
-    for m in result.get("messages", []):
+    # bug-214: rank order, not payload order — the most valuable row is last.
+    for m in reversed(result.get("messages", [])):
         content = m.get("content")
         if not isinstance(content, str):
             continue
@@ -339,7 +354,10 @@ async def do_recall_boundary(
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
-        return _oc_reject(error)
+        # bug-232: `messages` is the documented shape of every recall response (the
+        # preview / get_contents workflow tells callers to read it), so the gate
+        # refusal carries the empty collection rather than making one path KeyError.
+        return {**_oc_reject(error), "messages": []}
     result = await do_recall(
         agent_id,
         query,
@@ -367,7 +385,7 @@ async def do_recall_with_context_boundary(
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
-        return _oc_reject(error)
+        return {**_oc_reject(error), "messages": []}  # bug-232
     result = await do_recall_with_context(
         agent_id,
         query,
@@ -632,13 +650,21 @@ registry.auto_tool(
                         "properties": {
                             "type": {
                                 "type": "string",
-                                # b1-2: enum and alias prose both derive from
+                                # bug-233: NO `enum` here. The MCP SDK validates every
+                                # call against inputSchema before dispatch, so an enum of
+                                # the canonical values rejected the legacy spellings the
+                                # very next sentence promises to fold — the call died at
+                                # the schema, normalize_source was never reached, and the
+                                # write was lost instead of normalized. The canonical list
+                                # stays in the description (still derived from
                                 # utils.CANONICAL_SOURCE_TYPES / _TYPE_ALIASES, so the
-                                # published contract cannot drift from the write seam.
-                                "enum": list(CANONICAL_SOURCE_TYPES),
+                                # published contract cannot drift from the write seam);
+                                # enforcement is the write seam's plus
+                                # check_health(invalid_source_type).
                                 "description": (
-                                    "Producer role — this enum IS the contract; send one of "
-                                    "these. Legacy producers that cannot are folded server-side "
+                                    "Producer role — send one of "
+                                    + ", ".join(f"'{t}'" for t in CANONICAL_SOURCE_TYPES)
+                                    + ". Legacy producers that cannot are folded server-side "
                                     "at the write seam (" + source_type_alias_summary() + "), "
                                     "and shapes outside that table are stored verbatim for "
                                     "check_health(invalid_source_type) to surface."
@@ -920,14 +946,25 @@ registry.auto_tool(
 
 registry.auto_tool(
     "update_profile",
-    "Save a pre-computed agent profile to the database.",
+    "Save a pre-computed agent profile to the database. "
+    # The cap was invisible at this boundary while store / update_memory both
+    # state theirs, and the profile row is the ONLY copy of that text (it is not
+    # a memory row and has no ref), so an unannounced cut is unrecoverable.
+    "The text passes through the same sanitizer as store, against the profile's own "
+    f"ceiling: it is capped at {config.MAX_PROFILE_LENGTH} characters "
+    "(CPERSONA_MAX_PROFILE_LENGTH) and the response carries truncated:true when the cap "
+    "bit — branch on it, the discarded remainder is not stored anywhere else.",
     {
         "type": "object",
         "properties": {
             "agent_id": {"type": "string", "description": "Agent identifier"},
             "profile": {
                 "type": "string",
-                "description": "Profile text to save (pre-computed by caller)",
+                "description": (
+                    "Profile text to save (pre-computed by caller). Capped at "
+                    f"{config.MAX_PROFILE_LENGTH} characters (CPERSONA_MAX_PROFILE_LENGTH); "
+                    "the response says truncated:true when the cap cut it."
+                ),
             },
         },
         "required": ["agent_id", "profile"],
