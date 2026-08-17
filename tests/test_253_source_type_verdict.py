@@ -337,3 +337,65 @@ async def test_unattributed_rows_are_visible_somewhere(db):
     assert found[0]["count"] == 4, "both shapes mean 'no producer' and count as one number"
     assert found[0]["unattributed"] == 3
     assert "deep_check" in found[0]["hint"], "the recoverable half keeps its hint"
+
+
+# ---------------------------------------------------------------------------
+# bug-210 (an earlier decision): a capped fix run must not read as convergence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_capped_fix_reports_remaining_and_says_to_run_again(db, monkeypatch):
+    """One fix run on a backlog above the cap repairs cap rows and used to answer
+    with nothing but "mapped: <cap>" — which reads as done. The production shape
+    (5000 offenders, cap 1000, five runs needed) is pinned here at 5-and-2."""
+    monkeypatch.setattr(checks, "INVALID_SOURCE_CLASSIFY_CAP", 2)
+    for i in range(5):
+        await _insert(db, '{"type":"assistant"}', f"mappable {i}")
+
+    first = (await checks.check_invalid_source_type(db, AGENT, fix=True))[0]
+    assert first["mapped"] == 2
+    assert first["remaining"] == 3, "the response must say the run did not converge"
+    assert "run fix again" in first["hint"]
+
+    second = (await checks.check_invalid_source_type(db, AGENT, fix=True))[0]
+    assert second["mapped"] == 2
+    assert second["remaining"] == 1
+
+    third = (await checks.check_invalid_source_type(db, AGENT, fix=True))[0]
+    assert third["mapped"] == 1
+    assert third["remaining"] == 0
+    assert "run fix again" not in third.get("hint", ""), (
+        "the final run classified everything; telling the operator to keep "
+        "re-running would be the inverse defect"
+    )
+
+    assert await checks.check_invalid_source_type(db, AGENT, fix=False) == [], (
+        "three runs at cap 2 must actually converge on 5 offenders"
+    )
+
+
+@pytest.mark.asyncio
+async def test_uncapped_fix_remaining_equals_the_unmappable_rows(db):
+    """Below the cap, `remaining` still reports — and equals the rows further
+    runs will never fix, so a re-run loop keyed on 'remaining decreasing'
+    terminates instead of spinning on unmappable rows."""
+    await _insert(db, '{"type":"assistant"}', "mappable a")
+    await _insert(db, '{"type":"user"}', "mappable b")
+    await _insert(db, '{"id":"discord:1","name":"bob"}', "unmappable")
+
+    found = (await checks.check_invalid_source_type(db, AGENT, fix=True))[0]
+    assert found["mapped"] == 2
+    assert found["unmapped"] == 1
+    assert found["remaining"] == 1
+    assert "run fix again" not in found.get("hint", "")
+
+
+@pytest.mark.asyncio
+async def test_detection_run_carries_no_remaining(db):
+    """`remaining` is a statement about what a repair left behind; a run that
+    repaired nothing has no such statement to make (`count` already answers)."""
+    await _insert(db, '{"type":"assistant"}', "mappable")
+
+    found = (await checks.check_invalid_source_type(db, AGENT, fix=False))[0]
+    assert "remaining" not in found
