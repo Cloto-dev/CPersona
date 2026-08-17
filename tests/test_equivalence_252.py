@@ -74,20 +74,71 @@ _DIFF_FLOAT_PLACES = 6
 # created_at -- so the eleven affected scenarios were re-recorded and the diff on
 # them is the review surface, exactly as the header above prescribes for an
 # intended change. The invariants themselves are pinned in tests/test_review_b.py.
-_KEYS_ADDED_SINCE_GOLDEN = {"repairable"}
+#
+# checks_run (bug-230): check_health echoes the registry names it executed, the
+# way deep_check always has. Additive -- it reports what the run did instead of
+# changing it -- and it exists because an unrecognised name selected nothing and
+# the all-zero result read as a clean bill of health. Pinned in
+# tests/test_review_c_fixes.py.
+_KEYS_ADDED_SINCE_GOLDEN = {"repairable", "checks_run"}
 
 
-def _drop_keys_added_since_golden(obj: Any) -> Any:
-    """Recursively remove post-golden keys so the comparison stays value-exact."""
+# Values the golden DOES hold that a later version deliberately changed.
+#
+# Different from the additions above, and deliberately harder to use: a recorded
+# value is evidence, so an entry names one scenario, one key path and the change
+# that owns it, and nothing else in that scenario is relaxed.
+#
+# ("health-fix-repairs-warn", ("result", "issues")) — bug-225: a fix run used to
+# answer with the RESIDUAL issue list (empty once the repair converged), which
+# discarded every field a runner emits only under fix=True (`fixed`,
+# `fix_error`, `mapped`, `remaining`) before any caller could read it.
+# `issues` is now what the FIX run found; `severity_summary` and `status` are
+# still the residual verdict and are still compared here, so the bug-059
+# property this scenario was recorded for stays pinned. Behaviour pinned in
+# tests/test_review_c_fixes.py.
+_VALUES_CHANGED_SINCE_GOLDEN = {
+    ("health-fix-repairs-warn", ("result", "issues")),
+}
+
+
+def _drop_keys_added_since_golden(obj: Any, recorded: Any = None) -> Any:
+    """Recursively remove post-golden keys the golden does not hold here.
+
+    Position-aware, not name-only: `checks_run` is new on check_health (bug-230)
+    but deep_check has always emitted it and the golden records it, so a rule
+    keyed on the name alone would delete the RECORDED one from the comparison —
+    quietly retiring the evidence this file exists to keep.
+    """
     if isinstance(obj, dict):
+        rec = recorded if isinstance(recorded, dict) else {}
         return {
-            k: _drop_keys_added_since_golden(v)
+            k: _drop_keys_added_since_golden(v, rec.get(k))
             for k, v in obj.items()
-            if k not in _KEYS_ADDED_SINCE_GOLDEN
+            if k in rec or k not in _KEYS_ADDED_SINCE_GOLDEN
         }
     if isinstance(obj, list):
-        return [_drop_keys_added_since_golden(v) for v in obj]
+        rec = recorded if isinstance(recorded, list) else []
+        return [
+            _drop_keys_added_since_golden(v, rec[i] if i < len(rec) else None)
+            for i, v in enumerate(obj)
+        ]
     return obj
+
+
+def _without_changed_values(obj: Any, scenario_id: str) -> Any:
+    """Drop the key paths listed in _VALUES_CHANGED_SINCE_GOLDEN for this scenario."""
+    paths = [p for sid, p in _VALUES_CHANGED_SINCE_GOLDEN if sid == scenario_id]
+    if not paths:
+        return obj
+    out = json.loads(json.dumps(obj))
+    for path in paths:
+        node = out
+        for key in path[:-1]:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, dict):
+            node.pop(path[-1], None)
+    return out
 
 
 def _structures_equal(a: Any, b: Any, *, abs_tol: float = _COMPARE_ABS_TOL) -> bool:
@@ -149,8 +200,10 @@ async def test_behaviour_matches_the_pre_refactor_golden(scenario, golden):
             "construction and proves nothing."
         )
 
-    observed = _drop_keys_added_since_golden(await observe(scenario))
     expected = golden[scenario.id]
+    observed = _drop_keys_added_since_golden(await observe(scenario), expected)
+    observed = _without_changed_values(observed, scenario.id)
+    expected = _without_changed_values(expected, scenario.id)
 
     if not _structures_equal(observed, expected):
         diff = "".join(

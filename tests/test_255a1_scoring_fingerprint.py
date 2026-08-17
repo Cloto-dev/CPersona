@@ -166,6 +166,21 @@ def _fingerprint(monkeypatch) -> str:
 def test_scoring_distribution_fingerprint(monkeypatch):
     current = _fingerprint(monkeypatch)
     if current == GOLDEN_FINGERPRINT:
+        # bug-244: the PAIR is pinned on the passing path too. A SCORING_VERSION
+        # bump for a change outside this grid (bug-213 bumped it for episode
+        # timestamp plumbing) leaves the fingerprint identical, so the golden
+        # version string silently goes stale — and the NEXT genuine unbumped
+        # shift then takes the branch below and tells the developer the shift is
+        # "presumably intentional, re-pin", which is exactly the blessing this
+        # detector exists to withhold.
+        assert SCORING_VERSION == GOLDEN_SCORING_VERSION, (
+            "SCORING_VERSION moved but the scoring distribution did not, so the golden\n"
+            "pair in this test is now out of step:\n"
+            f"  SCORING_VERSION:        {SCORING_VERSION!r}\n"
+            f"  GOLDEN_SCORING_VERSION: {GOLDEN_SCORING_VERSION!r}\n"
+            "Re-pin GOLDEN_SCORING_VERSION on ANY bump, not only on one that moves the\n"
+            "grid — a stale pair inverts this test's verdict on the next unbumped shift."
+        )
         return
     if SCORING_VERSION == GOLDEN_SCORING_VERSION:
         pytest.fail(

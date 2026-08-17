@@ -15,6 +15,7 @@ from cpersona import checks as checks_registry
 from cpersona import vector
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where
+from cpersona.utils import error_response
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,21 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
     issue carries ``severity`` (critical / warn / info) and ``check``. The
     ``severity_summary`` counts feed the checkup CLI's gate exit code.
     """
+    # bug-230: an unrecognised name selects NOTHING, so the run used to answer
+    # status='healthy' with an empty issues list after executing zero checks —
+    # a typo ('empty_contnet') read as a clean bill of health, and the response
+    # carried no record of what actually ran. Reject the call instead, and echo
+    # `checks_run` the way deep_check does so a caller can always tell.
+    unknown = [name for name in (checks or []) if name not in checks_registry.HEALTH_CHECK_NAMES]
+    if unknown:
+        return error_response(
+            f"unknown check name(s): {', '.join(unknown)}. Valid names: "
+            f"{', '.join(checks_registry.HEALTH_CHECK_NAMES)}",
+            unknown_checks=unknown,
+            valid_checks=list(checks_registry.HEALTH_CHECK_NAMES),
+        )
+    checks_run = list(checks) if checks else list(checks_registry.HEALTH_CHECK_NAMES)
+
     # Under no-persist, downgrade fix=True to fix=False so the diagnostic
     # still runs but no rows are mutated. Clear no-persist and re-run to repair.
     repairs_skipped = bool(fix and no_persist.is_paused())
@@ -76,9 +92,16 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
     # is unreliable; a fix=False re-run reports true residual uniformly, so a clean
     # auto-repair is no longer reported as unhealthy (and the checkup CLI no longer
     # exits nonzero after a successful fix).
+    # bug-225: only the SEVERITY comes from that residual run. Rebinding `issues`
+    # to it as well discarded every field a runner emits only under fix=True —
+    # `fixed` / `fix_error`, `mapped` / `unmapped` / `remaining` (bug-210's
+    # non-convergence signal), `re_embedded`, `normalized` — so the MCP tool and
+    # the checkup CLI, the only surfaces operators use, could not tell a failed
+    # repair from one that was never attempted, nor a capped run from a converged
+    # one. Tests that pin those fields call the runner directly and never saw it.
     if fix:
         async with connection() as db:
-            issues, severity_summary = await checks_registry.run_health_checks(
+            _residual_issues, severity_summary = await checks_registry.run_health_checks(
                 db, agent_id=agent_id, fix=False, checks=checks
             )
 
@@ -139,12 +162,20 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
     # while ``status`` already said 'healthy' for the same run. Two verdicts
     # disagreeing by construction is worse than one, and a caller wanting the
     # old meaning still has ``issues`` and ``severity_summary`` verbatim.
+    #
+    # bug-225: the two halves of a fix run's response answer different questions
+    # and come from different runs. ``issues`` is what the FIX run did (its
+    # fix-only fields intact); ``severity_summary`` / ``status`` are the RESIDUAL
+    # verdict measured after the commit (bug-059), so a repaired database is not
+    # reported unhealthy for the issues it just fixed. On a fix=False run the two
+    # are the same run.
     result = {
         "total_memories": total,
         "issues": issues,
         "severity_summary": severity_summary,
         "status": checks_registry.health_status(severity_summary),
         "fixed": fix,
+        "checks_run": checks_run,
         "stats": stats,
     }
     if repairs_skipped:
@@ -192,8 +223,32 @@ async def do_deep_check(agent_id: str, fix: bool = False, checks: list | None = 
 # the concrete channel is the substring before the first ':'. The kernel stores
 # it at metadata.session_id (system.rs), persisted into the memories.metadata
 # JSON column, so json_extract recovers it deterministically.
-_SESSION_ID_EXPR = "json_extract(metadata, '$.session_id')"
+# bug-239: the json_extract is guarded by json_valid(metadata), the bug-144
+# hazard checks.py already documents — json_extract RAISES 'malformed JSON' (it
+# does not return NULL) on a non-JSON metadata value, so a single
+# channel='discord' row with unparseable metadata (one check_invalid_json can
+# leave behind forever when the row is locked) aborted every statement in this
+# tool, including the dry run whose whole purpose is to report before mutating.
+#
+# The guard is a CASE rather than checks.py's leading `json_valid(x) AND …`
+# because it must hold in EVERY position, not only as a top-level WHERE
+# conjunct: measured on SQLite 3.50, `SELECT json_valid(m) AND json_extract(m,
+# '$.k')` still raises (the AND short-circuit is a WHERE-clause property), while
+# CASE is defined to evaluate only the selected branch. A malformed row
+# therefore reads as "no session_id", which is exactly what it is.
+_SESSION_ID_EXPR = "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.session_id') END"
 _SNOWFLAKE_SESSION_GLOB = "[0-9]*:*"
+
+_RECOVERABLE_WHERE = f"channel = 'discord' AND {_SESSION_ID_EXPR} GLOB ?"
+# The complement: no session_id at all (including the malformed rows, which are
+# unrecoverable by definition) or one that is not a snowflake.
+_UNRECOVERABLE_WHERE = (
+    f"channel = 'discord' AND ({_SESSION_ID_EXPR} IS NULL OR NOT ({_SESSION_ID_EXPR} GLOB ?))"
+)
+_INVALID_METADATA_WHERE = (
+    "channel = 'discord' AND metadata IS NOT NULL AND json_valid(metadata) = 0"
+)
+_INVALID_METADATA_SAMPLE_LIMIT = 10
 
 
 async def do_migrate_channel_axis(
@@ -226,6 +281,10 @@ async def do_migrate_channel_axis(
                        to channel='' (global), which the v2 recall change makes
                        match every channel-scoped recall, so they are not
                        orphaned by the flip. Default False (report only).
+
+    Rows whose metadata is not valid JSON are unrecoverable by definition and
+    are additionally reported on their own (`invalid_metadata_total` /
+    `invalid_metadata_ids`, bug-239) — they used to abort the whole tool.
     """
     # Under no-persist, force a report-only run so nothing mutates.
     paused = no_persist.is_paused()
@@ -241,7 +300,7 @@ async def do_migrate_channel_axis(
         recoverable_rows = await db.execute_fetchall(
             f"""SELECT {recovered_expr} AS recovered_channel, COUNT(*) AS n
                FROM memories
-               WHERE channel = 'discord' AND {sid} GLOB ?{iso.and_clause}
+               WHERE {_RECOVERABLE_WHERE}{iso.and_clause}
                GROUP BY recovered_channel
                ORDER BY n DESC""",
             (_SNOWFLAKE_SESSION_GLOB, *iso.params),
@@ -262,11 +321,31 @@ async def do_migrate_channel_axis(
         sample_rows = await db.execute_fetchall(
             f"""SELECT id, {recovered_expr}, {sid}
                FROM memories
-               WHERE channel = 'discord' AND {sid} GLOB ?{iso.and_clause}
+               WHERE {_RECOVERABLE_WHERE}{iso.and_clause}
                LIMIT 5""",
             (_SNOWFLAKE_SESSION_GLOB, *iso.params),
         )
         samples = [{"id": r[0], "recovered_channel": r[1], "session_id": r[2]} for r in sample_rows]
+
+        # bug-239: the malformed-metadata rows are reported as their own counted,
+        # listed remainder (they are inside `unrecoverable_total` too). Naming
+        # them is the difference between "this tool cannot run, find the row by
+        # hand" and "these ids need an operator".
+        invalid_metadata_total = (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM memories WHERE {_INVALID_METADATA_WHERE}{iso.and_clause}",
+                iso.params,
+            )
+        )[0][0]
+        invalid_metadata_ids = [
+            r[0]
+            for r in await db.execute_fetchall(
+                f"""SELECT id FROM memories
+                   WHERE {_INVALID_METADATA_WHERE}{iso.and_clause}
+                   ORDER BY id LIMIT {_INVALID_METADATA_SAMPLE_LIMIT}""",
+                iso.params,
+            )
+        ]
 
     migrated = 0
     globalized = 0
@@ -286,7 +365,7 @@ async def do_migrate_channel_axis(
             cur = await db.execute(
                 f"""UPDATE OR IGNORE memories
                    SET channel = {recovered_expr}
-                   WHERE channel = 'discord' AND {sid} GLOB ?{iso.and_clause}""",
+                   WHERE {_RECOVERABLE_WHERE}{iso.and_clause}""",
                 (_SNOWFLAKE_SESSION_GLOB, *iso.params),
             )
             # UPDATE OR IGNORE's changes() counts only rows actually updated, so a full
@@ -306,7 +385,7 @@ async def do_migrate_channel_axis(
                 # next migration pass instead. (OR IGNORE for symmetry with the above.)
                 cur2 = await db.execute(
                     f"UPDATE OR IGNORE memories SET channel = '' "
-                    f"WHERE channel = 'discord' AND ({sid} IS NULL OR NOT ({sid} GLOB ?)){iso.and_clause}",
+                    f"WHERE {_UNRECOVERABLE_WHERE}{iso.and_clause}",
                     (_SNOWFLAKE_SESSION_GLOB, *iso.params),
                 )
                 # Same rowcount semantics as `migrated` above: a real 0 (full collision)
@@ -319,6 +398,8 @@ async def do_migrate_channel_axis(
         "recoverable_total": recoverable_total,
         "recoverable_by_channel": by_channel,
         "unrecoverable_total": unrecoverable_total,
+        "invalid_metadata_total": invalid_metadata_total,
+        "invalid_metadata_ids": invalid_metadata_ids,
         "globalize_unrecoverable": globalize_unrecoverable,
         "migrated": migrated,
         "globalized": globalized,

@@ -122,14 +122,38 @@ def _write_stdout(message: str):
 
 
 def _write_error(request_line: bytes | str, error_msg: str):
-    """Write a JSON-RPC error response to stdout."""
+    """Write a JSON-RPC error response to stdout — unless the line was a notification.
+
+    bug-240: a notification is a well-formed object with no ``id``, and
+    JSON-RPC 2.0 says a server MUST NOT reply to one. Answering it with the
+    ``id: null`` error emitted a response the client is not tracking (an SDK
+    either logs a protocol error or tears the session down) for a
+    fire-and-forget message that needed no answer. The ``id: null`` reply
+    belongs to a DIFFERENT case — bug-135's line whose id could not be PARSED,
+    where the client IS waiting and has no other way to learn the request
+    failed. Keep it there, and only there.
+    """
+    parsed = True
     try:
         req = json.loads(request_line)
-        req_id = req.get("id")
-    except (json.JSONDecodeError, AttributeError):
+    except json.JSONDecodeError:
+        parsed, req = False, None
+
+    if parsed and isinstance(req, dict):
+        if "id" not in req:
+            logger.warning(
+                "notification %r not forwarded (no JSON-RPC reply is owed): %s",
+                req.get("method", "<unknown>"),
+                error_msg,
+            )
+            return
+        req_id = req["id"]
+    else:
+        # Unparseable, or a shape with no single id to answer under (a batch
+        # array): the client is waiting on something it can only be released
+        # from by a reply, so keep bug-135's id:null error.
         req_id = None
 
-    # bug-135: an unrecoverable request ID must still receive an id:null error.
     error = json.dumps(
         {
             "jsonrpc": "2.0",

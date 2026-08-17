@@ -437,13 +437,13 @@
       "version": "2.4.37",
       "commit": "c437697",
       "file": "cpersona/checks.py",
-      "pattern": "\\(TRIM\\(content\\) = '' OR content IS NULL\\) AND locked = 0",
+      "pattern": "DELETE FROM memories WHERE \\{_EMPTY_CONTENT_WHERE\\} AND locked = 0",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Add `AND locked = 0` to the empty_content DELETE.",
       "fixed_in": "2.4.38",
-      "fix_note": "v2.4.38: check_empty_content's DELETE excludes locked rows (AND locked = 0). Regression: test_v2438_hardening.py::test_locked_rows_survive_destructive_maintenance."
+      "fix_note": "v2.4.38: check_empty_content's DELETE excludes locked rows (AND locked = 0). Regression: test_v2438_hardening.py::test_locked_rows_survive_destructive_maintenance. bug-236 re-anchored the pattern: the whitespace/NULL disjunction now lives in the shared _EMPTY_CONTENT_WHERE constant (one predicate for the count, the repairable count and the DELETE), so the anchor tracks the DELETE's locked guard rather than the inlined predicate text."
     },
     {
       "id": "bug-031",
