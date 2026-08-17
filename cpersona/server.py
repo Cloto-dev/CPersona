@@ -269,6 +269,63 @@ def _apply_preview(result: dict) -> dict:
     return result
 
 
+# bug-211 (Task #705): the CSC #680 write-cap raise (2000 -> 16000) was followed
+# on the read side only at get_contents. recall(full_content=true) bypasses
+# _apply_preview entirely, so its worst case grew 8x with it — limit 100 x
+# 16000 = 1.6M characters, an opt-in flag away. Same doctrine as
+# GET_CONTENTS_MAX_CHARS: the budget is pinned at what the worst case USED to
+# be (100 x 2000), deliberately not derived from MAX_CONTENT_LENGTH, so a
+# relaxation of the write bound never enlarges the read blast radius again.
+RECALL_FULL_CONTENT_MAX_CHARS = 200_000
+
+
+def _apply_full_content_budget(result: dict) -> dict:
+    """Bound a full_content recall response in characters (bug-211).
+
+    Mirrors the get_contents budget discipline, adapted to recall's contract:
+    recall returns the RANKED LIST, so rows past the budget are not dropped or
+    deferred — they DEGRADE to the preview tier (pure prefix + content_len +
+    content_truncated + ref), exactly what the caller would have seen without
+    full_content, and get_contents fetches them whole. Whole rows only: the
+    budget never cuts a row that fits, and the first row is admitted whatever
+    its size (a single giant row must stay reachable, not be made unreadable by
+    its own length). Rows without a ref are never trimmed (bug-117 — no handle
+    would remain to the lost tail) but still spend the budget they occupy.
+
+    When the budget bites, the response carries full_content_budget_chars —
+    absent otherwise, so a caller that never meets it sees the same shape as
+    before (additive). CPERSONA_RECALL_PREVIEW_CHARS=0 disables the preview
+    tier wholesale; degradation to a disabled tier would silently drop content,
+    so it disables this budget too (the operator opted out of trimming).
+    """
+    cap = config.RECALL_PREVIEW_CHARS
+    if cap <= 0:
+        return result
+    used = 0
+    over_budget = False
+    for m in result.get("messages", []):
+        content = m.get("content")
+        if not isinstance(content, str):
+            continue
+        if not over_budget:
+            if used and used + len(content) > RECALL_FULL_CONTENT_MAX_CHARS:
+                over_budget = True
+            else:
+                used += len(content)
+                continue
+        if not m.get("ref"):
+            used += len(content)
+            continue
+        if len(content) > cap:
+            m["content_len"] = len(content)
+            m["content"] = content[:cap]
+            m["content_truncated"] = True
+        used += len(m["content"])
+    if over_budget:
+        result["full_content_budget_chars"] = RECALL_FULL_CONTENT_MAX_CHARS
+    return result
+
+
 async def do_recall_boundary(
     agent_id: str,
     query: str,
@@ -293,7 +350,7 @@ async def do_recall_boundary(
         project_id=pid,
         source_id=source_id,
     )
-    result = result if full_content else _apply_preview(result)
+    result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
 
 
@@ -321,7 +378,7 @@ async def do_recall_with_context_boundary(
         project_id=pid,
         source_id=source_id,
     )
-    result = result if full_content else _apply_preview(result)
+    result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
 
 
@@ -645,6 +702,9 @@ registry.auto_tool(
     "Recall relevant memories using multi-strategy search (vector + FTS5 + keyword). "
     "Message content is returned as a preview tier by default — expand selected rows "
     "with get_contents(refs), or opt out wholesale with full_content=true. "
+    "full_content is itself budgeted (200k chars per response, bug-211): rows "
+    "past the budget degrade to the preview tier and the response carries "
+    "full_content_budget_chars (absent when the budget never bites). "
     "v2.5.2 additive: each scored message carries match_reason={signal, score, ...} where "
     "signal is the branch the ranking / quality gate keyed on (confidence > rsf > cosine > rrf) "
     "and the remaining keys (cosine / rrf / rsf) surface the internal per-retriever "
@@ -736,7 +796,8 @@ registry.auto_tool(
     "Recall memories and merge with external conversation context. "
     "Automatically deduplicates, sorts chronologically, and returns a unified list. "
     "Replaces separate recall + manual merge in the caller. "
-    "Content is preview-tiered by default — see recall's full_content / get_contents. "
+    "Content is preview-tiered by default — see recall's full_content / get_contents "
+    "(full_content shares recall's 200k-char response budget, bug-211). "
     # audit C13: disclose the asymmetry instead of leaving it invisible.
     "Every external_context entry's content filters the recall (the caller already "
     "holds that text), but only role=user / role=assistant entries are merged into "
