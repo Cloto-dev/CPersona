@@ -120,7 +120,17 @@ def _parse(raw: bytes) -> OperatingContext:
         raise ValueError("[defaults] must map agent_id strings to project_id strings")
 
     doctrine: dict[str, str] = {}
-    for i, section in enumerate(data.get("doctrine", [])):
+    sections = data.get("doctrine", [])
+    # bug-238: type-checked like every sibling field above. A scalar here
+    # (`doctrine = 5`, `doctrine = true`, a TOML date) went straight into
+    # enumerate() and raised TypeError, which get_context does not catch — so a
+    # config typo escaped through instructions_text() at server import and the
+    # server never started, with no check_health finding because check_health
+    # could not run. The invariant is that a broken sidecar leaves the feature
+    # dormant, never takes memory down.
+    if not isinstance(sections, list):
+        raise ValueError("[[doctrine]] must be an array of tables")
+    for i, section in enumerate(sections):
         if (
             not isinstance(section, dict)
             or not isinstance(section.get("name"), str)
@@ -159,7 +169,10 @@ def get_context() -> OperatingContext | None:
         with open(path, "rb") as f:
             context = _parse(f.read())
         _cached_context, _cached_error = context, None
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError) as e:
+    # bug-238: TypeError is a backstop for any shape _parse forgets to check
+    # before using (the doctrine list was one). This guard is what makes the
+    # dormancy invariant true, so it must not depend on _parse being exhaustive.
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError, TypeError) as e:
         # Non-fatal by design: the server boots with the feature off and
         # check_health surfaces the finding (operating_context_parse).
         logger.warning("operating context %s unusable, feature dormant: %s", path, e)
