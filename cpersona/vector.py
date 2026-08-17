@@ -17,6 +17,7 @@ from cpersona.config import (
     REMOTE_SEARCH_TIMEOUT_SECS,
     VECTOR_SEARCH_MODE,
 )
+from cpersona.utils import episode_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +321,7 @@ async def _search_vector_remote(
         )
         ep_rows = await _fetch_rows_by_id(
             db,
-            f"SELECT id, summary, start_time, resolved FROM episodes WHERE id IN ({{ph}})"
+            f"SELECT id, summary, start_time, resolved, created_at FROM episodes WHERE id IN ({{ph}})"
             f"{iso_ep_fetch.and_clause}",
             [i for kind, i, _ in ordered if kind == "ep"],
             iso_ep_fetch.params,
@@ -357,7 +358,8 @@ async def _search_vector_remote(
                             "_cosine": score,
                             "content": f"[Episode] {row[1]}",
                             "source": {"System": "episode"},
-                            "timestamp": row[2] or "",
+                            # bug-213: start_time is nullable; created_at is not.
+                            "timestamp": episode_timestamp(row[2], row[4]),
                             "_resolved": bool(row[3]),
                         }
                     )
@@ -480,7 +482,7 @@ async def _scan_episodes_local(
         return []
 
     ep_rows = await db.execute_fetchall(
-        f"""SELECT id, summary, start_time, embedding, resolved
+        f"""SELECT id, summary, start_time, embedding, resolved, created_at
            FROM episodes
            WHERE {iso.clause} AND embedding IS NOT NULL
            ORDER BY created_at DESC
@@ -506,7 +508,7 @@ async def _scan_episodes_local(
     candidates: list[tuple[float, dict]] = []
     for i, sim_val in enumerate(ep_sims):
         if sim_val >= effective_min_sim:
-            ep_id, summary, start_time, _, ep_resolved = valid_ep_rows[i]
+            ep_id, summary, start_time, _, ep_resolved, ep_created_at = valid_ep_rows[i]
             sim = float(sim_val)
             candidates.append(
                 (
@@ -517,7 +519,8 @@ async def _scan_episodes_local(
                         "_cosine": sim,
                         "content": f"[Episode] {summary}",
                         "source": {"System": "episode"},
-                        "timestamp": start_time or "",
+                        # bug-213: start_time is nullable; created_at is not.
+                        "timestamp": episode_timestamp(start_time, ep_created_at),
                         "_resolved": bool(ep_resolved),
                     },
                 )
