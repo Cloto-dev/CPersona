@@ -60,7 +60,7 @@ Contract details, each load-bearing:
 ## Full-content access (two routes)
 
 1. **`full_content: true`** — a new boolean parameter on both recall tools
-   (default `false`): wholesale opt-out for trusted consumers. Unknown
+   (default `false`): opt-out for trusted consumers, bounded since bug-211 by a 200,000-char per-response budget — rows past it degrade back to the preview tier (most relevant kept whole first, bug-214) and the response carries `full_content_budget_chars`. Unknown
    parameters are ignored by pre-2.5.0 servers, so consumers can adopt it
    before their connector upgrades (forward-compatible migration).
 2. **`get_contents(agent_id, refs)`** — new tool (27 → 28): batch-resolves up
@@ -82,7 +82,7 @@ relevance judgement). `0` disables trimming entirely.
 | Consumer | Impact | Migration |
 | --- | --- | --- |
 | Bench harness (LMEB) | none — direct library calls; retrieval metrics are id-based | none |
-| ClotoCore kernel (`build_chat_messages`, Discord bridge) | injects recall content verbatim into the LLM prompt — previews would degrade it | Phase 1: pass `full_content: true` (behavior-identical; safe to land before the connector bump). Phase 2 (optional): adopt previews + `get_contents` for kernel-side context diet |
+| ClotoCore kernel (`build_chat_messages`, Discord bridge) | injects recall content verbatim into the LLM prompt — previews would degrade it | Phase 1: pass `full_content: true` (behavior-identical while a response stays under the bug-211 200,000-char budget — beyond it, rows degrade to previews and the kernel must fetch the rest via `get_contents`; safe to land before the connector bump). Phase 2 (optional): adopt previews + `get_contents` for kernel-side context diet |
 | Claude Code sessions | primary beneficiary (~15k tokens/session projected) | none — previews by default, `get_contents` on demand |
 
 ## Versioning
