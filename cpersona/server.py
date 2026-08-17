@@ -1308,7 +1308,10 @@ registry.auto_tool(
     "CPERSONA_MAX_CONTENT_LENGTH (default 16000 since 2.5.4a2) and the agent's "
     "profile row to CPERSONA_MAX_PROFILE_LENGTH (default 2000), keeping the "
     "start. Lower either cap and a fix run shortens rows that were within the "
-    "old one. "
+    "old one. Some repairs are bounded per run (source canonicalisation "
+    "classifies at most 1000 rows); a fix response carrying `remaining` > 0 "
+    "with a re-run hint has NOT converged — run fix again until `remaining` "
+    "stops decreasing. "
     "Use checks parameter to "
     # b1-3 (2.5.2b1, CONTRACT BREAK): one verdict, not two.
     "run a subset. The verdict is `status`: healthy / degraded / unhealthy, "

@@ -1364,6 +1364,13 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     Classification is capped (``INVALID_SOURCE_CLASSIFY_CAP``) like the
     near-duplicate scan. Past the cap the sample is incomplete, so the check
     stays at ``warn`` — an unknown is not evidence that nothing can be done.
+
+    bug-210: the cap bounds the REPAIR too — the fix loop walks only the rows
+    classification saw, so one run rewrites at most the cap. The cap itself is
+    sound defence (it bounds the JSON parsing a health call performs); the
+    defect was the response, which read as convergence. A fix run therefore
+    reports ``remaining`` — a fresh post-repair count of unlocked offenders —
+    and, when capped, a hint saying to run fix again until it stops decreasing.
     """
     iso = isolation_where(agent_id=agent_id or None)
     # bug-144: json_extract raises OperationalError 'malformed JSON' (not NULL) on
@@ -1450,6 +1457,23 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
                 iso.params,
             )
         )[0][0]
+        # bug-210: the repair loop above is bounded by the classification cap, so
+        # a single fix run on a 5000-row backlog stops at 1000 and its response —
+        # "mapped: 1000" — reads as convergence. This is the number that says
+        # otherwise: unlocked offenders still standing AFTER this run's repairs.
+        # Recounted, not derived (the bug-139 rule two comments up): a fresh
+        # COUNT is the only form that is true whatever the cap, the mapping, or
+        # a repair that failed to take. On an uncapped run it equals `unmapped`
+        # — rows more runs will never fix; past the cap it exceeds it — rows
+        # another run WILL classify.
+        issue["remaining"] = (
+            await db.execute_fetchall(
+                f"""SELECT COUNT(*) FROM memories
+                    WHERE {invalid_source_type_where(canonical_types)}
+                    AND locked = 0{iso.and_clause}""",
+                iso.params,
+            )
+        )[0][0]
 
     classified_all = len(rows) < INVALID_SOURCE_CLASSIFY_CAP
     if not classified_all:
@@ -1460,6 +1484,15 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     # sample is incomplete, and an unknown is not evidence that nothing can be
     # done (the reason the local rule stayed at warn there too).
     issue["repairable"] = len(repairs) if classified_all else None
+    if fix and not classified_all:
+        # bug-210: past the cap, the one wrong reading of this response is "fix
+        # ran, therefore done". Say the opposite in words next to the number.
+        issue["hint"] = (
+            f"repair is bounded by the classification cap "
+            f"({INVALID_SOURCE_CLASSIFY_CAP} rows per run); `remaining` counts "
+            "the unlocked offenders still standing — run fix again until it "
+            "stops decreasing"
+        )
     if not repairs and classified_all:
         # The generic dispatcher hint is true but says less than this one, and
         # the policy only setdefaults, so the specific text wins.
