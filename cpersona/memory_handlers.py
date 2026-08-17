@@ -595,9 +595,18 @@ def _autocut(results: list[dict]) -> list[dict]:
 
 
 def _adaptive_min_score(memory_count: int) -> float:
-    """Compute adaptive quality threshold based on memory pool size."""
+    """Compute adaptive quality threshold based on recall pool size.
+
+    bug-216: an empty pool used to return 1.0, which is at or above the ceiling of
+    EVERY gate branch (cosine and confidence cannot reach 1.0 for a real pair, the rrf
+    branch's `min_score * RRF_MAX_SCALE` is the rank-1-in-all-three-retrievers maximum).
+    So an agent whose pool the counting query happened to miss had every retrieved row
+    discarded — recall answered "nothing" while the data was present and had been
+    successfully retrieved. The threshold is floored at the small-pool value, which is
+    the count -> 0 limit of the curve below (log(1) = 0 -> 0.5): strict, but reachable.
+    """
     if memory_count <= 0:
-        return 1.0
+        return 0.5
     t = min(1.0, math.log(memory_count + 1) / math.log(500))
     return round(0.5 - t * 0.3, 4)
 
@@ -645,6 +654,11 @@ def _apply_quality_gate(
        (RRF uses the scaled threshold ``min_score * RRF_MAX_SCALE``)
     2. Profile injection (``id == -1``): skip if ``memory_count < 50``
     3. Unscored results kept only if ``memory_count >= 100``
+
+    bug-216: ``memory_count`` is the size of the POOL this gate governs — memories +
+    episodes over the recall's isolation scope — not a count of the ``memories`` table.
+    The gate filters episode rows too, so a count that omitted them made an
+    episodes-only agent look empty (see ``_adaptive_min_score``).
 
     v2.4.12 fix: previously ``_rrf_score`` was selected via falsy-chain before
     ``_cosine``, causing the RRF-scale value (0.01–0.05) to be compared against
@@ -990,8 +1004,18 @@ async def _apply_recall_scoring(
         # projects/channels scale a tightly-scoped recall's confidence curve.
         # Callers that score corpus-wide (gate calibration) keep the defaults.
         range_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+        # bug-237: exclude non-timestamps in SQL rather than trusting MIN/MAX. `timestamp`
+        # is TEXT NOT NULL but freely allows '' (import_memories defaults a missing field
+        # to it, and an explicit "timestamp": "" is stored verbatim), and under BINARY
+        # collation '' sorts first — so ONE such row collapsed MIN() to '', the falsy
+        # guard below skipped the whole block, and the scope lost both the range scaling
+        # and the bug-207 age anchor. The undated rows then fell back to "half the
+        # minimum range" (12 h) and outranked every dated row on the time axis: the
+        # presence of exactly the row bug-207 exists to place correctly is what disabled
+        # the anchor that would have placed it.
         range_row = await db.execute_fetchall(
-            f"SELECT MIN(timestamp), MAX(timestamp) FROM memories{range_iso.where}",
+            f"SELECT MIN(timestamp), MAX(timestamp) FROM memories "
+            f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{range_iso.and_clause}",
             range_iso.params,
         )
         if range_row and range_row[0][0] and range_row[0][1]:
@@ -1158,7 +1182,23 @@ async def do_recall(
             db, agent_id, results, deep, project_id=project_id, channel=channel, query=query
         )
 
-        memory_count = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent_id,)))[0][0]
+        # bug-216: count the pool the gate actually GOVERNS. The heuristic threshold was
+        # computed over `memories` alone but applied to every row the retrievers found —
+        # episodes and the profile sentinel included — so an agent holding only episodes
+        # (session-summary-only client; memories removed by delete_memory/health repair
+        # while its episodes stayed) scored count 0 and had every episode blocked. Scoped
+        # like the recall itself, for the same reason bug-107 scoped the temporal span:
+        # a tightly-scoped recall must not be gated by another project's volume.
+        pool_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+        memory_count = (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM memories{pool_iso.where}", pool_iso.params
+            )
+        )[0][0] + (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM episodes{pool_iso.where}", pool_iso.params
+            )
+        )[0][0]
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26/27 (an earlier decision): use the calibrated gate for whichever branch is active.
@@ -1629,10 +1669,17 @@ def _build_fts_query(query: str) -> str:
     kept whole. Terms shorter than 3 codepoints can never match a trigram index,
     so they are dropped here and left to the caller's LIKE fallback. Returns ""
     when no usable term can be formed.
+
+    bug-215: punctuation is NOT stripped. The trigram tokenizer indexes it as an
+    ordinary character, so 'CVE-2024-3094' and 'bug-183' only match with their
+    hyphens intact — mangling them to 'CVE20243094' made the exact-match row
+    invisible to the keyword channel, and _search_memories_keyword's LIKE
+    fallback cannot save it (it only runs when FTS returned ZERO rows, so any
+    other matching term hides the loss). The only character that needs
+    neutralising is the FTS5 phrase quote, which is escaped by doubling.
     """
-    sanitized = re.sub(r"[^\w\s]", "", query, flags=re.UNICODE)
     terms: list[str] = []
-    for tok in _TOKEN_RE.findall(sanitized):
+    for tok in _TOKEN_RE.findall(query):
         if _CJK_RE.match(tok):
             if len(tok) >= 3:
                 terms.extend(tok[i : i + 3] for i in range(len(tok) - 2))
@@ -1642,7 +1689,7 @@ def _build_fts_query(query: str) -> str:
         # ASCII tokens < 3 chars also can't match a trigram index -> dropped
     if not terms:
         return ""
-    return " OR ".join(f'"{t}"' for t in dict.fromkeys(terms))
+    return " OR ".join('"' + t.replace('"', '""') + '"' for t in dict.fromkeys(terms))
 
 
 async def _search_episodes_fts(

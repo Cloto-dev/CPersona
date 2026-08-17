@@ -274,6 +274,43 @@ async def test_recall_boundary_warns_but_serves(sidecar, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_read_boundaries_keep_their_collection_on_a_gate_refusal(sidecar, monkeypatch):
+    """bug-232 (the bug-169 class): a gate refusal still owes its caller the collection.
+
+    The unmapped-``@auto`` reject fires on READS too (no ``write`` guard on that
+    branch), and it is the session-start call shape — recall(project_id="@auto") for an
+    agent with no [defaults] entry. Before the fix those four boundaries answered with
+    ``_oc_reject``'s bare {ok, error, operating_context_revision}, so a client iterating
+    ``resp["messages"]`` / ``resp["memories"]`` raised KeyError on exactly one path while
+    every other failure mode of the same tool kept the key.
+    """
+    from cpersona import server
+
+    sidecar(_with_enforce("reject"))
+
+    async def unreachable(*a, **k):  # pragma: no cover - the gate blocks first
+        raise AssertionError("handler called despite reject")
+
+    for name in ("do_recall", "do_recall_with_context", "do_list_memories", "do_list_episodes"):
+        monkeypatch.setattr(server, name, unreachable)
+
+    recall = await server.do_recall_boundary("agent.unknown", "q", 5, False, "", [], "@auto", "")
+    assert recall["ok"] is False and "no [defaults] mapping" in recall["error"]
+    assert recall["messages"] == []
+
+    merged = await server.do_recall_with_context_boundary(
+        "agent.unknown", "q", [], 5, "", False, "@auto", ""
+    )
+    assert merged["ok"] is False and merged["messages"] == []
+
+    memories = await server.do_list_memories_boundary("agent.unknown", 10, project_id="@auto")
+    assert memories["ok"] is False and memories["memories"] == [] and memories["count"] == 0
+
+    episodes = await server.do_list_episodes_boundary("agent.unknown", 10, project_id="@auto")
+    assert episodes["ok"] is False and episodes["episodes"] == [] and episodes["count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_boundaries_are_transparent_when_dormant(sidecar, monkeypatch):
     from cpersona import server
 

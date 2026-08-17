@@ -193,3 +193,27 @@ async def test_import_cuts_to_the_profile_cap_and_reports_that_number(
     stored = await _profile_of(db)
     assert len(stored) == 300
     assert any("300-character" in e for e in result["errors"]), result.get("errors")
+
+
+# ---------------------------------------------------------------------------
+# The boundary contract — a lossy bound the tool never mentions is invisible
+# ---------------------------------------------------------------------------
+
+
+def test_update_profile_tool_states_its_cap_and_flag():
+    """The cut is unrecoverable, so the tool has to announce it.
+
+    store and update_memory both document their cap and their truncated flag;
+    update_profile was the one write tool whose bound was invisible at the
+    boundary, and the profile row is the ONLY copy of that text (no ref, not a
+    memory row). A caller with no reason to look for `truncated` reported success
+    while the remainder was gone for good.
+    """
+    from cpersona import server
+
+    tool = next(t for t in server.registry._tools if t.name == "update_profile")
+    surfaces = [tool.description, tool.inputSchema["properties"]["profile"]["description"]]
+    for text in surfaces:
+        assert "CPERSONA_MAX_PROFILE_LENGTH" in text, text
+        assert str(config.MAX_PROFILE_LENGTH) in text, text
+        assert "truncated" in text, text

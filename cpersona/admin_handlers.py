@@ -1375,7 +1375,13 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
     clear = False
     if beta and beta > 0:
         resolved_beta = float(beta)
-        resolved_precision = precision.lower() or "custom"
+        # bug-234: label the beta that was actually stored, the same way the read-back
+        # companion does. Echoing the NAME the caller sent described the persisted state
+        # falsely — set_recall_precision(precision='strict', beta=3.0) answered
+        # precision:'strict' while get_recall_precision reported 'custom' for the very
+        # same row, so a UI's selected level changed on reload with nothing having
+        # changed. _precision_label is the single inversion of _PRECISION_BETA.
+        resolved_precision = _precision_label(resolved_beta)
     elif precision:
         level = precision.lower()
         if level not in config._PRECISION_BETA:
