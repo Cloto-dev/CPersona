@@ -1065,7 +1065,10 @@ registry.auto_tool(
             "agent_id": {"type": "string", "description": "Agent ID whose memories to sample"},
             "sample_size": {"type": "integer", "description": "Number of embeddings to sample (default: 200)"},
             "z_factor": {"type": "number", "description": "Z-score multiplier for method='zscore' (default: 1.0, higher = stricter)"},
-            "method": {"type": "string", "description": "'separation' (default; two-population — learns the operating point from null pairs vs temporally-adjacent same-session positives, falling back to nearest-neighbour when too few exist), 'percentile', or 'zscore'"},
+            # bug-231: the enum is rendered from config.CALIBRATE_METHODS, the same tuple
+            # the handler validates against — an unknown spelling is now refused at the
+            # boundary instead of silently taking the percentile branch.
+            "method": {"type": "string", "enum": list(config.CALIBRATE_METHODS), "description": "'separation' (default; two-population — learns the operating point from null pairs vs temporally-adjacent same-session positives, falling back to nearest-neighbour when too few exist), 'percentile', or 'zscore'"},
             "percentile": {"type": "number", "description": "Null-distribution quantile for method='percentile' (default: 0.95, higher = stricter)"},
         },
         "required": ["agent_id"],
@@ -1276,7 +1279,11 @@ registry.auto_tool(
 
 registry.auto_tool(
     "import_memories",
-    "Import memories, episodes, and profiles from a JSONL file. Idempotent via msg_id deduplication.",
+    # bug-220: the claim now matches the code. Episodes were re-inserted on every run
+    # while this said "idempotent" and the annotation below said idempotentHint=True,
+    # which is what a host acts on when it retries a lost response.
+    "Import memories, episodes, and profiles from a JSONL file. Idempotent: memories deduplicate on "
+    "msg_id (and on content within a project/channel), episodes on their summary within a project/channel.",
     {
         "type": "object",
         "properties": {

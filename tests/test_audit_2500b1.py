@@ -199,10 +199,12 @@ async def test_merge_move_is_one_atomic_unit(clean_db, monkeypatch):
     )
     await db.commit()
 
-    async def failing_delete(db_, agent_id):
+    # bug-218/bug-222 moved the move-phase delete to _delete_merged_source_rows (it
+    # deletes the copied ids instead of the agent); the atomicity invariant is unchanged.
+    async def failing_delete(db_, agent_id, tally):
         raise RuntimeError("injected delete fault")
 
-    monkeypatch.setattr(admin_handlers, "_delete_agent_rows", failing_delete)
+    monkeypatch.setattr(admin_handlers, "_delete_merged_source_rows", failing_delete)
     res = await admin_handlers.do_merge_memories("src", "dst", mode="move")
     assert res["ok"] is False and "injected delete fault" in res["error"]
 

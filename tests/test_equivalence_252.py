@@ -67,6 +67,13 @@ _DIFF_FLOAT_PLACES = 6
 # rows its fix would write. Additive -- severity, status and counts are
 # unchanged, as this diff itself showed. Guarded by
 # tests/test_255_repairable_contract.py, which is where its behaviour is pinned.
+#
+# The 2.5.5 import/merge integrity batch (bug-218..bug-246) is NOT listed here.
+# It changes recorded VALUES, not just keys -- a move stops deleting rows it never
+# copied, an import stops duplicating episodes, a merged episode keeps its
+# created_at -- so the eleven affected scenarios were re-recorded and the diff on
+# them is the review surface, exactly as the header above prescribes for an
+# intended change. The invariants themselves are pinned in tests/test_review_b.py.
 _KEYS_ADDED_SINCE_GOLDEN = {"repairable"}
 
 

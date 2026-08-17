@@ -264,12 +264,12 @@ async def test_import_rejects_unconfined_and_oversized_paths(clean_db, monkeypat
     }
 
     inside = export_root / "large.jsonl"
-    inside.write_text('{"_type":"memory","agent_id":"unsafe","content":"must not import"}\n')
-    monkeypatch.setattr(
-        admin_handlers.os.path,
-        "getsize",
-        lambda _path: config.MAX_IMPORT_BYTES + 1,
-    )
+    body = '{"_type":"memory","agent_id":"unsafe","content":"must not import"}\n'
+    inside.write_text(body)
+    # bug-241: the cap reads st_size from the one os.stat the guard now performs, so the
+    # oversized case is exercised by lowering the cap under a real file rather than by
+    # faking the measurement.
+    monkeypatch.setattr(config, "MAX_IMPORT_BYTES", len(body) - 1)
     result = await admin_handlers.do_import_memories(str(inside))
     assert result == {
         "ok": False,

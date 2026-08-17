@@ -272,7 +272,7 @@ On both models measured here, Track B lands at or above Track A — the fusion l
 | `persistence_status` | Report whether persistence is paused and the TTL remaining |
 | `migrate_channel_axis` | Re-channel bridge-type memories to their concrete channel |
 | `export_memories` | Export to JSONL (memories, episodes, profiles) |
-| `import_memories` | Import from JSONL (idempotent via msg_id dedup) |
+| `import_memories` | Import from JSONL (idempotent: memories dedup on msg_id/content, episodes on summary) |
 | `merge_memories` | Merge one agent's data into another (atomic, with dedup) |
 | `get_queue_status` | Background task queue status |
 | `check_health` | Registry-driven health check (severity-tagged issues) with auto-repair |
@@ -359,8 +359,8 @@ considered and not the order they come back in.
 
 - **~10,700 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **689 test functions** across 60 test modules — 838 cases once the
-  behavioural matrix is parametrised (~17,800 LOC, more test code than server
+- **781 test functions** across 69 test modules — 987 cases once the
+  behavioural matrix is parametrised (~22,900 LOC, more test code than server
   code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)
 - **MIT License**
