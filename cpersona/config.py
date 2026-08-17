@@ -68,12 +68,16 @@ MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
 # The number is derived, not picked: 1.5x the longest record that ever existed
 # (a 10,432-character episode) and 8x the old cap, while no row in the corpus
 # exceeds 8000 — so it refuses no honest write, and still stops a runaway blob
-# with 60x of headroom. The read side does NOT follow it up: get_contents keeps
-# a fixed character budget (GET_CONTENTS_MAX_CHARS, 40000 — what the worst case
-# used to be at 20 refs x 2000) that is not derived from this constant, so a
-# batch cannot grow just because this number did. The one documented exception
-# is a single row that alone exceeds the budget, which is still returned whole
-# rather than made unreachable; at this default no such row can exist.
+# with 60x of headroom. The read side does NOT follow it up: each full-text read
+# path keeps its own fixed character budget pinned at what its worst case used
+# to be — get_contents at GET_CONTENTS_MAX_CHARS (40000 = 20 refs x 2000),
+# recall(full_content=true) at server.RECALL_FULL_CONTENT_MAX_CHARS (200000 =
+# limit 100 x 2000; bug-211 — this path shipped unbudgeted at first, so the
+# claim here was briefly true only of get_contents). Neither is derived from
+# this constant, so a batch cannot grow just because this number did. The one
+# documented exception is a single row that alone exceeds the budget, which is
+# still returned whole rather than made unreachable; at this default no such
+# row can exist.
 #
 # The embedding window is unchanged (512 tokens), so text past the window is
 # still invisible to the vector retriever. It is NOT invisible to search: the

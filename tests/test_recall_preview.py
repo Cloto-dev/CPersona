@@ -204,3 +204,113 @@ async def test_get_contents_input_validation():
     too_many = [f"mem:{i}" for i in range(1, 23)]
     out = await do_get_contents("pv-agent", too_many)
     assert "error" in out and "max 20" in out["error"]
+
+
+# --- bug-211 (an earlier decision): the full_content read budget -----------------------
+#
+# an earlier decision raised the write cap 2000 -> 16000 and bounded the read side only at
+# get_contents; recall(full_content=true) bypassed _apply_preview entirely, so
+# its worst case grew 8x (limit 100 x 16000 = 1.6M chars). The budget mirrors
+# get_contents' discipline: whole rows only, first row admitted whatever its
+# size, rows past the budget DEGRADE to the preview tier (never dropped —
+# recall's contract is the ranked list), refless rows are never trimmed
+# (bug-117), and the marker is absent unless the budget actually bit.
+
+
+def _rows(*contents, ref=True):
+    return {
+        "messages": [
+            {**({"ref": f"mem:{i}"} if ref else {}), "content": c}
+            for i, c in enumerate(contents, start=1)
+        ]
+    }
+
+
+def test_full_content_budget_degrades_the_tail_to_preview(monkeypatch):
+    monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
+    out = S._apply_full_content_budget(_rows("a" * 60, "b" * 60, "c" * 60))
+    first, second, third = out["messages"]
+    assert first["content"] == "a" * 60 and "content_truncated" not in first
+    assert second["content"] == "b" * 10 and second["content_truncated"] is True
+    assert second["content_len"] == 60
+    assert third["content"] == "c" * 10 and third["content_truncated"] is True
+    assert out["full_content_budget_chars"] == 100
+
+
+def test_full_content_budget_admits_the_first_row_whatever_its_size(monkeypatch):
+    monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
+    out = S._apply_full_content_budget(_rows("g" * 500, "h" * 60))
+    giant, tail = out["messages"]
+    assert giant["content"] == "g" * 500 and "content_truncated" not in giant, (
+        "a single giant row must stay reachable, not be made unreadable by its own length"
+    )
+    assert tail["content"] == "h" * 10 and tail["content_truncated"] is True
+    assert out["full_content_budget_chars"] == 100
+
+
+def test_full_content_budget_never_trims_refless_rows(monkeypatch):
+    monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
+    result = {
+        "messages": [
+            {"ref": "mem:1", "content": "a" * 90},
+            {"content": "[Profile] " + "p" * 200},  # bug-117: no handle back
+            {"ref": "mem:2", "content": "b" * 60},
+        ]
+    }
+    out = S._apply_full_content_budget(result)
+    profile = out["messages"][1]
+    assert profile["content"].endswith("p" * 200) and "content_truncated" not in profile
+    assert out["messages"][2]["content_truncated"] is True
+
+
+def test_full_content_budget_is_inert_when_preview_tier_is_disabled(monkeypatch):
+    monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 0)
+    out = S._apply_full_content_budget(_rows("a" * 300, "b" * 300))
+    assert all("content_truncated" not in m for m in out["messages"])
+    assert "full_content_budget_chars" not in out, (
+        "degrading to a disabled tier would silently drop content; the kill "
+        "switch must disable the budget with it"
+    )
+
+
+def test_full_content_budget_is_absent_when_it_never_bites(monkeypatch):
+    monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
+    out = S._apply_full_content_budget(_rows("a" * 40, "b" * 40))
+    assert all("content_truncated" not in m for m in out["messages"])
+    assert "full_content_budget_chars" not in out
+
+
+@pytest.mark.asyncio
+async def test_recall_boundary_applies_the_budget_on_full_content(monkeypatch):
+    monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
+
+    async def fake_do_recall(agent_id, query, limit, **kw):
+        return _rows("a" * 90, "b" * 90)
+
+    monkeypatch.setattr(S, "do_recall", fake_do_recall)
+    out = await S.do_recall_boundary("a", "q", 5, False, "", [], None, "", full_content=True)
+    assert out["messages"][0]["content"] == "a" * 90
+    assert out["messages"][1]["content"] == "b" * 10
+    assert out["full_content_budget_chars"] == 100
+
+
+@pytest.mark.asyncio
+async def test_recall_with_context_boundary_applies_the_budget_too(monkeypatch):
+    monkeypatch.setattr(S, "RECALL_FULL_CONTENT_MAX_CHARS", 100)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
+
+    async def fake_rwc(agent_id, query, **kw):
+        return _rows("a" * 90, "b" * 90)
+
+    monkeypatch.setattr(S, "do_recall_with_context", fake_rwc)
+    out = await S.do_recall_with_context_boundary(
+        "a", "q", [], 5, "", False, None, "", full_content=True
+    )
+    assert out["messages"][1]["content_truncated"] is True
+    assert out["full_content_budget_chars"] == 100
