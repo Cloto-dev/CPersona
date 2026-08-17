@@ -87,11 +87,24 @@ discretion and must not be relied upon.
 | Line | Tier | Notes |
 | --- | --- | --- |
 | 2.4.x | **Stable** | Certified Stable; the marketplace serves this line by default. Enters Grace 30 days after 2.5.x is certified Stable. |
-| 2.5.x | **Current** | Latest release: 2.5.3. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Awaiting production-soak certification to Stable. |
+| 2.5.x | **Current** | Latest release: 2.5.4. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Awaiting production-soak certification to Stable. |
 
 Certification and EOL dates are recorded in this table as they occur.
 
 ## Known issues
+
+- **All released versions through 2.5.4a2 — undated rows outrank every dated row
+  under confidence scoring (bug-207, HIGH).** With `CPERSONA_CONFIDENCE_ENABLED=true`
+  (not the default), a memory or episode whose timestamp is missing or unparseable
+  was scored as written this instant: it took a time-decay of 1.0 that no dated row
+  can reach, sorted above every dated row and survived the quality gate that cut
+  them. Production impact scales with undated rows — in the reference deployment
+  two thirds of episodes had no `start_time`. **Fixed in v2.5.4** (unknown age is
+  imputed as the midpoint of the corpus age range and flagged `age_unknown: true`);
+  the Stable 2.4.x line is affected and unfixed. Workaround on affected versions:
+  leave confidence off (the default), or backfill timestamps
+  (`check_health(checks=["missing_episode_start_time"], fix=true)` on 2.5.5+).
+
 
 - **v2.5.2 and earlier — the HTTP transport starts unauthenticated on a loopback
   bind (bug-198, HIGH).** With `CPERSONA_TRANSPORT=streamable-http` and no
@@ -186,4 +199,4 @@ diagnosis already exists and may already be fixed in a later release.
 **Security vulnerabilities are the exception.** Do not open a public issue for
 them; follow [SECURITY.md](SECURITY.md) instead.
 
-*Last updated: 2026-07-29*
+*Last updated: 2026-08-18*
