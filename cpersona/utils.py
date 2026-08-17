@@ -153,6 +153,37 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
         return None
 
 
+def episode_timestamp(start_time: str | None, created_at: str | None) -> str:
+    """The time an episode is scored and shown by: its own ``start_time``, else the time
+    the row was recorded.
+
+    bug-213: ``episodes.start_time`` is nullable and 338 of 505 episodes on this
+    project's deployment carry NULL there, while ``episodes.created_at`` is
+    ``TEXT NOT NULL DEFAULT (datetime('now'))`` and every row has one. Every read path
+    passed ``start_time or ""`` straight through, so those rows reached
+    ``_compute_confidence`` with no timestamp at all and took bug-207's imputed age —
+    an age SYNTHESISED from the corpus span while the same row carried a usable time.
+
+    ``created_at`` is a good enough stand-in and is measured, not assumed: across the 167
+    episodes holding both values it trails ``start_time`` by under 24h in 93.4% of cases
+    (mean +8.8h, max +209h), against an imputation whose median error on the same
+    deployment was 950h. The imputation's error is also one-directional — a flat corpus
+    midpoint (1713h there) ages every recent episode at once, which is what made
+    session-start grounding lose the episodes it exists to surface.
+
+    It remains an approximation, and the only one the row itself can supply: ``created_at``
+    is when the episode was RECORDED, not when what it describes happened. It is read, never
+    written back — the data stays as it is (the same rule bug-207 set). When neither value
+    parses, ``_compute_confidence`` still imputes and still reports ``age_unknown``:
+    bug-207's branch is narrowed to the rows that genuinely have no time, not removed.
+
+    One implementation for one invariant: every path that turns an episode row into a
+    recall result calls this, so the age a row is ranked by cannot depend on which
+    retriever found it.
+    """
+    return start_time or created_at or ""
+
+
 # bug-184: fingerprint of the scoring function below. The calibrated recall gate is an
 # operating point measured ON a specific score distribution, so it may only be restored
 # for the scoring function it was calibrated on — restoring it across a scoring change
@@ -169,8 +200,12 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
 # 2.5.4a3 unknown-age imputation (bug-207) is the second: a row whose timestamp does not
 # parse no longer takes the ``time_decay`` of 1.0 reserved for a row written this instant,
 # so every undated row scores lower than the sidecar was calibrated against — two thirds
-# of the episodes on this project's deployment.
-SCORING_VERSION = "254a3-unknown-age"
+# of the episodes on this project's deployment. The 2.5.5a1 created_at fallback (bug-213)
+# is the third, and it moves the same two thirds again: an episode with no start_time is
+# now scored on the time it was recorded instead of on the imputed corpus midpoint, which
+# on this deployment raises every recent episode and lowers the older ones — the imputed
+# age was a single flat value for rows whose real ages span months.
+SCORING_VERSION = "255a1-episode-created-at"
 
 
 def _compute_confidence(
@@ -204,6 +239,12 @@ def _compute_confidence(
     # 2,221 memories carry a timestamp, while 333 of 500 episodes have no start_time, and
     # _search_episodes_fts passes that straight through as "". Two thirds of the episodes
     # were therefore ranked above every dated memory on the time axis.
+    #
+    # bug-213 narrowed which rows reach this branch: the episode read paths now fall back
+    # to episodes.created_at (utils.episode_timestamp), so a row that HAS a recorded time
+    # is scored on it rather than on the midpoint below. What remains here is the case the
+    # fallback cannot serve — a row with no usable time at all — and the imputation is
+    # still the answer for it.
     #
     # An unknown age is now placed in the middle of the corpus's own AGE range: neutral
     # rather than newest, deterministic, derived from values the caller already computed,
