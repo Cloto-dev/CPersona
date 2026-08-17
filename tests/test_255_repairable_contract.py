@@ -117,6 +117,20 @@ async def _s_null_episode_embedding(conn):
     yield conn
 
 
+@seeder("missing_episode_start_time")
+async def _s_missing_episode_start_time(conn):
+    # `episodes` has no locked column, so unlike the memory seeders this one
+    # cannot pin a locked-guard zero; the bound exercised instead is created_at
+    # parseability — the NULL-start_time row's default created_at parses, so it
+    # is repairable, and the contract value is 1.
+    await conn.execute(
+        "INSERT INTO episodes (agent_id, summary, start_time) VALUES (?, ?, NULL)",
+        (AGENT, "an episode with no start_time"),
+    )
+    await conn.commit()
+    yield conn
+
+
 class _RaiseOnIntegrityCheck:
     """Delegates to the real connection but reports the FTS index as corrupt.
 
@@ -244,6 +258,7 @@ EXPECTED_REPAIRABLE = {
     "embedding_dimension": 1,  # NULLs a wrong-length blob, not authored content
     "null_embedding": 1,
     "null_episode_embedding": 1,
+    "missing_episode_start_time": 1,  # `episodes` has no locked column
     "stale_pending_tasks": 1,  # queue rows, not memories
     "oversized_profile": 1,  # `profiles` has no locked column
     # object-scoped: one rebuild / one CREATE, always attempted

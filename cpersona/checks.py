@@ -1066,6 +1066,73 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
 
 
+async def check_missing_episode_start_time(db, agent_id: str, fix: bool) -> list[dict]:
+    """Episodes with no ``start_time`` (bug-208), repaired from ``created_at``.
+
+    Two thirds of this project's production episodes carried NULL/'' here (333 of
+    500, measured 2026-08-14) and every read path passed that emptiness straight
+    into scoring until bug-213 taught the read paths to fall back to
+    ``created_at`` (``utils.episode_timestamp``). This check is the write-side
+    complement: it makes the gap visible, and ``fix=true`` materialises the same
+    fallback into the row itself for every consumer that reads ``start_time``
+    directly (exports, list surfaces, external tooling).
+
+    The predicate is the SQL spelling of ``episode_timestamp``'s fallback
+    condition (``start_time`` falsy); the two languages cannot share one
+    implementation, so they share this reference instead — change one, check the
+    other.
+
+    ``episodes`` has no ``locked`` column, so the bug-007 fixer guard is
+    structurally N/A. ``repairable`` is bounded instead by ``created_at``
+    parseability: copying an unparseable created_at would trade "no timestamp"
+    for "garbage timestamp" — a worse row, not a repaired one. Severity is info,
+    not warn: since bug-213 the gap no longer degrades scoring (the fallback
+    reads the same value this fix would write); what remains is data
+    completeness.
+    """
+    iso = isolation_where(agent_id=agent_id or None)
+    missing = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM episodes WHERE (start_time IS NULL OR start_time = ''){iso.and_clause}",
+            iso.params,
+        )
+    )[0][0]
+    if missing == 0:
+        return []
+    # Before the repair (it rewrites the very rows this counts), same discipline
+    # as check_invalid_timestamp above.
+    repairable = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM episodes
+                WHERE (start_time IS NULL OR start_time = '')
+                AND datetime(created_at) IS NOT NULL{iso.and_clause}""",
+            iso.params,
+        )
+    )[0][0]
+    if fix:
+        await db.execute(
+            f"""UPDATE episodes SET start_time = created_at
+                WHERE (start_time IS NULL OR start_time = '')
+                AND datetime(created_at) IS NOT NULL{iso.and_clause}""",
+            iso.params,
+        )
+    return [
+        {
+            "type": "missing_episode_start_time",
+            "count": missing,
+            "repairable": repairable,
+            # The approximation caveat is load-bearing, not decorative: after the
+            # fix the row is indistinguishable from one whose start_time was
+            # recorded at store time.
+            "hint": (
+                "fix copies created_at into start_time — the time the episode was "
+                "recorded, not the time of what it describes; an approximation, "
+                "not a recovered truth"
+            ),
+        }
+    ]
+
+
 def _classify_timestamp(ts: str) -> str:
     """'utc' | 'aware' (non-UTC offset) | 'naive'. Deterministic string check."""
     if ts.endswith("Z") or ts.endswith("+00:00"):
@@ -1589,6 +1656,9 @@ HEALTH_CHECKS: list[Check] = [
     Check("axis_hygiene", "warn", False, check_axis_hygiene),
     Check("invalid_json", "warn", True, check_invalid_json),
     Check("invalid_timestamp", "warn", True, check_invalid_timestamp),
+    # bug-208: info, not warn — since bug-213 the read paths score these rows by
+    # created_at anyway; the fix materialises that fallback for direct readers.
+    Check("missing_episode_start_time", "info", True, check_missing_episode_start_time),
     Check("timestamp_format_drift", "warn", True, check_timestamp_format_drift),
     Check("stale_pending_tasks", "warn", True, check_stale_pending_tasks),
     Check("missing_profile", "info", False, check_missing_profile),
