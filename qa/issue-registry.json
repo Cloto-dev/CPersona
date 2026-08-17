@@ -1123,7 +1123,7 @@
       "discovered": "2026-07-08T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/vector.py",
-      "pattern": "SELECT id, summary, start_time, resolved FROM episodes WHERE id IN",
+      "pattern": "SELECT id, summary, start_time, resolved, created_at FROM episodes WHERE id IN",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
@@ -3058,6 +3058,21 @@
       "category": "counts-attempts-not-effects",
       "fixed_in": "2.5.5",
       "fix_note": "The repair set is built before the write, with the fixer's own `locked = 0` applied at selection time, and `normalized` is counted from each statement's rowcount rather than from the intent to issue it. Both halves matter and neither alone is sufficient: filtering at selection makes the count and the fixer the same set, and counting from rowcount keeps that true against a row locked between the scan and the write. Chosen over (a) leaving the guard on the UPDATE and subtracting a locked COUNT afterwards, which is the derivation bug-139 already rejected here — an identity that holds for any predicate cannot be falsified by a test, and a C5 mutant produced locked = -2 while the sum still reconciled; and over (b) dropping the locked rows from the finding entirely, which would hide a real drift because a locked aware timestamp still breaks lexicographic ordering. The residual is now reported as `unfixable_locked` beside the existing `unfixable_naive`, so `aware` reconciles as normalisable + locked instead of reading as an unexplained shortfall. This is the prerequisite an earlier decision's `repairable` contract was blocked on: the contract's whole premise is that a declared count describes rows a fix would WRITE, and this check was the counterexample living in the same file."
+    },
+    {
+      "id": "bug-213",
+      "summary": "(MEDIUM) Every path that turns an episode into a recall result read `start_time or \"\"`, but episodes.start_time is nullable while episodes.created_at is TEXT NOT NULL DEFAULT (datetime('now')): 338 of 505 episodes on this deployment reached _compute_confidence with no timestamp at all, and so took bug-207's IMPUTED age -- a value synthesised from the corpus span while the same row carried a recorded time. The imputation is one flat number (1713h here) for rows whose real ages span months: median error 950h against the true ages, and a 7-day-old episode was scored at time_decay 0.7042 where its own recorded time gives 0.9822. At the 0.4470 gate that is a 0.8392 factor on the score, i.e. 0.046 of extra raw cosine demanded of exactly the recent episodes that session-start grounding exists to surface. Four call sites shared the defect (the local and remote vector branches, the FTS retriever, get_contents), and none of them agreed with any other about what a row's age was.",
+      "severity": "MEDIUM",
+      "discovered": "2026-08-14T00:00:00Z",
+      "version": "2.5.4",
+      "file": "cpersona/utils.py",
+      "pattern": "bug-213",
+      "expected": "present",
+      "status": "fixed",
+      "category": "imputed-over-observed",
+      "fixed_in": "2.5.5",
+      "fix_note": "One helper, utils.episode_timestamp(start_time, created_at), read by all four episode read paths, so the age a row is ranked by cannot depend on which retriever found it. created_at is a measured stand-in, not an assumed one: over the 167 episodes holding both values it trails start_time by under 24h in 93.4% of cases (mean +8.8h, max +209h). Chosen over backfilling start_time from created_at with a health-check fixer (the shape an earlier decision proposes for VISIBILITY): a backfill writes a claim the data does not support -- created_at is when the episode was RECORDED, not when what it describes happened -- and once written that distinction is unrecoverable, whereas reading it keeps the approximation in the ranking and leaves the row honest. Also chosen over widening bug-207's imputation, which cannot beat a value the row already has. bug-207's branch is narrowed, not removed: a row with no usable time in either column still takes the imputed midpoint and still reports age_unknown. SCORING_VERSION bumped to 255a1-episode-created-at (the distribution moves for two thirds of the episodes).",
+      "note": "Regression: tests/test_255_episode_created_at.py -- one test per read path, because the fallback is only as good as its least-updated call site. Mutation-checked 2026-08-17: reverting the helper turns 6 tests red, and reverting any single call site turns that path's test red on its own. an earlier decision; an earlier decision (the imputation moves autocut's cut point) should be re-measured on top of this."
     }
   ]
 }

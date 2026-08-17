@@ -51,6 +51,7 @@ from cpersona.utils import (
     _compute_confidence,
     _content_excluded,
     _parse_timestamp_utc,
+    episode_timestamp,
     _sanitize_content,
     sanitize_content_with_flag,
     _try_parse_json,
@@ -1564,18 +1565,22 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     item["id"] = msg_id
             else:
                 rows = await db.execute_fetchall(
-                    "SELECT summary, start_time, resolved FROM episodes WHERE id = ? AND agent_id = ?",
+                    "SELECT summary, start_time, resolved, created_at FROM episodes "
+                    "WHERE id = ? AND agent_id = ?",
                     (row_id, agent_id),
                 )
                 if not rows:
                     missing.append(ref)
                     continue
-                summary, start_time, resolved = rows[0]
+                summary, start_time, resolved, created_at = rows[0]
                 item = {
                     "ref": ref,
                     "content": f"[Episode] {summary}",
                     "source": {"System": "episode"},
-                    "timestamp": start_time or "",
+                    # bug-213: the same fallback the retrievers score by. get_contents is
+                    # the expansion of a row recall already returned, so a timestamp that
+                    # disagreed with the one recall showed would read as two different rows.
+                    "timestamp": episode_timestamp(start_time, created_at),
                     "resolved": bool(resolved),
                 }
             # an earlier decision: whole rows only — the budget never cuts a content
@@ -1664,7 +1669,7 @@ async def _search_episodes_fts(
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
 
     rows = await db.execute_fetchall(
-        f"""SELECT e.id, e.summary, e.start_time, e.resolved, bm25(episodes_fts)
+        f"""SELECT e.id, e.summary, e.start_time, e.resolved, bm25(episodes_fts), e.created_at
            FROM episodes_fts f
            JOIN episodes e ON f.rowid = e.id
            WHERE episodes_fts MATCH ?
@@ -1679,7 +1684,9 @@ async def _search_episodes_fts(
             "id": row[0],
             "content": f"[Episode] {row[1]}",
             "source": {"System": "episode"},
-            "timestamp": row[2] or "",
+            # bug-213: start_time is nullable; created_at is not. This is the path
+            # bug-207 measured — it is what passed "" for two thirds of the episodes.
+            "timestamp": episode_timestamp(row[2], row[5]),
             "_rid": ("ep", row[0]),
             "_resolved": bool(row[3]),
             "_bm25": row[4],
