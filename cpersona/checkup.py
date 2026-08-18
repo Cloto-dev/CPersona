@@ -26,6 +26,24 @@ import os
 import sys
 
 
+def _deep_findings(results: dict) -> dict:
+    """Filter one agent's deep-check results down to what is worth printing.
+
+    bug-227 (residual): a deep check that crashes is recorded by do_deep_check
+    as ``{"error": ...}`` — a dict with none of the keys the old inline filter
+    looked at, so the non-``--json`` output rendered exactly the failure this
+    monitoring CLI exists to catch as silence. An ``error`` key is a finding.
+    """
+    return {
+        name: res
+        for name, res in results.items()
+        if res.get("count")
+        or res.get("pairs")
+        or "error" in res
+        or res.get("status") not in (None, "ok", "not_applicable")
+    }
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m cpersona.checkup",
@@ -126,11 +144,7 @@ async def _run(args) -> int:
             print(f"  [{issue['severity']:<8}] {issue['type']}: {extras}")
         if args.deep:
             for agent, deep in report["deep"].items():
-                findings = {
-                    name: res
-                    for name, res in deep["results"].items()
-                    if res.get("count") or res.get("pairs") or res.get("status") not in (None, "ok", "not_applicable")
-                }
+                findings = _deep_findings(deep["results"])
                 if findings:
                     print(f"  deep[{agent}]: {json.dumps(findings, ensure_ascii=False)[:400]}")
         print(f"exit={code} ({'strict' if args.strict else 'non-strict'} gate)")

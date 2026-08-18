@@ -1216,9 +1216,8 @@ async def check_missing_episode_start_time(db, agent_id: str, fix: bool) -> list
         # lexical conventions at once — a genuinely recorded value is caller
         # ISO-8601 with an offset, created_at is SQLite-native and naive, and
         # ' ' < 'T' so every backfilled row sorts before every recorded one
-        # regardless of date. No detector covers episodes (
-        # check_timestamp_format_drift reads `memories` only), so the drift
-        # would be undetectable as well as unrepaired.
+        # regardless of date. check_episode_timestamp_format_drift below covers
+        # rows the pre-2.5.5 backfill already wrote in the naive form.
         await db.execute(
             f"""UPDATE episodes
                 SET start_time = strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at)
@@ -1326,6 +1325,81 @@ async def check_timestamp_format_drift(db, agent_id: str, fix: bool) -> list[dic
         issue["unfixable_locked"] = locked_aware
     if counts["naive"]:
         issue["unfixable_naive"] = counts["naive"]
+    return [issue]
+
+
+async def check_episode_timestamp_format_drift(db, agent_id: str, fix: bool) -> list[dict]:
+    """Format drift in ``episodes.start_time`` / ``end_time`` (bug-245 residual).
+
+    ``check_timestamp_format_drift`` reads ``memories`` only, while the episode
+    columns hold the same mix of conventions: a recorded value is caller
+    ISO-8601 with an offset, and the pre-2.5.5 ``missing_episode_start_time``
+    backfill copied SQLite-native naive ``created_at`` verbatim — ``' ' < 'T'``,
+    so every such row sorts before every recorded one regardless of date.
+
+    Fix policy mirrors the memories check (aware → UTC, lossless) with one
+    episode-specific addition: a naive value that verbatim-equals the row's
+    ``created_at`` is the old backfill's copy, and ``created_at`` is
+    ``datetime('now')`` — UTC by schema. Re-encoding it to the canonical aware
+    form (the same string the bug-245 backfill now writes) changes the
+    encoding, not the instant. Any other naive value stays untouched: its
+    intended zone is unknowable, so rewriting it would fabricate data.
+    """
+    iso = isolation_where(agent_id=agent_id or None)
+    rows = await db.execute_fetchall(
+        f"""SELECT id, start_time, end_time, created_at FROM episodes
+            WHERE (COALESCE(start_time, '') != '' OR COALESCE(end_time, '') != ''){iso.and_clause}""",
+        iso.params,
+    )
+    # Counts are per value, not per row — a row contributes each non-empty column.
+    counts = {"utc": 0, "aware": 0, "naive": 0}
+    repairs: list[tuple[int, str, str]] = []  # (row_id, column, canonical)
+    unfixable_naive = 0
+    for row_id, start_time, end_time, created_at in rows:
+        for column, value in (("start_time", start_time), ("end_time", end_time)):
+            if not value:
+                continue
+            cls = _classify_timestamp(value)
+            counts[cls] += 1
+            if cls == "aware":
+                try:
+                    parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                canon = parsed.astimezone(datetime.timezone.utc).isoformat()
+                if canon != value:
+                    repairs.append((row_id, column, canon))
+            elif cls == "naive":
+                if value == created_at:
+                    # The verbatim-copy fingerprint: same instant, canonical form
+                    # (identical to strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at)).
+                    repairs.append((row_id, column, value.replace(" ", "T", 1) + "+00:00"))
+                else:
+                    unfixable_naive += 1
+    present = [k for k, v in counts.items() if v > 0]
+    if len(present) <= 1 and not repairs:
+        return []
+    issue = {"type": "episode_timestamp_format_drift", **counts}
+    # `episodes` has no locked column, so unlike the memories check the repair
+    # set is not reduced by a locked guard — every repair found is reachable.
+    issue["repairable"] = len(repairs)
+    if fix and repairs:
+        normalized = 0
+        for row_id, column, canon in repairs:
+            # `column` comes from the literal tuple above, never from data.
+            cur = await db.execute(
+                f"UPDATE episodes SET {column} = ? WHERE id = ?", (canon, row_id)
+            )
+            if getattr(cur, "rowcount", 0) == 1:
+                normalized += 1
+        issue["normalized"] = normalized
+    if unfixable_naive:
+        issue["unfixable_naive"] = unfixable_naive
+        issue["hint"] = (
+            "naive values that do not equal created_at were recorded by a caller "
+            "in an unknowable zone; only the created_at-verbatim backfill copies "
+            "are re-encoded"
+        )
     return [issue]
 
 
@@ -1812,6 +1886,9 @@ HEALTH_CHECKS: list[Check] = [
     # created_at anyway; the fix materialises that fallback for direct readers.
     Check("missing_episode_start_time", "info", True, check_missing_episode_start_time),
     Check("timestamp_format_drift", "warn", True, check_timestamp_format_drift),
+    # bug-245 residual: the episode columns hold the same drift class the check
+    # above detects for memories, and nothing covered them.
+    Check("episode_timestamp_format_drift", "warn", True, check_episode_timestamp_format_drift),
     Check("stale_pending_tasks", "warn", True, check_stale_pending_tasks),
     Check("missing_profile", "info", False, check_missing_profile),
     Check("empty_content", "warn", True, check_empty_content),

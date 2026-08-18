@@ -2387,8 +2387,20 @@ async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run
     # I/O inside transaction() stalls the event loop (and with it every reader)
     # for as long as the disk takes, while the write lock is held.
     try:
-        with open(input_path, encoding="utf-8") as f:
-            lines = f.readlines()
+        # bug-241 (residual): the st_size gate in _validate_import_preconditions
+        # raced this read — a regular file that grew in between could still be
+        # slurped whole. Bound the read itself: one byte past the cap is enough
+        # to convict, so the guard holds however the file got its size.
+        with open(input_path, "rb") as f:
+            raw = f.read(config.MAX_IMPORT_BYTES + 1)
+        if len(raw) > config.MAX_IMPORT_BYTES:
+            return error_response(
+                f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {input_path}"
+            )
+        # split('\n') rather than splitlines(): exports are '\n'-separated, and
+        # splitlines() would also cut on U+2028/U+2029, which are legal unescaped
+        # inside a JSON string. Trailing '\r' is removed by the strip() below.
+        lines = raw.decode("utf-8").split("\n")
     # bug-242: a file that is not valid UTF-8 fails on CONTENT, not on the OS call —
     # UnicodeDecodeError derives from ValueError, so it escaped this handler entirely
     # and the registry wrapper answered a bare {"error": ...} with no `ok` and none of
