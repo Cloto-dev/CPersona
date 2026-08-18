@@ -202,6 +202,24 @@ async def _s_timestamp_format_drift(conn):
     yield conn
 
 
+@seeder("episode_timestamp_format_drift")
+async def _s_episode_timestamp_format_drift(conn):
+    # No locked column on episodes, so both drift classes the fixer reaches are
+    # seeded: an aware offset (lossless UTC rewrite) and the pre-2.5.5 backfill
+    # fingerprint (naive start_time verbatim-equal to created_at).
+    await conn.execute(
+        "INSERT INTO episodes (agent_id, summary, start_time) VALUES (?, ?, ?)",
+        (AGENT, "recorded with an offset", "2026-08-01T09:00:00+09:00"),
+    )
+    await conn.execute(
+        """INSERT INTO episodes (agent_id, summary, start_time, created_at)
+           VALUES (?, ?, ?, ?)""",
+        (AGENT, "old naive backfill", "2026-08-01 00:00:00", "2026-08-01 00:00:00"),
+    )
+    await conn.commit()
+    yield conn
+
+
 @seeder("stale_pending_tasks")
 async def _s_stale_pending_tasks(conn):
     await conn.execute(
@@ -259,6 +277,7 @@ EXPECTED_REPAIRABLE = {
     "null_embedding": 1,
     "null_episode_embedding": 1,
     "missing_episode_start_time": 1,  # `episodes` has no locked column
+    "episode_timestamp_format_drift": 2,  # ditto: one aware + one backfill copy
     "stale_pending_tasks": 1,  # queue rows, not memories
     "oversized_profile": 1,  # `profiles` has no locked column
     # object-scoped: one rebuild / one CREATE, always attempted
