@@ -3731,6 +3731,19 @@
       "category": "policy-vs-spec",
       "fixed_in": "2.5.5",
       "fix_note": "The rejection is gated on `write`, exactly as the registry-validation branch below it always was; an unmapped @auto read resolves to '' (global pool) with the mapping warning attached, and only writes refuse. Chosen over removing reject-mode from reads wholesale: the explicit-value branch already had the correct write-only guard, so this makes the two branches express one policy rather than introducing a second. The bug-232 collection-merge on the read boundaries is retained as unreachable-by-design defence."
+    },
+    {
+      "id": "bug-257",
+      "summary": "(HIGH) The bug-213 created_at fallback feeds the episode-boundary penalty, which halves every historical episode's score: _episode_boundary_factor exempts rows with an empty timestamp (`if not memory_ts_str: return 1.0`), and until 2.5.5a1 that exemption covered the two-thirds of episodes whose start_time is NULL (338/505 on the production deployment). The a1 fallback gives those rows created_at as their timestamp, so they now enter the penalty branch, and with EPISODE_DECAY_RATE=0.01/h the factor saturates at EPISODE_DECAY_FLOOR=0.5 for anything ~3 days older than the newest episode — which is every episode except the most recent few BY CONSTRUCTION, since the boundary is MAX(episodes.created_at) over the same scope. Measured on a production snapshot (in-process do_recall, rsf+confidence on, query='embedding A/B ベンチ Track B fast regime 候補モデル run 進捗', agent=claude-code): episode cosines exactly halve (ep 32: 0.6293->0.3147, ep 468: 0.6192->0.3096), episodes 39/40 drop off the vector channel into backfill, and at limit=10 the recall answer goes from 7 rows (5 episodes) on 2.5.4a3 to 3 rows (1 episode) at the recalibrated gate 0.4288 — 2 rows at the pre-a1 gate 0.447. The rows demoted are exactly the session-start grounding rows bug-213's own rationale said the fallback exists to surface. Same defect class as bug-215's trade-off note and the an earlier decision autocut finding: a local repair (give undated rows a real age) silently changed a different mechanism (cross-session penalty membership) that keys on the same field. Also note the double time punishment: _compute_confidence time_decay and the boundary penalty now both read the same fallback timestamp.",
+      "severity": "HIGH",
+      "discovered": "2026-08-18T00:00:00Z",
+      "version": "2.5.5a1",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "_episode_boundary_factor\\(r\\.get\\(\"timestamp\"\\)",
+      "expected": "present",
+      "status": "open",
+      "category": "scoring-interaction",
+      "note": "Interaction of bug-213 (fixed, 2.5.5a1) with the v2.4.14 episode-boundary penalty. The penalty's own docstring scopes its intent to memories ('weaken cross-session memories so current-session signals take precedence'); episodes are cross-session summaries by construction and their retrieval purpose IS cross-session grounding. Design fork, owner ruling wanted before a fix: (a) exempt episode rows from the boundary penalty entirely (also changes the 167 dated episodes, which were already penalized pre-a1); (b) let the penalty read only the recorded start_time, not the fallback (preserves pre-a1 behavior exactly, but perpetuates the dated-punished/undated-exempt incoherence bug-213 removed from the confidence path); (c) accept and document. Measurement artifacts: scratchpad r715 (probe re-run of an earlier decision's instrument against master vs 2.5.4a3 on the same snapshot copy)."
     }
   ]
 }
