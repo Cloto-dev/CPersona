@@ -745,7 +745,7 @@ registry.auto_tool(
             "query": {"type": "string", "description": "Search query (empty returns recent memories)"},
             "limit": {
                 "type": "integer",
-                "description": "Max memories to return (agent-facing cap; the library layer accepts up to the scan window for direct callers)",
+                "description": "Per-retriever search depth, not a pure response cap (an earlier decision): the value is handed to each retrieval channel (vector / episode FTS / keyword) as its top-K, so lowering it shrinks the candidate pool itself — rows beyond the depth are unreachable at any gate value, and score normalization / autocut operate on the smaller pool, which can also reorder what remains. Fewer rows than this may be returned. (Agent-facing cap; the library layer accepts up to the scan window for direct callers.)",
                 "default": 10,
                 "minimum": 0,
                 "maximum": 100,
@@ -858,7 +858,7 @@ registry.auto_tool(
             },
             "limit": {
                 "type": "integer",
-                "description": "Max recalled memories (agent-facing cap; the library layer accepts up to the scan window for direct callers)",
+                "description": "Per-retriever search depth for the underlying recall, not a pure response cap — same semantics as recall's limit (an earlier decision): lowering it shrinks the candidate pool itself, not just the rows returned. (Agent-facing cap; the library layer accepts up to the scan window for direct callers.)",
                 "default": 10,
                 "minimum": 0,
                 "maximum": 100,

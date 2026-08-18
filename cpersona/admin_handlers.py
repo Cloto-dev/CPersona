@@ -1046,6 +1046,51 @@ async def _calibrate_fused_gate(
     }
 
 
+async def _calibrate_fused_gate_median(
+    db,
+    agent_id: str,
+    sample_queries: int,
+    window_min: float,
+    beta: float,
+    floor: float,
+    draws: int | None = None,
+) -> dict | None:
+    """Median-of-K wrapper over ``_calibrate_fused_gate`` (an earlier decision).
+
+    The single-draw estimator is unstable: ``_separation_threshold``'s objective
+    J(θ) = TPR + β(1−FPR) is multimodal over a real corpus (a second mode near
+    θ≈0.152 reproduced on every probe draw, 2026-08-17), and the calibration
+    samples its pseudo-queries with ``ORDER BY RANDOM()`` — so one unlucky draw
+    can hand the argmax to the minor mode. Production shipped a 0.1544 gate that
+    21 subsequent probe draws never produced again (median 0.4288, stdev
+    0.025–0.044). A median across K independent draws cannot land on a mode that
+    fewer than half the draws select.
+
+    Returns the stats dict of the draw holding the (upper) median threshold —
+    the reported numbers stay one coherent measurement rather than an average of
+    incompatible runs — annotated with every successful draw's threshold under
+    ``threshold_draws``. None when every draw returns None (same degrade
+    contract as the single-draw calibration: the caller keeps the heuristic
+    gate).
+    """
+    if draws is None:
+        draws = config.FUSED_GATE_CALIBRATION_DRAWS
+    results: list[dict] = []
+    for _ in range(max(1, draws)):
+        stats = await _calibrate_fused_gate(
+            db, agent_id, sample_queries, window_min, beta, floor
+        )
+        if stats is not None:
+            results.append(stats)
+    if not results:
+        return None
+    results.sort(key=lambda s: s["threshold"])
+    chosen = results[len(results) // 2]
+    if len(results) > 1:
+        chosen["threshold_draws"] = [s["threshold"] for s in results]
+    return chosen
+
+
 async def _sample_embeddings(db, agent_id: str, sample_n: int):
     """Draw the embedding sample the null distribution is built from.
 
@@ -1253,7 +1298,7 @@ async def do_calibrate_threshold(
             # must not abort calibration and lose the vector threshold computed above (which
             # is persisted below). Degrade to the heuristic gate on any failure.
             try:
-                fused_stats = await _calibrate_fused_gate(
+                fused_stats = await _calibrate_fused_gate_median(
                     db,
                     agent_id,
                     config.FUSED_GATE_SAMPLE_QUERIES,
@@ -1269,6 +1314,16 @@ async def do_calibrate_threshold(
                 )
                 fused_stats = None
             if fused_stats is not None:
+                # an earlier decision / an earlier decision: the 0.1544 collapse produced zero log lines —
+                # the gate is recall's effective filter, so a replacement is worth one.
+                logger.info(
+                    "Fused gate [%s]: %s -> %.4f (signal=%s, draws=%s)",
+                    agent_id,
+                    vector._agent_fused_gates.get(agent_id, "unset"),
+                    fused_stats["threshold"],
+                    fused_stats["signal"],
+                    fused_stats.get("threshold_draws", [fused_stats["threshold"]]),
+                )
                 vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
                 vector._fused_gate_signal = fused_stats["signal"]
                 # Only on success: a degraded run (no embedding client, a flaky
