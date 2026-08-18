@@ -274,40 +274,48 @@ async def test_recall_boundary_warns_but_serves(sidecar, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_read_boundaries_keep_their_collection_on_a_gate_refusal(sidecar, monkeypatch):
-    """bug-232 (the bug-169 class): a gate refusal still owes its caller the collection.
+async def test_read_boundaries_warn_through_on_unmapped_auto(sidecar, monkeypatch):
+    """bug-256 (owner ruling 2026-08-18): unmapped ``@auto`` never rejects a READ.
 
-    The unmapped-``@auto`` reject fires on READS too (no ``write`` guard on that
-    branch), and it is the session-start call shape — recall(project_id="@auto") for an
-    agent with no [defaults] entry. Before the fix those four boundaries answered with
-    ``_oc_reject``'s bare {ok, error, operating_context_revision}, so a client iterating
-    ``resp["messages"]`` / ``resp["memories"]`` raised KeyError on exactly one path while
-    every other failure mode of the same tool kept the key.
+    §5.1 damage asymmetry — a bad read filter loses nothing, a bad write pollutes a
+    bucket — was implemented on the registry-validation branch but not the
+    unmapped-``@auto`` branch, so the session-start call shape
+    (recall(project_id="@auto") for an agent with no [defaults] entry) was refused in
+    reject mode. It now resolves to '' (global pool) and warns; only writes reject.
+    bug-232's shape guarantee (a refusal owes its caller the collection) is pinned
+    below for the write path, which is the one that can still refuse.
     """
     from cpersona import server
 
     sidecar(_with_enforce("reject"))
 
-    async def unreachable(*a, **k):  # pragma: no cover - the gate blocks first
-        raise AssertionError("handler called despite reject")
+    async def echo_recall(agent_id, query, limit, **kwargs):
+        return {"messages": [], "seen_project_id": kwargs.get("project_id")}
 
-    for name in ("do_recall", "do_recall_with_context", "do_list_memories", "do_list_episodes"):
-        monkeypatch.setattr(server, name, unreachable)
+    async def echo_list(agent_id, limit, project_id=None):
+        return {"memories": [], "count": 0, "seen_project_id": project_id}
+
+    monkeypatch.setattr(server, "do_recall", echo_recall)
+    monkeypatch.setattr(server, "do_list_memories", echo_list)
 
     recall = await server.do_recall_boundary("agent.unknown", "q", 5, False, "", [], "@auto", "")
-    assert recall["ok"] is False and "no [defaults] mapping" in recall["error"]
+    assert recall["seen_project_id"] == ""  # resolved to the global pool, not refused
+    assert "no [defaults] mapping" in recall["operating_context_warning"]
     assert recall["messages"] == []
 
-    merged = await server.do_recall_with_context_boundary(
-        "agent.unknown", "q", [], 5, "", False, "@auto", ""
-    )
-    assert merged["ok"] is False and merged["messages"] == []
-
     memories = await server.do_list_memories_boundary("agent.unknown", 10, project_id="@auto")
-    assert memories["ok"] is False and memories["memories"] == [] and memories["count"] == 0
+    assert memories["seen_project_id"] == "" and "no [defaults] mapping" in memories["operating_context_warning"]
 
-    episodes = await server.do_list_episodes_boundary("agent.unknown", 10, project_id="@auto")
-    assert episodes["ok"] is False and episodes["episodes"] == [] and episodes["count"] == 0
+    # The write seam keeps the rejection — and (bug-232) a refusal keeps its shape.
+    resolved, warning, error = operating_context.check_project_id("@auto", "agent.unknown", True)
+    assert resolved is None and "no [defaults] mapping" in error
+
+
+def test_auto_unmapped_reject_mode_warns_reads(sidecar):
+    """bug-256 companion at the helper level: read side of the write-only rejection."""
+    sidecar(_with_enforce("reject"))
+    resolved, warning, error = operating_context.check_project_id("@auto", "agent.unknown", False)
+    assert resolved == "" and error is None and "no [defaults] mapping" in warning
 
 
 @pytest.mark.asyncio

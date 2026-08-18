@@ -3394,7 +3394,7 @@
       "status": "fixed",
       "category": "contract-shape",
       "fixed_in": "2.5.5",
-      "fix_note": "The four read boundaries merge their documented empty collection into the operating-context gate refusal ({messages: []} for the two recalls, {memories/episodes: [], count: 0} for the lists), the bug-169 treatment. Shape fix only — whether unmapped-@auto should reject reads at all (OPERATING_CONTEXT_DESIGN §5.1 says reads only warn) is an open policy question recorded for the maintainer."
+      "fix_note": "The four read boundaries merge their documented empty collection into the operating-context gate refusal ({messages: []} for the two recalls, {memories/episodes: [], count: 0} for the lists), the bug-169 treatment. Shape fix only — whether unmapped-@auto should reject reads at all (OPERATING_CONTEXT_DESIGN §5.1 says reads only warn) is an open policy question recorded for the maintainer. The open policy question was ruled on 2026-08-18: reads warn (§5.1); bug-256 implements the write-only rejection, which makes the read-side refusal — and this shape merge on the read boundaries — unreachable-by-design defence."
     },
     {
       "id": "bug-233",
@@ -3717,6 +3717,20 @@
       "category": "read-path-budget",
       "fix_sketch": "Give both list handlers the same character-budget discipline as `get_contents`: a module constant pinned at the pre-an earlier decision worst case (500 x 2000 and 200 x 2000), deliberately not derived from `MAX_CONTENT_LENGTH`, admitting whole rows and reporting `budget_chars` / `deferred` (or degrading to the preview tier with a `ref`) when it bites. Alternatively declare `maximum` on the schemas and preview-trim these rows, but the constant must not be a function of the write cap.",
       "note": "Deferred: list_memories/list_episodes need the same character-budget discipline as get_contents (bug-211 class); the budget constants and degradation shape deserve one design pass rather than an inline guess. Found by the 2026-08-18 pre-2.5.5a1 review (an earlier decision)."
+    },
+    {
+      "id": "bug-256",
+      "summary": "(MEDIUM) The unmapped-@auto branch of check_project_id rejected READS in reject mode: the write guard existed on the registry-validation branch but not here, so the session-start call shape — recall(project_id='@auto') for an agent with no [defaults] entry — was refused outright, contradicting both the function's own docstring and OPERATING_CONTEXT_DESIGN §5.1 (damage asymmetry: a bad read filter loses nothing, a bad write pollutes a bucket). Found by the 2026-08-18 pre-2.5.5a1 review as bug-232's open policy half; owner ruling 2026-08-18: reads warn.",
+      "severity": "MEDIUM",
+      "discovered": "2026-08-18T00:00:00Z",
+      "version": "2.5.4",
+      "file": "cpersona/operating_context.py",
+      "pattern": "bug-256",
+      "expected": "present",
+      "status": "fixed",
+      "category": "policy-vs-spec",
+      "fixed_in": "2.5.5",
+      "fix_note": "The rejection is gated on `write`, exactly as the registry-validation branch below it always was; an unmapped @auto read resolves to '' (global pool) with the mapping warning attached, and only writes refuse. Chosen over removing reject-mode from reads wholesale: the explicit-value branch already had the correct write-only guard, so this makes the two branches express one policy rather than introducing a second. The bug-232 collection-merge on the read boundaries is retained as unreachable-by-design defence."
     }
   ]
 }

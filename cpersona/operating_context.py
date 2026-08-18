@@ -233,7 +233,13 @@ def check_project_id(
                 f"@auto has no [defaults] mapping for agent_id '{agent_id}' "
                 f"(rev {context.revision}); resolved to '' (global pool)"
             )
-            if context.enforce == "reject":
+            # bug-256: rejection is gated on `write`, as the registry-validation
+            # branch below always was. The docstring's promise (§5.1 damage
+            # asymmetry: a bad read filter loses nothing, a bad write pollutes a
+            # bucket) held everywhere except here — the session-start call shape,
+            # recall(project_id="@auto") for an unmapped agent, was refused
+            # instead of warned. Owner ruling 2026-08-18: reads warn.
+            if context.enforce == "reject" and write:
                 return None, None, msg
             resolved = ""
             warning = None if context.enforce == "off" else msg
