@@ -238,6 +238,12 @@ FUSED_GATE_ENABLED = os.environ.get("CPERSONA_FUSED_GATE_ENABLED", "true").lower
 # Number of pseudo-queries sampled at calibration time (each runs one fusion recall,
 # so this bounds calibration cost — an offline / startup event, not per-recall).
 FUSED_GATE_SAMPLE_QUERIES = max(1, _parse_int("CPERSONA_FUSED_GATE_SAMPLE_QUERIES", 40))
+# Independent calibration draws per gate; the applied threshold is their median
+# (CSC #722). The separation objective is multimodal over a real corpus, so a
+# single draw's argmax can hand the gate to a minor mode — production shipped a
+# 0.1544 gate that 21 probe draws never reproduced. Total calibration cost is
+# DRAWS * SAMPLE_QUERIES recalls, still an offline / startup event.
+FUSED_GATE_CALIBRATION_DRAWS = max(1, _parse_int("CPERSONA_FUSED_GATE_CALIBRATION_DRAWS", 5))
 # knob 3 — the precision point. The calibrated separation curve is data-derived; this
 # is the single policy choice of where to sit on it. strict / balanced / lenient map to
 # a specificity weight beta in _separation_threshold (maximise sensitivity +
