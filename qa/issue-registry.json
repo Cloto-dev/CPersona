@@ -3324,7 +3324,7 @@
       "status": "fixed",
       "category": "fail-open-scan",
       "fixed_in": "2.5.5",
-      "fix_note": "json_valid(source) leads deep_anonymous_source's predicate as it does in the two sibling checks (the bug-144 guard): SQLite's json_extract RAISES on malformed JSON rather than returning NULL, so one legacy row aborted the whole scan and the checkup finding filter printed nothing. Residual (recorded, not fixed here): checkup's non-JSON output still renders a deep-check {'error': ...} result as silence; surfacing errors as findings in the CLI filter is follow-up work."
+      "fix_note": "json_valid(source) leads deep_anonymous_source's predicate as it does in the two sibling checks (the bug-144 guard): SQLite's json_extract RAISES on malformed JSON rather than returning NULL, so one legacy row aborted the whole scan and the checkup finding filter printed nothing. Residual closed (2.5.5, an earlier decision): the CLI filter (checkup._deep_findings) treats an 'error' key as a finding, so a crashed deep check prints instead of vanishing from the non-JSON output."
     },
     {
       "id": "bug-228",
@@ -3520,7 +3520,7 @@
       "status": "fixed",
       "category": "input-validation",
       "fixed_in": "2.5.5",
-      "fix_note": "One os.stat answers both questions: the import path requires stat.S_ISREG and takes the cap from st.st_size. os.path.getsize reports 0 for character devices and FIFOs, so the only size guard passed exactly the inputs that have no size and readlines() ran unbounded. Residual (recorded): a regular file that grows between the stat and the read can still exceed MAX_IMPORT_BYTES; bounding the read itself is follow-up work."
+      "fix_note": "One os.stat answers both questions: the import path requires stat.S_ISREG and takes the cap from st.st_size. os.path.getsize reports 0 for character devices and FIFOs, so the only size guard passed exactly the inputs that have no size and readlines() ran unbounded. Residual closed (2.5.5, an earlier decision): the read itself is bounded — the import reads at most MAX_IMPORT_BYTES+1 bytes and refuses when the extra byte arrives, so growth between the stat and the read no longer bypasses the cap."
     },
     {
       "id": "bug-242",
@@ -3576,7 +3576,7 @@
       "status": "fixed",
       "category": "repair-mints-drift",
       "fixed_in": "2.5.5",
-      "fix_note": "The bug-208 backfill writes the canonical aware form (same strftime as bug-229) instead of copying naive created_at into episodes.start_time, where ' ' < 'T' made every backfilled row sort before every recorded one regardless of date. Residual (recorded): check_timestamp_format_drift still reads memories only — episodes.start_time/end_time have no format-drift detector, so pre-existing naive values in deployed DBs are neither detected nor repaired; extending the detector is follow-up work."
+      "fix_note": "The bug-208 backfill writes the canonical aware form (same strftime as bug-229) instead of copying naive created_at into episodes.start_time, where ' ' < 'T' made every backfilled row sort before every recorded one regardless of date. Residual closed (2.5.5, an earlier decision): check_episode_timestamp_format_drift covers episodes.start_time/end_time — aware offsets normalize to UTC losslessly, and naive values that verbatim-equal created_at (the old backfill's copies) are re-encoded to the canonical aware form; other naive values are reported unfixable (intended zone unknowable)."
     },
     {
       "id": "bug-246",
