@@ -414,9 +414,21 @@ _AUTO_PROJECT_ID_CLAUSE = (
 # =============================================================================
 
 # 2.5.1 Soft layer (§4): the sidecar's instructions.summary rides the MCP
-# initialize response verbatim. Read once at process start — MCP only sends
-# instructions at initialize, so per-call reload would buy nothing; clients
-# see operator edits on reconnect.
+# initialize response verbatim.
+#
+# bug-252: it is read ONCE, here, at import time, and it stays that way for the
+# life of the process. The SDK's Server keeps the string as an attribute set in
+# __init__, and every create_initialization_options() returns that attribute —
+# so a client that reconnects to a RUNNING server is re-served this text however
+# old it is. Only restarting the process publishes an operator's edit. (A stdio
+# client relaunches the server per session and therefore gets one for free; the
+# streamable-HTTP transport, where one long-lived process serves every client,
+# does not.) The comment here used to claim the opposite — "clients see operator
+# edits on reconnect" — which was true of nothing.
+#
+# The Hard layer is NOT frozen with it: operating_context.get_context() re-parses
+# the sidecar whenever its mtime changes, so project_id validation, '@auto'
+# resolution and get_operating_context are live within the same process.
 registry = ToolRegistry("cloto-mcp-cpersona", instructions=operating_context.instructions_text())
 
 
@@ -1033,7 +1045,18 @@ registry.auto_tool(
 
 registry.auto_tool(
     "list_memories",
-    "List recent memories for an agent (for dashboard display).",
+    (
+        "List recent memories for an agent (for dashboard display). "
+        "bug-255: the response holds a 1,000,000-character content budget. Rows are "
+        "returned newest-first and none is dropped; once the budget is spent, later "
+        "rows LONGER than the preview cap (CPERSONA_RECALL_PREVIEW_CHARS, default 500) "
+        "degrade to a pure prefix with content_truncated/content_len and a `ref` that "
+        "get_contents expands under the row's own agent_id (in an all-agents listing, "
+        "pair the ref with the row's agent_id field). budget_chars appears iff at least "
+        "one row was degraded. The effective ceiling is the budget plus one whole row "
+        "plus the degraded rows' prefixes, so it scales with the preview cap; preview "
+        "cap 0 disables trimming and the budget with it."
+    ),
     {
         "type": "object",
         "properties": {
@@ -1053,7 +1076,16 @@ registry.auto_tool(
 
 registry.auto_tool(
     "list_episodes",
-    "List archived episodes for an agent (for dashboard display).",
+    (
+        "List archived episodes for an agent (for dashboard display). "
+        "bug-255: the response holds an 800,000-character budget across `summary` and "
+        "`keywords` together, with the same degradation and ceiling semantics as "
+        "list_memories — rows past the budget that exceed the preview cap carry pure "
+        "prefixes plus summary_truncated/summary_len and keywords_truncated/"
+        "keywords_len; budget_chars appears iff at least one row was degraded. Their "
+        "`ref` expands the summary via get_contents (under the row's own agent_id); a "
+        "full keywords string is only available through export_data."
+    ),
     {
         "type": "object",
         "properties": {

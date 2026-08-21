@@ -1902,6 +1902,48 @@ HEALTH_CHECKS: list[Check] = [
 
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]
 
+_CHECKS_BY_NAME = {c.name: c for c in HEALTH_CHECKS}
+
+# bug-254: the checks whose DETECTION is a whole-database read. fts_integrity
+# runs the FTS5 'integrity-check' command over both indexes and sqlite_integrity
+# runs PRAGMA quick_check over the whole file. Of these, only the REPORT-ONLY
+# member (fix_capable=False) leaves the write seam in do_check_health — a scan
+# that can never write has no business under the shared lock (the bug-072/083
+# doctrine). A fix-capable member stays locked even though its scan is also
+# O(database): its detection must be atomic with its repair, or corruption the
+# fix run's own content rewrites introduce lands in a window where an earlier
+# clean pre-scan already voted "no repair needed". See the dispatch there.
+WHOLE_DB_SCAN_CHECKS = frozenset({"fts_integrity", "sqlite_integrity"})
+
+
+def is_fix_capable(name: str) -> bool:
+    """Whether the named check can write a repair (registry metadata lookup).
+
+    An unknown name answers False: a check that does not exist cannot repair
+    anything, and the caller that could pass one (do_check_health) has already
+    rejected unknown names (bug-230).
+    """
+    check = _CHECKS_BY_NAME.get(name)
+    return bool(check and check.fix_capable)
+
+
+def merge_issues(*groups: list[dict]) -> list[dict]:
+    """Merge issue lists produced by separate runs back into registry order.
+
+    bug-254 split one health run across two seams (an unlocked scan and the
+    locked remainder), and the response's ``issues`` list is the operator's
+    reading order. Sorting by the registry index restores exactly the order a
+    single run would have produced; the sort is stable, so several issues from
+    the same check keep the order their runner emitted them in. An issue with
+    an unrecognised ``check`` sorts last rather than being dropped.
+    """
+    merged: list[dict] = []
+    for group in groups:
+        merged.extend(group)
+    order = {name: index for index, name in enumerate(HEALTH_CHECK_NAMES)}
+    merged.sort(key=lambda issue: order.get(issue.get("check"), len(order)))
+    return merged
+
 
 # bug-083: embedding_dimension is cache-aware too — it consumes the pre-probed
 # "expected_dim" instead of live-embedding under the write lock.

@@ -123,11 +123,108 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
     return result
 
 
+# bug-255: the two list tools were bounded by a row count and nothing else, so
+# they inherited the write cap as their real ceiling. At a 2000-character cap the
+# row caps did bound them (500 rows for memories; 200 rows x 2 text columns for
+# episodes); that cap was later raised to 16000 and both worst cases grew 8x — to
+# 8M and 6.4M characters — without a line of this file changing, in the same
+# release that budgeted get_contents. Same doctrine as GET_CONTENTS_MAX_CHARS and
+# server.RECALL_FULL_CONTENT_MAX_CHARS: the budget is stated here in characters
+# and pinned at what the worst case USED to be, deliberately NOT derived from
+# MAX_CONTENT_LENGTH, so the next relaxation of the write bound cannot enlarge
+# this read again.
+LIST_MEMORIES_MAX_CHARS = 1_000_000  # 500 rows x the old 2000-character cap
+LIST_EPISODES_MAX_CHARS = 800_000  # 200 rows x 2 text columns x the same cap
+
+
+def _apply_list_budget(items: list[dict], fields: tuple[str, ...], budget: int, kind: str) -> bool:
+    """Bound a list response in characters; returns whether any row was DEGRADED (bug-255).
+
+    The return drives ``budget_chars`` on the response, so it reports rows
+    actually trimmed — not merely that the running total crossed the budget. A
+    listing can cross the budget and still degrade nothing (every later row
+    already fits under the preview cap); advertising ``budget_chars`` there
+    would send a caller hunting for ``ref`` markers that do not exist.
+
+    The budget is honest about what it bounds: whole rows are never cut, the
+    first row is always admitted, and a degraded row still carries a preview-cap
+    prefix — so the effective ceiling is the budget plus one whole row plus up
+    to rows x preview-cap of prefixes, and an operator who raises
+    CPERSONA_RECALL_PREVIEW_CHARS raises that ceiling with it (at or above
+    MAX_CONTENT_LENGTH nothing is longer than the cap, and the budget is
+    effectively off — the same trade _apply_full_content_budget makes).
+
+    Rows past the budget are not dropped — a listing that silently returns fewer
+    rows than it was asked for is indistinguishable from an empty corpus — they
+    DEGRADE to the recall preview tier: each budgeted field becomes a pure prefix
+    of config.RECALL_PREVIEW_CHARS with ``<field>_len`` / ``<field>_truncated``
+    markers and a ``ref`` (``mem:<id>`` / ``ep:<id>``) that get_contents resolves
+    in full. Pure prefix, no ellipsis, for the same reason _apply_preview uses
+    one: a prefix still starts-with-matches the stored text.
+
+    Spent front-to-back, because these rows arrive newest-first and the valuable
+    end of a listing is the newest one. (bug-214 spends recall's budget from the
+    tail for the same reason: there the ranked list is reversed before it is
+    emitted, so its valuable end is the last row. The rule is "spend from the
+    valuable end", not "spend from the front".)
+
+    Whole rows only: the budget never cuts a row that fits, and the FIRST row is
+    admitted whatever its size, so one oversized memory cannot make the whole
+    listing a wall of prefixes. Markers are additive and only appear on the rows
+    the budget actually reached.
+
+    CPERSONA_RECALL_PREVIEW_CHARS=0 disables the preview tier wholesale; the
+    operator opted out of trimming, so it disables this budget too — the same
+    stance server._apply_full_content_budget takes, and the reason degradation
+    is never allowed to become deletion.
+    """
+    cap = config.RECALL_PREVIEW_CHARS
+    if cap <= 0:
+        return False
+
+    def charge(item: dict) -> int:
+        return sum(len(item[f]) for f in fields if isinstance(item.get(f), str))
+
+    used = 0
+    over_budget = False
+    any_degraded = False
+    for item in items:
+        if not over_budget:
+            if used and used + charge(item) > budget:
+                over_budget = True
+            else:
+                used += charge(item)
+                continue
+        trimmed = False
+        # `field` is dataclasses.field at module scope (F402) — name it `column`.
+        for column in fields:
+            value = item.get(column)
+            if isinstance(value, str) and len(value) > cap:
+                item[f"{column}_len"] = len(value)
+                item[column] = value[:cap]
+                item[f"{column}_truncated"] = True
+                trimmed = True
+        if trimmed:
+            any_degraded = True
+            # The handle back to the full row. Without it a truncated listing row
+            # would be the bug-117 failure mode: content with no way to expand it.
+            # It resolves through get_contents under the row's OWN agent_id: in an
+            # all-agents listing (agent_id=""), a ref expanded under a different
+            # agent comes back missing, so callers must pair it with the row's
+            # agent_id field.
+            item["ref"] = f"{kind}:{item['id']}"
+        used += charge(item)
+    return any_degraded
+
+
 async def do_list_memories(agent_id: str, limit: int, project_id: str | None = None) -> dict:
     """List recent memories for dashboard display.
 
     project_id (v2.4.17): γ filter — None = no filter, '' = global pool only,
     'X' = bucket 'X' ∪ global pool.
+
+    bug-255: bounded at LIST_MEMORIES_MAX_CHARS of content; see
+    _apply_list_budget for what a row past the budget looks like.
     """
     # Empty agent_id = all agents (the tool schema documents it) — hence `or None`.
     iso = isolation_where(agent_id=agent_id or None, project_id=project_id)
@@ -159,11 +256,29 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
                 "channel": row[9],
             }
         )
-    return {"memories": memories, "count": len(memories)}
+    over_budget = _apply_list_budget(memories, ("content",), LIST_MEMORIES_MAX_CHARS, "mem")
+    result = {"memories": memories, "count": len(memories)}
+    if over_budget:
+        # Absent unless the budget actually bit, so a caller that never meets it
+        # sees the response shape it always saw (the get_contents convention).
+        result["budget_chars"] = LIST_MEMORIES_MAX_CHARS
+    return result
 
 
 async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = None) -> dict:
-    """List archived episodes for dashboard display. Same γ semantics as do_list_memories."""
+    """List archived episodes for dashboard display. Same γ semantics as do_list_memories.
+
+    bug-255: bounded at LIST_EPISODES_MAX_CHARS across BOTH text columns —
+    `keywords` goes through the same write cap as `summary` (do_archive_episode
+    sanitises it), so budgeting only the summary would leave half the response
+    unbounded.
+
+    One honest asymmetry: the `ref` on a degraded row expands the SUMMARY
+    (get_contents returns '[Episode] <summary>'), and no tool returns an
+    episode's keywords in full except export_data. Trimming it anyway is the
+    lesser evil — the alternative is a response with no upper bound at all —
+    but a caller that needs the whole keyword string must export.
+    """
     # Empty agent_id = all agents (the tool schema documents it) — hence `or None`.
     iso = isolation_where(agent_id=agent_id or None, project_id=project_id)
     async with connection() as db:
@@ -186,7 +301,13 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
                 "created_at": row[7],
             }
         )
-    return {"episodes": episodes, "count": len(episodes)}
+    over_budget = _apply_list_budget(
+        episodes, ("summary", "keywords"), LIST_EPISODES_MAX_CHARS, "ep"
+    )
+    result = {"episodes": episodes, "count": len(episodes)}
+    if over_budget:
+        result["budget_chars"] = LIST_EPISODES_MAX_CHARS
+    return result
 
 
 async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
