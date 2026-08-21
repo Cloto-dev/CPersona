@@ -41,7 +41,11 @@ from cpersona.utils import SCORING_VERSION
 
 # The golden pair. Re-pin BOTH together, and only alongside a SCORING_VERSION bump
 # (or when extending the grid itself — say so in the commit message if you do).
-GOLDEN_SCORING_VERSION = "255a1-episode-created-at"
+# 255a3 (bug-257): the episode-penalty exemption is a CALL-SITE membership change
+# (_apply_recall_scoring skips episode rows); the two functions this grid drives are
+# untouched, so the fingerprint deliberately stays the same while the version moves.
+# The exemption itself is pinned behaviourally in test_255a3_episode_penalty_exemption.py.
+GOLDEN_SCORING_VERSION = "255a3-episode-penalty-exempt"
 GOLDEN_FINGERPRINT = "75fb2c84c901c1b6dfa82b18d202824299b6c9807f304d6688315647a080d027"
 
 FIXED_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
