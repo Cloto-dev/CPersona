@@ -177,3 +177,44 @@ async def test_exempt_episode_outranks_penalised_memory_after_resort(clean_db, m
     assert [r["id"] for r in results] == [2, 1], (
         "exempt episode (0.048) must outrank the penalised memory (0.050 * floor)"
     )
+
+
+@pytest.mark.asyncio
+async def test_exempt_episode_outranks_penalised_memory_under_confidence(clean_db, monkeypatch):
+    """The production configuration (confidence on) expresses the exemption too.
+
+    With CONFIDENCE_ENABLED the ordering is owned by the confidence re-sort, not
+    the bug-115 fusion re-sort, so the ranking consequence must be pinned here
+    separately: the penalty halves the memory's cosine before _compute_confidence
+    reads it, while the exempt episode's cosine reaches confidence intact — same
+    age, same raw cosine, the episode wins.
+    """
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "EPISODE_PENALTY_ENABLED", True)
+    await _arm_boundary(clean_db, AGENT)
+
+    memory_row = {
+        "id": 11,
+        "content": "old cross-session memory",
+        "timestamp": ANCIENT_TS,
+        "_cosine": 0.62,
+    }
+    episode_row = {
+        "id": 12,
+        "_rid": ("ep", 12),
+        "source": {"System": "episode"},
+        "content": "old episode summary",
+        "timestamp": ANCIENT_TS,
+        "_cosine": 0.62,
+    }
+    results, _, _, _ = await memory_handlers._apply_recall_scoring(
+        clean_db, AGENT, [dict(memory_row), dict(episode_row)], deep=False
+    )
+    by_id = {r["id"]: r for r in results}
+
+    assert by_id[12]["_cosine"] == pytest.approx(0.62), "episode cosine must reach confidence intact"
+    assert by_id[11]["_cosine"] == pytest.approx(0.62 * config.EPISODE_DECAY_FLOOR)
+    assert [r["id"] for r in results] == [12, 11], (
+        "under confidence the exempt episode must outrank the penalised memory of equal "
+        "age and raw cosine"
+    )
