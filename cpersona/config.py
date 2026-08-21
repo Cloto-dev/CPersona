@@ -73,8 +73,10 @@ MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
 # to be — get_contents at GET_CONTENTS_MAX_CHARS (40000 = 20 refs x 2000),
 # recall(full_content=true) at server.RECALL_FULL_CONTENT_MAX_CHARS (200000 =
 # limit 100 x 2000; bug-211 — this path shipped unbudgeted at first, so the
-# claim here was briefly true only of get_contents). Neither is derived from
-# this constant, so a batch cannot grow just because this number did. The one
+# claim here was briefly true only of get_contents), and the two list tools at
+# admin_handlers.LIST_MEMORIES_MAX_CHARS / LIST_EPISODES_MAX_CHARS (1,000,000
+# and 800,000; bug-255 — the second wave of the same omission). None of them is
+# derived from this constant, so a batch cannot grow just because this number did. The one
 # documented exception is a single row that alone exceeds the budget, which is
 # still returned whole rather than made unreachable; at this default no such
 # row can exist.

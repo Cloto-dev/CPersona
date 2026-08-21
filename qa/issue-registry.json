@@ -3669,12 +3669,12 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/server.py",
-      "pattern": "instructions=operating_context.instructions_text",
+      "pattern": "bug-252",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Either make the claim true or make it false loudly. Truthful option: build the `InitializationOptions` per connection — subclass/patch so `instructions` is read from `operating_context.instructions_text()` at `create_initialization_options()` time instead of at construction (the mtime cache makes this cheap). Cheap option: include `context_revision` in the injected summary and have `get_operating_context` echo the revision that was actually sent at initialize alongside the live one, and correct server.py:401 and docs/OPERATING_CONTEXT_DESIGN.md:57-58 to say \"frozen per process; restart to redistribute\".",
-      "note": "Deferred: making instructions per-connection requires patching InitializationOptions construction in the vendored SDK layer; making the claim honest instead is a doc decision the maintainer should pick. Found by the 2026-08-18 pre-2.5.5a1 review (CSC Task #723)."
+      "note": "Deferred: making instructions per-connection requires patching InitializationOptions construction in the vendored SDK layer; making the claim honest instead is a doc decision the maintainer should pick. Found by the 2026-08-18 pre-2.5.5a1 review batch.\n\nResolved in 2.5.5a3 by the sketch's doc option (maintainer pick): the server.py comment and OPERATING_CONTEXT_DESIGN.md now state the true behaviour — the Soft layer (initialize instructions) is frozen for the process lifetime and only a process restart publishes an operator edit (a stdio client gets one per session by construction; the shared streamable-HTTP process does not), while the Hard layer reloads on mtime. A test pins both halves so the honest claim cannot drift back. Not done, by choice: per-connection instructions (a vendored-SDK patch) and a runtime revision-echo disclosure of Soft/Hard divergence — either would be a separate additive enhancement, not part of making the claim honest."
     },
     {
       "id": "bug-253",
@@ -3697,12 +3697,12 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "async with transaction",
+      "pattern": "bug-254",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Split the registry the way the embedding work was split: run the read-only, O(database) checks (`sqlite_integrity`, and the `integrity-check` half of `fts_integrity`) in an unlocked `connection()` phase before entering `transaction()`, pass their verdicts in the way `embedding_cache` is passed, and keep only the actual repair statements (the FTS `rebuild`, the content/embedding UPDATEs) inside the locked scope.",
-      "note": "Deferred: splitting the O(database) read-only integrity scans out of the write-lock transaction changes check_health(fix=true) semantics mid-soak; schedule with the next maintenance-window rung. Found by the 2026-08-18 pre-2.5.5a1 review (CSC Task #723)."
+      "note": "Deferred: splitting the O(database) read-only integrity scans out of the write-lock transaction changes check_health(fix=true) semantics mid-soak; schedule with the next maintenance-window rung. Found by the 2026-08-18 pre-2.5.5a1 review batch.\n\nFixed in 2.5.5a3: the whole-database READ scans (fts_integrity's FTS5 integrity-check, sqlite_integrity's PRAGMA quick_check) run on the read seam before the locked phase; the write lock keeps only the repairs. A fix-capable scan that detected corruption re-runs under the lock (its rebuild + re-verify are writes) and reports once; a clean database now pays zero locked scans. The bug-059 post-commit residual re-run is retained deliberately — the pre-fix scan answers 'what needs repairing', the residual answers 'what is still true after the repairs committed', and skipping the latter for a pre-fix-clean index would blind exactly the class a fix run can introduce (repairs rewrite content; a stale FTS index over rewritten content is the bug-008 shape). The locked third copy is the one removed."
     },
     {
       "id": "bug-255",
@@ -3711,12 +3711,12 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "def do_list_memories",
+      "pattern": "bug-255",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Give both list handlers the same character-budget discipline as `get_contents`: a module constant pinned at the pre-CSC-#680 worst case (500 x 2000 and 200 x 2000), deliberately not derived from `MAX_CONTENT_LENGTH`, admitting whole rows and reporting `budget_chars` / `deferred` (or degrading to the preview tier with a `ref`) when it bites. Alternatively declare `maximum` on the schemas and preview-trim these rows, but the constant must not be a function of the write cap.",
-      "note": "Deferred: list_memories/list_episodes need the same character-budget discipline as get_contents (bug-211 class); the budget constants and degradation shape deserve one design pass rather than an inline guess. Found by the 2026-08-18 pre-2.5.5a1 review (CSC Task #723)."
+      "note": "Deferred: list_memories/list_episodes need the same character-budget discipline as get_contents (bug-211 class); the budget constants and degradation shape deserve one design pass rather than an inline guess. Found by the 2026-08-18 pre-2.5.5a1 review batch.\n\nFixed in 2.5.5a3: LIST_MEMORIES_MAX_CHARS = 1,000,000 (500 rows x the old 2000-char cap) and LIST_EPISODES_MAX_CHARS = 800,000 (200 rows x 2 text columns x the same cap — keywords passes the same write cap as summary, so budgeting only the summary would leave half the response unbounded; note this entry's own before/after arithmetic already counted both columns while the sketch's '200 x 2000' counted one). Rows past the budget are never dropped — they degrade to the recall preview tier (pure prefix at RECALL_PREVIEW_CHARS, <field>_len/<field>_truncated markers, a ref that get_contents expands) and the response carries budget_chars; the first row is always whole, and RECALL_PREVIEW_CHARS=0 disables the budget with the tier (degradation must not become deletion). One honest asymmetry is recorded in the docstrings: a degraded episode ref re-expands the summary only; full keywords are reachable only through export_data."
     },
     {
       "id": "bug-256",
