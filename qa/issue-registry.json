@@ -3756,6 +3756,21 @@
       "note": "Interaction of bug-213 (fixed, 2.5.5a1) with the v2.4.14 episode-boundary penalty. The penalty's own docstring scopes its intent to memories ('weaken cross-session memories so current-session signals take precedence'); episodes are cross-session summaries by construction and their retrieval purpose IS cross-session grounding. Design fork, owner ruling wanted before a fix: (a) exempt episode rows from the boundary penalty entirely (also changes the 167 dated episodes, which were already penalized pre-a1); (b) let the penalty read only the recorded start_time, not the fallback (preserves pre-a1 behavior exactly, but perpetuates the dated-punished/undated-exempt incoherence bug-213 removed from the confidence path); (c) accept and document. Measurement artifacts: scratchpad r715 (probe re-run of the earlier in-process recall instrument against master vs 2.5.4a3 on the same snapshot copy).",
       "fixed_in": "2.5.5a3",
       "fix_note": "Owner ruling 2026-08-22: option (a) — episode rows are exempt from the boundary penalty entirely, dated episodes included. The penalty's charter is cross-session memories; an episode's retrieval purpose IS cross-session grounding, and (a) removes the dated-punished/undated-exempt incoherence the same way bug-213 removed it from the confidence path. Implemented as an _is_episode_result skip in _apply_recall_scoring's penalty loop; SCORING_VERSION bumped to 255a3-episode-penalty-exempt (episodes behind the boundary now score up to 2x higher than the sidecar was calibrated against, so the stale-fingerprint recalibration fires on the first boot — median-of-K since 2.5.5a2). Behaviour pinned in tests/test_255a3_episode_penalty_exemption.py. Fixed in 2.5.5a3. Review addition: the production configuration (confidence on) is pinned by its own test — under the confidence re-sort an exempt episode outranks a penalised memory of equal age and raw cosine."
+    },
+    {
+      "id": "bug-258",
+      "category": "operations",
+      "severity": "MEDIUM",
+      "status": "fixed",
+      "version": "2.5.5a3",
+      "discovered": "2026-08-21T00:00:00Z",
+      "file": "cpersona/server.py",
+      "pattern": "bug-258",
+      "expected": "present",
+      "summary": "(MEDIUM) The startup calibration guard held the transport closed for its whole runtime: main() awaited ensure_calibrated_on_startup before starting the stdio/HTTP transport, and a recalibration is minutes of real embedding calls — median-of-K multiplied the per-agent cost by the draw count, and the guard runs once per agent — so a scoring-version bump turned every deploy into a multi-minute full outage. Measured on the production deployment during the 2.5.5a3 rollout: 3.5 minutes (17:16:06 boot to 17:19:30 'Uvicorn running') for two agents over a 2400-row corpus, with the tunnel returning 502 for the duration and the window growing linearly with agents and corpus size.",
+      "note": "Found operationally during the 2.5.5a3 production deploy (the first SCORING_VERSION-bump deploy after median-of-K calibration landed). Calls failing with 502 during the window never reach the server, so there is no double-execution risk — the outage is honest, just long.",
+      "fixed_in": "2.5.5",
+      "fix_note": "main() schedules the guard as a background task (_schedule_startup_calibration) and binds immediately. Safe because the guard's values only ever arrive through it: until it lands the in-memory gates are unset and recall uses the same heuristic fallback as a failed calibration; the stale sidecar is never consulted at recall time (_restore_calibration_state is its only reader). A done-callback reports a failed guard the moment it fails (the silent-death class the stdio bridge's writer had); shutdown cancels a still-running guard rather than holding the exit open for its embedding round-trips (an interrupted calibration leaves the state it started from — the sidecar write is the last step). An explicit calibrate_threshold issued during the window runs concurrently and last-writer-wins per key, same as two explicit runs."
     }
   ]
 }
