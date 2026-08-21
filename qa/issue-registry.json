@@ -3739,11 +3739,11 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.5a1",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "_episode_boundary_factor\\(r\\.get\\(\"timestamp\"\\)",
+      "pattern": "bug-257",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "scoring-interaction",
-      "note": "Interaction of bug-213 (fixed, 2.5.5a1) with the v2.4.14 episode-boundary penalty. The penalty's own docstring scopes its intent to memories ('weaken cross-session memories so current-session signals take precedence'); episodes are cross-session summaries by construction and their retrieval purpose IS cross-session grounding. Design fork, owner ruling wanted before a fix: (a) exempt episode rows from the boundary penalty entirely (also changes the 167 dated episodes, which were already penalized pre-a1); (b) let the penalty read only the recorded start_time, not the fallback (preserves pre-a1 behavior exactly, but perpetuates the dated-punished/undated-exempt incoherence bug-213 removed from the confidence path); (c) accept and document. Measurement artifacts: scratchpad r715 (probe re-run of CSC #711's instrument against master vs 2.5.4a3 on the same snapshot copy)."
+      "note": "Interaction of bug-213 (fixed, 2.5.5a1) with the v2.4.14 episode-boundary penalty. The penalty's own docstring scopes its intent to memories ('weaken cross-session memories so current-session signals take precedence'); episodes are cross-session summaries by construction and their retrieval purpose IS cross-session grounding. Design fork, owner ruling wanted before a fix: (a) exempt episode rows from the boundary penalty entirely (also changes the 167 dated episodes, which were already penalized pre-a1); (b) let the penalty read only the recorded start_time, not the fallback (preserves pre-a1 behavior exactly, but perpetuates the dated-punished/undated-exempt incoherence bug-213 removed from the confidence path); (c) accept and document. Measurement artifacts: scratchpad r715 (probe re-run of the earlier in-process recall instrument against master vs 2.5.4a3 on the same snapshot copy).\n\nOwner ruling 2026-08-22: option (a) — episode rows are exempt from the boundary penalty entirely, dated episodes included. The penalty's charter is cross-session memories; an episode's retrieval purpose IS cross-session grounding, and (a) removes the dated-punished/undated-exempt incoherence the same way bug-213 removed it from the confidence path. Implemented as an _is_episode_result skip in _apply_recall_scoring's penalty loop; SCORING_VERSION bumped to 255a3-episode-penalty-exempt (episodes behind the boundary now score up to 2x higher than the sidecar was calibrated against, so the stale-fingerprint recalibration fires on the first boot — median-of-K since 2.5.5a2). Behaviour pinned in tests/test_255a3_episode_penalty_exemption.py. Fixed in 2.5.5a3."
     }
   ]
 }
