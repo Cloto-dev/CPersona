@@ -222,7 +222,10 @@ def episode_timestamp(start_time: str | None, created_at: str | None) -> str:
 # now scored on the time it was recorded instead of on the imputed corpus midpoint, which
 # on this deployment raises every recent episode and lowers the older ones — the imputed
 # age was a single flat value for rows whose real ages span months.
-SCORING_VERSION = "255a1-episode-created-at"
+# The 2.5.5a3 episode-penalty exemption (bug-257) is the fourth: episode rows no longer
+# enter the boundary penalty at all, so every episode older than the boundary scores up
+# to 2x higher (the EPISODE_DECAY_FLOOR was 0.5) than the sidecar was calibrated against.
+SCORING_VERSION = "255a3-episode-penalty-exempt"
 
 
 def _compute_confidence(

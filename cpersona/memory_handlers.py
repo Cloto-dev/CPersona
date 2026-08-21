@@ -1055,6 +1055,17 @@ async def _apply_recall_scoring(
         if episode_boundary_ts is not None:
             penalized = False
             for r in results:
+                # bug-257: episode rows are exempt from the boundary penalty. The
+                # penalty's charter is to weaken cross-session MEMORIES so
+                # current-session signals take precedence; an episode is a
+                # cross-session summary by construction, and its retrieval purpose
+                # is exactly the cross-session grounding the penalty suppresses.
+                # Before the bug-213 created_at fallback, the NULL-start_time
+                # majority of episodes was exempt by accident (empty timestamp
+                # returned factor 1.0) while dated episodes were penalised; this
+                # makes the exemption principled and uniform instead.
+                if _is_episode_result(r):
+                    continue
                 factor = _episode_boundary_factor(r.get("timestamp"), episode_boundary_ts)
                 if factor < 1.0:
                     penalized = True
