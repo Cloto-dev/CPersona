@@ -289,3 +289,69 @@ def test_max_inflight_env_override(monkeypatch, raw, expected):
         monkeypatch.setenv("CPERSONA_PROXY_MAX_INFLIGHT", raw)
 
     assert proxy_stdio._max_inflight() == expected
+
+
+@pytest.mark.asyncio
+async def test_invalid_utf8_line_gets_an_id_null_error_and_kills_nothing(monkeypatch):
+    """A line that is invalid UTF-8 (not merely invalid JSON) is answered with the
+    bug-135 id:null error instead of killing the emitter.
+
+    json.loads(b'\\x80...') raises UnicodeDecodeError before any JSON parsing —
+    a ValueError that is NOT a JSONDecodeError. Before the review fix it escaped
+    _write_error inside the writer task, and the bridge kept forwarding requests
+    while emitting nothing for the rest of the session.
+    """
+    poison = b"\x80\x81\x82"
+
+    async def handler(request):
+        try:
+            payload = json.loads(request.content)
+        except ValueError:
+            return httpx.Response(502, text="bad request bytes")
+        return httpx.Response(200, json=_result(payload["id"]))
+
+    written = []
+    monkeypatch.setattr(proxy_stdio, "_write_stdout", written.append)
+    monkeypatch.setattr(proxy_stdio.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(proxy_stdio.threading, "Thread", _scripted_thread([poison, _request(2)]))
+
+    await asyncio.wait_for(proxy_stdio.main(), timeout=10)
+
+    by_id = {json.loads(m)["id"]: json.loads(m) for m in written}
+    assert set(by_id) == {None, 2}, "both the poison line and its neighbour must be answered"
+    assert by_id[None]["error"]["code"] == -32000
+    assert by_id[2] == _result(2)
+
+
+@pytest.mark.asyncio
+async def test_writer_survives_a_poisoned_emit_and_later_responses_flow(monkeypatch):
+    """One response whose emission raises is dropped; every later response is
+    still written and main() exits cleanly (the per-item guard in the writer)."""
+    written = []
+    calls = {"n": 0}
+
+    def flaky_write(message):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise BrokenPipeError("simulated torn pipe on one write")
+        written.append(message)
+
+    unblock = asyncio.Event()
+
+    async def handler(request):
+        payload = json.loads(request.content)
+        if payload["id"] == 1:
+            unblock.set()
+        else:
+            await unblock.wait()  # id 2 finishes after id 1, so id 1 is emitted first
+        return httpx.Response(200, json=_result(payload["id"]))
+
+    monkeypatch.setattr(proxy_stdio, "_write_stdout", flaky_write)
+    monkeypatch.setattr(proxy_stdio.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(proxy_stdio.threading, "Thread", _scripted_thread([_request(1), _request(2)]))
+
+    await asyncio.wait_for(proxy_stdio.main(), timeout=10)
+
+    assert [json.loads(m)["id"] for m in written] == [2], (
+        "the poisoned emit (id 1) is dropped; the survivor (id 2) must still flow"
+    )

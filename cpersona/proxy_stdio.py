@@ -64,8 +64,13 @@ def _read_stdin_lines(queue: asyncio.Queue, loop: asyncio.AbstractEventLoop, slo
     without bound. Reading first and gating afterwards would let one extra line
     through per cycle and, more importantly, would not be "stop reading".
 
-    The EOF sentinel is pushed without a slot: shutdown must never be gated on
-    work that is still in flight.
+    The EOF sentinel is pushed without a slot: once EOF has been READ, shutdown
+    is never gated on work that is still in flight. The read itself is another
+    matter — while the cap is saturated, NOTHING further is read, the next
+    request, a notifications/cancelled and the EOF alike. That is the price of
+    genuine backpressure: prompt cancel delivery is only guaranteed while fewer
+    than max_inflight requests are outstanding; at saturation the head-of-line
+    wait returns, bounded by the cap rather than by one request.
     """
     try:
         stream = sys.stdin.buffer
@@ -110,11 +115,21 @@ async def _stdout_writer(out_queue: asyncio.Queue):
         item = await out_queue.get()
         if item is None:
             return
-        if isinstance(item, _ErrorFor):
-            _write_error(item.request_line, item.message)
-        else:
-            for message in item:
-                _write_stdout(message)
+        # Per-item guard: one poisoned response must not kill the only consumer.
+        # An unguarded writer dies silently here (create_task holds the exception
+        # until the final await), and the bridge then keeps reading stdin and
+        # POSTing to the remote while emitting nothing — side effects execute,
+        # answers never arrive, and nothing is logged for the whole session.
+        # With the guard, that one request stays unanswered (its client times
+        # out, same as a transport error) and every later response still flows.
+        try:
+            if isinstance(item, _ErrorFor):
+                _write_error(item.request_line, item.message)
+            else:
+                for message in item:
+                    _write_stdout(message)
+        except Exception:
+            logger.exception("Failed to emit a response; dropping it and continuing")
 
 
 def _response_messages(response: httpx.Response) -> list[str]:
@@ -243,6 +258,14 @@ async def main():
                 if line is None:
                     break
 
+                # The writer has a per-item guard, so it only dies on something
+                # structural. If it does, stop accepting work: a bridge that
+                # forwards requests it can never answer is worse than one that
+                # exits loudly (the await in `finally` re-raises its exception).
+                if writer.done():
+                    logger.error("stdout writer terminated unexpectedly; shutting down the bridge")
+                    break
+
                 task = asyncio.create_task(_forward(client, line, session, out_queue, slots))
                 in_flight.add(task)
                 task.add_done_callback(in_flight.discard)
@@ -276,7 +299,11 @@ def _write_error(request_line: bytes | str, error_msg: str):
     parsed = True
     try:
         req = json.loads(request_line)
-    except json.JSONDecodeError:
+    except ValueError:
+        # ValueError, not JSONDecodeError: json.loads(b'\x80...') raises
+        # UnicodeDecodeError BEFORE any JSON parsing happens, and both are
+        # ValueError subclasses. Catching only the narrower one let a line that
+        # is invalid UTF-8 (rather than invalid JSON) escape and kill the caller.
         parsed, req = False, None
 
     if parsed and isinstance(req, dict):
