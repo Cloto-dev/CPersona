@@ -53,9 +53,19 @@ keeps the 2.5.x rollback-free declaration intact and makes governance trivial (�
   change whatsoever. Existing deployments are untouched.
 - **Invalid file → non-fatal.** The server boots with the feature off, logs a warning,
   and `check_health` reports a finding (§8). A config typo must never take memory down.
-- **Reload**: lazy, mtime-based. The Hard layer and `get_operating_context` pick up
-  operator edits live; the `instructions` text is naturally frozen per connection
-  (MCP sends it only at `initialize`), so clients see updates on reconnect.
+- **Reload**: lazy, mtime-based — on the Hard side only. `get_context()` re-parses when
+  the file's mtime changes, so registry validation, `@auto` resolution and
+  `get_operating_context` reflect an operator's edit on the next tool call.
+  The `instructions` text does **not** follow: it is read once, at module import
+  (`registry = ToolRegistry(..., instructions=operating_context.instructions_text())`),
+  and the SDK's `Server` holds that string as an attribute which every
+  `create_initialization_options()` returns — so it is frozen for the life of the
+  process. **Reconnecting is not enough**: a client re-initializing against a running
+  server is served the same text again. Publishing an edit requires restarting the
+  server process. A stdio client restarts it whenever it relaunches the server, so it
+  does pick edits up between sessions; the streamable-HTTP transport, where one
+  long-lived process serves every client, does not. (This document previously claimed
+  clients see updates on reconnect — bug-252.)
 
 ### 3.1 Schema
 
@@ -210,7 +220,9 @@ Hermetic (tmp-dir sidecar + env override), no live backend needed:
    `create_initialization_options()`.
 3. Registry modes: off/warn/reject × read/write × known/unknown/`""` project_id.
 4. `@auto`: mapped, unmapped, explicit-value-never-rewritten, `resolved_project_id` echo.
-5. mtime reload: edit sidecar mid-session → next call sees the new registry.
+5. mtime reload: edit sidecar mid-session → next call sees the new registry. Hard layer
+   only — the same edit does not change the `instructions` a reconnect is served, which
+   stays frozen until the process restarts (§3), and a test pins that asymmetry.
 6. Health checks fire on the two conditions in §8.
 
 ## 10. Version position & release path
