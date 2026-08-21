@@ -425,6 +425,12 @@ async def _scan_memories_local(
     the hydrate leaves the caller's answer identical (`nlargest` is stable and the
     bound keeps the scan order) and caps the payload read at `limit` rows -- which
     is what makes the split a win at every threshold instead of only a strict one.
+    The win is threshold-wide, not unconditional: at the library ceiling
+    (limit = MAX_MEMORIES) combined with a threshold that admits nearly the whole
+    window, the bound cuts nothing and the by-id hydrate is SLOWER than the
+    sequential read it replaced (measured 52 -> 90 ms; the MCP tools cap limit at
+    100, so only bench/bulk-export callers can reach that shape). Numbers and
+    regime: benchmarks/measurements/results-bug249-two-phase-scan.md.
 
     Rows whose embedding is a foreign width are skipped rather than reshaped: a
     mid-flight model swap leaves a mixed-dimension corpus behind, and one stale
