@@ -62,13 +62,64 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
             embedding_cache = await checks_registry.prefetch_null_embeddings(db, agent_id)
         embedding_cache["expected_dim"] = await checks_registry.probe_embedding_dim()
 
+    # bug-254: the whole-database READ scans leave the write seam for the same
+    # reason the embedding round-trips did. check_fts_integrity runs the FTS5
+    # integrity-check over both indexes and check_sqlite_integrity runs PRAGMA
+    # quick_check over the file; both are O(database) and neither writes a byte,
+    # yet under fix=True they executed inside transaction(), so every other
+    # writer — do_store, the queue drain, import/merge — waited on a scan that
+    # could not have needed the lock.
+    #
+    # What the lock still owns is the REPAIR. A report-only member
+    # (sqlite_integrity, fix_capable=False) is finished here and its findings are
+    # merged into the response below. A fix-capable one (fts_integrity) is left
+    # to the locked run ONLY when this scan found corruption, because its repair
+    # is an index rebuild plus the re-verify that reports `fixed`. So a healthy
+    # index costs zero locked scans, and a corrupt one pays one extra scan to be
+    # repaired — the case where the scan was never the expensive part.
+    scan_issues: list[dict] = []
+    locked_checks = checks_run
+    if fix:
+        scan_names = [n for n in checks_run if n in checks_registry.WHOLE_DB_SCAN_CHECKS]
+        if scan_names:
+            async with connection() as db:
+                scan_issues, _ = await checks_registry.run_health_checks(
+                    db, agent_id=agent_id, fix=False, checks=scan_names
+                )
+            needs_repair = {
+                issue["check"]
+                for issue in scan_issues
+                if checks_registry.is_fix_capable(issue["check"])
+            }
+            # Drop the findings of a check that is about to run again under the
+            # lock: that run re-detects the same corruption and reports it WITH
+            # its `fixed` marker, and one failure must not appear twice in
+            # `issues`.
+            scan_issues = [issue for issue in scan_issues if issue["check"] not in needs_repair]
+            locked_checks = [n for n in checks_run if n not in scan_names or n in needs_repair]
+
     # bug-042/043: a fix run's writes + commit are serialised by transaction() so a
     # concurrent import/merge cannot flush check_health's partial repairs (and vice
     # versa). The read-only (fix=False) path goes through the plain read seam.
-    async with (transaction() if fix else connection()) as db:
-        issues, severity_summary = await checks_registry.run_health_checks(
-            db, agent_id=agent_id, fix=fix, checks=checks, embedding_cache=embedding_cache
-        )
+    issues: list[dict] = []
+    # Same key order run_health_checks emits, so a caller reading the serialised
+    # response sees one shape whichever branch produced it.
+    severity_summary = {"critical": 0, "warn": 0, "info": 0}
+    # Empty only when every requested check was a scan already settled above; an
+    # empty `checks` list means "everything" to run_health_checks, so this must
+    # not reach it as one.
+    if locked_checks:
+        async with (transaction() if fix else connection()) as db:
+            issues, severity_summary = await checks_registry.run_health_checks(
+                db, agent_id=agent_id, fix=fix, checks=locked_checks, embedding_cache=embedding_cache
+            )
+    if scan_issues:
+        # Registry order, as if one run had produced them (merge_issues), and the
+        # summary counts them — even though a fix run's summary is replaced by the
+        # residual re-run below, the two must not disagree in between.
+        issues = checks_registry.merge_issues(issues, scan_issues)
+        for issue in scan_issues:
+            severity_summary[issue["severity"]] += 1
 
     # bug-083 second pass: rows NULLed DURING the locked run (embedding_dimension NULLs
     # mismatched blobs; memory_annotation / discord_mention / oversized_content rewrite
@@ -99,6 +150,16 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
     # the checkup CLI, the only surfaces operators use, could not tell a failed
     # repair from one that was never attempted, nor a capped run from a converged
     # one. Tests that pin those fields call the runner directly and never saw it.
+    #
+    # bug-254: this re-run repeats the whole-database scans the pre-fix phase
+    # already did, and that is not redundancy — the two answer different
+    # questions. The pre-fix scan says what needs repairing; this one says what
+    # is still true after the repairs committed, which is the only thing the
+    # verdict may be derived from. Skipping it for a pre-fix-clean index would
+    # blind exactly the class most likely to be introduced by a fix run: the
+    # repairs rewrite content, and bug-008 is an FTS index whose indexed text no
+    # longer matches that content. Both copies run on the read seam, so neither
+    # holds the write lock; the copy bug-254 removed is the third one, which did.
     if fix:
         async with connection() as db:
             _residual_issues, severity_summary = await checks_registry.run_health_checks(
