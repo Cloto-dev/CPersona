@@ -3683,12 +3683,14 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/proxy_stdio.py",
-      "pattern": "await client.post",
+      "pattern": "bug-253",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Spawn each forwarded message as its own task instead of awaiting it inline — e.g. `asyncio.create_task(_forward(client, line, headers))` with a bounded `asyncio.Semaphore` for backpressure — and serialise only the stdout writes (an `asyncio.Lock` around `_write_stdout`, or a single writer task fed by an output queue). Session-id capture (lines 82-83) must then be guarded, or dropped entirely since the server runs `stateless=True` and never issues one.",
-      "note": "Deferred: concurrent forwarding with bounded backpressure and serialised stdout is a structural rework of the pump loop; the proxy is a compatibility shim, so the cost/benefit needs a maintainer call. Found by the 2026-08-18 pre-2.5.5a1 review (an earlier decision)."
+      "note": "Deferred: concurrent forwarding with bounded backpressure and serialised stdout is a structural rework of the pump loop; the proxy is a compatibility shim, so the cost/benefit needs a maintainer call. Found by the 2026-08-18 pre-2.5.5a1 review batch.",
+      "fixed_in": "2.5.5a3",
+      "fix_note": "the pump is no longer serial. Each stdin message is forwarded as its own asyncio task; stdout emission is funnelled through a single writer task whose queue items are whole responses, so the lines of one response stay contiguous; backpressure is a threading.Semaphore the reader thread acquires BEFORE reading the next line (default cap 8, CPERSONA_PROXY_MAX_INFLIGHT), so stdin is not drained faster than the remote answers. A notifications/cancelled now reaches the remote while its target request is still in flight. What the bridge still does not do: open a GET SSE stream (server-initiated messages remain undeliverable), or abort the stuck POST itself (delivery of the cancel is the bridge's half; acting on it is the server's). Review hardening in the same rung: the stdout writer wraps each item in its own guard so one poisoned emit cannot silently kill the only consumer (the bridge now shuts down loudly if the writer ever dies anyway), _write_error catches ValueError so an invalid-UTF-8 line gets its id:null reply instead of escaping as UnicodeDecodeError, and the backpressure docstring states the saturation bound honestly (prompt cancel delivery is guaranteed only while in-flight < the cap)."
     },
     {
       "id": "bug-254",
