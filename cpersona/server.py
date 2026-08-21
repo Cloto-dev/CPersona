@@ -1047,11 +1047,15 @@ registry.auto_tool(
     "list_memories",
     (
         "List recent memories for an agent (for dashboard display). "
-        "bug-255: the response is bounded at 1,000,000 characters of content. Rows "
-        "are returned newest-first and none is dropped, but once the budget is spent "
-        "the remaining rows carry `content` as a pure prefix (CPERSONA_RECALL_PREVIEW_CHARS, "
-        "default 500) with content_truncated/content_len and a `ref` that get_contents "
-        "expands in full; the response then also carries budget_chars."
+        "bug-255: the response holds a 1,000,000-character content budget. Rows are "
+        "returned newest-first and none is dropped; once the budget is spent, later "
+        "rows LONGER than the preview cap (CPERSONA_RECALL_PREVIEW_CHARS, default 500) "
+        "degrade to a pure prefix with content_truncated/content_len and a `ref` that "
+        "get_contents expands under the row's own agent_id (in an all-agents listing, "
+        "pair the ref with the row's agent_id field). budget_chars appears iff at least "
+        "one row was degraded. The effective ceiling is the budget plus one whole row "
+        "plus the degraded rows' prefixes, so it scales with the preview cap; preview "
+        "cap 0 disables trimming and the budget with it."
     ),
     {
         "type": "object",
@@ -1074,12 +1078,13 @@ registry.auto_tool(
     "list_episodes",
     (
         "List archived episodes for an agent (for dashboard display). "
-        "bug-255: the response is bounded at 800,000 characters across `summary` and "
-        "`keywords` together, with the same degradation as list_memories — rows past "
-        "the budget carry pure prefixes plus summary_truncated/summary_len and "
-        "keywords_truncated/keywords_len, and the response carries budget_chars. "
-        "Their `ref` expands the summary via get_contents; a full keywords string is "
-        "only available through export_data."
+        "bug-255: the response holds an 800,000-character budget across `summary` and "
+        "`keywords` together, with the same degradation and ceiling semantics as "
+        "list_memories — rows past the budget that exceed the preview cap carry pure "
+        "prefixes plus summary_truncated/summary_len and keywords_truncated/"
+        "keywords_len; budget_chars appears iff at least one row was degraded. Their "
+        "`ref` expands the summary via get_contents (under the row's own agent_id); a "
+        "full keywords string is only available through export_data."
     ),
     {
         "type": "object",

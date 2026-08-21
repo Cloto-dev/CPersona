@@ -138,7 +138,21 @@ LIST_EPISODES_MAX_CHARS = 800_000  # 200 rows x 2 text columns x the same cap
 
 
 def _apply_list_budget(items: list[dict], fields: tuple[str, ...], budget: int, kind: str) -> bool:
-    """Bound a list response in characters; returns whether the budget bit (bug-255).
+    """Bound a list response in characters; returns whether any row was DEGRADED (bug-255).
+
+    The return drives ``budget_chars`` on the response, so it reports rows
+    actually trimmed — not merely that the running total crossed the budget. A
+    listing can cross the budget and still degrade nothing (every later row
+    already fits under the preview cap); advertising ``budget_chars`` there
+    would send a caller hunting for ``ref`` markers that do not exist.
+
+    The budget is honest about what it bounds: whole rows are never cut, the
+    first row is always admitted, and a degraded row still carries a preview-cap
+    prefix — so the effective ceiling is the budget plus one whole row plus up
+    to rows x preview-cap of prefixes, and an operator who raises
+    CPERSONA_RECALL_PREVIEW_CHARS raises that ceiling with it (at or above
+    MAX_CONTENT_LENGTH nothing is longer than the cap, and the budget is
+    effectively off — the same trade _apply_full_content_budget makes).
 
     Rows past the budget are not dropped — a listing that silently returns fewer
     rows than it was asked for is indistinguishable from an empty corpus — they
@@ -173,6 +187,7 @@ def _apply_list_budget(items: list[dict], fields: tuple[str, ...], budget: int, 
 
     used = 0
     over_budget = False
+    any_degraded = False
     for item in items:
         if not over_budget:
             if used and used + charge(item) > budget:
@@ -190,11 +205,16 @@ def _apply_list_budget(items: list[dict], fields: tuple[str, ...], budget: int, 
                 item[f"{column}_truncated"] = True
                 trimmed = True
         if trimmed:
+            any_degraded = True
             # The handle back to the full row. Without it a truncated listing row
             # would be the bug-117 failure mode: content with no way to expand it.
+            # It resolves through get_contents under the row's OWN agent_id: in an
+            # all-agents listing (agent_id=""), a ref expanded under a different
+            # agent comes back missing, so callers must pair it with the row's
+            # agent_id field.
             item["ref"] = f"{kind}:{item['id']}"
         used += charge(item)
-    return over_budget
+    return any_degraded
 
 
 async def do_list_memories(agent_id: str, limit: int, project_id: str | None = None) -> dict:

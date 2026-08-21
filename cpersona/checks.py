@@ -1906,11 +1906,13 @@ _CHECKS_BY_NAME = {c.name: c for c in HEALTH_CHECKS}
 
 # bug-254: the checks whose DETECTION is a whole-database read. fts_integrity
 # runs the FTS5 'integrity-check' command over both indexes and sqlite_integrity
-# runs PRAGMA quick_check over the whole file — O(database) work that writes
-# nothing, so it has no business inside the write seam (the bug-072/083
-# doctrine: only writes belong under the shared lock). do_check_health runs
-# these outside transaction(); see the dispatch there for how a fix-capable
-# member still gets its repair serialised.
+# runs PRAGMA quick_check over the whole file. Of these, only the REPORT-ONLY
+# member (fix_capable=False) leaves the write seam in do_check_health — a scan
+# that can never write has no business under the shared lock (the bug-072/083
+# doctrine). A fix-capable member stays locked even though its scan is also
+# O(database): its detection must be atomic with its repair, or corruption the
+# fix run's own content rewrites introduce lands in a window where an earlier
+# clean pre-scan already voted "no repair needed". See the dispatch there.
 WHOLE_DB_SCAN_CHECKS = frozenset({"fts_integrity", "sqlite_integrity"})
 
 

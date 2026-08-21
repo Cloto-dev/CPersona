@@ -107,12 +107,29 @@ async def test_a_row_shorter_than_the_preview_cap_is_never_marked(clean_db, monk
 
     result = await admin_handlers.do_list_memories(AGENT, 10)
 
-    assert result["budget_chars"] == 100
+    # The budget was crossed but no row was actually degraded ("tiny" fits under
+    # the preview cap), so budget_chars must NOT be advertised — it drives
+    # callers to hunt for ref markers, and there are none (review of bug-255).
+    assert "budget_chars" not in result
     tiny = result["memories"][1]
     assert tiny["content"] == "tiny"
     assert "content_truncated" not in tiny
     assert "content_len" not in tiny
     assert "ref" not in tiny
+
+
+@pytest.mark.asyncio
+async def test_budget_chars_appears_only_when_a_row_was_degraded(clean_db, monkeypatch):
+    """budget_chars <=> at least one row carries markers, in both directions."""
+    monkeypatch.setattr(admin_handlers, "LIST_MEMORIES_MAX_CHARS", 100)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 50)
+    await _seed_memories(clean_db, ["x" * 200, "y" * 80])
+
+    result = await admin_handlers.do_list_memories(AGENT, 10)
+
+    degraded = [m for m in result["memories"] if m.get("content_truncated")]
+    assert degraded, "the 80-char row exceeds the 50-char cap and must degrade"
+    assert result["budget_chars"] == 100
 
 
 @pytest.mark.asyncio
