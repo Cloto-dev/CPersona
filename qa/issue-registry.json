@@ -3671,12 +3671,14 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/server.py",
-      "pattern": "instructions=operating_context.instructions_text",
+      "pattern": "bug-252",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Either make the claim true or make it false loudly. Truthful option: build the `InitializationOptions` per connection — subclass/patch so `instructions` is read from `operating_context.instructions_text()` at `create_initialization_options()` time instead of at construction (the mtime cache makes this cheap). Cheap option: include `context_revision` in the injected summary and have `get_operating_context` echo the revision that was actually sent at initialize alongside the live one, and correct server.py:401 and docs/OPERATING_CONTEXT_DESIGN.md:57-58 to say \"frozen per process; restart to redistribute\".",
-      "note": "Deferred: making instructions per-connection requires patching InitializationOptions construction in the vendored SDK layer; making the claim honest instead is a doc decision the maintainer should pick. Found by the 2026-08-18 pre-2.5.5a1 review (CSC Task #723)."
+      "note": "Deferred: making instructions per-connection requires patching InitializationOptions construction in the vendored SDK layer; making the claim honest instead is a doc decision the maintainer should pick. Found by the 2026-08-18 pre-2.5.5a1 review batch.",
+      "fixed_in": "2.5.5a3",
+      "fix_note": "Resolved in 2.5.5a3 by the sketch's doc option (maintainer pick): the server.py comment and OPERATING_CONTEXT_DESIGN.md now state the true behaviour — the Soft layer (initialize instructions) is frozen for the process lifetime and only a process restart publishes an operator edit (a stdio client gets one per session by construction; the shared streamable-HTTP process does not), while the Hard layer reloads on mtime. A test pins both halves so the honest claim cannot drift back. Not done, by choice: per-connection instructions (a vendored-SDK patch) and a runtime revision-echo disclosure of Soft/Hard divergence — either would be a separate additive enhancement, not part of making the claim honest."
     },
     {
       "id": "bug-253",
@@ -3685,12 +3687,14 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/proxy_stdio.py",
-      "pattern": "await client.post",
+      "pattern": "bug-253",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Spawn each forwarded message as its own task instead of awaiting it inline — e.g. `asyncio.create_task(_forward(client, line, headers))` with a bounded `asyncio.Semaphore` for backpressure — and serialise only the stdout writes (an `asyncio.Lock` around `_write_stdout`, or a single writer task fed by an output queue). Session-id capture (lines 82-83) must then be guarded, or dropped entirely since the server runs `stateless=True` and never issues one.",
-      "note": "Deferred: concurrent forwarding with bounded backpressure and serialised stdout is a structural rework of the pump loop; the proxy is a compatibility shim, so the cost/benefit needs a maintainer call. Found by the 2026-08-18 pre-2.5.5a1 review (CSC Task #723)."
+      "note": "Deferred: concurrent forwarding with bounded backpressure and serialised stdout is a structural rework of the pump loop; the proxy is a compatibility shim, so the cost/benefit needs a maintainer call. Found by the 2026-08-18 pre-2.5.5a1 review batch.",
+      "fixed_in": "2.5.5a3",
+      "fix_note": "the pump is no longer serial. Each stdin message is forwarded as its own asyncio task; stdout emission is funnelled through a single writer task whose queue items are whole responses, so the lines of one response stay contiguous; backpressure is a threading.Semaphore the reader thread acquires BEFORE reading the next line (default cap 8, CPERSONA_PROXY_MAX_INFLIGHT), so stdin is not drained faster than the remote answers. A notifications/cancelled now reaches the remote while its target request is still in flight. What the bridge still does not do: open a GET SSE stream (server-initiated messages remain undeliverable), or abort the stuck POST itself (delivery of the cancel is the bridge's half; acting on it is the server's). Review hardening in the same rung: the stdout writer wraps each item in its own guard so one poisoned emit cannot silently kill the only consumer (the bridge now shuts down loudly if the writer ever dies anyway), _write_error catches ValueError so an invalid-UTF-8 line gets its id:null reply instead of escaping as UnicodeDecodeError, and the backpressure docstring states the saturation bound honestly (prompt cancel delivery is guaranteed only while in-flight < the cap)."
     },
     {
       "id": "bug-254",
@@ -3699,12 +3703,14 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "async with transaction",
+      "pattern": "bug-254",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Split the registry the way the embedding work was split: run the read-only, O(database) checks (`sqlite_integrity`, and the `integrity-check` half of `fts_integrity`) in an unlocked `connection()` phase before entering `transaction()`, pass their verdicts in the way `embedding_cache` is passed, and keep only the actual repair statements (the FTS `rebuild`, the content/embedding UPDATEs) inside the locked scope.",
-      "note": "Deferred: splitting the O(database) read-only integrity scans out of the write-lock transaction changes check_health(fix=true) semantics mid-soak; schedule with the next maintenance-window rung. Found by the 2026-08-18 pre-2.5.5a1 review (CSC Task #723)."
+      "note": "Deferred: splitting the O(database) read-only integrity scans out of the write-lock transaction changes check_health(fix=true) semantics mid-soak; schedule with the next maintenance-window rung. Found by the 2026-08-18 pre-2.5.5a1 review batch.",
+      "fixed_in": "2.5.5a3",
+      "fix_note": "Fixed in 2.5.5a3, scoped by review: only the REPORT-ONLY whole-database scan (sqlite_integrity, fix_capable=False) leaves the write seam — it runs on the read seam before the locked phase and its findings merge back in registry order. fts_integrity deliberately stays under the lock: an unlocked pre-scan vote of 'needs no repair' opens a window the fix run itself falls into (content-rewriting repairs precede fts_integrity in registry order and can create drift after a clean pre-scan), leaving corruption counted by the residual severity re-run but repaired by nothing and named by no issue. Detection atomic with repair fixes whatever is true at repair time, including damage the run's own writes introduced; the always-locked fts scan is the price of never shipping a critical-with-no-issue verdict. The bug-059 residual re-run is retained (what is still true after the repairs is the only source of the verdict)."
     },
     {
       "id": "bug-255",
@@ -3713,12 +3719,14 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "def do_list_memories",
+      "pattern": "bug-255",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Give both list handlers the same character-budget discipline as `get_contents`: a module constant pinned at the pre-CSC-#680 worst case (500 x 2000 and 200 x 2000), deliberately not derived from `MAX_CONTENT_LENGTH`, admitting whole rows and reporting `budget_chars` / `deferred` (or degrading to the preview tier with a `ref`) when it bites. Alternatively declare `maximum` on the schemas and preview-trim these rows, but the constant must not be a function of the write cap.",
-      "note": "Deferred: list_memories/list_episodes need the same character-budget discipline as get_contents (bug-211 class); the budget constants and degradation shape deserve one design pass rather than an inline guess. Found by the 2026-08-18 pre-2.5.5a1 review (CSC Task #723)."
+      "note": "Deferred: list_memories/list_episodes need the same character-budget discipline as get_contents (bug-211 class); the budget constants and degradation shape deserve one design pass rather than an inline guess. Found by the 2026-08-18 pre-2.5.5a1 review batch.",
+      "fixed_in": "2.5.5a3",
+      "fix_note": "Fixed in 2.5.5a3: LIST_MEMORIES_MAX_CHARS = 1,000,000 (500 rows x the old 2000-char cap) and LIST_EPISODES_MAX_CHARS = 800,000 (200 rows x 2 text columns x the same cap — keywords passes the same write cap as summary, so budgeting only the summary would leave half the response unbounded; note this entry's own before/after arithmetic already counted both columns while the sketch's '200 x 2000' counted one). Rows past the budget are never dropped — they degrade to the recall preview tier (pure prefix at RECALL_PREVIEW_CHARS, <field>_len/<field>_truncated markers, a ref that get_contents expands) and the response carries budget_chars; the first row is always whole, and RECALL_PREVIEW_CHARS=0 disables the budget with the tier (degradation must not become deletion). One honest asymmetry is recorded in the docstrings: a degraded episode ref re-expands the summary only; full keywords are reachable only through export_data. Review adjustments in the same rung: budget_chars appears iff at least one row was actually degraded (crossing the budget without trimming anything no longer advertises it), and the tool descriptions state the ceiling honestly — budget plus one whole row plus the degraded rows' preview-cap prefixes, scaling with CPERSONA_RECALL_PREVIEW_CHARS, off when the cap is 0 or >= the write cap — plus the cross-agent caveat: a degraded row's ref resolves through get_contents under the row's OWN agent_id."
     },
     {
       "id": "bug-256",
@@ -3736,16 +3744,18 @@
     },
     {
       "id": "bug-257",
-      "summary": "(HIGH) The bug-213 created_at fallback feeds the episode-boundary penalty, which halves every historical episode's score: _episode_boundary_factor exempts rows with an empty timestamp (`if not memory_ts_str: return 1.0`), and until 2.5.5a1 that exemption covered the two-thirds of episodes whose start_time is NULL (338/505 on the production deployment). The a1 fallback gives those rows created_at as their timestamp, so they now enter the penalty branch, and with EPISODE_DECAY_RATE=0.01/h the factor saturates at EPISODE_DECAY_FLOOR=0.5 for anything ~3 days older than the newest episode — which is every episode except the most recent few BY CONSTRUCTION, since the boundary is MAX(episodes.created_at) over the same scope. Measured on a production snapshot (in-process do_recall, rsf+confidence on, query='embedding A/B ベンチ Track B fast regime 候補モデル run 進捗', agent=claude-code): episode cosines exactly halve (ep 32: 0.6293->0.3147, ep 468: 0.6192->0.3096), episodes 39/40 drop off the vector channel into backfill, and at limit=10 the recall answer goes from 7 rows (5 episodes) on 2.5.4a3 to 3 rows (1 episode) at the recalibrated gate 0.4288 — 2 rows at the pre-a1 gate 0.447. The rows demoted are exactly the session-start grounding rows bug-213's own rationale said the fallback exists to surface. Same defect class as bug-215's trade-off note and the Task #715 autocut finding: a local repair (give undated rows a real age) silently changed a different mechanism (cross-session penalty membership) that keys on the same field. Also note the double time punishment: _compute_confidence time_decay and the boundary penalty now both read the same fallback timestamp.",
+      "summary": "(HIGH) The bug-213 created_at fallback feeds the episode-boundary penalty, which halves every historical episode's score: _episode_boundary_factor exempts rows with an empty timestamp (`if not memory_ts_str: return 1.0`), and until 2.5.5a1 that exemption covered the two-thirds of episodes whose start_time is NULL (338/505 on the production deployment). The a1 fallback gives those rows created_at as their timestamp, so they now enter the penalty branch, and with EPISODE_DECAY_RATE=0.01/h the factor saturates at EPISODE_DECAY_FLOOR=0.5 for anything ~3 days older than the newest episode — which is every episode except the most recent few BY CONSTRUCTION, since the boundary is MAX(episodes.created_at) over the same scope. Measured on a production snapshot (in-process do_recall, rsf+confidence on, query = a Japanese production query about embedding-benchmark progress, agent=claude-code): episode cosines exactly halve (ep 32: 0.6293->0.3147, ep 468: 0.6192->0.3096), episodes 39/40 drop off the vector channel into backfill, and at limit=10 the recall answer goes from 7 rows (5 episodes) on 2.5.4a3 to 3 rows (1 episode) at the recalibrated gate 0.4288 — 2 rows at the pre-a1 gate 0.447. The rows demoted are exactly the session-start grounding rows bug-213's own rationale said the fallback exists to surface. Same defect class as bug-215's trade-off note and the 2.5.5a2 autocut re-measurement finding: a local repair (give undated rows a real age) silently changed a different mechanism (cross-session penalty membership) that keys on the same field. Also note the double time punishment: _compute_confidence time_decay and the boundary penalty now both read the same fallback timestamp.",
       "severity": "HIGH",
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.5a1",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "_episode_boundary_factor\\(r\\.get\\(\"timestamp\"\\)",
+      "pattern": "bug-257",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "scoring-interaction",
-      "note": "Interaction of bug-213 (fixed, 2.5.5a1) with the v2.4.14 episode-boundary penalty. The penalty's own docstring scopes its intent to memories ('weaken cross-session memories so current-session signals take precedence'); episodes are cross-session summaries by construction and their retrieval purpose IS cross-session grounding. Design fork, owner ruling wanted before a fix: (a) exempt episode rows from the boundary penalty entirely (also changes the 167 dated episodes, which were already penalized pre-a1); (b) let the penalty read only the recorded start_time, not the fallback (preserves pre-a1 behavior exactly, but perpetuates the dated-punished/undated-exempt incoherence bug-213 removed from the confidence path); (c) accept and document. Measurement artifacts: scratchpad r715 (probe re-run of CSC #711's instrument against master vs 2.5.4a3 on the same snapshot copy)."
+      "note": "Interaction of bug-213 (fixed, 2.5.5a1) with the v2.4.14 episode-boundary penalty. The penalty's own docstring scopes its intent to memories ('weaken cross-session memories so current-session signals take precedence'); episodes are cross-session summaries by construction and their retrieval purpose IS cross-session grounding. Design fork, owner ruling wanted before a fix: (a) exempt episode rows from the boundary penalty entirely (also changes the 167 dated episodes, which were already penalized pre-a1); (b) let the penalty read only the recorded start_time, not the fallback (preserves pre-a1 behavior exactly, but perpetuates the dated-punished/undated-exempt incoherence bug-213 removed from the confidence path); (c) accept and document. Measurement artifacts: scratchpad r715 (probe re-run of the earlier in-process recall instrument against master vs 2.5.4a3 on the same snapshot copy).",
+      "fixed_in": "2.5.5a3",
+      "fix_note": "Owner ruling 2026-08-22: option (a) — episode rows are exempt from the boundary penalty entirely, dated episodes included. The penalty's charter is cross-session memories; an episode's retrieval purpose IS cross-session grounding, and (a) removes the dated-punished/undated-exempt incoherence the same way bug-213 removed it from the confidence path. Implemented as an _is_episode_result skip in _apply_recall_scoring's penalty loop; SCORING_VERSION bumped to 255a3-episode-penalty-exempt (episodes behind the boundary now score up to 2x higher than the sidecar was calibrated against, so the stale-fingerprint recalibration fires on the first boot — median-of-K since 2.5.5a2). Behaviour pinned in tests/test_255a3_episode_penalty_exemption.py. Fixed in 2.5.5a3. Review addition: the production configuration (confidence on) is pinned by its own test — under the confidence re-sort an exempt episode outranks a penalised memory of equal age and raw cosine."
     }
   ]
 }
