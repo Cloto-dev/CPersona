@@ -1033,7 +1033,14 @@ registry.auto_tool(
 
 registry.auto_tool(
     "list_memories",
-    "List recent memories for an agent (for dashboard display).",
+    (
+        "List recent memories for an agent (for dashboard display). "
+        "bug-255: the response is bounded at 1,000,000 characters of content. Rows "
+        "are returned newest-first and none is dropped, but once the budget is spent "
+        "the remaining rows carry `content` as a pure prefix (CPERSONA_RECALL_PREVIEW_CHARS, "
+        "default 500) with content_truncated/content_len and a `ref` that get_contents "
+        "expands in full; the response then also carries budget_chars."
+    ),
     {
         "type": "object",
         "properties": {
@@ -1053,7 +1060,15 @@ registry.auto_tool(
 
 registry.auto_tool(
     "list_episodes",
-    "List archived episodes for an agent (for dashboard display).",
+    (
+        "List archived episodes for an agent (for dashboard display). "
+        "bug-255: the response is bounded at 800,000 characters across `summary` and "
+        "`keywords` together, with the same degradation as list_memories — rows past "
+        "the budget carry pure prefixes plus summary_truncated/summary_len and "
+        "keywords_truncated/keywords_len, and the response carries budget_chars. "
+        "Their `ref` expands the summary via get_contents; a full keywords string is "
+        "only available through export_data."
+    ),
     {
         "type": "object",
         "properties": {
