@@ -20,7 +20,7 @@ merged by Reciprocal Rank Fusion). It has **zero LLM dependency** — the server
 never calls a model, so there is no API cost or hidden latency from memory
 itself; the calling agent (you) does all summarization.
 
-- **28 tools**, single SQLite file, MIT licensed.
+- **29 tools**, single SQLite file, MIT licensed.
 - Works with Claude Desktop, Claude Code, and any MCP host.
 - Repo: <https://github.com/Cloto-dev/cpersona>
 
@@ -321,7 +321,7 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
 
 ## Key facts
 
-- 28 tools · Schema v13 (auto-migrating) · ~5,600 LOC Python across focused modules · MIT.
+- 29 tools · Schema v13 (auto-migrating) · ~13,000 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up by copying one file.
 - Benchmarked on LMEB: `jina-v5-nano` (768d) scores NDCG@10 54.14, +47% over the
