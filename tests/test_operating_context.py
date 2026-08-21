@@ -130,6 +130,34 @@ def test_tool_registry_threads_instructions_into_initialize():
     assert ToolRegistry("t").server.create_initialization_options().instructions is None
 
 
+def test_instructions_are_frozen_at_construction_while_the_hard_layer_reloads(sidecar):
+    """bug-252: reconnecting does not re-read the sidecar; only a restart does.
+
+    The docs claimed clients see operator edits on reconnect. They do not: the
+    registry is built once at import with instructions=instructions_text(), and
+    the SDK stores that string on the Server, so every later
+    create_initialization_options() — which is what a re-initializing client is
+    served — returns it verbatim. The Hard layer, read through get_context() per
+    call, does pick the edit up; this pins both halves of that asymmetry, since a
+    doc is only honest about it while the behaviour still holds.
+    """
+    from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry
+
+    sidecar()
+    registry = ToolRegistry("t", instructions=operating_context.instructions_text())
+    assert "rev 2026-07-18.1" in registry.server.create_initialization_options().instructions
+
+    sidecar(VALID_SIDECAR.replace("2026-07-18.1", "2026-07-19.9"))
+
+    # The Soft layer: a reconnect is a fresh create_initialization_options() call
+    # against the same process, and it is served the old revision.
+    assert "rev 2026-07-18.1" in registry.server.create_initialization_options().instructions
+    assert "rev 2026-07-19.9" not in registry.server.create_initialization_options().instructions
+    # The Hard layer, same file, same process: live.
+    assert "2026-07-19.9" in operating_context.instructions_text()
+    assert operating_context.get_context().revision == "2026-07-19.9"
+
+
 # ---------------------------------------------------------------------------
 # §9-3 — registry validation mode matrix
 # ---------------------------------------------------------------------------
