@@ -20,6 +20,7 @@ This shell:
 """
 
 import asyncio
+import contextlib
 import hmac
 import ipaddress
 import logging
@@ -1927,6 +1928,41 @@ def _preflight_http_auth() -> None:
 # =============================================================================
 
 
+def _schedule_startup_calibration() -> asyncio.Task:
+    """Run the startup calibration guard as a background task (bug-258).
+
+    The task owns nothing the serving path waits on: gates and thresholds land
+    in vector's module state as each agent's calibration completes, and until
+    then recall uses the heuristic fallback — the same degraded mode as a failed
+    calibration, and infinitely better than the bound-nothing full outage that
+    awaiting the guard inline produced. The done-callback exists because a task
+    created and awaited only at shutdown would otherwise swallow its exception
+    for the whole session (the same silent-death shape the stdio bridge's
+    writer had): a failed guard must say so the moment it fails, and say what
+    the operator can do about it.
+    """
+
+    async def _run():
+        status = await ensure_calibrated_on_startup(AUTO_CALIBRATE, CALIBRATE_ON_MODEL_CHANGE)
+        logger.info("Vector threshold startup calibration: %s", status)
+
+    task = asyncio.create_task(_run())
+
+    def _report(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            logger.error(
+                "Startup calibration failed; recall gates stay on the heuristic "
+                "fallback until calibrate_threshold is run manually: %r",
+                exc,
+            )
+
+    task.add_done_callback(_report)
+    return task
+
+
 async def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -1975,9 +2011,21 @@ async def main():
     # thresholds, or (re)calibrate on first run / embedding-dimension change even when
     # AUTO_CALIBRATE is off. A stale threshold from a prior embedding model (e.g. a
     # silent jina 768d -> bge-m3 1024d swap) is a known recall-contamination cause.
+    #
+    # bug-258: scheduled, not awaited. Awaiting here held the transport closed for
+    # the whole guard — and a recalibration is minutes of real embedding calls
+    # (median-of-K multiplied it by the draw count, and it runs once per agent), so
+    # a scoring-version bump turned every deploy into a multi-minute full outage
+    # (measured: 3.5 minutes for two agents on a 2400-row corpus). Binding first is
+    # safe because the guard's values only ever ARRIVE through it: until it lands,
+    # the in-memory gates are simply unset and recall runs on the same heuristic
+    # fallback it uses when calibration fails or has never run. A stale sidecar is
+    # never consulted at recall time — _restore_calibration_state is the only
+    # reader — so serving during the window cannot apply a gate measured on the
+    # wrong scoring function.
+    calibration_task: asyncio.Task | None = None
     if EMBEDDING_MODE != "none":
-        status = await ensure_calibrated_on_startup(AUTO_CALIBRATE, CALIBRATE_ON_MODEL_CHANGE)
-        logger.info("Vector threshold startup calibration: %s", status)
+        calibration_task = _schedule_startup_calibration()
 
     if TASK_QUEUE_ENABLED:
         tasks._task_queue = tasks.MemoryTaskQueue()
@@ -2005,6 +2053,14 @@ async def main():
         else:
             raise ValueError(f"Unknown transport: {transport}")
     finally:
+        # bug-258: a calibration still in flight at shutdown is abandoned, not
+        # awaited — its embedding round-trips would hold the shutdown open for
+        # minutes, and an interrupted calibration leaves exactly the state it
+        # started from (the sidecar write is the last step).
+        if calibration_task is not None and not calibration_task.done():
+            calibration_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await calibration_task
         if tasks._task_queue:
             await tasks._task_queue.stop()
         await close_db()
