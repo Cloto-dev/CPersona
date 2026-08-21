@@ -393,11 +393,38 @@ async def _scan_memories_local(
     src_clause: str,
     src_params: tuple,
     scan_limit: int,
+    limit: int,
     query_vec,
     query_dim: int,
     effective_min_sim: float,
 ) -> list[tuple[float, dict]]:
     """Cosine-rank the newest `scan_limit` memory rows against the query vector.
+
+    Two phases, because the ranking and the answer need different columns
+    (bug-249). Phase 1 reads `(id, embedding)` for the whole scan window and
+    ranks it; phase 2 hydrates `msg_id/content/source/timestamp` only for the
+    rows that cleared `effective_min_sim`. Selecting the payload columns up front
+    made the scan's cost track `config.MAX_CONTENT_LENGTH`: that write cap was
+    raised 2000 -> 16000, and this path -- which materialises every row of the
+    window before a single similarity exists -- silently got 8x more text to
+    carry per recall, text no cosine ever reads. The note on that constant states
+    the rule the raise was granted under (a write bound must not enlarge a read
+    one) and names the two full-text read budgets pinned for it; this is the same
+    rule applied to the scan window rather than to a response.
+
+    `limit` bounds the hydrate, and it has to: the threshold does not. The fusion
+    callers pass `agent threshold x RRF_THRESHOLD_FACTOR`, which is deliberately
+    permissive, so "hydrate whatever clears it" is a FRACTION of the window rather
+    than a constant -- and `id IN (...)` is a b-tree lookup plus a row read each, so
+    at high survival it is slower than the sequential read it replaced (measured at
+    10000 rows x 16000 characters: 90 ms to hydrate every row by id against 52 ms
+    for the single query). Only the top `limit` memory candidates can reach a
+    response: the caller merges these with the episode candidates and takes
+    `heapq.nlargest(limit, ...)`, so a memory that already has `limit` memories
+    ranked above it cannot place, whatever the episodes do. Dropping those before
+    the hydrate leaves the caller's answer identical (`nlargest` is stable and the
+    bound keeps the scan order) and caps the payload read at `limit` rows -- which
+    is what makes the split a win at every threshold instead of only a strict one.
 
     Rows whose embedding is a foreign width are skipped rather than reshaped: a
     mid-flight model swap leaves a mixed-dimension corpus behind, and one stale
@@ -407,7 +434,7 @@ async def _scan_memories_local(
     # recall (as on the remote by-id path in _search_vector_remote) -- the
     # channel axis rides in `iso`.
     rows = await db.execute_fetchall(
-        f"""SELECT id, msg_id, content, source, timestamp, embedding
+        f"""SELECT id, embedding
            FROM memories
            WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}
            ORDER BY created_at DESC
@@ -417,38 +444,74 @@ async def _scan_memories_local(
     if not rows:
         return []
 
-    valid_rows = []
+    valid_ids = []
     blobs = []
     for row in rows:
-        blob = row[5]
+        blob = row[1]
         if blob and len(blob) == query_dim * 4:
-            valid_rows.append(row)
+            valid_ids.append(row[0])
             blobs.append(blob)
 
-    if not valid_rows:
+    if not valid_ids:
         return []
 
     sims = _cosine_batch(query_vec, query_dim, blobs)
 
+    # Survivors keep the scan's order (created_at DESC): heapq.nlargest in
+    # _search_vector is stable, so this order is what breaks a tie between two
+    # equally-similar rows, and nothing below may reorder them.
+    survivors = [
+        (valid_ids[i], float(sim_val))
+        for i, sim_val in enumerate(sims)
+        if sim_val >= effective_min_sim
+    ]
+    if not survivors:
+        return []
+
+    if limit < len(survivors):
+        # The stable top-`limit`: score first, scan position as the tie-break, which
+        # is the order `sorted(..., reverse=True)` -- and therefore `nlargest` --
+        # would have produced. Re-sorted back into scan order so the ties the caller
+        # breaks are the ties it broke before.
+        keep = heapq.nlargest(limit, range(len(survivors)), key=lambda i: (survivors[i][1], -i))
+        survivors = [survivors[i] for i in sorted(keep)]
+
+    # The hydrate re-applies the isolation axes and the source filter. That is
+    # NOT the bug-100 fail-closed argument (that one guards ids supplied by the
+    # REMOTE index, whose ownership the DB never confirmed) -- these ids came from
+    # the phase-1 read. It is for the window the split opens between the two
+    # statements: a row re-tagged or re-sourced in between must not be hydrated
+    # under axes it no longer has.
+    payload = await _fetch_rows_by_id(
+        db,
+        f"SELECT id, msg_id, content, source, timestamp FROM memories WHERE id IN ({{ph}})"
+        f"{iso.and_clause}{src_clause}",
+        [mem_id for mem_id, _ in survivors],
+        (*iso.params, *src_params),
+    )
+
     candidates: list[tuple[float, dict]] = []
-    for i, sim_val in enumerate(sims):
-        if sim_val >= effective_min_sim:
-            mem_id, msg_id, content, source, timestamp, _ = valid_rows[i]
-            sim = float(sim_val)
-            candidates.append(
-                (
-                    sim,
-                    {
-                        "id": mem_id,
-                        "_rid": ("mem", mem_id),
-                        "_cosine": sim,
-                        "msg_id": msg_id,
-                        "content": content,
-                        "source": source,
-                        "timestamp": timestamp,
-                    },
-                )
+    for mem_id, sim in survivors:
+        row = payload.get(mem_id)
+        # A survivor with no row was deleted (or moved out of scope) between the
+        # two statements. Skip it rather than emit a half-empty result -- the same
+        # silent-skip the remote branch applies to a stale index hit.
+        if row is None:
+            continue
+        candidates.append(
+            (
+                sim,
+                {
+                    "id": mem_id,
+                    "_rid": ("mem", mem_id),
+                    "_cosine": sim,
+                    "msg_id": row[1],
+                    "content": row[2],
+                    "source": row[3],
+                    "timestamp": row[4],
+                },
             )
+        )
     return candidates
 
 
@@ -621,9 +684,11 @@ async def _search_vector(
     scan_limit = MAX_MEMORIES
 
     # Memories first, then episodes: nlargest is stable, so this order is what
-    # breaks a tie between a memory and an episode of equal similarity.
+    # breaks a tie between a memory and an episode of equal similarity. The memory
+    # scan already returns at most `limit` candidates (bug-249) -- it applies this
+    # same cut, with this same tie-break, before paying to read their text.
     candidates = await _scan_memories_local(
-        db, iso, src_clause, src_params, scan_limit, query_vec, query_dim, effective_min_sim
+        db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim, effective_min_sim
     )
     candidates += await _scan_episodes_local(
         db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel
