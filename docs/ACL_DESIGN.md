@@ -206,8 +206,8 @@ alongside the implementation, independent of which way §9-D6 resolves).
 | `calibrate_threshold`, `set_recall_precision` | read-write | `agent_id` argument (mutate per-agent calibration state) |
 | `check_health`, `deep_check` | read; **read-write when `fix=true`** | `agent_id` argument; empty = every agent → requires the grant on `"*"` |
 | `migrate_channel_axis` | read-write | `agent_id` argument; empty = every agent → `"*"` |
-| `export_memories` | read-write (§9-D4: with `CPERSONA_EXPORT_DIR` unset — the shipped default — the output path is caller-chosen) | `agent_id` argument |
-| `import_memories` | read-write | `target_agent_id`; empty = "as recorded in file" → `"*"` |
+| `export_memories` | read-write; **while `CPERSONA_EXPORT_DIR` is unset (the shipped default) the demand escalates to `"*"`** — the path argument is caller-chosen anywhere on the filesystem, so the blast radius is not one agent's data (§9-D4, second amendment from the pre-merge review) | `agent_id` argument |
+| `import_memories` | read-write; same `"*"` escalation while `CPERSONA_EXPORT_DIR` is unset | `target_agent_id`; empty = "as recorded in file" → `"*"` |
 | `merge_memories` | `copy`: read(source) + read-write(target). `move`: read-write on **both** (move deletes source rows) | `source_agent_id` + `target_agent_id` |
 | `pause_persistence`, `resume_persistence` | read-write on `"*"` (process-wide switch affects every agent's writes) | global |
 | `persistence_status`, `get_queue_status`, `get_operating_context` | unscoped read: allowed for **any authenticated principal** (no per-agent data; §9-D5) | none |
@@ -215,8 +215,23 @@ alongside the implementation, independent of which way §9-D6 resolves).
 Resolution rules the table relies on:
 
 - A call whose scope resolves to `"*"` (empty `agent_id` on an all-agents tool)
-  requires the corresponding permission on the wildcard grant specifically —
-  holding `read` on three named agents does not add up to `read` on `"*"`.
+  is a **sweep**: it touches every agent, the excepted ones included. It is
+  satisfied only at the level every grant row allows — the minimum over the
+  wildcard grant and every named exception. Holding `read` on three named
+  agents does not add up to `read` on `"*"`, and `{"*": "read-write",
+  "prod": "none"}` cannot reach `prod` through an all-agents call: the
+  operator meant the exception (D6 applied to sweeps; pre-merge review
+  refinement — the first cut consulted only the wildcard grant, which let a
+  sweep do what the named `"none"` forbade).
+- An agent-scope argument that is not a non-empty string (absent, empty, or a
+  non-string type) resolves to the wildcard demand — the broadest requirement.
+  The guard runs outside the per-tool parameter validation, so it must not
+  assume validated shapes (pre-merge review refinement).
+- The file-I/O escalation tests only whether `CPERSONA_EXPORT_DIR` is set, not
+  how much it contains. **Point it at a service-owned directory**: a broad
+  root (`/home`, `/var`) restores the agent-scoped demand while still letting
+  a caller choose almost any path inside it, silently re-opening what the
+  escalation closed.
 - Conditional capability (`fix=true`) is resolved from arguments **before**
   the handler runs; the guard sees the same validated arguments the handler
   would.
