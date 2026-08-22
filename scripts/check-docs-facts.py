@@ -215,9 +215,11 @@ def check_env_tables(env_defaults: dict[str, str]) -> None:
 VOLATILE_CLAIMS = {
     # claim regex (group 1 = number) → measured-stat key. These are the only
     # numeric claims docs are allowed to hand-round; each is stated with `~`.
+    # The test-FUNCTION count is deliberately absent: Gate 12 in
+    # tests/test_structural_gates.py owns that claim (one invariant, one
+    # implementation) — it predates this script and is mutation-protected.
     r"~([\d,]+) LOC\*?\* Python": "server LOC",
     r"a ([\d,]+)-line vendored": "vendored LOC",
-    r"~([\d,]+) test functions": "test functions",
     r"([\d,]+) test modules": "test modules",
     r"~([\d,]+) cases": "collected cases",
     r"\(~([\d,]+) LOC, more test code": "test LOC",
