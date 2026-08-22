@@ -1722,7 +1722,8 @@ class BearerTokenMiddleware:
             # request's task lineage, so the value set here is visible at
             # dispatch — pinned end-to-end by tests/test_acl.py.
             header = request.headers.get("authorization", "")
-            token = header[7:] if header.startswith("Bearer ") else ""
+            # RFC 7235: the auth-scheme is case-insensitive.
+            token = header[7:] if header[:7].lower() == "bearer " else ""
             principal = acl.resolve_token(self.acl_config, token)
             if principal is None:
                 response = JSONResponse(
@@ -1746,8 +1747,11 @@ class BearerTokenMiddleware:
             # A missing/malformed header yields an empty token, which must
             # be rejected — the earlier code let header-less requests fall
             # through to the app (auth bypass, bug-003). compare_digest keeps
-            # the check constant-time against token-probing.
-            if not token or not hmac.compare_digest(token, self.auth_token):
+            # the check constant-time against token-probing; it runs over
+            # UTF-8 bytes because the str overload raises on non-ASCII input,
+            # and a header a remote caller controls must never turn a 401
+            # into a 500 (bug-259).
+            if not token or not hmac.compare_digest(token.encode("utf-8"), self.auth_token.encode("utf-8")):
                 response = JSONResponse(
                     {"error": "unauthorized"},
                     status_code=401,
@@ -1899,6 +1903,16 @@ async def _run_http_server():
 
     auth_token = os.environ.get("CPERSONA_AUTH_TOKEN", "")
     acl_config = acl.active_config()
+    if os.environ.get("CPERSONA_ACL_FILE", "") and acl_config is None:
+        # The operator asked for ACL mode but nothing activated it — a wiring
+        # regression (main() skipped, or activate dropped). Serving now would
+        # fall back to the legacy token path, silently granting a lingering
+        # CPERSONA_AUTH_TOKEN full capability: the exact fail-open D3 exists
+        # to prevent. Refuse to serve (review finding on PR #112).
+        raise RuntimeError(
+            "CPERSONA_ACL_FILE is set but no ACL configuration is active; "
+            "refusing to serve on the legacy authentication path"
+        )
     if acl_config is not None:
         # D3 (docs/ACL_DESIGN.md §4.1): one credential authority at a time.
         # main() has already warned when both were set; here the token is
@@ -2017,6 +2031,23 @@ def _schedule_startup_calibration() -> asyncio.Task:
     return task
 
 
+async def _run_stdio_server():
+    """Run the stdio transport, entering the ACL "local" principal first.
+
+    §5.4 (docs/ACL_DESIGN.md): the stdio peer is whoever spawned the process —
+    it resolves to the reserved "local" principal, whose grants come from the
+    same file (and default to none if unlisted). Set in this task's context so
+    every handler inherits it. Factored out of ``main()`` so the principal
+    entry is testable — a dropped set_principal here turns every stdio call in
+    ACL mode into a "no principal resolved" denial, a wholesale outage no
+    other test observes (review finding on PR #112).
+    """
+    if acl.is_active():
+        acl.set_principal(acl.Principal(acl.LOCAL_CLIENT_ID))
+    async with stdio_server() as (read_stream, write_stream):
+        await registry.server.run(read_stream, write_stream, registry.server.create_initialization_options())
+
+
 async def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -2118,14 +2149,7 @@ async def main():
     try:
         transport = os.environ.get("CPERSONA_TRANSPORT", "stdio")
         if transport == "stdio":
-            if acl.is_active():
-                # §5.4: the stdio peer is whoever spawned the process — it
-                # resolves to the reserved "local" principal, whose grants come
-                # from the same file (and default to none if unlisted). Set in
-                # this task's context so every handler inherits it.
-                acl.set_principal(acl.Principal(acl.LOCAL_CLIENT_ID))
-            async with stdio_server() as (read_stream, write_stream):
-                await registry.server.run(read_stream, write_stream, registry.server.create_initialization_options())
+            await _run_stdio_server()
         elif transport == "streamable-http":
             await _run_http_server()
         else:

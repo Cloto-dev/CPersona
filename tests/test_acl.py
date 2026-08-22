@@ -478,3 +478,224 @@ def test_preflight_accepts_acl_mode_without_a_token(tmp_path, monkeypatch):
     # With ACL configured: authentication exists; preflight passes.
     monkeypatch.setenv("CPERSONA_ACL_FILE", _write_config(tmp_path, _basic_payload()))
     server._preflight_http_auth()
+
+
+# ---------------------------------------------------------------------------
+# 11. Review-driven pins (PR #112 adversarial review findings)
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_is_bounded_by_named_exceptions():
+    """{"*": rw, "prod": none}: an all-agents call must not reach prod."""
+    grants = {acl.WILDCARD: acl.PERM_WRITE, "prod": acl.PERM_NONE}
+    assert acl.effective_permission(grants, acl.WILDCARD) == acl.PERM_NONE
+    read_capped = {acl.WILDCARD: acl.PERM_WRITE, "audit": acl.PERM_READ}
+    assert acl.effective_permission(read_capped, acl.WILDCARD) == acl.PERM_READ
+    unexcepted = {acl.WILDCARD: acl.PERM_WRITE}
+    assert acl.effective_permission(unexcepted, acl.WILDCARD) == acl.PERM_WRITE
+
+
+@pytest.mark.asyncio
+async def test_sweep_call_is_denied_for_a_client_with_an_exception(tmp_path):
+    payload = {
+        "clients": [
+            {
+                "client_id": "sweeper",
+                "token": "token-s",
+                "grants": {"*": "read-write", "prod": "none"},
+            }
+        ]
+    }
+    acl.activate(_load(tmp_path, payload))
+    guarded = acl._wrap("check_health", _stub_handler)
+    token = acl.set_principal(acl.Principal("sweeper"))
+    try:
+        named = await guarded({"agent_id": "staging", "fix": True})
+        assert named["ok"] is True  # exact/wildcard path unaffected
+        swept = await guarded({"agent_id": "", "fix": True})
+        assert swept["ok"] is False and swept["agent_id"] == "*"
+    finally:
+        acl.reset_principal(token)
+
+
+def test_non_string_agent_arguments_resolve_to_the_wildcard_demand():
+    """The guard sees raw arguments; unvalidated shapes must not crash it."""
+    assert _demands("store", {"agent_id": 123}) == [("*", acl.PERM_WRITE)]
+    assert _demands("store", {"agent_id": ["prod"]}) == [("*", acl.PERM_WRITE)]
+    assert _demands("merge_memories", {"source_agent_id": None, "target_agent_id": 5}) == [
+        ("*", acl.PERM_READ),
+        ("*", acl.PERM_WRITE),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unhashable_agent_argument_is_denied_not_crashed(tmp_path, caplog):
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("store", _stub_handler)
+    token = acl.set_principal(acl.Principal("reader"))
+    try:
+        with caplog.at_level("WARNING"):
+            result = await guarded({"agent_id": ["prod"]})
+    finally:
+        acl.reset_principal(token)
+    assert result["ok"] is False and result["error"] == "permission_denied"
+    assert result["agent_id"] == "*"
+    assert any("ACL denial" in r.message for r in caplog.records)
+
+
+def test_export_demand_escalates_to_wildcard_without_export_dir(monkeypatch):
+    monkeypatch.setattr(acl.config, "EXPORT_DIR", "")
+    assert _demands("export_memories", {"agent_id": "a"}) == [("*", acl.PERM_WRITE)]
+    assert _demands("import_memories", {"target_agent_id": "a"}) == [("*", acl.PERM_WRITE)]
+    monkeypatch.setattr(acl.config, "EXPORT_DIR", "/srv/exports")
+    assert _demands("export_memories", {"agent_id": "a"}) == [("a", acl.PERM_WRITE)]
+    assert _demands("import_memories", {"target_agent_id": "a"}) == [("a", acl.PERM_WRITE)]
+
+
+def test_partial_env_reference_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("CPERSONA_TEST_ACL_TOKEN", "x")
+    for bad in ("pre${CPERSONA_TEST_ACL_TOKEN}", "${CPERSONA_TEST_ACL_TOKEN}post"):
+        payload = _basic_payload()
+        payload["clients"][0]["token"] = bad
+        with pytest.raises(acl.AclConfigError):
+            _load(tmp_path, payload)
+
+
+def test_non_ascii_token_resolves_to_none_without_raising(tmp_path):
+    config = _load(tmp_path)
+    assert acl.resolve_token(config, "tökén") is None
+
+
+def test_resolver_visits_every_entry_even_after_a_match(tmp_path, monkeypatch):
+    """§5.1 'no early exit': a dict-by-token 'optimization' must fail here."""
+    config = _load(tmp_path)
+    calls = []
+    real = acl.hmac.compare_digest
+
+    def counting(a, b):
+        calls.append(1)
+        return real(a, b)
+
+    monkeypatch.setattr(acl.hmac, "compare_digest", counting)
+    # "token-a" matches the FIRST entry; the loop must still visit all.
+    principal = acl.resolve_token(config, "token-a")
+    assert principal == acl.Principal("assistant-a")
+    assert len(calls) == len(config.token_entries)
+
+
+@pytest.mark.asyncio
+async def test_non_ascii_bearer_is_401_on_both_auth_branches(tmp_path):
+    """bug-259: a remote-controlled header must never 500 the middleware."""
+    config = _load(tmp_path)
+    acl.activate(config)
+    app, observations = _make_acl_app(config)
+    status, _ = await _request(app, headers=(("authorization", "Bearer tökén"),))
+    assert status == 401 and observations == []
+
+    # Legacy single-token branch has the same remote-controlled input.
+    legacy_reached = []
+
+    async def endpoint(scope, receive, send):
+        legacy_reached.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        yield
+
+    legacy_app = server._build_http_app("s3cret", endpoint, lifespan)
+    status, _ = await _request(legacy_app, headers=(("authorization", "Bearer tökén"),))
+    assert status == 401 and legacy_reached == []
+
+
+@pytest.mark.asyncio
+async def test_bearer_scheme_is_case_insensitive_in_acl_mode(tmp_path):
+    config = _load(tmp_path)
+    acl.activate(config)
+    app, observations = _make_acl_app(config)
+    status, _ = await _request(app, headers=(("authorization", "bearer token-a"),))
+    assert status == 200
+    assert observations[0][0] == acl.Principal("assistant-a")
+
+
+@pytest.mark.asyncio
+async def test_run_http_server_hands_the_acl_config_to_the_factory(tmp_path, monkeypatch):
+    """M11/M12 pins: the active config reaches the middleware factory, the
+    legacy token is blanked (D3), and an env/activation mismatch refuses to
+    serve instead of falling open onto the legacy token path."""
+    import uvicorn
+
+    config = _load(tmp_path)
+    calls = []
+    sentinel = object()
+
+    def fake_build(auth_token, mcp_endpoint, lifespan, acl_config=None):
+        calls.append((auth_token, acl_config))
+        return sentinel
+
+    class _StubConfig:
+        def __init__(self, app, host=None, port=None, **kwargs):
+            self.app = app
+
+    class _StubServer:
+        def __init__(self, config):
+            self.config = config
+
+        async def serve(self):
+            pass
+
+    monkeypatch.setenv("CPERSONA_ACL_FILE", "/tmp/acl.json")
+    monkeypatch.setenv("CPERSONA_AUTH_TOKEN", "legacy-token")
+    monkeypatch.setattr(server, "_build_http_app", fake_build)
+    monkeypatch.setattr(uvicorn, "Config", _StubConfig)
+    monkeypatch.setattr(uvicorn, "Server", _StubServer)
+
+    # Env set but nothing activated: refuse to serve (fail closed, not open).
+    acl.activate(None)
+    with pytest.raises(RuntimeError, match="legacy authentication path"):
+        await server._run_http_server()
+    assert calls == []
+
+    # Activated: the config reaches the factory and the legacy token does not.
+    acl.activate(config)
+    await server._run_http_server()
+    assert calls == [("", config)], (
+        "ACL mode must hand the active config to the app factory and blank "
+        "the legacy token (D3)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stdio_transport_enters_the_local_principal(tmp_path, monkeypatch):
+    """M13 pin: a dropped set_principal turns every stdio call in ACL mode
+    into a wholesale 'no principal resolved' outage."""
+    observed = {}
+
+    @contextlib.asynccontextmanager
+    async def fake_stdio_server():
+        observed["principal"] = acl.current_principal()
+        yield (None, None)
+
+    async def fake_run(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(server, "stdio_server", fake_stdio_server)
+    monkeypatch.setattr(server.registry.server, "run", fake_run)
+    monkeypatch.setattr(
+        server.registry.server, "create_initialization_options", lambda: None
+    )
+
+    import asyncio
+
+    # Each run in its own task: set_principal is deliberately context-sticky
+    # for the process lifetime in production (main() runs once), so the test
+    # isolates the two scenarios the way separate processes would be.
+    acl.activate(_load(tmp_path))
+    await asyncio.create_task(server._run_stdio_server())
+    assert observed["principal"] == acl.Principal(acl.LOCAL_CLIENT_ID)
+
+    acl.activate(None)
+    observed.clear()
+    await asyncio.create_task(server._run_stdio_server())
+    assert observed["principal"] is None  # legacy mode: no principal, no ACL

@@ -29,6 +29,8 @@ import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from cpersona import config
+
 logger = logging.getLogger(__name__)
 
 # Permission lattice (design §3): none < read < read-write.
@@ -78,6 +80,15 @@ class AclConfig:
 def _resolve_token_value(raw: str, client_id: str) -> str:
     ref = _ENV_REF.match(raw)
     if not ref:
+        if "${" in raw:
+            # A partial reference ("pre${VAR}", "${VAR}x") would silently
+            # become a literal, guessable credential in a file operators
+            # commit more casually than a secret. Fail closed (§7).
+            raise AclConfigError(
+                f"ACL client {client_id!r}: token contains '${{' but is not a "
+                "whole-string ${ENV_VAR} reference; use a literal without '${' "
+                "or exactly \"${VAR}\""
+            )
         return raw
     value = os.environ.get(ref.group(1), "")
     if not value:
@@ -216,18 +227,21 @@ def current_principal() -> Principal | None:
     return _current_principal.get()
 
 
-def resolve_token(config: AclConfig, presented: str) -> Principal | None:
+def resolve_token(acl_config: AclConfig, presented: str) -> Principal | None:
     """Token → principal, comparing against EVERY entry (no early exit).
 
     The loop always visits the whole table so response timing does not narrow
     which entry matched. Duplicate tokens are rejected at load, so at most one
-    entry can match.
+    entry can match. Comparison is over UTF-8 bytes: ``hmac.compare_digest``
+    raises on non-ASCII str input, and a header a remote caller controls must
+    never turn a 401 into a 500 (bug-259).
     """
     if not presented:
         return None
+    presented_bytes = presented.encode("utf-8")
     matched: str | None = None
-    for token, client_id in config.token_entries:
-        if hmac.compare_digest(presented, token):
+    for token, client_id in acl_config.token_entries:
+        if hmac.compare_digest(presented_bytes, token.encode("utf-8")):
             matched = client_id
     return Principal(matched) if matched is not None else None
 
@@ -235,11 +249,19 @@ def resolve_token(config: AclConfig, presented: str) -> Principal | None:
 def effective_permission(grants: dict[str, int], agent_pattern: str) -> int:
     """Design §3: exact match beats wildcard in BOTH directions (D6).
 
-    A demand on the wildcard itself (``agent_pattern == "*"``) is satisfied
-    only by the wildcard grant — named grants do not add up to ``*``. That
-    falls out of the lookup order: ``"*"`` as a pattern hits the exact branch
-    when the wildcard grant exists and nothing otherwise.
+    A demand on the wildcard itself (``agent_pattern == "*"``) is a sweep —
+    the call touches EVERY agent, the excepted ones included — so it is
+    satisfied only at the level every grant row allows: the minimum over the
+    wildcard grant and every named exception. Named grants alone never add up
+    to ``*`` (no wildcard grant → PERM_NONE), and a client whose grants say
+    ``{"*": "read-write", "prod": "none"}`` cannot reach prod through an
+    all-agents call — the operator meant the exception (review finding on
+    PR #112; the D6 ruling's intent applied to sweeps).
     """
+    if agent_pattern == WILDCARD:
+        if WILDCARD not in grants:
+            return PERM_NONE
+        return min(grants.values())
     if agent_pattern in grants:
         return grants[agent_pattern]
     if WILDCARD in grants:
@@ -259,10 +281,42 @@ def effective_permission(grants: dict[str, int], agent_pattern: str) -> int:
 Demands = Callable[[dict], list[tuple[str, int]]]
 
 
+def _agent_arg(args: dict, key: str = "agent_id") -> str:
+    """Coerce an agent-scope argument to the pattern the guard evaluates.
+
+    The guard runs OUTSIDE the auto_tool parameter validation, so the value
+    here is whatever the caller sent. Anything that is not a non-empty string
+    — absent, empty, an int, a list — resolves to the wildcard demand: the
+    broadest requirement, and immune to unhashable-type surprises inside the
+    check (review finding on PR #112).
+    """
+    value = args.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return WILDCARD
+
+
 def _scoped(required: int, key: str = "agent_id") -> Demands:
     def demands(args: dict) -> list[tuple[str, int]]:
-        agent = args.get(key) or WILDCARD
-        return [(agent, required)]
+        return [(_agent_arg(args, key), required)]
+
+    return demands
+
+
+def _file_io_demands(key: str) -> Demands:
+    """export_memories / import_memories: caller-directed file I/O.
+
+    With ``CPERSONA_EXPORT_DIR`` unset (the shipped default) the path argument
+    is caller-chosen anywhere on the filesystem, so the blast radius is not
+    one agent's data — the demand escalates to read-write on ``"*"`` (review
+    finding on PR #112, extending D4). With the confinement configured, the
+    agent-scoped read-write demand of §6 applies.
+    """
+
+    def demands(args: dict) -> list[tuple[str, int]]:
+        if not config.EXPORT_DIR:
+            return [(WILDCARD, PERM_WRITE)]
+        return [(_agent_arg(args, key), PERM_WRITE)]
 
     return demands
 
@@ -270,12 +324,12 @@ def _scoped(required: int, key: str = "agent_id") -> Demands:
 def _health_demands(args: dict) -> list[tuple[str, int]]:
     # check_health / deep_check: read; fix=true repairs, which is a write.
     required = PERM_WRITE if args.get("fix") else PERM_READ
-    return [(args.get("agent_id") or WILDCARD, required)]
+    return [(_agent_arg(args), required)]
 
 
 def _merge_demands(args: dict) -> list[tuple[str, int]]:
-    source = args.get("source_agent_id") or WILDCARD
-    target = args.get("target_agent_id") or WILDCARD
+    source = _agent_arg(args, "source_agent_id")
+    target = _agent_arg(args, "target_agent_id")
     if args.get("mode", "copy") == "move":
         # move deletes source rows: read-write on BOTH sides.
         return [(source, PERM_WRITE), (target, PERM_WRITE)]
@@ -313,10 +367,10 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     # Calibration state is per-agent mutable state.
     "calibrate_threshold": _scoped(PERM_WRITE),
     "set_recall_precision": _scoped(PERM_WRITE),
-    # D4 (amended): export writes a caller-chosen path when CPERSONA_EXPORT_DIR
-    # is unset (the shipped default) — a caller-directed filesystem write.
-    "export_memories": _scoped(PERM_WRITE),
-    "import_memories": _scoped(PERM_WRITE, key="target_agent_id"),
+    # D4 (amended twice): caller-directed file I/O — read-write, escalating to
+    # the wildcard demand while CPERSONA_EXPORT_DIR leaves paths unconfined.
+    "export_memories": _file_io_demands("agent_id"),
+    "import_memories": _file_io_demands("target_agent_id"),
     "merge_memories": _merge_demands,
     # Empty agent_id sweeps every agent on these; _scoped maps "" to "*".
     "check_health": _health_demands,
