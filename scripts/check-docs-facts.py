@@ -52,6 +52,7 @@ DOC_FILES = [
     ROOT / "docs" / "index.ja.md",
     ROOT / "docs" / "faq.ja.md",
     ROOT / "docs" / "behavior-contracts.ja.md",
+    ROOT / "docs" / "operations.ja.md",
 ]
 
 # Relative drift allowed on volatile stats before the gate goes red. 3% keeps
