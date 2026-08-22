@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:5dfd5fb6eaf3f8c8ad58923dadd2ce32dd28af55 -->
+<!-- i18n-source: docs/index.md@blob:601c665650d63b02db03f6fad492118e3f821c59 -->
 
 # CPersona ドキュメント
 
@@ -21,8 +21,10 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 
 | したいこと | 読むページ |
 |---|---|
-| インストール・セットアップ | [README Quick Start](https://github.com/Cloto-dev/cpersona#quick-start) (PyPI ページと同内容) |
+| インストール・セットアップ | [はじめに (Getting Started)](getting-started.md) |
 | 依存してよい挙動を知る | [挙動契約 (Behavior Contracts)](behavior-contracts.md) |
+| 29 個のツールが何をするか見る | [ツール一覧](tools.md) |
+| 検索と保存の仕組みを理解する | [アーキテクチャ](architecture.md) |
 | 運用: バックアップ・チューニング・劣化検知・コーパス索引 | [運用 Runbook](operations.md) |
 | 環境変数を調べる | [設定リファレンス](configuration.md) |
 | よくある質問への短い回答 | [FAQ](faq.md) |

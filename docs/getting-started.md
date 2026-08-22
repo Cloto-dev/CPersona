@@ -1,0 +1,207 @@
+# Getting Started
+
+> **Applies to: CPersona 2.5.x.** This page is the canonical installation and
+> setup reference. The README keeps a condensed version of the same steps
+> because it is also the PyPI project page; when the two disagree, this page
+> wins.
+
+CPersona is an [MCP](https://modelcontextprotocol.io/) server. You install it,
+point an MCP client at it, and the client's agent gains `store` / `recall`
+tools that survive across sessions. Nothing else in your stack changes.
+
+## Prerequisites
+
+- **Python 3.11+**
+- **[uv](https://docs.astral.sh/uv/)** for the one-command path (optional —
+  `pip` works too)
+- An MCP client: Claude Desktop, Claude Code, or any other MCP host
+
+## Let the agent do it (Claude Code)
+
+The repository — and the published wheel — ship an
+[Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
+that walks Claude Code through the whole installation and, more importantly,
+teaches it *when* to store, recall, and archive afterwards. Installing the
+skill is the shortest path:
+
+```bash
+# Installed from PyPI? The skill ships inside the wheel — no clone needed:
+python -c "import cpersona,pathlib,shutil; s=pathlib.Path(cpersona.__file__).parent/'skills'/'cpersona-memory'; shutil.copytree(s, pathlib.Path.home()/'.claude/skills/cpersona-memory', dirs_exist_ok=True)"
+
+# Running via uvx (isolated environment), or not installed yet:
+git clone --depth 1 https://github.com/Cloto-dev/cpersona.git /tmp/cpersona
+mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claude/skills/
+```
+
+Then tell Claude Code: *"Set up CPersona — I want persistent memory."* The
+manual steps below are for every other client, and for anyone who prefers to
+configure things by hand.
+
+## 1. Install CPersona
+
+```bash
+uvx cpersona          # run directly, no install step
+# or
+pip install cpersona  # then the `cpersona` command is on your PATH
+```
+
+<details>
+<summary>From source (for development)</summary>
+
+```bash
+git clone https://github.com/Cloto-dev/cpersona.git
+cd cpersona
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install .
+```
+
+Run it with `python -m cpersona` (or `python server.py`).
+</details>
+
+## 2. Set up an embedding server (recommended)
+
+Vector search is the strongest of the three retrieval layers, and it is the
+only one that needs an external process. Without it CPersona still runs — on
+FTS5 + keyword search — and
+[says so on every recall](operations.md#detecting-a-dead-embedding-server).
+
+### The contract
+
+CPersona is embedding-server-agnostic. Point `CPERSONA_EMBEDDING_URL` at any
+HTTP endpoint that implements this:
+
+```
+POST /embed
+Request:  { "texts": ["string", ...] }        # non-empty array
+Response: { "embeddings": [[float, ...], ...], "dimensions": <int> }
+```
+
+CPersona reads **`embeddings`** and nothing else — `dimensions` is part of the
+reference server's response and is ignored by the client, so a backend that
+omits it still works. CPersona sends at most **32 texts per request**; the
+reference server accepts up to 100, so batch limits in that range are not a
+constraint you need to plan around.
+
+Three requirements are easy to miss and each one degrades ranking silently:
+
+- **Embeddings MUST be L2-normalized.** CPersona computes similarity as a raw
+  dot product, so a backend returning unnormalized vectors biases ranking by
+  vector magnitude. Every supported backend (the client's `api` mode and all
+  CEmbedding providers) already normalizes.
+- **The contract is role-less.** Queries and documents are embedded through
+  the same call, with no instruction prefix. Prompt-prefix models (e5-style,
+  prompted bge) underperform behind it; symmetric or retrieval-merged models
+  (jina-v5-nano, bge-m3, MiniLM) are the intended fit.
+- **Swapping models behind one URL invalidates the corpus.** CPersona
+  fingerprints the backend by embedding *dimension* only — the contract
+  carries no model identity — so a same-dimension swap is undetectable. After
+  one, re-embed (`check_health(fix=true)` repairs NULLed rows) and run
+  `calibrate_threshold`.
+
+### The reference server
+
+[CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) runs jina-v5-nano
+on-device (CPU) and exposes exactly this endpoint:
+
+```bash
+# Download the model into ./data/models
+uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
+
+# Run the server (it reads ./data/models from the current directory)
+EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding
+```
+
+Or put it on your PATH with `pip install "cembedding[onnx]"` and run
+`cembedding-download-model --model jina-v5-nano`, then `cembedding`. From a
+source checkout the same two steps are `python -m cembedding.download_model
+--model jina-v5-nano` and `python -m cembedding`.
+
+Either way you should see
+`HTTP embedding endpoint started on http://127.0.0.1:8401/embed`. Verify it
+before wiring CPersona to it:
+
+```bash
+curl -s http://127.0.0.1:8401/embed \
+  -H 'content-type: application/json' \
+  -d '{"texts":["hello world"]}' | head -c 200
+```
+
+CPersona's defaults are tuned against jina-v5-nano (768 dimensions). Any other
+server satisfying the contract works; models with published measurements are
+listed in [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
+
+The embedding server is a plain HTTP process, **not** an MCP server — run it
+however you run background services (a terminal, launchd, systemd). CPersona
+only needs its URL.
+
+## 3. Register CPersona with your MCP client
+
+**Claude Desktop** — add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "cpersona": {
+      "command": "uvx",
+      "args": ["cpersona"],
+      "env": {
+        "CPERSONA_DB_PATH": "/home/you/.claude/cpersona.db",
+        "EMBEDDING_MODE": "http",
+        "EMBEDDING_HTTP_URL": "http://127.0.0.1:8401/embed"
+      }
+    }
+  }
+}
+```
+
+**Claude Code** — one command:
+
+```bash
+claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
+```
+
+Notes that save a support round-trip:
+
+- **Set `CPERSONA_DB_PATH` to an absolute path.** Its default,
+  `data/cpersona.db`, is relative to the *client's* working directory — which
+  means a client launched from somewhere else opens a different, empty
+  database. On Windows, write it as `C:/Users/you/.claude/cpersona.db`.
+- **No embedding server yet?** Drop the two `EMBEDDING_*` lines (or set
+  `EMBEDDING_MODE=none`). CPersona runs on FTS5 + keyword and reports that it
+  is degraded.
+- `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` are the generic aliases of
+  `CPERSONA_EMBEDDING_MODE` / `CPERSONA_EMBEDDING_URL`; the prefixed form wins
+  when both are set. Every other setting is in the
+  [configuration reference](configuration.md).
+
+## 4. Verify it works
+
+Ask the agent to store something, then recall it — ideally in a *new* session,
+since surviving the session boundary is the whole point:
+
+> "Store this: the deploy runbook lives in ops/deploy.md."
+>
+> …then, in a fresh session: "What did I tell you about the deploy runbook?"
+
+Two checks worth running once the corpus is real:
+
+- `check_health` — the registry-driven health check. `status` is the verdict;
+  issues are severity-tagged (`critical` / `warn` / `info`), and
+  `check_health(fix=true)` repairs the mechanical ones.
+- Watch recall responses for an `advisory` field. It reports that vector
+  search is not contributing, and its severity distinguishes the two reasons:
+  a `hint` means embeddings are simply unconfigured (`mode=none`), while a
+  fault means a configured endpoint stopped answering — see
+  [detecting a dead embedding server](operations.md#detecting-a-dead-embedding-server).
+
+## Where to go next
+
+| You want to… | Read |
+|---|---|
+| Know which behaviors you can rely on | [Behavior Contracts](behavior-contracts.md) |
+| See what each tool does | [Tools](tools.md) |
+| Understand how retrieval works | [Architecture](architecture.md) |
+| Back up, tune, or diagnose a live instance | [Operations Runbook](operations.md) |
+| Look up a setting | [Configuration](configuration.md) |
+| Serve several clients over the network | [Remote HTTP transport](configuration.md#remote-http-transport) |

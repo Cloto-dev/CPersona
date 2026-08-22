@@ -283,11 +283,12 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 ### Operating knowledge (canonical: `docs/`)
 
 One-line versions of the behaviors that are easy to assume wrong. The
-canonical, maintained detail lives in the repo docs —
-[Behavior Contracts](https://github.com/Cloto-dev/cpersona/blob/master/docs/behavior-contracts.md)
-and the
-[Operations Runbook](https://github.com/Cloto-dev/cpersona/blob/master/docs/operations.md)
-— cite those, not this summary, when precision matters.
+canonical, maintained detail lives on the documentation site —
+[Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/),
+the [Operations Runbook](https://cloto-dev.github.io/CPersona/operations/), and
+the [Architecture](https://cloto-dev.github.io/CPersona/architecture/) page —
+cite those, not this summary, when precision matters. A machine-readable index
+of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 
 - **No upsert**: re-storing *changed* content under the same `msg_id` is
   silently **skipped**. Change memories with `update_memory` (or delete +
@@ -330,7 +331,9 @@ and the
 | Health | `check_health`, `deep_check`, `get_queue_status` |
 | Operator context | `get_operating_context` |
 
-Argument details live in each tool's MCP description.
+Argument details live in each tool's MCP description; the grouped reference
+with the contract each tool can surprise you with is
+[Tools](https://cloto-dev.github.io/CPersona/tools/).
 
 **Failures** — a tool answers a refused call with `ok: false`. The explanation travels in `error`, except on `store`, which explains a refusal in `reason` alongside `result` (`stored` / `skipped` / `rejected`): a dedup hit or a paused session is a `skipped`, not a failure, while a refusal is a `rejected` carrying `reason`.
 

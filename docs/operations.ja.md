@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:74318d9135f3e552fa02135736e55ff22d4a2456 -->
+<!-- i18n-source: docs/operations.md@blob:11994d7d92d5356539737d87ddb7ceac416536ab -->
 
 # 運用 Runbook
 
@@ -37,6 +37,19 @@
    スキーマバージョンに依存しない JSONL を書き出し、`import_memories` は
    冪等です (重複はスキップ)。したがってリストア訓練を安全に反復できます。
    月次程度が妥当な頻度です。
+
+**`.db` はインスタンスの全体ではありません。** データベースの外に 3 つの
+ファイルがあり、上のどのバックアップ手段もそれらに触れません:
+
+- `<CPERSONA_DB_PATH>.calibration.json` — エージェント別のベクトル閾値・
+  ゲート状態・スコアリング版。これ抜きで復元しても recall は動きますが、
+  ヒューリスティックなゲートに戻ります: 同じクエリが違う行を返すようになり、
+  かつ「調整が失われた」ことはどこにも報告されません。データベースと並べて
+  コピーするか、復元後に `calibrate_threshold` を実行してください。
+- `~/.cpersona/operating-context.toml` (または
+  `CPERSONA_OPERATING_CONTEXT_PATH`) — 全クライアントに配られる運用者の指示。
+- `CPERSONA_ACL_FILE` を設定しているならその ACL ファイル — 抜きで復元すると
+  誰が接続できるかが変わります。
 
 稼働中のデータベースは**クラウド同期フォルダの外**に置いてください
 (Dropbox、Drive 等)。同期クライアントは SQLite の WAL ファイルと相性が悪い
