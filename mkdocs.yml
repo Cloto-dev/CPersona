@@ -52,6 +52,11 @@ plugins:
 
 markdown_extensions:
   - admonition
+  # Translated pages carry explicit heading ids ({ #english-slug }) so that a
+  # heading rendered in Japanese keeps the anchor its English source generated.
+  # Without it, adding a translation silently breaks every cross-page anchor
+  # link aimed at that page, because mkdocs --strict does not validate anchors.
+  - attr_list
   - tables
   - toc:
       permalink: true
