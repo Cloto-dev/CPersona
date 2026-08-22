@@ -8,11 +8,24 @@ name: docs
 # the docs. Deployment happens only on push to master.
 
 on:
+  # Both lists are spelled out because GitHub Actions does not resolve YAML
+  # anchors — keep them in step.  The scripts/ entries are on the trigger so
+  # that a PR editing a doc checker actually runs the checker it edited.
   push:
     branches: [master]
-    paths: ["docs/**", "mkdocs.yml", ".github/workflows/docs.yml"]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+      - "scripts/check-doc-anchors.py"
+      - "scripts/check-i18n-drift.py"
   pull_request:
-    paths: ["docs/**", "mkdocs.yml", ".github/workflows/docs.yml"]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+      - "scripts/check-doc-anchors.py"
+      - "scripts/check-i18n-drift.py"
 
 permissions:
   contents: read
@@ -31,6 +44,14 @@ jobs:
       - name: Build site (strict)
         # Pinned for reproducibility, same policy as the lint job in ci.yml.
         run: uvx --with mkdocs-material==9.7.7 --with mkdocs-static-i18n==1.3.1 mkdocs build --strict
+      - name: In-site anchor links (blocking)
+        # --strict fails on a broken page link but passes a broken #fragment,
+        # so a translated heading can invalidate every link aimed at its
+        # English slug and still build green. Measured on this repo: stripping
+        # the explicit ids from one translated page left --strict at exit 0
+        # while breaking 16 links across four pages. This step is the detector
+        # for that class, and it runs against the built site, not the sources.
+        run: python3 scripts/check-doc-anchors.py site
       - name: Japanese translation drift (advisory)
         # English is canonical; ja pages carry an i18n-source marker. Stale
         # translations surface as ::warning annotations without failing the

@@ -46,6 +46,12 @@ DOC_FILES = [
     ROOT / "docs" / "configuration.md",
     ROOT / "docs" / "faq.md",
     ROOT / "docs" / "llms.txt",
+    # Translations restate the same measurable claims, so they rot the same
+    # way. The checks below key on `CPERSONA_*` cells and on the numbers
+    # themselves, not on English prose, so a ja page is scanned identically.
+    ROOT / "docs" / "index.ja.md",
+    ROOT / "docs" / "faq.ja.md",
+    ROOT / "docs" / "behavior-contracts.ja.md",
 ]
 
 # Relative drift allowed on volatile stats before the gate goes red. 3% keeps
