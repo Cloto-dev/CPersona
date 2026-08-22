@@ -30,7 +30,12 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Build site (strict)
         # Pinned for reproducibility, same policy as the lint job in ci.yml.
-        run: uvx --with mkdocs-material==9.7.7 mkdocs build --strict
+        run: uvx --with mkdocs-material==9.7.7 --with mkdocs-static-i18n==1.3.1 mkdocs build --strict
+      - name: Japanese translation drift (advisory)
+        # English is canonical; ja pages carry an i18n-source marker. Stale
+        # translations surface as ::warning annotations without failing the
+        # lane (flip to blocking by adding --strict).
+        run: python3 scripts/check-i18n-drift.py
       - name: Upload Pages artifact
         if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
