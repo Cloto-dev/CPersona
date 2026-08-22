@@ -82,6 +82,7 @@ def test_load_valid_config(tmp_path):
         lambda p: p["clients"][1].update({"token": "token-a"}),                # duplicate token
         lambda p: p["clients"][2].update({"token": "x"}),                      # token on "local"
         lambda p: p["clients"][0]["grants"].update({"": "read"}),              # empty grant key
+        lambda p: p["clients"][0].update({"token": "pässwort"}),               # non-ASCII token (latin-1 header decode would mangle it)
     ],
 )
 def test_load_rejects_defects(tmp_path, mutate):
@@ -475,8 +476,15 @@ def test_preflight_accepts_acl_mode_without_a_token(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         server._preflight_http_auth()
 
-    # With ACL configured: authentication exists; preflight passes.
+    # ACL env set but nothing activated: die cheaply, before the expensive
+    # initialisation main() runs after this preflight.
     monkeypatch.setenv("CPERSONA_ACL_FILE", _write_config(tmp_path, _basic_payload()))
+    acl.activate(None)
+    with pytest.raises(RuntimeError, match="legacy authentication path"):
+        server._preflight_http_auth()
+
+    # ACL configured AND active: authentication exists; preflight passes.
+    acl.activate(_load(tmp_path))
     server._preflight_http_auth()
 
 
@@ -540,6 +548,7 @@ async def test_unhashable_agent_argument_is_denied_not_crashed(tmp_path, caplog)
         acl.reset_principal(token)
     assert result["ok"] is False and result["error"] == "permission_denied"
     assert result["agent_id"] == "*"
+    assert "non-string agent_id" in result["detail"]  # §5.3 self-diagnosis
     assert any("ACL denial" in r.message for r in caplog.records)
 
 
@@ -699,3 +708,13 @@ async def test_stdio_transport_enters_the_local_principal(tmp_path, monkeypatch)
     observed.clear()
     await asyncio.create_task(server._run_stdio_server())
     assert observed["principal"] is None  # legacy mode: no principal, no ACL
+
+
+@pytest.mark.asyncio
+async def test_stdio_refuses_env_activation_mismatch(tmp_path, monkeypatch):
+    """The stdio transport carries the same fail-closed invariant as HTTP:
+    ACL requested by env but nothing active must not serve unrestricted."""
+    monkeypatch.setenv("CPERSONA_ACL_FILE", "/tmp/acl.json")
+    acl.activate(None)
+    with pytest.raises(RuntimeError, match="stdio transport unrestricted"):
+        await server._run_stdio_server()

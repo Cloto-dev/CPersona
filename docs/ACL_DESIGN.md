@@ -227,6 +227,11 @@ Resolution rules the table relies on:
   non-string type) resolves to the wildcard demand — the broadest requirement.
   The guard runs outside the per-tool parameter validation, so it must not
   assume validated shapes (pre-merge review refinement).
+- The file-I/O escalation tests only whether `CPERSONA_EXPORT_DIR` is set, not
+  how much it contains. **Point it at a service-owned directory**: a broad
+  root (`/home`, `/var`) restores the agent-scoped demand while still letting
+  a caller choose almost any path inside it, silently re-opening what the
+  escalation closed.
 - Conditional capability (`fix=true`) is resolved from arguments **before**
   the handler runs; the guard sees the same validated arguments the handler
   would.

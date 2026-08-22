@@ -175,6 +175,16 @@ def load_config(path: str) -> AclConfig:
                     f"ACL client {client_id!r}: token must be a non-empty string"
                 )
             token = _resolve_token_value(token_raw, client_id)
+            if not token.isascii():
+                # RFC 6750 token68 is ASCII, and HTTP header decoding
+                # (latin-1) would mangle a non-ASCII token before the UTF-8
+                # comparison ever saw it — the client could present the right
+                # secret forever and never authenticate, with nothing
+                # diagnosing why. Fail loudly at load instead (§7).
+                raise AclConfigError(
+                    f"ACL client {client_id!r}: token contains non-ASCII "
+                    "characters; bearer tokens must be ASCII (RFC 6750)"
+                )
             if token in seen_tokens:
                 # Which client is a presented token? must have exactly one answer.
                 raise AclConfigError(
@@ -433,8 +443,26 @@ def _wrap(name: str, handler):
                     agent_pattern,
                     _PERMISSION_NAMES[required],
                 )
+                detail = ""
+                if agent_pattern == WILDCARD:
+                    malformed = [
+                        k
+                        for k in ("agent_id", "source_agent_id", "target_agent_id")
+                        if k in arguments and not isinstance(arguments[k], str)
+                    ]
+                    if malformed:
+                        # §5.3: a mis-wired client diagnoses itself from its
+                        # side of the wire — say why the scope widened.
+                        detail = (
+                            f"non-string {malformed[0]} argument resolved to "
+                            "the all-agents demand"
+                        )
                 return _denial(
-                    name, principal.client_id, agent_id=agent_pattern, required=required
+                    name,
+                    principal.client_id,
+                    agent_id=agent_pattern,
+                    required=required,
+                    detail=detail,
                 )
         return await handler(arguments)
 

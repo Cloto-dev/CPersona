@@ -1983,6 +1983,16 @@ def _preflight_http_auth() -> None:
     if os.environ.get("CPERSONA_ACL_FILE", ""):
         # ACL mode is authentication (every request must resolve to a
         # principal); the file itself is validated fail-closed in main().
+        # The activation invariant lives here as well as in _run_http_server
+        # so an env/activation mismatch dies BEFORE the database, the
+        # embedding backend and the queue are initialised — under
+        # Restart=always that difference is a cheap failure loop versus the
+        # expensive one this preflight exists to avoid.
+        if not acl.is_active():
+            raise RuntimeError(
+                "CPERSONA_ACL_FILE is set but no ACL configuration is active; "
+                "refusing to serve on the legacy authentication path"
+            )
         return
     _assert_safe_http_bind(
         os.environ.get("CPERSONA_AUTH_TOKEN", ""),
@@ -2042,6 +2052,15 @@ async def _run_stdio_server():
     ACL mode into a "no principal resolved" denial, a wholesale outage no
     other test observes (review finding on PR #112).
     """
+    if os.environ.get("CPERSONA_ACL_FILE", "") and not acl.is_active():
+        # Same invariant as the HTTP transport, kept symmetric: the operator
+        # asked for ACL mode but nothing activated a configuration, and
+        # serving now would run every stdio call unrestricted (review finding
+        # on PR #112, second pass).
+        raise RuntimeError(
+            "CPERSONA_ACL_FILE is set but no ACL configuration is active; "
+            "refusing to serve the stdio transport unrestricted"
+        )
     if acl.is_active():
         acl.set_principal(acl.Principal(acl.LOCAL_CLIENT_ID))
     async with stdio_server() as (read_stream, write_stream):
