@@ -365,10 +365,10 @@ considered and not the order they come back in.
 
 ## Stats
 
-- **~13,000 LOC** Python across focused modules, plus a 3,300-line vendored MCP
+- **~14,100 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **835 test functions** across 76 test modules — 1,049 cases once the
-  behavioural matrix is parametrised (~24,500 LOC, more test code than server
+- **928 test functions** across 85 test modules — 1,174 cases once the
+  behavioural matrix is parametrised (~27,600 LOC, more test code than server
   code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)
 - **MIT License**
