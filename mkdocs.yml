@@ -27,6 +27,29 @@ theme:
     - content.code.copy
     - search.suggest
 
+plugins:
+  - search
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      reconfigure_material: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: ja
+          name: 日本語
+          build: true
+          nav_translations:
+            Home: ホーム
+            Behavior Contracts: 挙動契約
+            Operations Runbook: 運用 Runbook
+            Configuration: 設定リファレンス
+            FAQ: FAQ
+            Design documents: 設計ドキュメント
+            Release lifecycle: リリースライフサイクル
+
 markdown_extensions:
   - admonition
   - tables
