@@ -201,7 +201,7 @@ async def test_run_http_server_serves_the_app_from_the_factory(monkeypatch):
     sentinel = object()
     calls = []
 
-    def fake_build(auth_token, mcp_endpoint, lifespan):
+    def fake_build(auth_token, mcp_endpoint, lifespan, acl_config=None):
         calls.append((auth_token, mcp_endpoint, lifespan))
         return sentinel
 
