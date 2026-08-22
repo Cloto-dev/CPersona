@@ -30,6 +30,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from cpersona import acl
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
@@ -1151,6 +1152,9 @@ registry.auto_tool(
         ("method", str, ""),
         ("percentile", float, 0),
     ],
+    # Mutates the agent's persisted calibration state; each run redraws the
+    # sample, so repeating it is not idempotent (ACL_DESIGN.md §6 survey gap).
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
 )
 
 registry.auto_tool(
@@ -1188,6 +1192,9 @@ registry.auto_tool(
         ("precision", str, ""),
         ("beta", float, 0),
     ],
+    # Writes the agent's beta override and recalibrates its gate; setting the
+    # same precision twice lands in the same state (ACL_DESIGN.md §6 survey gap).
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
 registry.auto_tool(
@@ -1561,6 +1568,14 @@ registry.auto_tool(
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 
+# Capability guard (docs/ACL_DESIGN.md §5.2): wrap every handler registered
+# above. Installed unconditionally — with no active ACL configuration the wrap
+# passes straight through (legacy mode, zero decisions). This line must stay
+# BELOW the last auto_tool registration; the §8 exhaustiveness test fails red
+# if a tool is registered without a classification, and test_acl.py's
+# wrap-coverage check fails if one is registered without the guard.
+acl.install(registry)
+
 
 # =============================================================================
 # Streamable HTTP transport (Bearer auth, CORS)
@@ -1626,9 +1641,12 @@ class BearerTokenMiddleware:
     replica.
     """
 
-    def __init__(self, app, auth_token: str = ""):
+    def __init__(self, app, auth_token: str = "", acl_config: "acl.AclConfig | None" = None):
         self.app = app
         self.auth_token = auth_token
+        # ACL mode (docs/ACL_DESIGN.md §5.1): token → Principal via the
+        # identity seam; auth_token is not consulted while this is set (D3).
+        self.acl_config = acl_config
         self._exposure_warned = False
 
     def _warn_once_if_remotely_reached(self, request) -> None:
@@ -1687,7 +1705,7 @@ class BearerTokenMiddleware:
             # is installed, so uvicorn never completes the upgrade) but the
             # contract "no unauthenticated request reaches a tool" has to hold
             # as written, not as far as the dependency list happens to allow.
-            if self.auth_token:
+            if self.auth_token or self.acl_config is not None:
                 if scope["type"] == "websocket":
                     await send({"type": "websocket.close", "code": 1008})
                 return
@@ -1697,6 +1715,30 @@ class BearerTokenMiddleware:
         if request.method == "OPTIONS":
             await self.app(scope, receive, send)
             return
+        if self.acl_config is not None:
+            # ACL mode (docs/ACL_DESIGN.md §5.1): resolve the bearer token to a
+            # Principal and carry it to the dispatch guard via contextvar. The
+            # stateless HTTP transport executes the tool call inside this
+            # request's task lineage, so the value set here is visible at
+            # dispatch — pinned end-to-end by tests/test_acl.py.
+            header = request.headers.get("authorization", "")
+            # RFC 7235: the auth-scheme is case-insensitive.
+            token = header[7:] if header[:7].lower() == "bearer " else ""
+            principal = acl.resolve_token(self.acl_config, token)
+            if principal is None:
+                response = JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+                await response(scope, receive, send)
+                return
+            ctx_token = acl.set_principal(principal)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                acl.reset_principal(ctx_token)
+            return
         if not self.auth_token:
             self._warn_once_if_remotely_reached(request)
         if self.auth_token:
@@ -1705,8 +1747,11 @@ class BearerTokenMiddleware:
             # A missing/malformed header yields an empty token, which must
             # be rejected — the earlier code let header-less requests fall
             # through to the app (auth bypass, bug-003). compare_digest keeps
-            # the check constant-time against token-probing.
-            if not token or not hmac.compare_digest(token, self.auth_token):
+            # the check constant-time against token-probing; it runs over
+            # UTF-8 bytes because the str overload raises on non-ASCII input,
+            # and a header a remote caller controls must never turn a 401
+            # into a 500 (bug-259).
+            if not token or not hmac.compare_digest(token.encode("utf-8"), self.auth_token.encode("utf-8")):
                 response = JSONResponse(
                     {"error": "unauthorized"},
                     status_code=401,
@@ -1803,7 +1848,7 @@ def _resolve_embedding_timeout() -> int:
     return config.parse_int("CPERSONA_EMBEDDING_TIMEOUT_SECS", 30)
 
 
-def _build_http_app(auth_token: str, mcp_endpoint, lifespan):
+def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.AclConfig | None" = None):
     """Assemble the Starlette app the HTTP transport serves, middleware included.
 
     Factored out of ``_run_http_server`` so the wiring itself is testable. A
@@ -1841,7 +1886,7 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan):
                 ],
                 expose_headers=["Mcp-Session-Id"],
             ),
-            Middleware(BearerTokenMiddleware, auth_token=auth_token),
+            Middleware(BearerTokenMiddleware, auth_token=auth_token, acl_config=acl_config),
         ],
         lifespan=lifespan,
     )
@@ -1857,6 +1902,22 @@ async def _run_http_server():
     from starlette.applications import Starlette
 
     auth_token = os.environ.get("CPERSONA_AUTH_TOKEN", "")
+    acl_config = acl.active_config()
+    if os.environ.get("CPERSONA_ACL_FILE", "") and acl_config is None:
+        # The operator asked for ACL mode but nothing activated it — a wiring
+        # regression (main() skipped, or activate dropped). Serving now would
+        # fall back to the legacy token path, silently granting a lingering
+        # CPERSONA_AUTH_TOKEN full capability: the exact fail-open D3 exists
+        # to prevent. Refuse to serve (review finding on PR #112).
+        raise RuntimeError(
+            "CPERSONA_ACL_FILE is set but no ACL configuration is active; "
+            "refusing to serve on the legacy authentication path"
+        )
+    if acl_config is not None:
+        # D3 (docs/ACL_DESIGN.md §4.1): one credential authority at a time.
+        # main() has already warned when both were set; here the token is
+        # simply not handed to the middleware.
+        auth_token = ""
 
     session_manager = StreamableHTTPSessionManager(
         app=registry.server,
@@ -1872,7 +1933,7 @@ async def _run_http_server():
             logger.info("CPersona Streamable HTTP server ready")
             yield
 
-    app = _build_http_app(auth_token, mcp_endpoint, lifespan)
+    app = _build_http_app(auth_token, mcp_endpoint, lifespan, acl_config=acl_config)
 
     # The bind address is chosen here, but it is NOT what makes the port safe
     # (bug-198): tunnels, reverse proxies and published container ports all
@@ -1884,8 +1945,11 @@ async def _run_http_server():
     # main() has already run this check (see _preflight_http_auth); it stays
     # here because _run_http_server is also entered directly by tests and by
     # anything embedding the transport, and a guard that only one caller
-    # reaches is a guard one refactor away from being absent.
-    _assert_safe_http_bind(auth_token, host)
+    # reaches is a guard one refactor away from being absent. ACL mode IS
+    # authentication — every request must resolve to a principal — so the
+    # empty-token refusal does not apply there.
+    if acl_config is None:
+        _assert_safe_http_bind(auth_token, host)
     logger.info("Starting Streamable HTTP on %s:%d", host, port)
 
     # Not named `config`: that is the module this file imports, and shadowing it
@@ -1915,6 +1979,20 @@ def _preflight_http_auth() -> None:
     and no token.
     """
     if os.environ.get("CPERSONA_TRANSPORT", "stdio") != "streamable-http":
+        return
+    if os.environ.get("CPERSONA_ACL_FILE", ""):
+        # ACL mode is authentication (every request must resolve to a
+        # principal); the file itself is validated fail-closed in main().
+        # The activation invariant lives here as well as in _run_http_server
+        # so an env/activation mismatch dies BEFORE the database, the
+        # embedding backend and the queue are initialised — under
+        # Restart=always that difference is a cheap failure loop versus the
+        # expensive one this preflight exists to avoid.
+        if not acl.is_active():
+            raise RuntimeError(
+                "CPERSONA_ACL_FILE is set but no ACL configuration is active; "
+                "refusing to serve on the legacy authentication path"
+            )
         return
     _assert_safe_http_bind(
         os.environ.get("CPERSONA_AUTH_TOKEN", ""),
@@ -1963,11 +2041,55 @@ def _schedule_startup_calibration() -> asyncio.Task:
     return task
 
 
+async def _run_stdio_server():
+    """Run the stdio transport, entering the ACL "local" principal first.
+
+    §5.4 (docs/ACL_DESIGN.md): the stdio peer is whoever spawned the process —
+    it resolves to the reserved "local" principal, whose grants come from the
+    same file (and default to none if unlisted). Set in this task's context so
+    every handler inherits it. Factored out of ``main()`` so the principal
+    entry is testable — a dropped set_principal here turns every stdio call in
+    ACL mode into a "no principal resolved" denial, a wholesale outage no
+    other test observes (review finding on PR #112).
+    """
+    if os.environ.get("CPERSONA_ACL_FILE", "") and not acl.is_active():
+        # Same invariant as the HTTP transport, kept symmetric: the operator
+        # asked for ACL mode but nothing activated a configuration, and
+        # serving now would run every stdio call unrestricted (review finding
+        # on PR #112, second pass).
+        raise RuntimeError(
+            "CPERSONA_ACL_FILE is set but no ACL configuration is active; "
+            "refusing to serve the stdio transport unrestricted"
+        )
+    if acl.is_active():
+        acl.set_principal(acl.Principal(acl.LOCAL_CLIENT_ID))
+    async with stdio_server() as (read_stream, write_stream):
+        await registry.server.run(read_stream, write_stream, registry.server.create_initialization_options())
+
+
 async def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    # ACL mode (docs/ACL_DESIGN.md): load and validate the grant table before
+    # anything expensive, failing closed on any defect — the server refuses to
+    # start rather than serve a policy other than the one written (§7).
+    acl_path = os.environ.get("CPERSONA_ACL_FILE", "")
+    if acl_path:
+        acl.activate(acl.load_config(acl_path))
+        logger.info(
+            "ACL mode active: %d client(s) from %s",
+            len(acl.active_config().grants_by_client),
+            acl_path,
+        )
+        if os.environ.get("CPERSONA_AUTH_TOKEN", ""):
+            logger.warning(
+                "CPERSONA_AUTH_TOKEN is IGNORED while CPERSONA_ACL_FILE is set: "
+                "credentials come from the ACL file only (docs/ACL_DESIGN.md §4.1). "
+                "To keep using that token, list it as a client in the ACL file."
+            )
 
     # Before the database, the embedding backend and the queue — see the
     # docstring for what a restart loop costs when this runs last instead.
@@ -2046,8 +2168,7 @@ async def main():
     try:
         transport = os.environ.get("CPERSONA_TRANSPORT", "stdio")
         if transport == "stdio":
-            async with stdio_server() as (read_stream, write_stream):
-                await registry.server.run(read_stream, write_stream, registry.server.create_initialization_options())
+            await _run_stdio_server()
         elif transport == "streamable-http":
             await _run_http_server()
         else:

@@ -3771,6 +3771,20 @@
       "note": "Found operationally during the 2.5.5a3 production deploy (the first SCORING_VERSION-bump deploy after median-of-K calibration landed). Calls failing with 502 during the window never reach the server, so there is no double-execution risk — the outage is honest, just long.",
       "fixed_in": "2.5.5",
       "fix_note": "main() schedules the guard as a background task (_schedule_startup_calibration) and binds immediately. Safe because the guard's values only ever arrive through it: until it lands the in-memory gates are unset and recall uses the same heuristic fallback as a failed calibration; the stale sidecar is never consulted at recall time (_restore_calibration_state is its only reader). A done-callback reports a failed guard the moment it fails (the silent-death class the stdio bridge's writer had); shutdown cancels a still-running guard rather than holding the exit open for its embedding round-trips (an interrupted calibration leaves the state it started from — the sidecar write is the last step). An explicit calibrate_threshold issued during the window runs concurrently and last-writer-wins per key, same as two explicit runs."
+    },
+    {
+      "id": "bug-259",
+      "category": "transport-auth",
+      "severity": "LOW",
+      "status": "fixed",
+      "version": "2.5.5",
+      "discovered": "2026-08-22T00:00:00Z",
+      "file": "cpersona/server.py",
+      "pattern": "bug-259",
+      "expected": "present",
+      "summary": "(LOW) A non-ASCII bearer token turned a 401 into a 500 with a traceback: BearerTokenMiddleware compared the presented token with hmac.compare_digest on the str overload, which raises TypeError when either side contains non-ASCII characters. The Authorization header is fully remote-controlled, so any unauthenticated caller could trigger the 500 at will; the differing response also leaked a weak oracle (500 = a token is configured and was compared, 401 = rejected earlier). Found by the PR #112 adversarial review; the defect shipped in every release carrying the middleware up to 2.5.5.",
+      "fixed_in": "2.5.6a1",
+      "fix_note": "Both comparison sites (the legacy single-token branch and the ACL resolver's constant-time loop) now compare UTF-8 bytes: token.encode('utf-8') on each side before hmac.compare_digest. A remote-controlled header can no longer raise inside the middleware; non-ASCII tokens simply fail to match and 401. Pinned by tests/test_acl.py (non-ASCII bearer through the assembled app on both the ACL and legacy branches)."
     }
   ]
 }
