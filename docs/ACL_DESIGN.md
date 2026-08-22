@@ -205,7 +205,7 @@ alongside the implementation, independent of which way §9-D6 resolves).
 | `calibrate_threshold`, `set_recall_precision` | read-write | `agent_id` argument (mutate per-agent calibration state) |
 | `check_health`, `deep_check` | read; **read-write when `fix=true`** | `agent_id` argument; empty = every agent → requires the grant on `"*"` |
 | `migrate_channel_axis` | read-write | `agent_id` argument; empty = every agent → `"*"` |
-| `export_memories` | read (of the agent) + server-side file write | `agent_id` argument (§9-D4) |
+| `export_memories` | read-write (§9-D4: with `CPERSONA_EXPORT_DIR` unset — the shipped default — the output path is caller-chosen) | `agent_id` argument |
 | `import_memories` | read-write | `target_agent_id`; empty = "as recorded in file" → `"*"` |
 | `merge_memories` | `copy`: read(source) + read-write(target). `move`: read-write on **both** (move deletes source rows) | `source_agent_id` + `target_agent_id` |
 | `pause_persistence`, `resume_persistence` | read-write on `"*"` (process-wide switch affects every agent's writes) | global |
@@ -263,7 +263,7 @@ Proposed defaults are what §§3–7 specify; each is cheap to change pre-implem
 | D1 | Grant store | Config file (§4) | DB table (bootstrap problem; schema change is off the table for this line anyway) |
 | D2 | Default policy | Two-stage opt-in (§4.1) | ACL always on with an implicit full-grant default client (more moving parts in legacy deployments for zero gained enforcement) |
 | D3 | `CPERSONA_AUTH_TOKEN` in ACL mode | Ignored + startup warning | Auto-map to a built-in full-capability client (keeps one hidden super-token alive — the failure mode this feature exists to remove) |
-| D4 | `export_memories` | read (file write is operator-configured `CPERSONA_EXPORT_DIR`, not caller-chosen) | read-write (treat file egress as a write-privilege concern) |
+| D4 | `export_memories` | read-write. The original "read" rationale ("the file write is operator-configured, not caller-chosen") does not survive contact with `_confine_io_path`: with `CPERSONA_EXPORT_DIR` **unset — the shipped default — the caller picks any `..`-free absolute path** (bug-054 lineage), and the existing annotation already declares `destructiveHint=True` | read, valid only when `CPERSONA_EXPORT_DIR` confinement is actually configured — a later, condition-gated relaxation if read-only backup clients turn out to be a real need |
 | D5 | Unscoped reads (`persistence_status` etc.) | Any authenticated principal | Require at least one non-`none` grant (denies a fully-revoked-but-still-listed client even status visibility) |
 | D6 | Wildcard semantics | Exact-match overrides wildcard, both directions (§3) | Wildcard as floor (`max(exact, "*")`) — simpler but cannot express "read everywhere except none on X" |
 | D7 | Ship shape | One alpha rung (auth-surface change; soak the resolver + guard under real traffic) | Direct-to-final (formally allowed: additive, default-off) |
