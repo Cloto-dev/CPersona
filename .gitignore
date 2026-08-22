@@ -24,3 +24,4 @@ build/
 # artifact rather than committing it.
 /.mutation-diff/
 /mutation-diff-report.json
+site/
