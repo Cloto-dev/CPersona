@@ -2703,7 +2703,7 @@
       "severity": "MEDIUM",
       "discovered": "2026-07-29T00:00:00Z",
       "version": "2.5.2b1",
-      "file": "README.md",
+      "file": "docs/behavior-contracts.md",
       "pattern": "Two shapes stay outside that rule",
       "expected": "present",
       "status": "fixed",
@@ -2712,7 +2712,7 @@
       "fix_sketch": "One-clause qualifier in README Project status + SKILL.md error-handling section: scope the ok:false claim to handler-level failures, name the escaped-exception shape ({error} only, absent result = failure) and note read successes carry no ok. Annotate bug-164 fix_note with the same caveat and re-anchor server.py:516. Ships with the 2.5.2 final doc sync.",
       "fixed_in": "2.5.2",
       "fix_note": "Doc-only: the code is correct, the published claim was not. bug-164 prescribed stating the exception in three places and only the gate half landed; all three are now written. README.md narrows the claim to what a HANDLER returns and names both shapes that carry no ok — the outermost dispatch answering an unknown tool name or an escaped exception with a bare error (vendored from the library shared with the other Cloto servers, so it is corrected upstream, not here), and successful reads. skills/cpersona-memory/SKILL.md, which ships inside the wheel, gets the same qualifier plus the branching rule that follows from it: ok:false means failure, a response carrying error means failure whether or not ok is present, and a missing ok on its own means nothing. bug-161 fix_note is annotated so the ledger stops asserting the universal shape. Verified against the implementation rather than the audit text: the four read tools return their payload with no ok (memory_handlers.py:1559, admin_handlers.py:69/130/157) and both bare-error dispatch sites are still there (_vendored_mcp_common/mcp_utils.py:169,181). The pattern anchor moved because the fix rewrote the sentence the old one matched.",
-      "note": "Registry pattern re-anchored: the previous anchor was the very sentence this fix rewrote, so leaving it would have reported STALE the moment the fix landed."
+      "note": "Registry pattern re-anchored twice. First: the original anchor was the very sentence this fix rewrote, so leaving it would have reported STALE the moment the fix landed. Second (2026-08-22): the fix text itself moved from README.md into docs/behavior-contracts.md as contract \u00a710 when the README was slimmed to pointers, so the file was re-pointed with the pattern unchanged. The claim is still published in two places \u2014 the contract page and the wheel-shipped SKILL.md \u2014 and the anchor now sits on the canonical one."
     },
     {
       "id": "bug-186",
