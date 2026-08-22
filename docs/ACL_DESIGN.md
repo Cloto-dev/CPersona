@@ -1,7 +1,8 @@
 # Per-Client Capability / ACL Design
 
-**Status**: DESIGN — pre-implementation. Decision points in §9 await a maintainer
-ruling; everything else is proposed as written.
+**Status**: APPROVED — maintainer ruling 2026-08-22 resolved every §9 decision
+point as proposed (D4 in its amended read-write form). This document is the
+implementation contract; deviations found during implementation go back to §9.
 **Scope**: server-side hard enforcement of per-client, per-agent read/write
 capability. OAuth-based identity is a separate line that plugs into the seam
 defined here (§3.1) and is deliberately out of scope.
