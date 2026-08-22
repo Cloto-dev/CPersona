@@ -49,7 +49,7 @@ and ingestion is caller-driven. Two supported patterns: (A) a dedicated
 provably in sync, no diff logic), or (B) caller-side content-hash ledger with
 `update_memory` for changed chunks. The one trap: re-storing *changed*
 content under the same `msg_id` is silently **skipped**, not updated.
-→ [Corpus indexing patterns](operations.md#corpus-indexing--sync-patterns)
+→ [Corpus indexing patterns](operations.md#corpus-indexing-and-sync-patterns)
 
 ### What should I tune for a Japanese (or other CJK) corpus?
 
@@ -58,7 +58,7 @@ compensate for FTS5's weak CJK tokenization. Expect the default embedding
 model to be strong when query and memory share a proper-noun/identifier
 anchor and weaker on pure concept matches; phrasing queries with a concrete
 anchor term is the right adaptation.
-→ [Japanese / CJK corpora](operations.md#japanese--cjk-corpora)
+→ [Japanese / CJK corpora](operations.md#japanese-and-cjk-corpora)
 
 ### Recall returns too few results. Which knob actually widens the gate?
 
@@ -111,7 +111,7 @@ Not with a plain `cp` while the server runs (WAL). Use
 `sqlite3 ... ".backup ..."` or `VACUUM INTO`, or stop the server and copy the
 `.db` with its `-wal`/`-shm` siblings; complement with a monthly
 `export_memories` JSONL. Keep the live DB out of cloud-sync folders.
-→ [Backup & restore](operations.md#backup--restore)
+→ [Backup & restore](operations.md#backup-and-restore)
 
 ### How do I notice the embedding server died?
 

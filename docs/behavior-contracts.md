@@ -119,7 +119,7 @@ automatically), or `delete_memory` + `store`.
 The flip side is a guarantee you can lean on: re-submitting **unchanged**
 content is harmless by construction, which makes naive full re-submission of
 a corpus safe. See the
-[corpus indexing patterns](operations.md#corpus-indexing--sync-patterns) for
+[corpus indexing patterns](operations.md#corpus-indexing-and-sync-patterns) for
 how to run a document index on top of these semantics.
 
 `store` responses always carry `result`: `stored` (row written), `skipped`

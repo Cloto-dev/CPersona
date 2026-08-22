@@ -7,7 +7,7 @@
 
 ---
 
-## Backup & restore
+## Backup and restore
 
 The database is a single SQLite file (`CPERSONA_DB_PATH`) running in WAL
 mode. **A plain `cp` of a live WAL database can straddle a checkpoint and
@@ -109,7 +109,7 @@ corollaries:
 - `lock_memory` protects against loss, not against losing a ranking
   ([contract §9](behavior-contracts.md#9-lock_memory-protects-it-does-not-boost)).
 
-## Japanese / CJK corpora
+## Japanese and CJK corpora
 
 - Set **`CPERSONA_RECALL_MODE=rsf`**. FTS5 tokenizes CJK poorly; rsf keeps
   the keyword channel's score magnitude in the merge, which is the signal
@@ -125,7 +125,7 @@ corollaries:
   The server auto-recalibrates on a *dimension* change, but a same-dimension
   model swap needs the manual recalibration.
 
-## Corpus indexing / sync patterns
+## Corpus indexing and sync patterns
 
 CPersona's primary design center is memory that accrues from conversation.
 Using it as a **search index over canonical Markdown files** works, but two

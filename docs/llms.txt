@@ -1,0 +1,36 @@
+# CPersona
+
+> MCP memory server: persistent, searchable memory for Claude and any MCP
+> host. Single local SQLite file, 3-layer hybrid retrieval (vector + FTS5 +
+> keyword), zero LLM dependency — the server never calls a generative model.
+> This site is the canonical documentation for the 2.5.x line; when another
+> surface (README, bundled skill) disagrees, the site wins.
+
+Key facts an agent should not guess wrong: recall responses are ordered
+ascending by score (the LAST element is the best match); `store` dedup is
+skip-not-upsert (changed content under a reused msg_id is NOT updated — use
+update_memory); autocut is inert under the default rsf/rrf fusion modes
+(set_recall_precision is the effective gate knob); profile rows carry no
+score and can be cut by limit unless confidence scoring is enabled;
+CPERSONA_MAX_MEMORIES is the vector scan window, not a storage cap.
+
+## Docs
+
+- [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/): the behaviors callers may rely on — recall ordering, confidence×fusion interaction, episode boundary penalty, scan window, dedup, autocut, profile scoring, gate_fallback, lock semantics
+- [Operations Runbook](https://cloto-dev.github.io/CPersona/operations/): WAL-safe backup, degradation detection, recall tuning order, Japanese/CJK guidance, corpus indexing patterns, maintenance cadence
+- [Configuration](https://cloto-dev.github.io/CPersona/configuration/): every environment variable with defaults; HTTP transport and its authentication requirements
+- [FAQ](https://cloto-dev.github.io/CPersona/faq/): question-shaped index into the pages above
+
+## Design
+
+- [ACL / per-client capabilities](https://cloto-dev.github.io/CPersona/ACL_DESIGN/): named bearer tokens, per-agent read/write grants, deny-by-default
+- [Degraded-mode advisory](https://cloto-dev.github.io/CPersona/DEGRADED_ADVISORY_DESIGN/): how recall reports a dead embedding layer instead of silently degrading
+- [Operating context](https://cloto-dev.github.io/CPersona/OPERATING_CONTEXT_DESIGN/): distributing operator instructions to all connected MCP clients
+- [Recall preview tier](https://cloto-dev.github.io/CPersona/RECALL_PREVIEW_TIER_DESIGN/): preview truncation and the get_contents expansion path
+- [Release lifecycle](https://cloto-dev.github.io/CPersona/RELEASE_LIFECYCLE_STANDARD/): tier definitions (Stable / Current), pre-release ladder, support windows
+
+## Optional
+
+- [Repository](https://github.com/Cloto-dev/cpersona): source, README quick start, issues
+- [PyPI](https://pypi.org/project/cpersona/): pip / uvx installation
+- [Bundled agent skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory): teaches an MCP agent the store / recall / archive workflow and the CLAUDE.md policy block
