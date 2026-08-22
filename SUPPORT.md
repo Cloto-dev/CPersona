@@ -123,7 +123,8 @@ Certification and EOL dates are recorded in this table as they occur.
   `import_memories`. **If you serve CPersona over HTTP, set
   `CPERSONA_AUTH_TOKEN` now** — the stdio transport is unaffected, and so is any
   HTTP deployment that already sets a token. **Fixed in v2.5.3**, which refuses
-  to start without a token wherever it binds; see [README](README.md#remote-http-transport)
+  to start without a token wherever it binds; see the
+  [remote transport reference](https://cloto-dev.github.io/CPersona/configuration/#remote-http-transport)
   for the migration if you are deliberately running without authentication.
   Details: `qa/issue-registry.json` (bug-198).
 

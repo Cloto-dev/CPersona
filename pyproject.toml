@@ -66,7 +66,7 @@ Homepage = "https://github.com/Cloto-dev/cpersona"
 Repository = "https://github.com/Cloto-dev/cpersona"
 Issues = "https://github.com/Cloto-dev/cpersona/issues"
 Changelog = "https://github.com/Cloto-dev/cpersona/releases"
-Documentation = "https://github.com/Cloto-dev/cpersona#readme"
+Documentation = "https://cloto-dev.github.io/CPersona/"
 
 [dependency-groups]
 # Test toolchain (installed by `uv sync --dev`; used locally and in CI).

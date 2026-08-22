@@ -16,8 +16,10 @@ memory adds no API cost and stays deterministic.
 
 | You want to… | Read |
 |---|---|
-| Install and set up | [README Quick Start](https://github.com/Cloto-dev/cpersona#quick-start) (also the PyPI page) |
+| Install and set up | [Getting Started](getting-started.md) |
 | Know what behaviors you can rely on | [Behavior Contracts](behavior-contracts.md) |
+| See what each of the 29 tools does | [Tools](tools.md) |
+| Understand how retrieval and storage work | [Architecture](architecture.md) |
 | Run it well: backup, tuning, degradation, corpus indexing | [Operations Runbook](operations.md) |
 | Look up an environment variable | [Configuration](configuration.md) |
 | Quick answers to common operator questions | [FAQ](faq.md) |

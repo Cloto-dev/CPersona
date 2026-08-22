@@ -43,7 +43,10 @@ plugins:
           build: true
           nav_translations:
             Home: ホーム
+            Getting Started: はじめに
+            Architecture: アーキテクチャ
             Behavior Contracts: 挙動契約
+            Tools: ツール一覧
             Operations Runbook: 運用 Runbook
             Configuration: 設定リファレンス
             FAQ: FAQ
@@ -65,7 +68,10 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
   - Behavior Contracts: behavior-contracts.md
+  - Tools: tools.md
   - Operations Runbook: operations.md
   - Configuration: configuration.md
   - FAQ: faq.md
