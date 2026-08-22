@@ -1,0 +1,51 @@
+site_name: CPersona
+site_description: >-
+  MCP memory server — persistent, searchable memory for Claude and any MCP
+  host. Single SQLite file, 3-layer hybrid search, zero LLM dependency.
+site_url: https://cloto-dev.github.io/CPersona/
+repo_url: https://github.com/Cloto-dev/cpersona
+repo_name: Cloto-dev/cpersona
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.action.edit
+    - content.code.copy
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Behavior Contracts: behavior-contracts.md
+  - Operations Runbook: operations.md
+  - Configuration: configuration.md
+  - FAQ: faq.md
+  - Design documents:
+      - ACL / per-client capabilities: ACL_DESIGN.md
+      - Degraded-mode advisory: DEGRADED_ADVISORY_DESIGN.md
+      - Operating context: OPERATING_CONTEXT_DESIGN.md
+      - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
+      - CLAUDE.md policy standard: CLAUDE_MD_POLICY_STANDARD.md
+      - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
+  - Release lifecycle: RELEASE_LIFECYCLE_STANDARD.md

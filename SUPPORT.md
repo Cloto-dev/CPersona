@@ -7,6 +7,10 @@ It is written to be line-agnostic: the same rules apply to every release line
 **Looking to report a problem?** See [Reporting an issue](#reporting-an-issue)
 at the end of this document.
 
+**Looking for how the server behaves or how to run it?** The canonical
+documentation site is <https://cloto-dev.github.io/CPersona/> — behavior
+contracts, operations runbook, configuration reference, and FAQ.
+
 This policy is the operative instance of the
 [Release Lifecycle Standard](docs/RELEASE_LIFECYCLE_STANDARD.md), which is
 piloted in this repository as its reference implementation and quality
