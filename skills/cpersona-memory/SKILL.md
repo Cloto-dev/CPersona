@@ -236,6 +236,11 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 
 ### Recall quality knobs
 
+- **Return order is part of the contract: the LAST element is the best
+  match.** Results come back in ascending score order so the strongest memory
+  sits at the end of the injected context (LLMs attend most to the tail). If
+  you ever score or evaluate recall output, index from the tail.
+  (`recall_with_context` differs: it returns a chronological merge.)
 - **`CPERSONA_RECALL_MODE`** — `rrf` (default, rank-only fusion, robust) /
   `rsf` (relative-score fusion; **recommended for Japanese / CJK or
   topic-drift-prone** corpora, where keyword score magnitude is the
@@ -274,6 +279,40 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 - `deep_check(agent_id, fix=true)` — semantic quality pass.
 - `export_memories` / `import_memories` — JSONL portability (idempotent import).
 - `merge_memories` — atomically fold one agent's data into another, de-duped.
+
+### Operating knowledge (canonical: `docs/`)
+
+One-line versions of the behaviors that are easy to assume wrong. The
+canonical, maintained detail lives in the repo docs —
+[Behavior Contracts](https://github.com/Cloto-dev/cpersona/blob/master/docs/behavior-contracts.md)
+and the
+[Operations Runbook](https://github.com/Cloto-dev/cpersona/blob/master/docs/operations.md)
+— cite those, not this summary, when precision matters.
+
+- **No upsert**: re-storing *changed* content under the same `msg_id` is
+  silently **skipped**. Change memories with `update_memory` (or delete +
+  store). Re-submitting *unchanged* content is harmless by construction.
+- **Autocut is inert under `rsf`/`rrf`** (rank-fusion score gaps are not
+  relevance breaks) — under the default configuration,
+  `set_recall_precision` is the knob that actually moves the gate.
+- **Profile rows carry no score**: with confidence scoring off (the default)
+  they sort last and get cut by `limit` on a full corpus. Facts that must
+  *always* be in context belong in deterministic injection (CLAUDE.md), not
+  the profile. `lock_memory` protects from loss; it never boosts ranking.
+- **Confidence on = it takes over**: with `CPERSONA_CONFIDENCE_ENABLED=true`
+  the result order and the quality gate key on confidence, not the fusion
+  mode. Run `calibrate_threshold` once after switching.
+- **Do not backfill episodes**: the episode boundary penalty keys on the
+  newest episode's timestamp, so bulk-importing history penalizes everything
+  older. Disable `CPERSONA_EPISODE_PENALTY_ENABLED` for such an import.
+- **`CPERSONA_MAX_MEMORIES` is the vector scan window, not a cap** — raise it
+  via env for large corpora; FTS/keyword reach the full history regardless.
+- **Backup is not `cp`**: the DB runs WAL — use
+  `sqlite3 "$DB" ".backup 'b.db'"` (or `VACUUM INTO`), and keep the live DB
+  out of cloud-sync folders.
+- **Indexing documents into CPersona?** Use a dedicated `agent_id` and the
+  rebuild or content-hash patterns in the runbook — and recalibrate after
+  `delete_agent_data` (it drops calibration state too).
 
 ---
 
@@ -323,6 +362,8 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
 
 - 29 tools · Schema v13 (auto-migrating) · ~13,000 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
-- Single SQLite file → the user owns their memory; back it up by copying one file.
+- Single SQLite file → the user owns their memory; back it up with
+  `sqlite3 "$DB" ".backup 'backup.db'"` (WAL-safe — a plain `cp` of a live DB
+  is not).
 - Benchmarked on LMEB: `jina-v5-nano` (768d) scores NDCG@10 54.14, +47% over the
   MiniLM-384d baseline.
