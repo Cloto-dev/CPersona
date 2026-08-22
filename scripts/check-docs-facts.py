@@ -56,6 +56,10 @@ DOC_FILES = [
     ROOT / "docs" / "faq.ja.md",
     ROOT / "docs" / "behavior-contracts.ja.md",
     ROOT / "docs" / "operations.ja.md",
+    ROOT / "docs" / "configuration.ja.md",
+    ROOT / "docs" / "getting-started.ja.md",
+    ROOT / "docs" / "architecture.ja.md",
+    ROOT / "docs" / "tools.ja.md",
 ]
 
 # Relative drift allowed on volatile stats before the gate goes red. 3% keeps
@@ -156,9 +160,13 @@ def check_tool_and_schema_claims(tool_count: int, schema_version: int) -> None:
     for doc in DOC_FILES:
         text = doc.read_text()
         rel = doc.relative_to(ROOT)
-        for m in re.finditer(r"\b(\d+) tools\b", text):
-            if int(m.group(1)) != tool_count:
-                fail(f"{rel}: claims '{m.group(0)}' but the registry serves {tool_count}")
+        # Both spellings, because the translations restate the same count and a
+        # detector that only knows the English phrase passes them vacuously —
+        # which is indistinguishable from passing them correctly.
+        for pattern in (r"\b(\d+) tools\b", r"(\d+) 個のツール"):
+            for m in re.finditer(pattern, text):
+                if int(m.group(1)) != tool_count:
+                    fail(f"{rel}: claims '{m.group(0)}' but the registry serves {tool_count}")
         for m in re.finditer(r"\b[Ss]chema v(\d+)\b", text):
             if int(m.group(1)) != schema_version:
                 fail(f"{rel}: claims '{m.group(0)}' but SCHEMA_VERSION is {schema_version}")
