@@ -1157,7 +1157,13 @@ def test_readme_test_count_is_not_stale():
     import re
 
     readme = (PKG.parent / "README.md").read_text(encoding="utf-8")
-    claimed = int(re.search(r"\*\*([\d,]+) test functions\*\*", readme).group(1).replace(",", ""))
+    # ~ prefix: since the docs-facts CI gate (scripts/check-docs-facts.py) the
+    # README states volatile counts as rounded approximations; this gate stays
+    # the single owner of the test-function claim (the script deliberately
+    # does not check it — one invariant, one implementation).
+    claimed = int(
+        re.search(r"\*\*~?([\d,]+) test functions\*\*", readme).group(1).replace(",", "")
+    )
 
     collected = 0
     for path in sorted((PKG.parent / "tests").glob("test_*.py")):

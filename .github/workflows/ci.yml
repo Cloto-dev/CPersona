@@ -89,6 +89,29 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+  docs-facts:
+    # Goal: hand-written numbers in current-state docs (README, the bundled
+    # skill, docs/ canonical pages) must match what the code measures. The
+    # bundled skill shipped "28 tools / ~5,600 LOC" for months after both had
+    # grown — a production user caught it before CI did. The checker compares
+    # tool count (runtime registry), schema version, env-var defaults
+    # (config.py parse vs every doc table), and rounded volatile stats
+    # (LOC / test counts, 3% drift tolerance). Design docs are exempt
+    # (point-in-time records).
+    if: github.event_name != 'schedule'  # locked/pinned — see lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync dependencies (pytest needed for case collection)
+        run: uv sync --dev --python 3.13
+      - name: Check docs facts against source
+        run: uv run python scripts/check-docs-facts.py
+
   wheel-smoke:
     # bug-181: the wheel no longer ships the vendored modules nothing imports.
     # That exclusion is decided in pyproject and checked statically by Gate 13 in

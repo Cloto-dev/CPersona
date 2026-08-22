@@ -320,8 +320,8 @@ the measured interaction:
 
 - **~14,100 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **928 test functions** across 85 test modules — 1,174 cases once the
-  behavioural matrix is parametrised (~27,600 LOC, more test code than server
+- **~930 test functions** across 85 test modules — ~1,170 cases once the
+  behavioural matrix is parametrised (~27,700 LOC, more test code than server
   code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)
 - **MIT License**
