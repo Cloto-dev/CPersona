@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@d4d42f9a5a306819a1fb98f5b2d88c200ee527a2 -->
+<!-- i18n-source: docs/index.md@blob:5dfd5fb6eaf3f8c8ad58923dadd2ce32dd28af55 -->
 
 # CPersona ドキュメント
 

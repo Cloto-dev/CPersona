@@ -52,11 +52,26 @@ jobs:
         # while breaking 16 links across four pages. This step is the detector
         # for that class, and it runs against the built site, not the sources.
         run: python3 scripts/check-doc-anchors.py site
-      - name: Japanese translation drift (advisory)
-        # English is canonical; ja pages carry an i18n-source marker. Stale
-        # translations surface as ::warning annotations without failing the
-        # lane (flip to blocking by adding --strict).
-        run: python3 scripts/check-i18n-drift.py
+      - name: Japanese translation drift (blocking)
+        # English is canonical; a ja page records the English content it was
+        # translated from. Advisory was the wrong setting for a published
+        # site: an English edit shipped on its own left /ja/ serving the
+        # previous contract with nothing red anywhere, which is worse than an
+        # English fallback because the reader cannot tell.
+        #
+        # Escape hatch: label a PR `i18n-defer` to drop back to advisory for
+        # that PR. It exists for changes that cannot carry their translation —
+        # a fork PR, where secrets and write access are unavailable, is the
+        # case this repository will hit first.
+        env:
+          DEFER: ${{ contains(github.event.pull_request.labels.*.name, 'i18n-defer') }}
+        run: |
+          if [ "$DEFER" = "true" ]; then
+            echo "::notice::i18n-defer label present — reporting drift without failing"
+            python3 scripts/check-i18n-drift.py
+          else
+            python3 scripts/check-i18n-drift.py --strict
+          fi
       - name: Upload Pages artifact
         if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
