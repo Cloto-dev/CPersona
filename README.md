@@ -14,7 +14,7 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE)
 
-[Docs](https://cloto-dev.github.io/CPersona/) · [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [All Tools](#all-tools) · [PyPI](https://pypi.org/project/cpersona/) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
+[Documentation](https://cloto-dev.github.io/CPersona/) · [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) · [Architecture](https://cloto-dev.github.io/CPersona/architecture/) · [Tools](https://cloto-dev.github.io/CPersona/tools/) · [PyPI](https://pypi.org/project/cpersona/) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
 
 </div>
 
@@ -23,7 +23,25 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
-> **Project status (August 2026)** — The 2.4 series is the **Stable** line (latest: v2.4.41, gated by three comprehensive audit rounds — see [Quality Assurance](#quality-assurance)). The 2.5 series is the **Current** line (latest: v2.5.4) — an internal stabilization line that has passed the full release gate and is where all fixes land, pending production-soak certification; the DB schema is preserved across the line, and feature development resumes in 2.6. **v2.5.3 refuses to start the HTTP transport when `CPERSONA_AUTH_TOKEN` is unset**, wherever it binds — earlier versions allowed an unauthenticated loopback bind, which a tunnel or reverse proxy silently turns into public exposure (bug-198, HIGH; see [Remote HTTP transport](#remote-http-transport)). A deployment that deliberately runs without authentication must now say so with `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true`; the stdio transport is unaffected. **v2.5.2 changes three things about MCP tool responses** — `store` reports its outcome in `result` (stored / skipped / rejected) instead of an always-true `ok`, `check_health` reports the single `status` verdict without the `healthy` boolean, and every tool-level failure a handler returns now carries `ok: false` (most used to return `error` alone, with no `ok` to branch on; the explanation still travels in `error`, except on `store`, which puts it in `reason`). Two shapes stay outside that rule and always did: the outermost MCP dispatch answers an unknown tool name, or an exception escaping a handler, with a bare `error` and no `ok` — that layer is vendored from a library shared with the other Cloto servers, so correcting it is an upstream change rather than a local edit — and a successful read (`get_contents`, `list_memories`, `list_episodes`, `get_profile`) returns its payload with no `ok` either. Branch on `ok is false`, and treat a response carrying `error` as a failure whether or not `ok` is present. Tiers and support windows: [Release Channels & Support](#release-channels--support).
+> **Project status (August 2026)** — **2.4.x is the Stable line** (latest
+> v2.4.41, gated by three comprehensive audit rounds). **2.5.x is the Current
+> line** (latest v2.5.4): an internal stabilization line that has passed the
+> full release gate and is where all fixes land, pending production-soak
+> certification. The DB schema is preserved across the line, and feature
+> development resumes in 2.6. Tiers and support windows:
+> [Release Channels & Support](#release-channels--support).
+
+> **Upgrading from 2.5.2 or earlier?** Two changes need a decision from you:
+>
+> - **v2.5.3 refuses to start the HTTP transport when `CPERSONA_AUTH_TOKEN` is
+>   unset**, wherever it binds. Earlier versions allowed an unauthenticated
+>   loopback bind, which a tunnel or reverse proxy silently turns into public
+>   exposure (bug-198, HIGH). Set a token, or state that you really want none
+>   with `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true`. stdio is unaffected —
+>   [details](https://cloto-dev.github.io/CPersona/configuration/#remote-http-transport).
+> - **v2.5.2 changed tool response shapes.** Branch on `ok is false`, and treat
+>   any response carrying `error` as a failure whether or not `ok` is present —
+>   [contract §10](https://cloto-dev.github.io/CPersona/behavior-contracts/#10-response-shapes-how-to-tell-success-from-failure).
 
 ## The Problem
 
@@ -35,198 +53,69 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 
 **Prerequisites:** Python 3.11+ (and [uv](https://docs.astral.sh/uv/) for the one-command path).
 
-> **Claude Code? Let the agent do the setup.** This repo ships an [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/skills/cpersona-memory/SKILL.md) that walks Claude through the whole installation — cpersona, the embedding server, MCP registration, and a store/recall smoke test — and, more importantly, teaches it *when* to store, recall, and archive memories afterwards:
+> **Claude Code? Let the agent do the setup.** This repo ships an
+> [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/skills/cpersona-memory/SKILL.md)
+> that installs everything *and* teaches Claude when to store, recall, and
+> archive afterwards. Copy it in, then say *"Set up CPersona — I want
+> persistent memory."*
 >
 > ```bash
 > # Installed from PyPI? The skill ships inside the wheel — no clone needed:
 > python -c "import cpersona,pathlib,shutil; s=pathlib.Path(cpersona.__file__).parent/'skills'/'cpersona-memory'; shutil.copytree(s, pathlib.Path.home()/'.claude/skills/cpersona-memory', dirs_exist_ok=True)"
->
-> # Running via uvx (isolated environment), or not installed yet:
-> git clone --depth 1 https://github.com/Cloto-dev/cpersona.git /tmp/cpersona
-> mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claude/skills/
 > ```
->
-> Then just tell Claude Code: *"Set up CPersona — I want persistent memory."* The manual steps below are for Claude Desktop users and anyone who prefers to configure things by hand.
 
-### 1. Install cpersona
+**1. Install**
 
 ```bash
 uvx cpersona          # run directly, no install step
 # or
-pip install cpersona  # then the `cpersona` command is on your PATH
+pip install cpersona
 ```
 
-<details>
-<summary>From source (for development)</summary>
+**2. Run an embedding server** (recommended — it powers the vector layer)
 
 ```bash
-git clone https://github.com/Cloto-dev/cpersona.git
-cd cpersona
-python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install .
-```
-Run it with `python -m cpersona` (or `python server.py`).
-</details>
-
-### 2. Set up Embedding Server (Recommended)
-
-cpersona's hybrid search works best with an embedding server for vector similarity. cpersona is embedding-server-agnostic: point `CPERSONA_EMBEDDING_URL` (see step 3) at any HTTP endpoint that implements the following minimal contract.
-
-```
-POST /embed
-Request:  { "texts": ["string", ...] }        # non-empty array, max 100 per batch
-Response: { "embeddings": [[float, ...], ...], "dimensions": <int> }
+uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
+EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
 ```
 
-Contract requirements (2.5.0b1 clarifications):
+Any HTTP endpoint implementing the [embedding contract](https://cloto-dev.github.io/CPersona/getting-started/#the-contract)
+works. Without one, cpersona runs on FTS5 + keyword search and tells you it is degraded.
 
-- **Embeddings MUST be L2-normalized.** cpersona computes similarity as a raw
-  dot product; a backend returning unnormalized vectors biases ranking by
-  vector magnitude. Every supported backend (the client's `api` mode and all
-  CEmbedding providers) already normalizes.
-- **The contract is role-less** — queries and documents are embedded through
-  the same call. Prompt-prefix models (e5-style, prompted bge) will
-  underperform behind it; symmetric or retrieval-merged models (jina-v5-nano,
-  bge-m3, MiniLM) are the intended fit.
-- **Swapping models behind the same URL:** cpersona fingerprints the backend
-  by embedding *dimension* only (the contract carries no model identity). A
-  same-dimension model swap silently invalidates the stored corpus — after
-  one, re-embed (`check_health(fix=true)` repairs NULLed rows) and
-  `calibrate_threshold`.
-
-The reference server is [CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) — it runs jina-v5-nano on-device (CPU) and exposes exactly this endpoint:
-
-```bash
-git clone https://github.com/Cloto-dev/CEmbedding.git && cd CEmbedding
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install ".[onnx]"
-python download_model.py --model jina-v5-nano
-EMBEDDING_PROVIDER=onnx_jina_v5_nano python server.py   # serves http://127.0.0.1:8401/embed
-```
-
-cpersona ships with defaults tuned against jina-v5-nano (768d). Any other server that satisfies the contract above works too — see [Benchmarks](#benchmarks) for models with published measurements.
-
-> Without an embedding server, cpersona falls back to FTS5 + keyword search only. Vector search (the strongest retrieval layer) will be disabled.
-
-### 3. Configure your MCP client
-
-**Claude Desktop** — add to `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "cpersona": {
-      "command": "uvx",
-      "args": ["cpersona"],
-      "env": {
-        "CPERSONA_DB_PATH": "/home/you/.claude/cpersona.db",
-        "EMBEDDING_MODE": "http",
-        "EMBEDDING_HTTP_URL": "http://127.0.0.1:8401/embed"
-      }
-    }
-  }
-}
-```
-
-The embedding server from step 2 is a plain HTTP process, not an MCP server —
-run it however you run background services (a terminal, launchd/systemd, etc.);
-cpersona only needs its URL.
-
-> **Windows:** use `C:/Users/you/.claude/cpersona.db` for the DB path.
-> **No embedding server yet?** Drop the two `EMBEDDING_*` lines (or set `EMBEDDING_MODE=none`) — cpersona runs on FTS5 + keyword and tells you when it's degraded.
-
-**Claude Code:**
+**3. Register it with your MCP client**
 
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
 
-That's it. Claude now has persistent memory. Ask it to `store` something and `recall` it in a later session.
+That's it. Ask Claude to `store` something and `recall` it in a later session.
 
-## Features
+**Claude Desktop config, Windows paths, installing from source, and the full
+setup walkthrough:**
+[Getting Started](https://cloto-dev.github.io/CPersona/getting-started/).
 
-**Hybrid Search** — Three independent retrieval strategies run in parallel and merge results via Reciprocal Rank Fusion (RRF):
+## What You Get
 
-| Layer | Method | Strength |
-|-------|--------|----------|
-| Vector | Cosine similarity (jina-v5-nano, 768d) | Semantic meaning |
-| FTS5 | SQLite full-text search with trigram tokenizer | Exact terms, names, IDs |
-| Keyword | Fallback pattern matching | Edge cases, partial matches |
+- **Hybrid search** — vector (cosine), FTS5 (trigram tokenizer, so it works on
+  Japanese and other space-less scripts), and keyword matching, fused by rank
+  or relative score. The FTS/keyword layers rescue the queries vector search
+  misses: identifiers, error strings, exact names.
+- **Three memory types** — declarative facts (`store`), session summaries
+  (`archive_episode`), and an accumulated profile (`update_profile`).
+- **Zero LLM dependency** — cpersona never calls a generative model. Your agent
+  does the summarizing and hands over the result, so memory adds no API cost,
+  no hidden latency, and no nondeterminism.
+- **Single-file SQLite** — no external database. `sqlite3 .backup` copies the
+  whole corpus; the calibration sidecar beside it needs copying too
+  ([backup runbook](https://cloto-dev.github.io/CPersona/operations/#backup-and-restore)).
+- **Operable** — auto-calibrated retrieval thresholds, a severity-tagged health
+  check with auto-repair, an advisory that tells you when the embedding layer
+  has died, JSONL export/import, and agent-to-agent merge.
+- **Isolation** — `agent_id`, `project_id` and `channel` axes let several
+  agents and projects share one database without bleeding into each other.
 
-**Memory Types:**
-
-- **Declarative memory** — Individual facts, decisions, instructions stored via `store`
-- **Episodic memory** — Conversation summaries archived via `archive_episode`
-- **Profile memory** — Accumulated user/project attributes via `update_profile`
-
-**Confidence Scoring** (`CPERSONA_CONFIDENCE_ENABLED`, off by default) — when enabled, each recalled memory gets a confidence score combining:
-
-- Cosine similarity (semantic relevance)
-- Dynamic time decay (adapts to corpus time range — a 1-year-old corpus and a 1-day-old corpus use different decay curves)
-- Recall boost (raises the decay *floor* for frequently recalled memories, with natural fade-out — so it changes a score only where time decay would otherwise fall below that floor, which does not happen on a corpus spanning a few months)
-- Completion factor (resolved topics decay faster)
-
-**Enabling it does more than add metadata.** The score becomes the ranking key — the result set is re-sorted by it — and the quality gate keys on it too. See [Recall fusion mode](#recall-fusion-mode-cpersona_recall_mode) for how that interacts with the fusion strategy.
-
-**Zero LLM Dependency** — cpersona is a pure data server. It never calls an LLM internally. All summarization and extraction is performed by the calling agent. This means zero API costs from cpersona itself, deterministic behavior, and no hidden latency.
-
-**Additional capabilities:**
-
-- Agent namespace isolation — multiple agents share one DB without interference
-- Background task queue — DB-persisted, crash-recoverable async processing
-- JSONL export/import — full memory portability between environments
-- Agent-to-agent memory merge — atomic copy/move with deduplication
-- Auto-calibration — statistical threshold tuning via null distribution z-score (no labels needed)
-- Health check — a check registry with severity-tagged issues (`critical`/`warn`/`info`) and auto-repair (contamination, duplicates, FTS integrity, embedding dimension drift, schema objects, isolation-axis hygiene, stale tasks, invalid data), plus a `python -m cpersona.checkup` CLI for CI gating
-- Deep check — semantic data quality analysis (anonymous source recovery, short content, stale profiles, orphaned episodes)
-- Memory protection — lock/unlock to prevent accidental deletion or editing
-- Recent recall penalty — suppresses echo chamber effect for frequently recalled memories
-- stdio + Streamable HTTP transport
-- Single-file SQLite — no external database required
-
-## Architecture
-
-```
-                         ┌─────────────────────────────────────┐
-                         │            MCP Host                 │
-                         │   (Claude Desktop / Claude Code)    │
-                         └──────────────┬──────────────────────┘
-                                        │ MCP (JSON-RPC)
-                         ┌──────────────▼──────────────────────┐
-                         │           cpersona                  │
-                         │         (server.py)                 │
-                         │                                     │
-                         │  ┌─────────┐  ┌─────────┐          │
-                         │  │  store   │  │ recall  │  ...     │
-                         │  └────┬────┘  └────┬────┘          │
-                         │       │             │               │
-                         │  ┌────▼─────────────▼────────────┐  │
-                         │  │         SQLite DB              │  │
-                         │  │                                │  │
-                         │  │  memories    (content + embed) │  │
-                         │  │  episodes    (summaries)       │  │
-                         │  │  profiles    (attributes)      │  │
-                         │  │  memories_fts (FTS5 index)     │  │
-                         │  │  episodes_fts (FTS5 index)     │  │
-                         │  │  pending_memory_tasks (queue)  │  │
-                         │  └────────────────────────────────┘  │
-                         │                                      │
-                         └──────────────┬───────────────────────┘
-                                        │ HTTP
-                         ┌──────────────▼──────────────────────┐
-                         │       Embedding Server              │
-                         │  (jina-v5-nano ONNX, 768d)          │
-                         └─────────────────────────────────────┘
-```
-
-**Recall flow (RRF mode):**
-
-```
-Query → ┌── Vector search (cosine similarity)  ──┐
-        ├── FTS5 search (episodes + memories)    ──┼── RRF merge → Confidence scoring → Top-K
-        └── Keyword fallback                     ──┘
-```
+How it all fits together: [Architecture](https://cloto-dev.github.io/CPersona/architecture/).
+What each of the 29 tools does: [Tools](https://cloto-dev.github.io/CPersona/tools/).
 
 ## Benchmarks
 
@@ -244,77 +133,24 @@ Two tracks isolate the pipeline's contribution:
 
 On both models measured here, Track B lands at or above Track A — the fusion layers add signal rather than merely persisting vectors. The size of that contribution depends on the embedding: the FTS5/keyword layers rescue queries the vector search alone misses, so a weaker embedding gains more (+6.43 on all-MiniLM-L6-v2), while a strong one moves within the harness's run-to-run noise (+0.83 on bge-m3, against ±1–2 pt per task mean). Read the deltas as "the pipeline does not cost ranking quality, and recovers a lot of it on weaker embeddings" rather than as a uniform gain. Methodology, the measurement harness, the noise envelope, and the reproduction regime live in [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
 
-## All Tools
+## Documentation
 
-| Tool | Description |
-|------|-------------|
-| `store` | Store a message in agent memory |
-| `recall` | Recall relevant memories (vector + FTS5 + keyword, RRF merge) |
-| `recall_with_context` | Recall with external conversation context (auto-dedup) |
-| `get_contents` | Expand recall preview refs (`mem:<id>` / `ep:<id>`) to full content |
-| `get_profile` | Get current agent profile |
-| `update_profile` | Save pre-computed agent profile |
-| `get_operating_context` | Read the operator-owned operating context served to every client (read-only; edited on the filesystem) |
-| `archive_episode` | Archive conversation episode with summary and keywords |
-| `list_memories` | List recent memories |
-| `list_episodes` | List archived episodes |
-| `update_memory` | Update memory content (rejects if locked) |
-| `lock_memory` | Lock memory to prevent deletion/editing |
-| `unlock_memory` | Unlock memory to allow deletion/editing |
-| `delete_memory` | Delete a single memory (ownership enforced) |
-| `delete_episode` | Delete a single episode (ownership enforced) |
-| `delete_agent_data` | Delete all data for an agent |
-| `calibrate_threshold` | Auto-calibrate vector search threshold via z-score |
-| `set_recall_precision` | Set an agent's recall precision (knob 3) and recalibrate its gate |
-| `get_recall_precision` | Read an agent's effective recall precision (knob 3) |
-| `pause_persistence` | Turn writes into no-ops for an opt-in TTL window |
-| `resume_persistence` | Re-enable persistence immediately |
-| `persistence_status` | Report whether persistence is paused and the TTL remaining |
-| `migrate_channel_axis` | Re-channel bridge-type memories to their concrete channel |
-| `export_memories` | Export to JSONL (memories, episodes, profiles) |
-| `import_memories` | Import from JSONL (idempotent via msg_id dedup) |
-| `merge_memories` | Merge one agent's data into another (atomic, with dedup) |
-| `get_queue_status` | Background task queue status |
-| `check_health` | Registry-driven health check (severity-tagged issues) with auto-repair |
-| `deep_check` | Deep semantic data quality analysis with auto-repair |
+[**cloto-dev.github.io/CPersona**](https://cloto-dev.github.io/CPersona/) is the
+canonical documentation — when this README disagrees with it, the site wins.
 
-## Configuration
+| | |
+|---|---|
+| [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) | Install, embedding server, client registration, verification |
+| [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/) | What you may rely on: recall ordering, dedup, scan window, response shapes |
+| [Tools](https://cloto-dev.github.io/CPersona/tools/) | All 29 tools, grouped by what you reach for them for |
+| [Architecture](https://cloto-dev.github.io/CPersona/architecture/) | Storage, the retrieval pipeline, isolation axes |
+| [Operations Runbook](https://cloto-dev.github.io/CPersona/operations/) | Backup, degradation detection, tuning, CJK guidance, corpus sync |
+| [Configuration](https://cloto-dev.github.io/CPersona/configuration/) | Every environment variable and its default |
+| [FAQ](https://cloto-dev.github.io/CPersona/faq/) | Short answers to the questions operators actually ask |
 
-All settings are environment variables with sensible defaults; the Quick Start
-above shows the only ones a typical setup needs (`CPERSONA_DB_PATH` +
-the embedding server pair). The complete reference — every variable with its
-default, and the knobs behind recall quality — lives in the docs:
-**[Configuration reference](https://cloto-dev.github.io/CPersona/configuration/)**.
-
-### Remote (HTTP) transport
-
-The default transport is stdio, where the MCP client owns the process and no
-network is involved. Set `CPERSONA_TRANSPORT=streamable-http` to serve over
-HTTP instead — one server, several clients, reachable over a network.
-
-**A loopback bind is not a security boundary.** Tunnels (cloudflared, ngrok),
-reverse proxies, `kubectl port-forward` and published container ports all
-forward to `127.0.0.1`, so binding there says nothing about who can reach the
-port. Since v2.5.3 the server enforces that: with
-`CPERSONA_TRANSPORT=streamable-http` and no `CPERSONA_AUTH_TOKEN`, it
-**refuses to start** — set a token, or state that you really want no
-authentication with `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true` (local
-development only). Per-client credentials with per-agent read/write grants
-are available via `CPERSONA_ACL_FILE`
-([ACL design](https://cloto-dev.github.io/CPersona/ACL_DESIGN/)).
-
-Host/port variables, upgrade notes from 2.5.2 and earlier, and the full
-security discussion:
-[Configuration → Remote transport](https://cloto-dev.github.io/CPersona/configuration/#remote-http-transport).
-
-### Recall fusion mode (`CPERSONA_RECALL_MODE`)
-
-`rrf` (default — rank-only fusion, robust) / `rsf` (relative-score fusion —
-recommended for Japanese/CJK and topic-drift-prone corpora) / `cascade`
-(legacy). With `CPERSONA_CONFIDENCE_ENABLED=true` the fusion mode selects
-candidates but no longer decides the returned order. Full descriptions and
-the measured interaction:
-[Configuration → Recall fusion mode](https://cloto-dev.github.io/CPersona/configuration/#recall-fusion-mode-cpersona_recall_mode).
+Japanese translations of the main pages are available from the language
+selector; the English pages are canonical. An index for AI agents is published
+at [`llms.txt`](https://cloto-dev.github.io/CPersona/llms.txt).
 
 ## Stats
 
@@ -328,16 +164,7 @@ the measured interaction:
 
 ## Works With
 
-cpersona is an MCP server — it works with any MCP-compatible host:
-
-- [Claude Desktop](https://claude.ai/download)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- [ClotoCore](https://github.com/Cloto-dev/ClotoCore) (AI agent platform, where cpersona originated)
-- Any custom MCP client
-
-## Part of ClotoCore
-
-cpersona is the memory layer of [ClotoCore](https://github.com/Cloto-dev/ClotoCore), an open-source AI agent platform written in Rust. While cpersona is fully standalone (MIT license), it was designed to give AI agents persistent, searchable memory within the ClotoCore ecosystem.
+cpersona is an MCP server — it works with any MCP-compatible host: [Claude Desktop](https://claude.ai/download), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [ClotoCore](https://github.com/Cloto-dev/ClotoCore) (the AI agent platform where cpersona originated, and whose memory layer it is), or a custom MCP client. cpersona is fully standalone and MIT-licensed.
 
 ## Quality Assurance
 
@@ -349,49 +176,40 @@ Every release is gated by a machine-verifiable quality process:
   after three such rounds — 43 fixes, every one re-verified against the tree
   it landed on.
 - **Issue registry** — every audited defect lives in
-  [`qa/issue-registry.json`](https://github.com/Cloto-dev/cpersona/blob/master/qa/issue-registry.json) with a machine-checkable
-  code pattern; [`scripts/verify-issues.sh`](https://github.com/Cloto-dev/cpersona/blob/master/scripts/verify-issues.sh) verifies
-  that every fix marker is still present (and every removed defect stays
-  removed), so a regression or a silently-reverted fix fails loudly.
-- **Structural CI gates** — invariants that a plain test can't express are
-  enforced by AST- and behaviour-level gates in the pytest suite (run in CI on
-  Python 3.11/3.13): every writer holds the shared write lock, agent-scoped SQL
-  carries its isolation predicates, identity/dedup probes carry the
-  project/channel axes, and `check_health` performs no embedding network I/O
-  while holding the write lock.
+  [`qa/issue-registry.json`](https://github.com/Cloto-dev/cpersona/blob/master/qa/issue-registry.json)
+  with a machine-checkable code pattern, and
+  [`scripts/verify-issues.sh`](https://github.com/Cloto-dev/cpersona/blob/master/scripts/verify-issues.sh)
+  fails loudly if a fix marker disappears or a removed defect returns.
+- **Structural CI gates** — invariants a plain test can't express are enforced
+  by AST- and behaviour-level gates in the pytest suite (Python 3.11/3.13):
+  every writer holds the shared write lock, agent-scoped SQL carries its
+  isolation predicates, identity/dedup probes carry the project/channel axes,
+  and `check_health` performs no embedding network I/O while holding the lock.
+- **Documented facts are gated too** — tool counts, schema version and
+  environment-variable defaults in the docs are checked against the source that
+  defines them, and Japanese translations are checked against the English
+  content they were translated from.
 - **Release lifecycle standard** — the release process itself is specified in
-  [`docs/RELEASE_LIFECYCLE_STANDARD.md`](https://github.com/Cloto-dev/cpersona/blob/master/docs/RELEASE_LIFECYCLE_STANDARD.md)
-  (v1.0), piloted in this repository as the reference implementation for
-  Cloto-family projects.
+  [RELEASE_LIFECYCLE_STANDARD](https://cloto-dev.github.io/CPersona/RELEASE_LIFECYCLE_STANDARD/)
+  (v1.0), piloted here as the reference implementation for Cloto-family projects.
 
 ## Release Channels & Support
 
-Releases follow a three-tier model — **Stable** (production-certified,
-critical fixes only), **Current** (newest release line, all fixes land here),
-and **Experimental** (alpha/beta pre-releases, opt-in). When a new line is
-certified Stable, the previous one keeps critical-fix support for 30 more
-days, then reaches EOL. Current status: **2.4.x is the Stable line**
-(latest v2.4.41) and **2.5.x is the Current line** (latest v2.5.4), where all
-fixes land while it awaits production-soak certification.
+Releases follow a three-tier model — **Stable** (production-certified, critical
+fixes only), **Current** (newest release line, all fixes land here), and
+**Experimental** (alpha/beta pre-releases, opt-in). When a new line is certified
+Stable, the previous one keeps critical-fix support for 30 more days, then
+reaches EOL.
 
-> **Known issue:** v2.4.39 and earlier under-scan vector recall on corpora
-> beyond a few hundred rows (bug-085; v2.4.38–v2.4.39 are the most affected —
-> the limit clamp closed the only workaround). Fixed in v2.4.40; upgrading is
-> strongly recommended. See [SUPPORT.md § Known issues](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues).
+**Known issues that change what you should run** — including the pre-v2.4.40
+vector under-scan (bug-085) and the unauthenticated HTTP bind on the Stable line
+(bug-198) — are listed in
+[SUPPORT.md § Known issues](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues).
+Read it before pinning a version.
 
-> **Known issue (Stable line):** the 2.4.x line starts the HTTP transport
-> **unauthenticated** when `CPERSONA_AUTH_TOKEN` is unset and the bind is a
-> loopback address (bug-198, HIGH). A loopback bind does not bound
-> reachability — tunnels, reverse proxies, `kubectl port-forward` and published
-> container ports all forward to `127.0.0.1`. **If you serve 2.4.x over HTTP,
-> set `CPERSONA_AUTH_TOKEN`.** The startup enforcement that makes a missing
-> token refuse to boot wherever it binds is in the Current line (since v2.5.3); the
-> Stable line only warns.
-
-Full policy:
-[SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) · specification:
-[RELEASE_LIFECYCLE_STANDARD.md](https://github.com/Cloto-dev/cpersona/blob/master/docs/RELEASE_LIFECYCLE_STANDARD.md) · security
-reports: [SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md).
+Full policy: [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) ·
+specification: [Release lifecycle](https://cloto-dev.github.io/CPersona/RELEASE_LIFECYCLE_STANDARD/) ·
+security reports: [SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md).
 
 ### Found a bug, or something the docs do not explain?
 
@@ -406,7 +224,7 @@ vulnerabilities are the one exception: please report those privately via
 
 ## Learn More
 
-- [Official documentation](https://cloto-dev.github.io/CPersona/) — Behavior contracts, operations runbook, configuration reference, FAQ (canonical)
+- [Official documentation](https://cloto-dev.github.io/CPersona/) — canonical: getting started, behavior contracts, tools, architecture, operations, configuration, FAQ
 - [Zenn Book (Japanese)](https://zenn.dev/cloto/books/claude-memory-mcp-server) — Full design walkthrough and setup guide
 - [Replacing /compact with external memory (Japanese)](https://zenn.dev/cloto/articles/claude-code-compact-external-memory) — Measured token economics of the session-end → `/clear` → `recall` workflow
 - [Memory System Design](https://github.com/Cloto-dev/ClotoCore/blob/master/docs/CPERSONA_MEMORY_DESIGN.md) — Technical specification

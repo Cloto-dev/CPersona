@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:a7d4b060d38e511fb87035e00a39b69253408eb5 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:2d7770412a6c1fd8e4f53cbe7c5cb69ec2261ba5 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -167,9 +167,43 @@ recall の応答が `gate_fallback: true` を伴う場合 (伴わないときは
 字句マッチを返したという意味です。これらの行は低信頼として扱ってください —
 識別子やハッシュの検索で、完全一致がクエリ文と意味的に遠い場合に典型的です。
 
+**この救済経路は confidence スコアリング有効時にしか存在しません。** 返される行に
+印を付けるのは `CPERSONA_CONFIDENCE_ENABLED` が有効なときだけ走る backfill なので、
+既定の構成では `gate_fallback` は決して現れません: 全候補がゲートを下回った recall は
+単に空を返します。
+
 ## 9. `lock_memory` は保護する、押し上げはしない { #9-lock_memory-protects-it-does-not-boost }
 
 `lock_memory` は行を削除と編集から保護します。ランキングには**影響しません**
 — ロックした記憶でも recall に負けることはあります。要件が「決して*失われて*
 はならない」ならロックしてください。要件が「常に*文脈に載って*いてほしい」
 なら、決定的注入を使ってください (プロフィールに関する注意は §7 を参照)。
+
+## 10. 応答の形: 成功と失敗の見分け方 { #10-response-shapes-how-to-tell-success-from-failure }
+
+**v2.5.2** 以降、規則は統一されています: **`ok is false` で分岐し、`error` を
+伴う応答は `ok` の有無にかかわらず失敗として扱ってください。**
+
+同リリースで 3 点が変わりました。いずれも、それまでの形では失敗が成功として
+読めてしまったためです:
+
+- **`store` は結果を `result` で報告します** — `stored` / `skipped` /
+  `rejected` — 常に true の `ok` ではなくなりました。以前は拒否された書き込みが
+  成功と同じ形に見えていました ([§5](#5-dedup-semantics-skip-not-upsert) 参照)。
+- **`check_health` は `status` という単一の判定を返します**。従来の `healthy`
+  ブール値はありません。
+- **ハンドラが返すツールレベルの失敗は、すべて `ok: false` を伴います。**
+  以前は多くが `error` だけを返し、分岐できる `ok` がありませんでした。説明は
+  従来どおり `error` で運ばれます — ただし `store` だけは `reason` に入ります。
+
+次の 2 つの形は、この規則の外側にあり、以前からそうでした:
+
+- **最外層の MCP ディスパッチ**は、未知のツール名や、ハンドラから漏れた例外に
+  対して、`ok` を持たない素の `error` で応答します。この層は他の Cloto サーバーと
+  共有するライブラリから vendoring されているため、揃えるにはローカルの修正では
+  なく上流の変更が要ります。
+- **成功した読み取り** (`get_contents` / `list_memories` / `list_episodes` /
+  `get_profile`) も `ok` を持たないペイロードを返します。
+
+どちらも上の規則で覆われます。規則を「`ok` を確認する」ではなく「`error` を伴う
+応答は失敗として扱う」と述べているのはそのためです。

@@ -33,6 +33,19 @@ Recommended, in order:
    and `import_memories` is idempotent (duplicates are skipped) — so restore
    drills are safe to rehearse. Monthly is a reasonable cadence.
 
+**The `.db` is not the whole instance.** Three files live outside it and none
+of the backup forms above touch them:
+
+- `<CPERSONA_DB_PATH>.calibration.json` — per-agent vector thresholds, gate
+  state and scoring version. Restore without it and recall still works, but
+  falls back to a heuristic gate: the same query returns a different set of
+  rows, with nothing reporting that the tuning was lost. Copy it beside the
+  database, or re-run `calibrate_threshold` after a restore.
+- `~/.cpersona/operating-context.toml` (or `CPERSONA_OPERATING_CONTEXT_PATH`)
+  — the operator instructions served to every client.
+- The ACL file, if `CPERSONA_ACL_FILE` is set — restoring without it changes
+  who may connect.
+
 Keep the live database **outside cloud-sync folders** (Dropbox, Drive, etc.):
 sync clients interact badly with SQLite WAL files. Sync the *backups* instead.
 

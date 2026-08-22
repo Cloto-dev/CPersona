@@ -168,9 +168,43 @@ matches were returned instead of an empty result. Treat these rows as
 low-confidence — typical for identifier/hash lookups whose exact match is
 semantically distant from the query text.
 
+**The rescue path exists only under confidence scoring.** The rows it returns
+are marked by the same backfill that runs when `CPERSONA_CONFIDENCE_ENABLED`
+is on, so in the default configuration `gate_fallback` can never appear: an
+all-below-gate recall simply returns nothing.
+
 ## 9. `lock_memory` protects; it does not boost
 
 `lock_memory` protects a row from deletion and editing. It does **not**
 affect ranking — a locked memory can still lose a recall. If the requirement
 is "must never be *lost*", lock it. If the requirement is "must always be *in
 context*", use deterministic injection (and see §7 for the profile caveat).
+
+## 10. Response shapes: how to tell success from failure
+
+Since **v2.5.2** the rule is uniform: **branch on `ok is false`, and treat any
+response carrying `error` as a failure whether or not `ok` is present.**
+
+Three things changed in that release, each because the previous shape made a
+failure readable as a success:
+
+- **`store` reports its outcome in `result`** — `stored` / `skipped` /
+  `rejected` — instead of an always-true `ok`. A rejected write used to look
+  like a successful one (see [§5](#5-dedup-semantics-skip-not-upsert)).
+- **`check_health` reports the single `status` verdict**, without the former
+  `healthy` boolean.
+- **Every tool-level failure a handler returns now carries `ok: false`.** Most
+  used to return `error` alone, with no `ok` to branch on. The explanation
+  still travels in `error` — except on `store`, which puts it in `reason`.
+
+Two shapes stay outside that rule, and always did:
+
+- **The outermost MCP dispatch** answers an unknown tool name, or an exception
+  escaping a handler, with a bare `error` and no `ok`. That layer is vendored
+  from a library shared with the other Cloto servers, so aligning it is an
+  upstream change rather than a local edit.
+- **A successful read** (`get_contents`, `list_memories`, `list_episodes`,
+  `get_profile`) returns its payload with no `ok` either.
+
+Both are covered by the rule above, which is why the rule is phrased as "treat
+a response carrying `error` as a failure" rather than "check `ok`".
