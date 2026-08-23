@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:2d7770412a6c1fd8e4f53cbe7c5cb69ec2261ba5 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:57abe035e2865f5f3e3f2204d65ba31bdf8ff8b2 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -48,8 +48,10 @@
 未満でした。
 
 ランキングとゲートのシグナル優先順位は **confidence > rsf > cosine > rrf**
-です。各 recall 行の `match_reason.signal` が、その行で実際にどの分岐が
-効いたかを報告します。
+です。スコアの付いた行では `match_reason.signal` が、その行で実際にどの分岐が
+効いたかを報告します。スコアの付かない行はこのキー自体を持ちません — 注入される
+プロフィール行と、`cascade` recall が埋める FTS / keyword 行です。`match_reason`
+は「全行にあるフィールド」ではなく「あるかないか」として扱ってください。
 
 なお confidence は**マッチ強度ではありません**: コサイン類似度・時間減衰・
 resolved 状態・想起回数をブレンドした別の量です。完全一致の行が言い換えの行
@@ -102,12 +104,17 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 
 ## 5. 重複排除の意味論: upsert ではなく skip { #5-dedup-semantics-skip-not-upsert }
 
-`store` は 2 通りの重複排除を行い、いずれも分離軸にスコープされます:
+`store` は 2 通りの重複排除を行いますが、両者のスコープは異なります:
 
 - **`msg_id` 重複排除** — 既存の `msg_id` を持つ `store` は**スキップ**され
-  ます (`result: "skipped"`、既存行の id をエコー)。
-- **内容重複排除** — 同一の内容文字列も同様にスキップされます (ユニーク索引に
-  裏打ちされているため、並行書き込みが競合をすり抜けることはありません)。
+  ます (`result: "skipped"`、既存行の id をエコー)。この判定は agent と project
+  には及びますが **`channel` には及びません**: 同じ `msg_id` を別の channel に
+  書いても、最初の channel の行に対してスキップされます。
+- **内容重複排除** — 同一の内容文字列も同様にスキップされ、agent / project /
+  channel にスコープされます。ユニーク索引が裏打ちしますが、その範囲は厳密な
+  バケット (`agent_id, project_id, channel, content`) に限られる一方、先に走る
+  判定はグローバルプールも見ます。したがって *異なる* project バケットへ並行に
+  書き込む 2 者は、どちらも着地しえます。
 
 決定的な帰結: **upsert は存在しません**。*同じ* `msg_id` で*変更された*内容を
 再保存しても、保存済みの行は**更新されません** — スキップされます。保存済みの
@@ -120,9 +127,12 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 [コーパス索引パターン](operations.md#corpus-indexing-and-sync-patterns)
 を参照してください。
 
-`store` の応答は常に `result` を持ちます: `stored` (行を書いた)、`skipped`
-(重複ヒット、または永続化が一時停止中 — 異常ではない)、`rejected` (拒否、
-`reason` 付き)。
+ハンドラまで到達した `store` は `result` を持ちます: `stored` (行を書いた)、
+`skipped` (重複ヒット、または永続化が一時停止中 — 異常ではない)、`rejected`
+(拒否、`reason` 付き)。その上位に 1 層あり、そこは汎用の形で答えます: ACL を
+設定している場合、クライアントに許可されていない呼び出しは
+`{ok: false, error: "permission_denied", tool, client_id}` を返し `result` を
+持ちません。まず `ok is false` で分岐し、その後に `result` を見てください。
 
 ## 6. autocut は類似度スケールのシグナルでしか発火しない { #6-autocut-fires-only-on-similarity-scale-signals }
 
@@ -143,8 +153,10 @@ autocut (スコア差が最大の箇所で切り落とす仕組み) は、スコ
 
 ## 7. プロフィール行はスコアを持たない { #7-profile-rows-carry-no-score }
 
-`update_profile` の行 (最大 **3** 件、更新が新しい順) は注入行として recall
-応答に付加されます — スコアリングには参加しません。
+`update_profile` の行は注入行として recall 応答に付加されます — スコアリングには
+参加しません。行は最大 1 件です: `profiles` は `(agent_id, user_id)` で一意であり、
+どの書き込み経路も `user_id` を `''` に束縛するため、2 回目の `update_profile` は
+蓄積されず 1 件目を置き換えます。
 
 - **confidence off** (既定) では、プロフィール行はスコアを持たず最後尾に並び、
   スコア付きの結果だけで `limit` が埋まっていると**切り落とされます**。

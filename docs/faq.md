@@ -116,9 +116,11 @@ Not with a plain `cp` while the server runs (WAL). Use
 ### How do I notice the embedding server died?
 
 You don't have to catch it yourself: degraded recalls carry an `advisory`
-field (instruct your agent to surface it), every `store` reports `embedded:
-true|false`, and `check_health(fix=true)` repairs rows written during the
-outage. Note that a green `check_health` alone does not prove the endpoint is
+field (instruct your agent to surface it), a `store` that writes a row reports
+`embedded: true|false`, and `check_health(fix=true)` repairs rows written during
+the outage. Do not poll `embedded` alone: a `skipped` or `rejected` store omits
+the key, so re-storing content the corpus already has tells you nothing about
+the encoder. Note that a green `check_health` alone does not prove the endpoint is
 up.
 → [Detecting a dead embedding server](operations.md#detecting-a-dead-embedding-server)
 

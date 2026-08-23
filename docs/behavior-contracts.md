@@ -47,8 +47,10 @@ on, `rsf` and `rrf` returned identical rows in identical order for all 394
 queries; with it off, they agreed on fewer than 10%.
 
 The ranking / gate signal priority chain is: **confidence > rsf > cosine >
-rrf** — each recall row's `match_reason.signal` reports which branch actually
-keyed for that row.
+rrf** — a scored row's `match_reason.signal` reports which branch actually keyed
+for it. Rows that were never scored omit the key entirely: the injected profile
+row, and the FTS / keyword rows a `cascade` recall fills with. Treat
+`match_reason` as present-or-absent, not as a field on every row.
 
 Note that confidence is **not match strength**: it blends cosine similarity,
 time decay, resolved status, and recall count into a separate quantity. An
@@ -104,12 +106,17 @@ old rows sink via windows and decay*.
 
 ## 5. Dedup semantics: skip, not upsert
 
-`store` deduplicates two ways, both scoped to the isolation axes:
+`store` deduplicates two ways, and the two are scoped differently:
 
 - **`msg_id` dedup** — a `store` carrying a `msg_id` that already exists is
-  **skipped** (`result: "skipped"`, echoing the existing row's id).
-- **Content dedup** — an identical content string is likewise skipped
-  (backed by unique indexes, so concurrent writers cannot race past it).
+  **skipped** (`result: "skipped"`, echoing the existing row's id). This probe
+  spans agent and project but **not `channel`**: the same `msg_id` written to a
+  second channel is skipped against the first channel's row.
+- **Content dedup** — an identical content string is likewise skipped, scoped to
+  agent, project and channel. A unique index backs it, but only within an exact
+  bucket (`agent_id, project_id, channel, content`), while the probe that runs
+  first also sees the global pool. Two writers racing into *different* project
+  buckets can therefore both land.
 
 The critical consequence: **there is no upsert**. Re-storing a *changed*
 content under the *same* `msg_id` does **not** update the stored row — it is
@@ -122,9 +129,12 @@ a corpus safe. See the
 [corpus indexing patterns](operations.md#corpus-indexing-and-sync-patterns) for
 how to run a document index on top of these semantics.
 
-`store` responses always carry `result`: `stored` (row written), `skipped`
-(dedup hit or persistence paused — nothing wrong), or `rejected` (refused,
-with `reason`).
+A `store` that reaches the handler carries `result`: `stored` (row written),
+`skipped` (dedup hit or persistence paused — nothing wrong), or `rejected`
+(refused, with `reason`). One layer sits above that and answers in the generic
+shape instead: with an ACL configured, a call the client is not permitted to
+make returns `{ok: false, error: "permission_denied", tool, client_id}` and no
+`result`. Branch on `ok is false` first, then on `result`.
 
 ## 6. Autocut fires only on similarity-scale signals
 
@@ -145,8 +155,10 @@ does move the gate under fusion modes is `set_recall_precision` — see the
 
 ## 7. Profile rows carry no score
 
-`update_profile` rows (up to **3**, most recently updated first) are appended
-to recall responses as injection rows — they do not participate in scoring.
+The `update_profile` row is appended to recall responses as an injection row —
+it does not participate in scoring. There is at most one: `profiles` is unique
+on `(agent_id, user_id)` and every write path binds `user_id` to `''`, so a
+second `update_profile` replaces the first rather than accumulating.
 
 - With **confidence off** (the default), profile rows have no score, sort
   last, and are **cut by `limit`** when the scored results already fill it.
