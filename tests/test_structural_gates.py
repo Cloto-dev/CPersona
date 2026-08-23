@@ -1274,3 +1274,82 @@ def test_every_runtime_dependency_carries_an_upper_bound():
         "install to whatever upstream ships next. Add a ceiling (and say in a comment "
         "what it is betting on); widen it deliberately when the next major is tested."
     )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 14 (doc-claim class, 2.5.6): the background queue stays unwired in production.
+#
+# docs/architecture.md tells the operator "In the current line, nothing enqueues onto it",
+# and reads an empty get_queue_status as the expected reading rather than a symptom. That
+# is a claim about ABSENCE, and absence is the one thing a behavioural test cannot settle:
+# a spy on enqueue() only proves the paths a fixture happened to walk did not call it,
+# while the claim quantifies over every path. So the instrument has to be the source.
+#
+# The gate also pushes in the useful direction. Re-wiring the queue is a legitimate
+# change; shipping it while the architecture page still tells operators that an empty
+# queue is the healthy reading is not. Whoever adds the first call site gets a red test
+# whose fix is to update the page.
+#
+# Limit, stated so the green is not over-read: this sees syntactic ``.enqueue(...)`` call
+# sites. A dynamic dispatch (``getattr(q, "enqueue")()``) would pass. That is an honest
+# floor for a claim about ordinary wiring, not a proof of unreachability.
+# --------------------------------------------------------------------------------------
+
+_QUEUE_CLAIM_DOC = "docs/architecture.md ('Background task queue')"
+
+
+def _collect_enqueue_calls(tree):
+    """Return linenos of syntactic ``.enqueue(...)`` call sites in a module tree."""
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "enqueue"
+    ]
+
+
+def test_background_queue_has_no_production_call_site():
+    """Gate: the shipped package never enqueues, which is what the docs promise."""
+    hits = []
+    for path in _iter_module_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        hits.extend(f"{path.name}:{lineno}" for lineno in _collect_enqueue_calls(tree))
+
+    assert not hits, (
+        f"{_QUEUE_CLAIM_DOC} states that nothing enqueues onto pending_memory_tasks and "
+        f"reads an empty queue as healthy, but the package calls enqueue() at {hits}. "
+        "Either the wiring is unintended, or the claim is now stale — update the section "
+        "(and the drain-only framing around it) rather than relaxing the gate."
+    )
+
+    # The claim is only worth guarding while the queue it describes still exists.
+    from cpersona import tasks as tasks_module
+
+    assert hasattr(tasks_module.MemoryTaskQueue, "enqueue"), (
+        "MemoryTaskQueue.enqueue is gone, yet the architecture page still describes a "
+        "queue that drains and retries. Re-read the section instead of deleting this gate."
+    )
+
+
+def test_background_queue_gate_has_teeth():
+    """The gate must flag a re-wired queue, and must not flag the drain side."""
+    wired = (
+        "async def do_archive_episode(payload):\n"
+        "    queue = get_queue()\n"
+        "    await queue.enqueue('archive_episode', 'agent-1', payload)\n"
+    )
+    assert _collect_enqueue_calls(ast.parse(wired)) == [3], (
+        "queue gate failed to flag a production enqueue() call site"
+    )
+
+    # The drain side is what the docs say survives; it must stay green.
+    drain_only = (
+        "async def drain(queue):\n"
+        "    for task in await queue.pending():\n"
+        "        await queue.complete(task.id)\n"
+        "    return await queue.status()\n"
+    )
+    assert not _collect_enqueue_calls(ast.parse(drain_only)), (
+        "queue gate false-positived the drain/status side the docs describe as live"
+    )
