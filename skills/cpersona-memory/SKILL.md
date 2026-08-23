@@ -17,8 +17,10 @@ CPersona is an [MCP](https://modelcontextprotocol.io/) server that gives Claude
 persistent memory across sessions. It stores memories in a single local SQLite
 file and retrieves them with a 3-layer hybrid search (vector + FTS5 + keyword,
 merged by Reciprocal Rank Fusion). It has **zero LLM dependency** — the server
-never calls a model, so there is no API cost or hidden latency from memory
-itself; the calling agent (you) does all summarization.
+never calls a model, so memory adds no generative API cost and stays out of
+your token budget; the calling agent (you) does all summarization. (Embedding
+is separate: `EMBEDDING_MODE=api` bills per store and per recall against
+`CPERSONA_EMBEDDING_API_URL`. The local `http` mode and `none` cost nothing.)
 
 - **29 tools**, single SQLite file, MIT licensed.
 - Works with Claude Desktop, Claude Code, and any MCP host.
@@ -179,11 +181,14 @@ one-line record: hash, what changed, why.
 "see you tomorrow") → first `store` + lock any unsaved decisions, then
 `archive_episode(agent_id, history=<the real turns>, summary=…, keywords=…, resolved=…)`.
 Compute `summary`/`keywords` yourself (the server never calls an LLM; providing them makes
-storage synchronous). Pass the REAL conversation history — it drives timestamps and the
-episode embedding. Set `resolved=true` for finished topics so they decay out of future recalls.
+storage synchronous). Pass the REAL history — it sets the episode's start/end times from the
+turns' timestamps, but never reaches the embedding, which comes from `summary` alone.
+`resolved=true` decays finished topics out of recall only under `CPERSONA_CONFIDENCE_ENABLED=true`.
 
 **"Don't save this" / benchmark sessions** → `pause_persistence(ttl_seconds=1800)`;
-`resume_persistence()` (or TTL expiry) restores. Read tools are unaffected.
+`resume_persistence()` (or TTL expiry) restores. Reads still answer, minus the writes inside
+them: `recall` withholds its `recall_count` bump, `check_health`/`deep_check` drop to
+`fix=false`, `migrate_channel_axis` is forced to dry-run.
 
 **Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
 and follow its runbook (usually: start or repoint the embedding server, then recall again).
@@ -225,14 +230,18 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
 4. **Session end** → `archive_episode(agent_id, history=<the real turns>,
    summary=…, keywords=…, resolved=true|false)`. Pre-compute `summary` and
    `keywords` yourself so the server stores synchronously (it never calls an LLM).
-   Pass the **real** conversation history, not an empty array — it drives
-   timestamps and the episode embedding. Set `resolved=true` for finished
-   topics so they decay out of future recalls faster.
+   Pass the **real** conversation history, not an empty array — it sets the
+   episode's start and end times from the turns' timestamps. It does not reach
+   the embedding, which comes from `summary` alone. Set `resolved=true` for
+   finished topics to decay them out of future recalls — effective only under
+   `CPERSONA_CONFIDENCE_ENABLED=true`, ignored under the default.
 
 5. **Benchmarking / throwaway / "don't save this" sessions** →
    `pause_persistence(ttl_seconds=1800)` turns all writes into no-ops for a TTL
-   window; `resume_persistence()` (or TTL expiry) restores. Read tools are
-   unaffected.
+   window; `resume_persistence()` (or TTL expiry) restores. Reads still answer,
+   except that `recall` withholds its `recall_count` / `last_recalled_at` bump,
+   `check_health` / `deep_check` drop to `fix=false`, and `migrate_channel_axis`
+   is forced to dry-run.
 
 ### Recall quality knobs
 
@@ -327,7 +336,7 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 | Recall tuning | `set_recall_precision`, `get_recall_precision`, `calibrate_threshold` |
 | Persistence control | `pause_persistence`, `resume_persistence`, `persistence_status` |
 | Portability | `export_memories`, `import_memories`, `merge_memories` |
-| Channels / multi-user | `migrate_channel_axis` (and the `channel` / `source_id` args on `store` / `recall`) |
+| Channels / multi-user | `migrate_channel_axis` (plus `channel` on `store` / `recall`, and `source_id` on `recall` — a write carries its producer in `message.source.id`, which `recall(source_id=…)` prefix-matches) |
 | Health | `check_health`, `deep_check`, `get_queue_status` |
 | Operator context | `get_operating_context` |
 
@@ -368,5 +377,7 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 "$DB" ".backup 'backup.db'"` (WAL-safe — a plain `cp` of a live DB
   is not).
-- Benchmarked on LMEB: `jina-v5-nano` (768d) scores NDCG@10 54.14, +47% over the
-  MiniLM-384d baseline.
+- Benchmarked on LMEB (22 retrieval tasks, Mean NDCG@10). The measured figures
+  and the regime behind them live in the
+  [benchmarks](https://cloto-dev.github.io/CPersona/) — cite those rather than a
+  number copied here, which is how the previous pair went stale.
