@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/faq.md@blob:2f692a7565af2972178499e477b205e5d19e31b5 -->
+<!-- i18n-source: docs/faq.md@blob:86a1a9f9e3a4e31bd285794bcdb2f0f855c20604 -->
 
 # FAQ
 
@@ -113,8 +113,11 @@ recall で負けることはあります。「失われては困る」→ lock�
 ### 埋め込みサーバーが死んだことに気づくには？
 
 自分で見張る必要はありません: 劣化中の recall には `advisory` フィールドが付き
-(エージェントに表示させてください)、すべての `store` は `embedded: true|false`
-を報告し、`check_health(fix=true)` が停止中に書かれた行を修復します。なお
+(エージェントに表示させてください)、行を書いた `store` は `embedded: true|false`
+を報告し、`check_health(fix=true)` が停止中に書かれた行を修復します。ただし
+`embedded` だけを見張らないでください: `skipped` や `rejected` の store はこの
+キーを持たないため、コーパスに既にある内容を再 store しても encoder について
+何も分かりません。なお
 `check_health` が緑なだけではエンドポイントの生存証明にならない点に注意。
 → [埋め込みサーバー停止の検知](operations.md#detecting-a-dead-embedding-server)
 
