@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:f3d8617d818022aca8f542a3533391d77d69f08a -->
+<!-- i18n-source: docs/tools.md@blob:cc029e0efb5a8506fd7957d23efcf18494923108 -->
 
 # ツール一覧
 
@@ -46,8 +46,8 @@
 |---|---|
 | `lock_memory` | 記憶の編集と削除を拒否させます。これは**保護であってランキングの押し上げではありません** ([契約](behavior-contracts.md#9-lock_memory-protects-it-does-not-boost)) |
 | `unlock_memory` | その保護を解除します |
-| `delete_memory` | 記憶を 1 件削除します (所有権を強制、ロック中は拒否) |
-| `delete_episode` | エピソードを 1 件削除します (所有権を強制) |
+| `delete_memory` | 記憶を 1 件削除します。所有権が強制されるのは **`agent_id` を渡した場合だけ**です — 省略すると走査範囲が絞られず、他エージェントの行も削除できます (ロックはどちらでも拒否) |
+| `delete_episode` | エピソードを 1 件削除します。所有権の扱いは上の `delete_memory` と同じ条件付きです |
 | `delete_agent_data` | 1 エージェントに属するもの**すべて**を削除します。他のツールと同様にネットワークへ露出するため、[HTTP トランスポート](configuration.md#remote-http-transport) で `CPERSONA_AUTH_TOKEN` を設定すべき十分な理由になります |
 
 ## 検索品質 { #retrieval-quality }

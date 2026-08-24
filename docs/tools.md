@@ -43,8 +43,8 @@ detail that matters when you tighten `limit`.
 |---|---|
 | `lock_memory` | Refuse edits and deletes on a memory. It is **protection, not a ranking boost** ([contract](behavior-contracts.md#9-lock_memory-protects-it-does-not-boost)) |
 | `unlock_memory` | Lift that protection |
-| `delete_memory` | Delete one memory (ownership enforced; rejected while locked) |
-| `delete_episode` | Delete one episode (ownership enforced) |
+| `delete_memory` | Delete one memory. Ownership is enforced **only when `agent_id` is passed** — omit it and the delete is unscoped and can remove another agent's row (rejected while locked either way) |
+| `delete_episode` | Delete one episode. Same conditional ownership as `delete_memory` above |
 | `delete_agent_data` | Delete **everything** belonging to one agent. Exposed over the network like any other tool — reason enough to set `CPERSONA_AUTH_TOKEN` on the [HTTP transport](configuration.md#remote-http-transport) |
 
 ## Retrieval quality
