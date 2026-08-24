@@ -17,9 +17,11 @@ contract):
   cross-agent scan, spelled out in code as ``isolation_where(agent_id=None)``
   or ``agent_id=agent_id or None`` for the maintenance "empty = CLI global
   sweep" convention); any string INCLUDING ``''`` → exact ``agent_id = ?``.
-  No γ union: agents never share rows. Binding ``''`` matches nothing
-  do_store ever writes — a caller that forgets the ``or None`` fails CLOSED
-  (empty result), never open (cross-agent leak, the bug-044 class).
+  No γ union: agents never share rows. Binding ``''`` addresses the
+  empty-agent bucket, which do_store does accept and write — so a caller that
+  forgets the ``or None`` narrows to rows owned by no named agent rather than
+  widening. Not always an empty result, but never a cross-agent leak (the
+  bug-044 class).
 - ``project_id`` — γ semantics via the vendored ``gamma_clause`` (the
   cross-server single implementation): ``None`` → no filter, ``''`` → global
   pool only, ``'X'`` → ``IN ('X', '')``.
