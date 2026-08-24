@@ -190,3 +190,94 @@ def test_source_id_is_a_recall_argument_and_not_a_store_argument():
     assert "channel" in store_args and "channel" in recall_args, (
         "the same table names `channel` on both tools"
     )
+
+
+# --------------------------------------------------------------------------------------
+# docs/tools.md, "Protection and deletion":
+#
+#   "Delete one memory. Ownership is enforced **only when `agent_id` is passed** — omit
+#    it and the delete is unscoped and can remove another agent's row"
+#
+# The row said "(ownership enforced)" flat, for both delete tools, since the page was
+# written. The implementation has always enforced it conditionally: do_delete_memory
+# folds `AND agent_id = ?` into the DELETE only when the argument is non-empty, and
+# logs `UNSCOPED (no ownership enforcement)` when it is not. That branch is deliberate
+# — bug-137 chose to warn while "preserving the injected-trust behavior", the design
+# where a trusted kernel injects the scope — so the page moved, not the code.
+#
+# Pinned in BOTH directions. A test that only checked the scoped call would stay green
+# against an implementation that ignored agent_id entirely, and a test that only checked
+# the unscoped call would stay green against one that enforced nothing at all. The claim
+# is the shape of the pair, so the pair is what the test holds.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_enforces_ownership_only_when_agent_id_is_passed(clean_db):
+    """docs/tools.md promises conditional ownership on delete_memory — both halves."""
+    await _seed(clean_db, AGENT_A, ["owned by A"])
+    rows = await clean_db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = ?", (AGENT_A,)
+    )
+    victim = rows[0][0]
+
+    refused = await admin_handlers.do_delete_memory(victim, agent_id=AGENT_B)
+    assert refused.get("ok") is False, (
+        "a delete scoped to another agent succeeded. docs/tools.md promises ownership "
+        "is enforced when agent_id is passed; if that is no longer true the row in the "
+        "'Protection and deletion' table is now wrong."
+    )
+    still_there = await clean_db.execute_fetchall(
+        "SELECT id FROM memories WHERE id = ?", (victim,)
+    )
+    assert still_there, "the refused delete removed the row anyway"
+
+    unscoped = await admin_handlers.do_delete_memory(victim)
+    assert unscoped.get("ok") is True, (
+        "the unscoped delete was refused. That is a safer implementation, but it makes "
+        "docs/tools.md wrong in the other direction — the row says omitting agent_id "
+        "leaves the delete unscoped. Move the page with the code."
+    )
+    assert (
+        await clean_db.execute_fetchall("SELECT id FROM memories WHERE id = ?", (victim,))
+        == []
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/architecture.md, "Isolation axes", and the same sentence duplicated in
+# cpersona/isolation.py's module docstring:
+#
+#   "binding `''` narrows rather than widens: [...] That bucket is a real address, not a
+#    value no write produces: `store` accepts an empty `agent_id`, because *required* in
+#    a tool schema means present, not non-empty."
+#
+# Both said the opposite until now — that `''` "matches nothing any write produces", so
+# a predicate that forgot to decide the axis failed closed. It does not fail closed in
+# that sense: the empty-agent bucket is writable, so `''` selects real rows. What does
+# hold is the half worth keeping — those rows belong to no named agent, so the mistake
+# still cannot leak across agents.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_agent_id_is_a_writable_bucket_not_an_impossible_value(clean_db):
+    """architecture.md no longer claims `''` matches nothing a write produces."""
+    result = await memory_handlers.do_store(agent_id="", message={"content": "empty bucket"})
+    assert result.get("result") == "stored", (
+        "store now refuses an empty agent_id. If that is intended, architecture.md and "
+        "cpersona/isolation.py must go back to describing `''` as unreachable — right "
+        "now both say the bucket is a real address."
+    )
+
+    rows = await clean_db.execute_fetchall("SELECT agent_id FROM memories WHERE agent_id = ''")
+    assert rows, "the write did not land in the empty-agent bucket"
+
+    await _seed(clean_db, AGENT_A, ["owned by A"])
+    leaked = await clean_db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = '' AND content = 'owned by A'"
+    )
+    assert leaked == [], (
+        "binding '' reached a named agent's row. The narrowing half of the claim is the "
+        "one that still holds — it must not become false silently."
+    )

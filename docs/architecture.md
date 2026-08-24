@@ -164,10 +164,12 @@ questions:
 | `channel` | no filter | no filter | `X` plus channel-less rows |
 
 The asymmetry is the point. `agent_id` is hard isolation with no union —
-agents never share rows — and binding `''` matches nothing any write produces,
-so internal code that assembles a predicate without deciding the axis fails
-closed rather than open. **Omitting the axis is the opposite case, and it is
-deliberate: a cross-agent scan.** The listing tools take it that way — a
+agents never share rows — and binding `''` narrows rather than widens: internal
+code that assembles a predicate without deciding the axis addresses the
+empty-agent bucket, never another agent's rows. That bucket is a real address,
+not a value no write produces: `store` accepts an empty `agent_id`, because
+*required* in a tool schema means present, not non-empty. **Omitting the axis
+is the opposite case, and it is deliberate: a cross-agent scan.** The listing tools take it that way — a
 `list_memories` call with no `agent_id` returns rows belonging to every agent
 in the database. `project_id` unions with the global pool so shared
 context reaches every project without being copied into each. `channel`

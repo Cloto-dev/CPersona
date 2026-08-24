@@ -11,7 +11,7 @@
       "location": {
         "file": "cpersona/isolation.py",
         "definition": "isolation_where",
-        "line_hint": 71
+        "line_hint": 73
       },
       "classification": "operator_noise",
       "reason": "The '|' being mutated is inside the type annotation `agent_id: str | None`. cpersona/isolation.py opens with `from __future__ import annotations`, so under PEP 563 every annotation is stored as an un-evaluated string and never executed. The BitOr->Add mutant (`str + None`) therefore has no runtime effect and no test can observe it — this is engine noise, not a missing test. The same annotation-`|` noise recurs on the sibling axes (project_id / channel) and across the codebase; it is the first candidate for an operators-filter exclusion once L6 (#299) weighs the noise rate.",
