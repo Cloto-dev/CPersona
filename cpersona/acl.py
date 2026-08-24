@@ -42,6 +42,11 @@ _PERMISSION_NAMES = {PERM_READ: "read", PERM_WRITE: "read-write"}
 
 WILDCARD = "*"
 
+# A value no caller can send (NUL is not legal in a JSON string), used to ask a
+# demands function a counterfactual: "would this still span every agent if the
+# scope argument had been filled in?" It never reaches a grant lookup.
+_SCOPE_PROBE = "\x00scope-probe"
+
 # The stdio transport's reserved principal (design §5.4): no credential to
 # resolve, the peer is whoever spawned the process. Grants for it come from
 # the same file; if absent, stdio calls are denied like any ungranted client.
@@ -394,6 +399,24 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
 # ---------------------------------------------------------------------------
 
 
+def _widened_by_omission(demands: Demands, arguments: dict) -> bool:
+    """Would filling in the scope arguments have avoided the all-agents demand?
+
+    Asked rather than assumed. A wildcard demand does not always come from an
+    empty argument: export_memories / import_memories escalate to ``"*"`` on
+    their own while ``CPERSONA_EXPORT_DIR`` is unset, whatever agent_id says
+    (see _file_io_demands). Telling that caller to "pass agent_id" would be
+    advice that does not work, so the counterfactual is run instead of guessed.
+    """
+    probed = dict(arguments)
+    for key in ("agent_id", "source_agent_id", "target_agent_id"):
+        probed[key] = _SCOPE_PROBE
+    try:
+        return all(pattern != WILDCARD for pattern, _ in demands(probed))
+    except Exception:  # a demands function that dislikes the probe tells us nothing
+        return False
+
+
 def _denial(tool: str, client_id: str, *, agent_id: str = "", required: int = 0, detail: str = "") -> dict:
     response: dict = {"ok": False, "error": "permission_denied", "tool": tool}
     if agent_id:
@@ -456,6 +479,17 @@ def _wrap(name: str, handler):
                         detail = (
                             f"non-string {malformed[0]} argument resolved to "
                             "the all-agents demand"
+                        )
+                    elif _widened_by_omission(demands, arguments):
+                        # The common case, and the one a caller can fix itself:
+                        # it sent no scope, so every agent was demanded. Said
+                        # explicitly because "agent_id": "*" in the response
+                        # only shows the consequence, not the cause — a caller
+                        # would have to already know that "*" means "you did
+                        # not scope this".
+                        detail = (
+                            "no agent scope was sent, so the call resolved to "
+                            "the all-agents demand — pass agent_id to scope it"
                         )
                 return _denial(
                     name,

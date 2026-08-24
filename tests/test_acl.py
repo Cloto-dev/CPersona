@@ -718,3 +718,90 @@ async def test_stdio_refuses_env_activation_mismatch(tmp_path, monkeypatch):
     acl.activate(None)
     with pytest.raises(RuntimeError, match="stdio transport unrestricted"):
         await server._run_stdio_server()
+
+
+# ---------------------------------------------------------------------------
+# 9. Denials say why (§5.3, extended): the response is the only channel a
+#    caller has. "agent_id": "*" shows the consequence of an unscoped call, not
+#    its cause — a caller would have to already know that "*" means "you did
+#    not scope this" to act on it. These three cases split by who can fix them.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unscoped_write_says_the_scope_was_missing_and_the_advice_works(tmp_path):
+    """The fixable case: the caller sent no scope, and passing one is the fix.
+
+    Pinned in both directions — the message is only worth shipping if the
+    action it recommends actually changes the outcome.
+    """
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("delete_memory", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))  # {"alpha": rw, "*": read}
+    try:
+        denied = await guarded({"memory_id": 1})
+        scoped = await guarded({"memory_id": 1, "agent_id": "alpha"})
+    finally:
+        acl.reset_principal(token)
+
+    assert denied["error"] == "permission_denied" and denied["agent_id"] == "*"
+    assert "no agent scope was sent" in denied["detail"]
+    assert "pass agent_id" in denied["detail"]
+    assert scoped["ok"] is True and "error" not in scoped, (
+        "the denial tells the caller to pass agent_id; the same call with one "
+        "must therefore succeed, or the advice is wrong"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ungranted_agent_denial_stays_at_the_documented_shape(tmp_path):
+    """The unfixable case deliberately gains no prose.
+
+    A named agent the grants do not reach already names itself in the response:
+    `agent_id` is the agent, `required` is the level it was short of. Adding a
+    sentence saying that again would restate two fields the caller already has
+    and would contradict the exact denial documented in docs/ACL_DESIGN.md §5.3
+    — which uses this very case as its example. The caller cannot fix this one
+    from its side either way; what it needs is the fields, which it has.
+    """
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("store", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))
+    try:
+        result = await guarded({"agent_id": "beta", "message": {"content": "x"}})
+    finally:
+        acl.reset_principal(token)
+
+    assert result == {
+        "ok": False,
+        "error": "permission_denied",
+        "tool": "store",
+        "agent_id": "beta",
+        "required": "read-write",
+        "client_id": "assistant-a",
+    }
+
+
+@pytest.mark.asyncio
+async def test_file_io_wildcard_is_not_blamed_on_a_missing_scope(tmp_path, monkeypatch):
+    """The case that makes the counterfactual necessary rather than decorative.
+
+    export_memories escalates to the all-agents demand on its own while
+    EXPORT_DIR is unset — the path, not the scope, is what widened it. The
+    caller here DID pass agent_id, so "pass agent_id to scope it" would be
+    advice that cannot work. _widened_by_omission asks instead of assuming.
+    """
+    monkeypatch.setattr(acl.config, "EXPORT_DIR", "")
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("export_memories", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))
+    try:
+        result = await guarded({"agent_id": "alpha", "output_path": "/tmp/x.json"})
+    finally:
+        acl.reset_principal(token)
+
+    assert result["error"] == "permission_denied" and result["agent_id"] == "*"
+    assert "pass agent_id" not in result.get("detail", ""), (
+        "the export demand is unconditional while EXPORT_DIR is unset; blaming "
+        "the scope argument would send the caller after a fix that does nothing"
+    )

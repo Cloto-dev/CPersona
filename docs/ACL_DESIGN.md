@@ -170,6 +170,13 @@ enforcement-invisible (§8 pins this with an exhaustiveness test).
   "client_id": "assistant-a" }
 ```
 
+The shape above is the minimum, not the maximum: a `detail` string joins it
+whenever the guard can name a cause the fields do not already carry — an
+unclassified tool, a non-string scope argument, or a call that demanded every
+agent because it sent no scope at all. It is deliberately absent from the
+example's own case, where `agent_id` and `required` already say which agent was
+short of which level; restating that in prose would add no information.
+
 `client_id` echoes the caller's own resolved identity (it is not a secret to
 itself) so a mis-wired client is diagnosable from its side of the wire. Denials
 are logged server-side at WARNING with the same fields (observability; also the
