@@ -13,6 +13,7 @@ mechanism nobody has seen work.
 """
 
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
 
@@ -201,3 +202,56 @@ def test_exhausted_retries_report_the_reason_rather_than_a_generic_failure():
 def test_any_other_terminal_subtype_names_itself():
     with pytest.raises(RuntimeError, match="error_during_execution"):
         translate.extract_edits({"subtype": "error_during_execution"}, "docs/x.md")
+
+
+# --------------------------------------------------------------------------------------
+# What a non-zero exit tells the reader.
+#
+# Both of these arrived in real CI runs and neither could arrive in a unit test that only
+# exercised the success path: the reason for the failure was on the wrong stream, and then
+# inside a document that was being truncated. The cost of getting it wrong is not a wrong
+# answer but a round trip — the run fails, the message says nothing, and the next attempt
+# starts by reproducing the failure to find out what it was.
+# --------------------------------------------------------------------------------------
+
+
+def _cli_exits(monkeypatch, *, stdout: str, stderr: str, code: int = 1):
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=[], returncode=code, stdout=stdout, stderr=stderr)
+
+    monkeypatch.setattr(translate.subprocess, "run", fake_run)
+
+
+def test_a_failure_written_to_stdout_is_still_reported(monkeypatch):
+    """The CLI put an auth failure on stdout and left stderr empty."""
+    _cli_exits(monkeypatch, stdout="OAuth access token is invalid", stderr="")
+    with pytest.raises(RuntimeError) as exc:
+        translate.request_edits("m", "low", "diff", "ja", "docs/x.md")
+    assert "OAuth access token is invalid" in str(exc.value)
+    assert "(empty)" in str(exc.value)  # stderr, named rather than silently omitted
+
+
+def test_a_failed_run_reports_the_reason_inside_its_result_document(monkeypatch):
+    """A failed run comes back as an ordinary result JSON, so the reason is a field."""
+    _cli_exits(
+        monkeypatch,
+        stdout=json.dumps(
+            {
+                # Ahead of the reason on purpose: the first CI failure was read
+                # off a raw slice of this document, and the slice ended before
+                # the fields that said why.
+                "session_id": "s" * 900,
+                "subtype": "error_during_execution",
+                "terminal_reason": "api_error",
+                "api_error_status": 401,
+                "result": "OAuth access token is invalid",
+            }
+        ),
+        stderr="",
+    )
+    with pytest.raises(RuntimeError) as exc:
+        translate.request_edits("m", "low", "diff", "ja", "docs/x.md")
+    message = str(exc.value)
+    assert "terminal_reason=api_error" in message
+    assert "api_error_status=401" in message
+    assert "OAuth access token is invalid" in message
