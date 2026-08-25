@@ -25,7 +25,7 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 
 > **Project status (August 2026)** — **2.4.x is the Stable line** (latest
 > v2.4.41, gated by three comprehensive audit rounds). **2.5.x is the Current
-> line** (latest v2.5.5): an internal stabilization line that has passed the
+> line** (latest v2.5.6): an internal stabilization line that has passed the
 > full release gate and is where all fixes land, pending production-soak
 > certification. The DB schema is preserved across the line, and feature
 > development resumes in 2.6. Tiers and support windows:

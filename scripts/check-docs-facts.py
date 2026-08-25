@@ -516,9 +516,10 @@ def measured_latest_finals() -> dict[str, str]:
     """The newest FINAL release tag per minor line, from git.
 
     Pre-releases are excluded on purpose: a line's "latest release" in the
-    lifecycle table is the shipped final, and 2.5.6a1 sitting in pyproject is
-    not a release. That is also why pyproject cannot be the source of truth
-    here — it holds the version being prepared, not the one users can install.
+    lifecycle table is the shipped final, and an alpha does not answer that
+    question. That is also why pyproject cannot be the source of truth here —
+    it holds the version being prepared, which between a cut and the next bump
+    is either a pre-release or a final that is already tagged anyway.
 
     A shallow clone has no tags, and a check that silently measures nothing is
     worse than no check: it reports green over an unexamined claim. So an empty
