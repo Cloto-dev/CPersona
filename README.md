@@ -159,8 +159,8 @@ at [`llms.txt`](https://cloto-dev.github.io/CPersona/llms.txt).
 
 - **~14,100 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **~930 test functions** across ~86 test modules — ~1,170 cases once the
-  behavioural matrix is parametrised (~27,700 LOC, more test code than server
+- **~950 test functions** across ~86 test modules — ~1,190 cases once the
+  behavioural matrix is parametrised (~28,900 LOC, more test code than server
   code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)
 - **MIT License**
