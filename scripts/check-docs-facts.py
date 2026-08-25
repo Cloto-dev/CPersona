@@ -375,6 +375,97 @@ def check_embed_batch(batch: int) -> None:
                     )
 
 
+# Commands from the reference embedding server that the setup pages tell a reader to
+# run. CPersona does not depend on CEmbedding, so there is nothing here to import and
+# nothing to introspect — the entry points are a fact about another distribution.
+#
+# Why an allowlist rather than reading CEmbedding's metadata over the network: a check
+# that resolves a remote pyproject or PyPI record turns an unrelated outage — or a
+# private repository, or an offline `uv run` — into a red build on this repository, for
+# a claim confined to one page. Weighed against that, the failure this actually has to
+# catch is the one that already shipped: getting-started told readers to run `python
+# download_model.py`, a file that had been replaced by a console script, so anyone
+# following the page stopped at a missing file.
+#
+# So the bound is honest and worth stating: this catches a page inventing or keeping a
+# command that is not on the list. It does NOT notice CEmbedding renaming one — that
+# arrives as a doc edit here, or not at all. Verified against
+# https://github.com/Cloto-dev/CEmbedding `[project.scripts]` on 2026-08-25.
+CEMBEDDING_COMMANDS = {
+    "cembedding",
+    "cembedding-download-model",
+}
+# `python -m` forms the same pages offer for a source checkout.
+CEMBEDDING_MODULES = {
+    "cembedding",
+    "cembedding.download_model",
+}
+
+
+def check_script_file_invocations() -> None:
+    """`python <something>.py` must name a file that exists in this repository.
+
+    This is the shape the defect took: getting-started told readers to run `python
+    download_model.py`, which had been a file in ANOTHER distribution before it became
+    a console script. Nobody here could have noticed by reading, because the page looked
+    exactly like the `python server.py` line two sections above it — and that one is
+    real, which is why the rule is existence rather than a ban on the form.
+
+    Anything not in this tree is either a stale instruction or an instruction pointing
+    into a distribution whose layout this repository does not control. Both are the same
+    advice to the reader: name an entry point (`console_script`, or `python -m module`),
+    not a path into someone else's source tree.
+    """
+    for doc in DOC_FILES:
+        text = doc.read_text()
+        rel = doc.relative_to(ROOT)
+        for m in re.finditer(r"python[0-9]?\s+([\w./-]+\.py)\b", text):
+            script = m.group(1)
+            if (ROOT / script).exists():
+                continue
+            fail(
+                f"{rel}: tells the reader to run `python {script}`, and no such file "
+                "exists in this repository. If it belongs to another distribution, name "
+                "its entry point instead — a path into someone else's source tree stops "
+                "working the moment they package it differently, and the reader is the "
+                "one who finds out."
+            )
+
+
+def check_external_commands() -> None:
+    """Every `cembedding*` command a page tells the reader to run must exist upstream.
+
+    Bidirectional on purpose. An unused allowlist entry is reported too: this list is
+    the only record of what was verified, and an entry no page mentions is either a
+    command that quietly left the docs or one that was never there — both make the
+    remaining greens mean less than they appear to.
+    """
+    seen: set[str] = set()
+    for doc in DOC_FILES:
+        text = doc.read_text()
+        rel = doc.relative_to(ROOT)
+        for m in re.finditer(r"(?<![\w./\"-])(cembedding(?:[-.][\w.-]+)?)(?![\w./-])", text):
+            token = m.group(1)
+            pool = CEMBEDDING_MODULES if "." in token else CEMBEDDING_COMMANDS
+            if token in pool:
+                seen.add(token)
+                continue
+            fail(
+                f"{rel}: tells the reader to run `{token}`, which is not an entry point "
+                f"CEmbedding ships ({sorted(CEMBEDDING_COMMANDS | CEMBEDDING_MODULES)}). "
+                "This is a claim about another distribution, so a red here is usually a "
+                "stale instruction on this page rather than a defect in cpersona — check "
+                "CEmbedding's [project.scripts] and correct whichever side moved."
+            )
+    unused = (CEMBEDDING_COMMANDS | CEMBEDDING_MODULES) - seen
+    if unused:
+        fail(
+            f"the CEmbedding command allowlist carries {sorted(unused)}, which no scanned "
+            "page mentions. The list is the record of what was verified; prune it, or "
+            "find the page that lost the instruction."
+        )
+
+
 VOLATILE_CLAIMS = {
     # claim regex (group 1 = number) → measured-stat key. These are the only
     # numeric claims docs are allowed to hand-round; each is stated with `~`.
@@ -491,6 +582,8 @@ def main() -> int:
     check_volatile_claims(stats)
     check_release_claims(finals)
     check_axis_claims(acceptance)
+    check_external_commands()
+    check_script_file_invocations()
     check_calibrate_default(calibrate_default)
     check_embed_batch(embed_batch)
 
