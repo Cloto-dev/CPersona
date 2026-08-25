@@ -122,7 +122,13 @@ jobs:
           HAS_TOKEN: ${{ secrets.I18N_SYNC_TOKEN != '' }}
         run: |
           if [ "$HAS_KEY" != "true" ] || [ "$HAS_TOKEN" != "true" ]; then
-            echo "::notice::Automatic translation is not configured (CLAUDE_CODE_OAUTH_TOKEN / I18N_SYNC_TOKEN). Re-sync docs/*.ja.md by hand, or label this PR i18n-defer."
+            # A warning, not a notice: this job goes green when it is not
+            # configured, so an unconfigured run and a run with nothing to do
+            # look identical in the checks list. Observed during setup — a
+            # secret that had been set to an empty string read as "configured"
+            # at a glance, because the job was green and the notice sat in a
+            # collapsed log. A warning is surfaced on the run summary.
+            echo "::warning::Automatic translation is not configured (CLAUDE_CODE_OAUTH_TOKEN / I18N_SYNC_TOKEN). Re-sync docs/*.ja.md by hand, or label this PR i18n-defer."
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
