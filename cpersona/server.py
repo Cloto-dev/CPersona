@@ -766,7 +766,7 @@ registry.auto_tool(
             },
             "deep": {
                 "type": "boolean",
-                "description": "Deep recall — disable time and completion decay for exhaustive search",
+                "description": "Deep recall — halves the quality gate (and the calibrated fused gate), so weaker matches are admitted. It also disables time and completion decay, which are inert unless CPERSONA_CONFIDENCE_ENABLED=true, and it does NOT widen the scan window (CPERSONA_MAX_MEMORIES) — deep is about how weak a match may be, not how far back the search reaches.",
                 "default": False,
             },
             "channel": {
@@ -878,7 +878,7 @@ registry.auto_tool(
                 "maximum": 100,
             },
             "channel": {"type": "string", "description": "Memory channel filter"},
-            "deep": {"type": "boolean", "description": "Disable time decay", "default": False},
+            "deep": {"type": "boolean", "description": "Deep recall — same semantics as in `recall`: halves the quality gate so weaker matches are admitted.", "default": False},
             "project_id": {
                 "type": "string",
                 "description": "v2.4.17 γ filter — passed through to recall. Same semantics as in `recall`. " + _AUTO_PROJECT_ID_CLAUSE,
