@@ -3,7 +3,7 @@
 **Status**: implemented on `feature/2.5.1-operating-context` (target: 2.5.1, direct
 release — no pre-release ladder; merge/tag gated on 2.5.0 final)
 **Decision**: project owner, 2026-07-16 (design discussion immediately after the 2.5.0b1
-release; CSC Goal #171 / Task #246)
+release)
 **Scope**: additive — no DB schema change, one new read tool, one sidecar config file.
 The 2.5.x line declaration in `SUPPORT.md` ("DB schema and MCP tool contract are
 preserved, rollback-free") is maintained.
@@ -29,7 +29,7 @@ response. This design makes CPersona serve its own operating context — **deter
 distribution, explicitly distinguished from probabilistic compliance**.
 
 This generalizes the "shaping/limiting belongs to the boundary layer" principle
-(CSC Task #190): rules that can be *validated* are enforced server-side (Hard layer);
+already applied to the agent-facing `limit` cap: rules that can be *validated* are enforced server-side (Hard layer);
 rules that can only be *stated* are distributed server-side (Soft layer).
 
 ## 2. Two-layer architecture
