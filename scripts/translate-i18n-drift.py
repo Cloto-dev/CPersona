@@ -273,8 +273,15 @@ def request_edits(model: str, effort: str, diff: str, japanese: str, page: str) 
             text=True,
         )
     if proc.returncode != 0:
+        # Both streams, because the CLI does not consistently use stderr for its
+        # failures: an auth or startup problem can arrive on stdout with stderr
+        # empty, and reporting only stderr turns that into "exited 1" with no
+        # reason attached — a failure that tells the reader nothing is barely
+        # better than a silent one.
         raise RuntimeError(
-            f"{page}: claude exited {proc.returncode}. {proc.stderr.strip()[:400]}"
+            f"{page}: claude exited {proc.returncode}.\n"
+            f"  stderr: {proc.stderr.strip()[:600] or '(empty)'}\n"
+            f"  stdout: {proc.stdout.strip()[:600] or '(empty)'}"
         )
     try:
         payload = json.loads(proc.stdout)
