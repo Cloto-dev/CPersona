@@ -9,7 +9,7 @@
 
 ---
 
-### なぜ `recall` は最良のマッチを*最後*に返すのですか？
+### なぜ `recall` は最良のマッチを*最後*に返すのですか？ { #why-does-recall-return-the-best-match-last }
 
 意図的な契約です: 結果はスコア昇順で並び、最強の記憶が注入コンテキストの
 末尾 — LLM が最も強く注意を向ける位置 ("lost in the middle") — に来ます。
@@ -17,7 +17,7 @@ hit@k を評価するときは**末尾から**数えてください。先頭か�
 反転します。`recall_with_context` は別契約で、時系列マージを返します。
 → [契約 §1](behavior-contracts.md#1-recall-return-order-last-is-best)
 
-### 最新の決定が古い決定に負け続けます。新しさを勝たせるには？
+### 最新の決定が古い決定に負け続けます。新しさを勝たせるには？ { #my-newest-decisions-keep-losing-to-older-ones-how-do-i-make-recency-win }
 
 優先順に:
 
@@ -33,7 +33,7 @@ hit@k を評価するときは**末尾から**数えてください。先頭か�
 
 → [recall に頼らないという選択](operations.md#when-not-to-rely-on-recall)
 
-### `CPERSONA_CONFIDENCE_ENABLED=false` は「一時的に無効化された」機能ですか？
+### `CPERSONA_CONFIDENCE_ENABLED=false` は「一時的に無効化された」機能ですか？ { #is-cpersona_confidence_enabledfalse-a-temporarily-disabled-feature }
 
 いいえ — 壊れているから無効なのではなく、保守的な出荷既定です。confidence は
 ランキングの意味論を変えるため opt-in で出荷しています。本番でも使われています
@@ -41,7 +41,7 @@ hit@k を評価するときは**末尾から**数えてください。先頭か�
 結果の再ソートと品質ゲートの切り替えが起きることを理解してください —
 → [契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)
 
-### Markdown ファイル群の索引を CPersona と同期し続けるには？
+### Markdown ファイル群の索引を CPersona と同期し続けるには？ { #how-do-i-keep-an-index-of-markdown-files-in-sync-with-cpersona }
 
 ファイル監視も upsert も組み込まれていません — CPersona は受動サーバーで、
 投入は常に呼び出し側駆動です。サポートされるパターンは 2 つ: (A) 索引専用の
@@ -51,7 +51,7 @@ hit@k を評価するときは**末尾から**数えてください。先頭か�
 `msg_id` で再 store しても**黙って skip** され、更新されません。
 → [コーパス索引パターン](operations.md#corpus-indexing-and-sync-patterns)
 
-### 日本語 (CJK) コーパスでは何を設定すべきですか？
+### 日本語 (CJK) コーパスでは何を設定すべきですか？ { #what-should-i-tune-for-a-japanese-or-other-cjk-corpus }
 
 `CPERSONA_RECALL_MODE=rsf` — 以上です。rsf モードは FTS5 の弱い CJK
 トークナイズを補うために存在します。既定の埋め込みモデルは、クエリと記憶が
@@ -59,7 +59,7 @@ hit@k を評価するときは**末尾から**数えてください。先頭か�
 弱い性質があります。具体的なアンカー語を入れてクエリを書くのは正しい適応です。
 → [日本語 / CJK コーパス](operations.md#japanese-and-cjk-corpora)
 
-### recall の結果が少なすぎます。実際に効くつまみはどれですか？
+### recall の結果が少なすぎます。実際に効くつまみはどれですか？ { #recall-returns-too-few-results-which-knob-actually-widens-the-gate }
 
 `set_recall_precision(agent_id, "lenient")` — 既定の fusion mode では実質
 *唯一*のポリシーつまみです。`CPERSONA_AUTOCUT_MIN_RESULTS` は `rsf`/`rrf` では
@@ -67,14 +67,14 @@ hit@k を評価するときは**末尾から**数えてください。先頭か�
 無効化は最後の手段です。
 → [recall のチューニング](operations.md#tuning-recall)
 
-### コーパスが `CPERSONA_MAX_MEMORIES` を超えたらどうなりますか？
+### コーパスが `CPERSONA_MAX_MEMORIES` を超えたらどうなりますか？ { #what-happens-when-the-corpus-grows-past-cpersona_max_memories }
 
 何も削除されず、何も壊れません: この定数は*ベクトル走査窓*であって保存上限では
 ありません。窓より古い行も FTS・keyword 経路からは届きます。大規模コーパスでは
 env で窓を上げてください — それが想定された使い方で、アーカイブ運用は不要です。
 → [契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)
 
-### `archive_episode` はどの頻度で？過去分の一括投入は害がありますか？
+### `archive_episode` はどの頻度で？過去分の一括投入は害がありますか？ { #how-often-should-archive_episode-run-and-does-bulk-backfill-hurt }
 
 想定頻度はセッション終了ごとに 1 件です。エピソード境界ペナルティは
 現セッションの記憶を穏やかに優先します (境界より古い記憶は下限で半減) — そして
@@ -84,7 +84,7 @@ env で窓を上げてください — それが想定された使い方で、�
 (`CPERSONA_EPISODE_PENALTY_ENABLED=false`) してください。
 → [契約 §3](behavior-contracts.md#3-episode-boundary-penalty)
 
-### `lock_memory` で記憶の順位は上がりますか？
+### `lock_memory` で記憶の順位は上がりますか？ { #does-lock_memory-make-a-memory-rank-higher }
 
 いいえ。lock は削除・編集からの保護で、ランキングには影響せず、locked でも
 recall で負けることはあります。「失われては困る」→ lock。「常にコンテキストに
@@ -94,7 +94,7 @@ recall で負けることはあります。「失われては困る」→ lock�
 → [契約 §7](behavior-contracts.md#7-profile-rows-carry-no-score) /
 [§9](behavior-contracts.md#9-lock_memory-protects-it-does-not-boost)
 
-### operating context は設定が必要ですか？
+### operating context は設定が必要ですか？ { #do-i-need-to-configure-the-operating-context }
 
 単一クライアント・単一エージェント運用なら不要です — 未設定が正しい状態で、
 欠落ではありません。`operating-context.toml` は、1 つのサーバーに*複数の* MCP
@@ -102,7 +102,7 @@ recall で負けることはあります。「失われては困る」→ lock�
 配りたいオペレーターのための道具です。
 → [OPERATING_CONTEXT_DESIGN](OPERATING_CONTEXT_DESIGN.md)
 
-### データベースを安全にバックアップするには？
+### データベースを安全にバックアップするには？ { #how-do-i-back-up-the-database-safely }
 
 サーバー稼働中の素朴な `cp` は不可です (WAL)。`sqlite3 ... ".backup ..."` か
 `VACUUM INTO` を使うか、サーバーを止めて `.db` を `-wal`/`-shm` ごとコピー
@@ -110,7 +110,7 @@ recall で負けることはあります。「失われては困る」→ lock�
 クラウド同期フォルダの外に置きます。
 → [バックアップとリストア](operations.md#backup-and-restore)
 
-### 埋め込みサーバーが死んだことに気づくには？
+### 埋め込みサーバーが死んだことに気づくには？ { #how-do-i-notice-the-embedding-server-died }
 
 自分で見張る必要はありません: 劣化中の recall には `advisory` フィールドが付き
 (エージェントに表示させてください)、行を書いた `store` は `embedded: true|false`
@@ -121,7 +121,7 @@ recall で負けることはあります。「失われては困る」→ lock�
 `check_health` が緑なだけではエンドポイントの生存証明にならない点に注意。
 → [埋め込みサーバー停止の検知](operations.md#detecting-a-dead-embedding-server)
 
-### CPersona が LLM で記憶を統合・要約する日は来ますか？
+### CPersona が LLM で記憶を統合・要約する日は来ますか？ { #will-cpersona-ever-merge-or-summarize-memories-with-an-llm }
 
 来ません。*サーバーは生成モデルを呼ばない*ことは不変の核ドクトリンです —
 モデルとの通信は embedding だけで、だから記憶自体に API コストがなく決定論的に

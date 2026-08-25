@@ -255,3 +255,125 @@ def test_a_failed_run_reports_the_reason_inside_its_result_document(monkeypatch)
     assert "terminal_reason=api_error" in message
     assert "api_error_status=401" in message
     assert "OAuth access token is invalid" in message
+
+
+# --------------------------------------------------------------------------------------
+# A finding the updater cannot see is a finding that does not exist.
+#
+# The checker reports twice — once for a human (annotations, exit code) and once for a
+# program (--json). Those two consumers are what makes a half-recorded finding dangerous:
+# the run goes red, so a human eventually looks, while the updater reads an empty work
+# list and reports nothing to fix. That is worse than a plain failure, because the job
+# that is supposed to explain the red is the one saying everything is fine.
+# --------------------------------------------------------------------------------------
+
+
+def _tree(tmp_path: Path, pages: dict[str, str]) -> Path:
+    """A minimal checkout: the real checker, and only the docs handed to it.
+
+    Run against a copy rather than this repository's own docs/ because the case
+    under test is a page that must not exist here — an orphan translation is
+    exactly what the CI gate blocks.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check-i18n-drift.py").write_bytes(
+        (ROOT / "scripts" / "check-i18n-drift.py").read_bytes()
+    )
+    (tmp_path / "docs").mkdir()
+    for name, body in pages.items():
+        (tmp_path / "docs" / name).write_text(body)
+    return tmp_path
+
+
+def _check(tree: Path, *flags: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["python3", str(tree / "scripts" / "check-i18n-drift.py"), *flags],
+        cwd=tree,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_a_translation_whose_english_source_is_gone_reaches_the_machine_output(tmp_path):
+    """The exit code and --json used to disagree: red run, empty work list."""
+    tree = _tree(tmp_path, {"gone.ja.md": f"<!-- i18n-source: docs/gone.md@blob:{OLD_SHA} -->\n\n# 孤児\n"})
+
+    proc = _check(tree, "--json", "--strict")
+    assert proc.returncode == 1, "an orphan translation is still a blocking finding"
+
+    payload = json.loads(proc.stdout)
+    assert [f["reason"] for f in payload["stale"]] == ["missing_source"], (
+        "the checker exited non-zero but told the updater there was nothing to do; "
+        "a finding that only reaches the human output cannot be reported by the job "
+        "that runs on it"
+    )
+    finding = payload["stale"][0]
+    assert finding["translation"] == "docs/gone.ja.md"
+    assert finding["english"] == "docs/gone.md"
+    assert finding["current_blob"] is None, "there is no English file left to hash"
+
+
+def test_the_orphan_page_is_told_what_to_do_about_its_missing_source():
+    """Its cause is not a broken marker, so the marker advice would not work."""
+    advice = translate.skip_advice(
+        {"translation": "docs/gone.ja.md", "english": "docs/gone.md", "reason": "missing_source"}
+    )
+    assert "docs/gone.md" in advice and "does not exist" in advice
+    assert "Fix the marker" not in advice, (
+        "no marker edit brings back a deleted English page; the two ways out are "
+        "deleting the translation or repointing it"
+    )
+    assert "Fix the marker" in translate.skip_advice(
+        {"translation": "docs/x.ja.md", "english": "docs/x.md", "reason": "missing_marker"}
+    ), "the marker cases keep the advice that does work for them"
+
+
+# --------------------------------------------------------------------------------------
+# Exit 1 means two different things, so the exit code cannot be the verdict.
+#
+# The checker returns 1 for "drift found" under --strict; Python returns 1 for an
+# uncaught exception. Reading the code alone therefore turns a crashed checker into a
+# clean run, and the empty stdout that follows arrives at json.loads as "" — raising a
+# JSONDecodeError that names column 1 and nothing else, while the traceback saying why
+# is still unread in stderr. These pin that the reason reaches the reader.
+# --------------------------------------------------------------------------------------
+
+
+def _checker_is(monkeypatch, tmp_path: Path, body: str):
+    fake = tmp_path / "fake-checker.py"
+    fake.write_text(body)
+    monkeypatch.setattr(translate, "CHECKER", fake)
+
+
+def test_a_crashed_checker_reports_its_own_stderr_not_a_json_decode_error(monkeypatch, tmp_path):
+    _checker_is(
+        monkeypatch,
+        tmp_path,
+        'import sys\nprint("docs/ is not a directory", file=sys.stderr)\n'
+        'raise RuntimeError("checker exploded")\n',
+    )
+    with pytest.raises(SystemExit) as exc:
+        translate.stale_pages()
+    message = str(exc.value)
+    assert "docs/ is not a directory" in message, (
+        "the checker's own explanation was dropped; the caller was left with "
+        "'Expecting value: line 1 column 1', which describes the empty string it "
+        "was handed and not the failure that produced it"
+    )
+    assert "checker exploded" in message
+    assert "check-i18n-drift.py" in message
+
+
+def test_output_that_is_not_the_agreed_document_is_named_as_such(monkeypatch, tmp_path):
+    """Exit 0 with the wrong shape is a contract break, not an empty work list."""
+    _checker_is(monkeypatch, tmp_path, 'import json,sys; json.dump({"findings": []}, sys.stdout)\n')
+    with pytest.raises(SystemExit) as exc:
+        translate.stale_pages()
+    assert "stale" in str(exc.value), "name the key that was missing"
+    assert "findings" in str(exc.value), "show what arrived instead"
+
+
+def test_a_working_checker_still_parses(monkeypatch, tmp_path):
+    """The guards must not swallow the ordinary answer — including 'nothing stale'."""
+    _checker_is(monkeypatch, tmp_path, 'import json,sys; json.dump({"stale": []}, sys.stdout)\n')
+    assert translate.stale_pages() == []

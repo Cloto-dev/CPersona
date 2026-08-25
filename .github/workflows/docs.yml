@@ -18,6 +18,7 @@ on:
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
+      - "scripts/check-heading-parity.py"
       - "scripts/check-i18n-drift.py"
       - "scripts/translate-i18n-drift.py"
   pull_request:
@@ -26,6 +27,7 @@ on:
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
+      - "scripts/check-heading-parity.py"
       - "scripts/check-i18n-drift.py"
       - "scripts/translate-i18n-drift.py"
 
@@ -60,6 +62,16 @@ jobs:
         # while breaking 16 links across four pages. This step is the detector
         # for that class, and it runs against the built site, not the sources.
         run: python3 scripts/check-doc-anchors.py site
+      - name: Translated heading anchors (blocking)
+        # The anchor check above asks whether the links that exist resolve, so a
+        # translated page whose heading ids have all moved stays green until
+        # somebody links to one of them. Measured here: index.ja.md and
+        # faq.ja.md carried no explicit ids at all — 16 headings answering to
+        # `_1`, `3`, `ai`, `recall_1` — with every gate green. This step
+        # compares each translated page's heading ids against its English
+        # source, so the breakage is caught when it is written rather than when
+        # it is first linked.
+        run: python3 scripts/check-heading-parity.py site
       - name: Language routing (blocking)
         # GitHub Pages cannot negotiate on Accept-Language, so the routing lives
         # in the page head (overrides/main.html) and mkdocs --strict cannot see
@@ -186,6 +198,7 @@ jobs:
           python3 scripts/check-i18n-drift.py --strict
           uvx --with mkdocs-material==9.7.7 --with mkdocs-static-i18n==1.3.1 mkdocs build --strict
           python3 scripts/check-doc-anchors.py site
+          python3 scripts/check-heading-parity.py site
       - name: Commit to the PR branch
         if: steps.creds.outputs.configured == 'true'
         run: |

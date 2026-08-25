@@ -856,3 +856,99 @@ async def test_file_io_wildcard_is_not_blamed_on_a_missing_scope(tmp_path, monke
         "the export demand is unconditional while EXPORT_DIR is unset; blaming "
         "the scope argument would send the caller after a fix that does nothing"
     )
+
+
+# ---------------------------------------------------------------------------
+# 10. A caller that asked for every agent on purpose is told something else
+#     (bug-263). "You sent no scope" is the right diagnosis for an omitted
+#     argument and a false one for `agent_id="*"`, which IS a scope — the
+#     broadest one. The probes cannot separate the two: both overwrite every
+#     scope key before the demand is computed, so the original value is gone
+#     by the time anyone could look at it. That is why the arguments are read
+#     directly for this distinction, and why these tests pin the wording of
+#     each cause against the other's.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_wildcard_is_not_reported_as_a_missing_scope(tmp_path):
+    """The caller passed agent_id; being told to pass agent_id is unfollowable."""
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("delete_memory", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))  # {"alpha": rw, "*": read}
+    try:
+        denied = await guarded({"memory_id": 1, "agent_id": "*"})
+        scoped = await guarded({"memory_id": 1, "agent_id": "alpha"})
+    finally:
+        acl.reset_principal(token)
+
+    assert denied["error"] == "permission_denied" and denied["agent_id"] == "*"
+    assert "no agent scope was sent" not in denied["detail"], (
+        "the scope was sent — as the wildcard. Repeating the omitted-scope "
+        "advice here tells the caller to do what it already did"
+    )
+    assert 'sent as "*"' in denied["detail"]
+    # The reach, because "denied" alone does not say whether naming an agent helps.
+    assert "read on *" in denied["detail"], denied["detail"]
+    assert scoped["ok"] is True and "error" not in scoped, (
+        "the denial says to name a single agent; doing so must therefore "
+        "succeed, or the advice is wrong"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_client_with_no_wildcard_grant_is_told_that_naming_agents_is_the_way(tmp_path):
+    """The other way a sweep fails, and it takes a different answer.
+
+    With no wildcard grant at all, no set of named grants ever satisfies a
+    sweep (§3, D6) — so the useful thing to say is not "you are one level
+    short" but "this shape of call is not available to you; name an agent".
+    """
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("recall", _stub_handler)
+    token = acl.set_principal(acl.Principal("reader"))  # {"beta": read}, no wildcard
+    try:
+        denied = await guarded({"agent_id": "*", "query": "x"})
+        scoped = await guarded({"agent_id": "beta", "query": "x"})
+    finally:
+        acl.reset_principal(token)
+
+    assert denied["error"] == "permission_denied"
+    assert "holds no all-agents grant" in denied["detail"], denied["detail"]
+    assert "never add up" in denied["detail"]
+    assert scoped["ok"] is True and "error" not in scoped
+
+
+@pytest.mark.asyncio
+async def test_only_the_half_that_was_widened_is_named(tmp_path):
+    """merge_memories, one side scoped and the other sent as the wildcard."""
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("merge_memories", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))
+    try:
+        denied = await guarded({"source_agent_id": "alpha", "target_agent_id": "*"})
+    finally:
+        acl.reset_principal(token)
+
+    assert 'target_agent_id was sent as "*"' in denied["detail"], denied["detail"]
+    assert "source_agent_id" not in denied["detail"], (
+        "the half that was scoped correctly must not be demanded back"
+    )
+
+
+@pytest.mark.asyncio
+async def test_both_causes_in_one_call_are_both_reported(tmp_path):
+    """One argument omitted, the other widened: two causes, two fixes."""
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("merge_memories", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))
+    try:
+        denied = await guarded({"target_agent_id": "*"})
+        scoped = await guarded({"source_agent_id": "alpha", "target_agent_id": "alpha"})
+    finally:
+        acl.reset_principal(token)
+
+    detail = denied["detail"]
+    assert "no agent scope was sent" in detail and "pass source_agent_id" in detail, detail
+    assert 'target_agent_id was sent as "*"' in detail, detail
+    assert scoped["ok"] is True
