@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:ad3b5f0e1d5faf9bf31304b0e653071734bcac7e -->
+<!-- i18n-source: docs/getting-started.md@blob:96a9008f03151ab8e2d0bcd9372846683048acf3 -->
 
 # はじめに
 
@@ -95,8 +95,14 @@ CPersona が読むのは **`embeddings`** だけです — `dimensions` はリ�
   (jina-v5-nano、bge-m3、MiniLM) が想定される適合先です。
 - **同じ URL の裏でモデルを差し替えるとコーパスが無効化されます。** CPersona は
   バックエンドを埋め込みの*次元*だけで指紋認証します — 契約はモデル同一性を
-  運びません — そのため同じ次元での差し替えは検出できません。差し替えたら
-  再埋め込み (`check_health(fix=true)` が NULL 化された行を修復) し、
+  運びません — そのため同じ次元での差し替えは検出できません。しかもこれは修復
+  ツールが届かないケースです: `check_health(fix=true)` が再埋め込みするのは blob が
+  NULL の行で、次元チェックは*長さ*の違う blob だけを NULL 化します。したがって
+  同一次元での差し替え後は全 blob が期待どおりの大きさであり、何も NULL 化されず、
+  何も再埋め込みされません。既に blob を持つ行を強制的に再埋め込みするツールは
+  ありません。復旧手段はコーパスの再構築です — `delete_agent_data` してから再
+  `store` する
+  [再構築パターン](operations.md#corpus-indexing-and-sync-patterns) を使い、その後に
   `calibrate_threshold` を実行してください。
 
 ### リファレンス実装 { #the-reference-server }
@@ -133,9 +139,26 @@ CPersona の既定値は jina-v5-nano (768 次元) に合わせて調整され�
 [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md)
 にあります。
 
-埋め込みサーバーは MCP サーバーでは**なく**ただの HTTP プロセスです — バックグラウンド
-サービスとして普段どおりに動かしてください (ターミナル、launchd、systemd など)。
-CPersona が必要とするのは URL だけです。
+CPersona が必要とするのは URL だけです — ただし**参照サーバーをどう監視下で動かすか
+は重要**で、素直なやり方では動きません。
+
+これはただの HTTP プロセスではなく MCP サーバーです。既定のトランスポートでは前景で
+stdio の MCP セッションを回し、REST `/embed` エンドポイントはバックグラウンドタスク
+として提供します。つまり**プロセスの寿命は stdin に縛られています**: EOF でセッション
+が終わり、`finally` 節が HTTP タスクを cancel します。サービスマネージャが普通に起動
+する形 — stdin が `/dev/null` — で立ち上げると、ポートを bind し
+`HTTP embedding endpoint started` をログに出したうえで、**同じ秒のうちに終了コード 0
+で終了します**。監視側は正常終了を見て、CPersona は誰も応答しない URL を向いたまま
+残ります。
+
+stdin を開いたままにしてください。サービスマネージャの下ではパイプを保持する何かを
+挟むことになります (例:
+`ExecStart=/bin/sh -c 'sleep infinity | cembedding'`)。ターミナルでは端末が既にその
+役割を果たしています。
+
+`EMBEDDING_TRANSPORT=streamable-http` は stdin を読まないという意味では監視に向いた
+代替ですが、REST `/embed` の**代わりに** MCP エンドポイントを提供します — したがって
+`/embed` に POST する CPersona の `http` モードでは選択肢になりません。
 
 ## 3. MCP クライアントに登録する { #3-register-cpersona-with-your-mcp-client }
 
@@ -174,8 +197,11 @@ claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"
   動作し、劣化している旨を報告します。
 - `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` は `CPERSONA_EMBEDDING_MODE` /
   `CPERSONA_EMBEDDING_URL` の汎用エイリアスです。両方設定された場合は接頭辞つきが
-  優先されます。それ以外の設定は
-  [設定リファレンス](configuration.md) にあります。
+  優先されます。[設定リファレンス](configuration.md) は手を伸ばしそうな設定を
+  網羅していますが、完全な一覧ではありません — いくつかの変数
+  (`CPERSONA_STORE_BLOB`、`CPERSONA_FTS_ENABLED`、`CPERSONA_EMBEDDING_API_KEY`、
+  `CPERSONA_CALIBRATE_*` の 2 つ、ほか数個) はサーバーが読むにもかかわらずそこに
+  載っていません。完全な一覧は `cpersona/config.py` です。
 
 ## 4. 動作を確認する { #4-verify-it-works }
 

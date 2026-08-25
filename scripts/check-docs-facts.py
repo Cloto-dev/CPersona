@@ -14,6 +14,12 @@ Checked facts and their sources of truth:
   schema version  SCHEMA_VERSION literal in cpersona/database.py
   env defaults    static parse of cpersona/config.py, compared against every
                   markdown table row in docs/ that names a `CPERSONA_*` var
+  latest release  the newest final `vX.Y.Z` git tag, compared against every
+                  "latest v2.5.4" / "Latest release: 2.5.4" claim. Version
+                  freshness is the one fact that rots on a schedule — it goes
+                  stale the moment a tag is cut, and it went stale twice
+                  (README and SUPPORT both named a superseded release) before
+                  this check existed
   volatile stats  LOC / test-function / test-module / collected-case counts,
                   re-measured here with the same commands the docs cite;
                   docs state them as rounded `~` values and this check allows
@@ -39,6 +45,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # to stay as written — so they are deliberately not scanned.
 DOC_FILES = [
     ROOT / "README.md",
+    ROOT / "SUPPORT.md",
     ROOT / "skills" / "cpersona-memory" / "SKILL.md",
     ROOT / "docs" / "index.md",
     ROOT / "docs" / "getting-started.md",
@@ -263,20 +270,91 @@ def check_volatile_claims(stats: dict[str, float]) -> None:
                     )
 
 
+# (regex with group 1 = claimed version, human label). The separator is
+# `[\s>]+` rather than a single space because README wraps this sentence: the
+# 2.4 claim reads "(latest\n> v2.4.41". A pattern that only matched one space
+# found the 2.5 claim, missed the 2.4 one, and reported green — a hit rate is
+# not a coverage report, so both spellings are pinned by
+# test_release_claim_patterns_reach_every_claim below.
+RELEASE_CLAIMS = (
+    (re.compile(r"latest[\s>]+v(\d+\.\d+\.\d+)\b"), "latest v<version>"),
+    (re.compile(r"Latest release:[\s>]+(\d+\.\d+\.\d+)\b"), "Latest release: <version>"),
+)
+
+
+def measured_latest_finals() -> dict[str, str]:
+    """The newest FINAL release tag per minor line, from git.
+
+    Pre-releases are excluded on purpose: a line's "latest release" in the
+    lifecycle table is the shipped final, and 2.5.6a1 sitting in pyproject is
+    not a release. That is also why pyproject cannot be the source of truth
+    here — it holds the version being prepared, not the one users can install.
+
+    A shallow clone has no tags, and a check that silently measures nothing is
+    worse than no check: it reports green over an unexamined claim. So an empty
+    tag list is a failure with the fix in the message, not a skip.
+    """
+    proc = subprocess.run(
+        ["git", "tag", "--list", "v*"], cwd=ROOT, capture_output=True, text=True
+    )
+    finals: dict[str, tuple[int, int, int]] = {}
+    for tag in proc.stdout.split():
+        m = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
+        if not m:
+            continue  # pre-release (v2.5.6a1) or a non-version tag
+        major, minor, patch = (int(g) for g in m.groups())
+        line = f"{major}.{minor}"
+        if finals.get(line, (-1, -1, -1)) < (major, minor, patch):
+            finals[line] = (major, minor, patch)
+    if not finals:
+        fail(
+            "no final release tags visible (git tag --list 'v*' found none) — the "
+            "'latest release' claims cannot be checked. In CI this means the "
+            "checkout is shallow: set fetch-depth: 0 on the docs-facts job."
+        )
+    return {line: "%d.%d.%d" % v for line, v in finals.items()}
+
+
+def check_release_claims(finals: dict[str, str]) -> None:
+    if not finals:
+        return  # already reported by the measurement
+    for doc in DOC_FILES:
+        text = doc.read_text()
+        rel = doc.relative_to(ROOT)
+        for pattern, label in RELEASE_CLAIMS:
+            for m in pattern.finditer(text):
+                claimed = m.group(1)
+                line = ".".join(claimed.split(".")[:2])
+                latest = finals.get(line)
+                if latest is None:
+                    fail(
+                        f"{rel}: claims '{label}' = {claimed}, but no final tag "
+                        f"exists on the {line}.x line"
+                    )
+                elif claimed != latest:
+                    fail(
+                        f"{rel}: claims '{label}' = {claimed}, newest final tag on "
+                        f"the {line}.x line is {latest}"
+                    )
+
+
 def main() -> int:
     tool_count = measured_tool_count()
     schema_version = measured_schema_version()
     env_defaults = parsed_env_defaults()
     stats = measured_volatile_stats()
+    finals = measured_latest_finals()
 
     check_tool_and_schema_claims(tool_count, schema_version)
     check_env_tables(env_defaults)
     check_volatile_claims(stats)
+    check_release_claims(finals)
 
     print(
         f"measured: {tool_count} tools, schema v{schema_version}, "
         + ", ".join(f"{k}={int(v)}" for k, v in stats.items())
         + f", {len(env_defaults)} env defaults parsed"
+        + (", latest finals " + "/".join(f"{k}={v}" for k, v in sorted(finals.items())) if finals else "")
     )
     if failures:
         print(f"\n{len(failures)} documentation fact(s) out of date:", file=sys.stderr)

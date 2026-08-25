@@ -25,7 +25,7 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 
 > **Project status (August 2026)** — **2.4.x is the Stable line** (latest
 > v2.4.41, gated by three comprehensive audit rounds). **2.5.x is the Current
-> line** (latest v2.5.4): an internal stabilization line that has passed the
+> line** (latest v2.5.5): an internal stabilization line that has passed the
 > full release gate and is where all fixes land, pending production-soak
 > certification. The DB schema is preserved across the line, and feature
 > development resumes in 2.6. Tiers and support windows:
@@ -103,8 +103,11 @@ setup walkthrough:**
 - **Three memory types** — declarative facts (`store`), session summaries
   (`archive_episode`), and an accumulated profile (`update_profile`).
 - **Zero LLM dependency** — cpersona never calls a generative model. Your agent
-  does the summarizing and hands over the result, so memory adds no API cost,
-  no hidden latency, and no nondeterminism.
+  does the summarizing and hands over the result. Embeddings are a separate
+  question: `EMBEDDING_MODE=http` talks to a local server and costs nothing per
+  call, while `api` mode bills against an OpenAI-compatible endpoint. Recall is
+  deterministic given a calibrated gate, though the gate is measured by random
+  sampling, so two installs on identical data can settle differently.
 - **Single-file SQLite** — no external database. `sqlite3 .backup` copies the
   whole corpus; the calibration sidecar beside it needs copying too
   ([backup runbook](https://cloto-dev.github.io/CPersona/operations/#backup-and-restore)).
@@ -156,7 +159,7 @@ at [`llms.txt`](https://cloto-dev.github.io/CPersona/llms.txt).
 
 - **~14,100 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **~930 test functions** across 85 test modules — ~1,170 cases once the
+- **~930 test functions** across ~86 test modules — ~1,170 cases once the
   behavioural matrix is parametrised (~27,700 LOC, more test code than server
   code), including structural-enforcement gates
 - **Schema v13** (auto-migrating)
