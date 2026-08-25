@@ -460,3 +460,514 @@ async def test_autocut_keys_on_the_fusion_mode_not_the_confidence_flag(
         "regression needs a corpus wide enough for rank fusion to spread, which is "
         "not what this file is for."
     )
+
+
+# --------------------------------------------------------------------------------------
+# docs/behavior-contracts.md §8, and the same claim in docs/architecture.md ("Retrieval",
+# stage 2):
+#
+#   "The rescue path exists only under confidence scoring. The rows it returns are marked
+#    by the same backfill that runs when `CPERSONA_CONFIDENCE_ENABLED` is on, so in the
+#    default configuration `gate_fallback` can never appear: an all-below-gate recall
+#    simply returns nothing."
+#
+# This is a reachability claim about a marker a caller is told to branch on, and it is the
+# kind that rots quietly: the rescue would still look correct in review if someone moved
+# the backfill out from behind the flag, and the only symptom would be a marker the page
+# says is unreachable turning up in production responses.
+#
+# Both halves are pinned because they fail independently. A test that only asserted the
+# default-off half would also pass on an implementation where the rescue was deleted
+# outright — which is the opposite defect, and it would mean §8 documents a marker that
+# no configuration can produce.
+#
+# The gate is forced rather than fitted. `_adaptive_min_score` is monkeypatched above
+# every branch's scale (confidence / rsf / cosine are 0-1; the rrf branch compares against
+# min_score * RRF_MAX_SCALE), so "every candidate fell below the quality gate" holds by
+# construction instead of depending on a corpus that happens to score low. The per-agent
+# vector threshold is raised for the same reason: it keeps the identifier row out of the
+# vector arm, so it arrives through FTS alone and cosine-less, which is the row the
+# backfill exists to move — the "identifier/hash lookup" case §8 names.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gate_fallback_is_unreachable_with_confidence_off(
+    clean_db, fake_embedding_client, monkeypatch
+):
+    """§8's reachability claim, pinned on both sides of the confidence flag."""
+    from cpersona import vector
+
+    identifier = "a3f9c2deadbeef"
+    for index in range(12):
+        await memory_handlers.do_store(
+            AGENT_A, {"content": f"gardening notes {index} soil water sun tools"}
+        )
+    # Lexically an exact hit, semantically far: one rare token diluted among twenty, which
+    # puts its cosine (~0.22 under the deterministic test embedder) well under the vector
+    # arm's floor below and leaves the margin insensitive to small scoring changes.
+    await memory_handlers.do_store(
+        AGENT_A,
+        {
+            "content": "deploy log soil water sun tools note rollback done shipped "
+            f"staging queue drain retry batch worker timer flush {identifier}"
+        },
+    )
+
+    # A calibrated agent whose vector arm demands a close match; the identifier row is
+    # below it, so only FTS finds it.
+    monkeypatch.setitem(vector._agent_thresholds, AGENT_A, 0.9)
+    # An impossible gate: above every branch's scale, so nothing survives it.
+    monkeypatch.setattr(memory_handlers, "_adaptive_min_score", lambda count: 5.0)
+
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", False)
+    default = await memory_handlers.do_recall(AGENT_A, identifier, limit=10)
+
+    assert default["messages"] == [], (
+        "an all-below-gate recall returned rows under the shipped configuration. "
+        f"behavior-contracts.md §8 and architecture.md both promise an empty response "
+        f"there. Got: {[m['content'] for m in default['messages']]}"
+    )
+    assert "gate_fallback" not in default, (
+        "`gate_fallback` appeared with CPERSONA_CONFIDENCE_ENABLED off. Both pages tell "
+        "the reader the marker is unreachable in the default configuration, so a caller "
+        "who never enabled confidence has no branch for it — either the backfill left "
+        "the flag, or the rescue stopped keying on it. The pages and the two tool "
+        "descriptions in server.py have to move with that change."
+    )
+
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    rescued = await memory_handlers.do_recall(AGENT_A, identifier, limit=10)
+
+    assert rescued.get("gate_fallback") is True, (
+        "with confidence scoring on, the same all-below-gate recall did not raise "
+        "`gate_fallback`. §8 documents a rescue path that exists for exactly this case "
+        "(an identifier whose exact match is semantically distant); if it no longer "
+        "fires, §8 describes a marker no configuration produces and the section should "
+        f"go, not be left as advice. Response keys: {sorted(rescued)}"
+    )
+    assert any(identifier in m["content"] for m in rescued["messages"]), (
+        "the rescue fired but did not return the exact lexical match it exists to keep "
+        f"visible. Returned: {[m['content'] for m in rescued['messages']]}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/architecture.md, "The three memory types", on the profile row:
+#
+#   "Appended to recall responses **when the scope holds at least 50 rows** (memories and
+#    episodes together — the pool the gate governs; below that the gate drops it) [...]"
+#
+# The page said "at least 50 memories" until this test was written, and measurement moved
+# the sentence: 49 memories plus one episode injects the profile. That is not an accident
+# to be tidied away in the doc's favour — bug-216 made the gate count the pool it actually
+# governs (memories + episodes over the recall's isolation scope) precisely because an
+# episodes-only agent had every row blocked by a threshold computed over an empty
+# `memories` table. The old sentence would have an operator with 40 memories and 15
+# episodes conclude their profile is being dropped while it is being injected.
+#
+# Pinned on both sides of the boundary, plus the episode contribution, because the three
+# fail independently: an off-by-one in the comparison moves only the first two, and
+# scoping the count back to `memories` alone moves only the third.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_profile_injection_needs_fifty_rows_counting_episodes(
+    clean_db, fake_embedding_client
+):
+    """The profile gate's threshold, and what it counts as a row."""
+    from cpersona import admin_handlers
+
+    async def _recall_with(memories: int, episodes: int) -> list[str]:
+        for table in ("memories", "episodes", "profiles"):
+            await clean_db.execute(f"DELETE FROM {table}")
+        await clean_db.commit()
+        await admin_handlers.do_update_profile(AGENT_A, "operator prefers metric units")
+        for index in range(memories):
+            await memory_handlers.do_store(
+                AGENT_A, {"content": f"gardening notes {index} soil water sun"}
+            )
+        for index in range(episodes):
+            await memory_handlers.do_archive_episode(
+                AGENT_A, [], summary=f"a session about soil {index}", keywords="soil"
+            )
+        # A query no row answers: the scored channels come back empty, so what survives
+        # is the profile row alone and the gate's verdict on it is the whole result.
+        result = await memory_handlers.do_recall(AGENT_A, "zzqxunrelatedtoken", limit=10)
+        return [m["content"] for m in result["messages"]]
+
+    below = await _recall_with(memories=49, episodes=0)
+    assert below == [], (
+        "the profile row was injected into a 49-row scope. architecture.md tells the "
+        f"reader the gate drops it below 50, and behavior-contracts.md §7 sends anyone "
+        f"who needs guaranteed presence to deterministic injection instead. Got: {below}"
+    )
+
+    at_threshold = await _recall_with(memories=50, episodes=0)
+    assert any(c.startswith("[Profile]") for c in at_threshold), (
+        "the profile row did not appear at exactly 50 rows, so either the threshold "
+        f"moved or profile injection stopped working. architecture.md names 50. Got: "
+        f"{at_threshold}"
+    )
+
+    with_episode = await _recall_with(memories=49, episodes=1)
+    assert any(c.startswith("[Profile]") for c in with_episode), (
+        "49 memories plus one episode did not clear the gate, so the pool is being "
+        "counted over `memories` alone again. bug-216 scoped it to memories + episodes "
+        "so an episodes-only agent is not gated by a threshold computed over an empty "
+        "table, and architecture.md says 'rows (memories and episodes together)'. If "
+        f"the count is deliberately narrowing, that sentence moves with it. Got: "
+        f"{with_episode}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/tools.md, on check_health:
+#
+#   "Some checks are report-only by design — isolation-axis hygiene among them, because
+#    which spelling of an axis is canonical is an operator's call, not a repair"
+#
+# `fix=true` is the one argument in this API that rewrites rows, and this sentence is the
+# only thing telling an operator that one of the checks it runs will not act on what it
+# reports. The failure it guards against is silent and destructive in the direction that
+# matters: a well-meant "repair" that folds `cycia-mc` into `cyciamc` moves rows across a
+# hard γ-isolation boundary, and the operator's evidence that it did not happen is a
+# sentence on a page.
+#
+# Pinned in both directions. Asserting only that the rows are unchanged would also pass if
+# the check stopped detecting drift at all, which reads as "clean" and would leave the
+# split buckets in place with nothing reporting them.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_axis_hygiene_reports_naming_drift_without_repairing_it(clean_db):
+    """check_health(fix=True) reports axis drift and leaves the spellings alone."""
+    from cpersona import maintenance_handlers
+
+    for project_id in ("cycia-mc", "cyciamc"):
+        await clean_db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp, created_at, project_id) "
+            "VALUES (?, ?, '', '2026-08-20 00:00:00', ?)",
+            (AGENT_A, f"a note filed under {project_id}", project_id),
+        )
+    await clean_db.commit()
+
+    result = await maintenance_handlers.do_check_health(
+        agent_id=AGENT_A, fix=True, checks=["axis_hygiene"]
+    )
+
+    reported = [i for i in result["issues"] if i["type"] == "project_id_naming_drift"]
+    assert reported, (
+        "two spellings of one project_id went unreported by a check whose whole job is "
+        "to surface them. tools.md describes axis hygiene as report-only, which is only "
+        f"worth saying if it reports. Issues: {result['issues']}"
+    )
+
+    rows = await clean_db.execute_fetchall(
+        "SELECT project_id FROM memories WHERE agent_id = ? ORDER BY project_id", (AGENT_A,)
+    )
+    assert [r[0] for r in rows] == ["cycia-mc", "cyciamc"], (
+        "check_health(fix=True) rewrote a project_id. tools.md promises the operator "
+        "that axis hygiene is report-only because canonicalising a spelling is their "
+        "call — and project_id is a hard isolation axis, so folding one bucket into "
+        f"another moves rows across a boundary no recall crosses back. Rows now: {rows}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/architecture.md, "Retrieval":
+#
+#   "**Three retrievers** feed the fusion step: vector search, FTS5 over memories, and
+#    FTS5 over episodes. [...] A **keyword (`LIKE`) pass is not a fourth retriever.** It
+#    sits inside the memories channel as a fallback and runs only when FTS is disabled or
+#    its `MATCH` returns nothing — so it never merges alongside the FTS memories
+#    retriever, it stands in for it."
+#
+# The diagram on that page is drawn from this claim, and the arithmetic downstream of it
+# is a caller's: rank fusion gives a row one vote per channel it wins, so a fourth channel
+# over the same table would double-count every lexical hit and quietly re-weight the whole
+# merge toward it. This is also the shape bug-155 and bug-215 were both about.
+#
+# The observable is the row's `_bm25`: the FTS branch carries a score, the LIKE branch
+# carries None (the "uniform 1.0" vote _minmax_norm documents). One call to the memories
+# channel returning one branch's rows is what "stands in for it" means, so the test pins
+# the call count and the branch together — a spy that only counted calls would pass on an
+# implementation that merged both result sets inside the one call.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_keyword_pass_stands_in_for_fts_rather_than_joining_it(
+    clean_db, fake_embedding_client, monkeypatch
+):
+    """Three retrievers feed fusion; LIKE substitutes inside one of them."""
+    calls: dict[str, int] = {}
+    memories_rows: list[list[dict]] = []
+
+    def _spy(name, fn, record=False):
+        async def wrapper(*args, **kwargs):
+            calls[name] = calls.get(name, 0) + 1
+            rows = await fn(*args, **kwargs)
+            if record:
+                memories_rows.append(rows)
+            return rows
+
+        return wrapper
+
+    monkeypatch.setattr(
+        memory_handlers, "_search_vector", _spy("vector", memory_handlers._search_vector)
+    )
+    monkeypatch.setattr(
+        memory_handlers,
+        "_search_episodes_fts",
+        _spy("episodes_fts", memory_handlers._search_episodes_fts),
+    )
+    monkeypatch.setattr(
+        memory_handlers,
+        "_search_memories_keyword",
+        _spy("memories", memory_handlers._search_memories_keyword, record=True),
+    )
+
+    await memory_handlers.do_store(AGENT_A, {"content": "the deployment runbook for staging"})
+    await memory_handlers.do_store(AGENT_A, {"content": "an unrelated note about soil"})
+
+    await memory_handlers.do_recall(AGENT_A, "deployment runbook", limit=10)
+
+    assert calls == {"vector": 1, "episodes_fts": 1, "memories": 1}, (
+        "the fusion step was fed by something other than exactly three retriever calls. "
+        "architecture.md names three and draws its pipeline diagram from that count; a "
+        "fourth channel over `memories` would give every lexical hit a second rank-fusion "
+        f"vote. Calls: {calls}"
+    )
+    assert memories_rows[-1] and all(r["_bm25"] is not None for r in memories_rows[-1]), (
+        "the memories channel returned LIKE-branch rows (no bm25) for a query FTS can "
+        "answer. The page says the LIKE pass runs only when MATCH returns nothing; if it "
+        f"now runs first or alongside, bm25 ranking is gone from that channel. Rows: "
+        f"{memories_rows[-1]}"
+    )
+
+    # A two-character query: no trigram term can be formed, so _build_fts_query returns ""
+    # and the LIKE branch is the only thing that can answer — the substitution the page
+    # describes, exercised from the same call site.
+    memories_rows.clear()
+    calls.clear()
+    await memory_handlers.do_store(AGENT_A, {"content": "release ok"})
+    await memory_handlers.do_recall(AGENT_A, "ok", limit=10)
+
+    assert calls.get("memories") == 1, (
+        f"the memories channel was not called exactly once on the fallback path: {calls}"
+    )
+    assert memories_rows[-1] and all(r["_bm25"] is None for r in memories_rows[-1]), (
+        "a query with no usable trigram term did not fall through to the LIKE pass. That "
+        "fallback is what keeps short and CJK queries answerable at all (bug-215), and "
+        f"architecture.md documents it as the substitution branch. Rows: {memories_rows[-1]}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/architecture.md, "Retrieval", on the two bounds around fusion:
+#
+#   "The [episode boundary penalty] works on the other side: it multiplies the *already
+#    fused* score of memories older than the most recent `archive_episode`, before the
+#    gate runs."
+#
+# Order is the whole claim here, and under the default `rrf` mode it is load-bearing
+# rather than descriptive: rank fusion is ordinal, so a penalty applied to a channel's
+# raw scores *before* the merge would leave every rank — and therefore every fused score —
+# exactly where it was. The penalty exists at all only because it lands after the merge.
+# "Before the gate" is the second half: the gate compares the penalised value, so an old
+# row can be dropped outright rather than merely demoted.
+#
+# Measured at the gate's own input, which is the one place both halves are visible at
+# once. Comparing the response rows instead would show a reordering but could not tell a
+# post-fusion penalty apart from a pre-fusion one that happened to reorder — and could not
+# see the value the gate keyed on at all.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_episode_penalty_scales_the_fused_score_before_the_gate(
+    clean_db, fake_embedding_client, monkeypatch
+):
+    """The penalty multiplies `_rrf_score`, and the gate sees the multiplied value."""
+    gate_input: list[list[tuple[str, float | None]]] = []
+    original_gate = memory_handlers._apply_quality_gate
+
+    def spy(results, *args, **kwargs):
+        gate_input.append([(r.get("content", ""), r.get("_rrf_score")) for r in results])
+        return original_gate(results, *args, **kwargs)
+
+    monkeypatch.setattr(memory_handlers, "_apply_quality_gate", spy)
+
+    await clean_db.execute(
+        "INSERT INTO memories (agent_id, content, timestamp, created_at) "
+        "VALUES (?, 'the staging deployment runbook', '2026-08-01 00:00:00', "
+        "'2026-08-01 00:00:00')",
+        (AGENT_A,),
+    )
+    await clean_db.execute(
+        "INSERT INTO episodes (agent_id, summary, keywords, created_at) "
+        "VALUES (?, 'a prior session', '', '2026-08-20 00:00:00')",
+        (AGENT_A,),
+    )
+    await clean_db.execute(
+        "INSERT INTO memories (agent_id, content, timestamp, created_at) "
+        "VALUES (?, 'the staging deployment checklist', '2026-08-21 00:00:00', "
+        "'2026-08-21 00:00:00')",
+        (AGENT_A,),
+    )
+    await clean_db.commit()
+
+    monkeypatch.setattr(memory_handlers, "EPISODE_PENALTY_ENABLED", False)
+    await memory_handlers.do_recall(AGENT_A, "staging deployment", limit=10)
+    unpenalised = dict(gate_input[-1])
+
+    monkeypatch.setattr(memory_handlers, "EPISODE_PENALTY_ENABLED", True)
+    await memory_handlers.do_recall(AGENT_A, "staging deployment", limit=10)
+    penalised = dict(gate_input[-1])
+
+    old, recent = "the staging deployment runbook", "the staging deployment checklist"
+    assert unpenalised.get(old) and unpenalised.get(recent), (
+        f"both rows should reach the gate with a fused score: {unpenalised}"
+    )
+    assert penalised[old] < unpenalised[old], (
+        "the row written before the last archive_episode reached the gate with its fused "
+        "score untouched. Under `rrf` the merge is ordinal, so a penalty applied to a "
+        "channel's raw scores before fusion cannot change anything — if this stopped "
+        "biting, the penalty is being applied on the wrong side of the merge and "
+        f"architecture.md's 'already fused' is wrong. {unpenalised[old]} → {penalised[old]}"
+    )
+    assert penalised[recent] == unpenalised[recent], (
+        "a memory written after the boundary was penalised too. The penalty's charter is "
+        "to weaken CROSS-session rows so current-session signals take precedence; "
+        f"penalising both is a uniform rescale, which is a no-op. {unpenalised[recent]} → "
+        f"{penalised[recent]}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/operations.md, "Backup and restore":
+#
+#   "1. **Online physical backup** (first choice — safe while the server runs) [...]
+#    Both produce a consistent snapshot under concurrent writes."
+#
+#   "**The `.db` is not the whole instance.** State lives outside it that none of the
+#    backup forms above touch: `<CPERSONA_DB_PATH>.calibration.json` [...]"
+#
+# A backup runbook is only ever tested by the restore nobody rehearsed, so both halves are
+# pinned here: the recommended form really does carry a live database across (including
+# rows still sitting in the -wal file, which is why the page tells the operator not to
+# script a `cp`), and it really does leave the sidecar behind — the sentence that turns a
+# silent loss of tuning into a documented step.
+#
+# What this covers and what it does not: the backup is taken through the same SQLite
+# online-backup API the `sqlite3 ... ".backup"` shell command drives, from a second
+# connection to the live file, so the mechanism and the concurrency are the real ones. The
+# shell wrapper itself is not exercised — this asserts the guarantee the page makes, not
+# the spelling of the command.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_online_backup_carries_the_database_and_leaves_the_sidecar(
+    clean_db, fake_embedding_client, tmp_path
+):
+    """The recommended backup form: complete as to the .db, silent as to the sidecar."""
+    import os
+    import sqlite3
+
+    from cpersona import admin_handlers, config
+
+    await memory_handlers.do_store(AGENT_A, {"content": "the staging deployment runbook"})
+    await memory_handlers.do_store(AGENT_A, {"content": "an unrelated note about soil"})
+
+    # The live file is read off the connection, not off config.DB_PATH: modules in this
+    # suite reload `config` after removing CPERSONA_DB_PATH from the environment, so the
+    # attribute can point somewhere the open connection does not, and sqlite3.connect on
+    # a path that does not exist would silently back up a freshly created empty database.
+    # config.DB_PATH is then pinned to the live file for the duration, so the sidecar
+    # path this test writes and the database it backs up are the same instance.
+    live_db_path = (await clean_db.execute_fetchall("PRAGMA database_list"))[0][2]
+    ambient_db_path = config.DB_PATH
+    config.DB_PATH = live_db_path
+    sidecar = admin_handlers._calibration_sidecar_path()
+    previous = None
+    if os.path.exists(sidecar):
+        with open(sidecar, "rb") as handle:
+            previous = handle.read()
+    try:
+        admin_handlers._save_calibration_state(
+            embedding_dim=8,
+            embedding_model="fake",
+            global_threshold=0.42,
+            agent_thresholds={AGENT_A: 0.61},
+        )
+        assert os.path.exists(sidecar), "the calibration writer did not produce a sidecar"
+
+        destination = tmp_path / "cpersona-backup.db"
+        # A second connection to the live file, as the shell command is.
+        source = sqlite3.connect(live_db_path)
+        target = sqlite3.connect(destination)
+        with target:
+            source.backup(target)
+        source.close()
+
+        rows = target.execute(
+            "SELECT content FROM memories WHERE agent_id = ? ORDER BY id", (AGENT_A,)
+        ).fetchall()
+        assert [r[0] for r in rows] == [
+            "the staging deployment runbook",
+            "an unrelated note about soil",
+        ], (
+            "the online backup came back without rows the running server had already "
+            "written. operations.md calls this form safe under concurrent writes, and "
+            "tells the operator not to script a `cp` precisely because those rows can "
+            f"still be sitting in the -wal file. Got: {rows}"
+        )
+        embedded = target.execute(
+            "SELECT COUNT(*) FROM memories WHERE embedding IS NOT NULL AND agent_id = ?",
+            (AGENT_A,),
+        ).fetchone()[0]
+        assert embedded == 2, (
+            f"embeddings did not survive the backup ({embedded}/2), so a restore would "
+            "come back with no local vector arm and nothing in the runbook says so"
+        )
+        matched = target.execute(
+            "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'deployment'"
+        ).fetchone()[0]
+        assert matched == 1, (
+            f"the FTS index did not come across ({matched} matches), so the restored "
+            "instance would answer lexical queries with the LIKE fallback alone"
+        )
+        target.close()
+
+        # What the restored instance can find. Asserted through the loader rather than
+        # by looking for a file next to the copy: nothing in production could write one
+        # there, so that assertion could never go red, and a green that cannot fail is
+        # not a lock. This one fails the moment calibration state stops being
+        # DB-adjacent — a fixed per-user path, or a move into the database itself — and
+        # either change makes the operations.md bullet naming
+        # `<CPERSONA_DB_PATH>.calibration.json` the wrong thing to hand an operator.
+        restored_state = None
+        try:
+            config.DB_PATH = str(destination)
+            restored_state = admin_handlers._load_calibration_state()
+        finally:
+            config.DB_PATH = live_db_path
+        assert restored_state is None, (
+            "the restored copy came up already holding calibration state, so "
+            "operations.md's warning ('state lives outside it that none of the backup "
+            "forms above touch') now overstates the loss and its recovery step — copy "
+            "the sidecar, or re-apply set_recall_precision — is advice for a problem "
+            f"that no longer exists. Loaded: {restored_state}"
+        )
+    finally:
+        config.DB_PATH = ambient_db_path
+        if previous is None:
+            if os.path.exists(sidecar):
+                os.remove(sidecar)
+        else:
+            with open(sidecar, "wb") as handle:
+                handle.write(previous)
