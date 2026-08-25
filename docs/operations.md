@@ -33,18 +33,29 @@ Recommended, in order:
    and `import_memories` is idempotent (duplicates are skipped) — so restore
    drills are safe to rehearse. Monthly is a reasonable cadence.
 
-**The `.db` is not the whole instance.** Three files live outside it and none
-of the backup forms above touch them:
+**The `.db` is not the whole instance.** State lives outside it that none of
+the backup forms above touch:
 
 - `<CPERSONA_DB_PATH>.calibration.json` — per-agent vector thresholds, gate
-  state and scoring version. Restore without it and recall still works, but
-  falls back to a heuristic gate: the same query returns a different set of
-  rows, with nothing reporting that the tuning was lost. Copy it beside the
-  database, or re-run `calibrate_threshold` after a restore.
+  state, scoring version, and the per-agent `set_recall_precision` betas.
+  Restore without it and the measurements repair themselves: with the default
+  `CPERSONA_CALIBRATE_ON_MODEL_CHANGE=true`, a startup with no sidecar
+  recalibrates rather than falling back, and `deep_check` reports
+  `never_calibrated` if it did not. **The betas do not.** They are policy
+  inputs, not measurements — nothing re-derives a preference you stated — so
+  an operator who tuned precision loses that tuning silently and the
+  recalibration measures every gate at the default beta. Copy the sidecar
+  beside the database, or re-apply `set_recall_precision` after a restore.
 - `~/.cpersona/operating-context.toml` (or `CPERSONA_OPERATING_CONTEXT_PATH`)
   — the operator instructions served to every client.
 - The ACL file, if `CPERSONA_ACL_FILE` is set — restoring without it changes
   who may connect.
+- **The external vector index**, under `CPERSONA_VECTOR_SEARCH_MODE=remote`
+  with `CPERSONA_STORE_BLOB=false`. In that configuration the embeddings exist
+  only in the remote index, so restoring the database and all three files
+  above still comes back with no vector arm. `check_health` reports it as
+  `no_local_vector_fallback`; back the index up with the same schedule, or
+  keep `STORE_BLOB=true` so the `.db` stays self-sufficient.
 
 Keep the live database **outside cloud-sync folders** (Dropbox, Drive, etc.):
 sync clients interact badly with SQLite WAL files. Sync the *backups* instead.
@@ -91,12 +102,17 @@ The knobs, in the order you should reach for them:
    component actually cutting results is the fused gate. Re-run it after the
    corpus changes substantially, after a bulk (re)build, and after changing
    the embedding model.
-3. **`CPERSONA_AUTOCUT_MIN_RESULTS`** — only meaningful with confidence
-   scoring enabled. Under `rsf`/`rrf` autocut is deliberately inert
+3. **`CPERSONA_AUTOCUT_MIN_RESULTS`** — autocut fires on similarity-scale
+   signals: under confidence scoring, or on a homogeneous raw-cosine list
+   (which is what `cascade` produces, confidence on or off). It is
+   deliberately inert under `rsf`/`rrf`
    ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)),
-   so under the default configuration this knob does nothing.
+   so under the default configuration this knob does nothing — but it is the
+   fusion mode that decides that, not the confidence flag.
 4. **`CPERSONA_FUSED_GATE_ENABLED=false`** — last resort. Without the gate,
-   contamination passes through unfiltered.
+   filtering falls back to the pool-size heuristic (`_adaptive_min_score`),
+   which still rejects weak matches — it is a coarser gate, not an open door.
+   What you give up is the operating point measured for *this* corpus.
 
 **Choosing a precision**: the trade is asymmetric per use case. For
 index-style corpora (recall feeds an AI that can discard irrelevant rows), a
@@ -127,7 +143,8 @@ corollaries:
 - Set **`CPERSONA_RECALL_MODE=rsf`**. FTS5 tokenizes CJK poorly; rsf keeps
   the keyword channel's score magnitude in the merge, which is the signal
   that compensates. No further CJK-specific settings exist.
-- Known characteristics of the default embedding model (`jina-v5-nano`) on
+- Known characteristics of `jina-v5-nano` — the model this project runs, and
+  the one the reference embedding server downloads by default — on
   Japanese, confirmed by long-term production use: **strong when at least
   one proper-noun / identifier anchor overlaps** between query and memory;
   **weak on pure concept matches** with no shared vocabulary. Phrasing
@@ -158,9 +175,13 @@ first).**
    `set_recall_precision` if you use it): `delete_agent_data` discards that
    agent's calibration state along with its rows. If the rebuild is a nightly
    batch, the recalibration is part of the batch.
-4. Cost: re-embedding a few thousand chunks on CPU with the default model is
-   minutes to tens of minutes (environment-dependent). What you buy: no diff
-   logic, and the index provably matches the source at all times.
+4. Cost: re-embedding a few thousand chunks on CPU is minutes to tens of
+   minutes (environment-dependent). What you buy: no diff logic, and an index
+   that matches the source once the rebuild finishes. It does **not** match
+   during one: `delete_agent_data` commits before the re-`store` begins, so a
+   recall issued inside that window sees a partial index or none at all. Run
+   rebuilds when nothing is querying, or build under a second `agent_id` and
+   switch readers over when it is complete.
 
 **Pattern B — differential updates with an external content-hash ledger.**
 
