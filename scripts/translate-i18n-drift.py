@@ -278,10 +278,25 @@ def request_edits(model: str, effort: str, diff: str, japanese: str, page: str) 
         # empty, and reporting only stderr turns that into "exited 1" with no
         # reason attached — a failure that tells the reader nothing is barely
         # better than a silent one.
+        detail = proc.stdout.strip()
+        try:
+            failed = json.loads(detail)
+        except json.JSONDecodeError:
+            detail = detail[:600] or "(empty)"
+        else:
+            # The CLI reports a failed run as a normal result document, so the
+            # reason is a field inside it rather than a message on a stream.
+            # Truncating the raw JSON cuts that field off, which is how the first
+            # CI failure arrived with "api_error" and nothing else.
+            detail = (
+                f"terminal_reason={failed.get('terminal_reason')} "
+                f"api_error_status={failed.get('api_error_status')} "
+                f"result={str(failed.get('result'))[:700]}"
+            )
         raise RuntimeError(
             f"{page}: claude exited {proc.returncode}.\n"
-            f"  stderr: {proc.stderr.strip()[:600] or '(empty)'}\n"
-            f"  stdout: {proc.stdout.strip()[:600] or '(empty)'}"
+            f"  stderr: {proc.stderr.strip()[:400] or '(empty)'}\n"
+            f"  {detail}"
         )
     try:
         payload = json.loads(proc.stdout)
