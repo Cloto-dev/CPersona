@@ -68,6 +68,7 @@ DOC_FILES = [
     ROOT / "docs" / "getting-started.ja.md",
     ROOT / "docs" / "architecture.ja.md",
     ROOT / "docs" / "tools.ja.md",
+    ROOT / "docs" / "quality-assurance.ja.md",
 ]
 
 # Relative drift allowed on volatile stats before the gate goes red. 3% keeps

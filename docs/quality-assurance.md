@@ -54,11 +54,14 @@ environment-variable defaults stated in the docs are checked against the source
 that defines them, so a doc that disagrees with the code fails CI rather than
 misleading a reader. Version claims are checked against the release tags. The
 Japanese pages are checked against the English content they were translated
-from, so a translation cannot silently fall behind its source.
+from, so a translation cannot silently fall behind its source — and every page
+and nav label must either carry a translation or declare that it stays English,
+so a new page cannot quietly sit outside the translated site.
 
 The gates live in
 [`scripts/`](https://github.com/Cloto-dev/cpersona/tree/master/scripts):
-`check-docs-facts.py`, `check-doc-anchors.py` and `check-i18n-drift.py`.
+`check-docs-facts.py`, `check-doc-anchors.py`, `check-i18n-drift.py` and
+`check-i18n-coverage.py`.
 
 ## Mutation proof
 
