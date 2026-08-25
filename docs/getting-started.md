@@ -95,9 +95,15 @@ Three requirements are easy to miss and each one degrades ranking silently:
   (jina-v5-nano, bge-m3, MiniLM) are the intended fit.
 - **Swapping models behind one URL invalidates the corpus.** CPersona
   fingerprints the backend by embedding *dimension* only — the contract
-  carries no model identity — so a same-dimension swap is undetectable. After
-  one, re-embed (`check_health(fix=true)` repairs NULLed rows) and run
-  `calibrate_threshold`.
+  carries no model identity — so a same-dimension swap is undetectable. It is
+  also the case the repair tools cannot reach: `check_health(fix=true)`
+  re-embeds rows whose blob is NULL, and the dimension check only NULLs blobs
+  of the wrong *length*, so after a same-dimension swap every blob is the
+  expected size, nothing is NULLed, and nothing is re-embedded. No tool
+  force-re-embeds a row that already has a blob. The recovery is to rebuild
+  the corpus — `delete_agent_data` then re-`store`, as in the
+  [rebuild pattern](operations.md#corpus-indexing-and-sync-patterns) — and
+  then run `calibrate_threshold`.
 
 ### The reference server
 
@@ -131,9 +137,27 @@ CPersona's defaults are tuned against jina-v5-nano (768 dimensions). Any other
 server satisfying the contract works; models with published measurements are
 listed in [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
 
-The embedding server is a plain HTTP process, **not** an MCP server — run it
-however you run background services (a terminal, launchd, systemd). CPersona
-only needs its URL.
+CPersona only needs its URL — but **how you supervise the reference server
+matters**, and the obvious way does not work.
+
+It is an MCP server, not a plain HTTP process. On its default transport it
+runs an MCP session on stdio in the foreground and serves the REST `/embed`
+endpoint from a background task, so **its lifetime is bound to stdin**: at
+EOF the session ends and the `finally` clause cancels the HTTP task. Started
+the way a service manager starts things — with stdin on `/dev/null` — it
+binds the port, logs `HTTP embedding endpoint started`, and exits **in the
+same second with status 0**. The supervisor sees a clean exit, and CPersona
+is left pointed at a URL nothing answers.
+
+Give it a stdin that stays open. Under a service manager that means running
+it through something that holds the pipe, e.g.
+`ExecStart=/bin/sh -c 'sleep infinity | cembedding'`; in a terminal the
+terminal already does it.
+
+`EMBEDDING_TRANSPORT=streamable-http` is a supervisable alternative in the
+sense that it does not read stdin, but it serves the MCP endpoint **instead
+of** REST `/embed` — so it is not an option for CPersona's `http` mode, which
+posts to `/embed`.
 
 ## 3. Register CPersona with your MCP client
 
@@ -172,8 +196,12 @@ Notes that save a support round-trip:
   is degraded.
 - `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` are the generic aliases of
   `CPERSONA_EMBEDDING_MODE` / `CPERSONA_EMBEDDING_URL`; the prefixed form wins
-  when both are set. Every other setting is in the
-  [configuration reference](configuration.md).
+  when both are set. The [configuration reference](configuration.md) covers
+  the settings you are likely to reach for; it is not exhaustive — a handful
+  of variables (`CPERSONA_STORE_BLOB`, `CPERSONA_FTS_ENABLED`,
+  `CPERSONA_EMBEDDING_API_KEY`, the `CPERSONA_CALIBRATE_*` pair and a few
+  others) are read by the server without appearing there. `cpersona/config.py`
+  is the complete list.
 
 ## 4. Verify it works
 

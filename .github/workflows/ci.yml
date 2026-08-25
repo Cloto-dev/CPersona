@@ -103,6 +103,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The release-freshness check reads `git tag`, and the default
+          # shallow checkout carries none. The check fails loudly rather than
+          # skipping when it sees no tags, so without this the job is red, not
+          # quietly blind — but red for the wrong reason.
+          fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
