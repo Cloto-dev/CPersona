@@ -85,6 +85,7 @@ nav:
   - Operations Runbook: operations.md
   - Configuration: configuration.md
   - FAQ: faq.md
+  - Quality Assurance: quality-assurance.md
   - Design documents:
       - ACL / per-client capabilities: ACL_DESIGN.md
       - Degraded-mode advisory: DEGRADED_ADVISORY_DESIGN.md

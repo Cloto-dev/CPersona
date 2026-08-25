@@ -55,6 +55,7 @@ DOC_FILES = [
     ROOT / "docs" / "operations.md",
     ROOT / "docs" / "configuration.md",
     ROOT / "docs" / "faq.md",
+    ROOT / "docs" / "quality-assurance.md",
     ROOT / "docs" / "llms.txt",
     # Translations restate the same measurable claims, so they rot the same
     # way. The checks below key on `CPERSONA_*` cells and on the numbers
@@ -500,15 +501,23 @@ def check_volatile_claims(stats: dict[str, float]) -> None:
 
 
 # (regex with group 1 = claimed version, human label). The separator is
-# `[\s>]+` rather than a single space because README wraps this sentence: the
-# 2.4 claim reads "(latest\n> v2.4.41". A pattern that only matched one space
-# found the 2.5 claim, missed the 2.4 one, and reported green — a hit rate is
-# not a coverage report, so this family is audited against an independent
-# reading of the same pages by
+# `[\s>]+` rather than a single space because a claim inside a blockquote can
+# wrap across lines: a README status note once read "(latest\n> v2.4.41", and a
+# pattern that only matched one space found the 2.5 claim, missed the 2.4 one,
+# and reported green. A hit rate is not a coverage report, so this family is
+# audited against an independent reading of the same pages by
 # tests/test_structural_gates.py::test_release_claim_patterns_reach_every_claim.
 RELEASE_CLAIMS = (
-    (re.compile(r"latest[\s>]+v(\d+\.\d+\.\d+)\b"), "latest v<version>"),
-    (re.compile(r"Latest release:[\s>]+(\d+\.\d+\.\d+)\b"), "Latest release: <version>"),
+    # One pattern for both phrasings ("latest v2.5.6", "Latest release: 2.5.6").
+    # They were two, and the first one's only site was the README's status
+    # blockquote; when that blockquote stopped naming a version the pattern
+    # matched nothing anywhere, which the dead-pattern assertion below reports
+    # as a gate with no subject. Merging widens what is checked instead of
+    # narrowing it: either spelling is caught in any scanned page.
+    (
+        re.compile(r"(?i)latest(?:\s+release:)?[\s>]+v?(\d+\.\d+\.\d+)\b"),
+        "latest [release:] <version>",
+    ),
 )
 
 
