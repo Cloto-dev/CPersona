@@ -117,6 +117,11 @@ INVALID_SOURCE_CLASSIFY_CAP = 1000
 # number, and `repairable` is bounded by it — a fixer that reaches 500 rows must
 # not report 5,000 as repairable).
 REEMBED_ROW_CAP = 500
+# Texts per /embed request when re-embedding in bulk. This is the largest batch
+# CPersona ever sends, which is the number the getting-started contract quotes to
+# anyone writing their own embedding backend — named rather than inlined so the
+# doc check reads the same value the loop uses.
+EMBED_BATCH_SIZE = 32
 CALIBRATION_STALE_DAYS = 90
 
 _USERNAME_PREFIX_PATTERN = re.compile(r"^\[(.+?)\]\s")
@@ -489,8 +494,8 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
         rows = await db.execute_fetchall(
             f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT ?", (*iso.params, REEMBED_ROW_CAP)
         )
-        for start in range(0, len(rows), 32):
-            chunk = rows[start : start + 32]
+        for start in range(0, len(rows), EMBED_BATCH_SIZE):
+            chunk = rows[start : start + EMBED_BATCH_SIZE]
             try:
                 embeddings = await vector._embedding_client.embed([text for _, text in chunk])
             except Exception:
