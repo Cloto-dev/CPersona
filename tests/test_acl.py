@@ -754,6 +754,57 @@ async def test_unscoped_write_says_the_scope_was_missing_and_the_advice_works(tm
 
 
 @pytest.mark.asyncio
+async def test_the_advice_names_the_argument_the_tool_actually_takes(tmp_path):
+    """The same advice, on a tool that has no agent_id.
+
+    merge_memories scopes itself with source_agent_id / target_agent_id, and
+    accepts no agent_id at all. A denial that says "pass agent_id" is advice a
+    caller can follow to the letter and be denied again — the failure the
+    counterfactual exists to prevent, reappearing because the argument was
+    assumed rather than measured. Both halves are checked: the half that was
+    sent must not be demanded back, and the half that was missing must be.
+    """
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("merge_memories", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))  # {"alpha": rw, "*": read}
+    try:
+        denied = await guarded({"source_agent_id": "alpha"})
+        scoped = await guarded({"source_agent_id": "alpha", "target_agent_id": "alpha"})
+    finally:
+        acl.reset_principal(token)
+
+    assert denied["error"] == "permission_denied" and denied["agent_id"] == "*"
+    assert "target_agent_id" in denied["detail"], denied["detail"]
+    assert "pass agent_id" not in denied["detail"], (
+        "merge_memories has no agent_id argument, so naming it is advice that "
+        "cannot be followed"
+    )
+    assert scoped["ok"] is True and "error" not in scoped, (
+        "the denial names target_agent_id; supplying it must therefore succeed, "
+        "or the advice is wrong"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_advice_names_every_missing_half_not_just_one(tmp_path):
+    """With neither side sent, one name would still leave the caller denied."""
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("merge_memories", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))
+    try:
+        denied = await guarded({})
+        scoped = await guarded({"source_agent_id": "alpha", "target_agent_id": "alpha"})
+    finally:
+        acl.reset_principal(token)
+
+    assert denied["error"] == "permission_denied"
+    assert "source_agent_id" in denied["detail"] and "target_agent_id" in denied["detail"], (
+        denied["detail"]
+    )
+    assert scoped["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_ungranted_agent_denial_stays_at_the_documented_shape(tmp_path):
     """The unfixable case deliberately gains no prose.
 
