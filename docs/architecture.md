@@ -147,7 +147,8 @@ older than the most recent `archive_episode`, before the gate runs.
   from drowning today's answers.
 - **Profile** (`update_profile`) — accumulated attributes about the user or
   project. Appended to recall responses **when the scope holds at least 50
-  memories** (below that the gate drops it), never preview-trimmed, and it
+  rows** (memories and episodes together — the pool the gate governs; below
+  that the gate drops it), never preview-trimmed, and it
   [carries no score](behavior-contracts.md#7-profile-rows-carry-no-score) — so
   in the default configuration it sorts last and can be cut by `limit`.
 
