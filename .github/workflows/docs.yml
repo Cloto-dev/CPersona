@@ -118,11 +118,11 @@ jobs:
       - name: Check that the credentials exist
         id: creds
         env:
-          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
           HAS_TOKEN: ${{ secrets.I18N_SYNC_TOKEN != '' }}
         run: |
           if [ "$HAS_KEY" != "true" ] || [ "$HAS_TOKEN" != "true" ]; then
-            echo "::notice::Automatic translation is not configured (ANTHROPIC_API_KEY / I18N_SYNC_TOKEN). Re-sync docs/*.ja.md by hand, or label this PR i18n-defer."
+            echo "::notice::Automatic translation is not configured (CLAUDE_CODE_OAUTH_TOKEN / I18N_SYNC_TOKEN). Re-sync docs/*.ja.md by hand, or label this PR i18n-defer."
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -138,11 +138,21 @@ jobs:
       - name: Install uv
         if: steps.creds.outputs.configured == 'true'
         uses: astral-sh/setup-uv@v5
+      - name: Install Claude Code
+        if: steps.creds.outputs.configured == 'true'
+        # Pinned like every other tool this workflow runs. The npm package ships
+        # the same native binary as the standalone installer — Node is used to
+        # place it, not to run it.
+        run: npm install -g @anthropic-ai/claude-code@2.1.240
       - name: Draft the missing translations
         if: steps.creds.outputs.configured == 'true'
+        # Subscription auth, not an API key: the token is what `claude
+        # setup-token` mints, and the work is billed to the subscription rather
+        # than per-token. It can only make model requests, which is all this
+        # needs.
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: uv run --with anthropic python scripts/translate-i18n-drift.py
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: python3 scripts/translate-i18n-drift.py
       - name: Verify the result the same way a human edit is verified
         if: steps.creds.outputs.configured == 'true'
         run: |

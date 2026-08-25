@@ -163,3 +163,41 @@ def test_the_checker_reports_what_a_re_sync_needs():
     )
     for finding in payload["stale"]:
         assert set(finding) >= {"translation", "english", "reason", "translated_blob"}
+
+
+# --------------------------------------------------------------------------------------
+# A successful run and a usable answer are different things.
+#
+# Claude Code's structured-output contract says a run can end with subtype "success" and
+# still carry no structured_output, and that this must be treated as a failure. Here that
+# distinction is load-bearing in a way it usually is not: the value that would sail
+# through is an EMPTY edit list, and an empty list is also the correct answer when the
+# English change needs nothing on the Japanese side (a typo in a code sample). Conflating
+# them re-stamps the marker on a page nobody translated — the drift check goes green over
+# a translation that never happened, which is the exact failure the check exists to catch.
+# --------------------------------------------------------------------------------------
+
+
+def test_a_success_with_no_structured_output_is_a_failure_not_an_empty_edit_list():
+    with pytest.raises(RuntimeError, match="no answer at all"):
+        translate.extract_edits({"subtype": "success", "structured_output": None}, "docs/x.md")
+
+
+def test_an_empty_edit_list_is_a_legitimate_answer():
+    """'The English change needs no Japanese change' has to stay expressible."""
+    assert translate.extract_edits(
+        {"subtype": "success", "structured_output": {"edits": []}}, "docs/x.md"
+    ) == []
+
+
+def test_exhausted_retries_report_the_reason_rather_than_a_generic_failure():
+    """The CLI re-prompts on a schema mismatch; this is what it says when it gives up."""
+    with pytest.raises(RuntimeError, match="after the CLI's retries"):
+        translate.extract_edits(
+            {"subtype": "error_max_structured_output_retries", "result": "..."}, "docs/x.md"
+        )
+
+
+def test_any_other_terminal_subtype_names_itself():
+    with pytest.raises(RuntimeError, match="error_during_execution"):
+        translate.extract_edits({"subtype": "error_during_execution"}, "docs/x.md")

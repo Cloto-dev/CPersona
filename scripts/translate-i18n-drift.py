@@ -33,11 +33,18 @@ What this does NOT do — deliberately:
     no diff to apply — a human decides what the page should say.
 
 Usage:
-    translate-i18n-drift.py [--dry-run] [--model MODEL]
+    translate-i18n-drift.py [--dry-run] [--model MODEL] [--effort LEVEL]
 
-Requires ANTHROPIC_API_KEY and the `anthropic` package. Exits non-zero if any
-stale page could not be updated, so a CI step fails loudly rather than pushing
-a partial re-sync.
+Runs through the Claude Code CLI rather than the API directly, so the work is
+billed to a Claude subscription instead of per-token API usage. That is the
+only reason for the indirection — `--json-schema` gives the same validated
+object the API's structured outputs give, and the CLI additionally re-prompts
+on a schema mismatch before giving up.
+
+Requires `claude` on PATH, authenticated. In CI that means a
+CLAUDE_CODE_OAUTH_TOKEN secret (`claude setup-token` mints one, valid a year);
+locally it means an ordinary login. Exits non-zero if any stale page could not
+be updated, so a CI step fails loudly rather than pushing a partial re-sync.
 """
 
 from __future__ import annotations
@@ -48,13 +55,40 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKER = ROOT / "scripts" / "check-i18n-drift.py"
 MARKER = re.compile(r"<!--\s*i18n-source:\s*(\S+)@blob:([0-9a-f]{40})\s*-->")
 
+# Measured before choosing, on one fixed edit (a paragraph gaining a hedge, a
+# negation, an inline identifier and a link), four conditions, three runs each.
+# Every run passed the mechanical checks — applied cleanly, kept the heading ids,
+# the marker, the code spans and the link target — so the choice came down to two
+# things the checks cannot see:
+#
+#   Fidelity. Two Sonnet runs rendered "locking does not exempt a row from the
+#   gate" as "does not spare it from EXCLUSION from the gate", which reads as the
+#   opposite: excluded rather than evaluated. Both Opus settings got it right in
+#   every run. That error survives every guard in this repository — valid
+#   Markdown, correct marker, working links — so only a reader catches it, which
+#   is exactly the load this tool is supposed to lighten.
+#
+#   Anchor size. Sonnet's search anchors averaged 153-182 characters against
+#   Opus's 40-49, consistently across all runs. A longer anchor is echoed into
+#   the replacement, so it widens the area that gets rewritten — against the
+#   whole point of a search/replace design.
+#
+# Effort `low` was not a cost decision: `medium` bought no fidelity (both were
+# perfect), produced slightly longer anchors, and ran ~50% slower. Reported cost
+# is not comparable across the conditions — whichever ran first absorbed the
+# cache write — and is not the reason for either choice.
+#
+# The measurement's bound: one page, one shape of change, three runs. Deletions
+# were not covered, and neither were table edits or multi-site changes.
 DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_EFFORT = "low"
 
 SYSTEM = """\
 You maintain the Japanese translations of a documentation site whose English \
@@ -83,7 +117,11 @@ after your edits apply.
 the English diff did not touch must not appear in your edits at all.
 * Match the surrounding register: this documentation uses だ/である-adjacent \
 technical prose with English technical terms left in English where the existing \
-page leaves them in English.\
+page leaves them in English.
+* Keep the page's line width. These files hard-wrap prose at roughly the width \
+already in use, so re-wrap the whole paragraph you touch rather than leaving one \
+long line: a paragraph that reflows into one line makes the reviewer's diff show \
+the entire paragraph as changed, which hides the sentence that actually moved.\
 """
 
 EDITS_SCHEMA = {
@@ -156,7 +194,52 @@ def english_diff(before: str, after: str, path: str) -> str:
     )
 
 
-def request_edits(client, model: str, diff: str, japanese: str, page: str) -> list[dict]:
+def extract_edits(payload: dict, page: str) -> list[dict]:
+    """Pull the validated edits out of a Claude Code result, or explain the failure.
+
+    Two things are checked, not one. `subtype == "success"` alone is not enough:
+    a run can finish successfully and still carry no `structured_output`, which
+    the CLI documents as a case to treat as a failure. It matters here more than
+    most places, because the thing that would sail through is an *empty* edit
+    list — and an empty list is also the legitimate answer when the English
+    change needs no Japanese change (a typo in a code sample). Conflating the two
+    would re-stamp the marker on a page nobody translated, turning the drift
+    check green over a translation that never happened.
+    """
+    subtype = payload.get("subtype")
+    if subtype != "success":
+        detail = payload.get("result") or payload.get("api_error_status") or ""
+        if subtype == "error_max_structured_output_retries":
+            raise RuntimeError(
+                f"{page}: no valid edit list after the CLI's retries — the diff is "
+                f"probably too large or too tangled for one pass. {detail}"
+            )
+        raise RuntimeError(f"{page}: the run ended as {subtype!r}. {detail}")
+
+    structured = payload.get("structured_output")
+    if structured is None:
+        raise RuntimeError(
+            f"{page}: the run succeeded without producing a structured result. That is "
+            "not an empty edit list — it is no answer at all, and re-stamping the marker "
+            "on it would mark an untranslated page as current."
+        )
+    return structured["edits"]
+
+
+def request_edits(model: str, effort: str, diff: str, japanese: str, page: str) -> list[dict]:
+    """Ask Claude Code for the edits, with as little else in the context as possible.
+
+    Three flags do real work beyond the obvious:
+
+    * ``--allowed-tools ""`` — the job is a transformation of text that is already
+      in the prompt, so a tool call could only reach for something that is not the
+      question. It also removes the whole class of "the page said to run this".
+    * ``--setting-sources ""`` and a scratch cwd — a run inside the repository
+      loads its CLAUDE.md and settings into every call. Measured: 27,627 cache-
+      write tokens with them, 3,073 without, for the same trivial request.
+    * ``--system-prompt`` (not ``--append-``) — replaces the default rather than
+      adding to it, for the same reason.
+    """
     prompt = (
         f"The English page `{page}` changed as follows:\n\n"
         f"```diff\n{diff}\n```\n\n"
@@ -164,26 +247,43 @@ def request_edits(client, model: str, diff: str, japanese: str, page: str) -> li
         f"```markdown\n{japanese}\n```\n\n"
         "Return the search/replace edits that apply the same change to the Japanese page."
     )
-    with client.messages.stream(
-        model=model,
-        max_tokens=32000,
-        system=SYSTEM,
-        output_config={
-            "effort": "high",
-            "format": {"type": "json_schema", "schema": EDITS_SCHEMA},
-        },
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        message = stream.get_final_message()
-
-    if message.stop_reason == "refusal":
-        raise RuntimeError(f"the model declined to translate {page}")
-    if message.stop_reason == "max_tokens":
-        raise RuntimeError(
-            f"the reply for {page} hit max_tokens — the diff is too large for one pass"
+    with tempfile.TemporaryDirectory() as scratch:
+        proc = subprocess.run(
+            [
+                "claude",
+                "-p",
+                prompt,
+                "--model",
+                model,
+                "--effort",
+                effort,
+                "--json-schema",
+                json.dumps(EDITS_SCHEMA),
+                "--output-format",
+                "json",
+                "--system-prompt",
+                SYSTEM,
+                "--setting-sources",
+                "",
+                "--allowed-tools",
+                "",
+            ],
+            cwd=scratch,
+            capture_output=True,
+            text=True,
         )
-    text = next((b.text for b in message.content if b.type == "text"), "")
-    return json.loads(text)["edits"]
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"{page}: claude exited {proc.returncode}. {proc.stderr.strip()[:400]}"
+        )
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"{page}: could not read the CLI's response as JSON ({exc}). "
+            f"First 200 characters: {proc.stdout[:200]!r}"
+        ) from exc
+    return extract_edits(payload, page)
 
 
 def apply_edits(japanese: str, edits: list[dict], page: str) -> str:
@@ -216,6 +316,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="report without writing")
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--effort", default=DEFAULT_EFFORT, help="low | medium | high | xhigh | max")
     args = parser.parse_args()
 
     pages = stale_pages()
@@ -234,12 +335,6 @@ def main() -> int:
     work = [p for p in pages if p["reason"] == "stale"]
     if not work:
         return 1 if skipped else 0
-
-    client = None
-    if not args.dry_run:
-        import anthropic  # noqa: PLC0415 — only needed on the writing path
-
-        client = anthropic.Anthropic()
 
     failures = list(skipped)
     for page in work:
@@ -262,7 +357,9 @@ def main() -> int:
             continue
 
         try:
-            edits = request_edits(client, args.model, diff, translation.read_text(), page["english"])
+            edits = request_edits(
+                args.model, args.effort, diff, translation.read_text(), page["english"]
+            )
             updated = apply_edits(translation.read_text(), edits, page["translation"])
             updated = restamp(updated, page["english"], page["current_blob"], page["translation"])
         except (RuntimeError, json.JSONDecodeError) as exc:
