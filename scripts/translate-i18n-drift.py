@@ -156,8 +156,35 @@ EDITS_SCHEMA = {
 }
 
 
+def _checker_failed(proc: subprocess.CompletedProcess, why: str) -> str:
+    """What to say when the checker did not answer — both streams, named.
+
+    Same rule as the CLI failure below: a report that omits the stream the
+    reason happened to land on is a report the reader cannot act on. The
+    checker writes its findings to stdout and its tracebacks to stderr, and
+    which one carries the explanation depends on how it failed.
+    """
+    return (
+        f"check-i18n-drift.py {why} (exit {proc.returncode}).\n"
+        f"  stderr: {proc.stderr.strip()[:800] or '(empty)'}\n"
+        f"  stdout: {proc.stdout.strip()[:400] or '(empty)'}"
+    )
+
+
 def stale_pages() -> list[dict]:
-    """Ask the checker what is stale. Its --json output is the contract."""
+    """Ask the checker what is stale. Its --json output is the contract.
+
+    Exit 1 is ambiguous here and cannot be made otherwise: it is what the
+    checker returns for "drift found" under --strict, and it is also what
+    Python returns for an uncaught exception. Reading the verdict off the code
+    alone therefore mistakes a crashed checker for a clean run with drift, and
+    the empty stdout that follows reaches json.loads as "" — which raises a
+    JSONDecodeError naming column 1 and nothing else, while the traceback that
+    said why is still sitting unread in stderr.
+
+    So the output decides, not the code: a verdict is always a JSON document
+    (bug-261).
+    """
     proc = subprocess.run(
         [sys.executable, str(CHECKER), "--json"],
         cwd=ROOT,
@@ -165,8 +192,15 @@ def stale_pages() -> list[dict]:
         text=True,
     )
     if proc.returncode not in (0, 1):
-        raise SystemExit(f"check-i18n-drift.py failed:\n{proc.stderr}")
-    return json.loads(proc.stdout)["stale"]
+        raise SystemExit(_checker_failed(proc, "failed"))
+    if not proc.stdout.strip():
+        raise SystemExit(_checker_failed(proc, "produced no output, so it did not run to a verdict"))
+    try:
+        return json.loads(proc.stdout)["stale"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise SystemExit(
+            _checker_failed(proc, f"did not answer with the expected document ({exc})")
+        ) from exc
 
 
 def english_at(blob: str) -> str | None:
@@ -334,6 +368,28 @@ def restamp(japanese: str, english_rel: str, sha: str, page: str) -> str:
     return MARKER.sub(marker, japanese, count=1)
 
 
+def skip_advice(page: dict) -> str:
+    """Why this page cannot be re-synced automatically, and what to do instead.
+
+    Two different causes reach here and they take different fixes, so they are
+    not given one message. A missing / legacy / wrong-source marker means the
+    page never recorded what it translated: the English text is fine and the
+    marker is the thing to repair. A missing source means the English page
+    itself is gone, and no marker edit brings it back — telling that author to
+    "fix the marker by hand" is advice that cannot work.
+    """
+    if page["reason"] == "missing_source":
+        return (
+            f"it translates {page['english']}, which does not exist. The English page was "
+            "deleted or renamed, so there is no current text to re-sync against: delete "
+            "this translation, or point it at the page that replaced it."
+        )
+    return (
+        "nothing records what was translated, so there is no diff to apply. "
+        "Fix the marker by hand."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="report without writing")
@@ -350,8 +406,7 @@ def main() -> int:
     for page in skipped:
         print(
             f"::warning file={page['translation']},line=1::{page['translation']} "
-            f"cannot be re-synced automatically ({page['reason']}): nothing records what "
-            "was translated, so there is no diff to apply. Fix the marker by hand.",
+            f"cannot be re-synced automatically ({page['reason']}): {skip_advice(page)}",
         )
 
     work = [p for p in pages if p["reason"] == "stale"]

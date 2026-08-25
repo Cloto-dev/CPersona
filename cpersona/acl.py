@@ -449,6 +449,62 @@ def _omitted_scope_keys(demands: Demands, arguments: dict) -> list[str]:
     return needed
 
 
+def _sweep_reach(grants: dict[str, int]) -> str:
+    """How far an all-agents demand gets with these grants (§3, D6).
+
+    A sweep fails in two ways that take different answers, and "denied" alone
+    does not separate them: a client with no wildcard grant can never satisfy
+    one — naming agents does not add up to ``"*"`` — while a client that has
+    one is held down to its weakest row, so the call it wants is available per
+    agent but not across all of them.
+    """
+    if WILDCARD not in grants:
+        return "this client holds no all-agents grant, and named grants never add up to one"
+    weakest = min(grants.values())
+    limiting = sorted(name for name, level in grants.items() if level == weakest)
+    return (
+        "a sweep is satisfied only at the weakest grant this client holds "
+        f"({_PERMISSION_NAMES.get(weakest, 'none')} on {' and '.join(limiting)})"
+    )
+
+
+def _scope_advice(omitted: list[str], wildcarded: list[str], grants: dict[str, int]) -> str:
+    """What to tell a caller whose call resolved to the all-agents demand.
+
+    Two causes arrive here and only one of them is "you forgot to scope this".
+    A caller that sent ``agent_id="*"`` DID send a scope — it asked for every
+    agent on purpose — so telling it to pass the argument it just passed is
+    advice it can follow to the letter and be denied again, the same failure
+    _omitted_scope_keys exists to prevent, one layer up.
+
+    The counterfactuals cannot see the difference: both probes overwrite every
+    scope key, so by the time the demand is computed the original value is gone
+    and an omitted key looks exactly like one sent as ``"*"``. The arguments
+    are therefore read directly here, and each cause gets the advice that works
+    for it: fill the scope in, or stop asking for every agent.
+    """
+    parts = []
+    if omitted:
+        parts.append(
+            "no agent scope was sent, so the call resolved to the all-agents demand — pass "
+            + " and ".join(omitted)
+            + " to scope it"
+        )
+    if wildcarded:
+        parts.append(
+            " and ".join(wildcarded)
+            + ' was sent as "*", so the call demands every agent at once — '
+            + _sweep_reach(grants)
+            + ". Name a single agent to scope it"
+        )
+    if not parts:
+        return (
+            "no agent scope was sent, so the call resolved to the all-agents demand — "
+            "pass an agent scope to scope it"
+        )
+    return "; ".join(parts)
+
+
 def _denial(tool: str, client_id: str, *, agent_id: str = "", required: int = 0, detail: str = "") -> dict:
     response: dict = {"ok": False, "error": "permission_denied", "tool": tool}
     if agent_id:
@@ -521,12 +577,15 @@ def _wrap(name: str, handler):
                         # not scope this". The argument is named from the
                         # counterfactual rather than assumed to be agent_id,
                         # which merge_memories does not even accept.
-                        missing = _omitted_scope_keys(demands, arguments)
-                        detail = (
-                            "no agent scope was sent, so the call resolved to "
-                            "the all-agents demand — pass "
-                            + (" and ".join(missing) if missing else "an agent scope")
-                            + " to scope it"
+                        #
+                        # A key the caller sent as "*" itself lands in the same
+                        # list — the probe cannot tell an omitted key from a
+                        # deliberately widened one — so the two are separated
+                        # here before either is named (bug-263).
+                        needed = _omitted_scope_keys(demands, arguments)
+                        wildcarded = [k for k in needed if arguments.get(k) == WILDCARD]
+                        detail = _scope_advice(
+                            [k for k in needed if k not in wildcarded], wildcarded, grants
                         )
                 return _denial(
                     name,

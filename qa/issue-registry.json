@@ -2712,7 +2712,7 @@
       "fix_sketch": "One-clause qualifier in README Project status + SKILL.md error-handling section: scope the ok:false claim to handler-level failures, name the escaped-exception shape ({error} only, absent result = failure) and note read successes carry no ok. Annotate bug-164 fix_note with the same caveat and re-anchor server.py:516. Ships with the 2.5.2 final doc sync.",
       "fixed_in": "2.5.2",
       "fix_note": "Doc-only: the code is correct, the published claim was not. bug-164 prescribed stating the exception in three places and only the gate half landed; all three are now written. README.md narrows the claim to what a HANDLER returns and names both shapes that carry no ok — the outermost dispatch answering an unknown tool name or an escaped exception with a bare error (vendored from the library shared with the other Cloto servers, so it is corrected upstream, not here), and successful reads. skills/cpersona-memory/SKILL.md, which ships inside the wheel, gets the same qualifier plus the branching rule that follows from it: ok:false means failure, a response carrying error means failure whether or not ok is present, and a missing ok on its own means nothing. bug-161 fix_note is annotated so the ledger stops asserting the universal shape. Verified against the implementation rather than the audit text: the four read tools return their payload with no ok (memory_handlers.py:1559, admin_handlers.py:69/130/157) and both bare-error dispatch sites are still there (_vendored_mcp_common/mcp_utils.py:169,181). The pattern anchor moved because the fix rewrote the sentence the old one matched.",
-      "note": "Registry pattern re-anchored twice. First: the original anchor was the very sentence this fix rewrote, so leaving it would have reported STALE the moment the fix landed. Second (2026-08-22): the fix text itself moved from README.md into docs/behavior-contracts.md as contract \u00a710 when the README was slimmed to pointers, so the file was re-pointed with the pattern unchanged. The claim is still published in two places \u2014 the contract page and the wheel-shipped SKILL.md \u2014 and the anchor now sits on the canonical one."
+      "note": "Registry pattern re-anchored twice. First: the original anchor was the very sentence this fix rewrote, so leaving it would have reported STALE the moment the fix landed. Second (2026-08-22): the fix text itself moved from README.md into docs/behavior-contracts.md as contract §10 when the README was slimmed to pointers, so the file was re-pointed with the pattern unchanged. The claim is still published in two places — the contract page and the wheel-shipped SKILL.md — and the anchor now sits on the canonical one."
     },
     {
       "id": "bug-186",
@@ -3785,6 +3785,58 @@
       "summary": "(LOW) A non-ASCII bearer token turned a 401 into a 500 with a traceback: BearerTokenMiddleware compared the presented token with hmac.compare_digest on the str overload, which raises TypeError when either side contains non-ASCII characters. The Authorization header is fully remote-controlled, so any unauthenticated caller could trigger the 500 at will; the differing response also leaked a weak oracle (500 = a token is configured and was compared, 401 = rejected earlier). Found by the PR #112 adversarial review; the defect shipped in every release carrying the middleware up to 2.5.5.",
       "fixed_in": "2.5.6a1",
       "fix_note": "Both comparison sites (the legacy single-token branch and the ACL resolver's constant-time loop) now compare UTF-8 bytes: token.encode('utf-8') on each side before hmac.compare_digest. A remote-controlled header can no longer raise inside the middleware; non-ASCII tokens simply fail to match and 401. Pinned by tests/test_acl.py (non-ASCII bearer through the assembled app on both the ACL and legacy branches)."
+    },
+    {
+      "id": "bug-260",
+      "category": "silent-failure",
+      "severity": "LOW",
+      "status": "fixed",
+      "version": "2.5.6",
+      "discovered": "2026-08-25T00:00:00Z",
+      "file": "scripts/check-i18n-drift.py",
+      "pattern": "bug-260",
+      "expected": "present",
+      "summary": "(LOW) The i18n drift checker reported a translation whose English source no longer exists to its human output only, so the exit code and --json disagreed: the `not en.exists()` branch appended to `findings` without the matching `record()` call every other branch makes, and --json emits `record()`'s list alone. Measured with an orphan .ja.md in docs/: `--json --strict` printed {\"stale\": []} and exited 1. The only consumer of --json is translate-i18n-drift.py, which therefore saw an empty work list and could not even report the page as skipped, while the build went red for a reason the translation job could not name.",
+      "fix_note": "Record the finding in both outputs (reason `missing_source`) rather than teaching the consumer to infer it from an exit code — the exit code carries one bit for the whole run, so it cannot name the page. `current_blob` becomes None here because there is no English file left to hash, which is why record() now accepts None for it. The translate side gets a cause-specific message instead of the marker advice, which does not apply: no marker edit brings back a deleted English page."
+    },
+    {
+      "id": "bug-261",
+      "category": "silent-failure",
+      "severity": "LOW",
+      "status": "fixed",
+      "version": "2.5.6",
+      "discovered": "2026-08-25T00:00:00Z",
+      "file": "scripts/translate-i18n-drift.py",
+      "pattern": "bug-261",
+      "expected": "present",
+      "summary": "(LOW) A crashed drift checker was reported as a JSON parse error with the real cause discarded: stale_pages() guarded only on a return code outside (0, 1), but an uncaught Python exception exits exactly 1 — the same code as \"drift found\" under --strict — so a traceback slipped past the guard, left stdout empty, and reached json.loads(\"\"). CI then showed \"Expecting value: line 1 column 1 (char 0)\", which describes the empty string the parser was handed, while the checker's own stderr saying why was never printed. Same file, 275-300, already treats an unreadable failure as barely better than a silent one.",
+      "fix_note": "Decide on the output rather than the return code: exit 1 is genuinely ambiguous here and no amount of care makes it a verdict, but a verdict is always a JSON document, so empty or unparseable stdout means the checker did not reach one. All three failure shapes (crash, non-JSON, JSON without the agreed key) now report both streams. Tested by crashing a stand-in checker and asserting its own message reaches the reader — a changed exception type would not prove that."
+    },
+    {
+      "id": "bug-262",
+      "category": "doc-drift",
+      "severity": "LOW",
+      "status": "fixed",
+      "version": "2.5.6",
+      "discovered": "2026-08-25T00:00:00Z",
+      "file": "docs/faq.ja.md",
+      "pattern": "\\{ #why-does-recall-return-the-best-match-last \\}",
+      "expected": "present",
+      "summary": "(LOW) index.ja.md and faq.ja.md carried no explicit heading ids, so 16 headings answered to slugs derived from their Japanese text (`_1`, `3`, `ai`, `recall_1`) instead of the English ones every other translated page preserves. A .ja.md page replaces the English page at /ja/<page>/, so any cross-page link aimed at an English slug would 404 on the Japanese site only. Nothing was red: check-doc-anchors.py verifies that the links which exist resolve, and no link pointed at these pages' sections yet, so the breakage was real and merely not yet reachable.",
+      "fix_note": "Stamp the English slugs, taken from the built English HTML rather than re-derived by hand, and add check-heading-parity.py to the docs workflow so the convention has a detector of its own. Verified in the direction that matters: rebuilt from the pre-fix sources the new gate fails on exactly these two pages while check-doc-anchors.py stays green on the same input, which is the blind spot it was written for. Scoped to h2 and below, matching the convention — extending it to h1 would mean re-stamping every translated page, which is a decision rather than a check."
+    },
+    {
+      "id": "bug-263",
+      "category": "diagnostics",
+      "severity": "LOW",
+      "status": "fixed",
+      "version": "2.5.6",
+      "discovered": "2026-08-25T00:00:00Z",
+      "file": "cpersona/acl.py",
+      "pattern": "bug-263",
+      "expected": "present",
+      "summary": "(LOW) A denial for a call that explicitly asked for every agent said the opposite of what happened: with agent_id=\"*\" sent, _widened_by_omission() returns True and _omitted_scope_keys() names agent_id, so the detail read \"no agent scope was sent ... pass agent_id to scope it\" — naming an argument the caller had just passed. The probes cannot distinguish the two cases by construction, because both overwrite every scope key before computing the demand. Authorization was unaffected (the allow/deny outcome is identical); the cost is a caller told to do what it already did.",
+      "fix_note": "Read the arguments directly for this one distinction instead of trying to make the counterfactual carry it — the probe erases the original value on purpose, and a probe that preserved it would answer a different question. Each cause then gets advice that works: fill in the scope, or stop demanding a sweep. The wildcard case also names how far the client's own grants reach, because \"denied\" alone does not separate \"no all-agents grant at all\" (never satisfiable by naming agents) from \"held down by a named exception\" (satisfiable per agent)."
     }
   ]
 }
