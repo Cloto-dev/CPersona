@@ -579,6 +579,63 @@ def check_release_claims(finals: dict[str, str]) -> None:
                     )
 
 
+# The LMEB Track A/B table is published twice: in the README, where a visitor
+# decides whether the pipeline costs ranking quality, and in benchmarks/README,
+# beside the harness that produced it. Two copies of the same measurement is
+# exactly the shape this gate exists for — the second copy is the one nobody
+# remembers to update, and a benchmark number that quietly disagrees with itself
+# is worse than one nobody published.
+#
+# Rows are compared as text after whitespace is squeezed, so reformatting the
+# table is free and changing a number is not. A missing table on either side is
+# a failure rather than a skip: a comparison with nothing to compare reports
+# green over an unexamined claim.
+BENCH_TABLE_SOURCES = (
+    ROOT / "README.md",
+    ROOT / "benchmarks" / "README.md",
+)
+BENCH_ROW = re.compile(r"^\|\s*([\w.\-/]+)\s*\|\s*\d+M\s*\|.*$", re.M)
+
+
+def _bench_rows(doc: Path) -> dict[str, str]:
+    text = doc.read_text()
+    return {
+        m.group(1): re.sub(r"\s+", " ", m.group(0)).strip()
+        for m in BENCH_ROW.finditer(text)
+    }
+
+
+def check_benchmark_tables_agree() -> None:
+    tables = {doc: _bench_rows(doc) for doc in BENCH_TABLE_SOURCES}
+    for doc, rows in tables.items():
+        if not rows:
+            fail(
+                f"{doc.relative_to(ROOT)}: no LMEB benchmark rows found. The table is "
+                "published in both README.md and benchmarks/README.md and this gate "
+                "compares them; if it moved, update BENCH_TABLE_SOURCES rather than "
+                "leaving the comparison with nothing to compare."
+            )
+    if any(not rows for rows in tables.values()):
+        return
+
+    first, second = BENCH_TABLE_SOURCES
+    a, b = tables[first], tables[second]
+    for model in sorted(set(a) | set(b)):
+        if model not in a or model not in b:
+            present, missing = (first, second) if model in a else (second, first)
+            fail(
+                f"{missing.relative_to(ROOT)}: has no benchmark row for {model!r}, "
+                f"which {present.relative_to(ROOT)} publishes — the two tables must "
+                "carry the same models."
+            )
+        elif a[model] != b[model]:
+            fail(
+                f"benchmark row for {model!r} differs between the two tables:\n"
+                f"      {first.relative_to(ROOT)}: {a[model]}\n"
+                f"      {second.relative_to(ROOT)}: {b[model]}"
+            )
+
+
 def main() -> int:
     tool_count = measured_tool_count()
     schema_version = measured_schema_version()
@@ -598,6 +655,7 @@ def main() -> int:
     check_script_file_invocations()
     check_calibrate_default(calibrate_default)
     check_embed_batch(embed_batch)
+    check_benchmark_tables_agree()
 
     print(
         f"measured: {tool_count} tools, schema v{schema_version}, "

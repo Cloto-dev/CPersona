@@ -9,10 +9,7 @@
 Give Claude persistent memory across sessions.
 Single SQLite file. 29 tools. Zero LLM dependency.
 
-[![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/)
-[![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE)
 
 [Documentation](https://cloto-dev.github.io/CPersona/) · [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) · [Architecture](https://cloto-dev.github.io/CPersona/architecture/) · [Tools](https://cloto-dev.github.io/CPersona/tools/) · [PyPI](https://pypi.org/project/cpersona/) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
 
@@ -29,16 +26,13 @@ Single SQLite file. 29 tools. Zero LLM dependency.
 > resumes in 2.6. Which version to run, and how long each line keeps receiving
 > fixes: [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
 
-> **Upgrading from 2.5.2 or earlier?** Two changes need a decision from you:
->
-> - **v2.5.3 will not start the HTTP transport without `CPERSONA_AUTH_TOKEN`**,
->   wherever it binds: an unauthenticated loopback bind becomes public exposure
->   behind a tunnel or reverse proxy (bug-198, HIGH). Set a token, or opt out
->   with `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true`. stdio is unaffected —
->   [details](https://cloto-dev.github.io/CPersona/configuration/#remote-http-transport).
-> - **v2.5.2 changed tool response shapes.** Branch on `ok is false`, and treat
->   any response carrying `error` as a failure whether or not `ok` is present —
->   [contract §10](https://cloto-dev.github.io/CPersona/behavior-contracts/#10-response-shapes-how-to-tell-success-from-failure).
+> **Upgrading from 2.5.2 or earlier?** Two things need a decision from you.
+> **v2.5.3 will not start the HTTP transport without `CPERSONA_AUTH_TOKEN`**,
+> wherever it binds — set one, or opt out with
+> `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true` ([why](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues); stdio is unaffected).
+> **v2.5.2 changed tool response shapes** — branch on `ok is false`, and treat any
+> response carrying `error` as a failure whether or not `ok` is present
+> ([contract §10](https://cloto-dev.github.io/CPersona/behavior-contracts/#10-response-shapes-how-to-tell-success-from-failure)).
 
 ## The Problem
 
@@ -48,23 +42,20 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 
 ## Quick Start
 
-**Prerequisites:** Python 3.11+ (and [uv](https://docs.astral.sh/uv/) for the one-command path).
-
 > **Claude Code? Let the agent do the setup.** The wheel ships an
 > [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/skills/cpersona-memory/SKILL.md)
 > that installs everything *and* teaches Claude when to store, recall and
-> archive. Copy it in, then say *"Set up CPersona — I want persistent memory."*
+> archive. Copy it in, then say *"Set up CPersona."*
 >
 > ```bash
 > python -c "import cpersona,pathlib,shutil; s=pathlib.Path(cpersona.__file__).parent/'skills'/'cpersona-memory'; shutil.copytree(s, pathlib.Path.home()/'.claude/skills/cpersona-memory', dirs_exist_ok=True)"
 > ```
 
-**1. Install**
+**1. Install** — Python 3.11+, and [uv](https://docs.astral.sh/uv/) for the one-command path.
 
 ```bash
 uvx cpersona          # run directly, no install step
-# or
-pip install cpersona
+pip install cpersona  # or install it
 ```
 
 **2. Run an embedding server** (recommended — it powers the vector layer)
@@ -89,29 +80,24 @@ walkthrough: [Getting Started](https://cloto-dev.github.io/CPersona/getting-star
 
 ## What You Get
 
-- **Hybrid search** — vector (cosine), FTS5 (trigram tokenizer, so it works on
-  Japanese and other space-less scripts), and keyword matching, fused by rank
-  or relative score. The FTS/keyword layers rescue the queries vector search
-  misses: identifiers, error strings, exact names.
-- **Three memory types** — declarative facts (`store`), session summaries
-  (`archive_episode`), and an accumulated profile (`update_profile`).
+- **Hybrid search** — vector, FTS5 (trigram, so it works on Japanese and other
+  space-less scripts) and keyword, fused by rank or relative score. The FTS and
+  keyword layers rescue what vectors miss: identifiers, error strings, exact names.
+- **Three memory types** — facts, session summaries and an accumulated profile.
 - **Zero LLM dependency** — cpersona never calls a generative model; your agent
-  summarizes and hands over the result. Embeddings are a separate question:
-  `EMBEDDING_MODE=http` costs nothing per call, `api` mode bills an
-  OpenAI-compatible endpoint. Recall is deterministic given a calibrated gate,
-  but the gate is measured by random sampling, so two installs on identical
-  data can settle differently.
-- **Single-file SQLite** — no external database. `sqlite3 .backup` copies the
-  whole corpus; the calibration sidecar beside it needs copying too
-  ([backup runbook](https://cloto-dev.github.io/CPersona/operations/#backup-and-restore)).
-- **Operable** — auto-calibrated retrieval thresholds, a severity-tagged health
-  check with auto-repair, an advisory that tells you when the embedding layer
-  has died, JSONL export/import, and agent-to-agent merge.
-- **Isolation** — `agent_id`, `project_id` and `channel` axes let several
-  agents and projects share one database without bleeding into each other.
+  summarizes and hands over the result. Recall is deterministic given a calibrated
+  gate, but the gate is sampled, so two installs on identical data can settle
+  differently.
+- **Single-file SQLite** — no external database; `sqlite3 .backup` copies the
+  corpus (the calibration sidecar beside it needs copying too).
+- **Operable** — auto-calibrated thresholds, a health check with auto-repair, an
+  advisory when the embedding layer dies, JSONL export/import, agent-to-agent merge.
+- **Isolation** — `agent_id`, `project_id` and `channel` let several agents and
+  projects share one database without bleeding into each other.
 
-How it all fits together: [Architecture](https://cloto-dev.github.io/CPersona/architecture/).
-What each of the 29 tools does: [Tools](https://cloto-dev.github.io/CPersona/tools/).
+How it fits together: [Architecture](https://cloto-dev.github.io/CPersona/architecture/) ·
+what the tools do: [Tools](https://cloto-dev.github.io/CPersona/tools/) ·
+what you may rely on: [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/).
 
 ## Benchmarks
 
@@ -126,8 +112,7 @@ Track B lands at or above Track A on both models: the fusion layers add signal r
 
 ## Documentation
 
-[**cloto-dev.github.io/CPersona**](https://cloto-dev.github.io/CPersona/) is the
-canonical documentation — when this README disagrees with it, the site wins.
+[**cloto-dev.github.io/CPersona**](https://cloto-dev.github.io/CPersona/) is canonical — when this README disagrees with it, the site wins.
 
 | | |
 |---|---|
@@ -140,44 +125,33 @@ canonical documentation — when this README disagrees with it, the site wins.
 | [Quality Assurance](https://cloto-dev.github.io/CPersona/quality-assurance/) | How a release is gated: audits, the bug ledger, structural and mutation gates |
 | [FAQ](https://cloto-dev.github.io/CPersona/faq/) | Short answers to the questions operators actually ask |
 
-Japanese translations are in the language selector (the English pages are
-canonical); agents can read the index at
-[`llms.txt`](https://cloto-dev.github.io/CPersona/llms.txt). Longer reads in
-Japanese: a [book](https://zenn.dev/cloto/books/claude-memory-mcp-server) on the
-design and setup, and an
-[article](https://zenn.dev/cloto/articles/claude-code-compact-external-memory)
-measuring the token economics of session-end → `/clear` → `recall`.
+Japanese translations are in the language selector (English is canonical) and
+agents can read [`llms.txt`](https://cloto-dev.github.io/CPersona/llms.txt).
+Longer reads in Japanese: a [book](https://zenn.dev/cloto/books/claude-memory-mcp-server)
+on the design and setup, and an [article](https://zenn.dev/cloto/articles/claude-code-compact-external-memory)
+on the token economics of session-end → `/clear` → `recall`.
 
 ## Quality Assurance
 
-Every release is gated by a machine-verifiable process: multi-agent audit rounds
-with adversarial verification, a bug ledger
-([`qa/issue-registry.json`](https://github.com/Cloto-dev/cpersona/blob/master/qa/issue-registry.json))
-that fails CI if a fix marker disappears or a removed defect returns, structural
-gates for invariants a plain test cannot express, a mutation proof that those
-gates go red when the invariant is broken, and gates holding the documented
-counts, defaults and version claims to the source that defines them. Behind it:
-**~950 test functions** across ~86 test modules (~1,190 cases parametrised, more
-test code than server code), on **Schema v13** —
-[how a release is gated](https://cloto-dev.github.io/CPersona/quality-assurance/).
+Every release is gated by a machine-verifiable process: multi-agent audit rounds with adversarial verification, a [bug ledger](https://github.com/Cloto-dev/cpersona/blob/master/qa/issue-registry.json) that fails CI if a fix marker disappears or a removed defect returns, structural gates for invariants a plain test cannot express, a mutation proof that those gates go red when the invariant is broken, and gates holding the documented counts, defaults and version claims to the source that defines them.
+
+Behind it: **~980 test functions** across ~89 test modules (~1,230 cases parametrised, more test code than server code), on **Schema v13** — [how a release is gated](https://cloto-dev.github.io/CPersona/quality-assurance/).
 
 ## Support
 
-Three tiers — **Stable** (production-certified, critical fixes only),
-**Current** (newest line, all fixes land here) and **Experimental** (opt-in
-pre-releases). A superseded line keeps critical-fix support for 30 more days.
-**Read [SUPPORT.md § Known issues](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues)
-before pinning a version** — some of them change what you should run. Full
-policy: [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) ·
-specification: [Release lifecycle](https://cloto-dev.github.io/CPersona/RELEASE_LIFECYCLE_STANDARD/).
+Three tiers — **Stable** (production-certified, critical fixes only), **Current**
+(newest line, all fixes land here) and **Experimental** (opt-in pre-releases). A
+superseded line keeps critical-fix support for 30 more days. **Read
+[SUPPORT.md § Known issues](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues)
+before pinning a version** — some of them change what you should run.
 
 Found a bug, or something the docs do not explain? Open a
 [bug report](https://github.com/Cloto-dev/cpersona/issues/new?template=bug_report.yml)
-or [feature request](https://github.com/Cloto-dev/cpersona/issues/new?template=feature_request.yml)
-— reports are welcome even when you are not certain, because a configuration
-problem mistaken for a bug means the documentation was unclear, which is a
-defect of its own. Security vulnerabilities are the exception: report those
-privately via [SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md).
+or [feature request](https://github.com/Cloto-dev/cpersona/issues/new?template=feature_request.yml),
+even when you are not certain — a configuration problem mistaken for a bug means
+the documentation was unclear, which is a defect of its own. Report security
+vulnerabilities privately via
+[SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md).
 
 ## License
 
