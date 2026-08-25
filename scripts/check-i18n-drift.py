@@ -61,7 +61,9 @@ def blob_sha(path: Path) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
-def record(rel: Path, en_rel: str, reason: str, translated_blob: str | None, current_blob: str) -> None:
+def record(
+    rel: Path, en_rel: str, reason: str, translated_blob: str | None, current_blob: str | None
+) -> None:
     """Add the machine-readable twin of the finding just appended.
 
     `translated_blob` is the English content this page was translated from, and
@@ -69,6 +71,13 @@ def record(rel: Path, en_rel: str, reason: str, translated_blob: str | None, cur
     fetch that exact blob and diff it against the current file, which is what
     makes a targeted edit possible instead of a full re-translation. It is None
     when the page never recorded one.
+
+    `current_blob` is None in the one case where there is nothing to hash: the
+    English page named by the translation does not exist. Every finding has to
+    reach this list even when it carries no blobs, because the exit code and
+    this list are read by different callers — a finding that only reaches the
+    human output is invisible to the updater, which then reports nothing to fix
+    while the run fails.
     """
     machine_findings.append(
         {
@@ -90,6 +99,10 @@ def main() -> int:
         en = ROOT / en_rel
         if not en.exists():
             findings.append((rel, f"has no English source ({en_rel} does not exist)"))
+            # bug-260: this branch used to report to the human output only, so a
+            # run could exit non-zero while telling the updater there was
+            # nothing to do.
+            record(rel, en_rel, "missing_source", None, None)
             continue
 
         text = ja.read_text()
