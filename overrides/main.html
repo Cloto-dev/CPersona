@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{#
+  Language routing for a statically hosted site.
+
+  GitHub Pages cannot negotiate on Accept-Language — there is no server to read
+  it — so a reader arriving from the README's links lands on whichever tree the
+  link named, English, whatever they read. The hreflang alternates the i18n
+  plugin already emits fix that for search engines; they do nothing for someone
+  who followed a link.
+
+  So the routing happens here, in the head, before the body paints, and it obeys
+  two rules that matter more than the detection itself:
+
+    * An explicit choice wins, forever. Clicking English in the language
+      selector is a decision; a site that bounces that reader back to Japanese
+      on the next page is broken in a way that cannot be worked around.
+    * Redirect with location.replace, never assign. A redirect in the history
+      stack turns the back button into a trap: back, redirect, back, redirect.
+
+  Detection itself is deliberately dumb — the first entry in navigator.languages
+  that is either Japanese or English decides, so a reader whose list is
+  ['en-US', 'ja'] gets English and one whose list is ['ja', 'en'] gets Japanese.
+
+  The destination URLs are rendered from the same per-page alternates the plugin
+  builds the language selector from, rather than assembled here by string
+  surgery on the path. That keeps this template from carrying a second, private
+  theory of what the Japanese URL of a page is — the kind of duplicate that goes
+  wrong silently the first time the URL layout changes.
+#}
+{% block extrahead %}
+  {{ super() }}
+  {%- set alternates = {} -%}
+  {%- for alt in config.extra.alternate | default([], true) -%}
+    {%- set _ = alternates.update({alt.lang: alt.link | url}) -%}
+  {%- endfor %}
+  {%- if alternates.en %}
+  <link rel="alternate" hreflang="x-default" href="{{ alternates.en }}">
+  {%- endif %}
+  <script>
+    (function () {
+      // Language routing must never be the reason a page fails to render, so
+      // everything below is inside one try: a storage-denied browser (Safari in
+      // private mode throws on localStorage) reads the site in whatever
+      // language the link named, which is exactly today's behaviour.
+      try {
+        var KEY = "cpersona-doc-lang";
+        var ALTERNATES = {{ alternates | tojson }};
+        var here = (document.documentElement.getAttribute("lang") || "en").slice(0, 2);
+
+        // Using the selector is a decision. Recorded in the capture phase so the
+        // write lands before the browser starts the navigation.
+        document.addEventListener("click", function (event) {
+          var link = event.target && event.target.closest && event.target.closest(".md-select__link");
+          if (link && link.hreflang) {
+            try { localStorage.setItem(KEY, link.hreflang.slice(0, 2)); } catch (e) {}
+          }
+        }, true);
+
+        var go = function (lang) {
+          var target = ALTERNATES[lang];
+          if (!target || lang === here) return;
+          location.replace(target + location.search + location.hash);
+        };
+
+        var chosen = null;
+        try { chosen = localStorage.getItem(KEY); } catch (e) {}
+        if (chosen) { go(chosen); return; }
+
+        var preferences = navigator.languages || [navigator.language || ""];
+        for (var i = 0; i < preferences.length; i++) {
+          var tag = String(preferences[i]).toLowerCase();
+          if (tag.indexOf("ja") === 0) { go("ja"); return; }
+          if (tag.indexOf("en") === 0) { go("en"); return; }
+        }
+      } catch (e) {}
+    })();
+  </script>
+{% endblock %}

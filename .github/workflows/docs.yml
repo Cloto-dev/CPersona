@@ -60,6 +60,17 @@ jobs:
         # while breaking 16 links across four pages. This step is the detector
         # for that class, and it runs against the built site, not the sources.
         run: python3 scripts/check-doc-anchors.py site
+      - name: Language routing (blocking)
+        # GitHub Pages cannot negotiate on Accept-Language, so the routing lives
+        # in the page head (overrides/main.html) and mkdocs --strict cannot see
+        # whether it works: the template can render a syntactically perfect
+        # script pointing at the wrong pages. Measured while writing it — reading
+        # config.extra.alternate without Material's `url` filter left every page
+        # except the site root redirecting into a 404, with a green build. This
+        # step checks the destinations against each page's own hreflang links and
+        # executes the script against a stubbed DOM for the cases that only go
+        # wrong later: the redirect loop, the overridden choice, private mode.
+        run: node scripts/check-lang-routing.js site
       - name: Japanese translation drift (blocking)
         # English is canonical; a ja page records the English content it was
         # translated from. Advisory was the wrong setting for a published
