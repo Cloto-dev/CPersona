@@ -4,8 +4,13 @@ CPersona is an [MCP](https://modelcontextprotocol.io/) server that gives
 Claude — or any MCP-capable agent — **persistent memory across sessions**.
 Memories live in a single local SQLite file and are retrieved with a 3-layer
 hybrid search (vector + FTS5 + keyword, fused by rank or relative score). The
-server has **zero LLM dependency**: it never calls a generative model, so
-memory adds no API cost and stays deterministic.
+server has **zero LLM dependency**: it never calls a generative model. Two
+caveats on what that buys you — embeddings can still cost money
+(`EMBEDDING_MODE=api` bills per request against an endpoint that defaults to
+OpenAI's; `http` mode against a local server does not), and recall is
+deterministic given a calibrated gate, but the gate itself is measured by
+sampling the corpus at random, so two installs on identical data can settle on
+different operating points.
 
 > **Applies to: CPersona 2.5.x.** This site is the canonical documentation —
 > when the README or the bundled skill disagrees with a page here, this site

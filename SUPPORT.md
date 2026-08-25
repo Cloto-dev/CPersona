@@ -91,7 +91,7 @@ discretion and must not be relied upon.
 | Line | Tier | Notes |
 | --- | --- | --- |
 | 2.4.x | **Stable** | Certified Stable; the marketplace serves this line by default. Enters Grace 30 days after 2.5.x is certified Stable. |
-| 2.5.x | **Current** | Latest release: 2.5.4. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Awaiting production-soak certification to Stable. |
+| 2.5.x | **Current** | Latest release: 2.5.5. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Awaiting production-soak certification to Stable. |
 
 Certification and EOL dates are recorded in this table as they occur.
 
@@ -204,4 +204,4 @@ diagnosis already exists and may already be fixed in a later release.
 **Security vulnerabilities are the exception.** Do not open a public issue for
 them; follow [SECURITY.md](SECURITY.md) instead.
 
-*Last updated: 2026-08-18*
+*Last updated: 2026-08-25*
