@@ -100,6 +100,52 @@ def measured_schema_version() -> int:
     return int(m.group(1))
 
 
+def measured_axis_acceptance() -> dict[str, list[str]]:
+    """{axis: sorted tool names whose input schema offers it}, from the registry.
+
+    The three isolation axes are offered unevenly and the docs state the counts,
+    so the counts are a schema-derived fact rather than prose. Measured off the
+    same registry `measured_tool_count` reads, which is what the server serves.
+    """
+    sys.path.insert(0, str(ROOT))
+    import cpersona.server as server  # noqa: PLC0415 — deliberate late import
+
+    tools = server.registry._tools
+    items = tools.items() if isinstance(tools, dict) else [(t.name, t) for t in tools]
+    return {
+        axis: sorted(
+            name
+            for name, tool in items
+            if axis in ((tool.inputSchema or {}).get("properties") or {})
+        )
+        for axis in ("agent_id", "project_id", "channel")
+    }
+
+
+def measured_calibrate_default() -> str:
+    """The calibration method a bare `calibrate_threshold` call resolves to."""
+    text = (ROOT / "cpersona" / "config.py").read_text()
+    m = re.search(r'CALIBRATE_METHOD = os\.environ\.get\("CPERSONA_CALIBRATE_METHOD", "(\w+)"\)', text)
+    if not m:
+        fail("config.py: CALIBRATE_METHOD default not found — update this script")
+        return ""
+    return m.group(1)
+
+
+def measured_embed_batch() -> int:
+    """The largest number of texts CPersona puts in one /embed request.
+
+    Read from the named constant rather than from a literal in a slice, so the
+    check keeps measuring the same thing if the batching loop is rewritten.
+    """
+    text = (ROOT / "cpersona" / "checks.py").read_text()
+    m = re.search(r"^EMBED_BATCH_SIZE = (\d+)$", text, re.M)
+    if not m:
+        fail("checks.py: EMBED_BATCH_SIZE literal not found — update this script")
+        return -1
+    return int(m.group(1))
+
+
 def parsed_env_defaults() -> dict[str, str]:
     """Static parse of config.py → {VAR_NAME: normalized default}.
 
@@ -237,6 +283,98 @@ def check_env_tables(env_defaults: dict[str, str]) -> None:
                 )
 
 
+_AXIS_COUNT_CLAIMS = (
+    # (axis, English pattern, Japanese pattern). Both spellings for the reason the
+    # tool-count check carries both: a detector that only knows the English phrase
+    # passes the translation vacuously, and vacuous is indistinguishable from correct.
+    ("agent_id", r"`agent_id` is accepted by\s+most tools \((\d+) of \d+\)", r"個のツールのうち\s*(\d+) 個が受け取り"),
+    ("project_id", r"`project_id` by (\w+)", r"`project_id` は (\d+) 個"),
+    ("channel", r"`channel` by exactly (\w+)", r"`channel` はちょうど (\d+) 個"),
+)
+
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7}
+
+# Where a page spells the `channel` tools out by name. Group 1 is the run of names.
+_CHANNEL_NAME_CLAIMS = (
+    r"`channel` by exactly \w+ —\s*\n?((?:[^\n]*`\w+`[^\n]*\n?){1,3})",
+    r"`channel` はちょうど \d+ 個 —\s*\n?((?:[^\n]*`\w+`[^\n]*\n?){1,3}?)\s*— だけです",
+)
+
+
+def check_axis_claims(acceptance: dict[str, list[str]]) -> None:
+    """The per-axis tool counts, and the four tool names `channel` is named with.
+
+    The names matter as much as the count: a page that lists the four tools by name
+    stays literally true on the count while naming the wrong one, and the reader is
+    the one who finds out.
+    """
+    for doc in DOC_FILES:
+        text = doc.read_text()
+        rel = doc.relative_to(ROOT)
+        for axis, en_pattern, ja_pattern in _AXIS_COUNT_CLAIMS:
+            actual = len(acceptance[axis])
+            for pattern in (en_pattern, ja_pattern):
+                for m in re.finditer(pattern, text):
+                    raw = m.group(1)
+                    claimed = _NUMBER_WORDS.get(raw)
+                    if claimed is None and raw.isdigit():
+                        claimed = int(raw)
+                    if claimed is None:
+                        # An unreadable spelling is reported, not skipped: a pattern
+                        # that quietly stops matching returns the same green as one
+                        # that matched and agreed.
+                        fail(
+                            f"{rel}: states a count for `{axis}` as '{raw}', which this "
+                            "check cannot read — add it to _NUMBER_WORDS or write the digit"
+                        )
+                        continue
+                    if claimed != actual:
+                        fail(
+                            f"{rel}: claims `{axis}` is accepted by {raw}, but "
+                            f"{actual} tool schemas offer it"
+                        )
+        # The four named tools, wherever a page spells them out next to `channel`.
+        for pattern in _CHANNEL_NAME_CLAIMS:
+            for m in re.finditer(pattern, text):
+                named = set(re.findall(r"`(\w+)`", m.group(1)))
+                expected = set(acceptance["channel"])
+                if named != expected:
+                    fail(
+                        f"{rel}: names {sorted(named)} as the tools taking `channel`, "
+                        f"but the schemas say {sorted(expected)}"
+                    )
+
+
+def check_calibrate_default(method: str) -> None:
+    if not method:
+        return  # already reported by the measurement
+    for doc in DOC_FILES:
+        text = doc.read_text()
+        rel = doc.relative_to(ROOT)
+        for m in re.finditer(r"by default \(`(\w+)`\)|既定 \(`(\w+)`\)", text):
+            claimed = m.group(1) or m.group(2)
+            if claimed != method:
+                fail(
+                    f"{rel}: claims calibrate_threshold defaults to `{claimed}`, but "
+                    f"CPERSONA_CALIBRATE_METHOD defaults to `{method}`"
+                )
+
+
+def check_embed_batch(batch: int) -> None:
+    if batch < 0:
+        return  # already reported by the measurement
+    for doc in DOC_FILES:
+        text = doc.read_text()
+        rel = doc.relative_to(ROOT)
+        for pattern in (r"at most \*\*(\d+) texts per request\*\*", r"送るのは最大 \*\*(\d+) 件\*\*"):
+            for m in re.finditer(pattern, text):
+                if int(m.group(1)) != batch:
+                    fail(
+                        f"{rel}: claims at most {m.group(1)} texts per /embed request, "
+                        f"but EMBED_BATCH_SIZE is {batch}"
+                    )
+
+
 VOLATILE_CLAIMS = {
     # claim regex (group 1 = number) → measured-stat key. These are the only
     # numeric claims docs are allowed to hand-round; each is stated with `~`.
@@ -344,17 +482,26 @@ def main() -> int:
     env_defaults = parsed_env_defaults()
     stats = measured_volatile_stats()
     finals = measured_latest_finals()
+    acceptance = measured_axis_acceptance()
+    calibrate_default = measured_calibrate_default()
+    embed_batch = measured_embed_batch()
 
     check_tool_and_schema_claims(tool_count, schema_version)
     check_env_tables(env_defaults)
     check_volatile_claims(stats)
     check_release_claims(finals)
+    check_axis_claims(acceptance)
+    check_calibrate_default(calibrate_default)
+    check_embed_batch(embed_batch)
 
     print(
         f"measured: {tool_count} tools, schema v{schema_version}, "
         + ", ".join(f"{k}={int(v)}" for k, v in stats.items())
         + f", {len(env_defaults)} env defaults parsed"
         + (", latest finals " + "/".join(f"{k}={v}" for k, v in sorted(finals.items())) if finals else "")
+        + ", axes "
+        + "/".join(f"{axis}={len(names)}" for axis, names in acceptance.items())
+        + f", calibrate default={calibrate_default}, embed batch={embed_batch}"
     )
     if failures:
         print(f"\n{len(failures)} documentation fact(s) out of date:", file=sys.stderr)

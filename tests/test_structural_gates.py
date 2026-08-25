@@ -1353,3 +1353,104 @@ def test_background_queue_gate_has_teeth():
     assert not _collect_enqueue_calls(ast.parse(drain_only)), (
         "queue gate false-positived the drain/status side the docs describe as live"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 15 (doc-claim class, 2.5.6): the embed response's `dimensions` field is never read.
+#
+# docs/getting-started.md publishes the contract a third-party embedding backend has to
+# satisfy, and tells its author "CPersona reads **`embeddings`** and nothing else —
+# `dimensions` is part of the reference server's response and is ignored by the client, so
+# a backend that omits it still works." Someone acts on that sentence by shipping a server
+# without the field. If a later change starts reading `dimensions`, their backend breaks
+# at a distance, and nothing in this repository's tests would notice: the reference server
+# and every fixture send the field, so every test keeps passing.
+#
+# That makes this a claim about ABSENCE over every path — the class Gate 14 is in — and a
+# behavioural test is the wrong instrument twice over: it can only observe the paths a
+# fixture walks, and the fixture that would reveal the problem is the one nobody writes
+# (a response with the field left out).
+#
+# The vendored client is scanned alongside the package because the sentence names it. Only
+# key reads count: `["dimensions"]` and `.get("dimensions")`. A string that merely says the
+# word — checks.py reports "mixed embedding dimensions" as a skip reason — is not a read,
+# and flagging it would push the fix toward rewording an unrelated message.
+#
+# Limit, stated so the green is not over-read: this sees literal key access. A read via a
+# variable key (`resp[field]`) would pass. That is an honest floor for ordinary access, not
+# a proof that the field is unreachable.
+# --------------------------------------------------------------------------------------
+
+_EMBED_CONTRACT_DOC = "docs/getting-started.md ('Bring your own embedding server')"
+_VENDORED = PKG / "_vendored_mcp_common"
+
+
+def _iter_shipped_files():
+    """Package modules plus the vendored client the contract sentence names."""
+    yield from _iter_module_files()
+    yield from sorted(_VENDORED.rglob("*.py"))
+
+
+def _collect_dimensions_reads(tree):
+    """Linenos where the literal key ``dimensions`` is read off a mapping."""
+    hits = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == "dimensions"
+        ):
+            hits.append(node.lineno)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "dimensions"
+        ):
+            hits.append(node.lineno)
+    return sorted(hits)
+
+
+def test_embed_response_dimensions_is_never_read():
+    """Gate: nothing shipped reads `dimensions` off an embedding response."""
+    hits = []
+    for path in _iter_shipped_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        hits.extend(f"{path.name}:{lineno}" for lineno in _collect_dimensions_reads(tree))
+
+    assert not hits, (
+        f"{_EMBED_CONTRACT_DOC} tells backend authors that `dimensions` is ignored and a "
+        f"server that omits it still works, but the shipped code reads it at {hits}. "
+        "Someone's backend does not send that field. Either drop the read, or change the "
+        "published contract and say so in the release notes — the people affected are not "
+        "reading this repository's diffs."
+    )
+
+
+def test_dimensions_gate_has_teeth():
+    """The gate must flag a real key read, and must not flag the word in prose."""
+    reading = (
+        "async def embed(self, texts):\n"
+        "    payload = await self._post(texts)\n"
+        "    if payload['dimensions'] != self.dim:\n"
+        "        raise ValueError('dimension drift')\n"
+        "    return payload.get('embeddings')\n"
+    )
+    assert _collect_dimensions_reads(ast.parse(reading)) == [3], (
+        "dimensions gate failed to flag a subscript read of the field"
+    )
+
+    via_get = "def check(payload):\n    return payload.get('dimensions', 0)\n"
+    assert _collect_dimensions_reads(ast.parse(via_get)) == [2], (
+        "dimensions gate failed to flag a .get() read of the field"
+    )
+
+    # The false positive that would push the fix in the wrong direction: a message
+    # that merely contains the word. checks.py ships exactly this shape.
+    prose = 'def skip():\n    return {"skipped": "mixed embedding dimensions"}\n'
+    assert not _collect_dimensions_reads(ast.parse(prose)), (
+        "dimensions gate flagged a string that only mentions the word, which would send "
+        "the next reader to reword a skip message instead of examining a contract break"
+    )
