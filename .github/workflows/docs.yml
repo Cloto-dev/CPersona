@@ -19,6 +19,7 @@ on:
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
       - "scripts/check-i18n-drift.py"
+      - "scripts/translate-i18n-drift.py"
   pull_request:
     paths:
       - "docs/**"
@@ -26,6 +27,7 @@ on:
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
       - "scripts/check-i18n-drift.py"
+      - "scripts/translate-i18n-drift.py"
 
 permissions:
   contents: read
@@ -39,6 +41,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The translation updater diffs the current English page against the
+          # blob its translation recorded. A shallow clone does not have that
+          # blob, and the updater refuses to fall back to a full re-translation
+          # — so without history the job reports and stops instead of working.
+          fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Build site (strict)
@@ -77,6 +85,87 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: site/
+
+  # Draft the missing translation on the same branch, so the blocking check above
+  # has something to go green against.
+  #
+  # Three constraints shaped this, all learned the hard way elsewhere:
+  #
+  #   * It pushes to the PR's own branch, never a second PR. The i18n check is
+  #     blocking, so a fix that arrives as a separate PR leaves the original red
+  #     and waiting on a merge that is waiting on it.
+  #   * It pushes with a PAT, not GITHUB_TOKEN. A commit pushed with GITHUB_TOKEN
+  #     does not trigger workflows, so the blocking check would never re-run and
+  #     the PR would sit red forever with a green fix already committed to it.
+  #     The symptom is "the check just never updates", which reads as a hung
+  #     runner rather than a token policy.
+  #   * It never merges. No gate here reads meaning: a translation that reverses
+  #     a MUST, drops a negation, or quietly changes a threshold passes the
+  #     anchor check, the drift check, and the site build. What is automated is
+  #     the first draft; the fidelity review against the English is a person's.
+  translate:
+    if: >-
+      !cancelled() &&
+      github.event_name == 'pull_request' &&
+      needs.build.result == 'failure' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'i18n-defer')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check that the credentials exist
+        id: creds
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_TOKEN: ${{ secrets.I18N_SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::notice::Automatic translation is not configured (ANTHROPIC_API_KEY / I18N_SYNC_TOKEN). Re-sync docs/*.ja.md by hand, or label this PR i18n-defer."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.configured == 'true'
+        with:
+          # The PAT is what makes the pushed commit re-trigger this workflow.
+          token: ${{ secrets.I18N_SYNC_TOKEN }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          fetch-depth: 0
+      - name: Install uv
+        if: steps.creds.outputs.configured == 'true'
+        uses: astral-sh/setup-uv@v5
+      - name: Draft the missing translations
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: uv run --with anthropic python scripts/translate-i18n-drift.py
+      - name: Verify the result the same way a human edit is verified
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          python3 scripts/check-i18n-drift.py --strict
+          uvx --with mkdocs-material==9.7.7 --with mkdocs-static-i18n==1.3.1 mkdocs build --strict
+          python3 scripts/check-doc-anchors.py site
+      - name: Commit to the PR branch
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          if [ -z "$(git status --porcelain -- docs/)" ]; then
+            echo "::notice::No translation changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          # Two -m flags rather than one multi-line string: a YAML block scalar
+          # strips only the common indent, so a body indented past `run:` keeps
+          # the extra spaces on every line of the commit message.
+          git commit \
+            -m "docs: draft the Japanese side of this change" \
+            -m "Generated from the English diff of this branch. The wording is a first draft: read it against the English before merging. No automated gate here reads meaning, so a reversed MUST or a dropped negation passes every check."
+          git push
 
   deploy:
     if: github.event_name == 'push'
