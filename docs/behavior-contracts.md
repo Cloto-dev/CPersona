@@ -177,8 +177,8 @@ probabilistic recall — see [When not to use recall](operations.md#when-not-to-
 A recall response carrying `gate_fallback: true` (absent otherwise) means
 **every candidate fell below the quality gate**, and the below-gate lexical
 matches were returned instead of an empty result. Treat these rows as
-low-confidence — typical for identifier/hash lookups whose exact match is
-semantically distant from the query text.
+low-confidence. This is typical of identifier and hash lookups, where the
+exact match is semantically distant from the query text that found it.
 
 **The rescue path exists only under confidence scoring.** The rows it returns
 are marked by the same backfill that runs when `CPERSONA_CONFIDENCE_ENABLED`
