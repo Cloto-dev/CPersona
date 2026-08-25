@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:f606c2923a82995f5634bcadb908de455c8629ee -->
+<!-- i18n-source: docs/configuration.md@blob:ef4600fa5e1e2da05fe8a59efffba74fa22599ef -->
 
 # 設定リファレンス
 
@@ -13,22 +13,22 @@
 | 変数 | 既定値 | 説明 |
 |----------|---------|-------------|
 | `CPERSONA_DB_PATH` | `data/cpersona.db` | SQLite データベースのパス。**クライアントの作業ディレクトリからの相対**なので、セッションをまたいで 1 つの記憶を保つには絶対パスを指定してください |
-| `CPERSONA_EMBEDDING_MODE` | `none` | 埋め込みモード (`http` または `none`) |
+| `CPERSONA_EMBEDDING_MODE` | `none` | 埋め込みモード: `http` (ローカルの埋め込みサーバー)、`api` (OpenAI 互換エンドポイント — `CPERSONA_EMBEDDING_API_URL` の既定は OpenAI なので、このモードはリクエストごとに課金されます)、`none` のいずれか |
 | `CPERSONA_EMBEDDING_URL` | *(未設定)* | 埋め込みサーバーの URL。例: `http://127.0.0.1:8401/embed` |
 | `CPERSONA_VECTOR_SEARCH_MODE` | `local` | ベクトル検索の実行場所 (`local` = プロセス内コサイン、`remote` = 外部委譲) |
 | `CPERSONA_RECALL_MODE` | `rrf` | recall の融合戦略 (`rrf` / `rsf` / `cascade`) — 後述 |
-| `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211): 超過分は行がプレビュー階層に戻り — 関連度の高い行から全文で残し (bug-214) — 応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層のみを無効化し、予算は無効化しません |
+| `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211): 超過分は行がプレビュー階層に戻り — 関連度の高い行から全文で残し (bug-214) — 応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層**と両方の予算を**無効化します — 無効な階層への降格は本文を無言で落とすことになるため、切り詰めをやめる選択はどこでも切り詰めないという選択になります |
 | `CPERSONA_RRF_K` | `60` | RRF の平滑化パラメータ |
 | `CPERSONA_MAX_CONTENT_LENGTH` | `16000` | 記憶 1 件・エピソード 1 件あたりの最大文字数。超過分は切り詰められ、`check_health(fix=true)` は既存行も上限で切るため、**下げると保存済みデータが短くなります**。2.5.4a2 で `2000` から引き上げ。埋め込みウィンドウを超えた本文も、行全体を索引するキーワードチャネル経由では検索できます |
-| `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | プロフィール 1 行あたりの最大文字数 (記憶とは別枠)。プロフィールは全 recall 応答に注入され、プレビュー切り詰めの対象外なので、この上限だけが唯一の歯止めです |
+| `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | プロフィール 1 行あたりの最大文字数 (記憶とは別枠)。プロフィールはプレビュー切り詰めの対象外なので、この上限だけが唯一の歯止めです。ただし*全*応答に注入されるわけではありません: プールが 50 行未満の間は品質ゲートがプロフィール行を落とし、スコア付きの結果で埋まっている場合は `limit` が落とします ([契約 §7](behavior-contracts.md#7-profile-rows-carry-no-score)) |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | confidence メタデータを結果に含める — かつ**それをランキングキーにする**: 結果集合はこのスコアで並べ直され、品質ゲートもこれを見ます。有効時、`CPERSONA_RECALL_MODE` は返却順を決めなくなります ([契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | 起動時に自動較正する |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | バックグラウンドタスクキュー (DB 永続・クラッシュ復帰可能) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | 直近に想起された記憶へのペナルティ |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | 上記ペナルティの対象時間窓 (分) |
 | `CPERSONA_MAX_MEMORIES` | `10000` | ベクトル検索の**走査ウィンドウ** (保存件数の上限ではありません) — 大きなコーパスでは引き上げてください ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
-| `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。意味を持つのは confidence 有効時のみ — autocut は `rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)) |
-| `CPERSONA_FUSED_GATE_ENABLED` | `true` | 融合後の品質ゲート。無効化は最終手段です — 混入が素通りします |
+| `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。autocut は類似度スケールのシグナル — confidence スコアリング下、あるいは `cascade` が作る生 cosine だけの均質なリスト — に対して発火し、`rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。したがってこのつまみが働くかどうかを決めるのは融合モードです |
+| `CPERSONA_FUSED_GATE_ENABLED` | `true` | 融合後の品質ゲート。無効化は最終手段です: フィルタはプール規模のヒューリスティックにフォールバックし、粗くはなりますが弱い一致は依然として弾かれます — 失うのはこのコーパスに対して測定された動作点です |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | 埋め込みが利用不能な間、recall 応答に `advisory` を付ける ([runbook](operations.md#detecting-a-dead-embedding-server)) |
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `true` | エピソード境界ペナルティ ([契約 §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | 境界より前の記憶に対する 1 時間あたりの減衰率 |
@@ -87,9 +87,11 @@ v2.5.3 以降、サーバーはこれを強制します: `CPERSONA_TRANSPORT=str
   分かち書きのない言語 (日本語など) で推奨**です — `rrf` が平坦化してしまう
   その大きさこそが、そこでの識別シグナルだからです (≈ Weaviate の
   `relativeScoreFusion`。ClotoCore の `RECALL_CONTAMINATION_AB_2026-06-14`
-  レポート §10–12 を参照)。*注意:* min-max 正規化は、`autocut` 有効時に小さく
-  スコアが接近した結果集合を切りすぎることがあります — この相互作用が固まるまで
-  既定は `rrf` のままです。
+  レポート §10–12 を参照)。かつてこのモードが抱えていた切りすぎの危険 — min-max
+  正規化は最下行を 0.0 に固定するので、それが全スケールのギャップに見える — は
+  両側から塞がれています: autocut はランク融合スコアに対して早期 return し、
+  `CPERSONA_AUTOCUT_MIN_RESULTS` が小さい集合に下限を設けます。既定が `rrf` の
+  ままなのは継続性のためであって、この相互作用がまだ未解決だからではありません。
 - **`cascade`** — チャネルを順番に埋める方式 (レガシー)。
 
 **`CPERSONA_CONFIDENCE_ENABLED=true` のとき、融合モードは返却順を決めません。**
