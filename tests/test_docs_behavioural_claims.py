@@ -281,3 +281,64 @@ async def test_empty_agent_id_is_a_writable_bucket_not_an_impossible_value(clean
         "binding '' reached a named agent's row. The narrowing half of the claim is the "
         "one that still holds — it must not become false silently."
     )
+
+
+# --------------------------------------------------------------------------------------
+# skills/cpersona-memory/SKILL.md, "Mandatory triggers" and the shipped policy block:
+#
+#   "Use `deep=true` when the first pass comes back thin: it halves the quality gate,
+#    so weaker matches are admitted. It does not widen the scan window."
+#
+# Both lines said the opposite until now — "dig past time decay" and "search the full
+# history without time decay". Time decay lives in `_compute_confidence`, and BOTH of
+# its call sites are behind `CONFIDENCE_ENABLED`, which ships false. So on a default
+# install there is no decay to dig past: the only thing `deep` changes is the quality
+# gate (`min_score * 0.5`, and the calibrated fused gate likewise halved). "Full
+# history" was false in the other direction — retrieval is bounded by the vector scan
+# window (`CPERSONA_MAX_MEMORIES`), which `deep` does not touch.
+#
+# Pinned in both directions, for the reason test #4 above needed it: an assertion that
+# `deep` merely returns "at least as much" would also pass on an implementation where
+# `deep` did nothing at all, which is the exact claim being corrected.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_deep_relaxes_the_quality_gate_rather_than_a_time_horizon(
+    clean_db, fake_embedding_client
+):
+    """SKILL.md's `deep=true`: weaker matches, not an older horizon."""
+    for index in range(40):
+        await memory_handlers.do_store(
+            AGENT_A, {"content": f"filler row {index} gardening tools soil"}
+        )
+    await memory_handlers.do_store(AGENT_A, {"content": "quantum tunnelling diodes"})
+
+    shallow = await memory_handlers.do_recall(AGENT_A, "quantum diodes tunnelling", limit=10)
+    deep = await memory_handlers.do_recall(
+        AGENT_A, "quantum diodes tunnelling", limit=10, deep=True
+    )
+
+    shallow_contents = {m["content"] for m in shallow["messages"]}
+    deep_contents = {m["content"] for m in deep["messages"]}
+
+    assert not any("confidence" in m for m in deep["messages"]), (
+        "a `confidence` block came back on a default install, so time decay is live "
+        "after all and SKILL.md's correction ('the gate, not a time horizon') is "
+        "itself now wrong. CONFIDENCE_ENABLED ships false — if that changed, both the "
+        "SKILL lines and the recall tool description need rewriting together."
+    )
+
+    assert deep_contents > shallow_contents, (
+        "SKILL.md tells the caller that `deep=true` halves the quality gate so weaker "
+        f"matches are admitted. It admitted {len(deep_contents)} rows against the default "
+        f"pass's {len(shallow_contents)}. If `deep` no longer relaxes the gate, the "
+        "sentence in SKILL.md ('Mandatory triggers', and the shipped policy block) is "
+        "now the wrong advice to give an agent whose first pass came back thin."
+    )
+    admitted = deep_contents - shallow_contents
+    assert all("gardening" in c for c in admitted), (
+        "the rows `deep` adds should be the weak matches the gate had rejected; it "
+        f"added {sorted(admitted)}"
+    )
+

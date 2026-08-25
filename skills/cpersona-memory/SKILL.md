@@ -166,7 +166,7 @@ Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wa
 
 **Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
 the first substantive action. Prefer `recall_with_context` when conversation history is already
-at hand (it de-dupes and merges); add `deep=true` to dig past time decay. Skip only for trivial
+at hand (it de-dupes and merges); add `deep=true` to halve the quality gate. Skip only for trivial
 one-shot questions.
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
@@ -217,7 +217,9 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
    opening topic, or ''>", limit=10)` before the first substantive action, so
    you start with relevant past context. Use `recall_with_context` instead when
    you already hold conversation history (it de-dupes and merges automatically).
-   Use `deep=true` to search the full history without time decay.
+   Use `deep=true` when the first pass comes back thin: it halves the
+   quality gate, so weaker matches are admitted. It does not widen the
+   scan window (`CPERSONA_MAX_MEMORIES`).
    *Skip for trivial one-shot questions.*
 
 2. **A decision / rule / preference / bug finding** → `store` it immediately.
