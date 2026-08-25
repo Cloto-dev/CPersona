@@ -342,3 +342,121 @@ async def test_deep_relaxes_the_quality_gate_rather_than_a_time_horizon(
         f"added {sorted(admitted)}"
     )
 
+
+
+# --------------------------------------------------------------------------------------
+# docs/operations.md ("Tuning recall") and docs/configuration.md, on
+# CPERSONA_FUSED_GATE_ENABLED=false:
+#
+#   "filtering falls back to the pool-size heuristic (`_adaptive_min_score`), which
+#    still rejects weak matches — it is a coarser gate, not an open door."
+#
+# Both pages said "contamination passes through unfiltered", which would make turning
+# the gate off a very different decision than it is. `gate` becomes None and
+# _apply_quality_gate still applies `effective_min`, so the pool-size floor keeps
+# cutting. An operator who read the old sentence would either avoid a knob that is
+# safe to reach for, or reach for it expecting a diagnostic firehose and get one row.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_disabling_the_fused_gate_leaves_the_pool_size_floor(
+    clean_db, fake_embedding_client, monkeypatch
+):
+    """Turning off the fused gate is a coarser gate, not an open door."""
+    from cpersona import config
+
+    for index in range(40):
+        await memory_handlers.do_store(
+            AGENT_A, {"content": f"filler row {index} gardening tools soil"}
+        )
+    await memory_handlers.do_store(AGENT_A, {"content": "quantum tunnelling diodes"})
+
+    monkeypatch.setattr(config, "FUSED_GATE_ENABLED", False)
+    result = await memory_handlers.do_recall(AGENT_A, "quantum diodes tunnelling", limit=10)
+
+    contents = [m["content"] for m in result["messages"]]
+    assert not any("gardening" in c for c in contents), (
+        "with CPERSONA_FUSED_GATE_ENABLED=false the weak rows came back, so the pages "
+        "should go back to warning that contamination passes unfiltered. Right now "
+        "both operations.md and configuration.md tell the operator the pool-size "
+        f"heuristic still cuts. Returned: {contents}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/operations.md ("Tuning recall") and docs/configuration.md, on
+# CPERSONA_AUTOCUT_MIN_RESULTS:
+#
+#   "autocut fires on similarity-scale signals: under confidence scoring, or on a
+#    homogeneous raw-cosine list (which is what `cascade` produces, confidence on or
+#    off) [...] so under the default configuration this knob does nothing — but it is
+#    the fusion mode that decides that, not the confidence flag."
+#
+# Both pages said autocut was "only meaningful with confidence scoring enabled". The
+# conclusion they drew from it — inert by default — is right, but the reason was not,
+# and an operator debugging a truncated `cascade` recall would have ruled out the
+# knob that was doing the truncating. Pinned on both sides for that reason: the
+# firing case (cascade, confidence off) and the inert case (rrf, the default) are
+# different halves of the sentence and can break independently.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_autocut_keys_on_the_fusion_mode_not_the_confidence_flag(
+    clean_db, fake_embedding_client, monkeypatch
+):
+    """Autocut fires on a raw-cosine list with confidence off, and not under rrf."""
+    # Cosine gaps wide enough to trip the heuristic (1.0 / .84 / .73 / .56, so a
+    # relative gap of .17 against the .15 floor). The same list under `rrf` scores
+    # .0328 / .0323 / .0317 / .0313 — no gap the heuristic would act on — which is
+    # the difference the two halves below are measuring.
+    for content in (
+        "alpha beta",
+        "alpha beta zeta",
+        "alpha beta zeta eta",
+        "alpha omicron pi rho sigma tau",
+    ):
+        await memory_handlers.do_store(AGENT_A, {"content": content})
+
+    # Pinned rather than asserted. do_recall reads the flag through the name
+    # memory_handlers bound at import, and the suite's ambient config.CONFIDENCE_ENABLED
+    # does not track it: another module sets CPERSONA_CONFIDENCE_ENABLED in the process
+    # env and a third reloads config, so the config attribute flips True mid-run while
+    # the recall path keeps running confidence-off. Reading the ambient value here would
+    # make this test's outcome depend on collection order. That the SHIPPED default is
+    # confidence-off is pinned separately, on an observable response, by
+    # test_deep_relaxes_the_quality_gate_rather_than_a_time_horizon.
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", False)
+
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "cascade")
+    monkeypatch.setattr(memory_handlers, "AUTOCUT_ENABLED", True)
+    cut = await memory_handlers.do_recall(AGENT_A, "alpha beta", limit=10)
+    monkeypatch.setattr(memory_handlers, "AUTOCUT_ENABLED", False)
+    uncut = await memory_handlers.do_recall(AGENT_A, "alpha beta", limit=10)
+
+    assert len(cut["messages"]) < len(uncut["messages"]), (
+        "under `cascade` with confidence off, autocut did not cut "
+        f"({len(cut['messages'])} vs {len(uncut['messages'])} rows). Both pages now say "
+        "it fires on a homogeneous raw-cosine list regardless of the confidence flag; "
+        "if that stopped being true they should go back to naming confidence as the "
+        "condition."
+    )
+
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
+    monkeypatch.setattr(memory_handlers, "AUTOCUT_ENABLED", True)
+    rrf_cut = await memory_handlers.do_recall(AGENT_A, "alpha beta", limit=10)
+    monkeypatch.setattr(memory_handlers, "AUTOCUT_ENABLED", False)
+    rrf_uncut = await memory_handlers.do_recall(AGENT_A, "alpha beta", limit=10)
+
+    assert len(rrf_cut["messages"]) == len(rrf_uncut["messages"]), (
+        "autocut cut a rank-fusion list. Under the default `rrf` both pages promise "
+        "the knob does nothing, and bug-013 made that so deliberately — rank-fusion "
+        "gaps encode retriever overlap, not relevance breaks. Note what this half can "
+        "and cannot see: it catches the branch precedence collapsing (cosine applied "
+        "to an rrf-ordered list, which is bug-013 itself), because these rows carry "
+        "both signals. It would NOT catch autocut being rewired to cut on the rrf "
+        "score, whose gaps on this fixture are far below the ratio floor — that "
+        "regression needs a corpus wide enough for rank fusion to spread, which is "
+        "not what this file is for."
+    )
