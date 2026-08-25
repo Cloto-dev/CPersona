@@ -15,9 +15,10 @@ the list and the full text of one or two rows.
 ## Design principle (shared with the v2.5.0 limit re-layering)
 
 **Shaping and capping belong to the boundary layer; the library returns full
-data.** The an earlier decision change moved the agent-facing `limit` cap into the MCP
-JSON Schema while the library clamps only to the scan window. The preview tier
-is the same move for payload shape:
+data.** An earlier change moved the agent-facing `limit` cap into the MCP JSON
+Schema and left the library clamping only to the scan window, so that a caller
+using the library directly is not held to a ceiling that exists to protect a
+context window. The preview tier is the same move for payload shape:
 
 - `do_recall` / `do_recall_with_context` (library) — full content, unchanged.
 - The MCP tool wrappers (`server.py`) — trim content to the preview tier

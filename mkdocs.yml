@@ -52,6 +52,16 @@ plugins:
             FAQ: FAQ
             Design documents: 設計ドキュメント
             Release lifecycle: リリースライフサイクル
+            # The section heading was translated while the pages under it were
+            # not, so the Japanese nav listed English titles under a Japanese
+            # header. A nav label is translated here; the page itself is
+            # translated by adding <page>.ja.md.
+            ACL / per-client capabilities: ACL / クライアント別ケーパビリティ
+            Degraded-mode advisory: 縮退モードの通知
+            Operating context: 運用コンテキスト
+            Recall preview tier: recall プレビュー階層
+            CLAUDE.md policy standard: CLAUDE.md ポリシー標準
+            SuperAuditor standard: SuperAuditor 標準
 
 markdown_extensions:
   - admonition
