@@ -23,6 +23,7 @@ CPERSONA_MAX_MEMORIES is the vector scan window, not a storage cap.
 - [Operations Runbook](https://cloto-dev.github.io/CPersona/operations/): WAL-safe backup, degradation detection, recall tuning order, Japanese/CJK guidance, corpus indexing patterns, maintenance cadence
 - [Configuration](https://cloto-dev.github.io/CPersona/configuration/): every environment variable with defaults; HTTP transport and its authentication requirements
 - [FAQ](https://cloto-dev.github.io/CPersona/faq/): question-shaped index into the pages above
+- [Quality Assurance](https://cloto-dev.github.io/CPersona/quality-assurance/): how a release is gated — audit rounds, the bug ledger, structural CI gates, mutation proof, and the gates that check the docs themselves
 
 ## Design
 

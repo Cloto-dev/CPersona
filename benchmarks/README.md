@@ -249,6 +249,30 @@ the remaining remote time is the FTS5 retriever, which both modes share
 under `rrf`. Numbers predating CEmbedding 0.6.1 are not comparable: 0.6.0's
 fixed-length padding put a ~620 ms encode floor under every recall.
 
+## Track A vs Track B (documented record)
+
+The metric is Mean NDCG@10 across all 22 tasks, cpersona v2.4.40, full-ranking
+regime. The top-level README publishes this table; the reading below is the
+documented record for it.
+
+| Embedding Model | Params | Dim | Track A (raw) | Track B (cpersona) | Δ |
+|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 | 22M | 384 | 43.67 | **50.10** | +6.43 |
+| bge-m3 | 568M | 1024 | 56.83 | **57.66** | +0.83 |
+
+On both models measured here, Track B lands at or above Track A — the fusion
+layers add signal rather than merely persisting vectors. The size of that
+contribution depends on the embedding: the FTS5 and keyword layers rescue
+queries the vector search alone misses, so a weaker embedding gains more
+(+6.43 on all-MiniLM-L6-v2), while a strong one moves within this harness's
+run-to-run noise (+0.83 on bge-m3, against the ±1–2 pt per-task-mean envelope
+recorded under "Measurement regime" above).
+
+Read the deltas as "the pipeline does not cost ranking quality, and recovers a
+lot of it on weaker embeddings" rather than as a uniform gain. Two models are
+two points: they bound the direction of the effect on this corpus, not its size
+on an embedding neither of them resembles.
+
 ## Results
 
 Result JSON directories (`trackb_results*`, `lmeb_results*`,
