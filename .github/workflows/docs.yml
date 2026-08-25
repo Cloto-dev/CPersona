@@ -80,6 +80,16 @@ jobs:
           else
             python3 scripts/check-i18n-drift.py --strict
           fi
+      - name: Japanese translation coverage (blocking)
+        # The drift check above walks docs/*.ja.md, so it can only ask whether an
+        # existing translation is current. A page with no translation is not
+        # walked and is not a finding there — English fallback is by design. This
+        # step covers the other half: a page must carry a translation or declare
+        # in docs/.i18n-english-only that it stays English, and every nav label
+        # must have a nav_translations entry (a missing one does not fail the
+        # build, it renders English into the Japanese nav). Measured here:
+        # docs/quality-assurance.md shipped with neither and every gate was green.
+        run: python3 scripts/check-i18n-coverage.py --strict
       - name: Upload Pages artifact
         if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3

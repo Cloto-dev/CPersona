@@ -50,6 +50,7 @@ plugins:
             Operations Runbook: 運用 Runbook
             Configuration: 設定リファレンス
             FAQ: FAQ
+            Quality Assurance: 品質保証
             Design documents: 設計ドキュメント
             Release lifecycle: リリースライフサイクル
             # The section heading was translated while the pages under it were
