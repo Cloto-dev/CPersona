@@ -503,8 +503,9 @@ def check_volatile_claims(stats: dict[str, float]) -> None:
 # `[\s>]+` rather than a single space because README wraps this sentence: the
 # 2.4 claim reads "(latest\n> v2.4.41". A pattern that only matched one space
 # found the 2.5 claim, missed the 2.4 one, and reported green — a hit rate is
-# not a coverage report, so both spellings are pinned by
-# test_release_claim_patterns_reach_every_claim below.
+# not a coverage report, so this family is audited against an independent
+# reading of the same pages by
+# tests/test_structural_gates.py::test_release_claim_patterns_reach_every_claim.
 RELEASE_CLAIMS = (
     (re.compile(r"latest[\s>]+v(\d+\.\d+\.\d+)\b"), "latest v<version>"),
     (re.compile(r"Latest release:[\s>]+(\d+\.\d+\.\d+)\b"), "Latest release: <version>"),

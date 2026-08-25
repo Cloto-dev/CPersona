@@ -46,6 +46,10 @@ WILDCARD = "*"
 # demands function a counterfactual: "would this still span every agent if the
 # scope argument had been filled in?" It never reaches a grant lookup.
 _SCOPE_PROBE = "\x00scope-probe"
+# The arguments a tool can scope itself with. Named once because two separate
+# counterfactuals iterate them, and a key present in one and not the other
+# would make the advice disagree with the test that produced it.
+_SCOPE_KEYS = ("agent_id", "source_agent_id", "target_agent_id")
 
 # The stdio transport's reserved principal (design §5.4): no credential to
 # resolve, the peer is whoever spawned the process. Grants for it come from
@@ -409,12 +413,40 @@ def _widened_by_omission(demands: Demands, arguments: dict) -> bool:
     advice that does not work, so the counterfactual is run instead of guessed.
     """
     probed = dict(arguments)
-    for key in ("agent_id", "source_agent_id", "target_agent_id"):
+    for key in _SCOPE_KEYS:
         probed[key] = _SCOPE_PROBE
     try:
         return all(pattern != WILDCARD for pattern, _ in demands(probed))
     except Exception:  # a demands function that dislikes the probe tells us nothing
         return False
+
+
+def _omitted_scope_keys(demands: Demands, arguments: dict) -> list[str]:
+    """Which scope arguments this call has to send to stop demanding every agent.
+
+    The same reason _widened_by_omission runs a counterfactual instead of
+    guessing: naming the wrong argument is advice that does not work. Every
+    tool does not scope itself through ``agent_id`` — merge_memories takes
+    ``source_agent_id`` / ``target_agent_id`` and has no ``agent_id`` at all,
+    so a caller told to "pass agent_id" can comply and be denied again.
+
+    Each key is tested by leaving it out while the others are filled: if the
+    demand is still a sweep without it, the caller has to send it. That names
+    both halves of a merge when both are missing, and only the missing half
+    when one was sent.
+    """
+    needed = []
+    for key in _SCOPE_KEYS:
+        probed = dict(arguments)
+        for other in _SCOPE_KEYS:
+            if other != key:
+                probed[other] = _SCOPE_PROBE
+        try:
+            if any(pattern == WILDCARD for pattern, _ in demands(probed)):
+                needed.append(key)
+        except Exception:  # as above: a demands function that dislikes the probe
+            continue
+    return needed
 
 
 def _denial(tool: str, client_id: str, *, agent_id: str = "", required: int = 0, detail: str = "") -> dict:
@@ -470,7 +502,7 @@ def _wrap(name: str, handler):
                 if agent_pattern == WILDCARD:
                     malformed = [
                         k
-                        for k in ("agent_id", "source_agent_id", "target_agent_id")
+                        for k in _SCOPE_KEYS
                         if k in arguments and not isinstance(arguments[k], str)
                     ]
                     if malformed:
@@ -486,10 +518,15 @@ def _wrap(name: str, handler):
                         # explicitly because "agent_id": "*" in the response
                         # only shows the consequence, not the cause — a caller
                         # would have to already know that "*" means "you did
-                        # not scope this".
+                        # not scope this". The argument is named from the
+                        # counterfactual rather than assumed to be agent_id,
+                        # which merge_memories does not even accept.
+                        missing = _omitted_scope_keys(demands, arguments)
                         detail = (
                             "no agent scope was sent, so the call resolved to "
-                            "the all-agents demand — pass agent_id to scope it"
+                            "the all-agents demand — pass "
+                            + (" and ".join(missing) if missing else "an agent scope")
+                            + " to scope it"
                         )
                 return _denial(
                     name,

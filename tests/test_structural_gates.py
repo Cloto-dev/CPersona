@@ -23,7 +23,9 @@ instead of a comment the analyser trusts blindly.
 """
 
 import ast
+import importlib.util
 import pathlib
+import re
 
 PKG = pathlib.Path(__file__).parent.parent / "cpersona"
 
@@ -1453,4 +1455,84 @@ def test_dimensions_gate_has_teeth():
     assert not _collect_dimensions_reads(ast.parse(prose)), (
         "dimensions gate flagged a string that only mentions the word, which would send "
         "the next reader to reword a skip message instead of examining a contract break"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gate: the docs-facts release-claim patterns reach every claim they cover.
+#
+# The patterns are a hit list, and a hit list cannot report what it never saw.
+# Measured once already: README wraps the 2.4 sentence across a line, so a
+# pattern expecting a single space found the 2.5 claim, missed the 2.4 one, and
+# the gate printed green over an unchecked version. Widening the separator fixed
+# that instance; nothing stopped the next rewording from doing it again, because
+# nothing compared the patterns against an independent reading of the corpus.
+#
+# So the corpus is read a second way here — keyed on the word "latest" and a
+# version token near it, indifferent to the separator and the words between —
+# and the two readings must agree. A claim phrased in a way the gate cannot see
+# shows up as a difference, not as silence.
+# ---------------------------------------------------------------------------
+
+
+def _docs_facts():
+    path = PKG.parent / "scripts" / "check-docs-facts.py"
+    spec = importlib.util.spec_from_file_location("check_docs_facts", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Deliberately looser than the production patterns: it keys on the word and a
+# nearby version, so any rewording that keeps the meaning still registers.
+_CLAIM_SITE = re.compile(r"(?i)\blatest\b.{0,40}?\bv?(\d+\.\d+\.\d+)\b", re.S)
+
+
+def _unwrapped(text: str) -> str:
+    """Join blockquote line breaks — the wrap is what hid the 2.4 claim."""
+    return re.sub(r"\n>?[ \t]*", " ", text)
+
+
+def test_release_claim_patterns_reach_every_claim():
+    cdf = _docs_facts()
+    seen_by_pattern = {label: 0 for _, label in cdf.RELEASE_CLAIMS}
+
+    for doc in cdf.DOC_FILES:
+        text = doc.read_text(encoding="utf-8")
+        independent = sorted(_CLAIM_SITE.findall(_unwrapped(text)))
+        matched = []
+        for pattern, label in cdf.RELEASE_CLAIMS:
+            hits = [m.group(1) for m in pattern.finditer(text)]
+            seen_by_pattern[label] += len(hits)
+            matched.extend(hits)
+
+        assert sorted(matched) == independent, (
+            f"{doc.name}: reading the page for 'latest <version>' finds "
+            f"{independent}, but the docs-facts patterns find {sorted(matched)}. "
+            "A claim the patterns cannot see is a claim the gate reports green "
+            "without checking — widen RELEASE_CLAIMS to reach it."
+        )
+
+    dead = [label for label, hits in seen_by_pattern.items() if hits == 0]
+    assert not dead, (
+        f"release-claim pattern(s) {dead} match nothing in the checked docs. "
+        "Either the claim they were written for is gone (drop the pattern) or "
+        "it was reworded past them (fix the pattern) — as written they are "
+        "coverage the gate does not actually have."
+    )
+
+
+def test_the_independent_reading_is_broader_than_the_patterns():
+    """The comparison above is only meaningful if this side can see more.
+
+    A detector no wider than the thing it audits agrees with it unconditionally
+    and would pass over the exact regression it exists to catch.
+    """
+    cdf = _docs_facts()
+    reworded = "> the current line (latest release v9.9.9) is where fixes land"
+
+    assert _CLAIM_SITE.findall(_unwrapped(reworded)) == ["9.9.9"]
+    assert not [m for p, _ in cdf.RELEASE_CLAIMS for m in p.finditer(reworded)], (
+        "the production patterns already reach this phrasing, so the gate above "
+        "cannot demonstrate that it would catch a reworded claim"
     )
