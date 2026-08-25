@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:57abe035e2865f5f3e3f2204d65ba31bdf8ff8b2 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:96f4c586d29726d58a17488d3f2d3f2c8c14e9a8 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -176,8 +176,9 @@ confidence を有効にして運用しているのでない限り、プロフィ
 
 recall の応答が `gate_fallback: true` を伴う場合 (伴わないときは欠落)、
 **全ての候補が品質ゲートを下回った**ため、空の結果の代わりにゲート未満の
-字句マッチを返したという意味です。これらの行は低信頼として扱ってください —
-識別子やハッシュの検索で、完全一致がクエリ文と意味的に遠い場合に典型的です。
+字句マッチを返したという意味です。これらの行は低信頼として扱ってください。
+これは識別子やハッシュの検索で典型的です — その完全一致は、それを見つけた
+クエリ文とは意味的に遠いからです。
 
 **この救済経路は confidence スコアリング有効時にしか存在しません。** 返される行に
 印を付けるのは `CPERSONA_CONFIDENCE_ENABLED` が有効なときだけ走る backfill なので、
