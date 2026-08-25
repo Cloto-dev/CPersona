@@ -36,6 +36,7 @@ stale.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -46,6 +47,12 @@ MARKER = re.compile(r"<!--\s*i18n-source:\s*(\S+)@blob:([0-9a-f]{40})\s*-->")
 LEGACY_MARKER = re.compile(r"<!--\s*i18n-source:\s*(\S+)@(?!blob:)([0-9a-f]{7,40})\s*-->")
 
 findings: list[tuple[Path, str]] = []
+# The same findings, in the shape a program needs: --json emits these. Human
+# output is a rendering of this list, never the other way round — a caller that
+# has to scrape ::error annotations is reading a display format, and display
+# formats change (colour, prefixes, wording) without anyone counting that as a
+# breaking change.
+machine_findings: list[dict] = []
 
 
 def blob_sha(path: Path) -> str:
@@ -54,8 +61,29 @@ def blob_sha(path: Path) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
+def record(rel: Path, en_rel: str, reason: str, translated_blob: str | None, current_blob: str) -> None:
+    """Add the machine-readable twin of the finding just appended.
+
+    `translated_blob` is the English content this page was translated from, and
+    it is the field an automated re-translation needs: with it the updater can
+    fetch that exact blob and diff it against the current file, which is what
+    makes a targeted edit possible instead of a full re-translation. It is None
+    when the page never recorded one.
+    """
+    machine_findings.append(
+        {
+            "translation": str(rel),
+            "english": en_rel,
+            "reason": reason,
+            "translated_blob": translated_blob,
+            "current_blob": current_blob,
+        }
+    )
+
+
 def main() -> int:
     strict = "--strict" in sys.argv
+    as_json = "--json" in sys.argv
     for ja in sorted((ROOT / "docs").glob("*.ja.md")):
         rel = ja.relative_to(ROOT)
         en_rel = str(rel).replace(".ja.md", ".md")
@@ -72,16 +100,19 @@ def main() -> int:
                     (rel, "carries the old commit-sha marker; re-stamp it as "
                           f"<!-- i18n-source: {en_rel}@blob:{blob_sha(en)} -->")
                 )
+                record(rel, en_rel, "legacy_marker", None, blob_sha(en))
             else:
                 findings.append(
                     (rel, "is missing its i18n-source marker (first line: "
                           f"<!-- i18n-source: {en_rel}@blob:{blob_sha(en)} -->)")
                 )
+                record(rel, en_rel, "missing_marker", None, blob_sha(en))
             continue
 
         marked_path, marked_sha = m.group(1), m.group(2)
         if marked_path != en_rel:
             findings.append((rel, f"marker names {marked_path}, expected {en_rel}"))
+            record(rel, en_rel, "wrong_source", marked_sha, blob_sha(en))
             continue
 
         current = blob_sha(en)
@@ -92,6 +123,15 @@ def main() -> int:
                  f"content is now blob:{current[:10]} — re-sync the translation "
                  "and re-stamp the marker")
             )
+            record(rel, en_rel, "stale", marked_sha, current)
+
+    if as_json:
+        # Exit code still carries the verdict under --strict, so a caller can
+        # branch on either. Findings go to stdout alone: annotations on stdout
+        # would corrupt the document.
+        json.dump({"stale": machine_findings}, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 1 if (findings and strict) else 0
 
     if findings:
         level = "error" if strict else "warning"
