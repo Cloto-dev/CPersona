@@ -80,7 +80,14 @@ _DIFF_FLOAT_PLACES = 6
 # changing it -- and it exists because an unrecognised name selected nothing and
 # the all-zero result read as a clean bill of health. Pinned in
 # tests/test_review_c_fixes.py.
-_KEYS_ADDED_SINCE_GOLDEN = {"repairable", "checks_run"}
+#
+# advisory_scope (bug-251): the degraded advisory now names what its
+# once-per-episode suppression is keyed on, because that state is per PROCESS and
+# a shared transport makes a process several sessions. Additive -- severity,
+# reason, evidence and the runbook this scenario recorded are unchanged, and the
+# recorded run is stdio, where the answer is "session" and nothing downgraded
+# differently. Pinned in tests/test_bug251_advisory_scope.py.
+_KEYS_ADDED_SINCE_GOLDEN = {"repairable", "checks_run", "advisory_scope"}
 
 
 # Values the golden DOES hold that a later version deliberately changed.

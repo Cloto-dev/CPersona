@@ -307,3 +307,29 @@ OAUTH_AUTHORIZATION_SERVERS = os.environ.get("CPERSONA_OAUTH_AUTHORIZATION_SERVE
 # back exactly the scope the resource server asked for, so this value is the
 # lever over scope design — an empty one gives it away.
 OAUTH_SCOPES = os.environ.get("CPERSONA_OAUTH_SCOPES", "cpersona:read cpersona:write")
+
+
+# Transport. Unlike everything above this is read at CALL time, not at import:
+# `main()` reads it after the ACL file, the preflight and the embedding client
+# are already up, and the tests that cover those paths set it with
+# `monkeypatch.setenv`. A module constant would freeze the import-time value and
+# make every one of them silently test the default.
+def transport() -> str:
+    """The configured transport name, unvalidated (``main`` rejects unknown ones)."""
+    return os.environ.get("CPERSONA_TRANSPORT", "stdio")
+
+
+def shared_transport() -> bool:
+    """True when ONE process serves SEVERAL client sessions.
+
+    The streamable-HTTP transport runs ``stateless=True``: a single process
+    answers every connected client and no session survives a request, so any
+    process-level "already told them" state is shared by callers that never saw
+    each other's responses (bug-251). Under stdio the process IS the session.
+
+    Deliberately not spelled `transport() == "streamable-http"` at the call
+    sites: this asks "is my process-level state shared", which happens to
+    coincide with "am I serving HTTP" only because the HTTP mode is stateless.
+    A sessionful HTTP mode would keep the second answer and change this one.
+    """
+    return transport() == "streamable-http"

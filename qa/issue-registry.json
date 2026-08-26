@@ -3657,12 +3657,13 @@
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
       "file": "cpersona/health.py",
-      "pattern": "_advisory_emitted",
+      "pattern": "bug-251",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-observability",
       "fix_sketch": "Key the once-per-episode suppression on something session-scoped rather than on a process global — e.g. pass a caller-supplied session/agent key into `maybe_advisory()` and keep a bounded `{key: episode_id}` map, or drop the suppression on the FAULT severity (the full template is ~1000 chars; an outage is rare) and keep the short form only for repeats within the same key. At minimum, do what no-persist does and disclose the scope in the payload (`\"advisory_scope\": \"process\"`) so a client can tell a first-notice from a reminder it never received.",
-      "note": "Deferred: per-session advisory suppression needs a session key at the recall seam; the CSC v0.8 session_key pattern is the likely shape. Found by the 2026-08-18 pre-2.5.5a1 review (CSC Task #723)."
+      "note": "Found by a pre-release review on 2026-08-18 and deferred: scoping the suppression per session looked like it needed a session identity at the recall seam, and there is none. Undeferred by scoping it to the transport instead — see fix_note.",
+      "fix_note": "A fault no longer downgrades to the short reminder while one process serves several sessions. config.shared_transport() reports that condition (the streamable-HTTP mode is stateless, so its process is not a session), and maybe_advisory() exempts the fault severity from the once-per-episode short form. hint keeps the downgrade on purpose: mode=none is permanent, so the same exemption would repeat a 650-character runbook on every recall forever, at exactly the deliberate keyword-only deployment the opt-out exists to leave alone. The payload now carries advisory_scope (process|session) so a shortened runbook discloses whose \"already told you\" state produced it, which is what the no-persist toggle does with its own blast radius. Reproduced before the fix through the real transport rather than argued from the code: two clients, one process, one outage, 1067 characters with the notify imperative for the first and 107 without it for the second. The regression test is killed by removing the exemption alone, and it dies on the assertion that names the defect (the second session was not told), so the new advisory_scope key is not what is holding it up. Per-session suppression remains out of reach and is documented as such: no session survives a request on this transport and the principal carries only a client id, so it needs a caller-supplied key; advisory_scope is the field that would start answering session, with no change of shape."
     },
     {
       "id": "bug-252",
