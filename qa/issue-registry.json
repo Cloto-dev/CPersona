@@ -180,7 +180,7 @@
     },
     {
       "id": "bug-014",
-      "summary": "(HIGH) check_health(fix=true) duplicate_content repair groups only by (agent_id, content) at checks.py:109/121, ignoring the project_id/channel axes of the idx_memories_dedup_content UNIQUE contract; two legitimately distinct memories that share content across different project_id/channel gamma-buckets are collapsed into one duplicate group and every row except the global MIN(id) is DELETEd, silently and permanently destroying valid cross-bucket rows (e.g. the same text under project_id='' and 'data-ops') on the recommended monthly maintenance path.",
+      "summary": "(HIGH) check_health(fix=true) duplicate_content repair groups only by (agent_id, content) at checks.py:109/121, ignoring the project_id/channel axes of the idx_memories_dedup_content UNIQUE contract; two legitimately distinct memories that share content across different project_id/channel gamma-buckets are collapsed into one duplicate group and every row except the global MIN(id) is DELETEd, silently and permanently destroying valid cross-bucket rows (e.g. the same text under project_id='' and 'acme-app') on the recommended monthly maintenance path.",
       "severity": "HIGH",
       "discovered": "2026-07-05T00:00:00Z",
       "version": "2.4.37",
@@ -261,7 +261,7 @@
     },
     {
       "id": "bug-019",
-      "summary": "(MEDIUM) auto_tool's _handler (_vendored_mcp_common/mcp_utils.py:127) gates on `if default is not None`, so a param spec with an explicit None default -- ('project_id', str, None), used by recall/recall_with_context/list_memories/list_episodes to mean 'omit -> no filter (all projects)' -- is indistinguishable from having no default and validate_str substitutes ''; an omitted project_id therefore reaches the handler as '' (gamma_clause -> `project_id = ''` = global pool only), making the documented all-projects branch unreachable via MCP and silently excluding every project-bucketed (e.g. data-ops) row from session-start recall.",
+      "summary": "(MEDIUM) auto_tool's _handler (_vendored_mcp_common/mcp_utils.py:127) gates on `if default is not None`, so a param spec with an explicit None default -- ('project_id', str, None), used by recall/recall_with_context/list_memories/list_episodes to mean 'omit -> no filter (all projects)' -- is indistinguishable from having no default and validate_str substitutes ''; an omitted project_id therefore reaches the handler as '' (gamma_clause -> `project_id = ''` = global pool only), making the documented all-projects branch unreachable via MCP and silently excluding every project-bucketed (e.g. acme-app) row from session-start recall.",
       "severity": "MEDIUM",
       "discovered": "2026-07-05T00:00:00Z",
       "version": "2.4.37",

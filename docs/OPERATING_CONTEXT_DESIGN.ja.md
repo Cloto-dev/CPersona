@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:bb47873ab0b7347b3861e1a4e7cddb5ee0f92d70 -->
+<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:e2d741baab28b4c54c304e242316d1b6d6ea3b61 -->
 
 # サーバー供給の運用コンテキスト (グローバル設定 + MCP instructions 配布)
 
@@ -90,13 +90,13 @@ context_revision = "2026-07-16.1" # operator-owned label, echoed in all surfaces
 summary = """
 CPersona operating context (rev 2026-07-16.1).
 agent_id: 'claude-code' for Claude Code sessions, 'agent.<name>' for kernel agents.
-project_id registry: "" (global), "data-ops". Pass "@auto" to resolve your default.
+project_id registry: "" (global), "acme-app". Pass "@auto" to resolve your default.
 recall: limit<=5 outside session-start; use exclude_contents for known content.
 Details: call get_operating_context.
 """
 
 [registry]
-project_ids = ["", "data-ops"]    # the valid project_id set
+project_ids = ["", "acme-app"]    # the valid project_id set
 enforce = "warn"                  # "off" | "warn" | "reject"
 
 [defaults]

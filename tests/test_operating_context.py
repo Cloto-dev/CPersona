@@ -19,15 +19,15 @@ context_revision = "2026-07-18.1"
 [instructions]
 summary = \"\"\"
 CPersona operating context (rev 2026-07-18.1).
-project_id registry: "" (global), "data-ops". Pass "@auto" to resolve your default.
+project_id registry: "" (global), "acme-app". Pass "@auto" to resolve your default.
 \"\"\"
 
 [registry]
-project_ids = ["", "data-ops"]
+project_ids = ["", "acme-app"]
 enforce = "warn"
 
 [defaults]
-"claude-code" = "data-ops"
+"claude-code" = "acme-app"
 "agent.global" = ""
 
 [[doctrine]]
@@ -70,7 +70,7 @@ def test_absent_file_is_fully_dormant(sidecar):
     state = operating_context.load_state()
     assert state["enabled"] and not state["present"] and state["parse_error"] is None
     # passthrough for every caller value — including the literal sentinel
-    for pid in (None, "", "data-ops", "unknown", "@auto"):
+    for pid in (None, "", "acme-app", "unknown", "@auto"):
         for write in (True, False):
             assert operating_context.check_project_id(pid, "claude-code", write) == (pid, None, None)
 
@@ -171,7 +171,7 @@ def _with_enforce(mode: str) -> str:
 @pytest.mark.parametrize("mode", ["off", "warn", "reject"])
 def test_known_empty_and_omitted_always_pass(sidecar, mode, write):
     sidecar(_with_enforce(mode))
-    for pid in (None, "", "data-ops"):
+    for pid in (None, "", "acme-app"):
         assert operating_context.check_project_id(pid, "a", write) == (pid, None, None)
 
 
@@ -205,13 +205,13 @@ def test_unknown_id_reject_mode_rejects_writes_only(sidecar):
 
 def test_auto_resolves_the_mapped_default(sidecar):
     sidecar()
-    assert operating_context.check_project_id("@auto", "claude-code", True) == ("data-ops", None, None)
+    assert operating_context.check_project_id("@auto", "claude-code", True) == ("acme-app", None, None)
 
 
 def test_auto_mapped_to_global_skips_registry_validation(sidecar):
     # "agent.global" maps to "", which is always valid even if "" were missing
     # from project_ids — assert via a registry without the empty entry.
-    sidecar(VALID_SIDECAR.replace('project_ids = ["", "data-ops"]', 'project_ids = ["data-ops"]'))
+    sidecar(VALID_SIDECAR.replace('project_ids = ["", "acme-app"]', 'project_ids = ["acme-app"]'))
     assert operating_context.check_project_id("@auto", "agent.global", True) == ("", None, None)
 
 
@@ -235,7 +235,7 @@ def test_auto_unmapped_reject_mode_is_an_error(sidecar):
 
 def test_auto_resolved_value_is_registry_validated(sidecar):
     # mapping points outside the registry -> validated like an explicit value
-    sidecar(VALID_SIDECAR.replace('"claude-code" = "data-ops"', '"claude-code" = "ghost"'))
+    sidecar(VALID_SIDECAR.replace('"claude-code" = "acme-app"', '"claude-code" = "ghost"'))
     resolved, warning, error = operating_context.check_project_id("@auto", "claude-code", False)
     assert resolved == "ghost" and "not in registry" in warning and error is None
 
@@ -244,8 +244,8 @@ def test_explicit_values_are_never_rewritten(sidecar):
     sidecar()
     # a caller with a [defaults] mapping still gets its explicit value untouched
     assert operating_context.check_project_id("", "claude-code", True) == ("", None, None)
-    resolved, _, _ = operating_context.check_project_id("data-ops", "claude-code", True)
-    assert resolved == "data-ops"
+    resolved, _, _ = operating_context.check_project_id("acme-app", "claude-code", True)
+    assert resolved == "acme-app"
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +267,8 @@ async def test_store_boundary_resolves_auto_and_echoes(sidecar, monkeypatch):
 
     monkeypatch.setattr(server, "do_store", fake_store)
     result = await server.do_store_boundary("claude-code", {"content": "x"}, project_id="@auto")
-    assert seen["project_id"] == "data-ops"
-    assert result["resolved_project_id"] == "data-ops"
+    assert seen["project_id"] == "acme-app"
+    assert result["resolved_project_id"] == "acme-app"
     assert "operating_context_warning" not in result
 
 
@@ -449,8 +449,8 @@ async def test_get_operating_context_preview_tier(sidecar):
     result = await do_get_operating_context()
     assert result["ok"] is True
     assert result["context_revision"] == "2026-07-18.1"
-    assert result["registry"] == {"project_ids": ["", "data-ops"], "enforce": "warn"}
-    assert result["defaults"] == {"claude-code": "data-ops", "agent.global": ""}
+    assert result["registry"] == {"project_ids": ["", "acme-app"], "enforce": "warn"}
+    assert result["defaults"] == {"claude-code": "acme-app", "agent.global": ""}
     assert result["doctrine_sections"] == ["agent-id-conventions", "recall-discipline"]
     # preview tier: section bodies are NOT in the no-args response
     assert "recall: limit<=5" not in str(result)
