@@ -291,3 +291,19 @@ RRF_THRESHOLD_FACTOR = _parse_float("CPERSONA_RRF_THRESHOLD_FACTOR", 0.5)
 # _apply_quality_gate to map cosine-scale min_score (0.2–1.0) into the RRF
 # score's tight range (0–~0.05).
 RRF_MAX_SCALE = 3.0 / (RRF_K + 1)
+
+# OAuth 2.0 protected resource discovery (RFC 9728, docs/OAUTH_DESIGN.md §7).
+# Discovery only: nothing here verifies a token. The metadata document and the
+# 401's resource_metadata parameter are what let a conformant client find the
+# authorization server it should talk to; without them the client finds nothing
+# and falls through to asking a human to type in a client id.
+#
+# The feature is off unless OAUTH_RESOURCE is non-empty AND at least one
+# authorization server is listed. Off means byte-identical responses to today.
+OAUTH_RESOURCE = os.environ.get("CPERSONA_OAUTH_RESOURCE", "")
+# Whitespace- or comma-separated issuer URLs.
+OAUTH_AUTHORIZATION_SERVERS = os.environ.get("CPERSONA_OAUTH_AUTHORIZATION_SERVERS", "")
+# Advertised on the 401. Measured (docs/OAUTH_DESIGN.md §2): the client sends
+# back exactly the scope the resource server asked for, so this value is the
+# lever over scope design — an empty one gives it away.
+OAUTH_SCOPES = os.environ.get("CPERSONA_OAUTH_SCOPES", "cpersona:read cpersona:write")

@@ -25,9 +25,12 @@ import hmac
 import ipaddress
 import logging
 import os
+from typing import NamedTuple
+from urllib.parse import urlparse
 
 from mcp.server.stdio import stdio_server
 from mcp.types import ToolAnnotations
+from pydantic import AnyHttpUrl, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from cpersona import acl
@@ -1634,6 +1637,110 @@ def _peer_is_remote(peer: str) -> bool:
     return not address.is_loopback
 
 
+class _OAuthDiscovery(NamedTuple):
+    """Resolved RFC 9728 discovery configuration (docs/OAUTH_DESIGN.md §7).
+
+    Discovery only. Nothing in this tuple verifies a token; the audience check
+    the specification requires (§1.3) belongs to the half that is not built.
+    """
+
+    resource: AnyHttpUrl
+    authorization_servers: list[AnyHttpUrl]
+    scopes: list[str]
+    #: Exact request path the metadata document is served at. Matched
+    #: exactly, never as a prefix — see BearerTokenMiddleware.__call__.
+    metadata_path: str
+    #: The full WWW-Authenticate value for a 401 while discovery is on.
+    challenge: str
+
+
+def _scope_tokens(raw: str) -> list[str]:
+    """Split a configured scope string, dropping anything that is not a scope.
+
+    RFC 6749 §3.3 defines a scope token as printable ASCII excluding the double
+    quote and the backslash. That is not pedantry here: this value is
+    interpolated into a quoted WWW-Authenticate parameter, so a quote arriving
+    from configuration would end the parameter early and hand the client a
+    malformed challenge — the one header discovery depends on. Filtering at the
+    boundary keeps a configuration typo from becoming a protocol error, and
+    warns rather than dropping silently.
+    """
+    kept, rejected = [], []
+    for token in raw.replace(",", " ").split():
+        if all("\x21" <= ch <= "\x7e" and ch not in '"\\' for ch in token):
+            kept.append(token)
+        else:
+            rejected.append(token)
+    if rejected:
+        logger.warning(
+            "ignoring %d scope value(s) that are not RFC 6749 scope tokens: %r",
+            len(rejected),
+            rejected,
+        )
+    return kept
+
+
+def _oauth_discovery() -> "_OAuthDiscovery | None":
+    """Resolve the discovery configuration, or None when the feature is off.
+
+    Off is the default and off must be indistinguishable from the server that
+    has never heard of OAuth: no route, no pass-through, and a 401 carrying the
+    bare ``Bearer`` challenge it carries today. Both halves of the switch are
+    required — a resource URI with no authorization server would publish a
+    metadata document whose one mandatory field (RFC 9728 §2,
+    ``authorization_servers``) is empty, which is worse than publishing
+    nothing.
+
+    A malformed URL warns and disables rather than raising. This mirrors the
+    bug-133 handling of malformed numeric settings: a typo in an additive,
+    optional setting must not stop the server from serving the callers that
+    never asked for it. The warning is the part that keeps it from being a
+    silent failure.
+    """
+    resource = (config.OAUTH_RESOURCE or "").strip()
+    if not resource:
+        return None
+    # Whitespace or comma, so an operator can write either form.
+    raw_servers = (config.OAUTH_AUTHORIZATION_SERVERS or "").replace(",", " ").split()
+    if not raw_servers:
+        logger.warning(
+            "CPERSONA_OAUTH_RESOURCE is set but CPERSONA_OAUTH_AUTHORIZATION_SERVERS is "
+            "empty; protected resource metadata is disabled (RFC 9728 requires at least "
+            "one authorization server)."
+        )
+        return None
+    from mcp.server.auth.routes import build_resource_metadata_url
+
+    try:
+        resource_url = AnyHttpUrl(resource)
+        authorization_servers = [AnyHttpUrl(s) for s in raw_servers]
+        metadata_url = build_resource_metadata_url(resource_url)
+    except (ValidationError, ValueError) as exc:
+        logger.warning(
+            "invalid OAuth discovery configuration (resource=%r, authorization_servers=%r): "
+            "%s; protected resource metadata is disabled",
+            resource,
+            config.OAUTH_AUTHORIZATION_SERVERS,
+            exc,
+        )
+        return None
+
+    scopes = _scope_tokens(config.OAUTH_SCOPES or "")
+    challenge = f'Bearer resource_metadata="{metadata_url}"'
+    if scopes:
+        # Measured (docs/OAUTH_DESIGN.md §2): the client adopts the scope the
+        # 401 advertises, verbatim. Dropping this parameter hands the scope
+        # decision to whatever the client happens to guess.
+        challenge += f', scope="{" ".join(scopes)}"'
+    return _OAuthDiscovery(
+        resource=resource_url,
+        authorization_servers=authorization_servers,
+        scopes=scopes,
+        metadata_path=urlparse(str(metadata_url)).path,
+        challenge=challenge,
+    )
+
+
 class BearerTokenMiddleware:
     """Simple Bearer token authentication middleware.
 
@@ -1641,13 +1748,62 @@ class BearerTokenMiddleware:
     replica.
     """
 
-    def __init__(self, app, auth_token: str = "", acl_config: "acl.AclConfig | None" = None):
+    def __init__(
+        self,
+        app,
+        auth_token: str = "",
+        acl_config: "acl.AclConfig | None" = None,
+        oauth: "_OAuthDiscovery | None" = None,
+    ):
         self.app = app
         self.auth_token = auth_token
         # ACL mode (docs/ACL_DESIGN.md §5.1): token → Principal via the
         # identity seam; auth_token is not consulted while this is set (D3).
         self.acl_config = acl_config
+        # RFC 9728 discovery, or None when the feature is off. Resolved once by
+        # _build_http_app rather than per request: a malformed setting then
+        # costs one warning at startup instead of a 500 on every arrival.
+        self.oauth = oauth
         self._exposure_warned = False
+
+    def _unauthorized(self, scope, receive, send):
+        """The 401 both credential modes return, with one challenge builder.
+
+        The two modes had the header spelled out separately, so a change to one
+        was a change to one. Discovery lives or dies on this header (RFC 9728
+        §5.1 — it is one of the two ways a client can find the metadata), and a
+        client that authenticates by static token would have been left with the
+        bare challenge while the ACL path advertised discovery. One builder,
+        both callers.
+        """
+        challenge = self.oauth.challenge if self.oauth is not None else "Bearer"
+        response = JSONResponse(
+            {"error": "unauthorized"},
+            status_code=401,
+            headers={"WWW-Authenticate": challenge},
+        )
+        return response(scope, receive, send)
+
+    def _is_public_metadata_request(self, scope) -> bool:
+        """Is this the one unauthenticated request the server owes an answer?
+
+        Protected resource metadata is a public document by construction: a
+        client that cannot read it without a token cannot learn where to get a
+        token, which is precisely today's failure. So this path — and only this
+        path — is exempt from the credential check.
+
+        Exact match, never a prefix. ``startswith`` would exempt
+        ``/.well-known/oauth-protected-resource/mcp/../../mcp`` and anything
+        else a caller can hang off the end of that string, turning one public
+        document into an unauthenticated subtree. Reads only, too: the document
+        is served by GET, and a POST to that path has no business skipping
+        authentication.
+        """
+        if self.oauth is None:
+            return False
+        if scope.get("path") != self.oauth.metadata_path:
+            return False
+        return scope.get("method") in ("GET", "HEAD", "OPTIONS")
 
     def _warn_once_if_remotely_reached(self, request) -> None:
         """Report observed reachability while running without authentication.
@@ -1711,6 +1867,13 @@ class BearerTokenMiddleware:
                 return
             await self.app(scope, receive, send)
             return
+        if self._is_public_metadata_request(scope):
+            # RFC 9728 metadata, and nothing else, is served without
+            # credentials. Placed ahead of both credential modes because the
+            # exemption has to hold in either; placed behind nothing else,
+            # because every other path below must stay refused.
+            await self.app(scope, receive, send)
+            return
         request = Request(scope, receive)
         if request.method == "OPTIONS":
             await self.app(scope, receive, send)
@@ -1726,12 +1889,7 @@ class BearerTokenMiddleware:
             token = header[7:] if header[:7].lower() == "bearer " else ""
             principal = acl.resolve_token(self.acl_config, token)
             if principal is None:
-                response = JSONResponse(
-                    {"error": "unauthorized"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-                await response(scope, receive, send)
+                await self._unauthorized(scope, receive, send)
                 return
             ctx_token = acl.set_principal(principal)
             try:
@@ -1752,12 +1910,7 @@ class BearerTokenMiddleware:
             # and a header a remote caller controls must never turn a 401
             # into a 500 (bug-259).
             if not token or not hmac.compare_digest(token.encode("utf-8"), self.auth_token.encode("utf-8")):
-                response = JSONResponse(
-                    {"error": "unauthorized"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-                await response(scope, receive, send)
+                await self._unauthorized(scope, receive, send)
                 return
         await self.app(scope, receive, send)
 
@@ -1870,8 +2023,29 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
     from starlette.middleware.cors import CORSMiddleware
     from starlette.routing import Mount
 
+    oauth = _oauth_discovery()
+    routes = [Mount("/mcp", app=mcp_endpoint), Mount("/", app=mcp_endpoint)]
+    if oauth is not None:
+        # RFC 9728 (docs/OAUTH_DESIGN.md §7). The SDK builds the route and the
+        # document; writing either by hand would be a second implementation of
+        # a format whose whole value is that clients already parse it.
+        #
+        # Ahead of the mounts, and it has to be: Mount("/") matches every path,
+        # so a metadata route registered after it is never reached. Off (the
+        # default) the list is what it has always been.
+        from mcp.server.auth.routes import create_protected_resource_routes
+
+        routes = (
+            create_protected_resource_routes(
+                resource_url=oauth.resource,
+                authorization_servers=oauth.authorization_servers,
+                scopes_supported=oauth.scopes or None,
+            )
+            + routes
+        )
+
     return Starlette(
-        routes=[Mount("/mcp", app=mcp_endpoint), Mount("/", app=mcp_endpoint)],
+        routes=routes,
         middleware=[
             Middleware(
                 CORSMiddleware,
@@ -1886,7 +2060,12 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
                 ],
                 expose_headers=["Mcp-Session-Id"],
             ),
-            Middleware(BearerTokenMiddleware, auth_token=auth_token, acl_config=acl_config),
+            Middleware(
+                BearerTokenMiddleware,
+                auth_token=auth_token,
+                acl_config=acl_config,
+                oauth=oauth,
+            ),
         ],
         lifespan=lifespan,
     )
