@@ -971,3 +971,109 @@ async def test_online_backup_carries_the_database_and_leaves_the_sidecar(
         else:
             with open(sidecar, "wb") as handle:
                 handle.write(previous)
+
+
+# --------------------------------------------------------------------------------------
+# docs/behavior-contracts.md §5, "Dedup semantics: skip, not upsert":
+#
+#   "`store` deduplicates two ways, and the two are scoped differently… This probe
+#    spans agent and project but **not `channel`**: the same `msg_id` written to a
+#    second channel is skipped against the first channel's row."
+#
+# The page used to describe one dedup scope covering both probes. It does not: a
+# caller who separates conversations by channel — the documented use of the axis —
+# loses a write to a channel it never looked at, and gets `skipped` rather than an
+# error, so nothing surfaces at the call site. The asymmetry between the two probes
+# is the whole content of the claim, which is why both halves are asserted here: a
+# test that only pinned the msg_id half would stay green if content dedup quietly
+# widened to match it.
+#
+# The assertion is on the echoed id, not on `result` alone, and that distinction is
+# load-bearing. Two layers refuse this write: the probe above, and a unique index on
+# (agent_id, project_id, msg_id) that also omits channel. Channel-scoping the probe
+# still yields `skipped` — the index catches what the probe let past — so a test
+# reading only `result` passes over the change it exists to catch. Only the probe
+# echoes the existing row's id, which is why the page mentions the echo and why this
+# test asserts it.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_msg_id_dedup_ignores_channel_while_content_dedup_respects_it(clean_db):
+    """One probe crosses the channel axis and the other does not."""
+    first = await memory_handlers.do_store(
+        AGENT_A, {"id": "shared-id", "content": "the first channel's text"}, channel="chan-a"
+    )
+    assert first["result"] == "stored", f"seed write did not land: {first}"
+
+    crossed = await memory_handlers.do_store(
+        AGENT_A, {"id": "shared-id", "content": "different text entirely"}, channel="chan-b"
+    )
+    assert crossed["result"] == "skipped", (
+        "behavior-contracts.md §5 states the msg_id probe spans agent and project but "
+        f"not channel, so this second-channel write is documented as skipped: {crossed}. "
+        "If msg_id dedup is now channel-scoped, the page has to say so — callers are "
+        "currently told to expect the write to be dropped."
+    )
+    assert crossed.get("id") == first["id"], (
+        "the same page describes the skip as `echoing the existing row's id`, which only "
+        f"the msg_id probe does: {crossed}. A skip that carries no id came from the unique "
+        "index instead, meaning the probe no longer spans channels — the page's account of "
+        "which layer answers, and of what the caller gets back, is then wrong."
+    )
+
+    same_text = "content that repeats across channels"
+    landed = await memory_handlers.do_store(AGENT_A, {"content": same_text}, channel="chan-a")
+    assert landed["result"] == "stored", f"seed write did not land: {landed}"
+    other_channel = await memory_handlers.do_store(
+        AGENT_A, {"content": same_text}, channel="chan-b"
+    )
+    assert other_channel["result"] == "stored", (
+        "the same page scopes content dedup to agent, project *and* channel, so identical "
+        f"content in a second channel is documented as a new row: {other_channel}. The two "
+        "probes having the same scope is exactly the reading §5 was rewritten to correct."
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/faq.md, "How do I notice the embedding server died?":
+#
+#   "a `store` that writes a row reports `embedded: true|false` … Do not poll
+#    `embedded` alone: a `skipped` or `rejected` store omits the key, so re-storing
+#    content the corpus already has tells you nothing about the encoder."
+#
+# The page used to present `embedded` as a field of every store response, which makes
+# the obvious health probe — store a fixed string on a timer and watch the flag —
+# read as working while reporting nothing at all: after the first call the string is
+# in the corpus, every later store is `skipped`, and the absent key is not `false`.
+# A monitor that cannot go red is worse than no monitor, so the corrected sentence is
+# load-bearing for anyone following the page's own advice.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_embedded_is_reported_only_by_the_store_that_wrote_the_row(
+    clean_db, fake_embedding_client
+):
+    """Only a `stored` outcome carries the key the FAQ tells you not to poll."""
+    wrote = await memory_handlers.do_store(AGENT_A, {"content": "a line worth encoding"})
+    assert wrote["result"] == "stored", f"seed write did not land: {wrote}"
+    assert "embedded" in wrote, (
+        "docs/faq.md offers `embedded` as the per-write signal that the encoder ran, so a "
+        f"store that writes a row has to carry it: {wrote}"
+    )
+
+    repeated = await memory_handlers.do_store(AGENT_A, {"content": "a line worth encoding"})
+    assert repeated["result"] == "skipped", f"expected the second write to dedup: {repeated}"
+    assert "embedded" not in repeated, (
+        "the FAQ warns that a skipped store omits `embedded`, which is why polling it with "
+        f"a fixed string reports nothing: {repeated}. If the key is present now, say what "
+        "it means for a write that never happened — the page currently tells readers the "
+        "absence is the point."
+    )
+
+    refused = await memory_handlers.do_store(AGENT_A, {"content": ""})
+    assert refused["result"] == "rejected", f"expected empty content to be refused: {refused}"
+    assert "embedded" not in refused, (
+        f"the FAQ names `rejected` alongside `skipped` as omitting the key: {refused}"
+    )
