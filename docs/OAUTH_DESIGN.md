@@ -1,9 +1,14 @@
 # OAuth support: three routes, measured
 
-**Status: adopted, and not implemented.** Nothing here describes behaviour the server has
-today. Route (b) — stay a resource server, delegate issuance to an external identity provider —
-was chosen, together with shipping the route-independent half first (§7). One question is
-deliberately still open, and §11 says which.
+**Status: adopted. The discovery half is built; nothing else is.** Route (b) — stay a resource
+server, delegate issuance to an external identity provider — was chosen, together with shipping
+the route-independent half first (§7). That half now exists: the metadata document is served and
+the 401 points at it, both off unless configured.
+
+Everything about *verifying* a token is still unbuilt, §5 included. Read that plainly rather than
+optimistically: a client can now discover where to obtain a token, and will still be refused when
+it arrives with one. Turning discovery on before the other half exists advertises a door that does
+not open yet. One question is deliberately still open, and §11 says which.
 
 The rejected routes are kept rather than deleted. A design record that lists only the choice
 leaves the next reader to rediscover why the other two were worse, and one of them looks cheapest
