@@ -1,7 +1,7 @@
 """Regression tests for the 2.5.0b1 post-release audit fixes (bug-114..122, → 2.5.0b2).
 
-Covers the b1 comprehensive-audit confirmed defects (CSC Task #243/#244,
-report: .agents-artifacts/reviews/b1q-audit-report-2026-07-16.md):
+Covers the b1 comprehensive-audit confirmed defects
+(report: .agents-artifacts/reviews/b1q-audit-report-2026-07-16.md):
 naive-timestamp UTC anchoring (bug-114), episode-penalty ranking no-op under
 default config (bug-115), mixed-format orphan-episode false positives
 (bug-116), preview truncation of ref-less injected rows (bug-117), FTS-gated

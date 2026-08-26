@@ -213,7 +213,7 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
                 )
             )[0][0]
 
-    # 2.5.2b1 (Task #291 item b1-3): ``status`` is the only verdict. The legacy
+    # 2.5.2b1: ``status`` is the only verdict. The legacy
     # ``healthy`` boolean was ``len(issues) == 0``, which reported False for an
     # info-only database — an observation, not a defect (the bug-009 lesson) —
     # while ``status`` already said 'healthy' for the same run. Two verdicts
@@ -315,7 +315,7 @@ async def do_migrate_channel_axis(
 ) -> dict:
     """Re-channel bridge-type memories to their concrete channel (knob2 v2).
 
-    Prepares the knob2 v2 default flip (Goal #120). Under the historical default
+    Prepares the knob2 v2 default flip. Under the historical default
     the kernel filed PerUser memories under the bridge *type* ("discord") rather
     than the concrete channel, so once recall starts filtering by the concrete
     channel those memories can no longer be matched. This tool recovers the

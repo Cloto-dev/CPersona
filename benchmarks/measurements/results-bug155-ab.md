@@ -1,4 +1,4 @@
-# Results: bug-155 cosine-backfill A/B (CSC #374)
+# Results: bug-155 cosine-backfill A/B
 
 Companion to `prereg-bug155-ab.md` (incl. Amendment 1). All numbers below are
 the pre-registered metrics, quoted in the registered order, computed over the

@@ -1,4 +1,4 @@
-"""Regression tests for the v2.4.39 audit line (Goal #157).
+"""Regression tests for the v2.4.39 audit line.
 
 Covers the fixes filed from the 2.4.39 comprehensive audit (qa/issue-registry.json
 bug-040..060, the 18 adopted fixes). Each test pins one fixed defect so

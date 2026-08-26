@@ -189,7 +189,7 @@ def test_quality_gate_profile_sentinel():
 
 
 # ============================================================
-# v2.4.26/27 (Goal #132) — calibrated gate, signal-matched per branch
+# v2.4.26/27 — calibrated gate, signal-matched per branch
 # ============================================================
 
 

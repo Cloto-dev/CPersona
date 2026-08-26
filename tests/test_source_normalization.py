@@ -1,4 +1,4 @@
-"""Source-contract normalization (2.5.2, Task #282 items 1 + 1b).
+"""Source-contract normalization (2.5.2).
 
 Three surfaces move together on the canonical ``source = {type,id,name}``
 contract:
@@ -374,7 +374,7 @@ async def test_fix_reports_locked_rows_it_cannot_touch(clean_db):
 
 
 # ---------------------------------------------------------------------------
-# 2.5.2b1 (Task #291 item b1-2): one definition of the enum, three surfaces
+# 2.5.2b1: one definition of the enum, three surfaces
 # ---------------------------------------------------------------------------
 
 

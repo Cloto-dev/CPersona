@@ -1,4 +1,4 @@
-"""Regression tests for the 3rd comprehensive audit round (Goal #157, bug-076..084).
+"""Regression tests for the 3rd comprehensive audit round (bug-076..084).
 
 Covers the 9 fixes adopted from the round-3 audit of the frozen 2.4.39 baseline
 (commit 125b33b): 5 new defects (bug-076..080) and 4 residuals of earlier 2.4.39

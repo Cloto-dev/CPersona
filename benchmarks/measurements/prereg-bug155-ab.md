@@ -1,4 +1,4 @@
-# Pre-registration: bug-155 cosine-backfill A/B on LMEB (CSC Task #374)
+# Pre-registration: bug-155 cosine-backfill A/B on LMEB
 
 Registered BEFORE any A/B run was executed or inspected. The comparison basis
 below — conditions, metrics, aggregation, and noise controls — is fixed by this

@@ -1,4 +1,4 @@
-"""Task #707: a staleness recalibration must leave evidence of what it replaced.
+"""A staleness recalibration must leave evidence of what it replaced.
 
 Two production boots showed the same hole from two sides:
 
@@ -215,6 +215,8 @@ async def test_backup_failure_does_not_block_the_recalibration(monkeypatch, capl
     assert status["action"] == "recalibrated_scoring", status
     assert status["sidecar_backup"] is None
     assert _backup_files() == []
-    assert any("could not back up" in r.message for r in caplog.records)
+    # Case-insensitive: the assertion is about what the operator is told, not
+    # about where the sentence happens to start.
+    assert any("could not back up" in r.message.lower() for r in caplog.records)
     # The recalibration still happened and was persisted.
     assert admin_handlers._load_calibration_state()["scoring_version"] == SCORING_VERSION

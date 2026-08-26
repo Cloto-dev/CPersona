@@ -78,7 +78,7 @@ class MemoryTaskQueue:
     async def get_status(self) -> dict:
         """Get queue status for monitoring."""
         # Queue depth is a global system resource, not agent-partitioned — the typed
-        # no-filter helper call replaces the old waiver comment (Task #180).
+        # no-filter helper call replaces the old waiver comment.
         iso = isolation_where(agent_id=None)
         async with connection() as db:
             rows = await db.execute_fetchall(f"SELECT COUNT(*) FROM pending_memory_tasks{iso.where}")
