@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:291b6affa343fc8e36800d46236f6e3fc214bb22 -->
+<!-- i18n-source: docs/operations.md@blob:6b7dea5b31c0eb0f522276a34c4c370076724d2d -->
 
 # 運用 Runbook
 
@@ -74,11 +74,16 @@
 
 1. **recall 応答の `advisory`** (v2.4.33 以降、主たる検知面)。状態機械が実際の
    埋め込み失敗を観測し、劣化した recall には
-   `advisory = {degraded, severity, reason, evidence, runbook}` が付きます —
-   「ベクトル層が落ちている。FTS + keyword のみで応答中」という意味です。
-   このフィールドをユーザーに提示し、その `runbook` に従うようエージェントに
-   指示してください (通常は「埋め込みサーバーを起動または向け直してから
-   再度 recall する」)。`CPERSONA_DEGRADED_ADVISORY=false` での無効化は、
+   `advisory = {degraded, severity, reason, evidence, runbook, advisory_scope}`
+   が付きます — 「ベクトル層が落ちている。FTS + keyword のみで応答中」という
+   意味です。このフィールドをユーザーに提示し、その `runbook` に従うよう
+   エージェントに指示してください (通常は「埋め込みサーバーを起動または
+   向け直してから再度 recall する」)。runbook が短縮されている場合は「もう
+   伝えた」という意味ですが、その「誰に」を述べるのが `advisory_scope` です —
+   プロセスが自分専用なら `session`、HTTP トランスポートでは状態がサーバー全体の
+   ものなので `process` になります。共有サーバーでは、fault は自分のセッションが
+   見たと仮定せず完全版 runbook を繰り返します (bug-251)。
+   `CPERSONA_DEGRADED_ADVISORY=false` での無効化は、
    意図的に keyword のみで運用する場合に限ってください。設計:
    [DEGRADED_ADVISORY_DESIGN](DEGRADED_ADVISORY_DESIGN.md)。
 2. **store 応答の `embedded`。** 全ての書き込みが、自分の埋め込みが永続化された

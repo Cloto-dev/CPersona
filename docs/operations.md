@@ -68,10 +68,14 @@ exist, and the calling agent should be instructed to watch the first:
 
 1. **`advisory` on recall responses** (v2.4.33+, the primary surface). A
    state machine observes real embedding failures, and degraded recalls carry
-   `advisory = {degraded, severity, reason, evidence, runbook}` — "the vector
-   layer is down; serving FTS + keyword only". Instruct your agent to surface
-   this field to the user and follow its `runbook` (usually: start or repoint
-   the embedding server, then recall again). Opt out with
+   `advisory = {degraded, severity, reason, evidence, runbook, advisory_scope}`
+   — "the vector layer is down; serving FTS + keyword only". Instruct your agent
+   to surface this field to the user and follow its `runbook` (usually: start or
+   repoint the embedding server, then recall again). A shortened runbook means
+   "you were already told"; `advisory_scope` says who "you" was — `session` when
+   the process is yours alone, `process` on the HTTP transport, where the state
+   is the whole server's. On a shared server a fault repeats its full runbook
+   rather than assume your session saw it (bug-251). Opt out with
    `CPERSONA_DEGRADED_ADVISORY=false` only for a deliberate keyword-only
    deployment. Design: [DEGRADED_ADVISORY_DESIGN](DEGRADED_ADVISORY_DESIGN.md).
 2. **`embedded` on store responses.** Every write reports whether its
