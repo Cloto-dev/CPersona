@@ -631,7 +631,7 @@ async def test_profile_injection_needs_fifty_rows_counting_episodes(
 # `fix=true` is the one argument in this API that rewrites rows, and this sentence is the
 # only thing telling an operator that one of the checks it runs will not act on what it
 # reports. The failure it guards against is silent and destructive in the direction that
-# matters: a well-meant "repair" that folds `cycia-mc` into `cyciamc` moves rows across a
+# matters: a well-meant "repair" that folds `data-ops` into `dataops` moves rows across a
 # hard γ-isolation boundary, and the operator's evidence that it did not happen is a
 # sentence on a page.
 #
@@ -646,7 +646,7 @@ async def test_axis_hygiene_reports_naming_drift_without_repairing_it(clean_db):
     """check_health(fix=True) reports axis drift and leaves the spellings alone."""
     from cpersona import maintenance_handlers
 
-    for project_id in ("cycia-mc", "cyciamc"):
+    for project_id in ("data-ops", "dataops"):
         await clean_db.execute(
             "INSERT INTO memories (agent_id, content, timestamp, created_at, project_id) "
             "VALUES (?, ?, '', '2026-08-20 00:00:00', ?)",
@@ -668,7 +668,7 @@ async def test_axis_hygiene_reports_naming_drift_without_repairing_it(clean_db):
     rows = await clean_db.execute_fetchall(
         "SELECT project_id FROM memories WHERE agent_id = ? ORDER BY project_id", (AGENT_A,)
     )
-    assert [r[0] for r in rows] == ["cycia-mc", "cyciamc"], (
+    assert [r[0] for r in rows] == ["data-ops", "dataops"], (
         "check_health(fix=True) rewrote a project_id. tools.md promises the operator "
         "that axis hygiene is report-only because canonicalising a spelling is their "
         "call — and project_id is a hard isolation axis, so folding one bucket into "

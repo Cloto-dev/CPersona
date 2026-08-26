@@ -79,13 +79,13 @@ context_revision = "2026-07-16.1" # operator-owned label, echoed in all surfaces
 summary = """
 CPersona operating context (rev 2026-07-16.1).
 agent_id: 'claude-code' for Claude Code sessions, 'agent.<name>' for kernel agents.
-project_id registry: "" (global), "cycia-mc". Pass "@auto" to resolve your default.
+project_id registry: "" (global), "acme-app". Pass "@auto" to resolve your default.
 recall: limit<=5 outside session-start; use exclude_contents for known content.
 Details: call get_operating_context.
 """
 
 [registry]
-project_ids = ["", "cycia-mc"]    # the valid project_id set
+project_ids = ["", "acme-app"]    # the valid project_id set
 enforce = "warn"                  # "off" | "warn" | "reject"
 
 [defaults]

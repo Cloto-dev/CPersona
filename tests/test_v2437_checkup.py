@@ -207,8 +207,8 @@ async def test_sqlite_integrity_ok_on_healthy_db():
 @pytest.mark.asyncio
 async def test_axis_hygiene_clusters_normalized_equal_project_ids():
     db = await get_db()
-    await _insert(db, content="row one", project_id="cycia-mc-audit")
-    await _insert(db, content="row two", project_id="cyciamc-audit")
+    await _insert(db, content="row one", project_id="data-ops-audit")
+    await _insert(db, content="row two", project_id="dataops-audit")
     await _insert(db, content="row three", project_id="unrelated")
 
     issues = await checks.check_axis_hygiene(db, "", fix=False)
@@ -216,7 +216,7 @@ async def test_axis_hygiene_clusters_normalized_equal_project_ids():
     clusters = issues[0]["clusters"]
     assert len(clusters) == 1
     ids = {m["project_id"] for m in clusters[0]}
-    assert ids == {"cycia-mc-audit", "cyciamc-audit"}  # 'unrelated' not flagged
+    assert ids == {"data-ops-audit", "dataops-audit"}  # 'unrelated' not flagged
 
 
 @pytest.mark.asyncio
