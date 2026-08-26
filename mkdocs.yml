@@ -59,6 +59,7 @@ plugins:
             # header. A nav label is translated here; the page itself is
             # translated by adding <page>.ja.md.
             ACL / per-client capabilities: ACL / クライアント別ケーパビリティ
+            OAuth support: OAuth 対応
             Degraded-mode advisory: 縮退モードの通知
             Operating context: 運用コンテキスト
             Recall preview tier: recall プレビュー階層
@@ -90,6 +91,7 @@ nav:
   - Quality Assurance: quality-assurance.md
   - Design documents:
       - ACL / per-client capabilities: ACL_DESIGN.md
+      - OAuth support: OAUTH_DESIGN.md
       - Degraded-mode advisory: DEGRADED_ADVISORY_DESIGN.md
       - Operating context: OPERATING_CONTEXT_DESIGN.md
       - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
