@@ -68,6 +68,62 @@ def test_load_valid_config(tmp_path):
     assert sorted(cid for _, cid in config.token_entries) == ["assistant-a", "reader"]
 
 
+def test_explicit_null_token_declares_a_row_no_caller_can_present(tmp_path):
+    """A grant row for a principal some resolver asserts (§4, §5.4 generalised).
+
+    Both halves are the point. The row must carry grants, and it must
+    contribute no token entry — a row that quietly became presentable would
+    hand out a live credential nobody meant to issue, which is exactly what
+    writing a placeholder token to get the grants in would have done.
+    """
+    resolver_asserted = "oauth:https://idp.example:web"
+    payload = _basic_payload()
+    payload["clients"].append(
+        {"client_id": resolver_asserted, "token": None, "grants": {"alpha": "read"}}
+    )
+    config = _load(tmp_path, payload)
+
+    assert config.grants_by_client[resolver_asserted]["alpha"] == acl.PERM_READ
+    assert all(cid != resolver_asserted for _, cid in config.token_entries), (
+        "a row declared credential-less must be unreachable by presenting one"
+    )
+
+
+def test_omitting_the_token_key_is_not_that_declaration(tmp_path):
+    """Forgetting a token still fails at load; saying null does not.
+
+    The two are one keystroke apart in the file and opposite in consequence,
+    so the loader is pinned on the difference rather than on either alone: a
+    static client whose token was forgotten must fail loudly (§7), while a
+    principal that genuinely arrives another way must be writable.
+    """
+    omitted = _basic_payload()
+    omitted["clients"][0].pop("token")
+    with pytest.raises(acl.AclConfigError):
+        _load(tmp_path, omitted)
+
+    declared = _basic_payload()
+    declared["clients"][0]["token"] = None
+    config = _load(tmp_path, declared)
+    assert config.grants_by_client["assistant-a"]["alpha"] == acl.PERM_WRITE
+    assert all(cid != "assistant-a" for _, cid in config.token_entries)
+
+
+def test_the_stdio_principal_may_state_its_absence_explicitly(tmp_path):
+    """"local" carries no credential either way (§5.4); null spells it out.
+
+    The reserved principal was the first row that had grants and no token, and
+    it said so by leaving the key out. Now that null means the same thing, the
+    two spellings must agree — a non-null token here is still refused, which
+    the defect table above pins.
+    """
+    payload = _basic_payload()
+    payload["clients"][2]["token"] = None
+    config = _load(tmp_path, payload)
+    assert config.grants_by_client[acl.LOCAL_CLIENT_ID]["alpha"] == acl.PERM_READ
+    assert sorted(cid for _, cid in config.token_entries) == ["assistant-a", "reader"]
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -83,6 +139,7 @@ def test_load_valid_config(tmp_path):
         lambda p: p["clients"][2].update({"token": "x"}),                      # token on "local"
         lambda p: p["clients"][0]["grants"].update({"": "read"}),              # empty grant key
         lambda p: p["clients"][0].update({"token": "pässwort"}),               # non-ASCII token (latin-1 header decode would mangle it)
+        lambda p: p["clients"][0].update({"token": 5}),                       # non-string token (null is the only non-string form)
     ],
 )
 def test_load_rejects_defects(tmp_path, mutate):
@@ -724,7 +781,8 @@ async def test_stdio_refuses_env_activation_mismatch(tmp_path, monkeypatch):
 # 9. Denials say why (§5.3, extended): the response is the only channel a
 #    caller has. "agent_id": "*" shows the consequence of an unscoped call, not
 #    its cause — a caller would have to already know that "*" means "you did
-#    not scope this" to act on it. These three cases split by who can fix them.
+#    not scope this" to act on it. These cases split by who can fix them —
+#    the caller, or nobody but the operator.
 # ---------------------------------------------------------------------------
 
 
@@ -855,6 +913,57 @@ async def test_file_io_wildcard_is_not_blamed_on_a_missing_scope(tmp_path, monke
     assert "pass agent_id" not in result.get("detail", ""), (
         "the export demand is unconditional while EXPORT_DIR is unset; blaming "
         "the scope argument would send the caller after a fix that does nothing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_client_with_no_row_is_told_that_rather_than_to_scope_its_call(tmp_path):
+    """The cause no caller can fix, and the one that hides best.
+
+    A principal with no row authenticates and is then refused every scoped
+    tool while the unscoped ones answer normally — a connection that looks
+    healthy and remembers nothing. Scope advice is actively wrong here: no
+    agent is reachable at any level, so a caller could pass one and be denied
+    again, the failure the counterfactuals exist to prevent.
+    """
+    unknown = "oauth:https://idp.example:web"
+    acl.activate(_load(tmp_path))
+    recall = acl._wrap("recall", _stub_handler)
+    status = acl._wrap("persistence_status", _stub_handler)
+
+    token = acl.set_principal(acl.Principal(unknown))
+    try:
+        scoped_denial = await recall({"agent_id": "alpha"})
+        unscoped_denial = await recall({})
+        answered = await status({})
+    finally:
+        acl.reset_principal(token)
+
+    assert scoped_denial["error"] == "permission_denied"
+    assert "no entry in the ACL grant table" in scoped_denial["detail"]
+    assert answered["ok"] is True, (
+        "the unscoped tools answer for any authenticated principal — the half "
+        "that makes this look like a working connection rather than a gap"
+    )
+    assert "no agent scope was sent" not in unscoped_denial.get("detail", ""), (
+        "an unscoped call from a client with no row must not be blamed on the "
+        "scope: supplying one changes nothing"
+    )
+    assert "no entry in the ACL grant table" in unscoped_denial["detail"]
+
+    granted = _basic_payload()
+    granted["clients"].append(
+        {"client_id": unknown, "token": None, "grants": {"alpha": "read"}}
+    )
+    acl.activate(_load(tmp_path, granted))
+    token = acl.set_principal(acl.Principal(unknown))
+    try:
+        allowed = await recall({"agent_id": "alpha"})
+    finally:
+        acl.reset_principal(token)
+    assert allowed["ok"] is True and "error" not in allowed, (
+        "the denial says an operator must state this principal; stating one "
+        "must therefore succeed, or the message is wrong"
     )
 
 

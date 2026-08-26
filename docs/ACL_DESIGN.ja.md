@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ACL_DESIGN.md@blob:04178308043646d2ba45a3d0b34800d1eabe4b61 -->
+<!-- i18n-source: docs/ACL_DESIGN.md@blob:3b524085470b42e5aa172435cd921661912d8b59 -->
 
 # クライアント別ケーパビリティ / ACL 設計
 
@@ -97,6 +97,11 @@ class IdentityResolver(Protocol):
       "client_id": "importer",
       "token": "s3cr3t-literal-also-allowed",
       "grants": { "beta": "read-write" }
+    },
+    {
+      "client_id": "web-connector",
+      "token": null,                              // grants only: a resolver
+      "grants": { "beta": "read" }                // asserts this identity (§5.4)
     }
   ]
 }
@@ -104,6 +109,13 @@ class IdentityResolver(Protocol):
 
 - `token` はリテラル、または `${ENV_VAR}` 参照を受け付けます (読み込み時に解決。
   未設定の変数は起動時エラー — fail closed、§7)。
+- `token: null` は、その行が「呼び出し側が提示する資格情報」ではなく「何らかの
+  resolver が主張する principal」のための grant を運ぶことを表明します (§5.4)。
+  この行はトークン項目を一切生まないので、誰も提示できません。**キーの省略は
+  この表明ではありません**: トークンの書き忘れは起動時エラーのままです — 何も
+  到達できない行は、client id を書いた運用者が意図したものではないからです。
+  この区別が、代替手段 (grant を通すためにダミーのトークンを書く) が誰も望まない
+  生きた資格情報を黙って発行してしまうことを防ぎます。
 - `client_id` の重複、または解決後のトークンの重複: 起動時エラー。トークンの
   参照は曖昧であってはなりません。
 - 権限は厳密に `"none" | "read" | "read-write"` のみです。未知の文字列:
@@ -179,10 +191,18 @@ guard(tool_name, handler):  arguments → resolve scope → check → handler | 
 
 上の形は最小であって最大ではありません: 既存フィールドが運んでいない原因を guard
 が名指しできるときは、`detail` 文字列がこれに加わります — 未分類のツール、文字列
-でない scope 引数、あるいは scope をまったく送らなかったために全エージェントを
-要求した呼び出し、といった場合です。例そのもののケースでは意図的に不在です。
+でない scope 引数、scope をまったく送らなかったために全エージェントを要求した
+呼び出し、あるいは grant 表に項目を持たないクライアント、といった場合です。
+例そのもののケースでは意図的に不在です。
 そこでは `agent_id` と `required` が「どのエージェントで、どの水準が足りなかったか」
 をすでに述べており、それを散文で言い直しても情報は増えないからです。
+
+最後のものは呼び出し側にはどうにもできない唯一の原因であり、そして設定の欠落
+としては最も読み取りにくいものです: 行を持たない principal は認証を通り、scope の
+無いツールは普通に応答し、scope 付きのツールはすべて拒否する — 健全に見えて何も
+記憶しない接続になります。これを scope の助言に委ねず名指しするのは、そのままでは
+効かない修正へ呼び出し側を差し向けることになるからです (どのエージェントにも、
+どの水準でも到達できません)。
 
 `client_id` は呼び出し側自身の解決済み identity を返しているだけです (自分自身に
 とっては秘密ではありません) — 配線を誤ったクライアントを、その側から診断できる
@@ -194,8 +214,10 @@ guard(tool_name, handler):  arguments → resolve scope → check → handler | 
 
 stdio トランスポートには解決すべき資格情報がありません — 相手はプロセスを起動した
 者そのものです。提案: ACL モードでは、stdio は予約 principal `"local"` に解決
-します。その grant は同じファイルから来ます (`"client_id": "local"`、`token`
-フィールドなし)。`"local"` が無ければ、stdio 呼び出しは権限の無い他の principal と
+します。その grant は同じファイルから来ます (`"client_id": "local"` で、`token` は
+省略するか、明示的な `null` を書きます — それ以外の値は起動時エラーです。誰も
+提示できない項目になってしまうからです)。`"local"` が無ければ、stdio 呼び出しは
+権限の無い他の principal と
 同様に拒否されます — ACL モードを有効にする運用者は、ローカルのものも含め、
 すべての principal を明示的に述べるからです。レガシーモードでは、stdio は現在と
 同じく無制限です。
