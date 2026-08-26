@@ -100,7 +100,7 @@ def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
 
 
 def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
-    """Sanitize a profile write against the profile's own cap (an earlier decision).
+    """Sanitize a profile write against the profile's own cap.
 
     Same seam as ``sanitize_content_with_flag`` — the two paths differ only in
     which ceiling applies. The profile row is injected into every recall response
@@ -364,14 +364,14 @@ def _try_parse_json(s: str) -> dict:
         return {}
 
 
-# Canonical source contract (2.5.2, an earlier decision item 1/1b).
+# Canonical source contract (2.5.2).
 # The wire shape is {"type": <"User"|"Agent"|"System">, "id": str, "name": str}.
 # ~75 % of production memories carried legacy variants that survived a write path
 # with zero validation; the enum here is intentionally the same three values as
 # ClotoCore's serde tag ("Assistant" is written to "Agent"), so the marketplace
 # and Rust callers agree on the discriminator.
 #
-# 2.5.2b1 (an earlier decision item b1-2): this tuple is the SINGLE SOURCE for all three
+# 2.5.2b1: this tuple is the SINGLE SOURCE for all three
 # surfaces that state the contract — the published JSON Schema (server.py store
 # tool), the write seam (``normalize_source`` below), and the health check that
 # audits legacy rows (``checks.check_invalid_source_type``, via

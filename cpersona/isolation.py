@@ -1,4 +1,4 @@
-"""isolation_where() — the single source for the 3-axis read predicate (2.5.0, an earlier decision C1).
+"""isolation_where() — the single source for the 3-axis read predicate (2.5.0).
 
 Every read-side isolation predicate on the agent-scoped tables (memories /
 episodes / profiles / pending_memory_tasks) is built here. Before 2.5.0 each

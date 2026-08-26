@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record the current behaviour of the 2.5.2 refactor targets (an earlier decision).
+"""Record the current behaviour of the 2.5.2 refactor targets.
 
     uv run python scripts/capture-behaviour.py            # rewrite the golden
     uv run python scripts/capture-behaviour.py --check    # diff without writing

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Mutation-diff waiver registry — the L2 triage home for advisory survivors
-(an earlier decision / an earlier decision).
+(lane L2).
 
 A waiver says "this specific survivor is not a real test gap, for this reason"
 so it stops counting against the advisory lane's un-waived total. It is the
@@ -23,7 +23,7 @@ Enforcement (failing CI on an un-waived survivor) is NOT here — that is L6
 (#299). At L2 this registry only annotates the advisory report and is checked
 for its own integrity. Approval is human-only: a waiver suppresses a survivor
 only when approved_by == 'human'. The AI submits waivers with approved_by=null
-(pending) and never self-approves its own — an earlier decision's single-maintainer rule.
+(pending) and never self-approves its own — the single-maintainer rule.
 
 CLI:
     python scripts/mutation_waivers.py            # verify the registry (advisory)

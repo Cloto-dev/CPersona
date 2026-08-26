@@ -1,4 +1,4 @@
-"""Regression tests for the v2.4.38 structural-hardening line (an earlier decision).
+"""Regression tests for the v2.4.38 structural-hardening line.
 
 Covers the fixes filed from the an earlier decision full audit (qa/issue-registry.json
 bug-014..039). Each test pins one fixed defect so verify-issues.sh's "pattern
@@ -664,7 +664,7 @@ async def test_auto_tool_two_tuple_still_uses_validator_default():
 async def test_export_import_preserves_both_source_shapes(clean_db, tmp_path):
     """The roundtrip must survive the source shapes the real corpus actually holds.
 
-    Measured on the production corpus (1587 rows, an earlier decision): `source` is an
+    Measured on the production corpus (1587 rows): `source` is an
     object in 868 rows and a bare JSON string in 719 — "claude-code",
     "assistant", "user" and friends. The pre-existing roundtrip test covers one
     object-shaped source only, so the string shape — 45% of real rows — was

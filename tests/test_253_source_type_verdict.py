@@ -1,4 +1,4 @@
-"""bug-187: an unattributed memory is not a broken one (2.5.3, an earlier decision).
+"""bug-187: an unattributed memory is not a broken one (2.5.3).
 
 ``store`` records an omitted or null ``source`` as the anonymous ``{}``. That is
 the write path's own normalisation and a supported way to say "producer
@@ -187,7 +187,7 @@ UNREPAIRABLE = ['"claude-code"', '{"id":"discord:1","name":"bob"}', '{"type":123
 async def _verdict(db, agent_id: str = AGENT) -> dict:
     """The issue as an operator actually receives it.
 
-    2.5.5 (an earlier decision) promoted this check's local rule to the registry-wide
+    2.5.5 promoted this check's local rule to the registry-wide
     ``repairable`` contract: the runner reports what a fix would write, and
     ``run_health_checks`` turns that into the severity. Asserting on the runner
     alone would now pin only half the behaviour — and would keep passing if the
@@ -340,7 +340,7 @@ async def test_unattributed_rows_are_visible_somewhere(db):
 
 
 # ---------------------------------------------------------------------------
-# bug-210 (an earlier decision): a capped fix run must not read as convergence
+# bug-210: a capped fix run must not read as convergence
 # ---------------------------------------------------------------------------
 
 

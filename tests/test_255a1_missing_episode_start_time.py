@@ -1,4 +1,4 @@
-"""bug-208 (an earlier decision): episodes with no ``start_time``, visible and repairable.
+"""bug-208: episodes with no ``start_time``, visible and repairable.
 
 Production measured 333 of 500 episodes (66.6%) with NULL/'' ``start_time``
 while every one of them carried a NOT NULL ``created_at``. bug-213 already
@@ -19,7 +19,7 @@ The tests pin the four properties the task names:
   the time of what it describes (the approximation caveat is a MUST from the
   task, because after the fix the row is indistinguishable from a genuine one).
 
-The ``repairable`` contract (an earlier decision) is exercised for this check in
+The ``repairable`` contract is exercised for this check in
 ``test_255_repairable_contract.py``; these tests cover the check's own
 behaviour.
 """

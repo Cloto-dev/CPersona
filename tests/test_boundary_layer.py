@@ -1,4 +1,4 @@
-"""MCP boundary-layer forwarding tests (an earlier decision part 2).
+"""MCP boundary-layer forwarding tests (part 2).
 
 The six functions under ``cpersona.server.*_boundary`` are the MCP entry
 point for every tool that carries a project_id. They run the operating-

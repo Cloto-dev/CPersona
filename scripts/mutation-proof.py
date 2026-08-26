@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Targeted mutation proof for the 2.5.2 refactor seams (an earlier decision).
+"""Targeted mutation proof for the 2.5.2 refactor seams.
 
 The 2.5.2 alpha stage splits five large functions apart. Every one of them is
 covered by tests that pass today — but a test passing is not evidence that it
@@ -63,7 +63,7 @@ class Mutation:
 
 
 # ---------------------------------------------------------------------------
-# _search_vector (vector.py) — remote/local split, an earlier decision.
+# _search_vector (vector.py) — remote/local split.
 # The remote branch is the extraction target, so its contract with the
 # embedding service and its fall-through to local are what must stay pinned.
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ MUTATIONS: list[Mutation] = [
     ),
     # ---------------------------------------------------------------------
     # do_import_memories (admin_handlers.py) — the highest-value split target
-    # and the one the soak never exercises. an earlier decision.
+    # and the one the soak never exercises.
     # ---------------------------------------------------------------------
     # M04 and M06 were both filed as equivalent mutants. Both classifications
     # turned out to be wrong, and they were wrong in the same way: each was
@@ -112,7 +112,7 @@ MUTATIONS: list[Mutation] = [
         file="cpersona/admin_handlers.py",
         find="if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):",
         replace="if False:",
-        # RECLASSIFIED (an earlier decision). Filed as equivalent because "the row
+        # RECLASSIFIED. Filed as equivalent because "the row
         # falls through to INSERT OR IGNORE and the v12 UNIQUE index turns it
         # into the same counted skip". True of a real import. On a dry_run there
         # IS no INSERT OR IGNORE, so this pre-check is the entire msg_id dedup
@@ -153,7 +153,7 @@ MUTATIONS: list[Mutation] = [
         # (1) EQUIVALENT, pre-#287. Reasoning: dry_run runs on the read seam, so
         #     an INSERT that escapes this guard is never committed. True of the
         #     database, and the database was all anyone was watching.
-        # (2) BEHAVIOURAL, an earlier decision. dry_run had two write targets and only
+        # (2) BEHAVIOURAL. dry_run had two write targets and only
         #     one was doubly defended:
         #         database       read seam (M10) + this guard   -> rolled back
         #         remote index   this guard, alone              -> nothing
@@ -163,7 +163,7 @@ MUTATIONS: list[Mutation] = [
         #     to the live index — invisible to every DB assertion in the suite,
         #     and found only because the behavioural snapshot records outbound
         #     traffic as well as rows.
-        # (3) EQUIVALENT again, an earlier decision — but for a different reason than
+        # (3) EQUIVALENT again — but for a different reason than
         #     (1), and this is the point. The remote queue now goes through
         #     _ImportTally.queue_remote, which a preview cannot make write, so
         #     the second target has two layers too. The counts also survive: the
@@ -240,7 +240,7 @@ MUTATIONS: list[Mutation] = [
         expect="test_import_skips_rows_whose_msg_id_already_exists",
     ),
     # ---------------------------------------------------------------------
-    # do_merge_memories (admin_handlers.py) — an earlier decision.
+    # do_merge_memories (admin_handlers.py).
     # ---------------------------------------------------------------------
     Mutation(
         id="M07",
@@ -252,7 +252,7 @@ MUTATIONS: list[Mutation] = [
         expect="test_merge_move_is_one_atomic_unit, test_merge_move_deletes_source_in_same_call",
     ),
     # ---------------------------------------------------------------------
-    # do_calibrate_threshold (admin_handlers.py) — an earlier decision.
+    # do_calibrate_threshold (admin_handlers.py).
     # ---------------------------------------------------------------------
     Mutation(
         id="M08",

@@ -1,4 +1,4 @@
-"""Assert the 2.5.2 split did not change behaviour (an earlier decision).
+"""Assert the 2.5.2 split did not change behaviour.
 
 `tests/behaviour_252.py` defines the scenario matrix and what an observation
 contains; `scripts/capture-behaviour.py` recorded the pre-refactor answers into
@@ -63,7 +63,7 @@ _DIFF_FLOAT_PLACES = 6
 # So: additions are listed, never absorbed. Anything that changes a value the
 # golden already holds still fails, which is the whole point.
 #
-# repairable (2.5.5, an earlier decision): every fix_capable check now declares how many
+# repairable (2.5.5): every fix_capable check now declares how many
 # rows its fix would write. Additive -- severity, status and counts are
 # unchanged, as this diff itself showed. Guarded by
 # tests/test_255_repairable_contract.py, which is where its behaviour is pinned.

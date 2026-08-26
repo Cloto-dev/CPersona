@@ -57,7 +57,7 @@ MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
 # vector retriever, so the default must comfortably exceed a real corpus.
 # Benchmarks on larger corpora raise it via the env var instead of patching code.
 MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
-# an earlier decision: 16000, raised from 2000, because the old cap was destroying the part
+# 16000, raised from 2000, because the old cap was destroying the part
 # of a memory that is worth the most. Long records put the conclusion first and
 # the hard-won detail last, so cutting the tail on every write removed exactly
 # what nothing else records — and no later line can restore it (the 2.6 tree
@@ -85,9 +85,9 @@ MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
 # still invisible to the vector retriever. It is NOT invisible to search: the
 # FTS triggers index the stored content in full, so the tail becomes reachable
 # through the lexical channel the moment it is stored. Closing the vector gap is
-# the 2.6 tree's job (an earlier decision).
+# the 2.6 tree's job.
 MAX_CONTENT_LENGTH = _parse_int("CPERSONA_MAX_CONTENT_LENGTH", 16000)
-# an earlier decision: the profile owns its ceiling, because the two rows are bounded for
+# The profile owns its ceiling, because the two rows are bounded for
 # different reasons and only one of them is bounded by its cap alone.
 #
 # A memory is preview-trimmed on the way out (RECALL_PREVIEW_CHARS) and its full
@@ -98,8 +98,8 @@ MAX_CONTENT_LENGTH = _parse_int("CPERSONA_MAX_CONTENT_LENGTH", 16000)
 # So the profile's cap is the ONLY thing bounding it, and it is paid in EVERY
 # recall response.
 #
-# Sharing one constant meant a future relaxation of the memory cap (the 2.6 tree,
-# an earlier decision) would silently unbound the profile too. The number is unchanged —
+# Sharing one constant meant a future relaxation of the memory cap (the 2.6
+# tree) would silently unbound the profile too. The number is unchanged —
 # 2000 is right for the profile, and small is the point — only its ownership is.
 MAX_PROFILE_LENGTH = _parse_int("CPERSONA_MAX_PROFILE_LENGTH", 2000)
 # 2.5.2b1 (audit C12): the JSON sidecar fields — source and metadata — reach the
@@ -229,7 +229,7 @@ CALIBRATE_TEMPORAL_WINDOW_MIN = _parse_float("CPERSONA_CALIBRATE_TEMPORAL_WINDOW
 # style swaps that would otherwise leave a stale, mis-scaled threshold in place.
 CALIBRATE_ON_MODEL_CHANGE = os.environ.get("CPERSONA_CALIBRATE_ON_MODEL_CHANGE", "true").lower() == "true"
 
-# v2.4.26 — post-fusion quality-gate calibration (an earlier decision). The fused-score
+# v2.4.26 — post-fusion quality-gate calibration. The fused-score
 # (RSF/RRF) quality gate is calibrated by simulate-query separation: sample stored
 # memories as pseudo-queries, run the active fusion pipeline, and separate the fused
 # scores of temporally-adjacent (same-session ≈ related) rows from unrelated rows.
@@ -241,7 +241,7 @@ FUSED_GATE_ENABLED = os.environ.get("CPERSONA_FUSED_GATE_ENABLED", "true").lower
 # so this bounds calibration cost — an offline / startup event, not per-recall).
 FUSED_GATE_SAMPLE_QUERIES = max(1, _parse_int("CPERSONA_FUSED_GATE_SAMPLE_QUERIES", 40))
 # Independent calibration draws per gate; the applied threshold is their median
-# (an earlier decision). The separation objective is multimodal over a real corpus, so a
+# of several. The separation objective is multimodal over a real corpus, so a
 # single draw's argmax can hand the gate to a minor mode — production shipped a
 # 0.1544 gate that 21 probe draws never reproduced. Total calibration cost is
 # DRAWS * SAMPLE_QUERIES recalls, still an offline / startup event.
@@ -277,12 +277,12 @@ EPISODE_DECAY_RATE = _parse_float("CPERSONA_EPISODE_DECAY_RATE", 0.01)
 EPISODE_DECAY_FLOOR = _parse_float("CPERSONA_EPISODE_DECAY_FLOOR", 0.5)
 
 RECALL_MODE = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
-# 2.5.0 (an earlier decision): MCP-boundary preview tier for recall responses. Message
+# 2.5.0: MCP-boundary preview tier for recall responses. Message
 # content longer than this many characters is returned as a pure prefix (plus
 # content_truncated/content_len markers) unless the caller opts out with
 # full_content=true; full text is re-fetchable via get_contents(refs). 0
 # disables trimming. Boundary-layer only — library callers (do_recall) always
-# receive full content, same layering as the an earlier decision limit cap.
+# receive full content, same layering as the limit cap.
 RECALL_PREVIEW_CHARS = _parse_int("CPERSONA_RECALL_PREVIEW_CHARS", 500)
 RRF_K = max(1, _parse_int("CPERSONA_RRF_K", 60))
 RRF_THRESHOLD_FACTOR = _parse_float("CPERSONA_RRF_THRESHOLD_FACTOR", 0.5)

@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# store outcome contract (2.5.2b1, an earlier decision item b1-1)
+# store outcome contract (2.5.2b1)
 #
 # Every do_store return carries ``result`` — the discriminator that answers the
 # only question a caller actually has ("is my memory in the database?"):
@@ -122,7 +122,7 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
 
     msg_id = message.get("id", "")
     raw_content = message.get("content", "")
-    # 2.5.2 (an earlier decision): normalize known legacy source shapes at the write seam.
+    # 2.5.2: normalize known legacy source shapes at the write seam.
     # Unknown shapes are stored verbatim so the health check still surfaces them
     # for human-reviewed migration — never fabricate a discriminator we can't
     # justify (would corrupt attribution and defeat anonymous_source).
@@ -616,7 +616,7 @@ def _gate_score(row: dict) -> tuple[float | None, str | None]:
     ``_apply_quality_gate``: confidence > rsf > cosine > rrf. Returns (None, None) for an
     unscored row. Used by both the runtime gate and the gate calibration so the
     calibrated operating point is computed on exactly the value the gate compares
-    (v2.4.27, an earlier decision)."""
+    (v2.4.27)."""
     confidence = row.get("_confidence_score")
     if confidence is not None:
         return confidence, "confidence"
@@ -665,7 +665,7 @@ def _apply_quality_gate(
     the cosine-scale ``min_score`` (0.2–1.0) → every RRF-mode result rejected.
     Cascade mode (no ``_rrf_score`` on rows) is unaffected.
 
-    v2.4.26/27 (an earlier decision): ``gate`` is the calibrated operating point and ``gate_signal``
+    v2.4.26/27: ``gate`` is the calibrated operating point and ``gate_signal``
     is the branch it was calibrated for (confidence / rsf / cosine / rrf — see
     ``_gate_score``). It replaces the pool-size heuristic ``min_score`` only in the
     matching branch, so the scales always agree and a stale gate from a different config
@@ -954,7 +954,7 @@ async def _apply_recall_scoring(
     """Post-recall scoring run before the quality gate: the episode-boundary penalty
     (L3, v2.4.14) and, when CONFIDENCE_ENABLED, the confidence score (which also
     re-sorts by it). Factored out of do_recall (v2.4.27) so the gate calibration
-    (an earlier decision) computes the operating point on exactly the per-row score the runtime
+    computes the operating point on exactly the per-row score the runtime
     gate keys on — including confidence, which takes precedence over the fused score and
     so owns the gate in confidence-enabled deployments. Mutates ``results``.
 
@@ -1151,7 +1151,7 @@ async def do_recall(
     # negative limit otherwise flows to SQLite as `LIMIT -1` (unbounded full-corpus
     # scan + O(N) scoring on the hot path) and to `results[:limit]` as a silent
     # tail-drop. do_recall_with_context delegates here, so this covers both entries.
-    # 2.5.0 (an earlier decision): the ceiling is the vector scan window (MAX_MEMORIES), not
+    # 2.5.0: the ceiling is the vector scan window (MAX_MEMORIES), not
     # 100 — the library layer bounds resource use only. The context-explosion cap
     # for agents lives at the MCP boundary (the recall tools' JSON Schema declares
     # `maximum: 100`); library callers (bench full-ranking, bulk export, future
@@ -1186,7 +1186,7 @@ async def do_recall(
             )
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
-        # produces the exact same per-row gate score the runtime gate keys on — an earlier decision).
+        # produces the exact same per-row gate score the runtime gate keys on).
         # time_range_hours / recall_counts are reused below for the response metadata + the
         # recall-count update, so they are returned rather than recomputed.
         results, time_range_hours, recall_counts, newest_age_hours = await _apply_recall_scoring(
@@ -1212,7 +1212,7 @@ async def do_recall(
         )[0][0]
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
-    # v2.4.26/27 (an earlier decision): use the calibrated gate for whichever branch is active.
+    # v2.4.26/27: use the calibrated gate for whichever branch is active.
     # The gate carries the signal it was calibrated for; _apply_quality_gate applies it
     # only to the matching branch, so a gate from a different config is inert (no scale
     # mismatch). Under CONFIDENCE_ENABLED the active signal is "confidence".
@@ -1310,7 +1310,7 @@ async def do_recall(
         content = r["content"]
 
         msg: dict = {"content": content}
-        # an earlier decision: a stable full-fetch handle. `id` below is the caller-supplied
+        # A stable full-fetch handle. `id` below is the caller-supplied
         # msg_id (absent on episodes), so previews need their own reference — this
         # is what get_contents(refs) resolves. Episode/memory kinds share one
         # AUTOINCREMENT id space (bug-040/041), hence the kind prefix.
@@ -1548,13 +1548,13 @@ async def do_recall_with_context(
     return result
 
 
-# an earlier decision: get_contents batch size. A full row is worth ~800 tokens (the
+# get_contents batch size. A full row is worth ~800 tokens (the
 # token-inventory measurement that motivated the preview tier), so 20 full rows
 # already approaches a whole recall's pre-diet payload — a larger batch would
 # reopen the context-explosion hole the preview exists to close.
 GET_CONTENTS_MAX_REFS = 20
 
-# an earlier decision: the ref count alone stopped bounding this response. When the write
+# The ref count alone stopped bounding this response. When the write
 # cap was 2000 characters, 20 refs could not exceed ~40,000; raising the cap to
 # 16,000 would have carried the same call to ~320,000 without a line of this
 # file changing. A relaxation of the WRITE bound must not enlarge the READ blast
@@ -1565,7 +1565,7 @@ GET_CONTENTS_MAX_CHARS = 40000
 
 
 async def do_get_contents(agent_id: str, refs: list) -> dict:
-    """Resolve recall preview refs back to full, untrimmed rows (2.5.0, an earlier decision).
+    """Resolve recall preview refs back to full, untrimmed rows (2.5.0).
 
     The recall tools' MCP boundary returns ``content`` as a preview
     (RECALL_PREVIEW_CHARS); every returned message carries a ``ref``
@@ -1634,7 +1634,7 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     "timestamp": episode_timestamp(start_time, created_at),
                     "resolved": bool(resolved),
                 }
-            # an earlier decision: whole rows only — the budget never cuts a content
+            # Whole rows only — the budget never cuts a content
             # string. get_contents is the ONLY path back to full text, so a
             # trimmed answer here would be indistinguishable from the preview it
             # was called to escape (the bug-117 failure mode: content with no
@@ -1720,7 +1720,7 @@ async def _search_episodes_fts(
     fts_query = _build_fts_query(query)
     if not fts_query:
         return []
-    # isolation_where composes all three axes (an earlier decision): exact agent, γ project,
+    # isolation_where composes all three axes: exact agent, γ project,
     # and the knob2 v2 channel contract — an episode stored under channel '' is
     # global and surfaces in every channel-scoped recall, so old (pre-per-channel)
     # episodes are never orphaned once recall starts filtering by concrete channel.
@@ -1767,7 +1767,7 @@ async def _search_memories_keyword(
     project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
     source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
     """
-    # isolation_where composes all three axes (an earlier decision): exact agent, γ project,
+    # isolation_where composes all three axes: exact agent, γ project,
     # and the knob2 v2 channel contract (stored channel '' matches every
     # channel-scoped recall). The alias="m" variant serves the FTS-join path —
     # this replaces the old .replace("channel", "m.channel") rewrite hack.

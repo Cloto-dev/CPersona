@@ -1,4 +1,4 @@
-"""an earlier decision: the write cap stops cutting tails, and the read side does not follow.
+"""The write cap stops cutting tails, and the read side does not follow.
 
 Two halves of one change, and they only make sense together.
 
@@ -92,7 +92,7 @@ async def test_the_write_is_still_bounded(db):
 
 @pytest.mark.asyncio
 async def test_the_profile_cap_did_not_move_with_it(db):
-    """an earlier decision split the two constants so this relaxation would not spread.
+    """Splitting the two constants keeps this relaxation from spreading.
 
     The profile is injected into every recall response and is never
     preview-trimmed (bug-117), so its cap is the only thing bounding it. This is

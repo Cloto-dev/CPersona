@@ -59,7 +59,7 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
 # no calibration data fall back to the global config.VECTOR_MIN_SIMILARITY.
 _agent_thresholds: dict[str, float] = {}
 
-# Per-agent post-fusion quality-gate thresholds (v2.4.26, an earlier decision). Calibrated by
+# Per-agent post-fusion quality-gate thresholds (v2.4.26). Calibrated by
 # simulate-query separation in admin_handlers over the fused-score distribution.
 # An absent agent falls back to the global gate; a None global falls back to the
 # pool-size heuristic _adaptive_min_score in memory_handlers.
@@ -71,7 +71,7 @@ _global_fused_gate: float | None = None
 # calibrated under confidence-on, now confidence-off) is simply never used.
 _fused_gate_signal: str | None = None
 
-# Per-agent precision weight beta (knob 3, v2.4.29, an earlier decision). The specificity weight
+# Per-agent precision weight beta (knob 3, v2.4.29). The specificity weight
 # the agent's fused gate is calibrated at: strict=2.0 (fewer contaminants, more misses) /
 # balanced=1.0 (Youden's J) / lenient=0.5 (fewer misses, more contaminants). Only agents
 # with an explicit override (set_recall_precision) are stored here; an absent agent uses
@@ -619,7 +619,7 @@ async def _search_vector(
     ``json_extract(source, '$.id')`` applied to memory rows (not episodes).
     Used by Discord multi-user sessions to prevent cross-user contamination.
     """
-    # isolation_where composes the axes (an earlier decision). `iso` (agent + γ project +
+    # isolation_where composes the axes. `iso` (agent + γ project +
     # knob2 v2 channel) scopes the local scans; `iso_fetch` scopes the remote
     # by-id fetches. The remote memory and episode fetches carry the same three
     # isolation axes, symmetric with the local scans (bug-046/075).

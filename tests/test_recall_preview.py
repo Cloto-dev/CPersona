@@ -1,4 +1,4 @@
-"""Tests for the 2.5.0 recall preview tier (an earlier decision).
+"""Tests for the 2.5.0 recall preview tier.
 
 Three layers, each pinned separately so a regression localises:
 1. Library: do_recall messages carry a stable `ref` handle (mem:/ep: — episodes
@@ -206,9 +206,9 @@ async def test_get_contents_input_validation():
     assert "error" in out and "max 20" in out["error"]
 
 
-# --- bug-211 (an earlier decision): the full_content read budget -----------------------
+# --- bug-211: the full_content read budget ---------------------------------
 #
-# an earlier decision raised the write cap 2000 -> 16000 and bounded the read side only at
+# The write cap was raised 2000 -> 16000 and the read side bounded only at
 # get_contents; recall(full_content=true) bypassed _apply_preview entirely, so
 # its worst case grew 8x (limit 100 x 16000 = 1.6M chars). The budget mirrors
 # get_contents' discipline: whole rows only, rows past the budget DEGRADE to the

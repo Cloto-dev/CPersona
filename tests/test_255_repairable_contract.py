@@ -1,4 +1,4 @@
-"""The ``repairable`` contract and its one de-escalation rule (2.5.5, an earlier decision).
+"""The ``repairable`` contract and its one de-escalation rule (2.5.5).
 
 bug-205 gave ``check_invalid_source_type`` a local rule: a finding no fix run can
 act on should not pin ``status=degraded`` forever. A second instance turned up in

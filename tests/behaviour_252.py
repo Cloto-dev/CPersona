@@ -1,7 +1,7 @@
 """Behavioural snapshot of the five functions the 2.5.2 alpha stage splits apart.
 
-an earlier decision. This is the second half of the safety net; `scripts/mutation-proof.py`
-(an earlier decision) is the first, and they prove different things:
+This is the second half of the safety net; `scripts/mutation-proof.py`
+is the first, and they prove different things:
 
     mutation proof   "if this behaviour broke, a test would go red"
     this snapshot    "the behaviour after the split is the behaviour before it"
@@ -35,7 +35,7 @@ WHAT THIS DOES NOT PROVE
     regenerated, and the diff in that regeneration is the thing to review.
 
 An observation is deliberately wider than the return value: for the write paths
-the return value is the LEAST interesting half (an earlier decision found a dry_run that
+the return value is the LEAST interesting half (a mutation found a dry_run that
 could have committed rows while reporting `imported: 0`). Each scenario records
 
     result      the return value, or the exception type and message
@@ -111,7 +111,7 @@ def pack(text: str) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Frozen wall clock (an earlier decision, part 1)
+# Frozen wall clock (part 1)
 # ---------------------------------------------------------------------------
 #
 # do_store and do_recall both read the wall clock, and the raw values leak into
@@ -396,7 +396,7 @@ async def observe(scenario: Scenario) -> dict:
             ctx.out.record("remote_index_upsert", agent_id=agent_id, items=items)
 
         ctx.patch(vector, "remote_index_upsert", _fake_upsert)
-        # an earlier decision: freeze the wall clock so the do_store timestamp default
+        # Freeze the wall clock so the do_store timestamp default
         # and every _compute_confidence age_hours/score is deterministic. See
         # the module-level `_install_frozen_clock` docstring for why this is a
         # subclass swap rather than a per-field `volatile` mark.
@@ -675,22 +675,22 @@ def scenario(
     return deco
 
 
-# --- _search_vector, local branch (an earlier decision) ---------------------------
+# --- _search_vector, local branch ------------------------------------------
 
 
-@scenario("sv-local-basic", "#286", "local scan: ranking, top-k cut, returned field set", seed=seed_corpus)
+@scenario("sv-local-basic", "_search_vector", "local scan: ranking, top-k cut, returned field set", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "a1", "apples", 3, min_similarity=0.0)
 
 
-@scenario("sv-local-limit-1", "#286", "local scan: limit smaller than the candidate set (heapq ordering)", seed=seed_corpus)
+@scenario("sv-local-limit-1", "_search_vector", "local scan: limit smaller than the candidate set (heapq ordering)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "a1", "apples", 1, min_similarity=0.0)
 
 
-@scenario("sv-local-threshold", "#286", "local scan: min_similarity=None falls back to the per-agent threshold", seed=seed_corpus)
+@scenario("sv-local-threshold", "_search_vector", "local scan: min_similarity=None falls back to the per-agent threshold", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     vector._agent_thresholds["a1"] = 0.5
@@ -700,37 +700,37 @@ async def _(ctx):
         vector._agent_thresholds.pop("a1", None)
 
 
-@scenario("sv-local-high-threshold", "#286", "local scan: a threshold no row clears returns empty, not an error", seed=seed_corpus)
+@scenario("sv-local-high-threshold", "_search_vector", "local scan: a threshold no row clears returns empty, not an error", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.999)
 
 
-@scenario("sv-local-project", "#286", "local scan: γ project axis ('X' means X ∪ global)", seed=seed_corpus)
+@scenario("sv-local-project", "_search_vector", "local scan: γ project axis ('X' means X ∪ global)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0, project_id="proj-b")
 
 
-@scenario("sv-local-project-global", "#286", "local scan: project_id='' is global-only", seed=seed_corpus)
+@scenario("sv-local-project-global", "_search_vector", "local scan: project_id='' is global-only", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0, project_id="")
 
 
-@scenario("sv-local-channel", "#286", "local scan: channel axis, with ''=global still matching", seed=seed_corpus)
+@scenario("sv-local-channel", "_search_vector", "local scan: channel axis, with ''=global still matching", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0, channel="chat")
 
 
-@scenario("sv-local-source-no-channel", "#286", "local scan: source_id without channel drops ALL episodes (bug-080)", seed=seed_corpus)
+@scenario("sv-local-source-no-channel", "_search_vector", "local scan: source_id without channel drops ALL episodes (bug-080)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0, source_id="discord:")
 
 
-@scenario("sv-local-source-with-channel", "#286", "local scan: source_id WITH channel keeps episodes (bug-080)", seed=seed_corpus)
+@scenario("sv-local-source-with-channel", "_search_vector", "local scan: source_id WITH channel keeps episodes (bug-080)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(
@@ -738,13 +738,13 @@ async def _(ctx):
     )
 
 
-@scenario("sv-local-source-escape", "#286", "local scan: LIKE metacharacters in source_id are escaped, not matched", seed=seed_corpus)
+@scenario("sv-local-source-escape", "_search_vector", "local scan: LIKE metacharacters in source_id are escaped, not matched", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0, source_id="discord:_2")
 
 
-@scenario("sv-local-empty-embed", "#286", "local scan: an empty query embedding returns [] via the health probe", seed=seed_corpus)
+@scenario("sv-local-empty-embed", "_search_vector", "local scan: an empty query embedding returns [] via the health probe", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
 
@@ -760,13 +760,13 @@ async def _(ctx):
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0)
 
 
-@scenario("sv-local-unknown-agent", "#286", "local scan: an agent with no rows", seed=seed_corpus)
+@scenario("sv-local-unknown-agent", "_search_vector", "local scan: an agent with no rows", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await vector._search_vector(ctx.db, "nobody", "apples", 10, min_similarity=0.0)
 
 
-# --- _search_vector, remote branch (an earlier decision) --------------------------
+# --- _search_vector, remote branch -----------------------------------------
 #
 # The split turns the remote branch into a helper whose return signals whether
 # local should run. These four scenarios are the ones that pin that signal, and
@@ -775,44 +775,44 @@ async def _(ctx):
 # "no hits" with "remote unavailable" passes every other scenario here.
 
 
-@scenario("sv-remote-hits", "#286", "remote: memory and episode hits become rows; request body and timeout", seed=seed_corpus)
+@scenario("sv-remote-hits", "_search_vector", "remote: memory and episode hits become rows; request body and timeout", seed=seed_corpus)
 async def _(ctx):
     install_remote(ctx, {"results": [{"id": "mem:1", "score": 0.91}, {"id": "ep:1", "score": 0.77}]})
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.25)
 
 
-@scenario("sv-remote-empty", "#286", "remote: a SUCCESSFUL empty result returns [] and does NOT fall through to local", seed=seed_corpus)
+@scenario("sv-remote-empty", "_search_vector", "remote: a SUCCESSFUL empty result returns [] and does NOT fall through to local", seed=seed_corpus)
 async def _(ctx):
     install_remote(ctx, {"results": []})
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0)
 
 
-@scenario("sv-remote-error-fallback", "#286", "remote: a transport failure falls through to the local scan", seed=seed_corpus)
+@scenario("sv-remote-error-fallback", "_search_vector", "remote: a transport failure falls through to the local scan", seed=seed_corpus)
 async def _(ctx):
     install_remote(ctx, None, error=RuntimeError("endpoint down"))
     return await vector._search_vector(ctx.db, "a1", "apples", 3, min_similarity=0.0)
 
 
-@scenario("sv-remote-isolation-miss", "#286", "remote: a hit whose row fails the γ predicate is dropped (bug-046/075/100)", seed=seed_corpus)
+@scenario("sv-remote-isolation-miss", "_search_vector", "remote: a hit whose row fails the γ predicate is dropped (bug-046/075/100)", seed=seed_corpus)
 async def _(ctx):
     install_remote(ctx, {"results": [{"id": "mem:3", "score": 0.99}, {"id": "mem:1", "score": 0.95}]})
     # mem:3 is the proj-b row; querying global-only must not surface it.
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0, project_id="")
 
 
-@scenario("sv-remote-stale-id", "#286", "remote: a hit for a row that no longer exists is skipped silently", seed=seed_corpus)
+@scenario("sv-remote-stale-id", "_search_vector", "remote: a hit for a row that no longer exists is skipped silently", seed=seed_corpus)
 async def _(ctx):
     install_remote(ctx, {"results": [{"id": "mem:9999", "score": 0.99}, {"id": "ep:9999", "score": 0.98}]})
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0)
 
 
-@scenario("sv-remote-episode-src-gate", "#286", "remote: source_id without channel skips episode hits (mirrors local bug-080)", seed=seed_corpus)
+@scenario("sv-remote-episode-src-gate", "_search_vector", "remote: source_id without channel skips episode hits (mirrors local bug-080)", seed=seed_corpus)
 async def _(ctx):
     install_remote(ctx, {"results": [{"id": "ep:1", "score": 0.9}, {"id": "mem:5", "score": 0.8}]})
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0, source_id="discord:")
 
 
-# --- do_import_memories (an earlier decision) -------------------------------------
+# --- do_import_memories -----------------------------------------------------
 
 
 async def _seed_import_target(ctx: Ctx) -> None:
@@ -823,7 +823,7 @@ async def _seed_import_target(ctx: Ctx) -> None:
     await ctx.db.commit()
 
 
-@scenario("import-fresh", "#287", "import: fresh records land; counts and rows agree", seed=_seed_import_target)
+@scenario("import-fresh", "admin-handlers", "import: fresh records land; counts and rows agree", seed=_seed_import_target)
 async def _(ctx):
     path = ctx.path("fresh.jsonl")
     write_jsonl(path, [
@@ -835,7 +835,7 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp")
 
 
-@scenario("import-dry-run", "#287", "import: dry_run reports the same counts and writes nothing", seed=_seed_import_target)
+@scenario("import-dry-run", "admin-handlers", "import: dry_run reports the same counts and writes nothing", seed=_seed_import_target)
 async def _(ctx):
     path = ctx.path("dry.jsonl")
     write_jsonl(path, [
@@ -851,7 +851,7 @@ async def _(ctx):
 # Added while refactoring #287: dropping the `else` branch that populates those
 # sets leaves the DB untouched and every other import scenario green, so nothing
 # else in the matrix watches this.
-@scenario("import-dry-run-intra-file-duplicates", "#287",
+@scenario("import-dry-run-intra-file-duplicates", "admin-handlers",
           "import: a preview dedups WITHIN the file, on both the content and msg_id axes (bug-070)",
           seed=_seed_import_target)
 async def _(ctx):
@@ -865,7 +865,7 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp", dry_run=True)
 
 
-@scenario("import-msgid-collision", "#287","import: an existing msg_id is skipped, the stored row is not overwritten", seed=_seed_import_target, unstable_row_ids=True)
+@scenario("import-msgid-collision", "admin-handlers","import: an existing msg_id is skipped, the stored row is not overwritten", seed=_seed_import_target, unstable_row_ids=True)
 async def _(ctx):
     path = ctx.path("collide.jsonl")
     write_jsonl(path, [
@@ -875,7 +875,7 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp")
 
 
-@scenario("import-content-collision", "#287", "import: duplicate content is absorbed by the UNIQUE index, not counted twice", seed=_seed_import_target, unstable_row_ids=True)
+@scenario("import-content-collision", "admin-handlers", "import: duplicate content is absorbed by the UNIQUE index, not counted twice", seed=_seed_import_target, unstable_row_ids=True)
 async def _(ctx):
     path = ctx.path("dupe.jsonl")
     write_jsonl(path, [
@@ -886,7 +886,7 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp")
 
 
-@scenario("import-truncated", "#287", "import: a header/row-count mismatch aborts and rolls back (bug-091/110)", seed=_seed_import_target)
+@scenario("import-truncated", "admin-handlers", "import: a header/row-count mismatch aborts and rolls back (bug-091/110)", seed=_seed_import_target)
 async def _(ctx):
     path = ctx.path("short.jsonl")
     write_jsonl(
@@ -897,7 +897,7 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp")
 
 
-@scenario("import-torn-line", "#287", "import: a malformed line is reported and the transaction rolls back", seed=_seed_import_target)
+@scenario("import-torn-line", "admin-handlers", "import: a malformed line is reported and the transaction rolls back", seed=_seed_import_target)
 async def _(ctx):
     path = ctx.path("torn.jsonl")
     with open(path, "w", encoding="utf-8") as f:
@@ -906,12 +906,12 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp")
 
 
-@scenario("import-missing-file", "#287", "import: a nonexistent path fails cleanly", seed=_seed_import_target)
+@scenario("import-missing-file", "admin-handlers", "import: a nonexistent path fails cleanly", seed=_seed_import_target)
 async def _(ctx):
     return await admin_handlers.do_import_memories(ctx.path("nope.jsonl"), target_agent_id="imp")
 
 
-@scenario("import-retarget", "#287", "import: target_agent_id overrides the agent_id in the file", seed=_seed_import_target)
+@scenario("import-retarget", "admin-handlers", "import: target_agent_id overrides the agent_id in the file", seed=_seed_import_target)
 async def _(ctx):
     path = ctx.path("retarget.jsonl")
     write_jsonl(path, [
@@ -921,7 +921,7 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp")
 
 
-@scenario("import-preserves-axes", "#287", "import: γ axes and locked survive the round trip", seed=_seed_import_target)
+@scenario("import-preserves-axes", "admin-handlers", "import: γ axes and locked survive the round trip", seed=_seed_import_target)
 async def _(ctx):
     path = ctx.path("axes.jsonl")
     write_jsonl(path, [
@@ -931,7 +931,7 @@ async def _(ctx):
     return await admin_handlers.do_import_memories(path, target_agent_id="imp")
 
 
-# --- do_merge_memories (an earlier decision) --------------------------------------
+# --- do_merge_memories ------------------------------------------------------
 
 
 async def _seed_merge(ctx: Ctx) -> None:
@@ -948,40 +948,40 @@ async def _seed_merge(ctx: Ctx) -> None:
     await db.commit()
 
 
-@scenario("merge-copy-skip", "#287", "merge: copy+skip leaves the source intact and dedups the shared row", seed=_seed_merge, unstable_row_ids=True)
+@scenario("merge-copy-skip", "admin-handlers", "merge: copy+skip leaves the source intact and dedups the shared row", seed=_seed_merge, unstable_row_ids=True)
 async def _(ctx):
     return await admin_handlers.do_merge_memories("src", "dst")
 
 
-@scenario("merge-move", "#287", "merge: move deletes the source rows in the same transaction", seed=_seed_merge, unstable_row_ids=True)
+@scenario("merge-move", "admin-handlers", "merge: move deletes the source rows in the same transaction", seed=_seed_merge, unstable_row_ids=True)
 async def _(ctx):
     return await admin_handlers.do_merge_memories("src", "dst", mode="move")
 
 
-@scenario("merge-dry-run", "#287", "merge: dry_run reports the counts and touches nothing", seed=_seed_merge, unstable_row_ids=True)
+@scenario("merge-dry-run", "admin-handlers", "merge: dry_run reports the counts and touches nothing", seed=_seed_merge, unstable_row_ids=True)
 async def _(ctx):
     return await admin_handlers.do_merge_memories("src", "dst", dry_run=True)
 
 
-@scenario("merge-move-dry-run", "#287", "merge: a move preview must not delete the source either", seed=_seed_merge, unstable_row_ids=True)
+@scenario("merge-move-dry-run", "admin-handlers", "merge: a move preview must not delete the source either", seed=_seed_merge, unstable_row_ids=True)
 async def _(ctx):
     return await admin_handlers.do_merge_memories("src", "dst", mode="move", dry_run=True)
 
 
-@scenario("merge-empty-source", "#287", "merge: an agent with no rows is a no-op, not an error", seed=_seed_merge, unstable_row_ids=True)
+@scenario("merge-empty-source", "admin-handlers", "merge: an agent with no rows is a no-op, not an error", seed=_seed_merge, unstable_row_ids=True)
 async def _(ctx):
     return await admin_handlers.do_merge_memories("ghost", "dst")
 
 
-@scenario("merge-into-self", "#287", "merge: source == target", seed=_seed_merge, unstable_row_ids=True)
+@scenario("merge-into-self", "admin-handlers", "merge: source == target", seed=_seed_merge, unstable_row_ids=True)
 async def _(ctx):
     return await admin_handlers.do_merge_memories("src", "src")
 
 
-# --- do_calibrate_threshold (an earlier decision) ---------------------------------
+# --- do_calibrate_threshold -------------------------------------------------
 
 
-@scenario("calibrate-basic", "#287", "calibrate: the null distribution, the derived threshold, and the in-place mutation",
+@scenario("calibrate-basic", "admin-handlers", "calibrate: the null distribution, the derived threshold, and the in-place mutation",
           seed=lambda ctx: seed_calibration(ctx, n=30))
 async def _(ctx):
     install_local(ctx)
@@ -992,7 +992,7 @@ async def _(ctx):
 # genuine random subset. `sampled_embeddings` and `num_pairs` -- the cap actually
 # taking effect, which is what the scenario is for -- stay pinned; the statistics
 # computed from the subset cannot be.
-@scenario("calibrate-sample-cap", "#287", "calibrate: an explicit sample_size bounds the draw",
+@scenario("calibrate-sample-cap", "admin-handlers", "calibrate: an explicit sample_size bounds the draw",
           seed=lambda ctx: seed_calibration(ctx, n=30),
           volatile=("distribution", "new_threshold", "old_threshold", "null_admit_rate",
                     "pos_admit_rate", "pos_mean", "youden_j", "separation", "thresholds"))
@@ -1001,28 +1001,28 @@ async def _(ctx):
     return await admin_handlers.do_calibrate_threshold("cal", sample_size=12)
 
 
-@scenario("calibrate-percentile", "#287", "calibrate: the percentile method rather than the z-score default",
+@scenario("calibrate-percentile", "admin-handlers", "calibrate: the percentile method rather than the z-score default",
           seed=lambda ctx: seed_calibration(ctx, n=30))
 async def _(ctx):
     install_local(ctx)
     return await admin_handlers.do_calibrate_threshold("cal", method="percentile", percentile=95.0)
 
 
-@scenario("calibrate-too-few", "#287", "calibrate: below the raw sample floor, refuse and leave the threshold unset",
+@scenario("calibrate-too-few", "admin-handlers", "calibrate: below the raw sample floor, refuse and leave the threshold unset",
           seed=lambda ctx: seed_calibration(ctx, n=4))
 async def _(ctx):
     install_local(ctx)
     return await admin_handlers.do_calibrate_threshold("cal")
 
 
-@scenario("calibrate-ragged", "#287", "calibrate: the post-dimension-filter floor, the second of the two",
+@scenario("calibrate-ragged", "admin-handlers", "calibrate: the post-dimension-filter floor, the second of the two",
           seed=lambda ctx: seed_calibration(ctx, n=8, ragged=6))
 async def _(ctx):
     install_local(ctx)
     return await admin_handlers.do_calibrate_threshold("cal")
 
 
-@scenario("calibrate-no-corpus", "#287", "calibrate: an agent with nothing to sample")
+@scenario("calibrate-no-corpus", "admin-handlers", "calibrate: an agent with nothing to sample")
 async def _(ctx):
     install_local(ctx)
     return await admin_handlers.do_calibrate_threshold("empty-agent")
@@ -1031,7 +1031,7 @@ async def _(ctx):
 # --- do_export_memories (round-trip partner of import) ----------------------
 
 
-@scenario("export-roundtrip", "#287", "export writes what import reads: the file survives its own reader", seed=seed_corpus)
+@scenario("export-roundtrip", "admin-handlers", "export writes what import reads: the file survives its own reader", seed=seed_corpus)
 async def _(ctx):
     path = ctx.path("export.jsonl")
     exported = await admin_handlers.do_export_memories("a1", path, include_embeddings=True)
@@ -1041,7 +1041,7 @@ async def _(ctx):
     return {"exported": exported, "line_types": line_types, "reimported": reimported}
 
 
-# --- do_store (an earlier decision) -----------------------------------------------
+# --- do_store ---------------------------------------------------------------
 #
 # 2.5.2b1 breaks the store contract at this layer, and the mutation harness
 # (`scripts/mutation-proof.py`) does not touch `do_store` / `do_recall` / the
@@ -1064,7 +1064,7 @@ async def _seed_store_target(ctx: Ctx) -> None:
     await db.commit()
 
 
-@scenario("store-local-basic", "#362", "store: fresh write, local mode — {ok, id, embedded:true}, row lands, no outbound")
+@scenario("store-local-basic", "store-recall-health", "store: fresh write, local mode — {ok, id, embedded:true}, row lands, no outbound")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store(
@@ -1079,7 +1079,7 @@ async def _(ctx):
 # same name off the `cpersona.config` binding it imported into
 # `memory_handlers` at module load, so the second patch below is what actually
 # takes the remote branch.
-@scenario("store-remote-basic", "#362", "store: fresh write, remote mode — /index POST body (namespace/items), embedded:true")
+@scenario("store-remote-basic", "store-recall-health", "store: fresh write, remote mode — /index POST body (namespace/items), embedded:true")
 async def _(ctx):
     install_remote(ctx, {})
     ctx.patch(memory_handlers, "VECTOR_SEARCH_MODE", "remote")
@@ -1090,7 +1090,7 @@ async def _(ctx):
 
 # Missing and empty content both hit `raw_content = message.get("content", "")`
 # and produce the same skipped-response, so one scenario pins both.
-@scenario("store-empty-content", "#362", "store: content missing or empty string — rejected 'empty content', no row")
+@scenario("store-empty-content", "store-recall-health", "store: content missing or empty string — rejected 'empty content', no row")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store("s1", {"content": ""})
@@ -1100,7 +1100,7 @@ async def _(ctx):
 # empty string that trips the SECOND skip branch. Whitespace-only after strip
 # hits the same branch; picking the annotation form so a reader can see WHICH
 # sanitizer step reduced it.
-@scenario("store-sanitized-empty", "#362", "store: content that sanitizes to empty ([Memory from …] only) — rejected 'empty after sanitization'")
+@scenario("store-sanitized-empty", "store-recall-health", "store: content that sanitizes to empty ([Memory from …] only) — rejected 'empty after sanitization'")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store(
@@ -1111,7 +1111,7 @@ async def _(ctx):
 # v2.5.2 additive: the skip response echoes the pre-existing row's id so a
 # caller can chain (e.g. update_memory) without a second SELECT. The msg_id
 # branch pins that echo AND the "duplicate msg_id" reason string.
-@scenario("store-duplicate-msg-id", "#362", "store: existing msg_id — skipped 'duplicate msg_id', echoes existing id (v2.5.2 additive)")
+@scenario("store-duplicate-msg-id", "store-recall-health", "store: existing msg_id — skipped 'duplicate msg_id', echoes existing id (v2.5.2 additive)")
 async def _(ctx):
     install_local(ctx)
     # Plant a row that carries a msg_id (the standard _mem helper leaves it "").
@@ -1131,7 +1131,7 @@ async def _(ctx):
     )
 
 
-@scenario("store-duplicate-content", "#362", "store: existing content — skipped 'duplicate content', echoes existing id", seed=_seed_store_target)
+@scenario("store-duplicate-content", "store-recall-health", "store: existing content — skipped 'duplicate content', echoes existing id", seed=_seed_store_target)
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store(
@@ -1143,7 +1143,7 @@ async def _(ctx):
 # the sanitized/truncated body -- pin both so a code move that swaps the two
 # orders is caught.
 #
-# an earlier decision: the cap is now an explicit input rather than whatever config says
+# The cap is now an explicit input rather than whatever config says
 # today. It used to be read live (config.MAX_CONTENT_LENGTH + 1), which made the
 # cap's VALUE an unrecorded input to a recorded observation: raising the default
 # from 2000 to 16000 changed the stored body and its embedding, and the scenario
@@ -1155,7 +1155,7 @@ async def _(ctx):
 _GOLDEN_CONTENT_CAP = 2000
 
 
-@scenario("store-truncated", "#362", "store: content > MAX_CONTENT_LENGTH — truncated:true AND the row stores the truncated body")
+@scenario("store-truncated", "store-recall-health", "store: content > MAX_CONTENT_LENGTH — truncated:true AND the row stores the truncated body")
 async def _(ctx):
     install_local(ctx)
     # Patch where the cap is READ (utils holds its own binding), not where it is
@@ -1172,13 +1172,13 @@ async def _(ctx):
 # .isoformat())` fires and the frozen 2027-01-01 lands verbatim in the row. The
 # ISO-with-T shape is NOT collapsed by _GENERATED_TS so a code move that changes
 # the default source (e.g. drops the tz suffix) shifts the pinned literal.
-@scenario("store-timestamp-default", "#362", "store: timestamp omitted — frozen datetime.now default lands as ISO-with-T in the row")
+@scenario("store-timestamp-default", "store-recall-health", "store: timestamp omitted — frozen datetime.now default lands as ISO-with-T in the row")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store("s1", {"content": "unstamped"})
 
 
-# an earlier decision seam (source normalization at the write path). Three scenarios pin
+# Source-normalization seam (write path). Three scenarios pin
 # three distinct classes of the mapping table -- the ones b1-2 rewrites:
 #   (a) bare-string alias    "assistant" → {"type":"Agent","id":"","name":""}
 #   (b) bare-string UNKNOWN  "claude-code" → stored verbatim (JSON string).
@@ -1188,7 +1188,7 @@ async def _(ctx):
 #       in the verbatim class instead (`_BARE_STRING_ALIASES` only covers
 #       user/assistant/ai). The recording matches the CODE, not the brief.
 #   (c) Rust serde tagged    {"User": "u-1"} → {"type":"User", ...}
-@scenario("store-source-normalize-bare-alias", "#362", "store: source='assistant' bare-string alias — normalized to canonical Agent dict (an earlier decision)")
+@scenario("store-source-normalize-bare-alias", "store-recall-health", "store: source='assistant' bare-string alias — normalized to canonical Agent dict")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store(
@@ -1197,7 +1197,7 @@ async def _(ctx):
     )
 
 
-@scenario("store-source-verbatim-bare-unknown", "#362", "store: source='claude-code' bare-string unknown — stored verbatim (an earlier decision anonymous-source contract)")
+@scenario("store-source-verbatim-bare-unknown", "store-recall-health", "store: source='claude-code' bare-string unknown — stored verbatim (anonymous-source contract)")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store(
@@ -1206,7 +1206,7 @@ async def _(ctx):
     )
 
 
-@scenario("store-source-normalize-serde-tagged", "#362", "store: source={'User': 'u-1'} Rust serde form — normalized to canonical User dict (an earlier decision)")
+@scenario("store-source-normalize-serde-tagged", "store-recall-health", "store: source={'User': 'u-1'} Rust serde form — normalized to canonical User dict")
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store(
@@ -1222,7 +1222,7 @@ async def _(ctx):
 # specifies. Both use `_seed_store_target` (global "prior body") plus an
 # inline bucket seed where needed, so the collision axis is the only thing
 # changing between them.
-@scenario("store-gamma-bucket-collides-global", "#362", "store: bucket write ('p1') collides with an identical global-pool row (bug-106 γ-visible scope)", seed=_seed_store_target)
+@scenario("store-gamma-bucket-collides-global", "store-recall-health", "store: bucket write ('p1') collides with an identical global-pool row (bug-106 γ-visible scope)", seed=_seed_store_target)
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_store(
@@ -1231,7 +1231,7 @@ async def _(ctx):
     )
 
 
-@scenario("store-gamma-global-not-collides-bucket", "#362", "store: global write does NOT collide with a bucket-only row (bug-106 γ-visible scope)")
+@scenario("store-gamma-global-not-collides-bucket", "store-recall-health", "store: global write does NOT collide with a bucket-only row (bug-106 γ-visible scope)")
 async def _(ctx):
     install_local(ctx)
     # Plant a bucket-only row (no global copy).
@@ -1245,7 +1245,7 @@ async def _(ctx):
 # `_reset` calls `no_persist.resume()` before the scenario body runs, so the
 # pause() below always fires on a clean state. Frozen clock makes the "reason"
 # TTL suffix deterministic ("30m left" for ttl=1800).
-@scenario("store-no-persist-paused", "#362", "store: no_persist paused — {id:'no-persist', persisted:false, dry_run:true, reason:'…30m left…'} shape (bug-141)")
+@scenario("store-no-persist-paused", "store-recall-health", "store: no_persist paused — {id:'no-persist', persisted:false, dry_run:true, reason:'…30m left…'} shape (bug-141)")
 async def _(ctx):
     install_local(ctx)
     no_persist.pause(1800)
@@ -1254,7 +1254,7 @@ async def _(ctx):
     )
 
 
-# --- do_recall (an earlier decision) ----------------------------------------------
+# --- do_recall --------------------------------------------------------------
 #
 # do_recall is the read hot path but it also WRITES: it bumps recall_count and
 # last_recalled_at on every returned memory (see memory_handlers.py:1050).
@@ -1282,7 +1282,7 @@ def _install_confidence_on(ctx: Ctx) -> None:
     ctx.patch(memory_handlers, "CONFIDENCE_ENABLED", True)
 
 
-@scenario("recall-basic-hits", "#362", "recall: seed_corpus hit set — messages, confidence, match_reason, refs; recall_count/last_recalled_at bumped (CONFIDENCE=on)", seed=seed_corpus)
+@scenario("recall-basic-hits", "store-recall-health", "recall: seed_corpus hit set — messages, confidence, match_reason, refs; recall_count/last_recalled_at bumped (CONFIDENCE=on)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     _install_confidence_on(ctx)
@@ -1292,7 +1292,7 @@ async def _(ctx):
 # bug-125: an empty query is a pure-recency listing with no relevance signal,
 # so the unscored volume rule is bypassed. Without the bypass, session-start
 # recall would return [] for every agent with < 100 memories.
-@scenario("recall-empty-query-pure-recency", "#362", "recall: empty query bypasses the unscored volume rule (bug-125) — pure recency listing", seed=seed_corpus)
+@scenario("recall-empty-query-pure-recency", "store-recall-health", "recall: empty query bypasses the unscored volume rule (bug-125) — pure recency listing", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_recall("a1", "", 5)
@@ -1303,7 +1303,7 @@ async def _(ctx):
 # baking that separate invariant into this scenario -- one branch per
 # scenario, in the existing file's style. Confidence on so the pin includes
 # the `confidence` dict on every SURVIVING message.
-@scenario("recall-exclude-contents", "#362", "recall: exclude_contents drops a matching row before ranking (CONFIDENCE=on)", seed=seed_corpus)
+@scenario("recall-exclude-contents", "store-recall-health", "recall: exclude_contents drops a matching row before ranking (CONFIDENCE=on)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     _install_confidence_on(ctx)
@@ -1322,7 +1322,7 @@ async def _(ctx):
 # skip-under-deep branch is the one being exercised; under default config the
 # bump is skipped for a DIFFERENT reason (recall_counts empty). Confidence-on
 # is what makes this scenario specifically pin the "deep skips the bump" wire.
-@scenario("recall-deep-no-decay-no-bump", "#362", "recall: deep=True disables time_decay/completion_factor AND skips the recall_count bump (CONFIDENCE=on)", seed=seed_corpus)
+@scenario("recall-deep-no-decay-no-bump", "store-recall-health", "recall: deep=True disables time_decay/completion_factor AND skips the recall_count bump (CONFIDENCE=on)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     _install_confidence_on(ctx)
@@ -1334,13 +1334,13 @@ async def _(ctx):
 # FTS branch returns 0 rows for the nonsense trigram. Fused score is empty,
 # so `messages: []` and no recall_count bump. Default confidence: the empty-
 # result branch is what's under test, no need to enable scoring on it.
-@scenario("recall-no-hits", "#362", "recall: a query matching no row returns messages=[] and does not touch recall_count", seed=seed_corpus)
+@scenario("recall-no-hits", "store-recall-health", "recall: a query matching no row returns messages=[] and does not touch recall_count", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_recall("a1", "xyzzyxyzzy", 5)
 
 
-# --- bug-155 cosine backfill (an earlier decision) --------------------------------
+# --- bug-155 cosine backfill ------------------------------------------------
 #
 # Pins the FTS-only-hit backfill path directly. A lexically-matching row is
 # kept out of the vector channel by packing its embedding blob from text
@@ -1399,7 +1399,7 @@ async def _seed_bug155_backfill(ctx: Ctx) -> None:
 # row survives. The rescue itself is pinned in tests/test_gate_remediation.py rather
 # than by a new golden: a golden recorded after the change it guards agrees with the
 # code by construction (see the header of tests/test_equivalence_252.py).
-@scenario("recall-cosine-backfill", "#374",
+@scenario("recall-cosine-backfill", "cosine-backfill",
           "recall bug-155: FTS-only row whose stored blob is DISJOINT from the query gets a backfilled cosine (or is gated out) instead of out-scoring a real vector hit under CONFIDENCE_ENABLED — the drop recorded here is DESIGNED for a mixed result (bug-183); an all-blocked result is rescued instead by the gate_fallback path",
           seed=_seed_bug155_backfill)
 async def _(ctx):
@@ -1408,7 +1408,7 @@ async def _(ctx):
     return await memory_handlers.do_recall("a374", "apples", 5, deep=True)
 
 
-# --- do_check_health / do_deep_check (an earlier decision) ------------------------
+# --- do_check_health / do_deep_check ----------------------------------------
 #
 # 2.5.2b1 drops `healthy` from the check_health response in favour of the
 # three-valued `status` (they currently COEXIST — commit 448acd4 added
@@ -1580,7 +1580,7 @@ async def _seed_deep_anonymous_source(ctx: Ctx) -> None:
     await ctx.db.commit()
 
 
-@scenario("health-clean", "#362",
+@scenario("health-clean", "store-recall-health",
           "check_health: clean corpus — full response shape (status='healthy', severity_summary zeros)",
           seed=_seed_health_clean)
 async def _(ctx):
@@ -1593,7 +1593,7 @@ async def _(ctx):
 # info-only finding therefore leaves status='healthy' while healthy=False
 # (len(issues)==0 is falsified) -- the asymmetry maintenance_handlers.py:136
 # calls out. That's the concrete pre-b1 contract this scenario pins.
-@scenario("health-info-only-asymmetry", "#362",
+@scenario("health-info-only-asymmetry", "store-recall-health",
           "check_health: info-only finding (memory_annotation) — status stays 'healthy' (the asymmetry the retired healthy boolean contradicted, motivating the b1 single verdict)",
           seed=_seed_health_info)
 async def _(ctx):
@@ -1606,7 +1606,7 @@ async def _(ctx):
 # healthy=False -- both come from the (issues, severity_summary) round trip
 # through health_status(). Fix=False keeps the observation to detection
 # only; the fix scenario below handles the mutation half.
-@scenario("health-warn-degraded", "#362",
+@scenario("health-warn-degraded", "store-recall-health",
           "check_health: warn finding (duplicate_content cross-channel, bug-014) — severity_summary.warn=1, status='degraded'",
           seed=_seed_health_warn)
 async def _(ctx):
@@ -1620,7 +1620,7 @@ async def _(ctx):
 # gone so the residual sees no findings, and healthy/status flip to
 # healthy=True/'healthy'. The survivor row and the deleted collider are
 # visible in the observation's `db` dump.
-@scenario("health-fix-repairs-warn", "#362",
+@scenario("health-fix-repairs-warn", "store-recall-health",
           "check_health: fix=True on the warn corpus — fixed=True; bug-059 residual re-run yields status='healthy'; the survivor row is visible in db",
           seed=_seed_health_warn)
 async def _(ctx):
@@ -1641,7 +1641,7 @@ async def _(ctx):
 # `fix` is absent from the individual result dicts under fix=False (the
 # `if fix:` blocks in each runner gate it), which is the difference between
 # this scenario and the fix-True one below.
-@scenario("deep-check-clean", "#362",
+@scenario("deep-check-clean", "store-recall-health",
           "deep_check: envelope + zero shape of every subcheck on a clean agent (fix=False)")
 async def _(ctx):
     return await maintenance_handlers.do_deep_check(_DEEP_AGENT)
@@ -1655,7 +1655,7 @@ async def _(ctx):
 # The other five subchecks report their zero shape (`fixed:0` for
 # short_content since fix is now True); the envelope's `fixed:True` reflects
 # the effective fix flag.
-@scenario("deep-check-anonymous-source-fix", "#362",
+@scenario("deep-check-anonymous-source-fix", "store-recall-health",
           "deep_check: fix=True with a recoverable anonymous-User row + [username] prefix — name recovered, source rewritten in db",
           seed=_seed_deep_anonymous_source)
 async def _(ctx):

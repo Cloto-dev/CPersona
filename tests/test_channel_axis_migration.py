@@ -1,6 +1,6 @@
 """Tests for the knob2 v2 channel-axis migration + ''=global recall.
 
-Two changes land together (an earlier decision, default-flip preparation):
+Two changes land together (default-flip preparation):
 
 - ``do_migrate_channel_axis`` re-channels bridge-type memories (channel='discord')
   to the concrete channel recovered from ``metadata.session_id``

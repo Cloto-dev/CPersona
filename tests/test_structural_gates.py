@@ -17,7 +17,7 @@ Run as part of the normal ``uv run pytest`` CI gate (no ci.yml change needed).
 
 Waiver protocol (seam gates only): a reviewed exception to Gate 1/1b is granted inline
 with a ``# seam-waiver: <reason>`` comment on the statement. The isolation gates (2/4)
-accept NO waivers as of 2.5.0 (an earlier decision): a deliberately global operation is spelled
+accept NO waivers as of 2.5.0: a deliberately global operation is spelled
 out in code as ``isolation_where(agent_id=None)`` — a typed, greppable decision —
 instead of a comment the analyser trusts blindly.
 """
@@ -228,7 +228,7 @@ def _sql_string_constants(tree):
                 yield node.lineno, v, node
 
 
-# 2.5.0 (an earlier decision): a dynamically-assembled isolation predicate is accepted ONLY when it
+# 2.5.0: a dynamically-assembled isolation predicate is accepted ONLY when it
 # demonstrably comes from cpersona.isolation.isolation_where(). Two conditions, both
 # required: (a) the f-string embeds an IsolationFilter accessor — an attribute named
 # clause / and_clause / where — and (b) the enclosing function actually calls
@@ -359,7 +359,7 @@ def _agent_dml_violations(tree):
       3. it embeds an IsolationFilter accessor AND its enclosing function calls
          isolation_where() — the predicate (or the typed decision to omit it,
          `agent_id=None`) comes from the single helper.
-    There is NO waiver escape (2.5.0, an earlier decision): the residual fails the gate.
+    There is NO waiver escape (2.5.0): the residual fails the gate.
     """
     import re
 
@@ -553,7 +553,7 @@ def test_identity_probes_carry_isolation_axes():
     """Any WHERE-side content=?/summary=?/msg_id=? probe against an agent-scoped table
     must carry the γ axes that define row identity (project_id, and channel for the
     content/summary probes). Guards the bug-044/047/057/076 class. No waiver escape
-    (2.5.0, an earlier decision) — a cross-bucket probe that is genuinely wanted is a gate-design
+    (2.5.0) — a cross-bucket probe that is genuinely wanted is a gate-design
     conversation, not a comment."""
     violations = []
     for path in _iter_module_files():
@@ -645,7 +645,7 @@ def test_isolation_gate_has_teeth():
         "    q = f\"SELECT content FROM memories WHERE 1=1 {clause}\"\n"
     )
     assert _agent_dml_violations(adhoc), (
-        "isolation gate still passes an ad-hoc clause-named fragment (an earlier decision hole)"
+        "isolation gate still passes an ad-hoc clause-named fragment (isolation hole)"
     )
 
     # The helper idiom must pass — including the typed global scan (agent_id=None).

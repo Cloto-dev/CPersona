@@ -1,6 +1,6 @@
 """Two follow-ups closed in 2.5.3.
 
-- an earlier decision: the MGP validation log filter was never installed on this server's
+- The MGP validation log filter was never installed on this server's
   own main loop, so every kernel handshake probe logged a 31-line pydantic
   ValidationError for a method the MCP schema does not know.
 - bug-188 residual: the profile write path was bounded, but nothing detected a
@@ -40,7 +40,7 @@ async def _set_profile(conn, content: str, agent_id: str = AGENT):
 
 
 # ---------------------------------------------------------------------------
-# an earlier decision — the filter is installed on this server's own loop
+# The filter is installed on this server's own loop
 # ---------------------------------------------------------------------------
 
 

@@ -75,8 +75,8 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-timeout>=2.3",
 ]
-# Mutation-testing engine for the advisory mutation-diff lane (an earlier decision /
-# an earlier decision). A separate group so a bare `uv sync --dev` stays lean — only the
+# Mutation-testing engine for the advisory mutation-diff lane (L1).
+# A separate group so a bare `uv sync --dev` stays lean — only the
 # mutation-diff CI job (and local mutation runs) pull cosmic-ray's ~28 deps.
 mutation = [
     "cosmic-ray>=8.4.6",

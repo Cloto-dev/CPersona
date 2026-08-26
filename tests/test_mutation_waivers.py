@@ -1,4 +1,4 @@
-"""Hermetic tests for the mutation-diff waiver registry (an earlier decision / L2, #295).
+"""Hermetic tests for the mutation-diff waiver registry (lane L2).
 
 No cosmic-ray dependency: these gate the waiver logic itself — content-based
 fingerprints, the verification rules, and the approval/expiry gating — under the

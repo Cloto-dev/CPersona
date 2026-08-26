@@ -256,7 +256,7 @@ async def test_probe_reports_ok(monkeypatch):
     assert ok is True and evidence is None
 
 
-# --- 2.5.0 an earlier decision: the recall limit cap is layered — library clamps to the scan
+# --- 2.5.0: the recall limit cap is layered — library clamps to the scan
 # window (MAX_MEMORIES) only; the agent-facing 100 cap lives in the MCP boundary's
 # JSON Schema. These pin both layers so neither regresses silently.
 

@@ -1,4 +1,4 @@
-"""Coverage the 2.5.2 refactor seams need before the code moves (an earlier decision).
+"""Coverage the 2.5.2 refactor seams need before the code moves.
 
 `scripts/mutation-proof.py` breaks one behaviour at a time and asserts the suite
 goes red. Four of its mutations initially SURVIVED — the suite stayed green

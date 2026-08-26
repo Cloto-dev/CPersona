@@ -1,4 +1,4 @@
-"""Median-of-K fused-gate calibration (an earlier decision).
+"""Median-of-K fused-gate calibration.
 
 The single-draw estimator handed production a 0.1544 gate from the minor mode
 of a multimodal separation objective — a value 21 subsequent probe draws never

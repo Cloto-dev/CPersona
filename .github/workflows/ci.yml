@@ -62,7 +62,7 @@ jobs:
       - name: Verify issue registry
         run: bash scripts/verify-issues.sh
       - name: Verify mutation-waiver registry
-        # an earlier decision / L2 (#295): registry-integrity check (stdlib-only, so no uv
+        # Registry-integrity check (stdlib-only, so no uv
         # sync). Fails only on a MALFORMED registry (hard problems); expiry and
         # code-drift are advisory until L6 (#299) turns on --strict.
         run: python3 scripts/mutation_waivers.py
@@ -159,7 +159,7 @@ jobs:
           "
 
   mutation-proof:
-    # an earlier decision (first increment): the 2.5.2 refactor seams are guarded by
+    # First increment: the 2.5.2 refactor seams are guarded by
     # scripts/mutation-proof.py, which applies each hand-authored mutation, runs
     # the suite, and asserts the mutant is CAUGHT (or is a documented equivalent
     # mutant). A green suite is not evidence it would go RED on a real regression;
@@ -188,7 +188,7 @@ jobs:
         run: uv run --frozen python scripts/mutation-proof.py
 
   mutation-diff:
-    # an earlier decision / an earlier decision (L1): ADVISORY, non-blocking mutation testing scoped
+    # Lane L1: ADVISORY, non-blocking mutation testing scoped
     # to the PR's production diff (cosmic-ray + cr-filter-git). It NEVER fails the
     # build — the script always exits 0 and continue-on-error is a second belt —
     # because this lane exists to MEASURE (survivor counts, noise rate, added CI

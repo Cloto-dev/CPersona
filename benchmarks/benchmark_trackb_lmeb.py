@@ -807,7 +807,7 @@ async def async_main(args):
     await _get_db()
     logger.info(f"cpersona DB initialized at {tmp_db_path}")
 
-    # --unclamp_limit is obsolete since 2.5.0 (an earlier decision): do_recall's in-library
+    # --unclamp_limit is obsolete since 2.5.0: do_recall's in-library
     # cap is now the scan window (MAX_MEMORIES), so the harness's
     # limit=corpus_size full-ranking convention works against a stock checkout.
     # The flag is still accepted (no-op) so pre-2.5.0 command lines keep working;

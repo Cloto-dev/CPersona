@@ -1,4 +1,4 @@
-"""Tests for per-agent recall precision (knob 3, v2.4.29, an earlier decision).
+"""Tests for per-agent recall precision (knob 3, v2.4.29).
 
 Covers the beta resolver, sidecar round-trip of the per-agent override, and the
 set_recall_precision handler's resolution / clear / error / no-persist branches —

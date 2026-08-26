@@ -1,4 +1,4 @@
-"""Three-level health status derived from severity counts (an earlier decision item 5).
+"""Three-level health status derived from severity counts (audit item 5).
 
 The mapping lives in ``checks.health_status`` (colocated with ``exit_code`` so
 gate semantics evolve together) and is surfaced on ``do_check_health``'s
