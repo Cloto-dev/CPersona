@@ -92,7 +92,7 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
     write path only — a profile stored oversized by an earlier version stays
     that size until it is rewritten.
 
-    CSC #677: the seam is shared, the ceiling is not. This path caps at
+    The seam is shared, the ceiling is not. This path caps at
     MAX_PROFILE_LENGTH, which is the row's only bound because the recall
     injection never preview-trims it.
     """
@@ -615,7 +615,7 @@ def _separation_threshold(null_sims, pos_sims, floor: float, beta: float = 1.0) 
     method, the operating point is derived from the corpus's actual separability
     rather than a fixed quantile.
 
-    ``beta`` is the precision point — knob 3 (Goal #132). ``beta == 1`` reproduces the
+    ``beta`` is the precision point — knob 3. ``beta == 1`` reproduces the
     balanced Youden's J point (``argmax TPR - FPR``); ``beta > 1`` favours specificity
     (strict — fewer contaminants, more misses); ``beta < 1`` favours sensitivity
     (lenient — fewer misses, more contaminants). The curve is calibrated from data;
@@ -696,7 +696,7 @@ async def _temporal_adjacency_sims(db, agent_id: str, limit: int, window_min: fl
     import numpy as np
 
     # Per-agent when agent_id provided, deliberate all-agents fallback when empty —
-    # the empty case is the typed no-filter form of the helper (Task #180).
+    # the empty case is the typed no-filter form of the helper.
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
         f"SELECT timestamp, embedding FROM memories WHERE embedding IS NOT NULL "
@@ -981,7 +981,7 @@ def _prune_calibration_backups(path: str) -> None:
 
 
 def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
-    """Copy the sidecar aside before a staleness recalibration replaces it (Task #707).
+    """Copy the sidecar aside before a staleness recalibration replaces it.
 
     A staleness-triggered recalibration (scoring change, dimension change) overwrites
     the only record of the gate values that were effective until this boot. Twice in
@@ -1008,7 +1008,7 @@ def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
     existing = sorted(glob.glob(f"{glob.escape(path)}.before-{glob.escape(version_tag)}-*"))
     if existing:
         logger.debug(
-            "Task #707 / bug-246: the calibration sidecar for scoring version %r is "
+            "bug-246: the calibration sidecar for scoring version %r is "
             "already backed up at %s; not writing another copy.",
             version_tag,
             existing[-1],
@@ -1023,7 +1023,7 @@ def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
         return backup
     except OSError as exc:
         logger.warning(
-            "Task #707: could not back up the calibration sidecar before "
+            "Could not back up the calibration sidecar before "
             "recalibration; the previous gate values will not survive: %s",
             exc,
         )
@@ -1034,7 +1034,7 @@ async def _corpus_embedding_dim() -> int | None:
     """Return the float32 dimension of one stored embedding, or None when empty."""
     async with connection() as db:
         # Embedding dimension is corpus-invariant (any agent's row answers it) — the
-        # typed no-filter helper call replaces the old waiver comment (Task #180).
+        # typed no-filter helper call replaces the old waiver comment.
         iso = isolation_where(agent_id=None)
         rows = await db.execute_fetchall(
             f"SELECT embedding FROM memories WHERE embedding IS NOT NULL{iso.and_clause} LIMIT 1"
@@ -1052,7 +1052,7 @@ async def _calibrate_fused_gate(
     beta: float,
     floor: float,
 ) -> dict | None:
-    """Simulate-query calibration of the recall quality gate (Goal #132, v2.4.27).
+    """Simulate-query calibration of the recall quality gate (v2.4.27).
 
     The quality gate keys on a per-row score that — unlike pairwise cosine similarity —
     only exists relative to a query: the confidence score when CONFIDENCE_ENABLED, else
@@ -1176,7 +1176,7 @@ async def _calibrate_fused_gate_median(
     floor: float,
     draws: int | None = None,
 ) -> dict | None:
-    """Median-of-K wrapper over ``_calibrate_fused_gate`` (CSC #722).
+    """Median-of-K wrapper over ``_calibrate_fused_gate``.
 
     The single-draw estimator is unstable: ``_separation_threshold``'s objective
     J(θ) = TPR + β(1−FPR) is multimodal over a real corpus (a second mode near
@@ -1219,12 +1219,12 @@ async def _sample_embeddings(db, agent_id: str, sample_n: int):
     cannot support a calibration. Two independent floors have to hold, and they
     fail for different reasons: too few rows to draw from at all, and too few of
     them sharing one dimension once the ragged ones are dropped. The suite only
-    ever tripped the first until CSC Task #285 (mutation M08) pointed at the gap.
+    ever tripped the first until mutation M08 pointed at the gap.
     """
     import numpy as np
 
     # Per-agent when agent_id is provided, deliberate all-agents calibration when
-    # empty (the typed no-filter form of the helper, Task #180).
+    # empty (the typed no-filter form of the helper).
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
         f"SELECT embedding FROM memories WHERE embedding IS NOT NULL{iso.and_clause} ORDER BY RANDOM() LIMIT ?",
@@ -1408,7 +1408,7 @@ async def do_calibrate_threshold(
             config.VECTOR_MIN_SIMILARITY = new_threshold
             vector._claim_global_calibration("global_threshold")
 
-        # Post-fusion quality-gate calibration (v2.4.26, Goal #132). Per-agent and
+        # Post-fusion quality-gate calibration (v2.4.26). Per-agent and
         # fusion-mode only: recall is per-agent, and the gate lives on the active mode's
         # fused-score scale. Calibrating the curve here makes precision driven by data in
         # every mode (cascade via the vector floor above, rsf/rrf via this gate) instead of
@@ -1435,7 +1435,7 @@ async def do_calibrate_threshold(
                 )
                 fused_stats = None
             if fused_stats is not None:
-                # Task #707 / CSC #722: the 0.1544 collapse produced zero log lines —
+                # The 0.1544 collapse produced zero log lines —
                 # the gate is recall's effective filter, so a replacement is worth one.
                 logger.info(
                     "Fused gate [%s]: %s -> %.4f (signal=%s, draws=%s)",
@@ -1529,7 +1529,7 @@ async def do_calibrate_threshold(
 
 
 async def do_set_recall_precision(agent_id: str, precision: str = "", beta: float = 0) -> dict:
-    """Set an agent's recall precision (knob 3, v2.4.29, Goal #120) and recalibrate its gate.
+    """Set an agent's recall precision (knob 3, v2.4.29) and recalibrate its gate.
 
     ``precision`` is one of ``strict`` / ``balanced`` / ``lenient``, mapped to a specificity
     weight (beta) of 2.0 / 1.0 / 0.5 in the gate separation objective
@@ -1761,7 +1761,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         restored = True
         # A pre-v2.4.27 sidecar (or one never gate-calibrated) restores the vector
         # threshold but carries no recall gate. With FUSED_GATE_ENABLED, fall through to
-        # calibrate the gate so Goal #132 actually bites in production; otherwise the
+        # calibrate the gate so it actually bites in production; otherwise the
         # restore is sufficient. (This is what activates the gate on a v2.4.25 -> v2.4.27
         # upgrade where the embedding dimension is unchanged, so no dim-change recalibrate
         # would otherwise fire.)
@@ -1815,7 +1815,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         for stored_agent_id in state.get("agent_betas") or {}:
             vector._claim_agent_calibration(stored_agent_id, "agent_betas")
 
-    # Task #707: a staleness recalibration is about to replace the only record of the
+    # A staleness recalibration is about to replace the only record of the
     # values that gated recall until this boot. Back the sidecar up first (evidence for
     # the before/after comparison the log below reports), and remember what was stored
     # so the report can distinguish it from the runtime default that
@@ -1865,7 +1865,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
                 agents.append(aid)
 
     if replaced is not None:
-        # Task #707 (b): the per-calibration log lines above each printed
+        # The per-calibration log lines above each printed
         # "old -> new" where old is the runtime default, because the stale restore
         # was skipped. This is the line that reports the quantity an operator
         # actually needs after an upgrade boot: what gated recall until now
@@ -1894,7 +1894,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             for aid in agent_ids
         )
         logger.warning(
-            "Task #707: staleness recalibration replaced the stored calibration "
+            "Staleness recalibration replaced the stored calibration "
             "(backup: %s). Global cosine threshold: stored=%s (effective until this "
             "boot; not applied, stale), runtime_default=%s, new=%s. Per-agent "
             "(stored -> new): %s",
@@ -1917,7 +1917,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         "scoring_stale": scoring_stale,
         "global_ok": bool(global_result.get("ok")),
         "agents": agents,
-        # Task #707: machine-readable form of the replacement report above; None on
+        # Machine-readable form of the replacement report above; None on
         # the boots (initial, plain auto-calibrate) that replace nothing stale.
         "sidecar_backup": sidecar_backup,
         "calibration_replaced": replaced,
@@ -2170,7 +2170,7 @@ class _ImportTally:
 
     `remote_items` is shipped after the transaction closes (see the tail of
     do_import_memories), where no rollback reaches — so that one guard was all
-    that stood between a preview and a live index write, and CSC Task #293 found
+    that stood between a preview and a live index write, and an audit found
     it by mutating the guard away: the database stayed spotless and every
     DB-watching test in the suite stayed green.
 
@@ -2271,7 +2271,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     run's is the whole contract (bug-056 / bug-070).
 
     bug-221: the content goes through the write path's own sanitiser first, like
-    ``_import_profile_record`` does (bug-188 / CSC #677). This file may have been
+    ``_import_profile_record`` does (bug-188). This file may have been
     produced by another DB, an older version or a hand edit, so import is the
     stricter of the two seams, not the looser one — a body that ``do_store``
     would refuse (empty after sanitisation) must not enter through the restore,
@@ -2289,7 +2289,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         return
     if truncated:
         # The number is the text that was actually kept, not a second read of the
-        # constant (CSC #677): len(content) after a truncation IS the cap.
+        # constant: len(content) after a truncation IS the cap.
         tally.errors.append(
             f"Line {line_num}: memory content exceeded the {len(content)}-character cap "
             "and was truncated"
@@ -2486,7 +2486,7 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
         )
         return
     if truncated:
-        # CSC #677: the number comes from the text that was actually kept, not
+        # The number comes from the text that was actually kept, not
         # from a second read of the constant. A message that quotes its own cap
         # can disagree with the cut; len(content) after a truncation IS the cap.
         tally.errors.append(

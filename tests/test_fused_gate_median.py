@@ -1,4 +1,4 @@
-"""Median-of-K fused-gate calibration (CSC #722).
+"""Median-of-K fused-gate calibration.
 
 The single-draw estimator handed production a 0.1544 gate from the minor mode
 of a multimodal separation objective — a value 21 subsequent probe draws never

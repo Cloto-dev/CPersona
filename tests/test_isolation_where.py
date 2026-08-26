@@ -1,4 +1,4 @@
-"""Unit tests for cpersona.isolation.isolation_where (2.5.0, Task #180).
+"""Unit tests for cpersona.isolation.isolation_where (2.5.0).
 
 The helper is the single source for the 3-axis read predicate; these tests pin
 the per-axis contract (agent=exact, project=γ, channel=knob2 v2) and the alias

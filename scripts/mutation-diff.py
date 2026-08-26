@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Advisory mutation-diff lane (CSC Goal #181, Task #294 / L1).
+"""Advisory mutation-diff lane (L1).
 
 NON-BLOCKING. This scopes a cosmic-ray mutation run to the production lines a PR
 actually changed, classifies the outcomes, writes a JSON artifact plus a
@@ -248,7 +248,7 @@ def write_summary(report: dict, path: str | None) -> None:
     """Append a markdown summary to $GITHUB_STEP_SUMMARY (or the given path)."""
     if not path:
         return
-    lines = ["## Mutation-diff (advisory — CSC #294)", ""]
+    lines = ["## Mutation-diff (advisory)", ""]
     status = report["status"]
     if status != "ok":
         lines += [f"**status:** `{status}` — {report.get('reason', '')}", ""]
@@ -332,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
 
     base_report = {
         "lane": "mutation-diff-advisory",
-        "task": "CSC #294 (L1)",
+        "task": "advisory mutation-diff lane (L1)",
         "base": base,
         "cap": args.cap,
         "tool": {"engine": "cosmic-ray", "version": ENGINE_VERSION},

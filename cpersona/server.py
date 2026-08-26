@@ -242,7 +242,7 @@ async def do_list_episodes_boundary(agent_id: str, limit: int, project_id: str |
 
 
 # =============================================================================
-# Recall preview boundary (2.5.0, Task #193)
+# Recall preview boundary (2.5.0)
 # =============================================================================
 
 # The library layer (do_recall / do_recall_with_context) always returns full
@@ -278,7 +278,7 @@ def _apply_preview(result: dict) -> dict:
     return result
 
 
-# bug-211 (Task #705): the CSC #680 write-cap raise (2000 -> 16000) was followed
+# bug-211: the write-cap raise (2000 -> 16000) was followed
 # on the read side only at get_contents. recall(full_content=true) bypasses
 # _apply_preview entirely, so its worst case grew 8x with it — limit 100 x
 # 16000 = 1.6M characters, an opt-in flag away. Same doctrine as
@@ -762,7 +762,7 @@ registry.auto_tool(
             "query": {"type": "string", "description": "Search query (empty returns recent memories)"},
             "limit": {
                 "type": "integer",
-                "description": "Per-retriever search depth, not a pure response cap (CSC #716): the value is handed to each retrieval channel (vector / episode FTS / keyword) as its top-K, so lowering it shrinks the candidate pool itself — rows beyond the depth are unreachable at any gate value, and score normalization / autocut operate on the smaller pool, which can also reorder what remains. Fewer rows than this may be returned. (Agent-facing cap; the library layer accepts up to the scan window for direct callers.)",
+                "description": "Per-retriever search depth, not a pure response cap: the value is handed to each retrieval channel (vector / episode FTS / keyword) as its top-K, so lowering it shrinks the candidate pool itself — rows beyond the depth are unreachable at any gate value, and score normalization / autocut operate on the smaller pool, which can also reorder what remains. Fewer rows than this may be returned. (Agent-facing cap; the library layer accepts up to the scan window for direct callers.)",
                 "default": 10,
                 "minimum": 0,
                 "maximum": 100,
@@ -875,7 +875,7 @@ registry.auto_tool(
             },
             "limit": {
                 "type": "integer",
-                "description": "Per-retriever search depth for the underlying recall, not a pure response cap — same semantics as recall's limit (CSC #716): lowering it shrinks the candidate pool itself, not just the rows returned. (Agent-facing cap; the library layer accepts up to the scan window for direct callers.)",
+                "description": "Per-retriever search depth for the underlying recall, not a pure response cap — same semantics as recall's limit: lowering it shrinks the candidate pool itself, not just the rows returned. (Agent-facing cap; the library layer accepts up to the scan window for direct callers.)",
                 "default": 10,
                 "minimum": 0,
                 "maximum": 100,

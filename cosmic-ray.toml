@@ -1,4 +1,4 @@
-# Advisory mutation-diff lane — cosmic-ray config (CSC Goal #181, Task #294 / L1).
+# Advisory mutation-diff lane — cosmic-ray config (lane L1).
 #
 # This drives the NON-BLOCKING, PR-diff-scoped mutation run wired by
 # scripts/mutation-diff.py. It is deliberately distinct from the two other

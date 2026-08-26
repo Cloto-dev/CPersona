@@ -175,7 +175,7 @@ async def test_recall_keyword_path_gamma_filter():
 
 
 # ============================================================
-# Write-side dedup channel contract (Task #289, 2026-07-20)
+# Write-side dedup channel contract (2026-07-20)
 # ============================================================
 
 

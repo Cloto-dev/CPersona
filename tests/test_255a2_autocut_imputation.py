@@ -1,4 +1,4 @@
-"""Pin the bug-207 imputation x autocut interaction (CSC Task #715).
+"""Pin the bug-207 imputation x autocut interaction.
 
 Finding (measured 2026-08-15 against a production snapshot, in-process do_recall):
 ``_autocut`` decides its cut point from the RELATIVE gap ``gap / max_score`` against
@@ -72,7 +72,7 @@ def _scored(timestamps: list[str]) -> list[dict]:
 
 
 def test_imputed_row_moves_the_autocut_cut_point():
-    """One undated row among dated ones shifts the cut — the Task #715 mechanism.
+    """One undated row among dated ones shifts the cut — the bug-207 mechanism.
 
     This is the pre-bug-213 world: the row's real time exists but no read path
     delivered it, so ``_compute_confidence`` imputes. The imputation changes one

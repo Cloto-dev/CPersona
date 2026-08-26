@@ -515,7 +515,7 @@
       "youden_j": 0.0713,
       "z_factor": 1.0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {
       "cal": 0.7859
     }
@@ -533,7 +533,7 @@
       "error": "Need at least 10 embeddings, found 0",
       "ok": false
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "calibrate-percentile": {
@@ -1048,7 +1048,7 @@
       "sidecar_persisted": true,
       "z_factor": 1.0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {
       "cal": 0.789
     }
@@ -1291,7 +1291,7 @@
       "error": "Need at least 10 same-dimension embeddings, found 8",
       "ok": false
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "calibrate-sample-cap": {
@@ -1805,7 +1805,7 @@
       "youden_j": "<volatile>",
       "z_factor": 1.0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": "<volatile>"
   },
   "calibrate-too-few": {
@@ -1886,7 +1886,7 @@
       "error": "Need at least 10 embeddings, found 4",
       "ok": false
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "deep-check-anonymous-source-fix": {
@@ -1959,7 +1959,7 @@
         }
       }
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "deep-check-clean": {
@@ -2007,7 +2007,7 @@
         }
       }
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "export-roundtrip": {
@@ -2370,7 +2370,7 @@
         "skipped_memories": 0
       }
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "health-clean": {
@@ -2436,7 +2436,7 @@
       "status": "healthy",
       "total_memories": 1
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "health-fix-repairs-warn": {
@@ -2502,7 +2502,7 @@
       "status": "healthy",
       "total_memories": 1
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "health-info-only-asymmetry": {
@@ -2575,7 +2575,7 @@
       "status": "healthy",
       "total_memories": 1
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "health-warn-degraded": {
@@ -2666,7 +2666,7 @@
       "status": "degraded",
       "total_memories": 2
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "import-content-collision": {
@@ -2731,7 +2731,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 2
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-dry-run": {
@@ -2769,7 +2769,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-dry-run-intra-file-duplicates": {
@@ -2807,7 +2807,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 2
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-fresh": {
@@ -2919,7 +2919,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-missing-file": {
@@ -2952,7 +2952,7 @@
       "error": "File not found: <tmp>/nope.jsonl",
       "ok": false
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-msgid-collision": {
@@ -3017,7 +3017,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 1
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-preserves-axes": {
@@ -3082,7 +3082,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-retarget": {
@@ -3165,7 +3165,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-torn-line": {
@@ -3233,7 +3233,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "import-truncated": {
@@ -3318,7 +3318,7 @@
       "skipped_episodes": 0,
       "skipped_memories": 0
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "merge-copy-skip": {
@@ -3520,7 +3520,7 @@
       "strategy": "skip",
       "target_agent_id": "dst"
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "merge-dry-run": {
@@ -3656,7 +3656,7 @@
       "strategy": "skip",
       "target_agent_id": "dst"
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "merge-empty-source": {
@@ -3792,7 +3792,7 @@
       "strategy": "skip",
       "target_agent_id": "dst"
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "merge-into-self": {
@@ -3912,7 +3912,7 @@
       "error": "source_agent_id and target_agent_id must differ",
       "ok": false
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "merge-move": {
@@ -4074,7 +4074,7 @@
       "strategy": "skip",
       "target_agent_id": "dst"
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "merge-move-dry-run": {
@@ -4210,7 +4210,7 @@
       "strategy": "skip",
       "target_agent_id": "dst"
     },
-    "seam": "#287",
+    "seam": "admin-handlers",
     "thresholds": {}
   },
   "recall-basic-hits": {
@@ -4396,7 +4396,7 @@
         }
       ]
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "recall-cosine-backfill": {
@@ -4462,7 +4462,7 @@
         }
       ]
     },
-    "seam": "#374",
+    "seam": "cosine-backfill",
     "thresholds": {}
   },
   "recall-deep-no-decay-no-bump": {
@@ -4648,7 +4648,7 @@
         }
       ]
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "recall-empty-query-pure-recency": {
@@ -4843,7 +4843,7 @@
         }
       ]
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "recall-exclude-contents": {
@@ -5029,7 +5029,7 @@
         }
       ]
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "recall-no-hits": {
@@ -5184,7 +5184,7 @@
     "result": {
       "messages": []
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-duplicate-content": {
@@ -5219,7 +5219,7 @@
       "reason": "duplicate content",
       "result": "skipped"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-duplicate-msg-id": {
@@ -5254,7 +5254,7 @@
       "reason": "duplicate msg_id",
       "result": "skipped"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-empty-content": {
@@ -5271,7 +5271,7 @@
       "reason": "empty content",
       "result": "rejected"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-gamma-bucket-collides-global": {
@@ -5306,7 +5306,7 @@
       "reason": "duplicate content",
       "result": "skipped"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-gamma-global-not-collides-bucket": {
@@ -5357,7 +5357,7 @@
       "ok": true,
       "result": "stored"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-local-basic": {
@@ -5392,7 +5392,7 @@
       "ok": true,
       "result": "stored"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-no-persist-paused": {
@@ -5413,7 +5413,7 @@
       "reason": "session no-persist mode active (30m left) — `store` skipped. Call `resume_persistence` to re-enable, or wait for TTL to elapse.",
       "result": "skipped"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-remote-basic": {
@@ -5463,7 +5463,7 @@
       "ok": true,
       "result": "stored"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-sanitized-empty": {
@@ -5480,11 +5480,11 @@
       "reason": "empty after sanitization",
       "result": "rejected"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-source-normalize-bare-alias": {
-    "covers": "store: source='assistant' bare-string alias — normalized to canonical Agent dict (Task #282)",
+    "covers": "store: source='assistant' bare-string alias — normalized to canonical Agent dict",
     "db": {
       "episodes": [],
       "memories": [
@@ -5515,11 +5515,11 @@
       "ok": true,
       "result": "stored"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-source-normalize-serde-tagged": {
-    "covers": "store: source={'User': 'u-1'} Rust serde form — normalized to canonical User dict (Task #282)",
+    "covers": "store: source={'User': 'u-1'} Rust serde form — normalized to canonical User dict",
     "db": {
       "episodes": [],
       "memories": [
@@ -5550,11 +5550,11 @@
       "ok": true,
       "result": "stored"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-source-verbatim-bare-unknown": {
-    "covers": "store: source='claude-code' bare-string unknown — stored verbatim (Task #282 anonymous-source contract)",
+    "covers": "store: source='claude-code' bare-string unknown — stored verbatim (anonymous-source contract)",
     "db": {
       "episodes": [],
       "memories": [
@@ -5585,7 +5585,7 @@
       "ok": true,
       "result": "stored"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-timestamp-default": {
@@ -5620,7 +5620,7 @@
       "ok": true,
       "result": "stored"
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "store-truncated": {
@@ -5656,7 +5656,7 @@
       "result": "stored",
       "truncated": true
     },
-    "seam": "#362",
+    "seam": "store-recall-health",
     "thresholds": {}
   },
   "sv-local-basic": {
@@ -5850,7 +5850,7 @@
         "timestamp": "2026-01-01T00:00:06Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-channel": {
@@ -6092,7 +6092,7 @@
         "timestamp": "2026-01-01T00:00:02Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-empty-embed": {
@@ -6245,7 +6245,7 @@
     "outbound": [],
     "raised": null,
     "result": [],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-high-threshold": {
@@ -6398,7 +6398,7 @@
     "outbound": [],
     "raised": null,
     "result": [],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-limit-1": {
@@ -6566,7 +6566,7 @@
         "timestamp": "2026-01-01T00:00:07Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-project": {
@@ -6808,7 +6808,7 @@
         "timestamp": "2026-01-01T00:00:02Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-project-global": {
@@ -7038,7 +7038,7 @@
         "timestamp": "2026-01-01T00:00:02Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-source-escape": {
@@ -7191,7 +7191,7 @@
     "outbound": [],
     "raised": null,
     "result": [],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-source-no-channel": {
@@ -7357,7 +7357,7 @@
         "timestamp": "2026-01-01T00:00:05Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-source-with-channel": {
@@ -7551,7 +7551,7 @@
         "timestamp": "2026-01-01T00:00:05Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-threshold": {
@@ -7745,7 +7745,7 @@
         "timestamp": "2026-01-01T00:00:06Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-local-unknown-agent": {
@@ -7898,7 +7898,7 @@
     "outbound": [],
     "raised": null,
     "result": [],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-remote-empty": {
@@ -8063,7 +8063,7 @@
     ],
     "raised": null,
     "result": [],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-remote-episode-src-gate": {
@@ -8241,7 +8241,7 @@
         "timestamp": "2026-01-01T00:00:05Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-remote-error-fallback": {
@@ -8447,7 +8447,7 @@
         "timestamp": "2026-01-01T00:00:06Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-remote-hits": {
@@ -8639,7 +8639,7 @@
         "timestamp": "2026-01-01T00:00:06Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-remote-isolation-miss": {
@@ -8817,7 +8817,7 @@
         "timestamp": "2026-01-01T00:00:01Z"
       }
     ],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   },
   "sv-remote-stale-id": {
@@ -8982,7 +8982,7 @@
     ],
     "raised": null,
     "result": [],
-    "seam": "#286",
+    "seam": "_search_vector",
     "thresholds": {}
   }
 }

@@ -33,7 +33,7 @@ has no safe automatic repair, while cosmetic ``memory_annotation`` is info and
 fully fixable. Fixes are always agent-scoped where the data is agent-scoped
 and never touch ``locked`` rows (the bug-007 invariant).
 
-The ``repairable`` contract (2.5.5, Goal #234)
+The ``repairable`` contract (2.5.5)
 ----------------------------------------------
 The escalation rules above are the only way a runner used to move its own
 severity. This is the one systematic *de-escalation*: a finding whose repair
@@ -312,7 +312,7 @@ async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
     them would also merge their counts, and "3 oversized rows" that means two
     memories and a profile tells an operator less than either number alone.
 
-    CSC #677: the threshold is MAX_PROFILE_LENGTH, the same constant the profile
+    The threshold is MAX_PROFILE_LENGTH, the same constant the profile
     write path caps at — detection, repair and the writer read one number. When
     the memory cap moves (the 2.6 tree) this check does not move with it.
     """
@@ -1529,7 +1529,7 @@ def invalid_source_type_where(canonical_types: str) -> str:
 
 
 async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
-    """Detect and (optionally) canonicalise legacy source shapes (Task #282, 1b).
+    """Detect and (optionally) canonicalise legacy source shapes (2.5.2).
 
     Historical fix path blanket-overwrote every offending row with an anonymous
     ``{"type":"User","id":"","name":""}`` sentinel — a lossy repair that
@@ -1676,7 +1676,7 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     classified_all = len(rows) < INVALID_SOURCE_CLASSIFY_CAP
     if not classified_all:
         issue["classified"] = len(rows)
-    # 2.5.5 (Goal #234): this check's local de-escalation became the registry-wide
+    # 2.5.5: this check's local de-escalation became the registry-wide
     # `repairable` contract, so it now only reports what a fix would write and
     # run_health_checks owns the verdict. None past the classification cap: the
     # sample is incomplete, and an unknown is not evidence that nothing can be

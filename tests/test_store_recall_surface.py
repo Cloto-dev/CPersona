@@ -1,9 +1,9 @@
-"""Agent-facing response polish for do_store and do_recall (v2.5.2, Task #282).
+"""Agent-facing response polish for do_store and do_recall (v2.5.2).
 
 Both changes are strictly additive on top of the existing JSON shapes so any
 existing agent that ignores unknown keys keeps working; these tests pin the
 NEW keys so a future refactor cannot silently drop them (which is how the
-original CSC Task #282 items were requested — the internal signals were
+original items were requested — the internal signals were
 already computed but discarded before the response, and the id was already
 in hand from the INSERT but not echoed).
 

@@ -1,4 +1,4 @@
-"""2.5.2b1 write-path and context-filter findings (CSC #361 items C12 / C13 / (6)).
+"""2.5.2b1 write-path and context-filter findings (audit items C12 / C13 / (6)).
 
 Three defects that share one shape: a write path (or a filter) that was less
 careful than its sibling, with nothing in the response admitting it.

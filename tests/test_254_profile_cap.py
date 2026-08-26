@@ -1,4 +1,4 @@
-"""CSC #677: the profile's ceiling is its own, not the memory content cap.
+"""The profile's ceiling is its own, not the memory content cap.
 
 Why the split exists. A memory is preview-trimmed on the way out and its full
 text stays reachable through ``ref`` + ``get_contents``, so MAX_CONTENT_LENGTH
@@ -6,7 +6,7 @@ does not govern what a recall response costs. The profile is injected as the
 id=-1 sentinel row, which ``_apply_preview`` skips because a ref-less row cannot
 be expanded again (bug-117) — so its cap is the only bound it has, and it is
 paid in every recall response. While one constant served both, relaxing the
-memory cap (the 2.6 tree, CSC #680) would have put an unbounded profile into
+memory cap (the 2.6 tree) would have put an unbounded profile into
 every response without a line of code mentioning profiles.
 
 Both defaults are 2000, so no behaviour changes today. That is exactly why these

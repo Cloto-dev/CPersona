@@ -1,4 +1,4 @@
-"""Observed reachability while unauthenticated (2.5.3, Goal #183).
+"""Observed reachability while unauthenticated (2.5.3).
 
 The startup guard can only look at the bind address, and that is exactly the
 premise that failed: a loopback bind said nothing about who could reach the
