@@ -1536,3 +1536,60 @@ def test_the_independent_reading_is_broader_than_the_patterns():
         "the production patterns already reach this phrasing, so the gate above "
         "cannot demonstrate that it would catch a reworded claim"
     )
+
+
+# ---------------------------------------------------------------------------
+# Gate 16 (cost class, 2.5.7): the translation helper ships no tool schemas.
+#
+# `--allowed-tools ""` is a permission filter, so it leaves every built-in
+# schema in the request and only forbids calling them; `--tools ""` is what
+# empties the roster. Getting this wrong costs tokens on every translated page
+# and changes nothing a test could otherwise notice: the model still answers,
+# the edits still apply, every gate in this repository still passes. A
+# regression here is invisible except on a bill, which is precisely why it needs
+# a gate rather than a comment.
+# ---------------------------------------------------------------------------
+
+_TRANSLATOR = PKG.parent / "scripts" / "translate-i18n-drift.py"
+
+
+def _cli_argv(source: str) -> list[str]:
+    """The string literals of the `claude` argv built in this source.
+
+    Read from the syntax tree rather than by grepping, so a flag that appears in
+    prose — this file argues about `--allowed-tools` at length — cannot be
+    mistaken for a flag that is passed.
+    """
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.List) or not node.elts:
+            continue
+        first = node.elts[0]
+        if isinstance(first, ast.Constant) and first.value == "claude":
+            return [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+    raise AssertionError("no `claude` argv list found in the source")
+
+
+def _tool_roster_is_emptied(source: str) -> bool:
+    argv = _cli_argv(source)
+    if "--allowed-tools" in argv:
+        return False
+    return "--tools" in argv and argv[argv.index("--tools") + 1] == ""
+
+
+def test_translation_helper_disables_tools_rather_than_denying_them():
+    assert _tool_roster_is_emptied(_TRANSLATOR.read_text(encoding="utf-8")), (
+        f"{_TRANSLATOR.name} must pass `--tools \"\"` to run without tool "
+        "schemas. `--allowed-tools \"\"` only denies the calls: the schemas are "
+        "still sent and still paid for, on every page, every time the workflow "
+        "runs."
+    )
+
+
+def test_tool_roster_gate_has_teeth():
+    """The gate must reject the form it exists to keep out."""
+    denied = _TRANSLATOR.read_text(encoding="utf-8").replace('"--tools",', '"--allowed-tools",')
+    assert not _tool_roster_is_emptied(denied)
+
+    dropped = _TRANSLATOR.read_text(encoding="utf-8").replace('                "--tools",\n                "",\n', "")
+    assert not _tool_roster_is_emptied(dropped)

@@ -265,12 +265,26 @@ def request_edits(model: str, effort: str, diff: str, japanese: str, page: str) 
 
     Three flags do real work beyond the obvious:
 
-    * ``--allowed-tools ""`` — the job is a transformation of text that is already
-      in the prompt, so a tool call could only reach for something that is not the
+    * ``--tools ""`` — the job is a transformation of text that is already in the
+      prompt, so a tool call could only reach for something that is not the
       question. It also removes the whole class of "the page said to run this".
+      Not ``--allowed-tools ""``, which was used here first and is a permission
+      filter: a denied tool is still a tool whose schema was sent, and the CLI
+      reported 26 of them loaded under it. Replaying one real page edit through
+      this function cost 26,550 input tokens that way and 8,248 with the tools
+      actually gone.
+
+      Read those as input_tokens + cache_creation + cache_read. The figure this
+      comment used to carry was cache-write alone, which reported 3,073 for a run
+      that was in fact carrying the whole roster: it arrived as a cache hit, and
+      a cache hit is cheaper but not absent. A metric that drops a term cannot
+      show a cost that lives in that term.
+
+      The count is a property of the CLI build, and the version measured here is
+      not the version this workflow pins, so treat 26 as the shape rather than
+      the constant. The flag empties the roster either way.
     * ``--setting-sources ""`` and a scratch cwd — a run inside the repository
-      loads its CLAUDE.md and settings into every call. Measured: 27,627 cache-
-      write tokens with them, 3,073 without, for the same trivial request.
+      loads its CLAUDE.md and settings into every call.
     * ``--system-prompt`` (not ``--append-``) — replaces the default rather than
       adding to it, for the same reason.
     """
@@ -299,7 +313,7 @@ def request_edits(model: str, effort: str, diff: str, japanese: str, page: str) 
                 SYSTEM,
                 "--setting-sources",
                 "",
-                "--allowed-tools",
+                "--tools",
                 "",
             ],
             cwd=scratch,
