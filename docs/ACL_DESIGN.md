@@ -92,6 +92,11 @@ also stays untouched (a 2.5.x line invariant).
       "client_id": "importer",
       "token": "s3cr3t-literal-also-allowed",
       "grants": { "beta": "read-write" }
+    },
+    {
+      "client_id": "web-connector",
+      "token": null,                              // grants only: a resolver
+      "grants": { "beta": "read" }                // asserts this identity (§5.4)
     }
   ]
 }
@@ -99,6 +104,13 @@ also stays untouched (a 2.5.x line invariant).
 
 - `token` accepts a literal or a `${ENV_VAR}` reference (resolved at load; an
   unset variable is a startup error — fail closed, §7).
+- `token: null` says the row carries grants for a principal some resolver
+  asserts rather than a credential a caller presents (§5.4). It contributes no
+  token entry, so nothing can present it. **Omitting the key is not that
+  declaration**: a forgotten token stays a startup error, because a row nothing
+  can reach is not what an operator who typed a client id meant to write. The
+  distinction is what keeps the alternative — writing a placeholder token to
+  get the grants in — from quietly issuing a live credential nobody wanted.
 - Duplicate `client_id` or duplicate resolved token: startup error. Token
   lookup must stay unambiguous.
 - Permissions are exactly `"none" | "read" | "read-write"`. Unknown strings:
@@ -172,10 +184,18 @@ enforcement-invisible (§8 pins this with an exhaustiveness test).
 
 The shape above is the minimum, not the maximum: a `detail` string joins it
 whenever the guard can name a cause the fields do not already carry — an
-unclassified tool, a non-string scope argument, or a call that demanded every
-agent because it sent no scope at all. It is deliberately absent from the
+unclassified tool, a non-string scope argument, a call that demanded every
+agent because it sent no scope at all, or a client with no entry in the grant
+table. It is deliberately absent from the
 example's own case, where `agent_id` and `required` already say which agent was
 short of which level; restating that in prose would add no information.
+
+The last of those is the only one no caller can act on, and it reads least
+like a configuration gap: a principal with no row authenticates, the unscoped
+tools answer it normally, and every scoped tool refuses — a connection that
+looks healthy and remembers nothing. It is named rather than left to the scope
+advice, which would send that caller after a fix that cannot work, since no
+agent is reachable at any level.
 
 `client_id` echoes the caller's own resolved identity (it is not a secret to
 itself) so a mis-wired client is diagnosable from its side of the wire. Denials
@@ -186,8 +206,10 @@ audit seed if a real audit log is ever wanted — deliberately not built now).
 
 The stdio transport has no credential to resolve — the peer is whoever spawned
 the process. Proposed: in ACL mode, stdio resolves to the reserved principal
-`"local"`; grants for it come from the same file (`"client_id": "local"`, no
-`token` field). If `"local"` is absent, stdio calls are denied like any
+`"local"`; grants for it come from the same file (`"client_id": "local"`, with
+`token` either omitted or written as an explicit `null` — any other value is a
+startup error, since it would be an entry nothing can ever present). If
+`"local"` is absent, stdio calls are denied like any
 ungranted principal — an operator who turns ACL mode on states every principal
 explicitly, the local one included. Legacy mode: stdio is unrestricted, as
 today.

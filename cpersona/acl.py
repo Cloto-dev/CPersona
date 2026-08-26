@@ -171,14 +171,26 @@ def load_config(path: str) -> AclConfig:
 
         if client_id == LOCAL_CLIENT_ID:
             # The stdio principal is asserted by transport, not by credential
-            # (§5.4). A token here would be an entry nothing can ever present.
-            if "token" in entry:
+            # (§5.4). A token here would be an entry nothing can ever present —
+            # an explicit null says precisely that, so it is the one value this
+            # row may carry for the key.
+            if entry.get("token") is not None:
                 raise AclConfigError(
                     f"ACL client {LOCAL_CLIENT_ID!r} is the stdio principal and must "
                     "not carry a token"
                 )
-        else:
-            token_raw = entry.get("token")
+        elif "token" not in entry:
+            # Omission stays a startup error (§7). A static client whose token
+            # was forgotten must fail loudly rather than load as a row nothing
+            # can present; declaring "no credential" is what the explicit null
+            # is for, and keeping the two apart is what makes that safe.
+            raise AclConfigError(
+                f"ACL client {client_id!r}: token must be a non-empty string, or "
+                "null for a principal a resolver asserts rather than one a caller "
+                "presents; omitting the key does not declare that"
+            )
+        elif entry["token"] is not None:
+            token_raw = entry["token"]
             if not isinstance(token_raw, str) or not token_raw:
                 raise AclConfigError(
                     f"ACL client {client_id!r}: token must be a non-empty string"
@@ -542,20 +554,36 @@ def _wrap(name: str, handler):
                 principal.client_id,
                 detail="tool not classified for ACL enforcement",
             )
+        known_client = principal.client_id in config.grants_by_client
         grants = config.grants_by_client.get(principal.client_id, {})
         for agent_pattern, required in demands(arguments):
             if agent_pattern == "":
                 continue  # authenticated-only demand: the principal suffices
             if effective_permission(grants, agent_pattern) < required:
                 logger.warning(
-                    "ACL denial: client=%s tool=%s agent=%s required=%s",
+                    "ACL denial: client=%s tool=%s agent=%s required=%s%s",
                     principal.client_id,
                     name,
                     agent_pattern,
                     _PERMISSION_NAMES[required],
+                    "" if known_client else " (no entry in the grant table)",
                 )
                 detail = ""
-                if agent_pattern == WILDCARD:
+                if not known_client:
+                    # Authenticated and granted nothing at all. The unscoped
+                    # tools answer while every scoped one refuses, so the
+                    # connection looks healthy and remembers nothing — the
+                    # shape hardest to read as a configuration gap. The scope
+                    # advice below cannot apply here: no agent is reachable at
+                    # any level, so "pass agent_id" is advice a caller can
+                    # follow exactly and be denied again. Name the cause.
+                    detail = (
+                        "this client has no entry in the ACL grant table, so no "
+                        "agent is reachable at any level — an operator running "
+                        "ACL mode states every principal explicitly, this one "
+                        "included"
+                    )
+                elif agent_pattern == WILDCARD:
                     malformed = [
                         k
                         for k in _SCOPE_KEYS
