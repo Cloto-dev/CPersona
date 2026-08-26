@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:4f1739010e94b45409edb4915e57a5ffdc89bbf7 -->
+<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:663ba27efa7c46e6cd06bd2511cea22394f33532 -->
 
 # dense 劣化のランタイム検知 + advisory のコンテキスト注入
 
@@ -316,3 +316,44 @@ observe)、`memory_handlers.py` (入口の `observe_config`、両方の返却地
 単体テスト + do_recall の統合テスト + プローブの単体テスト。autouse の `health._reset`)。
 テスト: 13/13 green。recall-SQL の回帰 `test_channel_axis_migration` 7/7 +
 `test_episode_channel` 10/10 green。
+
+---
+
+## 8. 抑制のスコープ (bug-251) { #8-suppression-scope-bug-251 }
+
+§3 の項目 4 の発火ルール、および §4.5 / §6 のペイロードのフィールド一覧を supersede します。
+
+**欠陥。** 「完全版 runbook はもう発火した」はプロセスの状態 (`health._advisory_emitted`)
+であり、エピソードごと 1 回の縮退はこれを鍵にしています。stdio ではこれが意図どおりの
+ルールです — 1 プロセスが 1 クライアントセッションを相手にするからです。しかし
+`CPERSONA_TRANSPORT=streamable-http` は `StreamableHTTPSessionManager(stateless=True)` で
+動くため、1 プロセスが接続中の全クライアントに応答します。障害中の最初の recall が
+全員分の完全版 runbook を消費し、他のすべてのセッションには `FAULT_RUNBOOK_SHORT` が
+渡っていました。これは `**Notify the user:**` の命令を持たず、そのセッションが受け取って
+いないメッセージへの続報として読めてしまいます。項目 7 の正直な到達範囲 —
+「fault は*次の* recall で表面化する」— は、いつのまにか「あるひとつのセッションの次の
+recall で、障害ごとに 1 回だけ」になっていました。
+
+実トランスポート経由で計測: 1 プロセス・1 回の障害で 2 クライアントが recall したところ、
+最初は命令付きの 1067 文字、2 番目は命令なしの 107 文字でした。
+
+**現在のルール。** プロセスが複数セッションを相手にしている間、`fault` は縮退しません。
+障害は稀であり runbook はこの機能の目的そのものなので、recall ごとにその費用を払う方が、
+1 つを除く全セッションで沈黙の費用を払うより良い、という判断です。
+
+`hint` は従来どおり縮退します。`mode=none` は恒久的な状態なので、免除すると 650 文字の
+runbook を recall ごとに永久に繰り返すことになり、しかもそれは項目 8 が放っておくために
+存在している「意図的な keyword-only 配備」にこそ当たります。
+
+**どちらのルールが効いているかはペイロードが述べます。** `advisory_scope` は抑制状態が
+共有されている時に `"process"`、プロセスがそのままセッションである時に `"session"` を
+返します。これによりクライアントは、受け取っていないものへの続報と、受け取ったものへの
+続報を区別できます。no-persist のトグルも同じやり方で影響範囲を開示しています。この
+advisory はそうせず、自分のペイロードを黙って劣化させていました。
+
+**なぜセッション単位にしないのか。** recall の継ぎ目にはセッションを識別できるものが
+ありません。HTTP モードは stateless なのでリクエストを越えて残るセッションはなく、ACL の
+principal はクライアント id しか持ちません — 1 つの資格情報を共有する 2 つのウィンドウは
+1 つの principal です。呼び出し側が渡す鍵があればセッション単位にできますが、その代償は
+全クライアントが渡さねばならない引数です。`advisory_scope` は、その時に `"session"` を
+返し始めるフィールドであり、形は変わりません。

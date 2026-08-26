@@ -36,12 +36,32 @@ On the first ``maybe_advisory()`` of a degraded episode the full runbook fires o
 subsequent calls in the same episode return a short reminder; ``healthy``/``unknown`` are
 completely silent. Recovery (``observe_ok``) re-arms the full template.
 
+bug-251: "already fired" is process state, and under a shared transport a process is not
+a session. Downgrading there told the user once per OUTAGE instead of once per session —
+every session but one received a reminder for a message it never got, with no
+``**Notify the user:**`` imperative in it. So a ``fault`` does not downgrade while
+``config.shared_transport()`` holds: an outage is rare and the runbook is the point of
+the feature. ``hint`` still downgrades, because ``mode=none`` is permanent and repeating
+a 650-char runbook on every recall forever is the worse failure. Either way the payload
+carries ``advisory_scope`` so a client can see whose suppression state it is looking at
+(the no-persist toggle discloses its blast radius the same way).
+
 Concurrency
 -----------
 State is module-level; the mutators contain no ``await``, so they run atomically between
 awaits under the asyncio single thread / GIL — no ``asyncio.Lock`` (same argument as
 ``_vendored_mcp_common/no_persist.py``). Per-process: a server restart resets to
 ``unknown``, which is correct (a respawned server re-measures on its first recall).
+
+Per-process is right for the measurement (the embedding backend is shared by every caller
+of this process) and wrong for the suppression (whether a given caller has been told is
+per caller). Making the second one per-session needs an identity at the recall seam that
+does not exist: the HTTP mode is stateless, so there is no session id, and
+``acl.Principal`` carries only ``client_id`` — two Claude Code windows on one credential
+are one principal. A caller-supplied key — an opaque identity the client declares on each
+call — is the way to get one, at the cost of an argument every client has to pass; until
+then the exemption above is the honest substitute and ``advisory_scope`` says which regime
+is in force.
 
 Versioning: introduced in cloto-mcp-cpersona 2.4.33.
 """
@@ -165,20 +185,29 @@ def maybe_advisory() -> dict | None:
     """Return the advisory payload to attach to a recall response, or ``None``.
 
     ``None`` when opted out, or when the state is silent (``unknown``/``healthy``). The full
-    runbook fires once per degraded episode; subsequent calls return the short reminder.
+    runbook fires once per degraded episode; subsequent calls return the short reminder —
+    except for a ``fault`` on a shared transport, which never downgrades (bug-251, see the
+    module docstring).
     """
     global _advisory_emitted
     if not config.DEGRADED_ADVISORY_ENABLED:
         return None
     if _state in (UNKNOWN, HEALTHY):
         return None
-    full = not _advisory_emitted
+    shared = config.shared_transport()
+    full = not _advisory_emitted or (shared and _state == FAULT)
     _advisory_emitted = True
-    return _build_payload(full)
+    return _build_payload(full, shared)
 
 
-def _build_payload(full: bool) -> dict:
-    """Build the ``{degraded, severity, reason, evidence, runbook}`` advisory struct."""
+def _build_payload(full: bool, shared: bool) -> dict:
+    """Build the ``{degraded, severity, reason, evidence, runbook, advisory_scope}`` struct.
+
+    ``advisory_scope`` names what the once-per-episode suppression is keyed on, so a
+    ``process`` reminder is not mistaken for a follow-up this caller received (bug-251).
+    It becomes ``session`` the day a caller-supplied key reaches this seam; today only the
+    stdio transport earns that value, by having one session per process.
+    """
     evidence = _evidence or "no detail captured"
     if _severity == "hint":
         runbook = HINT_RUNBOOK_FULL if full else HINT_RUNBOOK_SHORT
@@ -191,6 +220,7 @@ def _build_payload(full: bool) -> dict:
         "reason": _reason,
         "evidence": _evidence,
         "runbook": runbook,
+        "advisory_scope": "process" if shared else "session",
     }
 
 

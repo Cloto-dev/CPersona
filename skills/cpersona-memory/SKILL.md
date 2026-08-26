@@ -356,7 +356,8 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
 
 - **Recall results look thin / off-topic, or an `advisory` field appears on a
   `recall` response** — CPersona v2.4.33+ attaches
-  `advisory = {degraded, severity, reason, evidence, runbook}` when it is
+  `advisory = {degraded, severity, reason, evidence, runbook, advisory_scope}`
+  when it is
   running **degraded** (embeddings unavailable: `EMBEDDING_MODE=none`, or the
   HTTP endpoint is unreachable — process died, port changed, DB copied to a
   host without the embedding server, or a startup race). **Surface this to the
@@ -374,7 +375,7 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
 
 ## Key facts
 
-- 29 tools · Schema v13 (auto-migrating) · ~14,100 LOC Python across focused modules · MIT.
+- 29 tools · Schema v13 (auto-migrating) · ~14,500 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 "$DB" ".backup 'backup.db'"` (WAL-safe — a plain `cp` of a live DB

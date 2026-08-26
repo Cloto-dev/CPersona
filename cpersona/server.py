@@ -2157,7 +2157,7 @@ def _preflight_http_auth() -> None:
     Runs for the HTTP transport only, and silently for stdio, which has no bind
     and no token.
     """
-    if os.environ.get("CPERSONA_TRANSPORT", "stdio") != "streamable-http":
+    if config.transport() != "streamable-http":
         return
     if os.environ.get("CPERSONA_ACL_FILE", ""):
         # ACL mode is authentication (every request must resolve to a
@@ -2345,7 +2345,7 @@ async def main():
     install_mgp_validation_filter()
 
     try:
-        transport = os.environ.get("CPERSONA_TRANSPORT", "stdio")
+        transport = config.transport()
         if transport == "stdio":
             await _run_stdio_server()
         elif transport == "streamable-http":

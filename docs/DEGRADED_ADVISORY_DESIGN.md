@@ -294,3 +294,42 @@ where they conflict.
 (`CPERSONA_DEGRADED_ADVISORY`), `test_do_recall_response.py` (state-machine units + do_recall
 integration + probe units; autouse `health._reset`). Tests: 13/13 green; recall-SQL
 regression `test_channel_axis_migration` 7/7 + `test_episode_channel` 10/10 green.
+
+---
+
+## 8. Suppression scope (bug-251)
+
+Supersedes the point-4 firing rule in §3 and the payload field lists in §4.5 and §6.
+
+**The defect.** "The full runbook already fired" is process state
+(`health._advisory_emitted`), and the once-per-episode downgrade keys on it. Under stdio
+that is the intended rule — one process serves one client session. But
+`CPERSONA_TRANSPORT=streamable-http` runs `StreamableHTTPSessionManager(stateless=True)`,
+so one process answers every connected client: the first recall of an outage consumed the
+full runbook for everybody. Every other session received `FAULT_RUNBOOK_SHORT`, which
+carries no `**Notify the user:**` imperative and reads as a follow-up to a message that
+session never got. Point 7's honest reach — "fault surfaces on the *next* recall" —
+quietly became "on the next recall of one session, once per outage".
+
+Measured through the real transport, two clients in one process during one outage: the
+first got 1067 characters with the imperative, the second got 107 without it.
+
+**The rule now.** A `fault` does not downgrade while the process serves several sessions.
+An outage is rare and the runbook is the point of the feature, so paying for it on every
+recall beats paying silence on every session but one.
+
+A `hint` still downgrades. `mode=none` is permanent, so the exemption would repeat a
+650-character runbook on every recall forever — and it would land on exactly the
+deliberate keyword-only deployment that point 8 exists to leave alone.
+
+**The payload says which rule is in force.** `advisory_scope` is `"process"` when the
+suppression state is shared and `"session"` when the process is the session, so a client
+can tell a reminder it never received from a follow-up to one it did. The no-persist
+toggle discloses its blast radius the same way; this advisory used to degrade its own
+payload silently instead.
+
+**Why not per session.** Nothing at the recall seam identifies a session to key on. The
+HTTP mode is stateless, so no session survives a request, and the ACL principal carries
+only a client id — two windows sharing one credential are one principal. A caller-supplied
+key would give one, at the cost of an argument every client has to pass; `advisory_scope`
+is the field that would then start answering `"session"`, with no change of shape.
