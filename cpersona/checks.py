@@ -1034,7 +1034,7 @@ _PROJECT_ID_NORMALIZE = re.compile(r"[^a-z0-9]")
 async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
     """Flag project_id values that normalize to the same key (naming drift).
 
-    Distinct spellings of the same bucket ('cycia-mc-audit' / 'cyciamc-audit')
+    Distinct spellings of the same bucket ('data-ops-audit' / 'dataops-audit')
     split memories across γ buckets that no single read unifies — the rows are
     invisible to each other's recalls. Report-only: which spelling is
     canonical is an operator decision, and the registry of valid project_ids

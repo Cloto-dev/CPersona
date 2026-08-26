@@ -403,17 +403,17 @@ async def test_bug243_scoped_axis_hygiene_does_not_leak_other_agents_buckets(db)
 async def test_bug243_scoped_run_still_reports_the_agents_own_drift(db):
     await db.execute(
         "INSERT INTO memories (agent_id, project_id, content, timestamp) VALUES (?, ?, ?, ?)",
-        (AGENT, "cycia-mc", "mine a", UTC_TS),
+        (AGENT, "data-ops", "mine a", UTC_TS),
     )
     await db.execute(
         "INSERT INTO memories (agent_id, project_id, content, timestamp) VALUES (?, ?, ?, ?)",
-        (AGENT, "cyciamc", "mine b", UTC_TS),
+        (AGENT, "dataops", "mine b", UTC_TS),
     )
     await db.commit()
 
     scoped = await checks.check_axis_hygiene(db, AGENT, fix=False)
     spellings = {m["project_id"] for cluster in scoped[0]["clusters"] for m in cluster}
-    assert spellings == {"cycia-mc", "cyciamc"}
+    assert spellings == {"data-ops", "dataops"}
 
 
 # ---------------------------------------------------------------------------
