@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from cpersona import acl, server
+from cpersona import acl, config, server
 
 
 # ---------------------------------------------------------------------------
@@ -1061,3 +1061,102 @@ async def test_both_causes_in_one_call_are_both_reported(tmp_path):
     assert "no agent scope was sent" in detail and "pass source_agent_id" in detail, detail
     assert 'target_agent_id was sent as "*"' in detail, detail
     assert scoped["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# bug-264: a sweep no argument can narrow says why, instead of saying nothing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unconfined_file_io_denial_names_the_cause_not_the_scope(tmp_path, monkeypatch):
+    """The caller scoped the call correctly and was still refused.
+
+    With CPERSONA_EXPORT_DIR unset the path argument is caller-chosen anywhere
+    on the filesystem, so the demand escalates to every agent whatever agent_id
+    says. The counterfactuals rightly decline to claim scoping would have
+    helped; before bug-264 the branch after them said nothing at all, leaving a
+    client that holds read-write on exactly the agent it named reading
+    ``agent_id: "*"`` with no reason it could act on.
+    """
+    monkeypatch.setattr(config, "EXPORT_DIR", "")
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("export_memories", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))  # {"alpha": rw, "*": read}
+    try:
+        denied = await guarded({"agent_id": "alpha", "output_path": "/tmp/x.json"})
+    finally:
+        acl.reset_principal(token)
+
+    assert denied["error"] == "permission_denied" and denied["agent_id"] == "*"
+    assert "CPERSONA_EXPORT_DIR" in denied["detail"], denied["detail"]
+    assert "no agent scope narrows this call" in denied["detail"], denied["detail"]
+    # The advice for the OTHER cause must not appear here: this caller did send
+    # a scope, and telling it to send one is what bug-263 exists to prevent.
+    assert "no agent scope was sent" not in denied["detail"], denied["detail"]
+
+
+@pytest.mark.asyncio
+async def test_the_advice_that_works_is_the_one_offered_for_unconfined_io(tmp_path, monkeypatch):
+    """Pinned in both directions, like the omitted-scope advice above.
+
+    The denial names CPERSONA_EXPORT_DIR; setting it must therefore change the
+    outcome, or the message recommends an action that does not work.
+    """
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap("export_memories", _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))
+    try:
+        monkeypatch.setattr(config, "EXPORT_DIR", "")
+        denied = await guarded({"agent_id": "alpha", "output_path": "/tmp/x.json"})
+        monkeypatch.setattr(config, "EXPORT_DIR", str(tmp_path / "exports"))
+        allowed = await guarded({"agent_id": "alpha", "output_path": "/tmp/x.json"})
+    finally:
+        acl.reset_principal(token)
+
+    assert denied["error"] == "permission_denied"
+    assert allowed["ok"] is True and "error" not in allowed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["pause_persistence", "resume_persistence"])
+async def test_process_wide_denial_says_no_scope_would_have_helped(tmp_path, tool):
+    """The same silence covered every intrinsic sweep, not only file I/O.
+
+    A process-wide switch demands every agent by its nature. Classifying it as
+    a sweep and explaining why now live on the same object, so a tool cannot be
+    one without the other.
+    """
+    acl.activate(_load(tmp_path))
+    guarded = acl._wrap(tool, _stub_handler)
+    token = acl.set_principal(acl.Principal("assistant-a"))
+    try:
+        denied = await guarded({"agent_id": "alpha"})
+    finally:
+        acl.reset_principal(token)
+
+    assert denied["error"] == "permission_denied"
+    assert "process-wide" in denied["detail"], denied["detail"]
+    assert "no agent scope narrows this call" in denied["detail"], denied["detail"]
+
+
+def test_every_intrinsic_sweep_classification_can_explain_itself():
+    """A classification that always demands "*" must carry a cause.
+
+    The guard falls back to the always-true half when it does not, so this is
+    the check that keeps the fallback from quietly becoming the norm — the
+    silence bug-264 removed would otherwise return one tool at a time.
+    """
+    silent = []
+    for name, demands in acl.ACL_CLASSIFICATION.items():
+        probe = {key: "\x00probe" for key in acl._SCOPE_KEYS}
+        try:
+            patterns = [pattern for pattern, _ in demands(probe)]
+        except Exception:  # pragma: no cover - a demands function that dislikes the probe
+            continue
+        if acl.WILDCARD in patterns and not getattr(demands, "_sweep_cause", None):
+            silent.append(name)
+    assert not silent, (
+        "these tools demand every agent no matter how the call is scoped but "
+        f"cannot say why: {sorted(silent)}"
+    )
