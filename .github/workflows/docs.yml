@@ -10,25 +10,38 @@ name: docs
 on:
   # Both lists are spelled out because GitHub Actions does not resolve YAML
   # anchors — keep them in step.  The scripts/ entries are on the trigger so
-  # that a PR editing a doc checker actually runs the checker it edited.
+  # that a PR editing a doc checker actually runs the checker it edited; every
+  # checker the build job runs belongs here, or editing it is the one change
+  # that cannot be tested.  overrides/ is on the trigger because it IS the
+  # language-routing implementation (theme.custom_dir), not decoration: a PR
+  # that only touches it would otherwise ship an unrun check-lang-routing.js,
+  # and — because push is filtered by the same list — master would not
+  # redeploy Pages either, leaving the regression latent until an unrelated
+  # docs/ edit carried it out.
   push:
     branches: [master]
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "overrides/**"
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
       - "scripts/check-heading-parity.py"
+      - "scripts/check-i18n-coverage.py"
       - "scripts/check-i18n-drift.py"
+      - "scripts/check-lang-routing.js"
       - "scripts/translate-i18n-drift.py"
   pull_request:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "overrides/**"
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
       - "scripts/check-heading-parity.py"
+      - "scripts/check-i18n-coverage.py"
       - "scripts/check-i18n-drift.py"
+      - "scripts/check-lang-routing.js"
       - "scripts/translate-i18n-drift.py"
 
 permissions:
