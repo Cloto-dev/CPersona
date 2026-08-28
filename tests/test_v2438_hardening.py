@@ -1,6 +1,6 @@
 """Regression tests for the v2.4.38 structural-hardening line.
 
-Covers the fixes filed from the task#150 full audit (qa/issue-registry.json
+Covers the fixes filed from the full audit (qa/issue-registry.json
 bug-014..039). Each test pins one fixed defect so verify-issues.sh's "pattern
 absent" and these behavioural assertions move together.
 """
@@ -351,7 +351,7 @@ async def test_merge_preserves_project_locked_and_skips_collision(clean_db):
 
 
 # ---------------------------------------------------------------------------
-# v2.4.38 batch #2 (task#171): the 11 MEDIUM/LOW fixes approved by the maintainer
+# v2.4.38 batch #2: the 11 MEDIUM/LOW fixes approved by the maintainer
 # for 2.4.38.
 # Each test pins one landed fix.
 # ---------------------------------------------------------------------------
