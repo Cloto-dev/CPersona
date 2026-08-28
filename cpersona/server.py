@@ -1741,6 +1741,22 @@ def _oauth_discovery() -> "_OAuthDiscovery | None":
     )
 
 
+def _bearer_credential(header: str) -> str:
+    """The credential out of an ``Authorization: Bearer <token>`` header, or "".
+
+    One implementation for both credential modes. They previously parsed the
+    same header by different rules — the ACL branch case-insensitively, the
+    static-token branch not — so a client sending the equally legal
+    ``authorization: bearer <token>`` authenticated in ACL mode and got a bare
+    401 from the same server, the same client and the same credential in
+    ``CPERSONA_AUTH_TOKEN`` mode. RFC 7235 §2.1: the auth-scheme is
+    case-insensitive. Divergence is prevented here rather than corrected in
+    two places, because two spellings of one rule is what produced it
+    (bug-265).
+    """
+    return header[7:] if header[:7].lower() == "bearer " else ""
+
+
 class BearerTokenMiddleware:
     """Simple Bearer token authentication middleware.
 
@@ -1884,9 +1900,7 @@ class BearerTokenMiddleware:
             # stateless HTTP transport executes the tool call inside this
             # request's task lineage, so the value set here is visible at
             # dispatch — pinned end-to-end by tests/test_acl.py.
-            header = request.headers.get("authorization", "")
-            # RFC 7235: the auth-scheme is case-insensitive.
-            token = header[7:] if header[:7].lower() == "bearer " else ""
+            token = _bearer_credential(request.headers.get("authorization", ""))
             principal = acl.resolve_token(self.acl_config, token)
             if principal is None:
                 await self._unauthorized(scope, receive, send)
@@ -1900,8 +1914,7 @@ class BearerTokenMiddleware:
         if not self.auth_token:
             self._warn_once_if_remotely_reached(request)
         if self.auth_token:
-            header = request.headers.get("authorization", "")
-            token = header[7:] if header.startswith("Bearer ") else ""
+            token = _bearer_credential(request.headers.get("authorization", ""))
             # A missing/malformed header yields an empty token, which must
             # be rejected — the earlier code let header-less requests fall
             # through to the app (auth bypass, bug-003). compare_digest keeps
