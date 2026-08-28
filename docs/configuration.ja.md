@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:be2b30ebd32d465e454786fc0f8c89cabef1c7f6 -->
+<!-- i18n-source: docs/configuration.md@blob:ebc5614490e328a0713dac37d60e1ffdeec792fb -->
 
 # 設定リファレンス
 
@@ -52,6 +52,18 @@
 | `CPERSONA_AUTH_TOKEN` | *(未設定)* | 全リクエストに要求する Bearer トークン |
 | `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP` | `false` | HTTP トランスポートを認証なしで動かす |
 | `CPERSONA_ACL_FILE` | *(未設定)* | クライアント別ケーパビリティ: 名前つき Bearer トークンにエージェント別の read/write 権限を与え、既定は拒否 ([ACL 設計](ACL_DESIGN.md)) |
+| `CPERSONA_OAUTH_RESOURCE` | *(未設定)* | RFC 9728 metadata で公開し、クライアントから返されることを期待する正規のリソース識別子。空の間は discovery は無効のまま ([OAuth 設計](OAUTH_DESIGN.md)) |
+| `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | *(未設定)* | クライアントが認証しに行くべき issuer URL。空白またはカンマ区切り。1 つも列挙されていない間は discovery は無効のまま |
+| `CPERSONA_OAUTH_SCOPES` | `cpersona:read cpersona:write` | 401 で広告する scope。クライアントは要求されたとおりの scope を返してくるため、この値が scope 設計を左右する |
+
+**discovery は明示的に有効化するまで無効です。** OAuth に対応したクライアントは
+RFC 9728 の metadata を探し、見つからなければ人間に client id を手で入力させる段まで
+落ちます — 発見すべきものを与えられなかったクライアントとしては正しい挙動ですが、
+資格情報が壊れていると誤読されがちです。`CPERSONA_OAUTH_RESOURCE` **と**
+`CPERSONA_OAUTH_AUTHORIZATION_SERVERS` に最低 1 件を設定すると metadata が公開され、
+401 に `resource_metadata` と `scope` が乗ります。どちらかが未設定の間は、この機能を
+持たないビルドとバイト単位で同一の応答になります。つまり有効化は意図的な操作であって、
+アップグレードの副作用では起きません。
 
 **ループバックへの bind はセキュリティ境界ではありません。** トンネル
 (cloudflared / ngrok)、リバースプロキシ、`kubectl port-forward`、公開された

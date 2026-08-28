@@ -177,13 +177,28 @@ The resource-server half — RFC 9728 metadata, and a 401 that carries `resource
 `scope` — is required by **all three** routes. It is additive: it changes no existing caller's
 behaviour, because today every request without a valid credential is already refused.
 
-It also fixes a symptom we can already explain. Today the server implements neither discovery
-mechanism, so a specification-conformant client finds nothing and falls through to the last step
-of its registration ladder: asking the human to type in a client id. That screen is not a
-rejection of our credentials and not a client defect. It is the correct behaviour for a client
-that was given nothing to discover.
+It also fixes a symptom we can already explain. Before this half shipped the server implemented
+neither discovery mechanism, so a specification-conformant client found nothing and fell through
+to the last step of its registration ladder: asking the human to type in a client id. That screen
+is not a rejection of our credentials and not a client defect. It is the correct behaviour for a
+client that was given nothing to discover.
 
 This half can ship before the route is chosen, and it makes the failure legible either way.
+
+**How it is turned on.** Three environment variables, all unset by default — with none of them
+set the responses are byte-identical to before, which is what makes shipping ahead of the route
+choice safe:
+
+| Variable | What it does |
+|----------|--------------|
+| `CPERSONA_OAUTH_RESOURCE` | The canonical resource identifier this server publishes and expects back. Discovery stays off while it is empty |
+| `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | Whitespace- or comma-separated issuer URLs. Discovery stays off while none is listed |
+| `CPERSONA_OAUTH_SCOPES` | The scope advertised on the 401 (default `cpersona:read cpersona:write`) |
+
+Defaults and the surrounding settings: [Configuration](configuration.md). Naming them here
+matters more than it looks — an operator hitting exactly the failure above reads this section to
+find out what to do about it, and a feature whose switch is unwritten is a feature that shipped
+without shipping.
 
 ## 8. Additive design, and one place where "additive" stops being true
 
@@ -251,7 +266,8 @@ closes the door on the other two. A route that cannot be undone is a poor first 
 this young.
 
 **The route-independent half ships first** (§7). It is additive, it is required by whichever route
-had won, and it replaces a failure nobody can read with one that explains itself.
+had won, and it replaces a failure nobody can read with one that explains itself. It has since
+shipped; §7 names the three variables that enable it.
 
 **Still open: how a provider-minted client identifier acquires grants** (§8). A default, a mapping
 rule, or per-caller provisioning. This is not a detail to settle while writing the code — an

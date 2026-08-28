@@ -48,6 +48,17 @@ instead — one server, several clients, reachable over a network.
 | `CPERSONA_AUTH_TOKEN` | *(unset)* | Bearer token required on every request |
 | `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP` | `false` | Run the HTTP transport with no authentication at all |
 | `CPERSONA_ACL_FILE` | *(unset)* | Per-client capability mode: named bearer tokens with per-agent read/write grants, deny-by-default (see [ACL design](ACL_DESIGN.md)) |
+| `CPERSONA_OAUTH_RESOURCE` | *(unset)* | Canonical resource identifier published in the RFC 9728 metadata and expected back from the client. Discovery stays off while this is empty (see [OAuth design](OAUTH_DESIGN.md)) |
+| `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | *(unset)* | Whitespace- or comma-separated issuer URLs the client should authenticate against. Discovery stays off while none is listed |
+| `CPERSONA_OAUTH_SCOPES` | `cpersona:read cpersona:write` | Scope advertised on the 401. The client sends back exactly what is asked for, so this value is the lever over scope design |
+
+**Discovery is off until you turn it on.** A client that supports OAuth looks for RFC 9728
+metadata; finding none, it falls through to asking a human to type in a client id — correct
+behaviour for a client given nothing to discover, and easily misread as a broken credential.
+Setting `CPERSONA_OAUTH_RESOURCE` **and** at least one entry in
+`CPERSONA_OAUTH_AUTHORIZATION_SERVERS` publishes the metadata and puts `resource_metadata` and
+`scope` on the 401. With either unset the responses are byte-identical to a build without the
+feature, so enabling it is a deliberate act rather than an upgrade side effect.
 
 **A loopback bind is not a security boundary.** Tunnels (cloudflared, ngrok),
 reverse proxies, `kubectl port-forward` and published container ports all forward
