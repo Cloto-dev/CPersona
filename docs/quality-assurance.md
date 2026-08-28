@@ -80,9 +80,9 @@ and how long a line keeps receiving fixes, is
 
 ## By the numbers
 
-- **~14,500 LOC** Python across focused modules, plus a 3,300-line vendored MCP
+- **~15,000 LOC** Python across focused modules, plus a 3,300-line vendored MCP
   common snapshot
-- **~1,015 test functions** across ~90 test modules — ~1,278 cases once the
+- **~1,055 test functions** across ~90 test modules — ~1,350 cases once the
   behavioural matrix is parametrised (~30,400 LOC, more test code than server
   code), including the structural-enforcement gates above
 - **Schema v13** (auto-migrating)

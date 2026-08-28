@@ -2,7 +2,7 @@
 
 > **Applies to: CPersona 2.5.x.** The authoritative description of every
 > argument is the tool's own MCP description — your client reads it, and it
-> ships with the version you are running. This page groups the **29 tools** by
+> ships with the version you are running. This page groups the **30 tools** by
 > what you reach for them for, and links to the contract when a tool behaves in
 > a way its name does not suggest.
 
@@ -70,8 +70,9 @@ detail that matters when you tighten `limit`.
 |---|---|
 | `check_health` | Registry-driven check with severity-tagged issues and, with `fix=true`, auto-repair: contamination, duplicates, FTS integrity, embedding-dimension drift, schema objects, stale tasks, invalid data. Some checks are report-only by design — isolation-axis hygiene among them, because which spelling of an axis is canonical is an operator's call, not a repair |
 | `deep_check` | Semantic data-quality pass: anonymous sources, too-short content, stale profiles, orphaned episodes |
+| `get_session_findings` | The same findings, pulled on demand — the SuperAuditor pull contract ([standard](SUPERAUDITOR_STANDARD.md)). Whole-database by design (no agent or project filter), read-only, with `capped_kinds` naming every kind that had more than `per_kind_limit` rows. A probe that raised shows up as a finding of kind `check_crashed` rather than failing the call |
 
-Both are also reachable outside MCP as `python -m cpersona.checkup`, which is
+`check_health` and `deep_check` are also reachable outside MCP as `python -m cpersona.checkup`, which is
 the form to use in CI. Cadence guidance is in the
 [operations runbook](operations.md#maintenance-cadence).
 
@@ -97,7 +98,7 @@ without a `persisted` key at all.
 ## Isolation arguments
 
 The three isolation axes are not offered uniformly. `agent_id` is accepted by
-most tools (22 of 29); `project_id` by six; and `channel` by exactly four —
+most tools (22 of 30); `project_id` by six; and `channel` by exactly four —
 `store`, `recall`, `recall_with_context` and `archive_episode`. They are
 independent axes rather than one nested hierarchy, and reads treat an empty
 value differently from an omitted one — see
