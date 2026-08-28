@@ -84,6 +84,24 @@ def main() -> int:
         print(f"{findings} page(s) whose translated headings moved their anchors", file=sys.stderr)
         return 1
 
+    if not checked:
+        # Every English page's counterpart lookup missed. site/ja exists (the
+        # guard above passed), so this is not "nothing is translated" — it is
+        # the built layout no longer matching what this script walks: an
+        # i18n default_language flip moves English under site/en/, and a
+        # docs_structure change moves the counterpart somewhere else again.
+        # Reporting OK here would say every translated anchor is intact at the
+        # exact moment not one of them was compared — a check with nothing to
+        # check reporting green, which check-lang-routing.js refuses by name.
+        print(
+            f"heading parity: no page under {site} paired with a counterpart under "
+            f"{translated}, so nothing was compared — a check with nothing to check "
+            "would report green. The built layout no longer matches what this script "
+            "walks; fix the pairing rule rather than the guard.",
+            file=sys.stderr,
+        )
+        return 2
+
     print(f"heading parity: OK ({checked} translated page(s) keep their English anchors)")
     return 0
 

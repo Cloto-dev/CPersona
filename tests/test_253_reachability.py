@@ -11,6 +11,8 @@ operator who opted into running without auth gets told that the exposure is
 real, not blocked mid-request.
 """
 
+import json
+
 import pytest
 
 from cpersona import server
@@ -355,3 +357,68 @@ def test_preflight_does_not_duplicate_the_opt_in_warning(caplog, monkeypatch):
         server._preflight_http_auth()
 
     assert "UNAUTHENTICATED" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# bug-265: one Authorization header, one parse — in both credential modes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER", "BeArEr"])
+async def test_static_token_accepts_any_spelling_of_the_scheme(scheme):
+    """RFC 7235 §2.1: the auth-scheme is case-insensitive.
+
+    The ACL branch already matched it that way while this one required exactly
+    "Bearer ", so the same client with the same credential authenticated in ACL
+    mode and got a bare 401 in CPERSONA_AUTH_TOKEN mode. Some HTTP stacks emit
+    the scheme lowercase, and nothing in the 401 would have explained why.
+    """
+    app_reached, _ = await _call("s3cret", headers=[("authorization", f"{scheme} s3cret")])
+    assert app_reached is True, f"a legal {scheme!r} credential was refused"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "header",
+    [
+        "s3cret",  # no scheme at all
+        "Basic s3cret",  # a different scheme carrying the right secret
+        "Bearers3cret",  # no delimiter: the scheme is not "Bearer"
+        "Bearer wrong",
+        "",
+    ],
+)
+async def test_static_token_still_refuses_what_it_refused_before(header):
+    """Case-insensitivity must widen the spelling, not the credential."""
+    app_reached, _ = await _call("s3cret", headers=[("authorization", header)])
+    assert app_reached is False, f"{header!r} reached the app"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer"])
+async def test_both_credential_modes_read_the_header_the_same_way(tmp_path, scheme):
+    """The property the shared helper exists to hold.
+
+    Pinned as a comparison rather than as two separate expectations: the defect
+    was not that either mode was wrong on its own, it was that they disagreed.
+    """
+    from cpersona import acl
+
+    acl_file = tmp_path / "acl.json"
+    acl_file.write_text(
+        json.dumps({"clients": [{"client_id": "c1", "token": "s3cret", "grants": {"*": "read-write"}}]}),
+        encoding="utf-8",
+    )
+    acl_config = acl.load_config(str(acl_file))
+
+    headers = [("authorization", f"{scheme} s3cret")]
+    static_reached, _ = await _call("s3cret", headers=headers)
+    acl_mw = server.BearerTokenMiddleware(None, auth_token="", acl_config=acl_config)
+    acl_reached, _ = await _call("", headers=headers, middleware=acl_mw)
+    acl.activate(None)
+
+    assert static_reached == acl_reached is True, (
+        f"static mode reached={static_reached}, ACL mode reached={acl_reached} "
+        f"for {scheme!r} — the two modes must not disagree about the same header"
+    )

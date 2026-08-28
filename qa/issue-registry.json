@@ -3838,6 +3838,32 @@
       "expected": "present",
       "summary": "(LOW) A denial for a call that explicitly asked for every agent said the opposite of what happened: with agent_id=\"*\" sent, _widened_by_omission() returns True and _omitted_scope_keys() names agent_id, so the detail read \"no agent scope was sent ... pass agent_id to scope it\" — naming an argument the caller had just passed. The probes cannot distinguish the two cases by construction, because both overwrite every scope key before computing the demand. Authorization was unaffected (the allow/deny outcome is identical); the cost is a caller told to do what it already did.",
       "fix_note": "Read the arguments directly for this one distinction instead of trying to make the counterfactual carry it — the probe erases the original value on purpose, and a probe that preserved it would answer a different question. Each cause then gets advice that works: fill in the scope, or stop demanding a sweep. The wildcard case also names how far the client's own grants reach, because \"denied\" alone does not separate \"no all-agents grant at all\" (never satisfiable by naming agents) from \"held down by a named exception\" (satisfiable per agent)."
+    },
+    {
+      "id": "bug-264",
+      "category": "diagnostics",
+      "severity": "LOW",
+      "status": "fixed",
+      "version": "2.5.7",
+      "discovered": "2026-08-28T00:00:00Z",
+      "file": "cpersona/acl.py",
+      "pattern": "bug-264",
+      "expected": "present",
+      "summary": "(LOW) A denial for a tool whose all-agents demand no argument can narrow carried no detail at all. export_memories / import_memories escalate to the wildcard demand while CPERSONA_EXPORT_DIR is unset, and pause_persistence / resume_persistence are process-wide by nature; for all four, _widened_by_omission() correctly returns False and the wildcard is not malformed, so control fell out of every branch with detail=\"\". A client holding read-write on its own agent, calling export_memories(agent_id=\"myagent\"), received agent_id \"*\" and required read-write with nothing naming the cause — the response said the call demanded every agent while the caller demonstrably scoped it to one. Authorization was unaffected; the cost is a refusal nobody can act on, the same shape bug-263 fixed one branch earlier.",
+      "fix_note": "Give the demand itself the ability to say why it is a sweep: _file_io_demands and the new _process_wide() attach a _sweep_cause callable, and _intrinsic_sweep_detail() renders it with _sweep_reach() in the guard's remaining branch. Classification and explanation therefore live on the same object and cannot drift apart, and a classification carrying no cause still gets the half that is always true (scoping will not narrow this one) rather than silence. Verified by executing the guard: the scoped export_memories call now names CPERSONA_EXPORT_DIR, and the existing omitted-scope / explicit-\"*\" / ungranted-client advice is byte-identical."
+    },
+    {
+      "id": "bug-265",
+      "category": "auth",
+      "severity": "LOW",
+      "status": "fixed",
+      "version": "2.5.7",
+      "discovered": "2026-08-28T00:00:00Z",
+      "file": "cpersona/server.py",
+      "pattern": "bug-265",
+      "expected": "present",
+      "summary": "(LOW) The two credential modes parsed the same Authorization header by different rules. The ACL branch added in 2.5.6 matched the scheme case-insensitively (header[:7].lower()), while the static-token branch below it kept header.startswith(\"Bearer \"). A client sending the equally legal 'authorization: bearer <token>' (RFC 7235 §2.1 makes the auth-scheme case-insensitive, and some HTTP stacks emit it lowercase) therefore authenticated in ACL mode and received a bare 401 in CPERSONA_AUTH_TOKEN mode — same server, same client, same credential. The divergence was introduced by adding the correct spelling next to the wrong one rather than replacing it.",
+      "fix_note": "One implementation for both modes: _bearer_credential() parses the header once and both branches call it. Correcting the second spelling in place would have left two spellings of one rule, which is what produced the divergence."
     }
   ]
 }

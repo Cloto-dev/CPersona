@@ -349,6 +349,14 @@ def _file_io_demands(key: str) -> Demands:
             return [(WILDCARD, PERM_WRITE)]
         return [(_agent_arg(args, key), PERM_WRITE)]
 
+    demands._sweep_cause = lambda args: (  # type: ignore[attr-defined]
+        ""
+        if config.EXPORT_DIR
+        else (
+            "CPERSONA_EXPORT_DIR is unset, so the path argument is caller-chosen "
+            "anywhere on the filesystem and the call is not confined to one agent"
+        )
+    )
     return demands
 
 
@@ -367,6 +375,22 @@ def _merge_demands(args: dict) -> list[tuple[str, int]]:
     return [(source, PERM_READ), (target, PERM_WRITE)]
 
 
+def _process_wide(reason: str) -> Demands:
+    """A tool whose effect is process-wide: the all-agents demand is intrinsic.
+
+    No argument narrows it, so the guard's scope advice would be advice the
+    caller cannot follow. The reason travels with the demand rather than
+    living in a table beside it, so a tool cannot be classified in one place
+    and explained in another.
+    """
+
+    def demands(args: dict) -> list[tuple[str, int]]:
+        return [(WILDCARD, PERM_WRITE)]
+
+    demands._sweep_cause = lambda args: reason  # type: ignore[attr-defined]
+    return demands
+
+
 _AUTHENTICATED_ONLY: list[tuple[str, int]] = [("", PERM_READ)]
 
 ACL_CLASSIFICATION: dict[str, Demands] = {
@@ -375,8 +399,14 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     "get_queue_status": lambda args: _AUTHENTICATED_ONLY,
     "get_operating_context": lambda args: _AUTHENTICATED_ONLY,
     # Process-wide persistence switch affects every agent's writes.
-    "pause_persistence": lambda args: [(WILDCARD, PERM_WRITE)],
-    "resume_persistence": lambda args: [(WILDCARD, PERM_WRITE)],
+    "pause_persistence": _process_wide(
+        "persistence is a process-wide switch, so pausing it stops writes for "
+        "every agent this process serves, not only the caller's"
+    ),
+    "resume_persistence": _process_wide(
+        "persistence is a process-wide switch, so resuming it restarts writes "
+        "for every agent this process serves, not only the caller's"
+    ),
     # Per-agent reads.
     "recall": _scoped(PERM_READ),
     "recall_with_context": _scoped(PERM_READ),
@@ -517,6 +547,38 @@ def _scope_advice(omitted: list[str], wildcarded: list[str], grants: dict[str, i
     return "; ".join(parts)
 
 
+def _intrinsic_sweep_detail(demands: Demands, arguments: dict, grants: dict[str, int]) -> str:
+    """Why a sweep no argument can narrow was refused.
+
+    The scope advice above answers the caller that widened its own call. This
+    answers the caller that did not: some tools demand every agent by their
+    nature — a process-wide switch, or caller-directed file I/O while
+    CPERSONA_EXPORT_DIR leaves the path unconfined — whatever agent_id says.
+    Both counterfactuals correctly decline to claim scoping would have helped,
+    and the branch that used to follow them said nothing at all: a client
+    holding read-write on its own agent, having scoped the call to exactly
+    that agent, was told the call demanded ``"*"`` and given no reason it
+    could act on (bug-264).
+
+    The cause travels on the demands function (``_sweep_cause``) so that a
+    tool classified as a sweep and a tool explained as one cannot drift apart.
+    A classification that carries no cause still gets the part that is always
+    true — scoping will not narrow this one — rather than an empty ``detail``.
+    """
+    cause = ""
+    explain = getattr(demands, "_sweep_cause", None)
+    if explain is not None:
+        try:
+            cause = explain(arguments) or ""
+        except Exception:  # a classification that cannot explain itself must not raise here
+            cause = ""
+    base = (
+        "no agent scope narrows this call — it demands every agent by its nature, and "
+        + _sweep_reach(grants)
+    )
+    return f"{cause}; {base}" if cause else base
+
+
 def _denial(tool: str, client_id: str, *, agent_id: str = "", required: int = 0, detail: str = "") -> dict:
     response: dict = {"ok": False, "error": "permission_denied", "tool": tool}
     if agent_id:
@@ -615,6 +677,12 @@ def _wrap(name: str, handler):
                         detail = _scope_advice(
                             [k for k in needed if k not in wildcarded], wildcarded, grants
                         )
+                    else:
+                        # Neither malformed nor widened by omission: the demand
+                        # is intrinsic to the tool. Silence here is what left a
+                        # correctly-scoped caller reading "agent_id": "*" with
+                        # nothing naming the real cause.
+                        detail = _intrinsic_sweep_detail(demands, arguments, grants)
                 return _denial(
                     name,
                     principal.client_id,
