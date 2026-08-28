@@ -222,7 +222,9 @@ async def test_metadata_document_is_served_without_credentials(oauth_on):
 
     document = json.loads(body)
     assert document["resource"] == RESOURCE
-    assert document["authorization_servers"] == [AUTH_SERVER + "/"]
+    # bug-266: was AUTH_SERVER + "/" — the expectation had been written around
+    # the model's normalisation rather than around what a client may use.
+    assert document["authorization_servers"] == [AUTH_SERVER]
     assert document["scopes_supported"] == ["cpersona:read", "cpersona:write"]
 
 
@@ -254,9 +256,10 @@ async def test_authorization_servers_accept_whitespace_or_commas(monkeypatch):
     status, _, body = await _request(app)
 
     assert status == 200
+    # Separators are what this test is about; the spelling is bug-266's.
     assert json.loads(body)["authorization_servers"] == [
-        "https://a.example.com/",
-        "https://b.example.com/",
+        "https://a.example.com",
+        "https://b.example.com",
     ]
 
 
@@ -428,3 +431,91 @@ def test_every_scope_rejected_drops_the_parameter_rather_than_emptying_it(monkey
 
     assert "scope=" not in challenge, challenge
     assert challenge == f'Bearer resource_metadata="{METADATA_URL}"'
+
+
+# ---------------------------------------------------------------------------
+# bug-266: the published identifiers are the ones the operator wrote
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configured", "why"),
+    [
+        ("https://as.example", "a path-less issuer is what an authorization server actually publishes"),
+        ("https://as.example/", "an operator who writes the slash gets the slash"),
+        ("https://as.example/tenant", "a path is left alone in both directions"),
+        ("https://as.example/tenant/", "including its own terminating slash"),
+    ],
+)
+async def test_authorization_server_is_published_exactly_as_configured(monkeypatch, configured, why):
+    """RFC 8414 §3.3 compares identifiers by identity, not by equivalence.
+
+    A client reads `authorization_servers[0]`, fetches that server's metadata,
+    and MUST NOT use the response unless the `issuer` it reads back is
+    identical to the value it started from. An authorization server whose
+    issuer has no path returns it without a trailing slash forever, so a
+    document that adds one describes a server that does not exist.
+    """
+    monkeypatch.setattr(config, "OAUTH_RESOURCE", RESOURCE)
+    monkeypatch.setattr(config, "OAUTH_AUTHORIZATION_SERVERS", configured)
+    monkeypatch.setattr(config, "OAUTH_SCOPES", "cpersona:read cpersona:write")
+
+    app, _ = _make_app()
+    status, _, body = await _request(app)
+
+    assert status == 200
+    published = json.loads(body)["authorization_servers"]
+    assert published == [configured], f"{why}: published {published}, configured {configured!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured", ["https://resource.example", "https://resource.example/mcp"])
+async def test_resource_is_published_exactly_as_configured(monkeypatch, configured):
+    """RFC 9728 §3.3 states the same requirement for `resource`.
+
+    It goes unnoticed while the configured resource carries a path, which is
+    the shape this server is deployed with — the normalisation only rewrites
+    an identifier that has none. Pinned for the deployment that does not.
+    """
+    monkeypatch.setattr(config, "OAUTH_RESOURCE", configured)
+    monkeypatch.setattr(config, "OAUTH_AUTHORIZATION_SERVERS", AUTH_SERVER)
+    monkeypatch.setattr(config, "OAUTH_SCOPES", "cpersona:read cpersona:write")
+
+    app, _ = _make_app()
+    metadata_path = server._oauth_discovery().metadata_path
+    status, _, body = await _request(app, path=metadata_path)
+
+    assert status == 200
+    assert json.loads(body)["resource"] == configured
+
+
+@pytest.mark.asyncio
+async def test_several_authorization_servers_keep_their_own_spelling(monkeypatch):
+    """Order and spelling are both part of the identifier list."""
+    configured = ["https://first.example", "https://second.example/", "https://third.example/t"]
+    monkeypatch.setattr(config, "OAUTH_RESOURCE", RESOURCE)
+    monkeypatch.setattr(config, "OAUTH_AUTHORIZATION_SERVERS", " ".join(configured))
+    monkeypatch.setattr(config, "OAUTH_SCOPES", "")
+
+    app, _ = _make_app()
+    status, _, body = await _request(app)
+
+    assert status == 200
+    assert json.loads(body)["authorization_servers"] == configured
+
+
+def test_a_malformed_issuer_still_disables_discovery(monkeypatch, caplog):
+    """Keeping the written string must not stop it from being validated.
+
+    The strings are published verbatim, so nothing downstream would reject a
+    typo — validation is the only thing standing between an operator's slip
+    and a document telling every client to authenticate somewhere unusable.
+    """
+    monkeypatch.setattr(config, "OAUTH_RESOURCE", RESOURCE)
+    monkeypatch.setattr(config, "OAUTH_AUTHORIZATION_SERVERS", "not-a-url")
+    monkeypatch.setattr(config, "OAUTH_SCOPES", "")
+
+    with caplog.at_level("WARNING"):
+        assert server._oauth_discovery() is None
+    assert any("invalid OAuth discovery configuration" in r.message for r in caplog.records)

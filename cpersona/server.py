@@ -1644,8 +1644,13 @@ class _OAuthDiscovery(NamedTuple):
     the specification requires (§1.3) belongs to the half that is not built.
     """
 
-    resource: AnyHttpUrl
-    authorization_servers: list[AnyHttpUrl]
+    #: The operator's strings, kept verbatim. RFC 8414 §3.3 and RFC 9728 §3.3
+    #: both compare identifiers by identity: a client MUST NOT use metadata
+    #: whose issuer / resource differs from the value it started with, and a
+    #: normalised copy is a different value. AnyHttpUrl validates them below;
+    #: it does not get to decide what is published (bug-266).
+    resource: str
+    authorization_servers: list[str]
     scopes: list[str]
     #: Exact request path the metadata document is served at. Matched
     #: exactly, never as a prefix — see BearerTokenMiddleware.__call__.
@@ -1712,8 +1717,11 @@ def _oauth_discovery() -> "_OAuthDiscovery | None":
     from mcp.server.auth.routes import build_resource_metadata_url
 
     try:
+        # Validated, then set aside: build_resource_metadata_url needs the
+        # parsed form, the published document needs the written one.
         resource_url = AnyHttpUrl(resource)
-        authorization_servers = [AnyHttpUrl(s) for s in raw_servers]
+        for server in raw_servers:
+            AnyHttpUrl(server)
         metadata_url = build_resource_metadata_url(resource_url)
     except (ValidationError, ValueError) as exc:
         logger.warning(
@@ -1733,12 +1741,56 @@ def _oauth_discovery() -> "_OAuthDiscovery | None":
         # decision to whatever the client happens to guess.
         challenge += f', scope="{" ".join(scopes)}"'
     return _OAuthDiscovery(
-        resource=resource_url,
-        authorization_servers=authorization_servers,
+        resource=resource,
+        authorization_servers=raw_servers,
         scopes=scopes,
         metadata_path=urlparse(str(metadata_url)).path,
         challenge=challenge,
     )
+
+
+def _preserve_empty_url_paths_in_metadata() -> None:
+    """Stop the SDK's metadata model from rewriting a path-less identifier.
+
+    ``AnyHttpUrl`` normalises ``https://host`` to ``https://host/``, and the
+    document the SDK builds is typed with it — so an issuer written without a
+    path is published with one no matter what this server passes in. That is
+    not cosmetic: RFC 8414 §3.3 requires the ``issuer`` a client reads back to
+    be *identical* to the value it started from and says the response MUST NOT
+    be used otherwise, and RFC 9728 §3.3 says the same of ``resource``. An
+    identifier we altered is a value no authorization server will ever return.
+
+    Upstream fixed this by setting ``url_preserve_empty_path`` on the models
+    (modelcontextprotocol/python-sdk#2925, closing #2883), and the fix ships
+    in SDK 2.0 — a major upgrade this server has not taken yet. Rather than
+    hand-writing the document to route around one config flag, the same flag
+    is set here on the same models. Where the SDK already carries it this is a
+    no-op, so the patch retires itself when the upgrade lands; both halves are
+    needed until then, because a value this server normalised before handing
+    it over arrives already altered (bug-266).
+    """
+    from pydantic import ConfigDict
+
+    from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
+
+    for model in (ProtectedResourceMetadata, OAuthMetadata):
+        if model.model_config.get("url_preserve_empty_path"):
+            continue
+        try:
+            model.model_config = ConfigDict(
+                **{**dict(model.model_config), "url_preserve_empty_path": True}
+            )
+            model.model_rebuild(force=True)
+        except Exception as exc:  # pragma: no cover - a pydantic that lacks the flag
+            # Discovery still serves; identifiers keep the trailing slash the
+            # specification objects to. Loud, because the alternative is a
+            # conformance defect nobody is looking at.
+            logger.warning(
+                "could not preserve empty URL paths on %s (%s); published OAuth "
+                "identifiers may differ from the configured ones",
+                model.__name__,
+                exc,
+            )
 
 
 def _bearer_credential(header: str) -> str:
@@ -2047,6 +2099,9 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
         # so a metadata route registered after it is never reached. Off (the
         # default) the list is what it has always been.
         from mcp.server.auth.routes import create_protected_resource_routes
+
+        # Before the document is built: the models normalise at validation.
+        _preserve_empty_url_paths_in_metadata()
 
         routes = (
             create_protected_resource_routes(

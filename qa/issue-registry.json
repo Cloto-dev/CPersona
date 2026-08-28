@@ -3864,6 +3864,19 @@
       "expected": "present",
       "summary": "(LOW) The two credential modes parsed the same Authorization header by different rules. The ACL branch added in 2.5.6 matched the scheme case-insensitively (header[:7].lower()), while the static-token branch below it kept header.startswith(\"Bearer \"). A client sending the equally legal 'authorization: bearer <token>' (RFC 7235 §2.1 makes the auth-scheme case-insensitive, and some HTTP stacks emit it lowercase) therefore authenticated in ACL mode and received a bare 401 in CPERSONA_AUTH_TOKEN mode — same server, same client, same credential. The divergence was introduced by adding the correct spelling next to the wrong one rather than replacing it.",
       "fix_note": "One implementation for both modes: _bearer_credential() parses the header once and both branches call it. Correcting the second spelling in place would have left two spellings of one rule, which is what produced the divergence."
+    },
+    {
+      "id": "bug-266",
+      "category": "conformance",
+      "severity": "MEDIUM",
+      "status": "fixed",
+      "version": "2.5.7",
+      "discovered": "2026-08-28T00:00:00Z",
+      "file": "cpersona/server.py",
+      "pattern": "bug-266",
+      "expected": "present",
+      "summary": "(MEDIUM) The published OAuth identifiers were not the ones the operator configured. AnyHttpUrl normalises a path-less URL by appending a slash, so CPERSONA_OAUTH_AUTHORIZATION_SERVERS=https://as.example was published as https://as.example/ — measured against the live deployment, whose authorization server returns issuer https://as.example with no slash. RFC 8414 section 3.3 requires the issuer read back to be identical to the value the client started from and says the response MUST NOT be used otherwise; RFC 9728 section 3.3 states the same for resource, which went unnoticed only because the deployed resource carries a path. Two independent causes had to be removed together: this server converted the strings to AnyHttpUrl before handing them over, and the SDK's metadata models are themselves typed with AnyHttpUrl, so passing the raw string through the old models still published the altered value (both measured).",
+      "fix_note": "Keep the operator's strings verbatim in the discovery config — AnyHttpUrl validates them and no longer decides what is published — and set url_preserve_empty_path on the SDK's metadata models before the document is built, which is the same one-line fix upstream applied in modelcontextprotocol/python-sdk#2925 (closing #2883) and shipped in SDK 2.0. The local half is a no-op against an SDK that already carries the flag, so it retires itself when the 2.x upgrade lands. Pinned by tests that configure both spellings and assert the document reproduces each; mutation-tested by removing each half separately (5 tests red either way). Two existing tests had encoded the normalised form and were corrected."
     }
   ]
 }
