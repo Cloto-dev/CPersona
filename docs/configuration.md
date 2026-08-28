@@ -80,11 +80,20 @@ file format and per-tool classification: [ACL design](ACL_DESIGN.md).
   bm25 magnitude survives the merge. **Recommended for topic-drift-prone or space-less
   language (e.g. Japanese) contexts**, where that magnitude is the discriminating
   signal `rrf` flattens away (≈ Weaviate's `relativeScoreFusion`; see the ClotoCore
-  `RECALL_CONTAMINATION_AB_2026-06-14` report §10–12). The over-cutting this mode used
-  to risk — min-max normalization pins the lowest row to 0.0, which reads as a
-  full-scale gap — is closed on both sides: autocut returns early on rank-fusion
-  scores, and `CPERSONA_AUTOCUT_MIN_RESULTS` floors small sets. `rrf` remains the
-  default for continuity, not because that interaction is still open.
+  `RECALL_CONTAMINATION_AB_2026-06-14` report §10–12). Note what the
+  normalization costs: it pins each channel's lowest-scoring row to 0.0, and a
+  channel that returns a single candidate pins that row to 1.0, so a fused score
+  places a row among the candidates retrieved with it rather than measuring its
+  similarity to the query. Autocut does not act on that pin — it fires only on
+  similarity-scale signals
+  ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))
+  — but the quality gate still compares the fused score against a cosine-scale
+  threshold. So with `CPERSONA_CONFIDENCE_ENABLED=false`, which is the default and
+  what the [CJK guidance](operations.md#japanese-and-cjk-corpora) assumes, a
+  strongly matching row can be dropped for being the weakest of a strong set, and
+  a weak lone match can pass. Turning confidence on moves the gate onto the
+  confidence score and avoids this, at the cost described just below. `rrf`
+  remains the default.
 - **`cascade`** — Sequential channel fill (legacy).
 
 **With `CPERSONA_CONFIDENCE_ENABLED=true`, the fusion mode does not decide the order you

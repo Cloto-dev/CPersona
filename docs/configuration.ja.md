@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:ef4600fa5e1e2da05fe8a59efffba74fa22599ef -->
+<!-- i18n-source: docs/configuration.md@blob:be2b30ebd32d465e454786fc0f8c89cabef1c7f6 -->
 
 # 設定リファレンス
 
@@ -87,11 +87,19 @@ v2.5.3 以降、サーバーはこれを強制します: `CPERSONA_TRANSPORT=str
   分かち書きのない言語 (日本語など) で推奨**です — `rrf` が平坦化してしまう
   その大きさこそが、そこでの識別シグナルだからです (≈ Weaviate の
   `relativeScoreFusion`。ClotoCore の `RECALL_CONTAMINATION_AB_2026-06-14`
-  レポート §10–12 を参照)。かつてこのモードが抱えていた切りすぎの危険 — min-max
-  正規化は最下行を 0.0 に固定するので、それが全スケールのギャップに見える — は
-  両側から塞がれています: autocut はランク融合スコアに対して早期 return し、
-  `CPERSONA_AUTOCUT_MIN_RESULTS` が小さい集合に下限を設けます。既定が `rrf` の
-  ままなのは継続性のためであって、この相互作用がまだ未解決だからではありません。
+  レポート §10–12 を参照)。この正規化の代償に注意してください:
+  各チャネルの最下行は 0.0 に固定され、候補が 1 件しかないチャネルではその行が
+  1.0 に固定されます。つまり融合スコアが表すのは「クエリへの類似度」ではなく
+  「一緒に retrieve された候補の中での位置」です。autocut はこの固定に対しては
+  働きません — 類似度スケールのシグナルにしか発火しないためです
+  ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))
+  — が、品質ゲートは依然として融合スコアをコサインスケールの閾値と比較します。
+  したがって `CPERSONA_CONFIDENCE_ENABLED=false` (既定であり、
+  [CJK の指針](operations.md#japanese-and-cjk-corpora) が前提とする構成) のとき、
+  強く一致している行が「強い集合の中で最弱だった」という理由で落ち、逆に弱い単独
+  一致が通ることがあります。confidence を有効にするとゲートは confidence スコア
+  側に移り、この問題は避けられますが、その代償はすぐ下に書いたとおりです。
+  既定は `rrf` のままです。
 - **`cascade`** — チャネルを順番に埋める方式 (レガシー)。
 
 **`CPERSONA_CONFIDENCE_ENABLED=true` のとき、融合モードは返却順を決めません。**

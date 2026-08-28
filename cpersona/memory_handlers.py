@@ -479,9 +479,17 @@ async def _recall_rsf(
     bm25 gap collapses to ~5% at K=60 — so a near-tie vector channel can
     reintroduce a topically distinct contaminant the keyword channel had
     correctly down-ranked. RSF keeps the margin, letting the keyword channel
-    separate them. The fused score is divided by the number of active channels
-    so it stays on the cosine [0, 1] scale (and rewards multi-channel agreement)
-    for the quality gate. See ClotoCore/docs/RECALL_CONTAMINATION_AB_2026-06-14.md.
+    separate them. Dividing the sum by the number of active channels keeps the
+    result inside [0, 1] and rewards multi-channel agreement.
+
+    That range is not the cosine scale, and the quality gate is where the
+    difference bites. ``_minmax_norm`` rescales each channel against the min and
+    max of *this query's* candidates, so a fused score places a row among the
+    rows retrieved alongside it rather than measuring its similarity to the
+    query: the weakest survivor of a strong set is pinned to 0.0 however similar
+    it is, and a lone candidate normalizes to 1.0 however weak. Both then meet a
+    cosine-scale ``min_score`` in ``_apply_quality_gate``.
+    See ClotoCore/docs/RECALL_CONTAMINATION_AB_2026-06-14.md.
     """
     doc_map: dict[tuple, dict] = {}
     vec_raw: dict[tuple, float | None] = {}
@@ -707,7 +715,11 @@ def _apply_quality_gate(
             else:
                 stats["blocked"] += 1
         elif rsf is not None:
-            # RSF fused score is on the cosine [0, 1] scale.
+            # RSF fused scores lie in [0, 1] but not on the cosine scale: min-max
+            # normalization makes them relative to the rest of this query's
+            # candidates (weakest survivor pins to 0.0, a lone candidate to 1.0),
+            # so this comparison against a cosine-scale threshold is
+            # query-dependent. See _recall_rsf.
             rsf_threshold = gate if (gate is not None and gate_signal == "rsf") else min_score
             if rsf >= rsf_threshold:
                 filtered.append(r)
