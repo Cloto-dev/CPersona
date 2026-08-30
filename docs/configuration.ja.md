@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:ebc5614490e328a0713dac37d60e1ffdeec792fb -->
+<!-- i18n-source: docs/configuration.md@blob:cf590132964129e1c0ada96615e4587262be0343 -->
 
 # 設定リファレンス
 
@@ -55,6 +55,7 @@
 | `CPERSONA_OAUTH_RESOURCE` | *(未設定)* | RFC 9728 metadata で公開し、クライアントから返されることを期待する正規のリソース識別子。空の間は discovery は無効のまま ([OAuth 設計](OAUTH_DESIGN.md)) |
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | *(未設定)* | クライアントが認証しに行くべき issuer URL。空白またはカンマ区切り。1 つも列挙されていない間は discovery は無効のまま |
 | `CPERSONA_OAUTH_SCOPES` | `cpersona:read cpersona:write` | 401 で広告する scope。クライアントは要求されたとおりの scope を返してくるため、この値が scope 設計を左右する |
+| `CPERSONA_OAUTH_JWKS_URI` | *(未設定)* | このサーバーが metadata を読めない provider のための、issuer の署名鍵の所在。通常は issuer 自身の metadata から解決される。authorization server がちょうど 1 つのときだけ有効 |
 
 **discovery は明示的に有効化するまで無効です。** OAuth に対応したクライアントは
 RFC 9728 の metadata を探し、見つからなければ人間に client id を手で入力させる段まで
@@ -64,6 +65,16 @@ RFC 9728 の metadata を探し、見つからなければ人間に client id �
 401 に `resource_metadata` と `scope` が乗ります。どちらかが未設定の間は、この機能を
 持たないビルドとバイト単位で同一の応答になります。つまり有効化は意図的な操作であって、
 アップグレードの副作用では起きません。
+
+**同じ 2 つの設定がトークンの受理も有効にし、そちらには `CPERSONA_ACL_FILE` が要ります。**
+列挙した issuer が署名し、設定した resource ちょうど宛てに発行したトークンは、client 識別子
+`oauth:<issuer>:<client_id>` へ解決されます — grant を書く相手はこれです。別の resource 宛ての
+トークンは拒否されます。これは MCP SDK が resource server 側に残している検査です。検証に ACL
+モードが要るのは、grant テーブルの無い検証済み identity がすべてのツールへ届いてしまうから
+です — ACL ファイルが無い場合、サーバーは検証を off のままにするとログに書き、discovery は
+提供し続けるので、クライアントは issuer を見つけたうえで拒否されます。grant は client ごとです:
+誰かが行を足すまで、新しく接続したクライアントは認証を通り、スコープを持つツールはすべて
+拒否し、grant テーブルにその行が無いことを `detail` で述べます。
 
 **ループバックへの bind はセキュリティ境界ではありません。** トンネル
 (cloudflared / ngrok)、リバースプロキシ、`kubectl port-forward`、公開された
