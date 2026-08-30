@@ -22,9 +22,12 @@ Single SQLite file. 30 tools. Zero LLM dependency.
 
 > **Project status** — **2.4.x is Stable**; **2.5.x is Current**, an internal
 > stabilization line where all fixes land, pending production-soak
-> certification. The DB schema is preserved across the line, and feature work
-> resumes in 2.6. Which version to run, and how long each line keeps receiving
-> fixes: [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
+> certification. The DB schema is preserved across the line. Additive,
+> rollback-safe features may land here as well ([lifecycle standard
+> §2.6](https://cloto-dev.github.io/CPersona/RELEASE_LIFECYCLE_STANDARD/#26-feature-releases-within-a-line));
+> a change that cannot be rolled back waits for 2.6. Which version to run, and
+> how long each line keeps receiving fixes:
+> [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
 
 > **Upgrading from 2.5.2 or earlier?** Two things need a decision from you.
 > **v2.5.3 will not start the HTTP transport without `CPERSONA_AUTH_TOKEN`**,
