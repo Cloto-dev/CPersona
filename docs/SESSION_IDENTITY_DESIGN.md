@@ -204,11 +204,15 @@ saying otherwise would be false.
 
 ## 9. Version placement
 
-The 2.5.7 line is at `2.5.7a2`. This lands as **2.5.7b1**: additive,
-behavior-preserving, no schema change, so promoting the line from alpha to
-beta to carry it is consistent with the release lifecycle standard, which
-permits additive features inside a Current-tier line. The pre-release series
-graduates to `2.5.7` final — it does not jump to another number.
+This lands in the **2.5.7 beta series**. The line promoted from alpha to beta
+at `2.5.7b1`, which carries the findings pull tool; this design's stage 1 is
+the next release in that series, not `b1` itself.
+
+Either way the reasoning is the same: additive, behavior-preserving, no schema
+change, which is what the release lifecycle standard permits inside a
+Current-tier line (§2.6 — what waits for the next line is a change that cannot
+be rolled back). The pre-release series graduates to `2.5.7` final; it does not
+jump to another number.
 
 ## 10. Tests
 
