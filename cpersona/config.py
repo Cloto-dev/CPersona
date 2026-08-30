@@ -308,10 +308,14 @@ RRF_MAX_SCALE = 3.0 / (RRF_K + 1)
 OAUTH_RESOURCE = os.environ.get("CPERSONA_OAUTH_RESOURCE", "")
 # Whitespace- or comma-separated issuer URLs.
 OAUTH_AUTHORIZATION_SERVERS = os.environ.get("CPERSONA_OAUTH_AUTHORIZATION_SERVERS", "")
-# Advertised on the 401. Measured (docs/OAUTH_DESIGN.md §2): the client sends
-# back exactly the scope the resource server asked for, so this value is the
-# lever over scope design — an empty one gives it away.
-OAUTH_SCOPES = os.environ.get("CPERSONA_OAUTH_SCOPES", "cpersona:read cpersona:write")
+# Advertised on the 401 and in the resource metadata. Measured (docs/
+# OAUTH_DESIGN.md §2): the client sends back exactly the scope the resource
+# server asked for — and the authorization server refuses the whole request
+# with invalid_scope when it does not define that scope, before the user ever
+# reaches a sign-in page (measured live, 2026-08-31). This server does not
+# enforce scopes (§10), so the default advertises none; set this only to
+# values the configured issuer actually defines.
+OAUTH_SCOPES = os.environ.get("CPERSONA_OAUTH_SCOPES", "")
 # Escape hatch for an authorization server whose metadata this server cannot
 # read. Normally the signing keys are found through the issuer's own metadata,
 # which is the only way that survives the issuer moving them; this setting is

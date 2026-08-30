@@ -152,8 +152,11 @@ authorization code の単回使用、refresh token のローテーション。
   それ以外は落ちません。取り除いても何も壊れない検査は、検査ではありません。
 - **401 に載せる `scope`。** ミドルウェアが出すのは `error`、`error_description`、
   `resource_metadata` であって、`scope` は出しません。クライアントは 401 が広告した
-  scope をそのまま採用する (§2) のですから、ここを既定のままにすることは、我々が
-  握っていると実測した唯一のレバーを手放すことになります。
+  scope をそのまま採用する (§2) のですから、このパラメータは装填済みのレバーです:
+  実際の接続試行 (2026-08-31) は、広告した値が issuer の定義しない scope を名指して
+  いたために `invalid_scope` で issuer に弾かれました — 利用者はサインイン画面にすら
+  到達していません。したがって既定は何も広告しません。scope 設計を持たないサーバーに、
+  ここで言える真実はないからです。
 
 **経路 (a) では、さらに我々に残されるもの:**
 
@@ -222,7 +225,7 @@ client id を手で入力させる、という段です。あの画面は我々�
 |------|------|
 | `CPERSONA_OAUTH_RESOURCE` | このサーバーが公開し、クライアントから返されることを期待する正規のリソース識別子。空の間は discovery は無効のまま |
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | 空白またはカンマ区切りの issuer URL。1 つも列挙されていない間は discovery は無効のまま |
-| `CPERSONA_OAUTH_SCOPES` | 401 で広告する scope (既定 `cpersona:read cpersona:write`) |
+| `CPERSONA_OAUTH_SCOPES` | 401 で広告する scope (既定は空 — issuer が定義する scope だけを広告する。定義されない scope は全認可を `invalid_scope` で終わらせる) |
 | `CPERSONA_OAUTH_JWKS_URI` | このサーバーが metadata を読めない provider のための、issuer の署名鍵の所在。通常は discovery で解決される。issuer が複数あるときは無視される |
 
 上の 2 つは検証も同時に有効にします。誰に対しても開かない扉は、誰にも見つけられない

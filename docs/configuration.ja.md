@@ -54,7 +54,7 @@
 | `CPERSONA_ACL_FILE` | *(未設定)* | クライアント別ケーパビリティ: 名前つき Bearer トークンにエージェント別の read/write 権限を与え、既定は拒否 ([ACL 設計](ACL_DESIGN.md)) |
 | `CPERSONA_OAUTH_RESOURCE` | *(未設定)* | RFC 9728 metadata で公開し、クライアントから返されることを期待する正規のリソース識別子。空の間は discovery は無効のまま ([OAuth 設計](OAUTH_DESIGN.md)) |
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | *(未設定)* | クライアントが認証しに行くべき issuer URL。空白またはカンマ区切り。1 つも列挙されていない間は discovery は無効のまま |
-| `CPERSONA_OAUTH_SCOPES` | `cpersona:read cpersona:write` | 401 で広告する scope。クライアントは要求されたとおりの scope を返してくるため、この値が scope 設計を左右する |
+| `CPERSONA_OAUTH_SCOPES` | *(未設定)* | 401 と `scopes_supported` で広告する scope。クライアントは要求されたとおりの scope を返してきて、authorization server は自分が定義しない scope を `invalid_scope` で拒否する — issuer が定義する scope だけを広告すること |
 | `CPERSONA_OAUTH_JWKS_URI` | *(未設定)* | このサーバーが metadata を読めない provider のための、issuer の署名鍵の所在。通常は issuer 自身の metadata から解決される。authorization server がちょうど 1 つのときだけ有効 |
 
 **discovery は明示的に有効化するまで無効です。** OAuth に対応したクライアントは

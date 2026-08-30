@@ -133,8 +133,11 @@ method, single-use authorization codes, refresh token rotation.
   audience comparison disabled, two tests fail and no other. A check whose removal breaks nothing
   is not a check.
 - **`scope` on the 401.** The middleware emits `error`, `error_description` and
-  `resource_metadata` — no `scope`. Since the client adopts whatever scope the 401 advertises
-  (§2), leaving this at the default gives away the one lever we measured ourselves holding.
+  `resource_metadata` — no `scope`. The client adopts whatever scope the 401 advertises (§2),
+  which makes the parameter a loaded lever: a live connection attempt (2026-08-31) died at the
+  issuer with `invalid_scope` because the advertised value named scopes the issuer does not
+  define — the user never reached a sign-in page. The default therefore advertises none; a
+  server with no scope design has nothing true to say here.
 
 **Left to us, additionally, on route (a):**
 
@@ -196,7 +199,7 @@ choice safe:
 |----------|--------------|
 | `CPERSONA_OAUTH_RESOURCE` | The canonical resource identifier this server publishes and expects back. Discovery stays off while it is empty |
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | Whitespace- or comma-separated issuer URLs. Discovery stays off while none is listed |
-| `CPERSONA_OAUTH_SCOPES` | The scope advertised on the 401 (default `cpersona:read cpersona:write`) |
+| `CPERSONA_OAUTH_SCOPES` | The scope advertised on the 401 (default empty — advertise only scopes the issuer defines; one it does not define ends every authorization at `invalid_scope`) |
 | `CPERSONA_OAUTH_JWKS_URI` | Where the issuer's signing keys are, for a provider whose metadata this server cannot read. Normally discovered; ignored with more than one issuer |
 
 The first two enable verification as well, because a door that opens for nobody is the same failure
