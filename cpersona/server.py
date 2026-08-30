@@ -1851,8 +1851,10 @@ def _oauth_discovery() -> "_OAuthDiscovery | None":
     challenge = f'Bearer resource_metadata="{metadata_url}"'
     if scopes:
         # Measured (docs/OAUTH_DESIGN.md §2): the client adopts the scope the
-        # 401 advertises, verbatim. Dropping this parameter hands the scope
-        # decision to whatever the client happens to guess.
+        # 401 advertises, verbatim — so an advertised scope the issuer does
+        # not define ends every authorization at invalid_scope. This branch is
+        # for the operator who knows their issuer's scopes; the default
+        # advertises none.
         challenge += f', scope="{" ".join(scopes)}"'
     return _OAuthDiscovery(
         resource=resource,

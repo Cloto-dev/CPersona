@@ -50,7 +50,7 @@ instead — one server, several clients, reachable over a network.
 | `CPERSONA_ACL_FILE` | *(unset)* | Per-client capability mode: named bearer tokens with per-agent read/write grants, deny-by-default (see [ACL design](ACL_DESIGN.md)) |
 | `CPERSONA_OAUTH_RESOURCE` | *(unset)* | Canonical resource identifier published in the RFC 9728 metadata and expected back from the client. Discovery stays off while this is empty (see [OAuth design](OAUTH_DESIGN.md)) |
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | *(unset)* | Whitespace- or comma-separated issuer URLs the client should authenticate against. Discovery stays off while none is listed |
-| `CPERSONA_OAUTH_SCOPES` | `cpersona:read cpersona:write` | Scope advertised on the 401. The client sends back exactly what is asked for, so this value is the lever over scope design |
+| `CPERSONA_OAUTH_SCOPES` | *(unset)* | Scope advertised on the 401 and in `scopes_supported`. The client sends back exactly what is asked for, and the authorization server refuses a scope it does not define with `invalid_scope` — advertise only scopes your issuer defines |
 | `CPERSONA_OAUTH_JWKS_URI` | *(unset)* | Where the issuer's signing keys are, for a provider whose metadata this server cannot read. Normally discovered from the issuer's own metadata; ignored unless exactly one authorization server is configured |
 
 **Discovery is off until you turn it on.** A client that supports OAuth looks for RFC 9728
