@@ -63,6 +63,7 @@ plugins:
             Degraded-mode advisory: 縮退モードの通知
             Operating context: 運用コンテキスト
             Recall preview tier: recall プレビュー階層
+            Session identity: セッション同一性
             CLAUDE.md policy standard: CLAUDE.md ポリシー標準
             SuperAuditor standard: SuperAuditor 標準
 
@@ -97,4 +98,5 @@ nav:
       - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
       - CLAUDE.md policy standard: CLAUDE_MD_POLICY_STANDARD.md
       - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
+      - Session identity: SESSION_IDENTITY_DESIGN.md
   - Release lifecycle: RELEASE_LIFECYCLE_STANDARD.md
