@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Cloto-dev/cpersona",
   "title": "CPersona",
-  "description": "Persistent AI memory in one SQLite file: 3-layer hybrid search, confidence scoring, 29 tools.",
+  "description": "Persistent AI memory in one SQLite file: 3-layer hybrid search, confidence scoring, 30 tools.",
   "version": "2.5.4",
   "websiteUrl": "https://github.com/Cloto-dev/cpersona#readme",
   "repository": {

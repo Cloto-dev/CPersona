@@ -23,7 +23,7 @@ different operating points.
 |---|---|
 | Install and set up | [Getting Started](getting-started.md) |
 | Know what behaviors you can rely on | [Behavior Contracts](behavior-contracts.md) |
-| See what each of the 29 tools does | [Tools](tools.md) |
+| See what each of the 30 tools does | [Tools](tools.md) |
 | Understand how retrieval and storage work | [Architecture](architecture.md) |
 | Run it well: backup, tuning, degradation, corpus indexing | [Operations Runbook](operations.md) |
 | Look up an environment variable | [Configuration](configuration.md) |

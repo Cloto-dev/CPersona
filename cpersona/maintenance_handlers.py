@@ -7,11 +7,14 @@ implementation shared by the MCP tools, the pytest fixtures, and the
 behaviour live there, response envelopes live here.
 """
 
+import importlib.metadata
 import logging
 
 from cpersona._vendored_mcp_common import no_persist
 
 from cpersona import checks as checks_registry
+from cpersona import config
+from cpersona import findings as findings_seam
 from cpersona import vector
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where
@@ -466,3 +469,47 @@ async def do_migrate_channel_axis(
         out["repairs_skipped"] = True
         out["repairs_skip_reason"] = "no-persist mode active — dry_run forced"
     return out
+
+
+async def do_get_session_findings(
+    session_key: str = "", per_kind_limit: int = findings_seam.DEFAULT_PER_KIND_LIMIT, include_summary: bool = True
+) -> dict:
+    """Pull the storage-integrity findings on demand (SuperAuditor v1 seam).
+
+    The same detector ``check_health`` runs — ``checks.run_health_checks`` over
+    the whole database with ``fix=False`` — delivered as findings with the
+    static per-kind ``severity`` and honest per-kind caps that
+    ``docs/SUPERAUDITOR_STANDARD.md`` specifies. Read-only: nothing is
+    repaired, nothing is written, and the call is safe at any time.
+
+    Findings are NOT scoped to an agent or a project (standard §7): the
+    channel exists to surface forgotten state, and slicing it by the bucket
+    the caller happens to be reading would hide exactly the rows that were
+    forgotten. Scope a repair with ``check_health(agent_id=...)`` instead.
+
+    ``session_key`` is an opaque partition hint, accepted so a caller can
+    declare itself; this server carries no session-scoped probes, so the key
+    changes nothing but the honesty flag: on a shared transport with no key
+    declared the response carries ``identity_shared: true`` rather than
+    pretending it can tell sessions apart.
+    """
+    if per_kind_limit < 1:
+        return error_response(
+            f"per_kind_limit must be at least 1 (got {per_kind_limit})", per_kind_limit=per_kind_limit
+        )
+    async with connection() as db:
+        issues, _ = await checks_registry.run_health_checks(db, agent_id="", fix=False)
+    delivered = findings_seam.deliver_issues(issues, per_kind_limit)
+    if include_summary:
+        delivered["summary"] = findings_seam.render_summary(delivered)
+    if config.transport() != "stdio" and not session_key:
+        delivered["identity_shared"] = True
+    delivered["_meta"] = {"server_version": _server_version()}
+    return delivered
+
+
+def _server_version() -> str:
+    try:
+        return importlib.metadata.version("cpersona")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover - source checkout without install
+        return "unknown"

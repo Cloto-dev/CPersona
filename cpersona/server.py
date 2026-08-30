@@ -78,7 +78,12 @@ from cpersona.config import (
 from cpersona import config
 from cpersona import operating_context
 from cpersona.database import close_db, init_db
-from cpersona.maintenance_handlers import do_check_health, do_deep_check, do_migrate_channel_axis
+from cpersona.maintenance_handlers import (
+    do_check_health,
+    do_deep_check,
+    do_get_session_findings,
+    do_migrate_channel_axis,
+)
 from cpersona.memory_handlers import (
     do_archive_episode,
     do_get_contents,
@@ -1493,6 +1498,59 @@ registry.auto_tool(
     do_check_health,
     [("agent_id", str, ""), ("fix", bool, False), ("checks", list, [])],
     annotations=ToolAnnotations(readOnlyHint=False),
+)
+
+registry.auto_tool(
+    "get_session_findings",
+    "Pull the storage-integrity findings on demand (SuperAuditor v1 pull contract, "
+    "docs/SUPERAUDITOR_STANDARD.md) instead of reading them off check_health. Same "
+    "detector as check_health(fix=false) over the WHOLE database, delivered as "
+    "findings: each carries `kind` (the check registry name, so "
+    "check_health(checks=[kind]) re-runs exactly that probe; escalation tiers are "
+    "their own kinds, e.g. null_embedding_pipeline_down) and a static per-kind "
+    "`severity` (critical = the read contract is broken now / warn = two stored facts "
+    "contradict / info = an observation). check_health's own instance verdict rides "
+    "along as `health_severity`; a probe that raised is reported as kind "
+    "`check_crashed` instead of failing the pull, so a partial result says which "
+    "probe is missing. Read-only, never repairs; safe to call at any time. Findings "
+    "are NOT filtered by agent_id or project_id — the channel surfaces forgotten "
+    "state, and slicing it by the caller's bucket would hide exactly the rows that "
+    "were forgotten (scope a repair with check_health(agent_id=...)). Honest caps: "
+    "`findings` holds at most per_kind_limit rows per kind, `capped_kinds` names every "
+    "kind that had more (observed, not inferred from count == limit), `total` and "
+    "the counts describe the RETURNED set only, and `per_kind_limit` echoes the limit "
+    "applied. `summary` restates the same trimmed set in prose (pass "
+    "include_summary=false to skip paying for it). On a shared remote transport with "
+    "no session_key declared the response carries `identity_shared: true` — this "
+    "server has no session-scoped probes, so the key is a partition hint, not a "
+    "filter. `_meta.server_version` identifies the running instance.",
+    {
+        "type": "object",
+        "properties": {
+            "session_key": {
+                "type": "string",
+                "description": "Opaque client-declared session identity (partition hint, not "
+                "authentication). Empty on a non-stdio transport marks the response "
+                "identity_shared.",
+                "default": "",
+            },
+            "per_kind_limit": {
+                "type": "integer",
+                "description": "Maximum findings returned per kind (default 5, minimum 1). Kinds "
+                "that hit it are listed in capped_kinds.",
+                "default": 5,
+            },
+            "include_summary": {
+                "type": "boolean",
+                "description": "Include the human-readable `summary` rendering (default true). "
+                "It restates `findings` in prose — set false when machine-reading.",
+                "default": True,
+            },
+        },
+    },
+    do_get_session_findings,
+    [("session_key", str, ""), ("per_kind_limit", int, 5), ("include_summary", bool, True)],
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 
 registry.auto_tool(

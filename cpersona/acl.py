@@ -375,7 +375,7 @@ def _merge_demands(args: dict) -> list[tuple[str, int]]:
     return [(source, PERM_READ), (target, PERM_WRITE)]
 
 
-def _process_wide(reason: str) -> Demands:
+def _process_wide(reason: str, required: int = PERM_WRITE) -> Demands:
     """A tool whose effect is process-wide: the all-agents demand is intrinsic.
 
     No argument narrows it, so the guard's scope advice would be advice the
@@ -385,7 +385,7 @@ def _process_wide(reason: str) -> Demands:
     """
 
     def demands(args: dict) -> list[tuple[str, int]]:
-        return [(WILDCARD, PERM_WRITE)]
+        return [(WILDCARD, required)]
 
     demands._sweep_cause = lambda args: reason  # type: ignore[attr-defined]
     return demands
@@ -436,6 +436,14 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     # Empty agent_id sweeps every agent on these; _scoped maps "" to "*".
     "check_health": _health_demands,
     "deep_check": _health_demands,
+    # The findings channel is whole-database by contract (SUPERAUDITOR_STANDARD
+    # §7): no argument scopes it, so the all-agents READ demand is intrinsic.
+    "get_session_findings": _process_wide(
+        "findings are reported over the whole database by contract — the channel "
+        "surfaces forgotten state, so no argument narrows it to one agent; scope a "
+        "repair with check_health(agent_id=...) instead",
+        required=PERM_READ,
+    ),
     "migrate_channel_axis": _scoped(PERM_WRITE),
 }
 

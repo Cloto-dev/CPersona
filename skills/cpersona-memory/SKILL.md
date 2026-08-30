@@ -22,7 +22,7 @@ your token budget; the calling agent (you) does all summarization. (Embedding
 is separate: `EMBEDDING_MODE=api` bills per store and per recall against
 `CPERSONA_EMBEDDING_API_URL`. The local `http` mode and `none` cost nothing.)
 
-- **29 tools**, single SQLite file, MIT licensed.
+- **30 tools**, single SQLite file, MIT licensed.
 - Works with Claude Desktop, Claude Code, and any MCP host.
 - Repo: <https://github.com/Cloto-dev/cpersona>
 
@@ -288,6 +288,9 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
   + auto-repair. The tool description states the current check count and which
   findings gate; the verdict is `status` (healthy / degraded / unhealthy).
 - `deep_check(agent_id, fix=true)` — semantic quality pass.
+- `get_session_findings()` — pull the findings `check_health` computes, whole-database
+  and read-only, severity-tagged and capped per kind (`capped_kinds` names what was
+  cut). The form to read at the end of a session, before deciding whether to repair.
 - `export_memories` / `import_memories` — JSONL portability (idempotent import).
 - `merge_memories` — atomically fold one agent's data into another, de-duped.
 
@@ -339,7 +342,7 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 | Persistence control | `pause_persistence`, `resume_persistence`, `persistence_status` |
 | Portability | `export_memories`, `import_memories`, `merge_memories` |
 | Channels / multi-user | `migrate_channel_axis` (plus `channel` on `store` / `recall`, and `source_id` on `recall` — a write carries its producer in `message.source.id`, which `recall(source_id=…)` prefix-matches) |
-| Health | `check_health`, `deep_check`, `get_queue_status` |
+| Health | `check_health`, `deep_check`, `get_session_findings`, `get_queue_status` |
 | Operator context | `get_operating_context` |
 
 Argument details live in each tool's MCP description; the grouped reference
@@ -375,7 +378,7 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
 
 ## Key facts
 
-- 29 tools · Schema v13 (auto-migrating) · ~14,500 LOC Python across focused modules · MIT.
+- 30 tools · Schema v13 (auto-migrating) · ~15,000 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 "$DB" ".backup 'backup.db'"` (WAL-safe — a plain `cp` of a live DB

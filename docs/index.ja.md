@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:2c44790e91029d41a5b0df9f3079079012bfb624 -->
+<!-- i18n-source: docs/index.md@blob:f01ee2407a21a0486ae177725942e402f25f9f4f -->
 
 # CPersona ドキュメント
 
@@ -27,7 +27,7 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 |---|---|
 | インストール・セットアップ | [はじめに (Getting Started)](getting-started.md) |
 | 依存してよい挙動を知る | [挙動契約 (Behavior Contracts)](behavior-contracts.md) |
-| 29 個のツールが何をするか見る | [ツール一覧](tools.md) |
+| 30 個のツールが何をするか見る | [ツール一覧](tools.md) |
 | 検索と保存の仕組みを理解する | [アーキテクチャ](architecture.md) |
 | 運用: バックアップ・チューニング・劣化検知・コーパス索引 | [運用 Runbook](operations.md) |
 | 環境変数を調べる | [設定リファレンス](configuration.md) |
