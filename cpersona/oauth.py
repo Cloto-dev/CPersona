@@ -163,7 +163,13 @@ class IdpTokenVerifier:
         self._fetch = fetch or _http_get
         self._now = now
         self._cache: dict[str, _IssuerKeys] = {issuer: _IssuerKeys() for issuer in self._issuers}
-        self._outage_logged_at: float = 0.0
+        # -inf, not 0.0, for the reason _IssuerKeys.last_attempt carries it:
+        # ``time.monotonic`` is uptime on some platforms, so a 0.0 sentinel puts
+        # a freshly started process inside the cooldown and the FIRST outage —
+        # the one an operator most needs to see — is the one that goes unlogged.
+        # Measured: the test for it passed on a long-running machine and failed
+        # on a fresh CI runner.
+        self._outage_logged_at: float = -math.inf
 
     # -- public surface ----------------------------------------------------
 

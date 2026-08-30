@@ -503,10 +503,21 @@ async def test_the_first_token_is_verified_even_at_time_zero(idp):
 
 
 @pytest.mark.asyncio
-async def test_an_outage_before_any_key_is_held_refuses_and_says_so(idp, caplog):
+@pytest.mark.parametrize("uptime", [0.0, 5000.0])
+async def test_an_outage_before_any_key_is_held_refuses_and_says_so(idp, caplog, uptime):
+    """And the first outage is logged however long the process has been up.
+
+    The clock is pinned rather than ambient. ``time.monotonic`` is uptime on
+    some platforms, so a rate-limiter whose "last logged" sentinel is 0.0 puts a
+    freshly started process inside its own cooldown: the very first outage goes
+    unlogged, which is the one an operator most needs. Reading the real clock
+    would hide that — measured, on a machine up for days it passed and on a
+    fresh CI runner it failed.
+    """
     idp.metadata_status = 503
+    verifier = _verifier(idp, now=lambda: uptime)
     with caplog.at_level("WARNING", logger="cpersona"):
-        assert await _verifier(idp).verify_token(idp.mint()) is None
+        assert await verifier.verify_token(idp.mint()) is None
     assert any("OAuth verification degraded" in r.getMessage() for r in caplog.records)
 
 
