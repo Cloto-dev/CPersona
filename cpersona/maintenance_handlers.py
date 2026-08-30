@@ -480,7 +480,18 @@ async def do_get_session_findings(
     the whole database with ``fix=False`` — delivered as findings with the
     static per-kind ``severity`` and honest per-kind caps that
     ``docs/SUPERAUDITOR_STANDARD.md`` specifies. Read-only: nothing is
-    repaired, nothing is written, and the call is safe at any time.
+    repaired, nothing is written, and the call cannot corrupt anything.
+
+    It is not free, though, and "read-only" is easy to read as "cheap". The
+    registry is run unfiltered, which includes the two probes it names itself
+    as whole-database reads (``checks.WHOLE_DB_SCAN_CHECKS``): ``fts_integrity``
+    runs the FTS5 integrity-check over both indexes and ``sqlite_integrity``
+    runs ``PRAGMA quick_check`` over the file. Both are O(database) on every
+    pull, and this is a channel meant to be pulled once a session. There is
+    deliberately no cheap subset: a caller that could ask for one would be
+    choosing which forgotten state stays forgotten, which is the opposite of
+    what the channel is for (standard §7). Scope by cost with call frequency,
+    not by narrowing the probe set.
 
     Findings are NOT scoped to an agent or a project (standard §7): the
     channel exists to surface forgotten state, and slicing it by the bucket

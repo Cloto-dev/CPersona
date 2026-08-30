@@ -66,15 +66,19 @@ justification than the two defects above.
 One resolution point, mirroring the sibling implementation:
 
 ```python
-def resolve_session_key(arguments: dict) -> tuple[str, bool]:
+def resolve_session_key(declared: str | None) -> tuple[str, bool]:
     """Return (effective_key, declared)."""
-    raw = arguments.get("session_key")
-    if isinstance(raw, str):
-        stripped = raw.strip()
+    if isinstance(declared, str):
+        stripped = declared.strip()
         if stripped:
             return stripped, True
-    return _transport_fallback_key(), False
+    return TRANSPORT_KEY, False
 ```
+
+It takes the value, not the request: this server's tool registry validates and
+extracts declared parameters before dispatch, so a handler receives keyword
+arguments and never sees an argument dict. (The sibling implementation resolves
+from the dict because its dispatch hands one over. Same seam, different host.)
 
 - A non-empty, non-whitespace string is the effective key, and `declared` is
   true.
@@ -85,13 +89,17 @@ def resolve_session_key(arguments: dict) -> tuple[str, bool]:
   The value is compared, never parsed, never rendered into SQL identifiers,
   never logged as an identity claim.
 
-The fallback is a per-process constant. Under stdio that is already a
-session, because the process is one; under streamable-HTTP it is a single
-shared bucket that every keyless caller lands in — exactly the state of the
-world today. The fallback deliberately does not try to *derive* a session
+The fallback is a per-process constant (`TRANSPORT_KEY`). Under stdio that is
+already a session, because the process is one; under streamable-HTTP it is a
+single shared bucket that every keyless caller lands in — exactly the state of
+the world today. The fallback deliberately does not try to *derive* a session
 from the process: under the shared transport the process's own lineage
 describes the server, not any of its callers, and a key derived from it
 would look like an answer while partitioning nothing.
+
+A caller may of course declare the literal fallback value and join that bucket.
+That is not a hole to close: the key is a hint, and a caller that can send one
+key can send another. Nothing is defended by it.
 
 ## 4. What it partitions — the complete list
 
@@ -169,13 +177,24 @@ list that clients load on every session. This is a fixed cost paid by every
 caller, including those that never declare a key, and it is the reason this
 design stages rather than threading everything at once.
 
-The commitment: **measure the tool-list size before and after Stage 1**, and
-put the number in the pull request. Stage 2 multiplies that cost by roughly
-three (five tools to fifteen or more), and that measurement — not a
-preference — decides whether Stage 2 ships.
+Measured, on the serialized tool list this server advertises:
 
-Mitigation, if the number is unpleasant: one short description referring to
-this page, rather than the full explanation repeated per tool.
+| | tools | serialized chars |
+| --- | --- | --- |
+| before stage 1 | 30 | 39,135 |
+| after stage 1 | 30 | 41,703 |
+| delta | 0 | **+2,568 (+6.6%)** |
+
+That is ~514 characters per tool that accepts the key, paid by every client on
+every session, including clients that never declare one. The description is
+already written once and shared by all five schemas; the number above is the
+shared version, not five copies of a longer text.
+
+Stage 2 adds the key to roughly fifteen more tools: about +7,700 characters on
+top, for a total delta near +26%. That projection — not a preference — is what
+Stage 2 has to justify. If it cannot, the mitigation is a shorter shared
+description that points here for the explanation, which trades roughly 350 of
+those characters per tool for a page the client cannot see.
 
 ## 7. Lifetime
 
@@ -194,13 +213,23 @@ database.
 
 ## 8. Degradation contract
 
-A keyless caller on a shared transport is told, not guessed about:
-`identity_shared: true` on the affected responses, as `get_session_findings`
-already does and as the SuperAuditor standard requires. Degrading honestly
-is the requirement; degrading silently is the defect.
+A keyless caller is told, not guessed about. What it is told depends on what
+the response already says, because a keyless response must keep the exact shape
+it had — a new key on it would break the preservation §3 promises:
 
-Under stdio, `identity_shared` is absent — the process is the session, and
-saying otherwise would be false.
+- `get_session_findings` keeps carrying `identity_shared: true` for a keyless
+  caller on a shared transport, as the SuperAuditor standard requires. That
+  field predates this design.
+- The pause trio already answers with `scope: "process"`, which states the
+  blast radius exactly. The ownership fields (`pause_owner_known`,
+  `paused_by_self`) appear **only** for a caller that declared a key; a keyless
+  response is byte-for-byte what it was.
+- A recall response carries the regime in `advisory_scope` — but only inside an
+  advisory, which is only present when recall is degraded. A healthy keyless
+  recall gains nothing, which is the point.
+
+Under stdio nothing claims a shared identity, because the process is the
+session and saying otherwise would be false.
 
 ## 9. Version placement
 

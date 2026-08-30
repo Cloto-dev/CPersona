@@ -24,6 +24,7 @@ from cpersona.isolation import isolation_where
 
 from cpersona import health
 from cpersona import vector
+from cpersona.session import resolve_session_key
 from cpersona.config import (
     AUTOCUT_ENABLED,
     AUTOCUT_MIN_GAP_RATIO,
@@ -1140,6 +1141,7 @@ async def do_recall(
     exclude_contents: list | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    session_key: str = "",
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1427,7 +1429,8 @@ async def do_recall(
     # change the payload of the whole surface (and every recorded golden) to say nothing.
     if gate_fallback:
         result["gate_fallback"] = True
-    advisory = health.maybe_advisory()
+    advisory_key, advisory_declared = resolve_session_key(session_key)
+    advisory = health.maybe_advisory(advisory_key, advisory_declared)
     if advisory is not None:
         result["advisory"] = advisory
     return result
@@ -1474,6 +1477,7 @@ async def do_recall_with_context(
     deep: bool = False,
     project_id: str | None = None,
     source_id: str = "",
+    session_key: str = "",
 ) -> dict:
     """Recall memories and merge with external conversation context.
 
@@ -1493,6 +1497,7 @@ async def do_recall_with_context(
         exclude_contents=exclude_list,
         project_id=project_id,
         source_id=source_id,
+        session_key=session_key,
     )
     messages = recall_result.get("messages", [])
 
