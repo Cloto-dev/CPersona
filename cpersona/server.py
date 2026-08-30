@@ -1752,8 +1752,10 @@ def _peer_is_remote(peer: str) -> bool:
 class _OAuthDiscovery(NamedTuple):
     """Resolved RFC 9728 discovery configuration (docs/OAUTH_DESIGN.md §7).
 
-    Discovery only. Nothing in this tuple verifies a token; the audience check
-    the specification requires (§1.3) belongs to the half that is not built.
+    Discovery only — nothing in this tuple verifies a token. It does decide
+    *what* the other half accepts, though: ``resource`` is the audience a token
+    must be minted for, and ``authorization_servers`` is the closed set of
+    issuers whose keys will be trusted. See ``_oauth_verifier``.
     """
 
     #: The operator's strings, kept verbatim. RFC 8414 §3.3 and RFC 9728 §3.3
@@ -1861,6 +1863,46 @@ def _oauth_discovery() -> "_OAuthDiscovery | None":
     )
 
 
+def _oauth_verifier(oauth: "_OAuthDiscovery | None", acl_config: "acl.AclConfig | None"):
+    """Build the token verifier, or None when verification must stay off.
+
+    Two conditions, and the second is the one worth reading twice.
+
+    Discovery must be on. The same two settings enable both halves on purpose:
+    the failure §7 set out to end was a client that could not find the door, and
+    replacing it with a door that opens for nobody would be the same failure
+    wearing a different status code.
+
+    **ACL mode must be on.** The adopted design provisions grants per client
+    (docs/OAUTH_DESIGN.md §8, §11). Without a grant table there is nothing to
+    provision *against*: a verified token would authenticate, and with no
+    enforcement layer behind it the holder would reach every tool — including
+    delete_agent_data and the file-reading import/export. That is a fail-open,
+    and it would arrive silently, so verification refuses to start instead and
+    says why. Discovery is left on, because a client that can still find the
+    issuer and is then refused has learned something true.
+    """
+    if oauth is None:
+        return None
+    if acl_config is None:
+        logger.warning(
+            "OAuth discovery is configured but no ACL file is active, so token "
+            "verification stays OFF: a verified token would authenticate with no "
+            "grant table to limit it, reaching every tool. Set CPERSONA_ACL_FILE "
+            "and give the provider's clients grants (docs/ACL_DESIGN.md) to enable "
+            "it. Discovery keeps working; clients will find the issuer and then be "
+            "refused."
+        )
+        return None
+    from cpersona.oauth import IdpTokenVerifier
+
+    return IdpTokenVerifier(
+        oauth.authorization_servers,
+        oauth.resource,
+        jwks_uri=(config.OAUTH_JWKS_URI or "").strip(),
+    )
+
+
 def _preserve_empty_url_paths_in_metadata() -> None:
     """Stop the SDK's metadata model from rewriting a path-less identifier.
 
@@ -1934,6 +1976,7 @@ class BearerTokenMiddleware:
         auth_token: str = "",
         acl_config: "acl.AclConfig | None" = None,
         oauth: "_OAuthDiscovery | None" = None,
+        oauth_verifier=None,
     ):
         self.app = app
         self.auth_token = auth_token
@@ -1944,6 +1987,12 @@ class BearerTokenMiddleware:
         # _build_http_app rather than per request: a malformed setting then
         # costs one warning at startup instead of a 500 on every arrival.
         self.oauth = oauth
+        # The other half (docs/OAUTH_DESIGN.md §8): a verifier that turns a
+        # provider-issued token into the same Principal the local table
+        # produces. None whenever verification is off, which is the default and
+        # is also what an operator who configured discovery without a grant
+        # table gets — see _oauth_verifier.
+        self.oauth_verifier = oauth_verifier
         self._exposure_warned = False
 
     def _unauthorized(self, scope, receive, send):
@@ -1984,6 +2033,29 @@ class BearerTokenMiddleware:
         if scope.get("path") != self.oauth.metadata_path:
             return False
         return scope.get("method") in ("GET", "HEAD", "OPTIONS")
+
+    async def _oauth_principal(self, presented: str) -> "acl.Principal | None":
+        """The last resort of the composed resolver: a provider-issued token.
+
+        Order is chosen for cost and attack surface rather than correctness
+        (docs/OAUTH_DESIGN.md §8). The local comparisons are cheap and cannot be
+        fooled by a remote token; the token parse is the only step that reads
+        attacker-controlled structure, so it goes last. Every caller who
+        authenticates the way they do today therefore reaches a verdict without
+        this path running at all — which is what makes enabling OAuth additive
+        for them.
+
+        Rejection is silent here because the caller turns it into the same 401
+        every other failed credential gets: a response that distinguished "your
+        JWT was malformed" from "your token is not in the table" would hand a
+        prober the shape of our configuration.
+        """
+        if self.oauth_verifier is None or not presented:
+            return None
+        verified = await self.oauth_verifier.verify_token(presented)
+        if verified is None:
+            return None
+        return acl.Principal(client_id=verified.client_id)
 
     def _warn_once_if_remotely_reached(self, request) -> None:
         """Report observed reachability while running without authentication.
@@ -2066,6 +2138,8 @@ class BearerTokenMiddleware:
             # dispatch — pinned end-to-end by tests/test_acl.py.
             token = _bearer_credential(request.headers.get("authorization", ""))
             principal = acl.resolve_token(self.acl_config, token)
+            if principal is None:
+                principal = await self._oauth_principal(token)
             if principal is None:
                 await self._unauthorized(scope, receive, send)
                 return
@@ -2245,6 +2319,7 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
                 auth_token=auth_token,
                 acl_config=acl_config,
                 oauth=oauth,
+                oauth_verifier=_oauth_verifier(oauth, acl_config),
             ),
         ],
         lifespan=lifespan,

@@ -51,6 +51,7 @@ instead — one server, several clients, reachable over a network.
 | `CPERSONA_OAUTH_RESOURCE` | *(unset)* | Canonical resource identifier published in the RFC 9728 metadata and expected back from the client. Discovery stays off while this is empty (see [OAuth design](OAUTH_DESIGN.md)) |
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | *(unset)* | Whitespace- or comma-separated issuer URLs the client should authenticate against. Discovery stays off while none is listed |
 | `CPERSONA_OAUTH_SCOPES` | `cpersona:read cpersona:write` | Scope advertised on the 401. The client sends back exactly what is asked for, so this value is the lever over scope design |
+| `CPERSONA_OAUTH_JWKS_URI` | *(unset)* | Where the issuer's signing keys are, for a provider whose metadata this server cannot read. Normally discovered from the issuer's own metadata; ignored unless exactly one authorization server is configured |
 
 **Discovery is off until you turn it on.** A client that supports OAuth looks for RFC 9728
 metadata; finding none, it falls through to asking a human to type in a client id — correct
@@ -59,6 +60,16 @@ Setting `CPERSONA_OAUTH_RESOURCE` **and** at least one entry in
 `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` publishes the metadata and puts `resource_metadata` and
 `scope` on the 401. With either unset the responses are byte-identical to a build without the
 feature, so enabling it is a deliberate act rather than an upgrade side effect.
+
+**The same two settings accept tokens, and that needs `CPERSONA_ACL_FILE`.** A token signed by a
+listed issuer and minted for exactly the configured resource resolves to the client identifier
+`oauth:<issuer>:<client_id>`, which is what you write grants against; a token for any other
+resource is refused, which is the check the MCP SDK leaves to the resource server. Verification
+requires ACL mode because a verified identity with no grant table behind it would reach every
+tool — with no ACL file the server logs that verification is staying off and keeps serving
+discovery, so clients still find the issuer and are then refused. Grants are per client: until
+someone adds the row, a newly connected client authenticates and every scoped tool refuses it,
+saying in `detail` that the grant table has no entry for it.
 
 **A loopback bind is not a security boundary.** Tunnels (cloudflared, ngrok),
 reverse proxies, `kubectl port-forward` and published container ports all forward

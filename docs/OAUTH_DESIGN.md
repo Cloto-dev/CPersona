@@ -1,14 +1,14 @@
 # OAuth support: three routes, measured
 
-**Status: adopted. The discovery half is built; nothing else is.** Route (b) — stay a resource
-server, delegate issuance to an external identity provider — was chosen, together with shipping
-the route-independent half first (§7). That half now exists: the metadata document is served and
-the 401 points at it, both off unless configured.
+**Status: adopted, and both halves are built.** Route (b) — stay a resource server, delegate
+issuance to an external identity provider — was chosen, together with shipping the route-independent
+half first (§7). That half serves the metadata document and points the 401 at it. The other half
+now exists too: a token signed by a listed issuer and minted for exactly this resource resolves to
+a principal, and anything else is refused. Everything remains off unless configured.
 
-Everything about *verifying* a token is still unbuilt, §5 included. Read that plainly rather than
-optimistically: a client can now discover where to obtain a token, and will still be refused when
-it arrives with one. Turning discovery on before the other half exists advertises a door that does
-not open yet. One question is deliberately still open, and §11 says which.
+The question this document left open — how a provider-minted identifier acquires grants — was
+settled as **per-client provisioning**, and §8 records the shape that took in the code. What is
+deliberately *not* solved is §9, which is a property of the model rather than a gap in it.
 
 The rejected routes are kept rather than deleted. A design record that lists only the choice
 leaves the next reader to rediscover why the other two were worse, and one of them looks cheapest
@@ -128,7 +128,10 @@ method, single-use authorization codes, refresh token rotation.
 - **Audience validation.** The bearer backend checks the verifier's answer and the expiry, and
   nothing else. We removed the audience and issuer checks from our own verifier and re-ran: a
   token minted for a **different resource was accepted with 200**, and the identity was published
-  downstream. The specification's "must not accept" is entirely ours to honour.
+  downstream. The specification's "must not accept" is entirely ours to honour. It is honoured in
+  `cpersona/oauth.py`, and the same mutation was applied again to the shipped code: with the
+  audience comparison disabled, two tests fail and no other. A check whose removal breaks nothing
+  is not a check.
 - **`scope` on the 401.** The middleware emits `error`, `error_description` and
   `resource_metadata` — no `scope`. Since the client adopts whatever scope the 401 advertises
   (§2), leaving this at the default gives away the one lever we measured ourselves holding.
@@ -194,6 +197,11 @@ choice safe:
 | `CPERSONA_OAUTH_RESOURCE` | The canonical resource identifier this server publishes and expects back. Discovery stays off while it is empty |
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | Whitespace- or comma-separated issuer URLs. Discovery stays off while none is listed |
 | `CPERSONA_OAUTH_SCOPES` | The scope advertised on the 401 (default `cpersona:read cpersona:write`) |
+| `CPERSONA_OAUTH_JWKS_URI` | Where the issuer's signing keys are, for a provider whose metadata this server cannot read. Normally discovered; ignored with more than one issuer |
+
+The first two enable verification as well, because a door that opens for nobody is the same failure
+as a door nobody can find. Verification additionally requires ACL mode — §8 says why, and what the
+server does when it is missing.
 
 Defaults and the surrounding settings: [Configuration](configuration.md). Naming them here
 matters more than it looks — an operator hitting exactly the failure above reads this section to
@@ -223,6 +231,30 @@ someone has to decide how a provider-minted client identifier acquires grants �
 mapping rule, or per-caller provisioning. **That decision belongs to whichever route is chosen and
 should not be discovered during implementation.**
 
+**It was decided: per-caller provisioning.** A default grant would hand capability to whoever
+reaches the issuer, and an issuer-wide rule would make "has an account there" mean "may read this
+memory" — both put the authorization decision somewhere nobody wrote it down. So an operator adds a
+row, and three consequences follow that are worth stating rather than discovering:
+
+- **The identifier is namespaced by its issuer**, as `oauth:<issuer>:<client_id>`. A bare client id
+  only means something relative to the authorization server that minted it: used plain it can
+  collide with a statically configured client, and after a provider swap a row written for the old
+  provider would silently authorize a same-named client at the new one. The namespace also puts the
+  provenance of every row and every denial on the page an operator is reading.
+- **The row carries no credential.** `"token": null` declares a principal a resolver asserts rather
+  than one a caller presents (docs/ACL_DESIGN.md). Writing a placeholder string instead would create
+  a live static bearer nobody intended — measured, and the reason the null form exists.
+- **Verification refuses to run without a grant table.** With no ACL file there is nothing to
+  provision against, so a verified token would authenticate with no enforcement behind it and reach
+  every tool. Rather than degrade quietly the server logs that verification is off and keeps serving
+  discovery: a client still finds the issuer and is then refused, which is a true answer.
+
+The identity a token resolves to comes from its `client_id` claim, or `azp` where the provider sends
+that instead. A token carrying neither is **refused rather than falling back to `sub`**: the
+principal is a client identifier by contract (§9), and putting a subject in that field would let two
+different kinds of identity share one namespace, so a grant row's meaning would depend on which
+claim the provider happened to send.
+
 ## 9. A constraint that outlives the route choice
 
 The principal carries a client identifier and nothing else.
@@ -245,11 +277,18 @@ This document does not propose resolving it. It proposes not being surprised by 
 - Binding accounts to the memory agent identity.
 - Migrating existing callers off their current credentials. They keep working; that is the point
   of §8.
+- **Enforcing the token's `scope`.** §1 lists a 403 carrying `insufficient_scope` among a resource
+  server's obligations, and this implementation does not emit one. Authorization is the grant
+  table's job; reading the scope as a second, independent permission model would give one question
+  two answers with no rule for which wins when they disagree. The scope on the 401 remains the
+  lever §2 measured — it is what tells the client what to ask the issuer for — and the token's
+  scopes are carried on the verified identity, so the second model can be added later without
+  changing what is verified.
 - Any provider selection. The candidate comparison is a separate exercise, and its findings are
   documentation-level until one candidate is exercised with a real token against the verifier
   described in §8.
 
-## 11. The decision, and the part of it still open
+## 11. The decision, and the question it left open
 
 **Route (b).** It implements one protocol method instead of nine, persists nothing, builds no
 consent surface, and adds no dependency. The cost is an external service in the authentication
@@ -269,7 +308,10 @@ this young.
 had won, and it replaces a failure nobody can read with one that explains itself. It has since
 shipped; §7 names the three variables that enable it.
 
-**Still open: how a provider-minted client identifier acquires grants** (§8). A default, a mapping
-rule, or per-caller provisioning. This is not a detail to settle while writing the code — an
-identifier with no grants authenticates successfully and is then refused everything, which is
-correct and looks exactly like a bug.
+**Settled: a provider-minted client identifier acquires grants by per-caller provisioning** (§8).
+A default or an issuer-wide rule would place the authorization decision where nobody wrote it. The
+cost is the one this section warned about and does not remove: an identifier with no grants
+authenticates successfully and is then refused everything, which is correct and looks exactly like a
+bug. What was added is the sentence that tells them apart — a denial for a client the grant table
+has never seen now says so, rather than reading identically to a permission that was deliberately
+withheld.

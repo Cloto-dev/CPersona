@@ -292,14 +292,19 @@ RRF_THRESHOLD_FACTOR = _parse_float("CPERSONA_RRF_THRESHOLD_FACTOR", 0.5)
 # score's tight range (0–~0.05).
 RRF_MAX_SCALE = 3.0 / (RRF_K + 1)
 
-# OAuth 2.0 protected resource discovery (RFC 9728, docs/OAUTH_DESIGN.md §7).
-# Discovery only: nothing here verifies a token. The metadata document and the
-# 401's resource_metadata parameter are what let a conformant client find the
-# authorization server it should talk to; without them the client finds nothing
-# and falls through to asking a human to type in a client id.
+# OAuth 2.0 as a protected resource: discovery (RFC 9728,
+# docs/OAUTH_DESIGN.md §7) and token verification (§8). The metadata document
+# and the 401's resource_metadata parameter are what let a conformant client
+# find the authorization server it should talk to; without them the client
+# finds nothing and falls through to asking a human to type in a client id.
 #
 # The feature is off unless OAUTH_RESOURCE is non-empty AND at least one
 # authorization server is listed. Off means byte-identical responses to today.
+# The same two settings enable verification, because advertising a door and
+# then refusing everyone who walks through it is the failure §7 exists to end.
+# Verification additionally requires ACL mode: without a grant table there is
+# nothing to provision against, so every holder of a token for this resource
+# would reach every tool.
 OAUTH_RESOURCE = os.environ.get("CPERSONA_OAUTH_RESOURCE", "")
 # Whitespace- or comma-separated issuer URLs.
 OAUTH_AUTHORIZATION_SERVERS = os.environ.get("CPERSONA_OAUTH_AUTHORIZATION_SERVERS", "")
@@ -307,6 +312,13 @@ OAUTH_AUTHORIZATION_SERVERS = os.environ.get("CPERSONA_OAUTH_AUTHORIZATION_SERVE
 # back exactly the scope the resource server asked for, so this value is the
 # lever over scope design — an empty one gives it away.
 OAUTH_SCOPES = os.environ.get("CPERSONA_OAUTH_SCOPES", "cpersona:read cpersona:write")
+# Escape hatch for an authorization server whose metadata this server cannot
+# read. Normally the signing keys are found through the issuer's own metadata,
+# which is the only way that survives the issuer moving them; this setting is
+# for the deployment where that fetch is not possible. Ignored unless exactly
+# one authorization server is configured — one URL cannot be the right key set
+# for several issuers.
+OAUTH_JWKS_URI = os.environ.get("CPERSONA_OAUTH_JWKS_URI", "")
 
 
 # Transport. Unlike everything above this is read at CALL time, not at import:

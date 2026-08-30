@@ -55,6 +55,16 @@ dependencies = [
     "aiosqlite>=0.20.0,<1.0",
     "httpx>=0.27.0,<1.0",
     "numpy>=1.24.0,<3",
+    # OAuth token verification (cpersona/oauth.py) imports this directly. It
+    # already arrives as a dependency of `mcp`, so declaring it changes nothing
+    # about what gets installed — which is the point: a package that imports a
+    # module it does not declare keeps working only for as long as somebody
+    # else's dependency list happens to carry it, and a published wheel's
+    # requires_dist cannot be corrected afterwards. The crypto extra is the
+    # part that matters (RS256/ES256 need it); the floor is the release that
+    # `mcp` itself requires, and the ceiling is the usual bet on a major that
+    # does not exist yet.
+    "pyjwt[crypto]>=2.10.1,<3",
 ]
 
 [project.urls]
