@@ -55,13 +55,16 @@ awaits under the asyncio single thread / GIL — no ``asyncio.Lock`` (same argum
 
 Per-process is right for the measurement (the embedding backend is shared by every caller
 of this process) and wrong for the suppression (whether a given caller has been told is
-per caller). Making the second one per-session needs an identity at the recall seam that
-does not exist: the HTTP mode is stateless, so there is no session id, and
-``acl.Principal`` carries only ``client_id`` — two Claude Code windows on one credential
-are one principal. A caller-supplied key — an opaque identity the client declares on each
-call — is the way to get one, at the cost of an argument every client has to pass; until
-then the exemption above is the honest substitute and ``advisory_scope`` says which regime
-is in force.
+per caller). The transport supplies no identity to separate them: the HTTP mode is
+stateless, so there is no session id, and ``acl.Principal`` carries only ``client_id`` —
+two client windows on one credential are one principal.
+
+The caller supplies it instead. ``do_recall`` resolves an optional ``session_key``
+(``cpersona.session``) and passes it here; when one is declared the suppression is keyed
+on that session and every session in an outage is told once. A keyless caller keeps the
+process-global flag and the shared-transport exemption above — unchanged, because that is
+the honest substitute when there is nobody to key on. ``advisory_scope`` says which regime
+produced the payload.
 
 Versioning: introduced in cloto-mcp-cpersona 2.4.33.
 """
@@ -85,6 +88,15 @@ _reason: str | None = None
 _evidence: str | None = None
 _consecutive_failures: int = 0
 _advisory_emitted: bool = False
+
+# Suppression memory for callers that declare a session_key: the keys already
+# told about the current degraded episode. Bounded, because the key space is
+# client-supplied and a client that rotates keys must not grow this without
+# limit. Eviction forgets only that a session was already told, so the worst
+# case is a repeated full runbook — the safe direction. dict, not set, for
+# insertion order: the oldest told session is the one evicted.
+ADVISORY_SESSION_CAP = 256
+_told_sessions: dict[str, None] = {}
 
 
 # --- Runbook templates (static skeletons; the dynamic problem rides the evidence slot) ---
@@ -155,6 +167,7 @@ def observe_ok() -> None:
     _evidence = None
     _consecutive_failures = 0
     _advisory_emitted = False
+    _told_sessions.clear()
 
 
 def observe_failure(evidence: str | None) -> None:
@@ -168,8 +181,10 @@ def observe_failure(evidence: str | None) -> None:
     _consecutive_failures += 1
     if _consecutive_failures >= FAULT_PROMOTE_THRESHOLD:
         if _state != FAULT:
-            # fresh promotion from unknown/healthy — arm the full template
+            # fresh promotion from unknown/healthy — arm the full template for
+            # every bucket: a new episode is news to sessions told about the last.
             _advisory_emitted = False
+            _told_sessions.clear()
         _state = FAULT
         _severity = "fault"
         _reason = "embedding endpoint unreachable; recall fell back to keyword/FTS-only"
@@ -181,13 +196,21 @@ def is_faulted() -> bool:
     return _state == FAULT
 
 
-def maybe_advisory() -> dict | None:
+def maybe_advisory(session_key: str = "", declared: bool = False) -> dict | None:
     """Return the advisory payload to attach to a recall response, or ``None``.
 
     ``None`` when opted out, or when the state is silent (``unknown``/``healthy``). The full
-    runbook fires once per degraded episode; subsequent calls return the short reminder —
-    except for a ``fault`` on a shared transport, which never downgrades (bug-251, see the
-    module docstring).
+    runbook fires once per degraded episode; subsequent calls return the short reminder.
+
+    Which "once" is the point. With a declared ``session_key`` the suppression is keyed on
+    that session, so every session in an outage is told once — the per-session suppression
+    bug-251 recorded as out of reach without a caller-supplied key. Without one, the keyless
+    path is untouched: the process-global flag, and the shared-transport ``fault`` exemption
+    that never downgrades because it cannot tell whom it already told (bug-251's substitute).
+
+    A declared key needs no such exemption, which is why it is not applied there: the
+    exemption exists to compensate for missing identity, and repeating a 650-character
+    runbook to a session that already received it would be the cost it was paying to avoid.
     """
     global _advisory_emitted
     if not config.DEGRADED_ADVISORY_ENABLED:
@@ -195,18 +218,31 @@ def maybe_advisory() -> dict | None:
     if _state in (UNKNOWN, HEALTHY):
         return None
     shared = config.shared_transport()
-    full = not _advisory_emitted or (shared and _state == FAULT)
-    _advisory_emitted = True
-    return _build_payload(full, shared)
+    if declared:
+        full = session_key not in _told_sessions
+        _remember_told(session_key)
+    else:
+        full = not _advisory_emitted or (shared and _state == FAULT)
+        _advisory_emitted = True
+    return _build_payload(full, shared, declared)
 
 
-def _build_payload(full: bool, shared: bool) -> dict:
+def _remember_told(session_key: str) -> None:
+    """Record that this session has had the full runbook, evicting the oldest if full."""
+    _told_sessions[session_key] = None
+    while len(_told_sessions) > ADVISORY_SESSION_CAP:
+        _told_sessions.pop(next(iter(_told_sessions)))
+
+
+def _build_payload(full: bool, shared: bool, declared: bool = False) -> dict:
     """Build the ``{degraded, severity, reason, evidence, runbook, advisory_scope}`` struct.
 
     ``advisory_scope`` names what the once-per-episode suppression is keyed on, so a
     ``process`` reminder is not mistaken for a follow-up this caller received (bug-251).
-    It becomes ``session`` the day a caller-supplied key reaches this seam; today only the
-    stdio transport earns that value, by having one session per process.
+    It reads ``session`` when the caller declared a ``session_key`` — the suppression is
+    then genuinely keyed on that session — and also on stdio without one, where the
+    process is a session by construction. It reads ``process`` only where it is true: a
+    keyless caller on a transport whose process serves several sessions.
     """
     evidence = _evidence or "no detail captured"
     if _severity == "hint":
@@ -220,13 +256,14 @@ def _build_payload(full: bool, shared: bool) -> dict:
         "reason": _reason,
         "evidence": _evidence,
         "runbook": runbook,
-        "advisory_scope": "process" if shared else "session",
+        "advisory_scope": "session" if (declared or not shared) else "process",
     }
 
 
 def _reset() -> None:
     """Test-only: restore all module state to its initial values."""
     global _state, _severity, _reason, _evidence, _consecutive_failures, _advisory_emitted
+    _told_sessions.clear()
     _state = UNKNOWN
     _severity = None
     _reason = None

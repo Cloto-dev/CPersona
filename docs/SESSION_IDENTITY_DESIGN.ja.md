@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:d098e3b7626c158aa8c2da3a7774ab32850b0f1f -->
+<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:5bb921c0aa1e7e4b9a39bb3d85d1d93afb6d3997 -->
 
 # 申告型セッション同一性 (`session_key`)
 
@@ -66,15 +66,19 @@ id は後続の呼び出しでサーバーへ返ってきません。**同一性
 解決点は 1 つだけで、姉妹実装と同じ形です:
 
 ```python
-def resolve_session_key(arguments: dict) -> tuple[str, bool]:
+def resolve_session_key(declared: str | None) -> tuple[str, bool]:
     """Return (effective_key, declared)."""
-    raw = arguments.get("session_key")
-    if isinstance(raw, str):
-        stripped = raw.strip()
+    if isinstance(declared, str):
+        stripped = declared.strip()
         if stripped:
             return stripped, True
-    return _transport_fallback_key(), False
+    return TRANSPORT_KEY, False
 ```
+
+受け取るのはリクエストではなく値です。本サーバーのツールレジストリは宣言済みパラメータを
+ディスパッチ前に検証・抽出するため、ハンドラはキーワード引数を受け取り、引数 dict を見る
+ことがありません (姉妹実装が dict から解決するのは、あちらのディスパッチが dict を渡すから
+です。継ぎ目は同じで、宿主が違います)。
 
 - 空白のみでない非空文字列が実効 key となり、`declared` は true になります。
 - 不在・空・空白のみは transport fallback に落ち、`declared` は false —
@@ -82,12 +86,16 @@ def resolve_session_key(arguments: dict) -> tuple[str, bool]:
 - 長さ制限も、書式検証も、`strip()` を超えるサニタイズもありません。値は比較される
   だけで、パースされず、SQL 識別子に展開されず、同一性の主張としてログにも残りません。
 
-fallback はプロセス単位の定数です。stdio ではプロセスが 1 セッションなのでそれ自体が
+fallback はプロセス単位の定数 (`TRANSPORT_KEY`) です。stdio ではプロセスが 1 セッションなのでそれ自体が
 既にセッションであり、streamable-HTTP では key なしの呼び出し元が全員落ちる 1 つの
 共有バケットになります — つまり今日の世界そのものです。fallback が**プロセスから
 セッションを導出しようとしない**のは意図的です。共有トランスポートではプロセスの系譜は
 サーバー自身を指すのであって呼び出し元の誰でもなく、そこから導いた key は答えのように
 見えて何も分割しません。
+
+呼び出し元が fallback の値そのものを申告してそのバケットに入ることは当然できます。これは
+塞ぐべき穴ではありません — key はヒントであり、ある key を送れる呼び出し元は別の key も
+送れます。これによって守られているものは何もありません。
 
 ## 4. 何を分割するか — 完全な一覧 { #4-what-it-partitions-the-complete-list }
 
@@ -157,12 +165,22 @@ SuperAuditor 標準 §7 が想定し姉妹実装が持っているもの — は
 一覧に載せます。これは key を一度も申告しない呼び出し元も含めた**全員が払う固定費**で
 あり、本設計が一気に threading せず段階に割る理由です。
 
-約束事: **段階 1 の前後でツール一覧のサイズを実測し**、その数値を pull request に載せる
-こと。段階 2 はそのコストをおよそ 3 倍にします (5 ツール → 15 ツール以上)。段階 2 を
-出すかどうかを決めるのは、好みではなくこの実測値です。
+本サーバーが広告するツール一覧 (シリアライズ後) の実測値:
 
-数値が芳しくない場合の緩和策: 各ツールに全文を繰り返すのではなく、本ページを参照する
-短い説明文にすること。
+| | ツール数 | シリアライズ後の文字数 |
+| --- | --- | --- |
+| 段階 1 前 | 30 | 39,135 |
+| 段階 1 後 | 30 | 41,703 |
+| 差分 | 0 | **+2,568 (+6.6%)** |
+
+key を受け取るツール 1 本あたり約 514 文字で、これを全クライアントが毎セッション払います
+(key を一度も申告しないクライアントも含む)。説明文は既に 1 つを 5 スキーマで共有しており、
+上の数値はその共有版であって、長い文章の 5 コピーではありません。
+
+段階 2 はさらに約 15 本へ key を足すので、上に約 +7,700 文字が乗り、合計差分は +26% 近くに
+なります。段階 2 が正当化しなければならないのは、好みではなくこの見積りです。正当化
+できない場合の緩和策は、説明を本ページ参照の短文に置き換えて 1 ツールあたり約 350 文字を
+削ることですが、それはクライアントから見えないページとの交換になります。
 
 ## 7. 寿命 { #7-lifetime }
 
@@ -181,13 +199,22 @@ SuperAuditor 標準 §7 が想定し姉妹実装が持っているもの — は
 
 ## 8. 縮退の契約 { #8-degradation-contract }
 
-共有トランスポート上で key を申告しない呼び出し元には、推測ではなく事実を伝えます —
-該当する応答に `identity_shared: true` を載せます。`get_session_findings` が既にそう
-しており、SuperAuditor 標準が要求するとおりです。**正直に縮退することが要件であり、
-黙って縮退することが欠陥です。**
+key を申告しない呼び出し元にも、推測ではなく事実を伝えます。ただし**何を伝えるかは、その
+応答が既に何を言っているかで決まります** — key なしの応答は形を変えてはならないからです
+(新しいキーを 1 つ足すだけで §3 が約束する保存が壊れます):
 
-stdio では `identity_shared` は不在です。プロセスがセッションそのものであり、それ以外を
-言うのは虚偽になります。
+- `get_session_findings` は従来どおり、共有トランスポート上で key なしの呼び出し元に
+  `identity_shared: true` を載せます (SuperAuditor 標準の要求。このフィールドは本設計より
+  前から存在します)。
+- pause の 3 ツールは既に `scope: "process"` と答えており、影響範囲を正確に述べています。
+  所有者フィールド (`pause_owner_known` / `paused_by_self`) は **key を申告した呼び出し元に
+  だけ**現れ、key なしの応答はバイト単位で従来のままです。
+- recall の応答は `advisory_scope` で regime を伝えますが、それは advisory の内側、つまり
+  recall が劣化している時にだけ現れます。健全な key なし recall は何も増えません — そこが
+  要点です。
+
+stdio では共有の同一性を主張するものは何もありません。プロセスがセッションそのものであり、
+それ以外を言うのは虚偽になります。
 
 ## 9. バージョンの置き場所 { #9-version-placement }
 

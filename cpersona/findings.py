@@ -122,6 +122,18 @@ def finding_kind(issue: dict) -> str:
     return "schema_objects" if stamped == "critical" else "schema_objects_perf_index"
 
 
+# The names this seam moves a payload key to. A probe that ever emits one of
+# these itself would have its value silently replaced by the relocated one, so
+# the collision is refused instead. Checked at the seam rather than only in a
+# test, because the failure it guards is invisible: the response stays
+# well-formed and one field means something other than it says.
+RELOCATION_TARGETS = ("object_kind", "health_severity")
+
+
+class ReservedKeyCollision(Exception):
+    """A probe emitted a key this seam relocates into. See RELOCATION_TARGETS."""
+
+
 def as_finding(issue: dict) -> dict:
     """A ``check_health`` issue as the finding this seam delivers it as.
 
@@ -130,7 +142,21 @@ def as_finding(issue: dict) -> dict:
     (see the module docstring), and an issue's own ``kind`` — ``schema_objects``
     uses it for the object type, ``index`` / ``trigger`` — becomes
     ``object_kind``, because ``kind`` names the probe here.
+
+    The relocation is refused rather than performed if the issue already
+    carries the destination name. No probe does today; one that started would
+    otherwise have its own field overwritten by the moved one, and nothing
+    would look wrong — the standard reserves ``kind`` and ``severity`` but says
+    nothing about where an implementation may move a colliding payload key to,
+    so this end of the rule is ours to hold.
     """
+    for target in RELOCATION_TARGETS:
+        if target in issue:
+            raise ReservedKeyCollision(
+                f"issue from check {issue.get('check') or issue.get('type')!r} carries "
+                f"{target!r}, which this seam relocates a payload key into; rename the "
+                f"probe's field (the delivered finding would otherwise silently lose one)"
+            )
     kind = finding_kind(issue)
     finding = {key: value for key, value in issue.items() if key not in ("kind", "severity")}
     if "kind" in issue:

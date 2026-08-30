@@ -238,8 +238,9 @@ async def test_list_episodes_boundary_project_id_default_is_None(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# do_recall_boundary — 8 forwarded args
-# (agent_id, query, limit, deep, channel, exclude_contents, project_id, source_id)
+# do_recall_boundary — 9 forwarded args
+# (agent_id, query, limit, deep, channel, exclude_contents, project_id,
+#  source_id, session_key)
 # `full_content` is a boundary-layer preview switch; it must NOT reach
 # do_recall (whose signature does not accept it).
 # ---------------------------------------------------------------------------
@@ -264,7 +265,7 @@ async def test_recall_boundary_forwards_every_arg_to_do_recall(monkeypatch):
     monkeypatch.setattr(server, "do_recall", fake_recall)
 
     result = await server.do_recall_boundary(
-        "a-1", "query-text", 7, True, "c-1", ["prior-content"], "", "src:1"
+        "a-1", "query-text", 7, True, "c-1", ["prior-content"], "", "src:1", session_key="s-1"
     )
 
     assert captured["args"] == ("a-1", "query-text", 7)
@@ -274,6 +275,7 @@ async def test_recall_boundary_forwards_every_arg_to_do_recall(monkeypatch):
         "exclude_contents": ["prior-content"],
         "project_id": "",
         "source_id": "src:1",
+        "session_key": "s-1",
     }
     assert result == {"messages": []}
 
@@ -314,7 +316,8 @@ async def test_recall_boundary_full_content_stays_at_the_boundary(monkeypatch):
 @pytest.mark.asyncio
 async def test_recall_with_context_boundary_forwards_every_arg(monkeypatch):
     """Positional (agent_id, query) and kwargs (external_context, limit,
-    channel, deep, project_id, source_id) reach do_recall_with_context.
+    channel, deep, project_id, source_id, session_key) reach
+    do_recall_with_context.
 
     Note the argument ordering here differs from do_recall_boundary
     (limit before channel/deep vs after) — a boundary that copy-pasted
@@ -332,7 +335,7 @@ async def test_recall_with_context_boundary_forwards_every_arg(monkeypatch):
 
     ext = [{"role": "user", "content": "prior turn"}]
     result = await server.do_recall_with_context_boundary(
-        "a-1", "query-text", ext, 7, "c-1", True, "", "src:1"
+        "a-1", "query-text", ext, 7, "c-1", True, "", "src:1", session_key="s-1"
     )
 
     assert captured["args"] == ("a-1", "query-text")
@@ -343,6 +346,7 @@ async def test_recall_with_context_boundary_forwards_every_arg(monkeypatch):
         "deep": True,
         "project_id": "",
         "source_id": "src:1",
+        "session_key": "s-1",
     }
     assert result == {"messages": []}
 

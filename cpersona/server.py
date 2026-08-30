@@ -38,6 +38,7 @@ from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
 
+from cpersona import session
 from cpersona import tasks
 from cpersona import vector
 from cpersona.admin_handlers import (
@@ -77,6 +78,7 @@ from cpersona.config import (
 )
 from cpersona import config
 from cpersona import operating_context
+from cpersona.session import resolve_session_key
 from cpersona.database import close_db, init_db
 from cpersona.maintenance_handlers import (
     do_check_health,
@@ -361,6 +363,7 @@ async def do_recall_boundary(
     project_id: str | None,
     source_id: str,
     full_content: bool = False,
+    session_key: str = "",
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -377,6 +380,7 @@ async def do_recall_boundary(
         exclude_contents=exclude_contents,
         project_id=pid,
         source_id=source_id,
+        session_key=session_key,
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -392,6 +396,7 @@ async def do_recall_with_context_boundary(
     project_id: str | None,
     source_id: str,
     full_content: bool = False,
+    session_key: str = "",
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -405,6 +410,7 @@ async def do_recall_with_context_boundary(
         deep=deep,
         project_id=pid,
         source_id=source_id,
+        session_key=session_key,
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -442,33 +448,71 @@ _AUTO_PROJECT_ID_CLAUSE = (
 registry = ToolRegistry("cloto-mcp-cpersona", instructions=operating_context.instructions_text())
 
 
+# One description, referenced by every schema that takes the key. The parameter is
+# not free — each tool that accepts it carries this text in the tool list every client
+# loads on every session — so it is written once and kept short on purpose
+# (docs/SESSION_IDENTITY_DESIGN.md §6, which also commits to measuring the cost).
+_SESSION_KEY_PROPERTY = {
+    "type": "string",
+    "description": (
+        "Opaque session identity you declare — a partition hint, NOT authentication. "
+        "It scopes this process's per-session state: the degraded-recall advisory's "
+        '"already told you" memory, and who armed a no-persist pause. It does NOT '
+        "filter stored data (use agent_id / project_id / channel for that), and it "
+        "never reaches the database. Omit it to share one bucket with every other "
+        "caller that omits it, which is the behaviour that predates this parameter."
+    ),
+    "default": "",
+}
+
 # Session no-persist controls — registered first for discoverability.
-async def do_pause_persistence(ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS) -> dict:
-    """Pause persistence for this MCP server process for a TTL window."""
+async def do_pause_persistence(
+    ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS, session_key: str = ""
+) -> dict:
+    """Pause persistence for this MCP server process for a TTL window.
+
+    ``session_key`` does not scope the pause — it records who armed it, so a later
+    caller that declares the same key can be told the pause is its own rather than a
+    parallel session's. The switch itself stays process-wide (see the C2 note below).
+    """
+    key, declared = resolve_session_key(session_key)
     try:
         result = no_persist.pause(ttl_seconds=ttl_seconds)
     except ValueError as e:
         return error_response(str(e))
+    session.record_pause_owner(key, declared)
     # C2: the no-persist flag is a single process-global attribute, not
     # per-session. Under the streamable-HTTP transport one process serves every
     # connected client, so a pause here silences writes for all of them. Surface
     # that blast radius explicitly rather than letting callers assume it is
     # scoped to their own session.
     result["scope"] = "process"
+    result.update(session.pause_ownership(key, declared))
     return result
 
 
-async def do_resume_persistence() -> dict:
-    """Re-enable persistence immediately, clearing any active TTL."""
+async def do_resume_persistence(session_key: str = "") -> dict:
+    """Re-enable persistence immediately, clearing any active TTL.
+
+    Resume is not owner-gated: any caller may clear the pause, exactly as before. A
+    caller that declares a key is told whose pause it just cleared, which is the point
+    of recording an owner at all.
+    """
+    key, declared = resolve_session_key(session_key)
+    ownership = session.pause_ownership(key, declared)
     result = no_persist.resume()
+    session.clear_pause_owner()
     result["scope"] = "process"  # C2: process-global, see do_pause_persistence.
+    result.update(ownership)
     return result
 
 
-async def do_persistence_status() -> dict:
+async def do_persistence_status(session_key: str = "") -> dict:
     """Report whether write tools are currently being skipped, and the TTL remaining."""
+    key, declared = resolve_session_key(session_key)
     result = no_persist.status()
     result["scope"] = "process"  # C2: process-global, see do_pause_persistence.
+    result.update(session.pause_ownership(key, declared))
     return result
 
 
@@ -516,10 +560,11 @@ registry.auto_tool(
                 "minimum": 1,
                 "maximum": no_persist.MAX_TTL_SECONDS,
             },
+            "session_key": _SESSION_KEY_PROPERTY,
         },
     },
     do_pause_persistence,
-    [("ttl_seconds", int, no_persist.DEFAULT_TTL_SECONDS)],
+    [("ttl_seconds", int, no_persist.DEFAULT_TTL_SECONDS), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
@@ -530,9 +575,9 @@ registry.auto_tool(
     'flag is PROCESS-WIDE (response `scope`: "process"): on a streamable-HTTP '
     "deployment this re-enables writes for every connected session sharing the "
     "process, not just the caller's.**",
-    {"type": "object", "properties": {}},
+    {"type": "object", "properties": {"session_key": _SESSION_KEY_PROPERTY}},
     do_resume_persistence,
-    [],
+    [("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
@@ -542,9 +587,9 @@ registry.auto_tool(
     'seconds). The reported state is PROCESS-WIDE (response `scope`: "process"): '
     "on a streamable-HTTP deployment it reflects the one flag shared by every "
     "connected session, so `paused: true` may have been set by a different session.",
-    {"type": "object", "properties": {}},
+    {"type": "object", "properties": {"session_key": _SESSION_KEY_PROPERTY}},
     do_persistence_status,
-    [],
+    [("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
 
@@ -787,6 +832,7 @@ registry.auto_tool(
                 "description": "Normalized content strings to exclude from results (starts-with match). "
                 "Used to prevent duplication with conversation context already known to the caller.",
             },
+            "session_key": _SESSION_KEY_PROPERTY,
             "project_id": {
                 "type": "string",
                 "description": (
@@ -835,6 +881,7 @@ registry.auto_tool(
         ("project_id", str, None),
         ("source_id", str, ""),
         ("full_content", bool, False),
+        ("session_key", str, ""),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -901,6 +948,7 @@ registry.auto_tool(
                 "default": False,
                 "description": "v2.5.0 preview tier opt-out — same semantics as in `recall`.",
             },
+            "session_key": _SESSION_KEY_PROPERTY,
         },
         "required": ["agent_id", "query"],
     },
@@ -915,6 +963,7 @@ registry.auto_tool(
         ("project_id", str, None),
         ("source_id", str, ""),
         ("full_content", bool, False),
+        ("session_key", str, ""),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -1512,7 +1561,12 @@ registry.auto_tool(
     "contradict / info = an observation). check_health's own instance verdict rides "
     "along as `health_severity`; a probe that raised is reported as kind "
     "`check_crashed` instead of failing the pull, so a partial result says which "
-    "probe is missing. Read-only, never repairs; safe to call at any time. Findings "
+    "probe is missing. Read-only, never repairs. NOT free, though: the registry runs "
+    "unfiltered, which includes two whole-database reads (the FTS5 integrity-check over "
+    "both indexes, and PRAGMA quick_check over the file), so every pull is O(database) "
+    "on a channel meant to be pulled once a session — budget it by call frequency. There "
+    "is deliberately no cheap subset: choosing which probes run would be choosing which "
+    "forgotten state stays forgotten. Findings "
     "are NOT filtered by agent_id or project_id — the channel surfaces forgotten "
     "state, and slicing it by the caller's bucket would hide exactly the rows that "
     "were forgotten (scope a repair with check_health(agent_id=...)). Honest caps: "
