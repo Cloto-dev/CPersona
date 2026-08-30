@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/OAUTH_DESIGN.md@blob:afe9db67485d9f3e5b6f83e9dbec7fa2c2926972 -->
+<!-- i18n-source: docs/OAUTH_DESIGN.md@blob:87bc91b14e214f5b40eb42d5bd3d965e213e085a -->
 
 # OAuth 対応: 実測した 3 つの経路
 

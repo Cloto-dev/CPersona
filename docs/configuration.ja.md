@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:cf590132964129e1c0ada96615e4587262be0343 -->
+<!-- i18n-source: docs/configuration.md@blob:aaa890084985912b114700d15cc970e0a8385bcd -->
 
 # 設定リファレンス
 
