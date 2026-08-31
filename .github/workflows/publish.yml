@@ -60,15 +60,26 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Verify tag version matches pyproject
+      - name: Verify tag version matches the package
+        # Reads cpersona/__init__.py, which is where the version lives as of 2.5.8:
+        # pyproject declares `dynamic = ["version"]` and hatch derives it from there,
+        # so the literal this step used to grep out of pyproject no longer exists.
+        # It resolved to the empty string and failed every publish — correctly, but
+        # for the wrong reason. An empty match must stay a failure rather than
+        # comparing "" to "": grep exits non-zero under `bash -e` when it matches
+        # nothing, and the explicit emptiness check covers a match with no capture.
         run: |
-          pyproject_version=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          source_version=$(grep -m1 '^__version__ = ' cpersona/__init__.py | sed -E 's/__version__ = "(.*)"/\1/')
           tag_version="${{ steps.ref.outputs.tag_version }}"
-          if [ "$pyproject_version" != "$tag_version" ]; then
-            echo "::error::tag version '$tag_version' does not match pyproject version '$pyproject_version'"
+          if [ -z "$source_version" ]; then
+            echo "::error::could not read __version__ from cpersona/__init__.py — this guard is broken, not the tag"
             exit 1
           fi
-          echo "version match: $pyproject_version"
+          if [ "$source_version" != "$tag_version" ]; then
+            echo "::error::tag version '$tag_version' does not match package version '$source_version'"
+            exit 1
+          fi
+          echo "version match: $source_version"
 
       - name: Build sdist + wheel
         run: uv build

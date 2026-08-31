@@ -1818,3 +1818,30 @@ def test_version_gate_has_teeth():
 
     # A manifest that names no version must not read as agreement.
     assert _declared_versions({}) == {}
+
+
+def test_no_workflow_reads_the_version_from_pyproject():
+    """The version literal moved into the package; a reader left behind fails at release.
+
+    This is the gate's own origin story. When 2.5.8 moved the string and made
+    pyproject derive it, one consumer was updated because it went red and said so
+    — and a second, the publish workflow's tag guard, was not. It greps the literal
+    out of pyproject, fires only on a tag push, and so stayed green through every
+    PR and failed at the one moment a release depends on it, resolving the version
+    to the empty string.
+
+    The lesson is not "check that file" but "enumerate the readers": a literal that
+    moves leaves its consumers behind, and the ones that run rarely are exactly the
+    ones no ordinary run will find.
+    """
+    workflows = sorted((pathlib.Path(__file__).parent.parent / ".github" / "workflows").glob("*.yml"))
+    assert workflows, "no workflows found — this gate would pass vacuously"
+    offenders = [
+        w.name
+        for w in workflows
+        if re.search(r"""grep[^\n]*\^version = [^\n]*pyproject\.toml""", w.read_text())
+    ]
+    assert not offenders, (
+        "these workflows still read the version literal out of pyproject.toml, which no "
+        f"longer carries one: {offenders}"
+    )
