@@ -115,6 +115,14 @@ also stays untouched (a 2.5.x line invariant).
   lookup must stay unambiguous.
 - Permissions are exactly `"none" | "read" | "read-write"`. Unknown strings:
   startup error.
+- `"per_subject": true` (optional; only valid together with `token: null`)
+  declares the per-subject boundary of docs/OAUTH_DESIGN.md §12: each signed-in
+  subject arriving through that client reaches only its own alias space,
+  whatever the grants row allows — a restrictive boundary evaluated before the
+  grant table, so the deny beats every allow, `"*"` included. On a row that
+  carries a static token (or on `local`) the flag is a startup error: those
+  principals name a client or a transport, never a person, so the policy could
+  never apply.
 - File permissions: the loader warns when the file is group/world-readable
   (same posture as the DB file).
 

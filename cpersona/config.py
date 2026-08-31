@@ -43,6 +43,17 @@ def parse_float(env_key: str, default: float) -> float:
 
 
 DB_PATH = os.environ.get("CPERSONA_DB_PATH", "data/cpersona.db")
+# Per-subject alias ledger (docs/OAUTH_DESIGN.md §12). Defaults beside the
+# database rather than beside the ACL file on purpose: the server writes this
+# file (first connection issues an alias), while the grant table's directory is
+# operator-owned and on a hardened deployment not writable by the service user.
+ALIAS_LEDGER_FILE = os.environ.get("CPERSONA_ALIAS_LEDGER_FILE", "")
+
+
+def alias_ledger_path() -> str:
+    return ALIAS_LEDGER_FILE or os.path.join(
+        os.path.dirname(DB_PATH) or ".", "alias_ledger.json"
+    )
 # bug-054: optional confinement root for export_memories' caller-supplied
 # output_path. When set, an export's resolved realpath MUST stay within this
 # directory. When unset (default), export still rejects '..' traversal but allows

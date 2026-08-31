@@ -1898,10 +1898,24 @@ def _oauth_verifier(oauth: "_OAuthDiscovery | None", acl_config: "acl.AclConfig 
         return None
     from cpersona.oauth import IdpTokenVerifier
 
+    jwks_override = (config.OAUTH_JWKS_URI or "").strip()
+    require_public_subject = bool(acl_config.per_subject_clients)
+    if require_public_subject and jwks_override:
+        # The override skips authorization-server metadata entirely, and the
+        # metadata is where subject_types_supported would be read — so the
+        # pairwise fail-closed check (docs/OAUTH_DESIGN.md §12) cannot run.
+        # Said at startup, where the operator who set both is still looking.
+        logger.warning(
+            "CPERSONA_OAUTH_JWKS_URI bypasses authorization server metadata, so "
+            "subject_types_supported cannot be checked; per-subject partitioning "
+            "relies on the issuer using public subject identifiers — verify that "
+            "yourself"
+        )
     return IdpTokenVerifier(
         oauth.authorization_servers,
         oauth.resource,
-        jwks_uri=(config.OAUTH_JWKS_URI or "").strip(),
+        jwks_uri=jwks_override,
+        require_public_subject=require_public_subject,
     )
 
 
@@ -2057,7 +2071,16 @@ class BearerTokenMiddleware:
         verified = await self.oauth_verifier.verify_token(presented)
         if verified is None:
             return None
-        return acl.Principal(client_id=verified.client_id)
+        # The seam carries the verified subject and its issuer onto the
+        # principal (docs/OAUTH_DESIGN.md §12) — both were checked as signed
+        # claims, which is what entitles enforcement to consume them. Static
+        # resolvers leave these fields empty; only this one may fill them.
+        claims = getattr(verified, "claims", None) or {}
+        return acl.Principal(
+            client_id=verified.client_id,
+            issuer=str(claims.get("iss") or ""),
+            subject=str(getattr(verified, "subject", "") or ""),
+        )
 
     def _warn_once_if_remotely_reached(self, request) -> None:
         """Report observed reachability while running without authentication.
@@ -2503,6 +2526,41 @@ async def _run_stdio_server():
         await registry.server.run(read_stream, write_stream, registry.server.create_initialization_options())
 
 
+async def _assert_no_reserved_agent_ids() -> None:
+    """Refuse startup when per-subject reserved names are already in use.
+
+    Runs only when some ACL row declared per_subject (docs/OAUTH_DESIGN.md
+    §12), after the schema is ready. The names it guards: the literal ``@me``
+    sentinel — a stored row under it could never be addressed again, because
+    the guard rewrites the name before any query — and the ``u-`` alias
+    prefix, where a pre-existing agent is indistinguishable from an issued
+    alias and the boundary could hand one subject another tenant's data. A
+    configuration error, not a migration: the operator either renames the
+    colliding agents (merge_memories) or does not enable per_subject on this
+    database.
+    """
+    from cpersona import database
+    from cpersona.isolation import isolation_where
+
+    iso_all = isolation_where(agent_id=None)  # deliberate cross-agent enumeration
+    agent_ids: set[str] = set()
+    async with database.connection() as db:
+        for table in ("memories", "profiles", "episodes", "pending_memory_tasks"):
+            async with db.execute(
+                f"SELECT DISTINCT agent_id FROM {table}{iso_all.where}", iso_all.params
+            ) as cursor:
+                agent_ids.update(row[0] for row in await cursor.fetchall())
+    collisions = acl.reserved_agent_id_collisions(agent_ids)
+    if collisions:
+        raise RuntimeError(
+            "per_subject is configured but the database already uses reserved "
+            f"agent ids: {', '.join(collisions)}. The @me sentinel and the "
+            f"{acl.ALIAS_PREFIX!r} prefix belong to subject aliasing "
+            "(docs/OAUTH_DESIGN.md §12); rename those agents (merge_memories) "
+            "or remove per_subject from the ACL file"
+        )
+
+
 async def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -2520,6 +2578,21 @@ async def main():
             len(acl.active_config().grants_by_client),
             acl_path,
         )
+        if acl.active_config().per_subject_clients:
+            # Per-subject partitioning (docs/OAUTH_DESIGN.md §12). The ledger
+            # loads with the same failure posture as the grant table: a file
+            # that exists but cannot be parsed refuses startup — starting over
+            # would re-issue every subject's alias and sever each person from
+            # the memory space they already own.
+            from cpersona.aliases import AliasLedger
+
+            ledger_path = config.alias_ledger_path()
+            acl.activate_ledger(AliasLedger(ledger_path))
+            logger.info(
+                "per-subject partitioning active: %d client(s); alias ledger at %s",
+                len(acl.active_config().per_subject_clients),
+                ledger_path,
+            )
         if os.environ.get("CPERSONA_AUTH_TOKEN", ""):
             logger.warning(
                 "CPERSONA_AUTH_TOKEN is IGNORED while CPERSONA_ACL_FILE is set: "
@@ -2564,6 +2637,9 @@ async def main():
         logger.info("Embedding disabled (mode=none), using FTS5 + keyword only")
 
     await init_db()
+
+    if acl.is_active() and acl.active_config().per_subject_clients:
+        await _assert_no_reserved_agent_ids()
 
     # Vector-similarity threshold startup guard (v2.4.24): restore persisted
     # thresholds, or (re)calibrate on first run / embedding-dimension change even when

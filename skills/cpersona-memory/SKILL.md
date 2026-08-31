@@ -378,7 +378,7 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
 
 ## Key facts
 
-- 30 tools · Schema v13 (auto-migrating) · ~15,800 LOC Python across focused modules · MIT.
+- 30 tools · Schema v13 (auto-migrating) · ~16,300 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 "$DB" ".backup 'backup.db'"` (WAL-safe — a plain `cp` of a live DB
