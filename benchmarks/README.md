@@ -23,7 +23,7 @@ Two tracks are measured:
 | `benchmark_trackb_lmeb.py` | Track B runner (real cpersona store/recall paths) |
 | `budget_batching.py` | Token-budget dynamic batching for SentenceTransformer encode (MPS pathologies workaround); shared by both tracks |
 | `mps_accel.py` | Optional behavior-invariant recall acceleration (`--fast`): preloads each corpus group's embeddings into one matrix instead of per-query full-table scans. Zero changes to cpersona itself |
-| `mps_accel_equivalence_gate.py` | Equivalence gate proving `mps_accel` returns identical results to the original `_search_vector` (numpy backend: bitwise; torch: ≤1e-5), including a `do_recall` integration comparison. Deliberately NOT named `test_*.py`: it is a standalone script that mutates `os.environ` at import time, so pytest must never collect it |
+| `mps_accel_equivalence_gate.py` | Equivalence gate proving `mps_accel` returns identical results to the original `_search_vector` (numpy backend: bitwise; torch: ≤1e-5), including a `do_recall` integration comparison. `--mode sidecar` turns the same harness on the contiguous embedding index, comparing `_search_vector` with and without the index file present. Deliberately NOT named `test_*.py`: it is a standalone script that mutates `os.environ` at import time, so pytest must never collect it |
 | `run_trackb.sh` | Track B launcher encoding the official measurement regime |
 | `benchmark_latency.py` | Production-stack latency runner: end-to-end `do_recall()` / `do_store()` wall clock against a REAL HTTP embedding backend (CEmbedding `/embed`), in both `local` and `remote` (matrix `/search`) vector-search modes |
 
@@ -162,6 +162,25 @@ LMEB_DIR=~/lmeb python benchmarks/mps_accel_equivalence_gate.py \
     --tasks LoCoMo --device mps \
     --model_path sentence-transformers/all-MiniLM-L6-v2 --backends numpy,torch
 ```
+
+The same gate has a second mode for the contiguous embedding index, which lives
+*inside* `_search_vector` rather than beside it — so the comparison is one
+function against itself, with and without the index file on disk:
+
+```bash
+LMEB_DIR=~/lmeb python benchmarks/mps_accel_equivalence_gate.py \
+    --mode sidecar --tasks EPBench --device cpu \
+    --model_path sentence-transformers/all-MiniLM-L6-v2
+```
+
+Two passes per corpus, in that order, because an index is built once and reused
+— deleting it per query would exercise a cache path production never takes. The
+comparison is `strict`: unlike the torch backend, the index reads the same
+float32 bytes into the same matmul, so identical scores are not enough and the
+order of equal scores is part of the claim. The gate counts the calls the index
+actually answered and fails when a pass never took the path it exists to test,
+because every fallback on that path is silent by design and a gate that quietly
+fell back would compare the live scan against itself and report agreement.
 
 Long runs should be launched fully detached
 (`nohup bash benchmarks/run_trackb.sh > run.log 2>&1 &`).
