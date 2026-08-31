@@ -65,6 +65,7 @@ plugins:
             Recall preview tier: recall プレビュー階層
             Session identity: セッション同一性
             Memory origin: 記憶の発信元
+            Contiguous embedding index: 連続配置埋め込み索引
             CLAUDE.md policy standard: CLAUDE.md ポリシー標準
             SuperAuditor standard: SuperAuditor 標準
 
@@ -101,4 +102,5 @@ nav:
       - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
       - Session identity: SESSION_IDENTITY_DESIGN.md
       - Memory origin: MEMORY_ORIGIN_DESIGN.md
+      - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
   - Release lifecycle: RELEASE_LIFECYCLE_STANDARD.md
