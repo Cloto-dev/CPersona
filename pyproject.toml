@@ -1,6 +1,6 @@
 [project]
 name = "cpersona"
-version = "2.5.7b2"
+version = "2.5.7b3"
 # The tool count here is gated by scripts/check-docs-facts.py. The GitHub
 # repository description carries the same sentence and CANNOT be gated — it is
 # not a file in this tree — so changing this line means also running:
