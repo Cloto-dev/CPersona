@@ -442,11 +442,10 @@ import pytest  # noqa: E402  (kept close to the dynamic gate that needs it)
 @pytest.mark.asyncio
 async def test_check_health_never_embeds_under_write_lock():
     from conftest import FakeEmbeddingClient, fake_embed_one
-    from cpersona import database, maintenance_handlers, vector
-    from cpersona._vendored_mcp_common import no_persist
+    from cpersona import database, maintenance_handlers, session, vector
     from cpersona.database import get_db
 
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
@@ -1593,3 +1592,157 @@ def test_tool_roster_gate_has_teeth():
 
     dropped = _TRANSLATOR.read_text(encoding="utf-8").replace('                "--tools",\n                "",\n', "")
     assert not _tool_roster_is_emptied(dropped)
+
+
+# ---------------------------------------------------------------------------
+# Gate 17 (2.5.7, stage 2 of docs/SESSION_IDENTITY_DESIGN.md): the no-persist
+# pause has exactly one implementation.
+#
+# The pause used to be a process-global flag inside the vendored no_persist
+# module. Stage 2 replaced it with a per-session map in cpersona/session.py.
+# Routing the keyless bucket through the old global and declared keys through
+# the new map would have been two implementations of one invariant, and the one
+# nobody exercises is the one that drifts: a caller left on the vendored switch
+# consults a flag nothing arms any more, so it reads "not paused" forever — a
+# write tool that silently stopped honouring the pause, with no error, no
+# response-shape change, and no failing behavioural test unless someone happened
+# to cover that one tool.
+#
+# So the instrument is the source, for the same reason Gate 14's is: this is a
+# claim about ABSENCE over every path, and a behavioural test can only report on
+# the paths its fixtures walk. cpersona/session.py is exempt because it IS the
+# one implementation, and it still borrows the vendored module's constants and
+# response builder (its own tests pin both).
+#
+# The searched-for names are assembled rather than written out, so the gate's own
+# source cannot satisfy the pattern it looks for.
+# ---------------------------------------------------------------------------
+
+_VENDORED_PKG = "_vendored" + "_mcp_common"
+_PAUSE_MODULE = "no_" + "persist"
+# The four functions session.py replaced. The constants (DEFAULT_TTL_SECONDS /
+# MAX_TTL_SECONDS) and make_skipped_response are deliberately NOT here: they are
+# still the vendored module's to own, and server.py reads the constants directly.
+_PAUSE_SWITCH = frozenset({"is_" + "paused", "pau" + "se", "res" + "ume", "sta" + "tus"})
+_PAUSE_SEAM = "session.py"
+
+
+def _pause_switch_call_sites(tree, module_alias=None):
+    """Call sites of the vendored pause switch in one parsed module.
+
+    Two spellings reach it: attribute access on the imported module, and a
+    direct name bound by ``from ... import is_paused``. The second is the one a
+    grep for the module name would miss.
+    """
+    aliases = {module_alias} if module_alias else set()
+    direct = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.endswith(_PAUSE_MODULE):
+                for alias in node.names:
+                    if alias.name in _PAUSE_SWITCH:
+                        direct[alias.asname or alias.name] = alias.name
+            elif node.module.endswith(_VENDORED_PKG):
+                for alias in node.names:
+                    if alias.name == _PAUSE_MODULE:
+                        aliases.add(alias.asname or alias.name)
+
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in aliases
+            and func.attr in _PAUSE_SWITCH
+        ):
+            hits.append((node.lineno, f"{func.value.id}.{func.attr}"))
+        elif isinstance(func, ast.Name) and func.id in direct:
+            hits.append((node.lineno, direct[func.id]))
+    return hits
+
+
+def _pause_seam_files():
+    """Every shipped module the gate applies to (the vendored tree is exempt)."""
+    for path in sorted(PKG.rglob("*.py")):
+        if _VENDORED_PKG in path.parts or path.name == _PAUSE_SEAM:
+            continue
+        yield path
+
+
+def test_no_second_pause_implementation():
+    hits = []
+    for path in _pause_seam_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        hits.extend(f"{path.name}:{lineno} ({name})" for lineno, name in _pause_switch_call_sites(tree))
+
+    assert not hits, (
+        "these call sites still drive the vendored process-global pause switch instead "
+        f"of the per-session seam in cpersona/{_PAUSE_SEAM}: {hits}. That flag is no "
+        "longer armed by anything, so each of these silently stopped honouring "
+        "no-persist. Use session.is_paused_for(key) / pause_for / resume_for / "
+        "pause_status_for."
+    )
+
+    # The gate is only worth having while the seam it points at exists.
+    from cpersona import session as session_module
+
+    for name in ("is_paused_for", "pause_for", "resume_for", "pause_status_for"):
+        assert hasattr(session_module, name), (
+            f"cpersona/{_PAUSE_SEAM} no longer provides {name}; re-read the seam instead "
+            "of deleting this gate"
+        )
+
+
+def test_pause_seam_gate_has_teeth():
+    """Both spellings must be caught, and the legitimate uses must not be."""
+    attribute_form = (
+        f"from cpersona.{_VENDORED_PKG} import {_PAUSE_MODULE}\n"
+        "async def do_thing():\n"
+        f"    if {_PAUSE_MODULE}.is_paused():\n"
+        "        return None\n"
+    )
+    assert _pause_switch_call_sites(ast.parse(attribute_form)) == [(3, f"{_PAUSE_MODULE}.is_paused")]
+
+    aliased_form = (
+        f"from cpersona.{_VENDORED_PKG} import {_PAUSE_MODULE} as np2\n"
+        "def do_thing():\n"
+        "    return np2.resume()\n"
+    )
+    assert _pause_switch_call_sites(ast.parse(aliased_form)) == [(3, "np2.resume")]
+
+    direct_form = (
+        f"from cpersona.{_VENDORED_PKG}.{_PAUSE_MODULE} import is_paused\n"
+        "def do_thing():\n"
+        "    return is_paused()\n"
+    )
+    assert _pause_switch_call_sites(ast.parse(direct_form)) == [(3, "is_" + "paused")]
+
+    # What the package still legitimately does with that module: read the TTL
+    # constants, and (inside the seam) call the response builder. Flagging either
+    # would send the next reader to re-implement something that must not be copied.
+    permitted = (
+        f"from cpersona.{_VENDORED_PKG} import {_PAUSE_MODULE}\n"
+        f"CEILING = {_PAUSE_MODULE}.MAX_TTL_SECONDS\n"
+        f"def build(body):\n"
+        f"    return {_PAUSE_MODULE}.make_skipped_response(body, 'store')\n"
+    )
+    assert not _pause_switch_call_sites(ast.parse(permitted))
+
+    # An unrelated object with same-named methods is not the vendored switch.
+    unrelated = "def f(client):\n    return client.status()\n"
+    assert not _pause_switch_call_sites(ast.parse(unrelated))
+
+
+def test_pause_seam_gate_reaches_the_whole_package():
+    """The scan must be package-wide, and must exempt exactly two things."""
+    scanned = {p.relative_to(PKG).as_posix() for p in _pause_seam_files()}
+    assert "server.py" in scanned and "tasks.py" in scanned
+    assert _PAUSE_SEAM not in scanned, "the seam itself must be exempt, or the gate flags its own owner"
+    assert not any(part.startswith("_vendored") for name in scanned for part in name.split("/")), (
+        "the vendored tree is re-synced from another repository and is not this gate's to police"
+    )
+    # A sub-package added later must be in scope, which glob('*.py') would miss.
+    assert len(scanned) >= len({p.name for p in PKG.glob("*.py")}) - 1

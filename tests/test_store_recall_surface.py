@@ -27,8 +27,8 @@ import contextlib
 import pytest
 import pytest_asyncio
 
+from cpersona import session
 from cpersona import memory_handlers
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.database import get_db
 
 
@@ -40,7 +40,7 @@ async def clean_db():
     are stable regardless of collection order — the whole suite shares one
     DB singleton, and a prior test's inserts otherwise shift AUTOINCREMENT.
     """
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
@@ -406,11 +406,11 @@ async def test_dedup_is_skipped_not_rejected(clean_db):
 async def test_paused_persistence_is_a_skip_distinguishable_by_persisted(clean_db):
     """The no-persist branch is a skip too, so ``result`` alone cannot tell it
     from a dedup hit — ``persisted`` is the discriminator, and it must stay."""
-    no_persist.pause(ttl_seconds=120)
+    session.pause_for(session.TRANSPORT_KEY, False, 120)
     try:
         res = await memory_handlers.do_store("a1", {"content": "paused", "source": {}, "timestamp": "t"})
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
     assert res["result"] == "skipped", res
     assert res["persisted"] is False, res
     assert res["embedded"] is False

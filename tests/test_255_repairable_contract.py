@@ -23,8 +23,8 @@ from contextlib import asynccontextmanager
 import pytest
 import pytest_asyncio
 
+from cpersona import session
 from cpersona import checks, vector
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.config import MAX_CONTENT_LENGTH, MAX_PROFILE_LENGTH
 from cpersona.database import get_db
 
@@ -34,7 +34,7 @@ UTC_TS = "2026-08-01T00:00:00+00:00"
 
 @pytest_asyncio.fixture
 async def db():
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     conn = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await conn.execute(f"DELETE FROM {table}")

@@ -9,8 +9,7 @@ import asyncio
 import json
 import logging
 
-from cpersona._vendored_mcp_common import no_persist
-
+from cpersona import session
 from cpersona.config import TASK_MAX_RETRIES, TASK_RETRY_DELAY
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where
@@ -26,10 +25,24 @@ class MemoryTaskQueue:
     On startup, any pending tasks from a previous crash are automatically recovered.
     """
 
+    #: task_id -> the session_key that enqueued it. In-process only: the queue row
+    #: carries no session column (adding one is a schema change and a retention
+    #: question, deliberately out of scope), so attribution lives beside the queue
+    #: object that owns the row. Bounded because the key space is client-supplied
+    #: and the map must not outlive the rows it describes — every delete/complete
+    #: path drops its entry, and the cap is the backstop for a path that does not.
+    #:
+    #: A row that survives a process restart loses its attribution and falls back
+    #: to TRANSPORT_KEY. That is correct rather than lossy: a restart ends every
+    #: session, so no key from the previous process still names a live caller, and
+    #: the shared bucket is the honest place for work nobody is left to own.
+    _MAX_ATTRIBUTED_TASKS = 4096
+
     def __init__(self):
         self._event = asyncio.Event()
         self._running = False
         self._task: asyncio.Task | None = None
+        self._task_sessions: dict[int, str] = {}
 
     async def start(self):
         """Start the background processing loop."""
@@ -61,8 +74,20 @@ class MemoryTaskQueue:
                 self._task.cancel()
                 logger.warning("MemoryTaskQueue: forced shutdown after timeout")
 
-    async def enqueue(self, task_type: str, agent_id: str, payload: list[dict]) -> int:
-        """Enqueue a task. Returns task ID."""
+    async def enqueue(
+        self,
+        task_type: str,
+        agent_id: str,
+        payload: list[dict],
+        session_key: str = session.TRANSPORT_KEY,
+    ) -> int:
+        """Enqueue a task. Returns task ID.
+
+        ``session_key`` is the ALREADY-RESOLVED key of the caller that enqueued the
+        work, recorded so the drain can consult the right pause (see ``_drain``).
+        It defaults to the shared bucket, which is what an unattributed enqueue
+        means and what every caller got before the parameter existed.
+        """
         # bug-042/043: transaction() serialises write+commit on the shared connection
         # so this enqueue cannot flush a concurrent import/merge's partial transaction.
         async with transaction() as db:
@@ -71,9 +96,31 @@ class MemoryTaskQueue:
                 (task_type, agent_id, json.dumps(payload)),
             )
         task_id = cursor.lastrowid
+        self._remember_session(task_id, session_key)
         logger.info("MemoryTaskQueue: enqueued %s for agent %s (task_id=%d)", task_type, agent_id, task_id)
         self._event.set()
         return task_id
+
+    def _remember_session(self, task_id: int, session_key: str) -> None:
+        """Attribute a queued row to the session that enqueued it (bounded)."""
+        if session_key == session.TRANSPORT_KEY:
+            # The fallback is what an absent entry already means, so storing it
+            # would spend the cap to record nothing.
+            self._forget_session(task_id)
+            return
+        if task_id not in self._task_sessions and len(self._task_sessions) >= self._MAX_ATTRIBUTED_TASKS:
+            # Oldest task id first: the queue is FIFO, so the lowest id is the row
+            # closest to being drained (and to dropping its entry anyway).
+            del self._task_sessions[min(self._task_sessions)]
+        self._task_sessions[task_id] = session_key
+
+    def _forget_session(self, task_id: int) -> None:
+        """Drop a row's attribution. Called wherever the row itself goes away."""
+        self._task_sessions.pop(task_id, None)
+
+    def _session_for(self, task_id: int) -> str:
+        """The key whose pause governs this row; the shared bucket if unattributed."""
+        return self._task_sessions.get(task_id, session.TRANSPORT_KEY)
 
     async def get_status(self) -> dict:
         """Get queue status for monitoring."""
@@ -123,7 +170,12 @@ class MemoryTaskQueue:
             # If the session re-enters no-persist after this task was
             # enqueued, drop it instead of writing late — the user's
             # ephemeral intent overrides queued work that pre-dates it.
-            if no_persist.is_paused():
+            # WHOSE pause: the session that enqueued the row, not whichever one
+            # happens to be paused while the worker runs. A parallel session's
+            # pause must not discard work it never asked for, which is exactly
+            # what a single global flag did.
+            task_session_key = self._session_for(task_id)
+            if session.is_paused_for(task_session_key):
                 logger.info(
                     "MemoryTaskQueue: skipping task %d (%s) under no-persist mode",
                     task_id,
@@ -145,7 +197,12 @@ class MemoryTaskQueue:
                     # success to delete-and-log-completed — route it into the retry
                     # path like a raise. (The upsert itself is idempotent, so the
                     # separate delete transaction below is redo-safe.)
-                    result = await admin_handlers.do_update_profile(agent_id, payload)
+                    # Same key the gate above consulted: the handler re-checks its
+                    # own pause, and defaulting there would make it ask about the
+                    # shared bucket instead of this row's session.
+                    result = await admin_handlers.do_update_profile(
+                        agent_id, payload, session_key=task_session_key
+                    )
                     if isinstance(result, dict) and (result.get("error") or result.get("ok") is False):
                         raise RuntimeError(f"handler returned failure: {result.get('error') or result}")
                     await self._delete_task(task_id)
@@ -169,6 +226,7 @@ class MemoryTaskQueue:
                         cur = await db.execute(
                             "DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,)
                         )
+                        self._forget_session(task_id)
                         if cur.rowcount:
                             await memory_handlers._insert_episode_row(db, row)
                         else:
@@ -181,6 +239,7 @@ class MemoryTaskQueue:
                     logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
                     await self._delete_task(task_id)
 
+                self._forget_session(task_id)
                 logger.info("MemoryTaskQueue: completed %s (task_id=%d)", task_type, task_id)
             except Exception as e:
                 logger.error("MemoryTaskQueue: task %d (%s) failed: %s", task_id, task_type, e)
@@ -226,6 +285,8 @@ class MemoryTaskQueue:
         # bug-042/043: transaction() serialises write+commit on the shared connection.
         async with transaction() as db:
             await db.execute("DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,))
+        # The row is gone, so its attribution has nothing left to describe.
+        self._forget_session(task_id)
 
     async def _increment_retry(self, task_id: int):
         # bug-042/043: transaction() serialises write+commit on the shared connection.

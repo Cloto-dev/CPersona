@@ -24,8 +24,8 @@ import json
 import pytest
 import pytest_asyncio
 
+from cpersona import session
 from cpersona import checks, maintenance_handlers, memory_handlers
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.database import get_db
 from cpersona.utils import normalize_source
 
@@ -166,7 +166,7 @@ class TestNormalizeSourceUnit:
 @pytest_asyncio.fixture
 async def clean_db():
     """Truncate + sequence reset — same shape as the other 2.5.2 fixtures."""
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")

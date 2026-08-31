@@ -261,7 +261,7 @@ async def test_store_boundary_resolves_auto_and_echoes(sidecar, monkeypatch):
     sidecar()
     seen = {}
 
-    async def fake_store(agent_id, message, channel="", project_id=""):
+    async def fake_store(agent_id, message, channel="", project_id="", session_key=""):
         seen["project_id"] = project_id
         return {"ok": True, "id": 1}
 
@@ -350,7 +350,7 @@ def test_auto_unmapped_reject_mode_warns_reads(sidecar):
 async def test_boundaries_are_transparent_when_dormant(sidecar, monkeypatch):
     from cpersona import server
 
-    async def fake_store(agent_id, message, channel="", project_id=""):
+    async def fake_store(agent_id, message, channel="", project_id="", session_key=""):
         return {"ok": True, "id": 2}
 
     monkeypatch.setattr(server, "do_store", fake_store)

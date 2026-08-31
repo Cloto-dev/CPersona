@@ -17,9 +17,9 @@ from cpersona import (
     maintenance_handlers,
     memory_handlers,
     server,
+    session,
     vector,
 )
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.config import MAX_CONTENT_LENGTH
 from cpersona.database import get_db
 
@@ -27,7 +27,7 @@ from cpersona.database import get_db
 @pytest_asyncio.fixture
 async def clean_db():
     """A freshly-truncated DB for the DB-backed hardening tests."""
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
@@ -541,11 +541,11 @@ async def test_recall_does_not_bump_recall_count_under_no_persist(clean_db, monk
     await db.execute("UPDATE memories SET recall_count = 0 WHERE id = ?", (mid,))
     await db.commit()
 
-    no_persist.pause(1800)
+    session.pause_for(session.TRANSPORT_KEY, False, 1800)
     try:
         await memory_handlers.do_recall(A, "raspberry", 10)
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
 
     rc2 = (await db.execute_fetchall("SELECT recall_count FROM memories WHERE id=?", (mid,)))[0][0]
     assert rc2 == 0, "recall bumped recall_count under no-persist (bug-038)"

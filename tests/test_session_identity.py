@@ -18,10 +18,10 @@ from cpersona import config, findings, health, session
 @pytest.fixture(autouse=True)
 def _clean_advisory_state():
     health._reset()
-    session.clear_pause_owner()
+    session.reset_pauses_for_tests()
     yield
     health._reset()
-    session.clear_pause_owner()
+    session.reset_pauses_for_tests()
 
 
 @pytest.fixture
@@ -181,60 +181,58 @@ def test_hint_severity_keeps_its_downgrade_for_declared_callers(shared_transport
 
 
 # ---------------------------------------------------------------------------
-# §5 stage 1 — the pause discloses its owner (disclosure, NOT isolation)
+# §5 stage 2 — the pause is scoped, not merely disclosed
+#
+# Stage 1 recorded WHO armed a still-global pause and reported it back
+# (pause_owner_known / paused_by_self). Stage 2 removed that surface rather than
+# adding to it: a caller cannot learn about another session's pause because a
+# caller is no longer affected by one, and a disclosure field about a blast
+# radius that no longer exists would be a field about nothing. The two tests
+# below are the stage-1 handler round-trips, rewritten to assert the behaviour
+# that replaced them; the full per-session matrix (isolation, TTL, eviction,
+# queue attribution) lives in test_257_session_key_stage2.py.
 # ---------------------------------------------------------------------------
 
 
-def test_a_keyless_caller_sees_no_new_pause_fields():
-    """Preservation: the keyless response shape is exactly what it was."""
-    session.record_pause_owner("s-1", True)
-    assert session.pause_ownership(session.TRANSPORT_KEY, False) == {}
-
-
-def test_a_declared_caller_can_tell_its_own_pause_from_another_sessions():
-    session.record_pause_owner("s-1", True)
-    assert session.pause_ownership("s-1", True) == {"pause_owner_known": True, "paused_by_self": True}
-    assert session.pause_ownership("s-2", True) == {"pause_owner_known": True, "paused_by_self": False}
-
-
-def test_a_pause_armed_without_a_key_is_not_attributed_to_anyone():
-    """A keyless pause belongs to the shared bucket; claiming it is one session's is a lie."""
-    session.record_pause_owner(session.TRANSPORT_KEY, False)
-    assert session.pause_ownership("s-1", True) == {"pause_owner_known": True, "paused_by_self": None}
-
-
-def test_no_recorded_owner_is_reported_as_unknown_not_as_foreign():
-    """Nothing armed, or an owner lost to a restart — distinct from 'someone else's'."""
-    assert session.pause_ownership("s-1", True) == {"pause_owner_known": False, "paused_by_self": None}
-
-
 @pytest.mark.asyncio
-async def test_pause_and_status_round_trip_through_the_handlers(monkeypatch):
-    """The handlers wire resolution → ownership, and the pause stays process-wide."""
+async def test_pause_and_status_round_trip_through_the_handlers():
+    """The handlers wire resolution → this session's bucket, and no other."""
     from cpersona import server
 
     paused = await server.do_pause_persistence(ttl_seconds=60, session_key="s-1")
     try:
-        assert paused["scope"] == "process", "stage 1 discloses the owner; it does not scope the pause"
-        assert paused["paused_by_self"] is True
-        mine = await server.do_persistence_status(session_key="s-1")
+        assert paused["scope"] == "session", "a declared pause is the declaring session's"
+        assert paused["paused"] is True
+        assert (await server.do_persistence_status(session_key="s-1"))["paused"] is True
         theirs = await server.do_persistence_status(session_key="s-2")
         keyless = await server.do_persistence_status()
-        assert mine["paused_by_self"] is True
-        assert theirs["paused_by_self"] is False
-        assert "paused_by_self" not in keyless, "a keyless response gained a field"
+        assert theirs["paused"] is False, "one session's pause reached another"
+        assert keyless["paused"] is False, "a declared pause reached the keyless bucket"
+        # The stage-1 disclosure surface is gone, not merely unset: a field that
+        # answered "whose pause is this?" has no referent once the answer is
+        # always "yours".
+        for response in (paused, theirs, keyless):
+            assert "pause_owner_known" not in response
+            assert "paused_by_self" not in response
     finally:
         await server.do_resume_persistence(session_key="s-1")
 
 
 @pytest.mark.asyncio
-async def test_resume_reports_whose_pause_it_cleared():
+async def test_resume_clears_only_the_callers_own_pause():
+    """Stage 1 let any caller clear the one global pause. There is no longer one."""
     from cpersona import server
 
     await server.do_pause_persistence(ttl_seconds=60, session_key="s-1")
     cleared = await server.do_resume_persistence(session_key="s-2")
-    assert cleared["paused_by_self"] is False, "resume should say whose pause it just cleared"
-    assert (await server.do_persistence_status(session_key="s-2"))["pause_owner_known"] is False
+    assert cleared["was_active"] is False, "s-2 had nothing to clear; it reported otherwise"
+    assert (await server.do_persistence_status(session_key="s-1"))["paused"] is True, (
+        "a foreign resume cleared this session's pause"
+    )
+
+    mine = await server.do_resume_persistence(session_key="s-1")
+    assert mine["was_active"] is True
+    assert (await server.do_persistence_status(session_key="s-1"))["paused"] is False
 
 
 # ---------------------------------------------------------------------------

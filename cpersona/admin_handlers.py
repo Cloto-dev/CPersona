@@ -19,13 +19,14 @@ from datetime import datetime, timezone
 
 import httpx
 
-from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona.isolation import isolation_where
 
 from cpersona import config
+from cpersona import session
 from cpersona import tasks
 from cpersona import vector
+from cpersona.session import resolve_session_key
 from cpersona.config import (
     CALIBRATE_FLOOR,
     CALIBRATE_MAX_SAMPLE,
@@ -73,7 +74,7 @@ async def do_get_profile(agent_id: str) -> dict:
     return {"profile": rows[0][0] if rows else ""}
 
 
-async def do_update_profile(agent_id: str, profile: str = "") -> dict:
+async def do_update_profile(agent_id: str, profile: str = "", session_key: str = "") -> dict:
     """Update agent profile with pre-computed content.
 
     bug-188: the profile write used to be the one text path with no bounding at
@@ -96,8 +97,11 @@ async def do_update_profile(agent_id: str, profile: str = "") -> dict:
     MAX_PROFILE_LENGTH, which is the row's only bound because the recall
     injection never preview-trims it.
     """
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response({"ok": True, "profiles_updated": 0}, "update_profile")
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "profiles_updated": 0}, "update_profile", key
+        )
 
     if not profile:
         return {"ok": True, "profiles_updated": 0, "reason": "empty profile"}
@@ -310,13 +314,16 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
     return result
 
 
-async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
+async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str = "") -> dict:
     """Delete a single memory by ID.
 
     When agent_id is provided (non-empty), enforces ownership.
     """
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response({"ok": True, "deleted_id": memory_id}, "delete_memory")
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "deleted_id": memory_id}, "delete_memory", key
+        )
     _warn_if_unscoped("do_delete_memory", memory_id, agent_id)
     # aiosqlite 0.22 has execute_fetchall but no execute_fetchone — using the
     # former avoids a silent AttributeError that previously broke every delete.
@@ -361,10 +368,15 @@ async def do_delete_memory(memory_id: int, agent_id: str = "") -> dict:
     return {"ok": True, "deleted_id": memory_id}
 
 
-async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> dict:
+async def do_update_memory(
+    memory_id: int, content: str, agent_id: str = "", session_key: str = ""
+) -> dict:
     """Update memory content by ID. Rejects if memory is locked."""
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response({"ok": True, "updated_id": memory_id}, "update_memory")
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "updated_id": memory_id}, "update_memory", key
+        )
     if not content or not content.strip():
         return error_response("Content cannot be empty")
     _warn_if_unscoped("do_update_memory", memory_id, agent_id)
@@ -447,10 +459,13 @@ async def do_update_memory(memory_id: int, content: str, agent_id: str = "") -> 
     return result
 
 
-async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
+async def do_lock_memory(memory_id: int, agent_id: str = "", session_key: str = "") -> dict:
     """Lock a memory to prevent deletion and editing."""
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response({"ok": True, "locked_id": memory_id}, "lock_memory")
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "locked_id": memory_id}, "lock_memory", key
+        )
     _warn_if_unscoped("do_lock_memory", memory_id, agent_id)
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
@@ -468,10 +483,13 @@ async def do_lock_memory(memory_id: int, agent_id: str = "") -> dict:
     return {"ok": True, "locked_id": memory_id}
 
 
-async def do_unlock_memory(memory_id: int, agent_id: str = "") -> dict:
+async def do_unlock_memory(memory_id: int, agent_id: str = "", session_key: str = "") -> dict:
     """Unlock a memory to allow deletion and editing."""
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response({"ok": True, "unlocked_id": memory_id}, "unlock_memory")
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "unlocked_id": memory_id}, "unlock_memory", key
+        )
     _warn_if_unscoped("do_unlock_memory", memory_id, agent_id)
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
@@ -565,10 +583,11 @@ async def _purge_agent_remote_namespace(agent_id: str) -> None:
             logger.debug("Remote purge failed (non-fatal): %s", e)
 
 
-async def do_delete_agent_data(agent_id: str) -> dict:
+async def do_delete_agent_data(agent_id: str, session_key: str = "") -> dict:
     """Delete ALL data for a specific agent (memories, profiles, episodes)."""
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response(
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
             {
                 "ok": True,
                 "agent_id": agent_id,
@@ -579,6 +598,7 @@ async def do_delete_agent_data(agent_id: str) -> dict:
                 "deleted_pending_tasks": 0,
             },
             "delete_agent_data",
+            key,
         )
     if not agent_id:
         return error_response("agent_id is required for bulk deletion")
@@ -1278,6 +1298,7 @@ async def do_calibrate_threshold(
     z_factor: float = 0,
     method: str = "",
     percentile: float = 0,
+    session_key: str = "",
 ) -> dict:
     """Auto-calibrate the vector-similarity threshold from the embedding distribution.
 
@@ -1333,8 +1354,9 @@ async def do_calibrate_threshold(
     # shape (echo keys resolved above, computed fields nulled); the guard sits
     # AFTER the pure param validation so invalid input still returns the real
     # error response, pause or not (same doctrine as the import/merge gates).
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response(
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
             {
                 "ok": True,
                 "sidecar_persisted": False,
@@ -1353,6 +1375,7 @@ async def do_calibrate_threshold(
                 "new_threshold": None,
             },
             "calibrate_threshold",
+            key,
         )
 
     # The read seam stays open through the fused-gate calibration below — it issues
@@ -1528,7 +1551,9 @@ async def do_calibrate_threshold(
     return result
 
 
-async def do_set_recall_precision(agent_id: str, precision: str = "", beta: float = 0) -> dict:
+async def do_set_recall_precision(
+    agent_id: str, precision: str = "", beta: float = 0, session_key: str = ""
+) -> dict:
     """Set an agent's recall precision (knob 3, v2.4.29) and recalibrate its gate.
 
     ``precision`` is one of ``strict`` / ``balanced`` / ``lenient``, mapped to a specificity
@@ -1576,8 +1601,9 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
     # skeleton dropped cleared / fused_gate / calibrate and nulled precision/beta
     # instead of echoing the resolved values. The guard sits AFTER the pure
     # resolution above so invalid input still returns the real error response.
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response(
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
             {
                 "ok": True,
                 "agent_id": agent_id,
@@ -1588,6 +1614,7 @@ async def do_set_recall_precision(agent_id: str, precision: str = "", beta: floa
                 "calibrate": None,
             },
             "set_recall_precision",
+            key,
         )
 
     # Apply the override, then recalibrate so the change takes effect now (this also
@@ -1924,10 +1951,13 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
     }
 
 
-async def do_delete_episode(episode_id: int, agent_id: str = "") -> dict:
+async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: str = "") -> dict:
     """Delete a single episode by ID (FTS5 triggers handle the LOCAL index cleanup)."""
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response({"ok": True, "deleted_id": episode_id}, "delete_episode")
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "deleted_id": episode_id}, "delete_episode", key
+        )
     _warn_if_unscoped("do_delete_episode", episode_id, agent_id)
     # Read the owner up front so the remote-vector removal below targets the namespace
     # the episode was indexed under (cpersona:{owner}), matching how do_delete_memory
@@ -2217,7 +2247,9 @@ class _ImportTally:
         self.remote_items.setdefault(agent_id, []).append({"id": ref, "text": text})
 
 
-def _validate_import_preconditions(input_path: str, dry_run: bool) -> tuple[str | None, dict | None]:
+def _validate_import_preconditions(
+    input_path: str, dry_run: bool, session_key: str = ""
+) -> tuple[str | None, dict | None]:
     """Vet the request before any file or database work. Returns (path, error)."""
     # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
     # bug-079: only gate the WRITE path on no-persist (the bug-048 fix, applied to the
@@ -2225,8 +2257,9 @@ def _validate_import_preconditions(input_path: str, dry_run: bool) -> tuple[str 
     # guarded by `if not dry_run` and the dry_run path runs on the read seam — so
     # short-circuiting it into a fabricated all-zero response masks what a real import
     # would do and contradicts the "read tools unaffected" no-persist contract.
-    if no_persist.is_paused() and not dry_run:
-        return None, no_persist.make_skipped_response(
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key) and not dry_run:
+        return None, session.make_skipped_response(
             {
                 "ok": True,
                 "dry_run": dry_run,
@@ -2237,6 +2270,7 @@ def _validate_import_preconditions(input_path: str, dry_run: bool) -> tuple[str 
                 "profile_updated": False,
             },
             "import_memories",
+            key,
         )
     confined = _confine_io_path(input_path)
     if confined is None:
@@ -2546,9 +2580,11 @@ def _validate_file_header(tally: _ImportTally) -> None:
         )
 
 
-async def do_import_memories(input_path: str, target_agent_id: str = "", dry_run: bool = False) -> dict:
+async def do_import_memories(
+    input_path: str, target_agent_id: str = "", dry_run: bool = False, session_key: str = ""
+) -> dict:
     """Import memories, episodes, and profiles from a JSONL file."""
-    input_path, error = _validate_import_preconditions(input_path, dry_run)
+    input_path, error = _validate_import_preconditions(input_path, dry_run, session_key)
     if error is not None:
         return error
 
@@ -3004,6 +3040,7 @@ async def do_merge_memories(
     strategy: str = "skip",
     mode: str = "copy",
     dry_run: bool = False,
+    session_key: str = "",
 ) -> dict:
     """Merge memories, episodes, and profiles from one agent into another."""
     # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
@@ -3011,8 +3048,9 @@ async def do_merge_memories(
     # write-free (every mutation below is guarded by `if not dry_run`), so short-
     # circuiting it into a fabricated all-zero no-op masks what a real merge would
     # do and contradicts the "read tools unaffected" no-persist contract.
-    if no_persist.is_paused() and not dry_run:
-        return no_persist.make_skipped_response(
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key) and not dry_run:
+        return session.make_skipped_response(
             {
                 "ok": True,
                 "dry_run": dry_run,
@@ -3029,6 +3067,7 @@ async def do_merge_memories(
                 "skipped_profile": False,
             },
             "merge_memories",
+            key,
         )
     invalid = _validate_merge_arguments(source_agent_id, target_agent_id, strategy, mode)
     if invalid is not None:

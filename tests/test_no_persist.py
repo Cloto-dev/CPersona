@@ -3,8 +3,14 @@
 Covers upstream cloto-mcp-servers/servers/cpersona patch v2.4.19 (23cea89):
 the three control tools, write-tool no-op guards, read tools staying live,
 the or_queue wrapper not enqueueing under pause, and the check_health /
-deep_check fix downgrade. Uses _vendored_mcp_common.no_persist (module-level state),
-so the fixture force-resumes before and after every test.
+deep_check fix downgrade.
+
+Every case here is KEYLESS, which is the point: since the pause became
+per-session (stage 2 of docs/SESSION_IDENTITY_DESIGN.md) these are the
+preservation tests for the caller that declares nothing. It arms and observes
+``session.TRANSPORT_KEY`` — the one bucket every keyless caller shares — so the
+behaviour pinned here is the behaviour that predates the parameter. The state is
+process-local either way, so the fixture clears every bucket around each test.
 """
 
 import os
@@ -19,6 +25,7 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_no_persist.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
+from cpersona import session  # noqa: E402
 from cpersona import admin_handlers # noqa: E402
 from cpersona import maintenance_handlers # noqa: E402
 from cpersona import memory_handlers # noqa: E402
@@ -30,7 +37,7 @@ from cpersona.database import get_db  # noqa: E402
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     """Fresh DB + guaranteed-resumed no-persist state for each test."""
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     await db.execute("DELETE FROM memories")
     await db.execute("DELETE FROM episodes")
@@ -39,7 +46,7 @@ async def setup_db():
     await db.commit()
     tasks._task_queue = None
     yield
-    no_persist.resume()
+    session.reset_pauses_for_tests()
 
 
 def _msg(content: str, msg_id: str = "") -> dict:
@@ -67,7 +74,8 @@ async def test_pause_resume_status_round_trip():
 
     paused = await server.do_pause_persistence(ttl_seconds=120)
     assert paused["paused"] is True
-    assert no_persist.is_paused() is True
+    # A keyless pause arms the shared bucket, and nothing else.
+    assert session.is_paused_for(session.TRANSPORT_KEY) is True
 
     status = await server.do_persistence_status()
     assert status["paused"] is True
@@ -76,7 +84,7 @@ async def test_pause_resume_status_round_trip():
     resumed = await server.do_resume_persistence()
     assert resumed["paused"] is False
     assert resumed["was_active"] is True
-    assert no_persist.is_paused() is False
+    assert session.is_paused_for(session.TRANSPORT_KEY) is False
 
 
 @pytest.mark.asyncio
@@ -92,14 +100,14 @@ async def test_pause_clamps_ttl_to_max():
 
 @pytest.mark.asyncio
 async def test_store_skipped_under_pause():
-    no_persist.pause(ttl_seconds=120)
+    session.pause_for(session.TRANSPORT_KEY, False, 120)
     resp = await memory_handlers.do_store("agent-np", _msg("should not persist"))
     assert _is_skipped(resp)
     # bug-141: the skipped response keeps the success-contract keys — nothing
     # was persisted, so embedded is present and False (not absent).
     assert resp["embedded"] is False
 
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     rows = await db.execute_fetchall("SELECT COUNT(*) FROM memories")
     assert rows[0][0] == 0
@@ -107,11 +115,11 @@ async def test_store_skipped_under_pause():
 
 @pytest.mark.asyncio
 async def test_archive_episode_skipped_under_pause():
-    no_persist.pause(ttl_seconds=120)
+    session.pause_for(session.TRANSPORT_KEY, False, 120)
     resp = await memory_handlers.do_archive_episode("agent-np", history=[], summary="ephemeral episode")
     assert _is_skipped(resp)
 
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     rows = await db.execute_fetchall("SELECT COUNT(*) FROM episodes")
     assert rows[0][0] == 0
@@ -129,14 +137,14 @@ async def test_mutation_tools_skipped_under_pause():
     await db.commit()
     mem_id = cur.lastrowid
 
-    no_persist.pause(ttl_seconds=120)
+    session.pause_for(session.TRANSPORT_KEY, False, 120)
     assert _is_skipped(await admin_handlers.do_update_profile("agent-np", "new profile"))
     assert _is_skipped(await admin_handlers.do_update_memory(mem_id, "edited"))
     assert _is_skipped(await admin_handlers.do_lock_memory(mem_id))
     assert _is_skipped(await admin_handlers.do_unlock_memory(mem_id))
     assert _is_skipped(await admin_handlers.do_delete_memory(mem_id))
 
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     # The memory is untouched: still present, still unlocked, content unchanged.
     rows = await db.execute_fetchall("SELECT content, locked FROM memories WHERE id = ?", (mem_id,))
     assert rows == [("original", 0)]
@@ -148,12 +156,12 @@ async def test_mutation_tools_skipped_under_pause():
 async def test_archive_episode_or_queue_does_not_enqueue_under_pause():
     """The or_queue wrapper must not leak a row into pending_memory_tasks."""
     tasks._task_queue = tasks.MemoryTaskQueue()
-    no_persist.pause(ttl_seconds=120)
+    session.pause_for(session.TRANSPORT_KEY, False, 120)
     resp = await server.do_archive_episode_or_queue("agent-np", [{"content": "data"}])
     assert _is_skipped(resp)
     assert resp.get("queued") is False
 
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     rows = await db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks")
     assert rows[0][0] == 0
@@ -169,7 +177,7 @@ async def test_read_tools_work_under_pause():
     # Seed data while live.
     await memory_handlers.do_store("agent-np", _msg("recallable memory"))
 
-    no_persist.pause(ttl_seconds=120)
+    session.pause_for(session.TRANSPORT_KEY, False, 120)
     recall = await memory_handlers.do_recall("agent-np", "recallable", 10, deep=True)
     assert any("recallable memory" in m["content"] for m in recall["messages"])
 
@@ -187,7 +195,7 @@ async def test_read_tools_work_under_pause():
 
 @pytest.mark.asyncio
 async def test_check_health_downgrades_fix_under_pause():
-    no_persist.pause(ttl_seconds=120)
+    session.pause_for(session.TRANSPORT_KEY, False, 120)
     result = await maintenance_handlers.do_check_health("agent-np", fix=True)
     assert result["fixed"] is False
     assert result["repairs_skipped"] is True
@@ -196,7 +204,7 @@ async def test_check_health_downgrades_fix_under_pause():
 
 @pytest.mark.asyncio
 async def test_deep_check_downgrades_fix_under_pause():
-    no_persist.pause(ttl_seconds=120)
+    session.pause_for(session.TRANSPORT_KEY, False, 120)
     result = await maintenance_handlers.do_deep_check("agent-np", fix=True)
     assert result["fixed"] is False
     assert result["repairs_skipped"] is True

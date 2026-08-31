@@ -17,12 +17,12 @@ from datetime import datetime, timezone
 
 import aiosqlite
 import httpx
-from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where
 
 from cpersona import health
+from cpersona import session
 from cpersona import vector
 from cpersona.session import resolve_session_key
 from cpersona.config import (
@@ -102,7 +102,13 @@ def _store_skipped(reason: str, mem_id: int | None = None) -> dict:
     return body
 
 
-async def do_store(agent_id: str, message: dict, channel: str = "", project_id: str = "") -> dict:
+async def do_store(
+    agent_id: str,
+    message: dict,
+    channel: str = "",
+    project_id: str = "",
+    session_key: str = "",
+) -> dict:
     """Store a message in agent memory.
 
     project_id (v2.4.17): isolation axis. Defaults to '' (= global pool).
@@ -111,14 +117,15 @@ async def do_store(agent_id: str, message: dict, channel: str = "", project_id: 
     sibling buckets stay distinct; reads use the same γ semantics (see
     cpersona.isolation.isolation_where).
     """
-    if no_persist.is_paused():
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
         # bug-141: keep the no-persist shape aligned with the success contract
         # ({ok, id, embedded}) — nothing was persisted, so embedded is False.
         # b1-1: it is a `skipped` outcome (deliberately not written, nothing
         # wrong); the helper overwrites `reason` with its TTL message and adds
         # persisted=False, which is the key to branch on for this branch alone.
-        return no_persist.make_skipped_response(
-            {"ok": True, "result": "skipped", "id": 0, "embedded": False}, "store"
+        return session.make_skipped_response(
+            {"ok": True, "result": "skipped", "id": 0, "embedded": False}, "store", key
         )
 
     msg_id = message.get("id", "")
@@ -1398,7 +1405,16 @@ async def do_recall(
     # passing the gate on unrelated queries — a feedback loop straight back into the
     # lexical contamination bug-155 closed. A rescue is a disclosure ("this is all there
     # was, and it is weak"), not a confirmed hit, so it earns no ranking credit.
-    if not deep and not gate_fallback and recall_counts and not no_persist.is_paused():
+    # Resolved once, here, and reused by the advisory below: this gate and that one
+    # answer for the same caller, and two resolutions of one argument are two places
+    # for the fallback rule to drift apart.
+    session_key_resolved, session_key_declared = resolve_session_key(session_key)
+    if (
+        not deep
+        and not gate_fallback
+        and recall_counts
+        and not session.is_paused_for(session_key_resolved)
+    ):
         # bug-040: exclude episode rows — their id collides with a memory id, so
         # bumping `WHERE id IN (...)` on the memories table would falsely increment
         # an unrelated memory's recall_count and falsify its last_recalled_at.
@@ -1429,8 +1445,7 @@ async def do_recall(
     # change the payload of the whole surface (and every recorded golden) to say nothing.
     if gate_fallback:
         result["gate_fallback"] = True
-    advisory_key, advisory_declared = resolve_session_key(session_key)
-    advisory = health.maybe_advisory(advisory_key, advisory_declared)
+    advisory = health.maybe_advisory(session_key_resolved, session_key_declared)
     if advisory is not None:
         result["advisory"] = advisory
     return result
@@ -1849,6 +1864,7 @@ async def do_archive_episode(
     resolved: bool | None = None,
     project_id: str = "",
     channel: str = "",
+    session_key: str = "",
 ) -> dict:
     """Archive a conversation episode with pre-computed summary, keywords, and resolved status.
 
@@ -1857,9 +1873,10 @@ async def do_archive_episode(
     to '' (= unscoped / shared). A channel-scoped recall returns episodes whose
     channel matches; unfiltered recall returns all of them.
     """
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response(
-            {"ok": True, "episode_id": None, "id": 0}, "archive_episode"
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "episode_id": None, "id": 0}, "archive_episode", key
         )
 
     # bug-162: judge the text that would actually be STORED. _sanitize_content

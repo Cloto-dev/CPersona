@@ -16,13 +16,13 @@ import pytest
 import pytest_asyncio
 
 from conftest import FakeEmbeddingClient, fake_embed_one
+from cpersona import session
 from cpersona import (
     admin_handlers,
     checks,
     maintenance_handlers,
     memory_handlers,
 )
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.database import get_db
 from cpersona.vector import _search_vector
 
@@ -30,7 +30,7 @@ from cpersona.vector import _search_vector
 @pytest_asyncio.fixture
 async def clean_db():
     """A freshly-truncated DB for the DB-backed audit tests."""
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
@@ -181,10 +181,10 @@ async def test_import_dry_run_runs_under_no_persist(clean_db, tmp_path):
         '{"_type": "memory", "agent_id": "np1", "content": "two", "msg_id": "m2"}\n'
     )
     try:
-        no_persist.pause(ttl_seconds=60)
+        session.pause_for(session.TRANSPORT_KEY, False, 60)
         res = await admin_handlers.do_import_memories(str(f), dry_run=True)
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
     # Real preview counts (2), not the paused all-zero no-op.
     assert res.get("imported_memories") == 2, res
     assert "persisted" not in res or res.get("persisted") is not False
@@ -199,10 +199,10 @@ async def test_import_real_run_still_gated_under_no_persist(clean_db, tmp_path):
     f = tmp_path / "imp.jsonl"
     f.write_text('{"_type": "memory", "agent_id": "np2", "content": "one", "msg_id": "m1"}\n')
     try:
-        no_persist.pause(ttl_seconds=60)
+        session.pause_for(session.TRANSPORT_KEY, False, 60)
         res = await admin_handlers.do_import_memories(str(f))
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
     assert res.get("persisted") is False  # the WRITE path stays gated
     rows = await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = 'np2'")
     assert rows[0][0] == 0

@@ -29,16 +29,16 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_health_status.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
+from cpersona import session  # noqa: E402
 from cpersona import checks  # noqa: E402
 from cpersona import maintenance_handlers  # noqa: E402
 from cpersona import vector  # noqa: E402
-from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     await db.execute("DELETE FROM memories")
     await db.execute("DELETE FROM episodes")
@@ -54,7 +54,7 @@ async def setup_db():
     db = await get_db()
     await checks.check_schema_objects(db, "", fix=True)
     await db.commit()
-    no_persist.resume()
+    session.reset_pauses_for_tests()
 
 
 async def _insert(db, agent_id="agent-h", content="fine content", **cols):

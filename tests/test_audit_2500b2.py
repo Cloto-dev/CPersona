@@ -16,8 +16,8 @@ import pytest
 import pytest_asyncio
 
 import test_structural_gates as tsg
+from cpersona import session
 from cpersona import admin_handlers, config, database, memory_handlers, server
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.checks import deep_orphaned_episodes
 from cpersona.database import get_db
 from cpersona.utils import _content_excluded, _format_memory_timestamp, _parse_timestamp_utc
@@ -25,7 +25,7 @@ from cpersona.utils import _content_excluded, _format_memory_timestamp, _parse_t
 
 @pytest_asyncio.fixture
 async def clean_db():
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
@@ -229,7 +229,7 @@ async def test_stale_fts_trigger_modernised_on_boot(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_calibrate_skeleton_mirrors_real_shape():
-    no_persist.pause(ttl_seconds=60)
+    session.pause_for(session.TRANSPORT_KEY, False, 60)
     try:
         out = await admin_handlers.do_calibrate_threshold("skel-agent")
         assert out["persisted"] is False
@@ -245,12 +245,12 @@ async def test_calibrate_skeleton_mirrors_real_shape():
         bad = await admin_handlers.do_calibrate_threshold("skel-agent", percentile=200)
         assert bad["ok"] is False and "percentile" in bad["error"]
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
 
 
 @pytest.mark.asyncio
 async def test_set_recall_precision_skeleton_mirrors_real_shape():
-    no_persist.pause(ttl_seconds=60)
+    session.pause_for(session.TRANSPORT_KEY, False, 60)
     try:
         out = await admin_handlers.do_set_recall_precision("skel-agent", precision="strict")
         assert out["persisted"] is False
@@ -267,7 +267,7 @@ async def test_set_recall_precision_skeleton_mirrors_real_shape():
 
         assert "skel-agent" not in vector._agent_betas
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
 
 
 # ---------------------------------------------------------------------------

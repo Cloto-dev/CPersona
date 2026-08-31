@@ -562,13 +562,13 @@
       "version": "2.4.37",
       "commit": "6919f3a",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "and not no_persist\\.is_paused\\(\\):",
+      "pattern": "and not session\\.is_paused_for\\(",
       "expected": "present",
       "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Skip the recall_count/last_recalled_at bump when no_persist.is_paused() (and reconsider readOnlyHint) so a no-persist session leaves ranking state unmutated.",
       "fixed_in": "2.4.38",
-      "fix_note": "v2.4.38: the recall_count/last_recalled_at bump is gated on `not no_persist.is_paused()`, so a no-persist (benchmark/AB) session no longer mutates confidence-ranking state on recall. The bump statement itself legitimately remains (normal sessions still bump), so the fix marker is the gate condition, not the statement's absence. Landed in ec91303 as the 11th approved fix; this registry flip was initially missed (the code + regression test shipped without it). Regression: test_v2438_hardening.py::test_recall_does_not_bump_recall_count_under_no_persist. 2.5.2: bug-183 added `not gate_fallback` to the same condition (a rescued row must not accrue rank credit), which invalidated the old whole-line pattern. Re-anchored to the gate clause alone — it is unique in the file (the other two no_persist checks are standalone `if` guards, not `and` clauses) and keeps its teeth: deleting the no-persist gate from the bump still makes it STALE, while an unrelated clause added to the same `if` no longer does."
+      "fix_note": "v2.4.38: the recall_count/last_recalled_at bump is gated on `not no_persist.is_paused()`, so a no-persist (benchmark/AB) session no longer mutates confidence-ranking state on recall. The bump statement itself legitimately remains (normal sessions still bump), so the fix marker is the gate condition, not the statement's absence. Landed in ec91303 as the 11th approved fix; this registry flip was initially missed (the code + regression test shipped without it). Regression: test_v2438_hardening.py::test_recall_does_not_bump_recall_count_under_no_persist. 2.5.2: bug-183 added `not gate_fallback` to the same condition (a rescued row must not accrue rank credit), which invalidated the old whole-line pattern. Re-anchored to the gate clause alone — it is unique in the file (the other two no_persist checks are standalone `if` guards, not `and` clauses) and keeps its teeth: deleting the no-persist gate from the bump still makes it STALE, while an unrelated clause added to the same `if` no longer does. 2.5.7: the pause became per-session, so the same clause now reads `and not session.is_paused_for(...)` and the anchor moved with it — same clause, same teeth, one seam later."
     },
     {
       "id": "bug-039",
@@ -864,14 +864,14 @@
       "discovered": "2026-07-06T00:00:00Z",
       "version": "2.4.39",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "no_persist\\.is_paused\\(\\) and not dry_run",
+      "pattern": "session\\.is_paused_for\\(key\\) and not dry_run",
       "expected": "present",
       "status": "fixed",
       "category": "no-persist-overgate-readonly",
       "fix_sketch": "Change the gate to if no_persist.is_paused() and not dry_run: so the write-free preview path runs normally under pause and only the actual mutating merge (dry_run=False) is skipped.",
       "note": "v2.4.39 audit (multi-finder x adversarial verify). During a paused session, merge_memories(..., dry_run=True) is write-free (every mutation is guarded by if not dry_run), yet the gate at 1467 returns make_skipped_response with merged/skipped:0/persisted:false. The operator receives all-zero preview counts masking what a real merge would do, contradicting the 'read tools unaffected' no-persist contract. Line 1467 is the do_merge_memories occurrence of the is_paused gate.",
       "fixed_in": "2.4.39",
-      "fix_note": "do_merge_memories only gates the write path on no-persist; a write-free dry_run=True preview now runs normally under pause."
+      "fix_note": "do_merge_memories only gates the write path on no-persist; a write-free dry_run=True preview now runs normally under pause. 2.5.7: the gate reads the per-session pause (`session.is_paused_for(key) and not dry_run`); the dry_run half — the part this issue is about — is unchanged, and the anchor follows the rename."
     },
     {
       "id": "bug-050",
@@ -2200,13 +2200,13 @@
       "discovered": "2026-07-23T00:00:00Z",
       "version": "2.5.2a1",
       "commit": "7d4bf60",
-      "file": "cpersona/server.py",
-      "pattern": "process-global, see do_pause_persistence",
+      "file": "cpersona/session.py",
+      "pattern": "\"scope\": _scope\\(declared\\)",
       "expected": "present",
       "status": "fixed",
       "category": "no-persist-transparency",
       "fixed_in": "2.5.2a2",
-      "fix_note": "Transparency-only treatment (no per-session state added; pause is still accepted on HTTP). Added an additive scope=process key to the pause, resume and status response payloads in the CPersona handlers (the shared vendored no_persist is untouched so CScheduler's shape is unchanged), rewrote the three tool descriptions to state the pause is process-wide and silences writes for every connected session under HTTP, and corrected the no_persist module docstring's false per-session claim. Regression: tests/test_252a2_i5.py."
+      "fix_note": "Transparency-only treatment (no per-session state added; pause is still accepted on HTTP). Added an additive scope=process key to the pause, resume and status response payloads in the CPersona handlers (the shared vendored no_persist is untouched so CScheduler's shape is unchanged), rewrote the three tool descriptions to state the pause is process-wide and silences writes for every connected session under HTTP, and corrected the no_persist module docstring's false per-session claim. Regression: tests/test_252a2_i5.py. 2.5.7 (stage 2) superseded this in the safe direction: the pause is now keyed per declared session_key, so `scope` answers session for a declared caller and process only for the shared keyless bucket it still describes honestly. The marker moved to the one place that renders the field (cpersona/session.py::_scope), because the server-side comment it used to pin described a global that no longer exists."
     },
     {
       "id": "bug-152",

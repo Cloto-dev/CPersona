@@ -13,7 +13,7 @@ This module is the one place that resolves it. A caller that declares nothing
 lands in the transport bucket and behaves exactly as it did before this module
 existed; a caller that declares a key gets its own bucket of the process-local
 state that is keyed here (the degraded-recall advisory's "already told you"
-memory, and the owner of a no-persist pause).
+memory, and the no-persist pause itself).
 
 What this is NOT
 ----------------
@@ -24,7 +24,8 @@ here is a security boundary — the ACL layer decides what a caller may do.
 
 **Not an isolation axis.** ``agent_id`` / ``project_id`` / ``channel`` select
 *whose data* a query reads. This selects *whose in-process state* a call
-touches. No stored row is ever filtered by it, and no memory becomes reachable
+touches — which pause applies to a write, and whether an advisory has already
+been delivered. Nothing about *which rows* a call can see. No stored row is ever filtered by it, and no memory becomes reachable
 or unreachable because of it. Filtering recall by session would make memory
 unreadable across the boundary it exists to cross.
 
@@ -32,6 +33,10 @@ Authority: ``docs/SESSION_IDENTITY_DESIGN.md``.
 """
 
 from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+from cpersona._vendored_mcp_common import no_persist
 
 # The bucket every caller that declares nothing shares. Under stdio that is
 # already a session (the process is one); under the shared HTTP transport it
@@ -66,56 +71,165 @@ def resolve_session_key(declared: str | None) -> tuple[str, bool]:
     return TRANSPORT_KEY, False
 
 
-# --- Owner of the process-wide no-persist pause -------------------------------
+# --- The no-persist pause, per session ----------------------------------------
 #
-# The pause itself stays process-wide: it lives in the vendored ``no_persist``
-# module, one flag for the process, and every write in every session is skipped
-# while it is armed. That is not changed here and must not be described as if it
-# were. What is recorded here is WHO armed it, so a caller that declares a key
-# can be told whether the pause silencing its writes is its own or another
-# session's — disclosure, not isolation.
+# Stage 2 of the design: the pause is keyed, so a session silences its own writes
+# and nobody else's. Before this, one process-global flag in the vendored
+# ``no_persist`` module silenced every connected client, and a caller could only
+# be told who armed it (stage 1's disclosure).
 #
-# A caller that declares nothing is told nothing new: its responses keep the
-# exact shape they had, and the pre-existing ``scope: "process"`` field already
-# states the blast radius honestly.
+# ONE implementation, not two. The vendored module still owns the response shape
+# (``make_skipped_response``) and the TTL constants, but its ``pause`` / ``resume``
+# / ``status`` / ``is_paused`` are no longer called by this package: routing the
+# keyless bucket through the old global and declared keys through a new map would
+# have been two implementations of one invariant, and the one nobody exercises is
+# the one that drifts. ``test_no_second_pause_implementation`` fails if a call to
+# the vendored switch comes back, and ``test_ttl_validation_matches_vendored``
+# pins this module's argument handling against the vendored rules it replaced, so
+# a re-vendor that changes them is caught rather than silently diverged from.
+#
+# The keyless bucket is TRANSPORT_KEY, so every caller that declares nothing keeps
+# sharing exactly one pause — the behaviour that predates the parameter, preserved
+# by construction rather than by a special case.
 
-_pause_owner: str | None = None
-_pause_owner_declared: bool = False
+_MAX_PAUSED_SESSIONS = 256
 
-
-def record_pause_owner(session_key: str, declared: bool) -> None:
-    """Remember which key armed the pause (called on a successful pause)."""
-    global _pause_owner, _pause_owner_declared
-    _pause_owner = session_key
-    _pause_owner_declared = declared
-
-
-def clear_pause_owner() -> None:
-    """Forget the owner (called on resume)."""
-    global _pause_owner, _pause_owner_declared
-    _pause_owner = None
-    _pause_owner_declared = False
-
-
-def pause_owner() -> tuple[str | None, bool]:
-    """``(owner_key, owner_declared)`` for the pause currently recorded, if any."""
-    return _pause_owner, _pause_owner_declared
+# key -> deadline. Bounded for the same reason the advisory map is: the key space
+# is client-supplied and a client that rotates keys must not grow it without
+# limit. Eviction here is NOT as safe as it is there — forgetting a pause resumes
+# writes for that session — so the cap is high enough that reaching it means a
+# client is rotating keys per call, and eviction is nearest-deadline-first so the
+# entry closest to expiring anyway is the one that goes.
+_pauses: dict[str, datetime] = {}
 
 
-def pause_ownership(session_key: str, declared: bool) -> dict:
-    """Disclosure fields for a caller that declared a key, or ``{}`` for one that did not.
+def _now() -> datetime:
+    return datetime.now(UTC)
 
-    ``paused_by_self`` is True / False when both sides declared a key, and ``None`` when
-    the pause was armed by a caller that did not — the honest answer, because a keyless
-    pause belongs to the shared bucket and cannot be attributed to one session. The
-    absent-owner case (nothing armed, or an owner forgotten across a restart) returns the
-    field as ``None`` too, with ``pause_owner_known`` False to separate the two.
+
+def _decay(now: datetime | None = None) -> None:
+    """Drop every pause whose TTL has elapsed (lazy; no background timer)."""
+    if now is None:
+        now = _now()
+    for key in [k for k, deadline in _pauses.items() if now >= deadline]:
+        del _pauses[key]
+
+
+def _validate_ttl(ttl_seconds: int) -> int:
+    """Validate and clamp a TTL, with the vendored module's exact rules.
+
+    Pinned against that module by ``test_ttl_validation_matches_vendored`` — this
+    is a copy of an invariant, and the test is what keeps the copy honest.
     """
-    if not declared:
-        return {}
-    owner, owner_declared = pause_owner()
-    if owner is None:
-        return {"pause_owner_known": False, "paused_by_self": None}
-    if not owner_declared:
-        return {"pause_owner_known": True, "paused_by_self": None}
-    return {"pause_owner_known": True, "paused_by_self": owner == session_key}
+    if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int):
+        raise ValueError("ttl_seconds must be a positive integer")
+    if ttl_seconds < 1:
+        raise ValueError("ttl_seconds must be >= 1")
+    return min(ttl_seconds, no_persist.MAX_TTL_SECONDS)
+
+
+def _scope(declared: bool) -> str:
+    """What a pause on this caller's bucket actually covers.
+
+    ``session`` for a declared key. ``process`` for a keyless caller, which is
+    still true and still the widest honest answer: every keyless caller on this
+    process shares the one bucket, and under stdio that process is the session.
+    """
+    return "session" if declared else "process"
+
+
+def is_paused_for(session_key: str) -> bool:
+    """Return True iff this key's bucket is currently paused."""
+    _decay()
+    return session_key in _pauses
+
+
+def pause_for(session_key: str, declared: bool, ttl_seconds: int) -> dict:
+    """Arm this key's pause for ``ttl_seconds``. Last-write-wins, no stacking.
+
+    Raises ``ValueError`` for a non-int or non-positive TTL; values above the
+    ceiling are clamped.
+    """
+    ttl_seconds = _validate_ttl(ttl_seconds)
+    now = _now()
+    _decay(now)
+    deadline = now + timedelta(seconds=ttl_seconds)
+    if session_key not in _pauses and len(_pauses) >= _MAX_PAUSED_SESSIONS:
+        del _pauses[min(_pauses, key=_pauses.__getitem__)]
+    _pauses[session_key] = deadline
+    return {
+        "paused": True,
+        "expires_at": deadline.isoformat(),
+        "ttl_seconds": ttl_seconds,
+        "scope": _scope(declared),
+    }
+
+
+def resume_for(session_key: str, declared: bool) -> dict:
+    """Clear this key's pause immediately.
+
+    ``was_active`` reports whether this key's bucket was paused before the call
+    (after decay) — a caller cannot clear, or learn about, another session's.
+    """
+    _decay()
+    was_active = _pauses.pop(session_key, None) is not None
+    return {"paused": False, "was_active": was_active, "scope": _scope(declared)}
+
+
+def pause_status_for(session_key: str, declared: bool) -> dict:
+    """This key's pause state, in tool-response shape."""
+    # Evaluate the clock once: a second reading after decay could cross the
+    # deadline and report the contradictory paused:true / ttl_remaining:0.
+    now = _now()
+    _decay(now)
+    deadline = _pauses.get(session_key)
+    if deadline is None:
+        return {
+            "paused": False,
+            "expires_at": None,
+            "ttl_remaining_seconds": None,
+            "scope": _scope(declared),
+        }
+    return {
+        "paused": True,
+        "expires_at": deadline.isoformat(),
+        "ttl_remaining_seconds": max(0, int((deadline - now).total_seconds())),
+        "scope": _scope(declared),
+    }
+
+
+def ttl_label_for(session_key: str) -> str:
+    """Human-readable TTL suffix for a skipped-write ``reason`` (e.g. ``28m left``)."""
+    deadline = _pauses.get(session_key)
+    if deadline is None:
+        return "TTL unknown"
+    remaining = (deadline - _now()).total_seconds()
+    if remaining < 0:
+        return "TTL expired"
+    minutes = int(remaining // 60)
+    return f"{minutes}m left" if minutes >= 1 else f"{int(remaining)}s left"
+
+
+def reset_pauses_for_tests() -> None:
+    """Clear every pause. Test-only; there is no runtime caller."""
+    _pauses.clear()
+
+
+def make_skipped_response(default_body: dict, tool_name: str, session_key: str) -> dict:
+    """A skipped-write response whose TTL is this session's, not a process global.
+
+    The vendored builder owns the shape — the ``"no-persist"`` id sentinel and the
+    nulling of every action-specific id key (bug-104) are invariants worth exactly
+    one implementation, so they are not copied here. What it cannot do is name the
+    remaining TTL: it reads the module global this package no longer arms, and so
+    always renders ``TTL unknown``. That one parenthetical is substituted.
+
+    ``test_skipped_response_carries_this_sessions_ttl`` asserts the substitution
+    actually fired. Without it a re-vendor that reworded the reason would leave
+    every skipped write saying ``TTL unknown`` — true-ish, useless, and silent.
+    """
+    body = no_persist.make_skipped_response(default_body, tool_name)
+    reason = body.get("reason")
+    if isinstance(reason, str):
+        body["reason"] = reason.replace("(TTL unknown)", f"({ttl_label_for(session_key)})", 1)
+    return body
