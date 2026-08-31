@@ -177,9 +177,16 @@ the file is missing, the file fails its own integrity check (row count against
 file length, or fingerprint mismatch), or the query vector's dimension does not
 match the header's.
 
-The mid-flight model swap that leaves a mixed-dimension corpus behind is the
-same condition the current scan already tolerates by skipping foreign-width
-rows; here it disqualifies the whole file, and the scan carries on without it.
+A mid-flight model swap leaves a mixed-dimension corpus behind, and that is a
+fourth condition — one the *builder* refuses rather than the reader. The live
+scan applies its window **before** it skips foreign-width rows: it ranks whatever
+survives inside the newest `MAX_MEMORIES`. An index holding a single width cannot
+reproduce that window while other widths exist, because it would rank the newest
+`MAX_MEMORIES` *of its own width* — more rows, and more rows is a different
+answer even when every one of them scores identically. So the build declines
+while the corpus is mixed. That state is transient by construction, and
+throughout it the scan this index replaces stays correct and merely slower, which
+is the trade the whole design exists to make safely.
 
 **A fallback has to be visible.** If the only trace is a log line, an index that
 has been dead for a week reads as "somehow not faster", which is the failure

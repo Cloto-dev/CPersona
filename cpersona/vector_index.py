@@ -157,25 +157,34 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     if not meta:
         return {"built": False, "reason": "no embedded rows", "watermark": watermark}
 
-    widths: dict[int, int] = {}
-    for r in meta:
-        widths[r[5]] = widths.get(r[5], 0) + 1
-    # Ties broken by the larger width so the choice is a function of the data,
-    # not of dict ordering: a rebuild on the same corpus must pick the same one.
-    modal_width = max(widths.items(), key=lambda kv: (kv[1], kv[0]))[0]
-    if not modal_width or modal_width % 4:
-        return {"built": False, "reason": f"embedding width {modal_width} is not float32-aligned"}
-    dim = modal_width // 4
+    # A single width, or no index. The live scan applies its window BEFORE it
+    # skips foreign-width rows: it ranks whatever survives inside the newest
+    # MAX_MEMORIES rows. An index that holds only one width cannot reproduce that
+    # window while other widths exist — it would rank the newest MAX_MEMORIES
+    # rows *of its own width*, which is more rows, and more rows is a different
+    # answer even when every one of them is scored identically.
+    #
+    # So a mixed-dimension corpus declines rather than approximating. That state
+    # is what a model swap looks like from here, and it is transient by
+    # construction: the scan this index replaces stays correct throughout, only
+    # slower, which is the trade this whole design is built to make safely.
+    widths = {r[5] for r in meta}
+    if len(widths) > 1:
+        return {
+            "built": False,
+            "reason": f"corpus carries {len(widths)} embedding widths ({sorted(widths)})",
+            "watermark": watermark,
+        }
+    width = widths.pop()
+    if not width or width % 4:
+        return {"built": False, "reason": f"embedding width {width} is not float32-aligned"}
+    dim = width // 4
 
-    # A row of another width is absent from the index AND unwanted by a query of
-    # this dimension — the live scan skips it for the same reason — so it is not
-    # an exclusion, merely not here. A row this format cannot spell IS an
+    # A row whose created_at this fixed-width format cannot spell IS an
     # exclusion, and stays reachable because the query path unions the list into
     # its exact tail read.
     kept, excluded = [], []
     for r in meta:
-        if r[5] != modal_width:
-            continue
         if not _is_canonical(r[4]):
             excluded.append(int(r[0]))
             continue
@@ -189,7 +198,7 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
         }
     count = len(kept)
     if count == 0:
-        return {"built": False, "reason": "no rows of the modal width", "watermark": watermark}
+        return {"built": False, "reason": "no rows survive the format", "watermark": watermark}
 
     agents, agent_ix = _intern([r[1] for r in kept])
     projects, project_ix = _intern([r[2] for r in kept])
@@ -229,7 +238,7 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
             fh.write(blob)
             fh.write(np.array([r[0] for r in kept], dtype="<i8").tobytes())
 
-            written = await _stream_embeddings(db, fh, table, watermark, modal_width)
+            written = await _stream_embeddings(db, fh, table, watermark, width)
             if written != count:
                 raise IndexUnusable(
                     f"embedding pass returned {written} rows, metadata pass counted {count}"
@@ -409,3 +418,99 @@ def _main() -> int:  # pragma: no cover - operator entry point
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(_main())
+
+
+# --------------------------------------------------------------------------------------
+# Query side: selection, and the cache that keeps a rebuild visible.
+# --------------------------------------------------------------------------------------
+
+_cache: dict[str, tuple[tuple, VectorIndex | None]] = {}
+
+
+def _stat_key(src: str) -> tuple:
+    st = os.stat(src)
+    # size and mtime_ns together: a rebuild writes a new inode through os.replace,
+    # and even an identical-size rebuild moves mtime. Cheap enough to stat on every
+    # query, which is what keeps "rebuild frequency is a performance knob" true —
+    # a cache that had to be invalidated by hand would put correctness back into it.
+    return (st.st_size, st.st_mtime_ns, st.st_ino)
+
+
+def cached_index(table: str = "memories", path: str | None = None) -> VectorIndex | None:
+    """`load_index`, but re-mapping only when the file on disk has changed.
+
+    Raises `IndexUnusable` exactly as `load_index` does; a bad file is not
+    cached, so a rebuild that fixes it is picked up on the next call.
+    """
+    src = path or index_path(table)
+    if not os.path.exists(src):
+        _cache.pop(src, None)
+        return None
+    key = _stat_key(src)
+    hit = _cache.get(src)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    index = load_index(table, src)
+    _cache[src] = (key, index)
+    return index
+
+
+def _axis_codes(table: tuple, allowed) -> np.ndarray:
+    """Codes for the values this axis admits, as an int32 array for isin()."""
+    return np.array([i for i, v in enumerate(table) if v in allowed], dtype="<i4")
+
+
+def select(
+    index: VectorIndex,
+    *,
+    agent_id: str,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
+    limit: int,
+) -> np.ndarray:
+    """Positions of the rows a scan with these axes would rank, newest first.
+
+    Mirrors `isolation_where()` axis for axis — that helper stays the authority,
+    and the hydrate re-applies it; this is the index doing enough filtering that
+    the top-k cut is taken over the right rows rather than the whole corpus. The
+    obligation is one-directional: this may return rows the authority would drop
+    (they are dropped later, at the cost of some wasted work) but never drop a
+    row the authority admits.
+
+    Positions come back in the file's canonical order — `created_at` DESC, then
+    `id` ASC — which is the tie-break the caller's answer depends on.
+    """
+    mask = index.agent_code == _code_of(index.agents, agent_id)
+
+    if project_id is not None:
+        # γ semantics: 'X' is the union of 'X' and the global pool, '' is the
+        # global pool alone, and None (above) filters nothing.
+        allowed = {""} if project_id == "" else {project_id, ""}
+        mask &= np.isin(index.project_code, _axis_codes(index.projects, allowed))
+
+    if channel:
+        # knob2 v2: a channel-scoped read still sees the channel-global rows, and
+        # an empty channel is not a filter at all.
+        mask &= np.isin(index.channel_code, _axis_codes(index.channels, {channel, ""}))
+
+    if source_id:
+        # The SQL is a prefix LIKE over a JSON field. Resolved here against the
+        # header's string table, which is small because the values are: the
+        # per-row test is integer membership. A NULL source id carries NULL_CODE
+        # and matches nothing, exactly as LIKE against NULL does.
+        codes = np.array(
+            [i for i, v in enumerate(index.sources) if v is not None and v.startswith(source_id)],
+            dtype="<i4",
+        )
+        mask &= np.isin(index.source_code, codes)
+
+    positions = np.flatnonzero(mask)
+    return positions[:limit] if limit and len(positions) > limit else positions
+
+
+def _code_of(table: tuple, value: str) -> int:
+    try:
+        return table.index(value)
+    except ValueError:
+        return NULL_CODE  # an agent with no rows in the index: matches nothing

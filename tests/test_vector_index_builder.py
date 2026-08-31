@@ -159,9 +159,16 @@ async def test_watermark_bounds_the_index_and_new_rows_stay_outside(corpus, tmp_
 
 
 @pytest.mark.asyncio
-async def test_foreign_width_row_is_absent_and_not_an_exclusion(corpus, tmp_path):
-    """A row of another dimension is invisible to a query of this one — the live
-    scan skips it too — so it belongs in neither the arrays nor the exclusions."""
+async def test_mixed_widths_decline_the_build(corpus, tmp_path):
+    """A single foreign-width row disqualifies the whole file, on purpose.
+
+    The live scan applies its window BEFORE skipping foreign-width rows, so it
+    ranks whatever survives inside the newest MAX_MEMORIES. An index holding one
+    width would rank the newest MAX_MEMORIES *of that width* — more rows, and
+    more rows is a different answer even when each is scored identically. The
+    state is what a model swap looks like from here; declining keeps the scan
+    correct (and merely slower) until the swap finishes.
+    """
     await corpus.execute(
         "INSERT INTO memories (agent_id, project_id, channel, content, source, timestamp,"
         " created_at, embedding) VALUES (?, '', '', 'narrow', '{}', ?, ?, ?)",
@@ -169,14 +176,12 @@ async def test_foreign_width_row_is_absent_and_not_an_exclusion(corpus, tmp_path
          np.zeros(3, dtype=np.float32).tobytes()),
     )
     await corpus.commit()
-    narrow = (await corpus.execute_fetchall("SELECT MAX(id) FROM memories"))[0][0]
 
     path = str(tmp_path / "idx")
-    await vector_index.build_index(corpus, "memories", path)
-    idx = vector_index.load_index(path=path)
-    assert narrow not in set(int(i) for i in idx.ids)
-    assert narrow not in idx.excluded_ids
-    assert idx.dim == DIM
+    result = await vector_index.build_index(corpus, "memories", path)
+    assert result["built"] is False
+    assert "widths" in result["reason"]
+    assert not os.path.exists(path)
 
 
 @pytest.mark.asyncio
