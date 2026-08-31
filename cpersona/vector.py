@@ -12,6 +12,7 @@ from cpersona.isolation import IsolationFilter, isolation_where
 
 from cpersona import config
 from cpersona import health
+from cpersona import vector_index
 from cpersona.config import (
     MAX_MEMORIES,
     REMOTE_SEARCH_TIMEOUT_SECS,
@@ -384,8 +385,172 @@ def _cosine_batch(query_vec, query_dim: int, blobs: list[bytes]):
     import numpy as np
 
     mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(blobs), query_dim)
+    return _cosine_matrix(query_vec, mat)
+
+
+def _cosine_matrix(query_vec, mat):
+    """The one matmul. Both suppliers of a candidate matrix end here.
+
+    Kept as its own function so the contiguous index cannot acquire a second
+    arithmetic: a row's dot product does not depend on any other row, so as long
+    as every path reaches THIS call with the same float32 bytes in the same
+    shape, the scores are identical bit for bit and the equivalence gate keeps
+    its meaning. Re-implementing the sum is what would spend that -- measured on
+    the same bytes, a hand-written dot product disagrees with numpy on 77.9% of
+    rows.
+    """
     return mat @ query_vec
 
+
+async def _index_phase1(
+    db: aiosqlite.Connection,
+    *,
+    agent_id: str,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
+    scan_limit: int,
+    query_dim: int,
+):
+    """Phase 1 from the contiguous index, or None to use the SQL scan.
+
+    Returns `(ids, matrix)` in the scan's own order — `created_at` DESC, then
+    `id` ASC — so everything downstream (the threshold, the stable top-`limit`
+    cut, the hydrate) is handed exactly what the SQL read used to hand it.
+
+    None is the ordinary answer, not a failure: no index yet, a dimension that
+    does not match, or any condition under which this path cannot promise the
+    same answer. The scan it replaces stays correct, and the design's whole claim
+    rests on that staying true.
+    """
+    try:
+        index = vector_index.cached_index("memories")
+    except vector_index.IndexUnusable as exc:
+        # Visible, not just logged at debug: an index that has been unusable for
+        # a week otherwise reads as "somehow not faster", which is a failure this
+        # project has already made once.
+        logger.warning("Vector index unusable, falling back to the live scan: %s", exc)
+        return None
+    if index is None or index.dim != query_dim:
+        return None
+
+    positions = vector_index.select(
+        index,
+        agent_id=agent_id,
+        project_id=project_id,
+        channel=channel,
+        source_id=source_id,
+        limit=scan_limit,
+    )
+
+    tail = await _index_tail_rows(
+        db,
+        index,
+        agent_id=agent_id,
+        project_id=project_id,
+        channel=channel,
+        source_id=source_id,
+        scan_limit=scan_limit,
+    )
+    if tail is None:
+        return None
+
+    return _merge_index_and_tail(index, positions, tail, scan_limit, query_dim)
+
+
+async def _index_tail_rows(
+    db: aiosqlite.Connection,
+    index,
+    *,
+    agent_id: str,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
+    scan_limit: int,
+):
+    """The rows the index cannot answer for, read exactly.
+
+    Two disjoint groups, both bounded: everything written since the build
+    (`id > watermark`), and the rows the fixed-width format could not spell,
+    which the build named for exactly this purpose. Without the second the index
+    would silently stop returning them.
+
+    Returns None when a tail row carries a foreign embedding width. The live scan
+    applies its window BEFORE skipping such rows, so their presence changes which
+    rows fall inside the window — the index cannot reproduce that, and a
+    difference here is a different answer rather than a slower one. That state
+    means a model swap began after the build; the scan handles it correctly.
+    """
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    src_like = _escape_like_prefix(source_id)
+    src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
+    src_params = (src_like,) if src_like else ()
+
+    excluded = index.excluded_ids
+    holes = f" OR id IN ({','.join('?' * len(excluded))})" if excluded else ""
+    rows = await db.execute_fetchall(
+        f"""SELECT id, created_at, embedding, length(embedding)
+           FROM memories
+           WHERE (id > ?{holes}) AND embedding IS NOT NULL AND {iso.clause}{src_clause}
+           ORDER BY created_at DESC, id ASC
+           LIMIT ?""",
+        (index.watermark, *excluded, *iso.params, *src_params, scan_limit),
+    )
+    if any(r[3] != index.dim * 4 for r in rows):
+        return None
+    return rows
+
+
+def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: int):
+    """Interleave two already-sorted runs on (created_at DESC, id ASC).
+
+    Not a concatenation. It is tempting to assume everything in the tail is newer
+    than everything in the index and simply prepend it, but nothing promises
+    that: the import path carries a restored record's original `created_at` while
+    ids are assigned fresh, so an old export restored into a newer database
+    produces new ids bearing old timestamps. Both runs are already ordered, so
+    merging them costs nothing over prepending and does not have the failure mode.
+    """
+    import numpy as np
+
+    created = index.created_at
+    ids_arr = index.ids
+
+    merged_ids: list[int] = []
+    from_index: list[int] = []   # positions in the index, in output order
+    index_slots: list[int] = []  # where each of those lands in the matrix
+    from_tail: list[tuple[int, bytes]] = []
+
+    i = j = 0
+    while len(merged_ids) < scan_limit and (i < len(positions) or j < len(tail)):
+        take_index = j >= len(tail)
+        if not take_index and i < len(positions):
+            pos = positions[i]
+            t_created = tail[j][1].encode("ascii")
+            # created_at DESC, then id ASC: the exact key the SQL ORDER BY spells.
+            take_index = (created[pos], -int(ids_arr[pos])) > (t_created, -int(tail[j][0]))
+        if take_index:
+            pos = int(positions[i])
+            index_slots.append(len(merged_ids))
+            from_index.append(pos)
+            merged_ids.append(int(ids_arr[pos]))
+            i += 1
+        else:
+            from_tail.append((len(merged_ids), tail[j][2]))
+            merged_ids.append(int(tail[j][0]))
+            j += 1
+
+    if not merged_ids:
+        return [], np.empty((0, query_dim), dtype=np.float32)
+
+    mat = np.empty((len(merged_ids), query_dim), dtype=np.float32)
+    if from_index:
+        # One vectorised gather: a memcpy out of the mapped file, never a Python
+        # object per row, which is the 72.9% this whole change is about.
+        mat[index_slots] = index.embeddings[from_index]
+    for slot, blob in from_tail:
+        mat[slot] = np.frombuffer(blob, dtype=np.float32)
+    return merged_ids, mat
 
 async def _scan_memories_local(
     db: aiosqlite.Connection,
@@ -397,6 +562,11 @@ async def _scan_memories_local(
     query_vec,
     query_dim: int,
     effective_min_sim: float,
+    *,
+    agent_id: str,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
 ) -> list[tuple[float, dict]]:
     """Cosine-rank the newest `scan_limit` memory rows against the query vector.
 
@@ -436,32 +606,57 @@ async def _scan_memories_local(
     mid-flight model swap leaves a mixed-dimension corpus behind, and one stale
     row must not take the whole scan down with a reshape error.
     """
-    # ''=global (knob2 v2): a stored channel of '' matches every channel-scoped
-    # recall (as on the remote by-id path in _search_vector_remote) -- the
-    # channel axis rides in `iso`.
-    rows = await db.execute_fetchall(
-        f"""SELECT id, embedding
-           FROM memories
-           WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}
-           ORDER BY created_at DESC
-           LIMIT ?""",
-        (*iso.params, *src_params, scan_limit),
+    # Phase 1 has two suppliers and one contract: `(ids, similarities)` in the
+    # scan's order. The contiguous index answers when it can promise the same
+    # rows; otherwise this is the read it has always been.
+    supplied = await _index_phase1(
+        db,
+        agent_id=agent_id,
+        project_id=project_id,
+        channel=channel,
+        source_id=source_id,
+        scan_limit=scan_limit,
+        query_dim=query_dim,
     )
-    if not rows:
-        return []
+    if supplied is not None:
+        valid_ids, mat = supplied
+        if not valid_ids:
+            return []
+        sims = _cosine_matrix(query_vec, mat)
+    else:
+        # ''=global (knob2 v2): a stored channel of '' matches every channel-scoped
+        # recall (as on the remote by-id path in _search_vector_remote) -- the
+        # channel axis rides in `iso`.
+        #
+        # ORDER BY names `id` as well as `created_at`, which the index has to
+        # reproduce exactly: `created_at` has one-second resolution, so ties are
+        # ordinary, and the tie-break decides membership at the window edge, not
+        # just presentation. SQLite already returned this order (equal index keys
+        # come back by rowid ascending) and adding the term was measured to keep
+        # the same plan -- so this states a contract rather than changing one.
+        rows = await db.execute_fetchall(
+            f"""SELECT id, embedding
+               FROM memories
+               WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}
+               ORDER BY created_at DESC, id ASC
+               LIMIT ?""",
+            (*iso.params, *src_params, scan_limit),
+        )
+        if not rows:
+            return []
 
-    valid_ids = []
-    blobs = []
-    for row in rows:
-        blob = row[1]
-        if blob and len(blob) == query_dim * 4:
-            valid_ids.append(row[0])
-            blobs.append(blob)
+        valid_ids = []
+        blobs = []
+        for row in rows:
+            blob = row[1]
+            if blob and len(blob) == query_dim * 4:
+                valid_ids.append(row[0])
+                blobs.append(blob)
 
-    if not valid_ids:
-        return []
+        if not valid_ids:
+            return []
 
-    sims = _cosine_batch(query_vec, query_dim, blobs)
+        sims = _cosine_batch(query_vec, query_dim, blobs)
 
     # Survivors keep the scan's order (created_at DESC): heapq.nlargest in
     # _search_vector is stable, so this order is what breaks a tie between two
@@ -694,7 +889,8 @@ async def _search_vector(
     # scan already returns at most `limit` candidates (bug-249) -- it applies this
     # same cut, with this same tie-break, before paying to read their text.
     candidates = await _scan_memories_local(
-        db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim, effective_min_sim
+        db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim, effective_min_sim,
+        agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
     )
     candidates += await _scan_episodes_local(
         db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel
