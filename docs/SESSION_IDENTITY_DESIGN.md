@@ -336,15 +336,18 @@ default behavior — a pause that used to silence every connected client now
 silences one session — and it removes two response fields that stage 1 shipped.
 Under the standard (§2.1) that is exactly the trigger for the pre-release ladder:
 not rollback-safe, a change to default behavior, a break in the tool contract.
-It therefore ships as a new pre-release in the same series and soaks before any
-final, rather than riding a graduation that soaked different code.
+It therefore opens its own ladder rather than riding one that soaked different
+code. The `2.5.7` series had already graduated by the time this was ready, so
+stage 2 starts a new series at **`2.5.8a1`** — an alpha, not a beta, because the
+point of the first rung is to put a per-session pause in front of real traffic
+before anything is called ready.
 
 Two consequences follow, and neither is optional:
 
-- The series still graduates to `2.5.7` final and does not jump to another
-  number. Whichever pre-release is soaking when the ladder completes is the
-  content that becomes final — a graduation that names a version nobody ran is
-  the failure this line has already made once.
+- That series graduates to `2.5.8` final and does not jump to another number.
+  Whichever pre-release is soaking when the ladder completes is the content that
+  becomes final — a graduation that names a version nobody ran is the failure
+  this line has already made once.
 - Callers documented elsewhere as needing to check for parallel sessions before
   pausing are relying on the old blast radius. That guidance describes the
   behavior stage 2 removes, and it goes stale the moment this ships.
