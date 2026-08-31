@@ -32,6 +32,7 @@ Run from the repository root (CI does): `uv run python scripts/check-docs-facts.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -71,6 +72,18 @@ DOC_FILES = [
     ROOT / "docs" / "quality-assurance.ja.md",
 ]
 
+# Packaging manifests are not docs, but they carry the same current-state
+# claims to a wider audience than any page here: pyproject's description is
+# what PyPI shows and what the repository's own description was copied from,
+# and server.json is the registry entry. Both drifted to a stale tool count
+# while every scanned page stayed correct (2026-08-31) — the count was right
+# everywhere the gate could see and wrong everywhere else, which is what an
+# exemption that follows paths rather than claims produces.
+MANIFEST_FILES = [
+    ROOT / "pyproject.toml",
+    ROOT / "server.json",
+]
+
 # Relative drift allowed on volatile stats before the gate goes red. 3% keeps
 # routine test additions from forcing a doc edit per commit, while an 8% drift
 # like the one this gate was built for (13,000 vs 14,129 LOC) still fails.
@@ -91,6 +104,15 @@ def measured_tool_count() -> int:
     import cpersona.server as server  # noqa: PLC0415 — deliberate late import
 
     return len(server.registry._tools)
+
+
+def measured_project_version() -> str:
+    text = (ROOT / "pyproject.toml").read_text()
+    m = re.search(r'^version = "([^"]+)"$', text, re.M)
+    if not m:
+        fail("pyproject.toml: version literal not found — update this script")
+        return ""
+    return m.group(1)
 
 
 def measured_schema_version() -> int:
@@ -212,7 +234,7 @@ def measured_volatile_stats() -> dict[str, float]:
 
 
 def check_tool_and_schema_claims(tool_count: int, schema_version: int) -> None:
-    for doc in DOC_FILES:
+    for doc in DOC_FILES + MANIFEST_FILES:
         text = doc.read_text()
         rel = doc.relative_to(ROOT)
         # Both spellings, because the translations restate the same count and a
@@ -225,6 +247,46 @@ def check_tool_and_schema_claims(tool_count: int, schema_version: int) -> None:
         for m in re.finditer(r"\b[Ss]chema v(\d+)\b", text):
             if int(m.group(1)) != schema_version:
                 fail(f"{rel}: claims '{m.group(0)}' but SCHEMA_VERSION is {schema_version}")
+
+
+def check_manifest_version(project_version: str) -> None:
+    """The registry manifest must name the version this tree builds.
+
+    server.json is published to the MCP registry by hand, so nothing in CI
+    ever forced it to move: it was last caught up to 2.5.4 and sat there
+    through two finals while pyproject went on. Tying it to pyproject makes
+    the catch-up automatic — the release commit that bumps one has to bump
+    the other or this fails — rather than a step someone has to remember.
+
+    Both the top-level version and every package entry are checked: they are
+    separate fields, and a bump that moves one and not the other publishes a
+    manifest whose own two halves disagree about what it ships.
+    """
+    if not project_version:
+        return  # measured_project_version already failed with the reason
+    manifest_path = ROOT / "server.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        fail(f"server.json: unreadable ({e})")
+        return
+    declared = manifest.get("version")
+    if declared != project_version:
+        fail(
+            f"server.json: version is '{declared}' but pyproject builds "
+            f"{project_version} — the registry manifest is behind the tree"
+        )
+    packages = manifest.get("packages")
+    if not isinstance(packages, list) or not packages:
+        fail("server.json: no packages[] to check — update this script")
+        return
+    for pkg in packages:
+        pkg_version = pkg.get("version")
+        if pkg_version != project_version:
+            fail(
+                f"server.json: package '{pkg.get('identifier')}' is pinned at "
+                f"'{pkg_version}' but pyproject builds {project_version}"
+            )
 
 
 def normalize_doc_default(cell: str) -> str | None:
@@ -639,6 +701,7 @@ def check_benchmark_tables_agree() -> None:
 def main() -> int:
     tool_count = measured_tool_count()
     schema_version = measured_schema_version()
+    project_version = measured_project_version()
     env_defaults = parsed_env_defaults()
     stats = measured_volatile_stats()
     finals = measured_latest_finals()
@@ -647,6 +710,7 @@ def main() -> int:
     embed_batch = measured_embed_batch()
 
     check_tool_and_schema_claims(tool_count, schema_version)
+    check_manifest_version(project_version)
     check_env_tables(env_defaults)
     check_volatile_claims(stats)
     check_release_claims(finals)
