@@ -3905,6 +3905,76 @@
       "summary": "(HIGH) A startup failure after init_db left a half-alive process instead of exiting. The failure path skipped close_db, and aiosqlite runs each connection on a non-daemon worker thread, so the interpreter's shutdown join blocked forever: the process stayed alive with no MCP port bound, systemd counted it active, and Restart=always never fired — an invisible outage that needed a manual kill (measured in production 2026-08-31, triggered by the bug-267 guard).",
       "fixed_in": "2.5.7",
       "fix_note": "Everything past init_db moved inside the existing try/finally so close_db (and queue/client shutdown) reach every failure path; the process now exits and systemd's restart policy owns recovery. Exiting via os._exit was rejected: it would also skip cleanup on the healthy shutdown path and hide any future leak the join would have surfaced."
+    },
+    {
+      "id": "bug-269",
+      "summary": "(MEDIUM) The per-session pause map evicts to stay bounded, and the eviction is fail-open and silent: reaching the cap deletes the entry with the nearest deadline, so an existing pause is lifted with no signal to the caller that armed it. Its writes then persist while `store` keeps answering like any successful write; only an explicit `persistence_status` call reveals that the pause is gone. The nearest-deadline policy also selects against ordinary use — a caller on the default TTL is evicted before one holding the maximum TTL — so the entry dropped is the one least likely to belong to a key rotator. Measured: a paused key, plus enough long-TTL keys to fill the cap, and the paused key's write lands in the database.",
+      "severity": "MEDIUM",
+      "discovered": "2026-08-31T09:00:00Z",
+      "version": "2.5.8",
+      "file": "cpersona/session.py",
+      "pattern": "_MAX_PAUSED_SESSIONS",
+      "expected": "present",
+      "status": "open",
+      "category": "silent-failure",
+      "fix_sketch": "Fail safe instead: refuse a new pause once the map is full rather than dropping one already granted, or surface the eviction on the response of the write that outlived it. Refusing is the honest direction — an error the caller can read beats a guarantee that quietly stopped holding.",
+      "note": "Deferred from the 2.5.8 review. Reaching the cap needs that many distinct declared keys in one process, which no measured deployment approaches; the defect is the direction of the failure, not its likelihood."
+    },
+    {
+      "id": "bug-270",
+      "summary": "(LOW) The queue's task-to-session attribution is documented as never outliving its row (\"every delete/complete path drops its entry\"), and three paths delete queue rows without touching the map: agent-data deletion, a move-mode merge, and the stale-queue repair. The entries leak until the cap evicts them. No wrong pause decision follows — a reused row id is always overwritten before it is read — so the cost is cap pressure and an occasional early eviction, but the docstring and the design note both state a stronger invariant than the code holds. The test named for the invariant exercises only the completion and self-pause paths, so its name is broader than its body.",
+      "severity": "LOW",
+      "discovered": "2026-08-31T09:00:00Z",
+      "version": "2.5.8",
+      "file": "cpersona/tasks.py",
+      "pattern": "_task_sessions",
+      "expected": "present",
+      "status": "open",
+      "category": "doc-claim",
+      "fix_sketch": "Either drop the attribution on the three row-deleting paths, or narrow the claim in the docstring and the design note to the paths that actually hold it, and widen the test to cover whichever set is chosen.",
+      "note": "Deferred from the 2.5.8 review."
+    },
+    {
+      "id": "bug-271",
+      "summary": "(LOW) A keyless pause now reports `scope: \"process\"` with a docstring calling that \"the widest honest answer\", but since the pause became per-session the keyless bucket no longer reaches a declared session's writes. The word is no longer the widest radius, only the widest of the buckets — a caller that pauses keylessly for a benchmark can still be contaminated by a concurrent declared session's writes, which could not happen before. The tool description states this correctly; only the one-word `scope` value and the docstring behind it overstate.",
+      "severity": "LOW",
+      "discovered": "2026-08-31T09:00:00Z",
+      "version": "2.5.8",
+      "file": "cpersona/session.py",
+      "pattern": "still true and still the widest honest answer",
+      "expected": "present",
+      "status": "open",
+      "category": "doc-claim",
+      "fix_sketch": "Correct the docstring. Changing the reported value itself is a contract change and needs its own decision, since consumers branch on the two strings.",
+      "note": "Deferred from the 2.5.8 review. The behaviour is as designed; the finding is about the accuracy of one word."
+    },
+    {
+      "id": "bug-272",
+      "summary": "(LOW) One handler tests the raw `session_key` argument for truthiness instead of resolving it, so a whitespace-only value counts as declared and the response omits the shared-identity flag that every other surface would add. The resolver strips exactly so that a client template rendering an absent value cannot produce a bucket of its own; this call site bypasses that rule and is the only remaining place that does.",
+      "severity": "LOW",
+      "discovered": "2026-08-31T09:00:00Z",
+      "version": "2.5.8",
+      "file": "cpersona/maintenance_handlers.py",
+      "pattern": "not session_key",
+      "expected": "present",
+      "status": "open",
+      "category": "consistency",
+      "fix_sketch": "Resolve the argument through the session seam and branch on the resolved `declared` flag, as every other handler does.",
+      "note": "Deferred from the 2.5.8 review. Predates the stage 2 work; it became the sole deviation once that work made the seam canonical."
+    },
+    {
+      "id": "bug-273",
+      "summary": "(LOW) The pause-seam structural gate exempts its own module by base name rather than by path, so a `session.py` added inside a future sub-package would drop out of the scan silently. The companion test that checks the gate's reach asserts only that the top-level module is absent, so it would not notice.",
+      "severity": "LOW",
+      "discovered": "2026-08-31T09:00:00Z",
+      "version": "2.5.8",
+      "file": "tests/test_structural_gates.py",
+      "pattern": "path.name == _PAUSE_SEAM",
+      "expected": "present",
+      "status": "open",
+      "category": "gate-reach",
+      "fix_sketch": "Compare the path relative to the package root instead of the base name, and assert the exemption set by relative path in the reach test.",
+      "note": "Deferred from the 2.5.8 review."
     }
   ]
 }
