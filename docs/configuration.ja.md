@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:aaa890084985912b114700d15cc970e0a8385bcd -->
+<!-- i18n-source: docs/configuration.md@blob:454305964ed6898da7ac7736a17e29641870e1bb -->
 
 # 設定リファレンス
 
@@ -56,6 +56,7 @@
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | *(未設定)* | クライアントが認証しに行くべき issuer URL。空白またはカンマ区切り。1 つも列挙されていない間は discovery は無効のまま |
 | `CPERSONA_OAUTH_SCOPES` | *(未設定)* | 401 と `scopes_supported` で広告する scope。クライアントは要求されたとおりの scope を返してきて、authorization server は自分が定義しない scope を `invalid_scope` で拒否する — issuer が定義する scope だけを広告すること |
 | `CPERSONA_OAUTH_JWKS_URI` | *(未設定)* | このサーバーが metadata を読めない provider のための、issuer の署名鍵の所在。通常は issuer 自身の metadata から解決される。authorization server がちょうど 1 つのときだけ有効 |
+| `CPERSONA_ALIAS_LEDGER_FILE` | DB と同じ場所の `alias_ledger.json` | subject 別 alias 台帳の置き場所 — `"per_subject": true` の行の背後にある、サーバーが書く `(issuer, subject) → alias` の対応表 ([OAuth 設計 §12](OAUTH_DESIGN.md))。運用者が所有する ACL ファイルと違い、これはサーバーが書くため既定でデータベースの隣に置かれます |
 
 **discovery は明示的に有効化するまで無効です。** OAuth に対応したクライアントは
 RFC 9728 の metadata を探し、見つからなければ人間に client id を手で入力させる段まで
