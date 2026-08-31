@@ -9,7 +9,9 @@ a principal, and anything else is refused. Everything remains off unless configu
 The question this document left open — how a provider-minted identifier acquires grants — was
 settled as **per-client provisioning**, and §8 records the shape that took in the code. The
 constraint §9 states — a property of the model, not a gap in it — stood unresolved for a while and
-has since been answered without weakening the model: §12 records the per-subject boundary.
+has since been answered without weakening the model: §12 records the per-subject boundary. §13
+closes the operational end: a zero-configuration connection — the URL and nothing else — measured
+against the live deployment.
 
 The rejected routes are kept rather than deleted. A design record that lists only the choice
 leaves the next reader to rediscover why the other two were worse, and one of them looks cheapest
@@ -404,3 +406,44 @@ isolation this boundary already provides, at the cost of touching the storage la
 trade for the current line, and re-evaluatable when the schema is next open anyway. Enabling
 partitioning for one client changes nothing for any other row in the file; a deployment with no
 `per_subject` row runs byte-for-byte as before.
+
+## 13. Zero-configuration connection, measured
+
+**Decision: connecting is the URL and nothing else.** No pasted client id, no secret, no
+per-person setup. The connector platform does accept a pre-registered client id as static
+credentials — a legitimate option, and the stable-identifier problem it solves is real — but it
+was rejected here, because that id is a value an operator would have to hand to every person who
+connects. The reach this effort exists to buy (§9) is bounded by the worst step in the first-run
+experience, and "paste this second value too" is that step.
+
+Zero-configuration is only compatible with per-caller provisioning (§8) if the identifier a
+connection presents is stable. That was measured rather than assumed, in two steps against the
+live deployment (2026-08-31):
+
+- **Dynamic registration was turned off at the provider.** The provider's dashboard offers the
+  two registration eras as independent switches, so the deprecated path — which the connector
+  platform's own documentation says registers **a new client on every fresh connection** — is
+  closed structurally rather than tolerated. A legacy client that cannot present a metadata
+  document can no longer connect; every client this deployment serves can (§2).
+- **The connector was then deleted and re-added with only the URL.** Sign-in completed and a
+  scoped tool call passed **with the grant table untouched**. Under a verifier already measured
+  to refuse an identifier the grant table has never seen (§8), an untouched table passing a
+  scoped call is evidence that the re-registered client resolved to an identifier the table
+  already held: the provider mints its own identifier for a metadata-document client and keeps
+  it stable across re-registration. One grant row per client application is enough, written
+  once.
+
+The row is still written after first contact rather than before it: the hosted client's metadata
+URL is not published, so the first connection is observed — a refusal naming an unknown
+identifier, in the logs and in the denial itself (§11) — and then provisioned.
+Observation-then-provisioning is a one-time cost per client application, not per person; the
+per-person half is already carried by the subject boundary (§12).
+
+Account creation stays explicit. With social sign-in enabled at the provider, first contact is:
+paste the URL, choose a sign-in method, approve the identity provider's consent screen. The
+account in the tenant is the product of those two deliberate clicks — there is no silent
+enrollment step to disclose after the fact. What distribution does require is that the sign-in
+page carry the service's own name and a link to terms that say what is stored on the other side
+of consent; both are provider-dashboard configuration, and both are prerequisites to offering
+the URL beyond its current audience. The entry gate itself stays where §12 put it: the tenant's
+sign-up policy decides who can sign in at all.
