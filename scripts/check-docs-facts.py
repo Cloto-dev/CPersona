@@ -107,10 +107,14 @@ def measured_tool_count() -> int:
 
 
 def measured_project_version() -> str:
-    text = (ROOT / "pyproject.toml").read_text()
-    m = re.search(r'^version = "([^"]+)"$', text, re.M)
+    # 2.5.8: the version moved into the package and pyproject derives it from
+    # there (`[tool.hatch.version]`), so the source of truth is the module. Read
+    # it as text rather than importing: this script also runs where the package
+    # is not installed, and a literal is what the build itself parses.
+    text = (ROOT / "cpersona" / "__init__.py").read_text()
+    m = re.search(r'^__version__ = "([^"]+)"$', text, re.M)
     if not m:
-        fail("pyproject.toml: version literal not found — update this script")
+        fail("cpersona/__init__.py: __version__ literal not found — update this script")
         return ""
     return m.group(1)
 
