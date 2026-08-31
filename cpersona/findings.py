@@ -55,7 +55,9 @@ DEFAULT_PER_KIND_LIMIT = 5
 # registry default, or (fts_integrity / sqlite_integrity) one explicit value —
 # and tests/test_superauditor_findings.py pins that inventory against the
 # source, so a new escalation rule cannot appear without a tier entry.
-_TIERED_CHECKS = frozenset({"null_embedding", "null_episode_embedding", "schema_objects"})
+_TIERED_CHECKS = frozenset(
+    {"null_embedding", "null_episode_embedding", "schema_objects", "vector_index"}
+)
 
 _TIER_KINDS: dict[str, str] = {
     "null_embedding_expected": "info",
@@ -66,6 +68,12 @@ _TIER_KINDS: dict[str, str] = {
     # loss breaks a data guarantee (dedup uniqueness, FTS sync); the
     # performance / scoping indexes are declared warn on their own spec.
     "schema_objects_perf_index": "warn",
+    # vector_index: the registry default (info) covers the states that are not
+    # defects — no index built yet, or a tail that has grown past the rebuild
+    # threshold. The two the runner stamps warn are the ones where an index
+    # exists and has stopped being used: reads stay correct either way, so
+    # neither is critical, but silence is how they went unnoticed for a week.
+    "vector_index_degraded": "warn",
     # Not a probe — a probe that could not run (see module docstring).
     "check_crashed": "warn",
 }
@@ -116,6 +124,10 @@ def finding_kind(issue: dict) -> str:
         if stamped == "info":
             return f"{check}_expected"
         return check
+    if check == "vector_index":
+        # warn is the runner's stamp for "an index exists and is not being
+        # used"; the unstamped states are observations, not defects.
+        return "vector_index_degraded" if stamped == "warn" else "vector_index"
     # schema_objects: critical is the runner's own stamp for a guarantee-bearing
     # object; anything else is a performance index (warn, or info once the
     # repairable policy de-escalated it).

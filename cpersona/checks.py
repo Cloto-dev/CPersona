@@ -1849,6 +1849,128 @@ async def check_vector_fallback_config(db, agent_id: str = "", fix: bool = False
     ]
 
 
+# Below this many embedded rows the contiguous index is not worth mentioning:
+# its absence costs a scan that is already fast at that size, and an info line
+# every operator has to learn to ignore is worse than silence.
+INDEX_MATTERS_ROWS = 1000
+
+# A tail this large relative to the indexed rows means the rebuild is overdue.
+# The tail is read exactly on every query, so it is the design's own unit of
+# staleness: a late rebuild never returns a wrong answer, it grows this number
+# and the latency with it.
+INDEX_TAIL_RATIO = 0.2
+
+
+async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[dict]:
+    """Report what the contiguous embedding index is doing, or why it is not.
+
+    Every way that index can stop being used is silent by construction — that is
+    what makes falling back safe, and it is also what makes the condition
+    invisible. A file deleted, a file that no longer holds together, or a corpus
+    whose embedding width moved: in all three the answers stay correct and only
+    the latency changes, so nothing downstream has a reason to complain. Without
+    a line here, an index that died a week ago reads as "somehow not faster".
+
+    Report-only. Three states, deliberately not one:
+
+    - **absent** — the ordinary state before the first build and after a
+      deletion, and NOT a defect. Reported as ``info`` only once the corpus is
+      large enough for the index to be worth having; below that, silence.
+    - **unusable** — the file exists and does not hold together. ``warn``: reads
+      are still correct, so this is degradation rather than a broken contract,
+      but somebody has to hear about it.
+    - **dimension drift** — the corpus no longer matches what the index was built
+      for, which is what a model swap looks like from here. ``warn`` for the same
+      reason.
+
+    A fourth line reports a healthy index whose tail has grown past
+    ``INDEX_TAIL_RATIO``, which is the one form of staleness this design admits.
+    """
+    from cpersona import vector_index
+
+    iso = isolation_where(agent_id=agent_id or None)
+    embedded = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM memories WHERE embedding IS NOT NULL{iso.and_clause}",
+            iso.params,
+        )
+    )[0][0]
+
+    try:
+        index = vector_index.cached_index("memories")
+    except vector_index.IndexUnusable as exc:
+        return [
+            {
+                "type": "vector_index_unusable",
+                "severity": "warn",
+                "detail": str(exc),
+                "hint": "delete the file; it is a derived artifact and is rebuilt, never repaired",
+            }
+        ]
+
+    if index is None:
+        if embedded < INDEX_MATTERS_ROWS:
+            return []
+        return [
+            {
+                "type": "vector_index_absent",
+                "memories_with_local_embedding": embedded,
+                "hint": (
+                    "the local vector scan reads embeddings from SQLite row by row; "
+                    "building the contiguous index removes that cost"
+                ),
+            }
+        ]
+
+    # The widths the corpus actually holds. More than one means a model swap is
+    # in flight: the builder declines while that is true, because the live scan
+    # windows before it skips foreign-width rows and a single-width index cannot
+    # reproduce that window.
+    # Deliberately global, unlike the counts above: the builder declines while
+    # ANY row in the table carries another width, so an agent-scoped question
+    # would answer "no drift" about a corpus the builder is refusing. A width is
+    # not corpus content, so this discloses nothing agent-scoped (the bug-062
+    # rule is about sizes and contents).
+    all_axes = isolation_where(agent_id=None)
+    widths = {
+        r[0]
+        for r in await db.execute_fetchall(
+            f"SELECT DISTINCT length(embedding) FROM memories"
+            f" WHERE embedding IS NOT NULL{all_axes.and_clause}",
+            all_axes.params,
+        )
+    }
+    if widths and widths != {index.dim * 4}:
+        return [
+            {
+                "type": "vector_index_dimension_drift",
+                "severity": "warn",
+                "index_dim": index.dim,
+                "corpus_widths_bytes": sorted(widths),
+                "hint": (
+                    "the index is not being used; rebuild it once the corpus carries "
+                    "one embedding width again"
+                ),
+            }
+        ]
+
+    tail = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM memories WHERE id > ? AND embedding IS NOT NULL{iso.and_clause}",
+            (index.watermark, *iso.params),
+        )
+    )[0][0]
+    if index.count and tail > index.count * INDEX_TAIL_RATIO:
+        return [
+            {
+                "type": "vector_index_tail_grown",
+                "indexed_rows": index.count,
+                "rows_past_watermark": tail,
+                "hint": "rebuild the index; a long tail is read exactly on every query",
+            }
+        ]
+    return []
+
 class Check:
     """A registered health check: metadata + runner (see module docstring)."""
 
@@ -1901,6 +2023,7 @@ HEALTH_CHECKS: list[Check] = [
     Check("oversized_profile", "warn", True, check_oversized_profile),
     Check("anonymous_source", "info", False, check_anonymous_source),
     Check("vector_fallback_config", "info", False, check_vector_fallback_config),
+    Check("vector_index", "info", False, check_vector_index),
     Check("operating_context_parse", "warn", False, check_operating_context_parse),
     Check("operating_context_size", "info", False, check_operating_context_size),
 ]
