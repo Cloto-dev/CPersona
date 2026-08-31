@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:58edc397972c4e4f1604c78abc58cee42218118e -->
+<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:c64b903e3910bbb93fe779ae9c1b9e2cdea3c996 -->
 
 # 連続配置埋め込み索引
 
@@ -96,11 +96,14 @@ assert し、**故意に厳しくした索引でそれが赤くなること**を
 | ヘッダ | マジック、形式版、次元、dtype、行数、watermark、および埋め込みモデル・次元・スコアリング版にわたる fingerprint |
 | `embeddings` | `float32[count][dim]`、連続配置、正規順序 |
 | `ids` | `int64[count]` |
-| `project_code` / `channel_code` / `source_code` | `int32[count]`、ヘッダ内の小さな文字列表に intern |
+| `agent_code` / `project_code` / `channel_code` / `source_code` | `int32[count]`、ヘッダ内の小さな文字列表に intern |
 | `created_at` | 固定 19 バイト ASCII、列の正規形 `YYYY-MM-DD HH:MM:SS` |
 
-軸は低カーディナリティなので intern は安価です: 本番コーパスで project 12 種・
-channel 15 種・source id 38 種。軸一式で 1 行あたり 12 バイト、隣にある埋め込みは
+`agent_code` は isolation 述語が**等値で**比較する軸を担い、残る 3 つは小さな集合との
+比較になります。いずれにせよ行ごとの判定は整数の比較です。
+
+軸は低カーディナリティなので intern は安価です: 本番コーパスで agent 7 種・project 12 種・
+channel 15 種・source id 38 種。軸一式で 1 行あたり 16 バイト、隣にある埋め込みは
 3,072 バイトです。
 
 `source_code` が存在するのは、**カーディナリティを仮定せず実測したから**です。source

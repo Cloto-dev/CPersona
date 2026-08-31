@@ -101,12 +101,16 @@ A header followed by parallel arrays, all fixed-width:
 | Header | magic, format version, dimension, dtype, row count, watermark, and a fingerprint over the embedding model, the dimension and the scoring version |
 | `embeddings` | `float32[count][dim]`, contiguous, in canonical order |
 | `ids` | `int64[count]` |
-| `project_code`, `channel_code`, `source_code` | `int32[count]`, interned against small string tables in the header |
+| `agent_code`, `project_code`, `channel_code`, `source_code` | `int32[count]`, interned against small string tables in the header |
 | `created_at` | fixed 19-byte ASCII, the column's canonical `YYYY-MM-DD HH:MM:SS` form |
 
+`agent_code` carries the axis the isolation predicate compares for equality;
+the other three are compared against a small set. Either way the per-row test is
+an integer one.
+
 Interning is cheap because the axes are low-cardinality: a production corpus has
-12 distinct projects, 15 channels and 38 source ids. The whole axis set costs
-12 bytes per row next to 3,072 bytes of embedding.
+7 agents, 12 distinct projects, 15 channels and 38 source ids. The whole axis set
+costs 16 bytes per row next to 3,072 bytes of embedding.
 
 `source_code` exists because the cardinality was measured rather than assumed.
 The source filter is a prefix match against a JSON field, which looks like
