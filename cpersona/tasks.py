@@ -226,7 +226,14 @@ class MemoryTaskQueue:
                         cur = await db.execute(
                             "DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,)
                         )
-                        self._forget_session(task_id)
+                        # The attribution is NOT dropped here. This block is a
+                        # transaction: an insert that raises rolls the DELETE back and
+                        # the task row survives to be retried — but a dict mutation
+                        # does not roll back, so forgetting here would strand the
+                        # retry in the shared keyless bucket. A session that armed a
+                        # no-persist pause in the meantime would then have its episode
+                        # written anyway. Dropping it belongs on the paths that end the
+                        # task: the completion below, and _delete_task.
                         if cur.rowcount:
                             await memory_handlers._insert_episode_row(db, row)
                         else:

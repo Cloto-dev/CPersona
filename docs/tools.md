@@ -85,10 +85,18 @@ the form to use in CI. Cadence guidance is in the
 | `persistence_status` | Whether writes are paused, and how much TTL remains |
 
 Use these for benchmarking or throwaway exploration you do not want in the
-corpus. **The pause is process-wide, not per-session.** Under stdio, where the
-client owns its own process, that is effectively per-session; on a
-streamable-HTTP deployment one process serves every client, so pausing silences
-writes for all of them — and the other sessions are not told.
+corpus. **The blast radius follows `session_key`**, which each of the three
+reports back as `scope`. Declare a key on the pause and on the write calls it
+should cover, and the pause covers that key alone (`scope: "session"`); a
+session sending a different key is neither silenced by it nor able to clear it.
+The key is compared, never verified, so it partitions keys rather than callers —
+anyone sending the same string shares the pause.
+
+Omit the key and you arm the bucket every keyless caller shares
+(`scope: "process"`). Under stdio, where the client owns its own process, that
+bucket is the session; on a streamable-HTTP deployment one process serves every
+client, so a keyless pause silences writes for every other keyless session — and
+those sessions are not told.
 
 Two paths do not fit the `persisted: false` shape: `check_health` and
 `deep_check` are not blocked but downgrade to `fix=false`, and

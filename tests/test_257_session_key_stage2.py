@@ -615,6 +615,83 @@ async def test_attribution_does_not_outlive_the_row(clean_db, monkeypatch):
     assert dropped not in queue._task_sessions, "a dropped task kept its attribution"
 
 
+def test_the_literal_transport_key_is_not_a_declared_session():
+    """Sending ``TRANSPORT_KEY`` joins the shared bucket, so it is reported as one.
+
+    The module docstring says any caller may send any string, and names this one
+    explicitly. Resolving it as *declared* would make every consumer of the flag
+    describe the shared bucket as private: the pause would answer
+    ``scope: "session"`` while silencing every keyless caller — who could also
+    clear it — and the advisory would key its suppression per-session on state
+    the whole process shares. The bucket decides, not the caller's intent.
+    """
+    assert session.resolve_session_key(session.TRANSPORT_KEY) == (session.TRANSPORT_KEY, False)
+    assert session.resolve_session_key(f"  {session.TRANSPORT_KEY}  ") == (
+        session.TRANSPORT_KEY,
+        False,
+    )
+    # The scope it reports is the one a keyless caller gets, not "session".
+    armed = session.pause_for(*session.resolve_session_key(session.TRANSPORT_KEY), 120)
+    try:
+        assert armed["scope"] == "process"
+        keyless_key, keyless_declared = session.resolve_session_key(None)
+        assert session.is_paused_for(keyless_key), "the literal armed a different bucket"
+        assert session.pause_status_for(keyless_key, keyless_declared)["scope"] == "process"
+    finally:
+        session.resume_for(session.TRANSPORT_KEY, False)
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_insert_keeps_its_attribution(clean_db, monkeypatch):
+    """A transaction that rolls back must not strand the retry in the shared bucket.
+
+    The task-row DELETE and the episode INSERT share one transaction, so an
+    insert that raises rolls the row back into the queue to be retried. A dict
+    mutation does not roll back with it: dropping the attribution inside that
+    block would hand the retry to the keyless bucket, and a session that armed a
+    no-persist pause in the meantime would have its episode written anyway —
+    the exact write the pause exists to stop.
+    """
+    inserts = {"n": 0}
+    attributions: list[str] = []
+
+    async def fake_prepare(agent_id, payload, summary=""):
+        return {"agent_id": agent_id}
+
+    async def flaky_insert(db, row):
+        inserts["n"] += 1
+        if inserts["n"] == 1:
+            # The session goes no-persist while its queued work is in flight —
+            # the window the retry path exists to survive.
+            session.pause_for(A, True, 120)
+            raise RuntimeError("transient insert failure")
+
+    monkeypatch.setattr(memory_handlers, "_prepare_episode_row", fake_prepare)
+    monkeypatch.setattr(memory_handlers, "_insert_episode_row", flaky_insert)
+
+    queue = tasks.MemoryTaskQueue()
+    task_id = await queue.enqueue("archive_episode", "agent-A", [{"content": "x"}], session_key=A)
+    assert queue._task_sessions[task_id] == A
+
+    # _drain re-fetches until the queue is empty, so the retry happens inside this call.
+    original_session_for = queue._session_for
+    queue._session_for = lambda tid: attributions.append(original_session_for(tid)) or attributions[-1]
+    await _drain_once(queue)
+
+    assert attributions[0] == A, "the first attempt was not charged to the enqueuing session"
+    assert len(attributions) > 1, "the failed insert did not leave the row queued for retry"
+    assert attributions[1] == A, (
+        "the rolled-back transaction dropped the attribution, so the retry was judged "
+        "against the shared keyless bucket instead of the session that queued it"
+    )
+    assert inserts["n"] == 1, (
+        "the retry wrote the episode despite the pause armed by the session that "
+        "queued the work"
+    )
+    rows = await clean_db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks")
+    assert rows[0][0] == 0, "the task the pause dropped was left in the queue"
+
+
 def test_the_attribution_map_is_bounded():
     """Bounded for the same reason the pause map is, and by its own cap."""
     queue = tasks.MemoryTaskQueue()

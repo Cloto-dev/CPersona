@@ -63,10 +63,20 @@ def resolve_session_key(declared: str | None) -> tuple[str, bool]:
     recorded as an identity claim. ``strip()`` is what makes "  " undeclared
     rather than a bucket of its own, which matters because a client template
     that renders an absent value can easily emit whitespace.
+
+    One string is not a key: :data:`TRANSPORT_KEY` itself. A caller may send it
+    — the docstring above says any caller may send any string — and doing so
+    lands in the bucket every keyless caller already shares. Returning
+    ``declared=True`` for it would make every consumer of this flag describe
+    that bucket as private: the pause would report ``scope: "session"`` while
+    silencing every keyless caller, who could also clear it, and the advisory
+    would key its suppression per-session on shared state. The bucket, not the
+    caller's intent, decides — so the literal resolves as undeclared, which is
+    the true statement about where the call landed.
     """
     if isinstance(declared, str):
         stripped = declared.strip()
-        if stripped:
+        if stripped and stripped != TRANSPORT_KEY:
             return stripped, True
     return TRANSPORT_KEY, False
 
@@ -169,7 +179,10 @@ def resume_for(session_key: str, declared: bool) -> dict:
     """Clear this key's pause immediately.
 
     ``was_active`` reports whether this key's bucket was paused before the call
-    (after decay) — a caller cannot clear, or learn about, another session's.
+    (after decay). A caller reaches the bucket its key names and no other — but
+    "no other" is a statement about keys, not about people: the key is compared,
+    never verified, so anyone who sends the same string clears the same pause and
+    reads the same TTL. That is the partition, and it is the whole of it.
     """
     _decay()
     was_active = _pauses.pop(session_key, None) is not None

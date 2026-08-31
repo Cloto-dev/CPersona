@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ACL_DESIGN.md@blob:1c14507943643790a3e3c1fb73c31083f57b1dd6 -->
+<!-- i18n-source: docs/ACL_DESIGN.md@blob:92aa585e334b61f168bfbc4bfe10b44e971d2d03 -->
 
 # クライアント別ケーパビリティ / ACL 設計
 
@@ -254,7 +254,7 @@ stdio トランスポートには解決すべき資格情報がありません �
 | `export_memories` | read-write。**`CPERSONA_EXPORT_DIR` が未設定のあいだ (出荷時の既定) は、要求が `"*"` に格上げされます** — パス引数はファイルシステム上のどこでも呼び出し側が選べるため、影響範囲は 1 エージェントのデータでは済みません (§9-D4、マージ前レビューによる 2 つ目の修正) | `agent_id` 引数 |
 | `import_memories` | read-write。`CPERSONA_EXPORT_DIR` が未設定のあいだは同じ `"*"` への格上げ | `target_agent_id`。空 = 「ファイルに記録されたとおり」→ `"*"` |
 | `merge_memories` | `copy`: read(source) + read-write(target)。`move`: **両方**に read-write (move は source の行を削除するため) | `source_agent_id` + `target_agent_id` |
-| `pause_persistence`, `resume_persistence` | `"*"` に対する read-write (プロセス全体のスイッチであり、全エージェントの書き込みに影響する) | global |
+| `pause_persistence`, `resume_persistence` | `"*"` に対する read-write — 要求は呼び出し元が省略しうる引数に依存できず、キーなしの形は依然として全エージェントにわたってキーなし呼び出し元全員の書き込みを黙らせる。`session_key` を宣言すると*効果*はそのキーに狭まるが、*要求*は狭まらない | global |
 | `persistence_status`, `get_queue_status`, `get_operating_context` | スコープなしの read: **認証済みの principal すべて**に許可 (エージェント別のデータを持たないため。§9-D5) | none |
 
 この表が依拠している解決規則:
