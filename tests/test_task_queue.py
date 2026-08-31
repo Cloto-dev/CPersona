@@ -259,7 +259,7 @@ async def test_fifo_ordering():
     original_prepare = memory_handlers._prepare_episode_row
     original_insert = memory_handlers._insert_episode_row
 
-    async def mock_update_profile(agent_id, history):
+    async def mock_update_profile(agent_id, history, session_key=""):
         processed.append(("update_profile", agent_id))
         return {"ok": True, "profiles_updated": 0}
 

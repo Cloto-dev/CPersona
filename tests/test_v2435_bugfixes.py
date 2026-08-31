@@ -25,12 +25,12 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_v2435.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
+from cpersona import session  # noqa: E402
 from cpersona import admin_handlers  # noqa: E402
 from cpersona import maintenance_handlers  # noqa: E402
 from cpersona import memory_handlers  # noqa: E402
 from cpersona import server  # noqa: E402
 from cpersona import tasks  # noqa: E402
-from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
 
@@ -40,7 +40,7 @@ def _msg(content: str, msg_id: str = "") -> dict:
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     await db.execute("DELETE FROM memories")
     await db.execute("DELETE FROM episodes")
@@ -49,7 +49,7 @@ async def setup_db():
     await db.commit()
     tasks._task_queue = None
     yield
-    no_persist.resume()
+    session.reset_pauses_for_tests()
 
 
 # --------------------------------------------------------------------------

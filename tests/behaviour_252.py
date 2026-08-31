@@ -64,8 +64,8 @@ os.environ.setdefault("CPERSONA_OPERATING_CONTEXT", "off")
 
 import numpy as np  # noqa: E402
 
+from cpersona import session  # noqa: E402
 from cpersona import admin_handlers, maintenance_handlers, memory_handlers, utils, vector  # noqa: E402
-from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
@@ -130,9 +130,12 @@ def pack(text: str) -> bytes:
 #       Seeded rows carry Jan-1-2026 timestamps; without a freeze the score
 #       moves every day.
 #
-#   _vendored_mcp_common.no_persist._now() = datetime.now(UTC)
+#   session._now() = datetime.now(UTC)
 #       -- feeds the "reason" string's TTL-remaining suffix ("30m left") that
-#       make_skipped_response embeds in the store no-persist response.
+#       session.make_skipped_response substitutes into the store no-persist
+#       response. It is read TWICE for that one string (arming the pause, then
+#       labelling the remainder), so both reads must see the same instant or the
+#       suffix drifts to "29m left" on a slow run.
 #
 # Marking those output fields `Scenario.volatile` would work but is exactly the
 # wrong shape for #362: `confidence.score` and the no-persist response body are
@@ -182,8 +185,9 @@ def _install_frozen_clock(ctx: Ctx) -> None:
 
       cpersona.memory_handlers            do_store's timestamp default (line 86)
       cpersona.utils                       _compute_confidence's `now` (line 145)
-      cpersona._vendored_mcp_common.no_persist  _now() → TTL label in the
-                                          no-persist skipped-response body
+      cpersona.session                     _now() → the pause deadline and the
+                                          TTL label in the no-persist
+                                          skipped-response body
 
     admin_handlers.py also uses ``datetime.now`` (calibration sidecar / export
     header), but those values are written to files, not into the observation
@@ -197,7 +201,7 @@ def _install_frozen_clock(ctx: Ctx) -> None:
     """
     ctx.patch(memory_handlers, "datetime", _FrozenDatetime)
     ctx.patch(utils, "datetime", _FrozenDatetime)
-    ctx.patch(no_persist, "datetime", _FrozenDatetime)
+    ctx.patch(session, "datetime", _FrozenDatetime)
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +334,7 @@ class Scenario:
 
 
 async def _reset(db) -> None:
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
         # Autoincrement counters survive DELETE, so row ids would drift between
@@ -1242,13 +1246,13 @@ async def _(ctx):
     )
 
 
-# `_reset` calls `no_persist.resume()` before the scenario body runs, so the
+# `_reset` calls `session.reset_pauses_for_tests()` before the scenario body runs, so the
 # pause() below always fires on a clean state. Frozen clock makes the "reason"
 # TTL suffix deterministic ("30m left" for ttl=1800).
 @scenario("store-no-persist-paused", "store-recall-health", "store: no_persist paused — {id:'no-persist', persisted:false, dry_run:true, reason:'…30m left…'} shape (bug-141)")
 async def _(ctx):
     install_local(ctx)
-    no_persist.pause(1800)
+    session.pause_for(session.TRANSPORT_KEY, False, 1800)
     return await memory_handlers.do_store(
         "s1", {"content": "should not persist", "timestamp": "2026-07-22T00:00:00+00:00"}
     )
@@ -1442,7 +1446,7 @@ async def _(ctx):
 #     argument applies -- 2.5.2b1 refactors both handlers.
 #
 # WALL CLOCK REACH. `_install_frozen_clock` (installed unconditionally by
-# `observe`) already covers memory_handlers / utils / no_persist. The health
+# `observe`) already covers memory_handlers / utils / session. The health
 # checks read the clock only via:
 #
 #   * SQL `datetime('now', ...)` in check_stale_pending_tasks and in

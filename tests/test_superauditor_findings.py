@@ -23,8 +23,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from cpersona import session
 from cpersona import acl, checks, findings, maintenance_handlers, server, vector
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.database import get_db
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,7 +38,7 @@ AGENT_B = "findings-agent-b"
 async def db(monkeypatch):
     """A clean database with no embedding client, so the null-embedding checks
     sit on their info tier unless a test installs a client."""
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     monkeypatch.setattr(vector, "_embedding_client", None)
     conn = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):

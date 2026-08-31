@@ -12,6 +12,7 @@ import os
 import pytest
 import pytest_asyncio
 
+from cpersona import session
 from cpersona import admin_handlers, database, memory_handlers, tasks
 from cpersona.database import connection, get_db, transaction
 
@@ -273,7 +274,7 @@ async def test_drain_treats_failure_dict_as_failure(clean_db, monkeypatch):
     monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
     calls = {"n": 0}
 
-    async def failing_update_profile(agent_id, payload):
+    async def failing_update_profile(agent_id, payload, session_key=""):
         calls["n"] += 1
         return {"ok": False, "error": "synthetic failure"}
 
@@ -567,15 +568,14 @@ async def test_lock_memory_vanished_row_is_an_error(clean_db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_persist_skip_nulls_action_id_keys(clean_db):
-    from cpersona._vendored_mcp_common import no_persist
-
-    no_persist.pause(ttl_seconds=60)
+    
+    session.pause_for(session.TRANSPORT_KEY, False, 60)
     try:
         res = await admin_handlers.do_delete_memory(12345)
         assert res["persisted"] is False
         assert res.get("deleted_id") is None, "skipped delete echoed a truthy deleted_id"
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
 
 
 # ---------------------------------------------------------------------------
@@ -773,25 +773,24 @@ async def test_import_rejects_file_cut_at_profile_boundary(clean_db, tmp_path):
 
 @pytest.mark.asyncio
 async def test_no_persist_delete_shape_matches_real_response(clean_db):
-    from cpersona._vendored_mcp_common import no_persist
-
+    
     real = await admin_handlers.do_delete_agent_data("shape-agent")
-    no_persist.pause(ttl_seconds=60)
+    session.pause_for(session.TRANSPORT_KEY, False, 60)
     try:
         skipped = await admin_handlers.do_delete_agent_data("shape-agent")
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
     missing = {k for k in real if k not in skipped}
     assert not missing, f"no-persist response lost keys: {missing}"
 
     # Same drift class, merge edition (bug-111 sibling): compare against a real
     # copy-mode merge's unconditional keys.
     real_merge = await admin_handlers.do_merge_memories("shape-a", "shape-b")
-    no_persist.pause(ttl_seconds=60)
+    session.pause_for(session.TRANSPORT_KEY, False, 60)
     try:
         skipped_merge = await admin_handlers.do_merge_memories("shape-a", "shape-b")
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
     missing_merge = {k for k in real_merge if k not in skipped_merge}
     assert not missing_merge, f"merge no-persist response lost keys: {missing_merge}"
 

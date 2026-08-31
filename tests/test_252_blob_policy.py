@@ -30,10 +30,10 @@ os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
+from cpersona import session  # noqa: E402
 from cpersona import checks  # noqa: E402
 from cpersona import memory_handlers  # noqa: E402
 from cpersona import vector  # noqa: E402
-from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 from cpersona.config import local_blobs_stored  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
@@ -162,7 +162,7 @@ def _writer_policy(monkeypatch, mode: str, store_blob: bool):
 
 async def _store_and_read_blob(content: str) -> tuple[dict, bytes | None]:
     """Drive the real do_store and return its response plus the stored BLOB."""
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     res = await memory_handlers.do_store(AGENT, {"content": content, "timestamp": "t"})
     assert res["result"] == "stored", res
     db = await get_db()

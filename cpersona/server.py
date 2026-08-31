@@ -105,9 +105,9 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-async def do_update_profile_or_queue(agent_id: str, profile: str = "") -> dict:
+async def do_update_profile_or_queue(agent_id: str, profile: str = "", session_key: str = "") -> dict:
     """Save pre-computed profile. Queue is bypassed since no LLM processing is needed."""
-    return await do_update_profile(agent_id, profile=profile)
+    return await do_update_profile(agent_id, profile=profile, session_key=session_key)
 
 
 async def do_archive_episode_or_queue(
@@ -118,6 +118,7 @@ async def do_archive_episode_or_queue(
     resolved: bool | None = None,
     project_id: str = "",
     channel: str = "",
+    session_key: str = "",
 ) -> dict:
     """Enqueue episode archival if task queue is enabled, otherwise run synchronously.
 
@@ -127,10 +128,12 @@ async def do_archive_episode_or_queue(
     # Gate the wrapper too: enqueue() itself writes to pending_memory_tasks,
     # so guarding only the synchronous do_archive_episode would still let the
     # queue path leak rows into SQLite.
-    if no_persist.is_paused():
-        return no_persist.make_skipped_response(
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
             {"ok": True, "queued": False, "task_id": None, "episode_id": None, "id": 0},
             "archive_episode",
+            key,
         )
     if summary:
         return await do_archive_episode(
@@ -141,6 +144,7 @@ async def do_archive_episode_or_queue(
             resolved=resolved,
             project_id=project_id,
             channel=channel,
+            session_key=session_key,
         )
     # Server-side summary synthesis was removed prior to v2.4.10 (the queue no
     # longer has an LLM to turn raw history into a summary). Enqueuing an
@@ -187,7 +191,13 @@ def _oc_reject(error: str) -> dict:
     }
 
 
-async def do_store_boundary(agent_id: str, message: dict, channel: str = "", project_id: str = "") -> dict:
+async def do_store_boundary(
+    agent_id: str,
+    message: dict,
+    channel: str = "",
+    project_id: str = "",
+    session_key: str = "",
+) -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
         # b1-1: `result` is total over every store response, so the gate refusal
@@ -195,7 +205,9 @@ async def do_store_boundary(agent_id: str, message: dict, channel: str = "", pro
         # branches on `result` alone and never has to know the gate exists.
         # `error` is kept for the shape the other five gated tools share.
         return {**_oc_reject(error), "result": "rejected", "reason": error}
-    result = await do_store(agent_id, message, channel=channel, project_id=resolved)
+    result = await do_store(
+        agent_id, message, channel=channel, project_id=resolved, session_key=session_key
+    )
     return _oc_annotate(result, project_id, resolved, warning)
 
 
@@ -207,6 +219,7 @@ async def do_archive_episode_boundary(
     resolved: bool | None = None,
     project_id: str = "",
     channel: str = "",
+    session_key: str = "",
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
@@ -224,6 +237,7 @@ async def do_archive_episode_boundary(
         resolved=resolved,
         project_id=pid,
         channel=channel,
+        session_key=session_key,
     )
     return _oc_annotate(result, project_id, pid, warning)
 
@@ -465,55 +479,57 @@ _SESSION_KEY_PROPERTY = {
     "default": "",
 }
 
+# Arm D of the stage 2 cost decision (design §6): the full text above is kept only
+# on recall / recall_with_context, where "does this filter which memories I can
+# see?" is the question a reader actually arrives with. Every other keyed tool
+# carries this compressed form. It keeps the clause that prevents that misreading
+# — dropping it is what makes arm C cheaper — and drops the elaboration around it.
+# Measured on the serialized tool list: 509 chars per tool for the full text, 289
+# for this one. That difference across twenty tools is what makes stage 2
+# affordable; see docs/SESSION_IDENTITY_DESIGN.md §6 for the arms.
+_SESSION_KEY_PROPERTY_SHORT = {
+    "type": "string",
+    "description": (
+        "Opaque session identity you declare: a partition hint, not authentication "
+        "and not a data filter. Selects which no-persist pause applies to this call. "
+        "Omit to share one bucket with every caller that omits it. Full text on "
+        "recall."
+    ),
+    "default": "",
+}
+
 # Session no-persist controls — registered first for discoverability.
 async def do_pause_persistence(
     ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS, session_key: str = ""
 ) -> dict:
-    """Pause persistence for this MCP server process for a TTL window.
+    """Pause persistence for the caller's session (or the shared bucket) for a TTL window.
 
-    ``session_key`` does not scope the pause — it records who armed it, so a later
-    caller that declares the same key can be told the pause is its own rather than a
-    parallel session's. The switch itself stays process-wide (see the C2 note below).
+    ``session_key`` scopes the pause: a declared key silences that session's writes and
+    nobody else's, and the response says so in ``scope``. A caller that declares nothing
+    lands in the one bucket every keyless caller shares — which under stdio is the
+    session, and under the shared HTTP transport is still process-wide.
     """
     key, declared = resolve_session_key(session_key)
     try:
-        result = no_persist.pause(ttl_seconds=ttl_seconds)
+        return session.pause_for(key, declared, ttl_seconds)
     except ValueError as e:
         return error_response(str(e))
-    session.record_pause_owner(key, declared)
-    # C2: the no-persist flag is a single process-global attribute, not
-    # per-session. Under the streamable-HTTP transport one process serves every
-    # connected client, so a pause here silences writes for all of them. Surface
-    # that blast radius explicitly rather than letting callers assume it is
-    # scoped to their own session.
-    result["scope"] = "process"
-    result.update(session.pause_ownership(key, declared))
-    return result
 
 
 async def do_resume_persistence(session_key: str = "") -> dict:
-    """Re-enable persistence immediately, clearing any active TTL.
+    """Re-enable persistence immediately, clearing this bucket's active TTL.
 
-    Resume is not owner-gated: any caller may clear the pause, exactly as before. A
-    caller that declares a key is told whose pause it just cleared, which is the point
-    of recording an owner at all.
+    A caller clears its own bucket only: ``was_active`` reports whether *this* key was
+    paused, and a declared caller can neither clear nor observe another session's pause.
     """
     key, declared = resolve_session_key(session_key)
-    ownership = session.pause_ownership(key, declared)
-    result = no_persist.resume()
-    session.clear_pause_owner()
-    result["scope"] = "process"  # C2: process-global, see do_pause_persistence.
-    result.update(ownership)
-    return result
+    return session.resume_for(key, declared)
 
 
 async def do_persistence_status(session_key: str = "") -> dict:
-    """Report whether write tools are currently being skipped, and the TTL remaining."""
+    """Report whether this caller's writes are currently being skipped, and the TTL left."""
     key, declared = resolve_session_key(session_key)
-    result = no_persist.status()
-    result["scope"] = "process"  # C2: process-global, see do_pause_persistence.
-    result.update(session.pause_ownership(key, declared))
-    return result
+    return session.pause_status_for(key, declared)
 
 
 registry.auto_tool(
@@ -540,12 +556,14 @@ registry.auto_tool(
     "repairs_skipped: true). Read tools (recall, list_*, get_profile, etc.) still "
     "answer normally, except that recall suppresses its recall_count / "
     "last_recalled_at bump — a write that would otherwise move ranking state during "
-    "a paused session. **The pause is PROCESS-WIDE, not per-session (response `scope`: "
-    '"process"): the flag is one module-global on the server process. On a '
-    "streamable-HTTP deployment a single process serves every connected client, so "
-    "pausing here silences writes for ALL connected sessions until resume or TTL "
-    "elapse — and the other sessions get no signal. Under stdio (one process per "
-    "client) it is effectively session-scoped.** This affects only this MCP server "
+    "a paused session. **Blast radius follows session_key (response `scope`). Pass the "
+    'same session_key here and on your write calls and the pause is yours alone '
+    '(`scope: "session"`): no other session is silenced, and none can clear it. Omit '
+    'it and you arm the bucket every keyless caller shares (`scope: "process"`) — on a '
+    "streamable-HTTP deployment a single process serves every connected client, so a "
+    "keyless pause silences writes for every other keyless session until resume or TTL "
+    "elapse, and those sessions get no signal. Under stdio (one process per client) "
+    "that bucket is the session.** This affects only this MCP server "
     "(cpersona); call cscheduler's pause_persistence too if you want both paused. "
     "Use for benchmarking, AB testing, or ephemeral exploration where memory "
     "contamination must be avoided. Default TTL: 1800 seconds (30 minutes); upper "
@@ -560,7 +578,7 @@ registry.auto_tool(
                 "minimum": 1,
                 "maximum": no_persist.MAX_TTL_SECONDS,
             },
-            "session_key": _SESSION_KEY_PROPERTY,
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
     },
     do_pause_persistence,
@@ -570,12 +588,13 @@ registry.auto_tool(
 
 registry.auto_tool(
     "resume_persistence",
-    "Re-enable persistence immediately, clearing any active no-persist TTL. "
-    "Returns was_active=true if persistence was paused before this call. **The "
-    'flag is PROCESS-WIDE (response `scope`: "process"): on a streamable-HTTP '
-    "deployment this re-enables writes for every connected session sharing the "
-    "process, not just the caller's.**",
-    {"type": "object", "properties": {"session_key": _SESSION_KEY_PROPERTY}},
+    "Re-enable persistence immediately, clearing this caller's active no-persist TTL. "
+    "Returns was_active=true if THIS bucket was paused before the call. **It clears "
+    "only the bucket session_key selects (response `scope`): with a session_key, your "
+    "own pause and no other session's; without one, the shared keyless bucket, which "
+    "on a streamable-HTTP deployment re-enables writes for every other keyless session "
+    "too.**",
+    {"type": "object", "properties": {"session_key": _SESSION_KEY_PROPERTY_SHORT}},
     do_resume_persistence,
     [("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
@@ -584,10 +603,12 @@ registry.auto_tool(
 registry.auto_tool(
     "persistence_status",
     "Report whether persistence is currently paused and the TTL remaining (in "
-    'seconds). The reported state is PROCESS-WIDE (response `scope`: "process"): '
-    "on a streamable-HTTP deployment it reflects the one flag shared by every "
-    "connected session, so `paused: true` may have been set by a different session.",
-    {"type": "object", "properties": {"session_key": _SESSION_KEY_PROPERTY}},
+    "seconds). It reports the bucket session_key selects (response `scope`), not the "
+    "server as a whole: with a session_key it answers for your session only, so "
+    "`paused: false` here does not mean no other session is paused. Without one it "
+    "reflects the bucket every keyless caller shares, which on a streamable-HTTP "
+    "deployment means `paused: true` may have been armed by a different keyless session.",
+    {"type": "object", "properties": {"session_key": _SESSION_KEY_PROPERTY_SHORT}},
     do_persistence_status,
     [("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=True),
@@ -782,11 +803,18 @@ registry.auto_tool(
                     + _AUTO_PROJECT_ID_CLAUSE
                 ),
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["agent_id", "message"],
     },
     do_store_boundary,
-    [("agent_id", str), ("message", dict), ("channel", str, ""), ("project_id", str, "")],
+    [
+        ("agent_id", str),
+        ("message", dict),
+        ("channel", str, ""),
+        ("project_id", str, ""),
+        ("session_key", str, ""),
+    ],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
@@ -1037,11 +1065,12 @@ registry.auto_tool(
                     "the response says truncated:true when the cap cut it."
                 ),
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["agent_id", "profile"],
     },
     do_update_profile_or_queue,
-    [("agent_id", str), ("profile", str, "")],
+    [("agent_id", str), ("profile", str, ""), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
 )
 
@@ -1082,6 +1111,7 @@ registry.auto_tool(
                     "whose channel matches; this powers the per-channel episodic loop."
                 ),
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["agent_id", "summary"],
     },
@@ -1094,6 +1124,7 @@ registry.auto_tool(
         ("resolved", bool, None),
         ("project_id", str, ""),
         ("channel", str, ""),
+        ("session_key", str, ""),
     ],
     # bug-064: NOT idempotent — do_archive_episode does a bare INSERT with no OR IGNORE and
     # no unique constraint, so every call appends a new episode. idempotentHint=True falsely
@@ -1169,11 +1200,12 @@ registry.auto_tool(
         "type": "object",
         "properties": {
             "agent_id": {"type": "string", "description": "Agent ID whose data should be purged"},
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["agent_id"],
     },
     do_delete_agent_data,
-    [("agent_id", str)],
+    [("agent_id", str), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
@@ -1198,6 +1230,7 @@ registry.auto_tool(
             # boundary instead of silently taking the percentile branch.
             "method": {"type": "string", "enum": list(config.CALIBRATE_METHODS), "description": "'separation' (default; two-population — learns the operating point from null pairs vs temporally-adjacent same-session positives, falling back to nearest-neighbour when too few exist), 'percentile', or 'zscore'"},
             "percentile": {"type": "number", "description": "Null-distribution quantile for method='percentile' (default: 0.95, higher = stricter)"},
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["agent_id"],
     },
@@ -1208,6 +1241,7 @@ registry.auto_tool(
         ("z_factor", float, 0),
         ("method", str, ""),
         ("percentile", float, 0),
+        ("session_key", str, ""),
     ],
     # Mutates the agent's persisted calibration state; each run redraws the
     # sample, so repeating it is not idempotent (ACL_DESIGN.md §6 survey gap).
@@ -1240,6 +1274,7 @@ registry.auto_tool(
                 "description": "Raw specificity weight; overrides the named precision when > 0.",
                 "default": 0,
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["agent_id"],
     },
@@ -1248,6 +1283,7 @@ registry.auto_tool(
         ("agent_id", str),
         ("precision", str, ""),
         ("beta", float, 0),
+        ("session_key", str, ""),
     ],
     # Writes the agent's beta override and recalibrates its gate; setting the
     # same precision twice lands in the same state (ACL_DESIGN.md §6 survey gap).
@@ -1288,11 +1324,12 @@ registry.auto_tool(
         "properties": {
             "agent_id": {"type": "string", "description": "Agent ID for ownership verification (injected by kernel)"},
             "memory_id": {"type": "integer", "description": "Memory ID to delete"},
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["memory_id"],
     },
     do_delete_memory,
-    [("memory_id", int), ("agent_id", str)],
+    [("memory_id", int), ("agent_id", str), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
@@ -1304,11 +1341,12 @@ registry.auto_tool(
         "properties": {
             "agent_id": {"type": "string", "description": "Agent ID for ownership verification (injected by kernel)"},
             "episode_id": {"type": "integer", "description": "Episode ID to delete"},
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["episode_id"],
     },
     do_delete_episode,
-    [("episode_id", int), ("agent_id", str)],
+    [("episode_id", int), ("agent_id", str), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
@@ -1327,11 +1365,12 @@ registry.auto_tool(
             "agent_id": {"type": "string", "description": "Agent ID for ownership verification"},
             "memory_id": {"type": "integer", "description": "Memory ID to update"},
             "content": {"type": "string", "description": "New content for the memory"},
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["memory_id", "content"],
     },
     do_update_memory,
-    [("memory_id", int), ("content", str), ("agent_id", str)],
+    [("memory_id", int), ("content", str), ("agent_id", str), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
@@ -1343,11 +1382,12 @@ registry.auto_tool(
         "properties": {
             "agent_id": {"type": "string", "description": "Agent ID for ownership verification"},
             "memory_id": {"type": "integer", "description": "Memory ID to lock"},
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["memory_id"],
     },
     do_lock_memory,
-    [("memory_id", int), ("agent_id", str)],
+    [("memory_id", int), ("agent_id", str), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
@@ -1359,11 +1399,12 @@ registry.auto_tool(
         "properties": {
             "agent_id": {"type": "string", "description": "Agent ID for ownership verification"},
             "memory_id": {"type": "integer", "description": "Memory ID to unlock"},
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["memory_id"],
     },
     do_unlock_memory,
-    [("memory_id", int), ("agent_id", str)],
+    [("memory_id", int), ("agent_id", str), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )
 
@@ -1435,11 +1476,12 @@ registry.auto_tool(
                 "description": "Count records without writing to DB (preview mode)",
                 "default": False,
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["input_path"],
     },
     do_import_memories,
-    [("input_path", str), ("target_agent_id", str, ""), ("dry_run", bool, False)],
+    [("input_path", str), ("target_agent_id", str, ""), ("dry_run", bool, False), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
@@ -1474,6 +1516,7 @@ registry.auto_tool(
                 "description": "Preview merge without writing to DB",
                 "default": False,
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["source_agent_id", "target_agent_id"],
     },
@@ -1484,6 +1527,7 @@ registry.auto_tool(
         ("strategy", str, "skip"),
         ("mode", str, "copy"),
         ("dry_run", bool, False),
+        ("session_key", str, ""),
     ],
     # bug-078: annotations must reflect the WORST reachable behavior. mode='move'
     # ends with do_delete_agent_data(source) — the same irreversible whole-agent wipe
@@ -1542,10 +1586,11 @@ registry.auto_tool(
                 "description": "Registry check names to run (empty = all). See "
                 "cpersona.checks.HEALTH_CHECK_NAMES.",
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
     },
     do_check_health,
-    [("agent_id", str, ""), ("fix", bool, False), ("checks", list, [])],
+    [("agent_id", str, ""), ("fix", bool, False), ("checks", list, []), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 
@@ -1637,11 +1682,12 @@ registry.auto_tool(
                 "items": {"type": "string"},
                 "description": "Checks to run (empty = all). Options: anonymous_source, short_content, stale_profile, orphaned_episodes, calibration_staleness, near_duplicate",
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": ["agent_id"],
     },
     do_deep_check,
-    [("agent_id", str), ("fix", bool, False), ("checks", list, [])],
+    [("agent_id", str), ("fix", bool, False), ("checks", list, []), ("session_key", str, "")],
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 
@@ -1675,11 +1721,17 @@ registry.auto_tool(
                 "description": "Also move channel='discord' rows with no snowflake session_id to channel='' (global). Default false.",
                 "default": False,
             },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
         "required": [],
     },
     do_migrate_channel_axis,
-    [("agent_id", str, ""), ("dry_run", bool, True), ("globalize_unrecoverable", bool, False)],
+    [
+        ("agent_id", str, ""),
+        ("dry_run", bool, True),
+        ("globalize_unrecoverable", bool, False),
+        ("session_key", str, ""),
+    ],
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 

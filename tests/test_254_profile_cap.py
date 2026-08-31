@@ -20,8 +20,8 @@ import json
 import pytest
 import pytest_asyncio
 
+from cpersona import session
 from cpersona import admin_handlers, checks, config, memory_handlers, utils
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.database import get_db
 
 AGENT = "profile-cap-agent"
@@ -29,7 +29,7 @@ AGENT = "profile-cap-agent"
 
 @pytest_asyncio.fixture
 async def db():
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     conn = await get_db()
     for table in ("memories", "episodes", "profiles"):
         await conn.execute(f"DELETE FROM {table}")

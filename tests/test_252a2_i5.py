@@ -21,9 +21,9 @@ _tmpdir = tempfile.mkdtemp()
 os.environ["CPERSONA_DB_PATH"] = os.path.join(_tmpdir, "test_252a2_i5.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
+from cpersona import session  # noqa: E402
 from cpersona import config  # noqa: E402
 from cpersona import server  # noqa: E402
-from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 
 
 # ============================================================
@@ -92,9 +92,9 @@ def test_public_parse_wrappers_match_private(monkeypatch):
 @pytest.fixture(autouse=True)
 def _reset_no_persist():
     """Guarantee the process-global no-persist flag is clear around each test."""
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     yield
-    no_persist.resume()
+    session.reset_pauses_for_tests()
 
 
 @pytest.mark.asyncio

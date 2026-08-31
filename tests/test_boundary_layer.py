@@ -81,7 +81,7 @@ async def test_store_boundary_forwards_every_arg_to_do_store(monkeypatch):
     result = await server.do_store_boundary("a-1", message, channel="c-1", project_id="")
 
     assert captured["args"] == ("a-1", message)
-    assert captured["kwargs"] == {"channel": "c-1", "project_id": ""}
+    assert captured["kwargs"] == {"channel": "c-1", "project_id": "", "session_key": ""}
     assert result == {"ok": True, "id": 42}
 
 
@@ -104,7 +104,7 @@ async def test_store_boundary_forwards_defaults(monkeypatch):
     await server.do_store_boundary("a-1", {"content": "x"})
 
     assert captured["args"] == ("a-1", {"content": "x"})
-    assert captured["kwargs"] == {"channel": "", "project_id": ""}
+    assert captured["kwargs"] == {"channel": "", "project_id": "", "session_key": ""}
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +144,7 @@ async def test_archive_episode_boundary_forwards_every_arg(monkeypatch):
         "resolved": True,
         "project_id": "",
         "channel": "c-1",
+        "session_key": "",
     }
     assert result == {"ok": True, "queued": False, "episode_id": 7}
 

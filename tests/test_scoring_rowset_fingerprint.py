@@ -70,7 +70,7 @@ import pytest_asyncio
 
 import cpersona.memory_handlers as memory_handlers
 import cpersona.utils as utils
-from cpersona._vendored_mcp_common import no_persist
+from cpersona import session
 from cpersona.database import get_db
 from cpersona.utils import SCORING_VERSION
 
@@ -332,7 +332,7 @@ async def seeded_db():
     scales the confidence curve, so they are part of the fingerprint's input and must
     not drift.
     """
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")

@@ -18,8 +18,8 @@ os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 
 from cpersona import admin_handlers # noqa: E402
 from cpersona import config # noqa: E402
+from cpersona import session # noqa: E402
 from cpersona import vector # noqa: E402
-from cpersona._vendored_mcp_common import no_persist  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -202,7 +202,7 @@ async def test_failed_calibration_restores_prior_override(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_persist_skips(_stub_calibrate, monkeypatch):
-    monkeypatch.setattr(no_persist, "is_paused", lambda: True)
+    monkeypatch.setattr(session, "is_paused_for", lambda key: True)
     res = await admin_handlers.do_set_recall_precision("alice", "strict")
     assert res.get("persisted") is False
     assert "alice" not in vector._agent_betas  # no state change while paused
@@ -260,7 +260,7 @@ async def test_get_precision_missing_agent_id_errors():
 @pytest.mark.asyncio
 async def test_get_precision_is_read_only_under_no_persist(monkeypatch):
     """Read-back is unaffected by no-persist pause and never mutates state (like recall)."""
-    monkeypatch.setattr(no_persist, "is_paused", lambda: True)
+    monkeypatch.setattr(session, "is_paused_for", lambda key: True)
     res = await admin_handlers.do_get_recall_precision("nobody")
     assert res["ok"] is True
     assert vector._agent_betas == {}  # pure read, no override created

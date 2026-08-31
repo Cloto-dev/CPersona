@@ -10,20 +10,22 @@ behaviour live there, response envelopes live here.
 import importlib.metadata
 import logging
 
-from cpersona._vendored_mcp_common import no_persist
-
 from cpersona import checks as checks_registry
 from cpersona import config
 from cpersona import findings as findings_seam
+from cpersona import session
 from cpersona import vector
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where
+from cpersona.session import resolve_session_key
 from cpersona.utils import error_response
 
 logger = logging.getLogger(__name__)
 
 
-async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | None = None) -> dict:
+async def do_check_health(
+    agent_id: str = "", fix: bool = False, checks: list | None = None, session_key: str = ""
+) -> dict:
     """Check and optionally fix memory database health issues.
 
     Runs the full check registry (or the subset named in ``checks``); every
@@ -47,7 +49,8 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
 
     # Under no-persist, downgrade fix=True to fix=False so the diagnostic
     # still runs but no rows are mutated. Clear no-persist and re-run to repair.
-    repairs_skipped = bool(fix and no_persist.is_paused())
+    key, _declared = resolve_session_key(session_key)
+    repairs_skipped = bool(fix and session.is_paused_for(key))
     if repairs_skipped:
         fix = False
 
@@ -244,9 +247,12 @@ async def do_check_health(agent_id: str = "", fix: bool = False, checks: list | 
     return result
 
 
-async def do_deep_check(agent_id: str, fix: bool = False, checks: list | None = None) -> dict:
+async def do_deep_check(
+    agent_id: str, fix: bool = False, checks: list | None = None, session_key: str = ""
+) -> dict:
     """Deep heuristic analysis of memory data quality for a specific agent."""
-    repairs_skipped = bool(fix and no_persist.is_paused())
+    key, _declared = resolve_session_key(session_key)
+    repairs_skipped = bool(fix and session.is_paused_for(key))
     if repairs_skipped:
         fix = False
     selected = checks if checks else checks_registry.DEEP_CHECK_NAMES
@@ -315,6 +321,7 @@ async def do_migrate_channel_axis(
     agent_id: str = "",
     dry_run: bool = True,
     globalize_unrecoverable: bool = False,
+    session_key: str = "",
 ) -> dict:
     """Re-channel bridge-type memories to their concrete channel (knob2 v2).
 
@@ -347,7 +354,8 @@ async def do_migrate_channel_axis(
     `invalid_metadata_ids`, bug-239) — they used to abort the whole tool.
     """
     # Under no-persist, force a report-only run so nothing mutates.
-    paused = no_persist.is_paused()
+    key, _declared = resolve_session_key(session_key)
+    paused = session.is_paused_for(key)
     effective_dry_run = dry_run or paused
 
     iso = isolation_where(agent_id=agent_id or None)

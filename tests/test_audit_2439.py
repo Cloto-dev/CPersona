@@ -10,13 +10,13 @@ mode) and are intentionally not covered here.
 import pytest
 import pytest_asyncio
 
+from cpersona import session
 from cpersona import (
     admin_handlers,
     database,
     maintenance_handlers,
     memory_handlers,
 )
-from cpersona._vendored_mcp_common import no_persist
 from cpersona.database import get_db, write_lock
 from cpersona.vector import _search_vector
 
@@ -34,7 +34,7 @@ async def clean_db():
     episode#1 collision by id literal). Reset the sequence so ids restart at
     1 regardless of order.
     """
-    no_persist.resume()
+    session.reset_pauses_for_tests()
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
@@ -146,10 +146,10 @@ async def test_merge_dry_run_runs_under_no_persist(clean_db):
     await memory_handlers.do_store("src", {"content": "one", "source": {}, "timestamp": "t"})
     await memory_handlers.do_store("src", {"content": "two", "source": {}, "timestamp": "t"})
     try:
-        no_persist.pause(ttl_seconds=60)
+        session.pause_for(session.TRANSPORT_KEY, False, 60)
         res = await admin_handlers.do_merge_memories("src", "dst", dry_run=True)
     finally:
-        no_persist.resume()
+        session.reset_pauses_for_tests()
     # Real preview counts (2), not the paused all-zero no-op.
     assert res.get("merged_memories") == 2, res
     assert "persisted" not in res or res.get("persisted") is not False
