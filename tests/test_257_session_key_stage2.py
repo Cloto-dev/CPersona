@@ -634,3 +634,36 @@ def test_the_transport_key_is_not_stored_as_an_entry():
     queue._remember_session(1, session.TRANSPORT_KEY)
     assert queue._task_sessions == {}
     assert queue._session_for(1) == session.TRANSPORT_KEY
+
+
+@pytest.mark.asyncio
+async def test_export_is_not_gated_by_a_pause(clean_db, tmp_path):
+    """`export_memories` runs under a pause, and takes no session_key.
+
+    Not an omission from the threading: a pause means "do not write to my
+    memory", and an export writes a file the caller asked for and not one row.
+    Gating it would return a fabricated tally that hides what a real export
+    would have produced — the failure bug-048 and bug-079 corrected on the merge
+    and import previews. A key here would decide nothing, so it is not offered.
+
+    This test is what makes that a decision rather than an accident: adding a
+    pause gate, or the parameter, turns it red.
+    """
+    await memory_handlers.do_store("agent-1", _msg("written before the pause"))
+    await server.do_pause_persistence(ttl_seconds=120, session_key=A)
+    await server.do_pause_persistence(ttl_seconds=120)  # the keyless bucket too
+
+    out = tmp_path / "export.jsonl"
+    result = await admin_handlers.do_export_memories("agent-1", str(out))
+
+    assert not result.get("error"), result
+    assert result.get("persisted") is not False, "export was treated as a skipped write"
+    assert out.exists(), "no file was produced while a pause was armed"
+    assert "written before the pause" in out.read_text()
+
+    import inspect
+
+    assert "session_key" not in inspect.signature(admin_handlers.do_export_memories).parameters, (
+        "export_memories grew a session_key; it consults no pause, so the key would decide "
+        "nothing and would cost every client the description"
+    )
