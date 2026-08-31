@@ -64,6 +64,7 @@ plugins:
             Operating context: 運用コンテキスト
             Recall preview tier: recall プレビュー階層
             Session identity: セッション同一性
+            Memory origin: 記憶の発信元
             CLAUDE.md policy standard: CLAUDE.md ポリシー標準
             SuperAuditor standard: SuperAuditor 標準
 
@@ -99,4 +100,5 @@ nav:
       - CLAUDE.md policy standard: CLAUDE_MD_POLICY_STANDARD.md
       - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
       - Session identity: SESSION_IDENTITY_DESIGN.md
+      - Memory origin: MEMORY_ORIGIN_DESIGN.md
   - Release lifecycle: RELEASE_LIFECYCLE_STANDARD.md
