@@ -57,6 +57,7 @@ async def _legacy_scan_memories_local(
     query_dim,
     effective_min_sim,
     limit=None,  # accepted and ignored: the pre-split scan had no such bound
+    **axes,  # ditto for the raw isolation axes: this oracle reads SQL, never an index
 ):
     """Pre-bug-249 `_scan_memories_local`: one statement, payload columns
     materialised for the whole window before any similarity exists.
@@ -187,6 +188,14 @@ def _args(*, project_id=None, channel="", source_id="", min_sim=0.0, limit=vecto
         query_vec=query_vec,
         query_dim=len(query_vec),
         effective_min_sim=min_sim,
+        # The raw axes ride alongside the composed predicate: the contiguous
+        # index filters on interned codes rather than on SQL, and they are
+        # keyword-only with no defaults so a caller cannot quietly hand it an
+        # unscoped view of the corpus.
+        agent_id=AGENT,
+        project_id=project_id,
+        channel=channel,
+        source_id=source_id,
     )
 
 
@@ -364,7 +373,8 @@ async def test_the_limit_bound_does_not_change_the_recall_answer(
     db = episodes
 
     async def _unbounded(
-        db_, iso, src_clause, src_params, scan_limit, _limit, query_vec, query_dim, min_sim
+        db_, iso, src_clause, src_params, scan_limit, _limit, query_vec, query_dim, min_sim,
+        **axes,
     ):
         """The scan as it was: every survivor, no `limit` bound."""
         return await _legacy_scan_memories_local(
