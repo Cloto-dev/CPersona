@@ -52,6 +52,7 @@ instead — one server, several clients, reachable over a network.
 | `CPERSONA_OAUTH_AUTHORIZATION_SERVERS` | *(unset)* | Whitespace- or comma-separated issuer URLs the client should authenticate against. Discovery stays off while none is listed |
 | `CPERSONA_OAUTH_SCOPES` | *(unset)* | Scope advertised on the 401 and in `scopes_supported`. The client sends back exactly what is asked for, and the authorization server refuses a scope it does not define with `invalid_scope` — advertise only scopes your issuer defines |
 | `CPERSONA_OAUTH_JWKS_URI` | *(unset)* | Where the issuer's signing keys are, for a provider whose metadata this server cannot read. Normally discovered from the issuer's own metadata; ignored unless exactly one authorization server is configured |
+| `CPERSONA_ALIAS_LEDGER_FILE` | `alias_ledger.json` beside the DB | Where the per-subject alias ledger lives — the server-written `(issuer, subject) → alias` map behind `"per_subject": true` rows (see [OAuth design §12](OAUTH_DESIGN.md)). Defaults beside the database because the server writes it, unlike the operator-owned ACL file |
 
 **Discovery is off until you turn it on.** A client that supports OAuth looks for RFC 9728
 metadata; finding none, it falls through to asking a human to type in a client id — correct

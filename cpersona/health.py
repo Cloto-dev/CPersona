@@ -56,8 +56,9 @@ awaits under the asyncio single thread / GIL — no ``asyncio.Lock`` (same argum
 Per-process is right for the measurement (the embedding backend is shared by every caller
 of this process) and wrong for the suppression (whether a given caller has been told is
 per caller). The transport supplies no identity to separate them: the HTTP mode is
-stateless, so there is no session id, and ``acl.Principal`` carries only ``client_id`` —
-two client windows on one credential are one principal.
+stateless, so there is no session id, and ``acl.Principal`` identifies a client (plus,
+for an OAuth caller, the issuer/subject pair — still not a window) — two client windows
+on one credential are one principal.
 
 The caller supplies it instead. ``do_recall`` resolves an optional ``session_key``
 (``cpersona.session``) and passes it here; when one is declared the suppression is keyed

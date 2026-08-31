@@ -7,8 +7,9 @@ now exists too: a token signed by a listed issuer and minted for exactly this re
 a principal, and anything else is refused. Everything remains off unless configured.
 
 The question this document left open — how a provider-minted identifier acquires grants — was
-settled as **per-client provisioning**, and §8 records the shape that took in the code. What is
-deliberately *not* solved is §9, which is a property of the model rather than a gap in it.
+settled as **per-client provisioning**, and §8 records the shape that took in the code. The
+constraint §9 states — a property of the model, not a gap in it — stood unresolved for a while and
+has since been answered without weakening the model: §12 records the per-subject boundary.
 
 The rejected routes are kept rather than deleted. A design record that lists only the choice
 leaves the next reader to rediscover why the other two were worse, and one of them looks cheapest
@@ -272,11 +273,15 @@ adding OAuth at all is reach: many people, most of whom will arrive through exac
 client. Reach and per-client authorization are in tension, and the tension is structural rather
 than a gap in the current implementation.
 
-This document does not propose resolving it. It proposes not being surprised by it.
+When this section was first written it proposed not resolving the tension, only not being
+surprised by it. It has since been resolved: §12 describes the per-subject boundary, which keeps
+the constraint above intact — the principal's *client* identity is still a client identifier and
+nothing else — and separates people with a second verified field beside it rather than by mixing
+two kinds of identity into one namespace.
 
 ## 10. Out of scope
 
-- Separating end users of the same client from one another (§9).
+- ~~Separating end users of the same client from one another (§9).~~ Since resolved — §12.
 - Binding accounts to the memory agent identity.
 - Migrating existing callers off their current credentials. They keep working; that is the point
   of §8.
@@ -318,3 +323,84 @@ authenticates successfully and is then refused everything, which is correct and 
 bug. What was added is the sentence that tells them apart — a denial for a client the grant table
 has never seen now says so, rather than reading identically to a permission that was deliberately
 withheld.
+
+## 12. Per-subject separation: the boundary, the ledger, and `@me`
+
+§9 named the constraint: every end user of a multi-tenant client collapses into one client
+identifier, so one grant row means "everyone who can sign in to that tenant shares one memory".
+That is a quiet form of over-grant — no symptom, correct-looking behaviour, and exactly the wrong
+default for the deployment OAuth was added for. This section is the resolution. Three decisions
+carry it, and each was chosen against a concrete alternative.
+
+**The principal is structured, not renamed.** `Principal` now carries `(client_id, issuer,
+subject)`. The subject is the verified `sub` claim — the one identifier that is stable for a
+person, and only as the pair `(issuer, subject)` (OIDC Core §5.7). The alternative was to fold the
+subject into the agent namespace (`user-<sub>` as an `agent_id`), and it was rejected for the same
+reason §8 refuses to fall back from `client_id` to `sub`: two kinds of identity in one namespace
+make every row's meaning depend on which kind happened to arrive. Static resolvers leave both new
+fields empty — nothing vouched for a person there, so nothing claims one.
+
+**Separation is a restrictive boundary, not an additive grant.** A client row may declare
+`"per_subject": true`. From that client, each signed-in subject reaches **only its own alias
+space**; every other agent name is refused *before* the grant table is consulted, so an explicit
+deny beats every allow, the `"*"` wildcard included. The alternative — modelling subjects as extra
+grant rows — fails open twice: an operator who writes `"*": "read-write"` for convenience has
+silently granted cross-subject reach, and a subject nobody wrote a row for is indistinguishable
+from a configuration gap. A boundary that subtracts cannot be widened by generosity elsewhere in
+the file. The flag is only accepted on a resolver-asserted row (`"token": null`): a static token
+authenticates a client, not a person, so the flag there would be policy that can never apply, and
+the loader refuses it at startup rather than letting it sit inert.
+
+**Subjects get opaque aliases, issued by this server.** The name a subject's memory lives under is
+not the raw `sub` but a short opaque alias (`u-` + hex), and the `(issuer, subject) → alias` map is
+persisted in the **alias ledger** — a server-writable JSON file beside the database
+(`CPERSONA_ALIAS_LEDGER_FILE` to relocate). Baking the raw subject into `agent_id` was rejected
+because every provider event that re-issues subjects — a migration, a custom-domain move, a switch
+to pairwise identifiers — would orphan the data keyed by the old values with no seam to repair it.
+With the ledger, each of those events is an edit to one file: pointing two `(issuer, subject)` rows
+at one alias is manual account linking, and it is the operator's escape hatch. The ledger is
+deliberately a different file from the grant table, with different writers: `acl.json` is
+operator-written policy the server never touches; the ledger is server-written state the operator
+may edit.
+
+**Issuance is automatic.** The first call a new subject scopes to itself mints an alias, records it
+durably, logs it, and reports it (`alias_issued: true` in the response). The invitation-shaped
+alternative — require an operator to pre-create each subject — was rejected because it reproduces,
+per person, exactly the failure §8 documented for clients: authenticate successfully, then be
+refused everything, which is correct and looks exactly like a bug. The written `per_subject` flag
+is still the opt-in (no row, no partitioning — the §8 philosophy intact), and the *entry* gate
+belongs where accounts are managed: the identity provider's tenant settings decide who can sign in
+at all. A mint that cannot be made durable refuses the request instead of proceeding — an alias
+that authorized a write but evaporates on restart would strand that write behind a fresh alias.
+
+**`@me` names the caller's own space.** A subject cannot know its alias before the server has
+issued one, so the sentinel `@me` (same idiom as the existing `@auto`) resolves to it. The
+evaluation order is fixed: **resolve, then ACL, then query** — the sentinel is rewritten before any
+demand is computed, so no grant is ever evaluated against the literal, and the response echoes
+`resolved_agent_id` (the alias, never the raw subject) so what was reached is visible and
+addressable. Four refusals keep the sentinel from widening anything:
+
+- A client without the boundary — the stdio principal, every static-token client, an OAuth client
+  whose row lacks the flag — is refused `@me` outright. Falling back to the client identity would
+  let the sentinel quietly mean "my client", the namespace mixing this design exists to avoid.
+- A token carrying an `act` claim (RFC 8693 delegation) is refused at verification: the subject it
+  names is not the caller, and honoring it would hand the delegate the impersonated subject's
+  alias.
+- At startup with `per_subject` configured, a database already using the reserved names — the
+  literal `@me`, or any agent under the `u-` prefix — refuses to serve: a stored `@me` row could
+  never be addressed again, and a pre-existing `u-` agent is indistinguishable from an issued
+  alias. Deployments that never opt in keep every name they have.
+- An issuer whose metadata declares only pairwise subject identifiers is refused while
+  `per_subject` is configured: a pairwise `sub` names a (person, client) pair, not a person, so the
+  ledger key would silently split one person's memory per client. Absence of the field is not a
+  declaration — RFC 8414 metadata does not carry it — and `CPERSONA_OAUTH_JWKS_URI` bypasses
+  metadata entirely, so setting both earns a startup warning that the check cannot run.
+
+**What this deliberately does not do.** No new database axis: the boundary is enforced in one
+place (the ACL guard) and the alias is an ordinary `agent_id` everywhere below it, so the memory
+schema, the migration story and every query stay untouched. Routing subjects to separate databases,
+an owner/tenant column, and an identity-link table were all considered and deferred: each buys
+isolation this boundary already provides, at the cost of touching the storage layer — the wrong
+trade for the current line, and re-evaluatable when the schema is next open anyway. Enabling
+partitioning for one client changes nothing for any other row in the file; a deployment with no
+`per_subject` row runs byte-for-byte as before.

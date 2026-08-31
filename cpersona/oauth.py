@@ -144,9 +144,18 @@ class IdpTokenVerifier:
         jwks_uri: str = "",
         fetch=None,
         now=time.monotonic,
+        require_public_subject: bool = False,
     ):
         self._issuers = tuple(issuers)
         self._audience = audience
+        # Set while per-subject partitioning is configured (docs/OAUTH_DESIGN.md
+        # §12). The alias ledger keys on (issuer, subject), which identifies a
+        # person only under public subject identifiers; a pairwise issuer hands
+        # the same person a different ``sub`` through every client, silently
+        # splitting one person's memory per client. When the issuer's metadata
+        # declares it cannot mint public subjects, verification fails closed
+        # for that issuer rather than partitioning wrongly.
+        self._require_public_subject = require_public_subject
         # An operator-supplied key set location, for an issuer whose metadata
         # this server cannot reach. Only meaningful against a single issuer:
         # with several, one URL cannot be the right answer for all of them, and
@@ -219,6 +228,22 @@ class IdpTokenVerifier:
             # reason is still recorded for an operator who turns debug on while
             # a real client is failing.
             logger.debug("OAuth token rejected: %s", exc)
+            return None
+
+        if "act" in claims:
+            # RFC 8693 §4.1: ``act`` asserts the presenting party is acting on
+            # behalf of the subject — the subject named is not the caller.
+            # Subject identity is consumed by enforcement here (the per-subject
+            # boundary keys a person's memory space on it, docs/OAUTH_DESIGN.md
+            # §12), so honoring a delegation token would hand the delegate the
+            # impersonated subject's alias. No deployment of this server has a
+            # legitimate issuer minting these; refuse them all.
+            logger.warning(
+                "OAuth token from %s carries an act (delegation) claim; refusing it "
+                "— subject identity is consumed by enforcement, and impersonation "
+                "is not supported",
+                issuer,
+            )
             return None
 
         client_claim = claims.get("client_id") or claims.get("azp") or ""
@@ -364,6 +389,29 @@ class IdpTokenVerifier:
                     issuer,
                 )
                 continue
+            subject_types = document.get("subject_types_supported")
+            if (
+                self._require_public_subject
+                and isinstance(subject_types, list)
+                and subject_types
+                and "public" not in subject_types
+            ):
+                # Declared pairwise-only. Fail closed for the whole issuer, not
+                # just this metadata spelling: another document that merely
+                # omits the field would not make the declaration untrue. A
+                # document without the field passes — RFC 8414 metadata does
+                # not carry it, and refusing on absence would refuse issuers
+                # that are in fact public.
+                self._log_outage(
+                    "issuer %s supports only pairwise subject identifiers (%r); "
+                    "refusing its tokens while per-subject partitioning is "
+                    "configured — a pairwise subject names a (person, client) "
+                    "pair, not a person, and would split one person's memory "
+                    "per client",
+                    issuer,
+                    subject_types,
+                )
+                return ""
             jwks_uri = document.get("jwks_uri") or ""
             if not isinstance(jwks_uri, str) or not jwks_uri.startswith("https://"):
                 self._log_outage("metadata at %s publishes no https jwks_uri", url)

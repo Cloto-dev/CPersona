@@ -67,6 +67,9 @@ class FakeIdp:
         self.jwks_status = 200
         self.metadata_issuer = issuer
         self.jwks_uri = f"{issuer}/oauth2/jwks"
+        # Extra fields merged into the metadata document — how a test declares
+        # e.g. subject_types_supported without a second fake.
+        self.metadata_extra: dict = {}
 
     # -- the fetch seam ----------------------------------------------------
 
@@ -76,7 +79,11 @@ class FakeIdp:
             if self.metadata_status != 200:
                 return self.metadata_status, b""
             body = json.dumps(
-                {"issuer": self.metadata_issuer, "jwks_uri": self.jwks_uri}
+                {
+                    "issuer": self.metadata_issuer,
+                    "jwks_uri": self.jwks_uri,
+                    **self.metadata_extra,
+                }
             ).encode()
             return 200, body
         if url == self.jwks_uri:
@@ -231,6 +238,47 @@ async def test_a_token_for_this_resource_is_accepted(idp):
     assert verified is not None
     assert verified.client_id == NAMESPACED
     assert verified.subject == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_a_delegation_token_is_refused(idp):
+    """RFC 8693 ``act``: the subject named is not the caller (§12).
+
+    Signed by the right issuer, minted for this resource, unexpired — every
+    other check passes. Subject identity is consumed by enforcement (the
+    per-subject boundary keys a memory space on it), so honoring this token
+    would hand the delegate the impersonated subject's alias. Removing the
+    ``act`` refusal in cpersona/oauth.py turns this red.
+    """
+    delegated = idp.mint(act={"sub": "admin-console"})
+    assert await _verifier(idp).verify_token(delegated) is None
+
+
+@pytest.mark.asyncio
+async def test_a_pairwise_only_issuer_is_refused_when_subjects_partition(idp):
+    """subject_types_supported without "public" fails closed (§12).
+
+    A pairwise subject names a (person, client) pair, not a person, so the
+    (issuer, subject) alias key would split one person's memory per client.
+    The refusal is issuer-wide: no key is discovered, so no token verifies.
+    """
+    idp.metadata_extra = {"subject_types_supported": ["pairwise"]}
+    verifier = _verifier(idp, require_public_subject=True)
+    assert await verifier.verify_token(idp.mint()) is None
+
+
+@pytest.mark.asyncio
+async def test_pairwise_metadata_is_ignored_without_subject_partitioning(idp):
+    """The check is gated on per-subject configuration — additive otherwise."""
+    idp.metadata_extra = {"subject_types_supported": ["pairwise"]}
+    assert await _verifier(idp).verify_token(idp.mint()) is not None
+
+
+@pytest.mark.asyncio
+async def test_metadata_without_subject_types_is_not_refused(idp):
+    """Absence is not a pairwise declaration: RFC 8414 metadata lacks the field."""
+    verified = await _verifier(idp, require_public_subject=True).verify_token(idp.mint())
+    assert verified is not None
 
 
 @pytest.mark.asyncio

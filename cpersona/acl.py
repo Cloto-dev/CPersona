@@ -30,6 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from cpersona import config
+from cpersona.aliases import ALIAS_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,13 @@ LOCAL_CLIENT_ID = "local"
 # Whole-string environment reference for token values: "${VAR}".
 _ENV_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
-_CLIENT_KEYS = {"client_id", "token", "grants"}
+_CLIENT_KEYS = {"client_id", "token", "grants", "per_subject"}
+
+# The self sentinel (docs/OAUTH_DESIGN.md §12): a caller behind a per-subject
+# boundary cannot know its alias before the server has issued one, so "@me"
+# names "my own memory space" and the guard resolves it — resolve, then ACL,
+# then query, in that order, so no grant is ever evaluated against the literal.
+SELF_SENTINEL = "@me"
 
 
 class AclConfigError(Exception):
@@ -68,9 +75,19 @@ class AclConfigError(Exception):
 
 @dataclass(frozen=True)
 class Principal:
-    """An authenticated client identity. The only thing enforcement consumes."""
+    """An authenticated identity. The only thing enforcement consumes.
+
+    ``issuer`` and ``subject`` are filled only by a resolver that verified
+    them — the OAuth verifier, which checked both as signed claims. Static
+    resolvers leave them empty: a static token authenticates a client, and
+    pretending it names a person would give the per-subject boundary a value
+    nothing vouched for. Two kinds of identity, kept apart as fields rather
+    than mixed into one namespace (docs/OAUTH_DESIGN.md §9, §12).
+    """
 
     client_id: str
+    issuer: str = ""
+    subject: str = ""
 
 
 @dataclass(frozen=True)
@@ -79,11 +96,14 @@ class AclConfig:
 
     ``token_entries`` is a tuple of (token, client_id) pairs the resolver
     compares constant-time; ``grants_by_client`` maps client_id → its grant
-    dict (agent pattern → permission level).
+    dict (agent pattern → permission level). ``per_subject_clients`` names the
+    clients whose row declared ``"per_subject": true`` — a restrictive
+    boundary, consulted before any grant (docs/OAUTH_DESIGN.md §12).
     """
 
     grants_by_client: dict[str, dict[str, int]]
     token_entries: tuple[tuple[str, str], ...]
+    per_subject_clients: frozenset[str] = frozenset()
 
 
 def _resolve_token_value(raw: str, client_id: str) -> str:
@@ -141,6 +161,7 @@ def load_config(path: str) -> AclConfig:
     grants_by_client: dict[str, dict[str, int]] = {}
     token_entries: list[tuple[str, str]] = []
     seen_tokens: set[str] = set()
+    per_subject_clients: set[str] = set()
 
     for i, entry in enumerate(clients):
         if not isinstance(entry, dict):
@@ -214,10 +235,33 @@ def load_config(path: str) -> AclConfig:
             seen_tokens.add(token)
             token_entries.append((token, client_id))
 
+        per_subject = entry.get("per_subject", False)
+        if not isinstance(per_subject, bool):
+            raise AclConfigError(
+                f"ACL client {client_id!r}: per_subject must be true or false"
+            )
+        if per_subject:
+            if client_id == LOCAL_CLIENT_ID or entry.get("token") is not None:
+                # A subject arrives only on a token an identity provider issued
+                # and this server verified. The stdio principal is asserted by
+                # transport and a static token authenticates a client — neither
+                # carries a person, so a per_subject flag there is a written
+                # policy that can never apply. Fail at load, not silently at
+                # dispatch (§7).
+                raise AclConfigError(
+                    f"ACL client {client_id!r}: per_subject applies only to a "
+                    "resolver-asserted principal (\"token\": null) — a subject "
+                    "arrives only on a provider-issued token, so a static token "
+                    "row or the stdio principal has no subject to partition by"
+                )
+            per_subject_clients.add(client_id)
+
         grants_by_client[client_id] = grants
 
     return AclConfig(
-        grants_by_client=grants_by_client, token_entries=tuple(token_entries)
+        grants_by_client=grants_by_client,
+        token_entries=tuple(token_entries),
+        per_subject_clients=frozenset(per_subject_clients),
     )
 
 
@@ -256,6 +300,23 @@ def reset_principal(token: contextvars.Token) -> None:
 
 def current_principal() -> Principal | None:
     return _current_principal.get()
+
+
+# The alias ledger (docs/OAUTH_DESIGN.md §12), active only when some client row
+# declared per_subject. Process-wide like the config above, and activated next
+# to it at startup — a per_subject boundary with no ledger to resolve against
+# is a wiring regression the guard denies rather than waves through.
+_active_ledger = None
+
+
+def activate_ledger(ledger) -> None:
+    """Install (or clear, with None) the process-wide alias ledger."""
+    global _active_ledger
+    _active_ledger = ledger
+
+
+def active_ledger():
+    return _active_ledger
 
 
 def resolve_token(acl_config: AclConfig, presented: str) -> Principal | None:
@@ -626,7 +687,131 @@ def _wrap(name: str, handler):
             )
         known_client = principal.client_id in config.grants_by_client
         grants = config.grants_by_client.get(principal.client_id, {})
-        for agent_pattern, required in demands(arguments):
+
+        # Per-subject boundary and the @me sentinel (docs/OAUTH_DESIGN.md §12).
+        # Order is load-bearing: resolve, then ACL, then query. The sentinel is
+        # rewritten to the alias before any demand is computed, so no grant is
+        # ever evaluated against the literal "@me" and the handler only ever
+        # sees the resolved alias.
+        boundary = principal.client_id in config.per_subject_clients
+        resolved_alias = ""
+        alias_issued = False
+        if boundary and not principal.subject:
+            # A per_subject row matched a principal nothing attached a subject
+            # to. The loader forbids the flag on every row a subject-less
+            # resolver can produce, so this is a resolver regression — fail
+            # closed like the missing-principal case above.
+            logger.error(
+                "ACL: per_subject client %s resolved with no subject on %s — "
+                "resolver regression; denying",
+                principal.client_id,
+                name,
+            )
+            return _denial(
+                name,
+                principal.client_id,
+                detail="per-subject client resolved with no subject",
+            )
+        if any(arguments.get(key) == SELF_SENTINEL for key in _SCOPE_KEYS):
+            if not boundary:
+                # Includes the stdio principal and every static-token client:
+                # falling back to the client identity here would let "@me"
+                # quietly mean "my client", a different kind of identity.
+                return _denial(
+                    name,
+                    principal.client_id,
+                    detail=(
+                        '"@me" resolves the signed-in subject to its alias, and '
+                        "this client's identity carries no subject boundary — the "
+                        "sentinel is honored only for a client whose ACL row "
+                        'declares "per_subject": true; name an agent_id explicitly'
+                    ),
+                )
+            ledger = _active_ledger
+            if ledger is None:
+                logger.error(
+                    "ACL: per_subject client %s sent %s but no alias ledger is "
+                    "active — startup wiring regression; denying",
+                    principal.client_id,
+                    SELF_SENTINEL,
+                )
+                return _denial(
+                    name, principal.client_id, detail="alias ledger not active"
+                )
+            try:
+                resolved_alias, alias_issued = ledger.resolve_or_issue(
+                    principal.issuer, principal.subject
+                )
+            except Exception as exc:
+                # An alias that authorized this call but was never durably
+                # recorded would be re-rolled on restart, stranding whatever
+                # the call stored — refuse instead (aliases.py has the full
+                # argument).
+                logger.error(
+                    "ACL: alias issuance failed for client=%s: %s",
+                    principal.client_id,
+                    exc,
+                )
+                return _denial(
+                    name,
+                    principal.client_id,
+                    detail="alias could not be recorded; see the server log",
+                )
+            arguments = {
+                **arguments,
+                **{
+                    key: resolved_alias
+                    for key in _SCOPE_KEYS
+                    if arguments.get(key) == SELF_SENTINEL
+                },
+            }
+
+        demand_list = demands(arguments)
+
+        if boundary:
+            # The restrictive half: a per-subject principal reaches its own
+            # alias and nothing else, whatever the grant table would allow —
+            # explicit-deny beats every allow, the wildcard included, so a
+            # "*: read-write" row stays a convenience for the client without
+            # becoming cross-subject reach. Evaluated BEFORE the grant loop on
+            # purpose; moving it after (or deleting it) turns the
+            # deny-overrides tests in tests/test_per_subject.py red.
+            own = resolved_alias
+            if not own and _active_ledger is not None:
+                own = _active_ledger.peek(principal.issuer, principal.subject) or ""
+            for agent_pattern, required in demand_list:
+                if agent_pattern == "":
+                    continue  # no per-agent data touched; the boundary has no say
+                if own and agent_pattern == own:
+                    continue
+                logger.warning(
+                    "ACL denial (per-subject boundary): client=%s tool=%s agent=%s",
+                    principal.client_id,
+                    name,
+                    agent_pattern,
+                )
+                if agent_pattern == WILDCARD:
+                    detail = (
+                        "this client partitions by signed-in subject "
+                        "(per_subject), and this call demands every agent at "
+                        'once — scope it to your own space with agent_id "@me"'
+                    )
+                else:
+                    detail = (
+                        "this client partitions by signed-in subject "
+                        "(per_subject): each subject reaches only its own alias "
+                        '— address your own space as "@me"; the alias it '
+                        "resolves to is echoed back as resolved_agent_id"
+                    )
+                return _denial(
+                    name,
+                    principal.client_id,
+                    agent_id=agent_pattern,
+                    required=required,
+                    detail=detail,
+                )
+
+        for agent_pattern, required in demand_list:
             if agent_pattern == "":
                 continue  # authenticated-only demand: the principal suffices
             if effective_permission(grants, agent_pattern) < required:
@@ -698,11 +883,37 @@ def _wrap(name: str, handler):
                     required=required,
                     detail=detail,
                 )
-        return await handler(arguments)
+        result = await handler(arguments)
+        if resolved_alias and isinstance(result, dict):
+            # The @auto idiom (resolved_project_id): a resolution the server
+            # performed is echoed so the caller can see — and later address —
+            # what it actually reached. The alias, never the raw subject.
+            result["resolved_agent_id"] = resolved_alias
+            if alias_issued:
+                result["alias_issued"] = True
+        return result
 
     guarded._acl_guarded = True  # type: ignore[attr-defined]
     guarded._acl_inner = handler  # type: ignore[attr-defined]
     return guarded
+
+
+def reserved_agent_id_collisions(agent_ids) -> list[str]:
+    """Which of these agent ids collide with per-subject reserved names.
+
+    Per-subject partitioning reserves two shapes in the agent namespace: the
+    literal ``@me`` sentinel (a stored row under it could never be addressed —
+    the guard rewrites the name before any query) and the ``u-`` alias prefix
+    (a pre-existing agent there is indistinguishable from an issued alias, so
+    the boundary could hand one subject another tenant's data). Checked at
+    startup, only when some client row declared per_subject: an existing
+    deployment that never opts in keeps every name it has.
+    """
+    return sorted(
+        aid
+        for aid in set(agent_ids)
+        if aid == SELF_SENTINEL or aid.startswith(ALIAS_PREFIX)
+    )
 
 
 def install(registry) -> None:
