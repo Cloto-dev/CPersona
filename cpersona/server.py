@@ -2533,11 +2533,14 @@ async def _assert_no_reserved_agent_ids() -> None:
     §12), after the schema is ready. The names it guards: the literal ``@me``
     sentinel — a stored row under it could never be addressed again, because
     the guard rewrites the name before any query — and the ``u-`` alias
-    prefix, where a pre-existing agent is indistinguishable from an issued
-    alias and the boundary could hand one subject another tenant's data. A
-    configuration error, not a migration: the operator either renames the
-    colliding agents (merge_memories) or does not enable per_subject on this
-    database.
+    prefix, where an agent the alias ledger does not record is
+    indistinguishable from an issued alias and the boundary could hand one
+    subject another tenant's data. Aliases the ledger records are exempt
+    (bug-267): they are the server's own prior issuance, and refusing them
+    meant every restart after the first mint failed here — measured in
+    production, 2026-08-31. A collision is a configuration error, not a
+    migration: the operator either renames the colliding agents
+    (merge_memories) or does not enable per_subject on this database.
     """
     from cpersona import database
     from cpersona.isolation import isolation_where
@@ -2550,13 +2553,16 @@ async def _assert_no_reserved_agent_ids() -> None:
                 f"SELECT DISTINCT agent_id FROM {table}{iso_all.where}", iso_all.params
             ) as cursor:
                 agent_ids.update(row[0] for row in await cursor.fetchall())
-    collisions = acl.reserved_agent_id_collisions(agent_ids)
+    ledger = acl.active_ledger()
+    known_aliases = ledger.issued_aliases() if ledger is not None else frozenset()
+    collisions = acl.reserved_agent_id_collisions(agent_ids, known_aliases)
     if collisions:
         raise RuntimeError(
             "per_subject is configured but the database already uses reserved "
             f"agent ids: {', '.join(collisions)}. The @me sentinel and the "
             f"{acl.ALIAS_PREFIX!r} prefix belong to subject aliasing "
-            "(docs/OAUTH_DESIGN.md §12); rename those agents (merge_memories) "
+            "(docs/OAUTH_DESIGN.md §12), and the alias ledger records none of "
+            "these ids as issued; rename those agents (merge_memories) "
             "or remove per_subject from the ACL file"
         )
 
@@ -2638,35 +2644,6 @@ async def main():
 
     await init_db()
 
-    if acl.is_active() and acl.active_config().per_subject_clients:
-        await _assert_no_reserved_agent_ids()
-
-    # Vector-similarity threshold startup guard (v2.4.24): restore persisted
-    # thresholds, or (re)calibrate on first run / embedding-dimension change even when
-    # AUTO_CALIBRATE is off. A stale threshold from a prior embedding model (e.g. a
-    # silent jina 768d -> bge-m3 1024d swap) is a known recall-contamination cause.
-    #
-    # bug-258: scheduled, not awaited. Awaiting here held the transport closed for
-    # the whole guard — and a recalibration is minutes of real embedding calls
-    # (median-of-K multiplied it by the draw count, and it runs once per agent), so
-    # a scoring-version bump turned every deploy into a multi-minute full outage
-    # (measured: 3.5 minutes for two agents on a 2400-row corpus). Binding first is
-    # safe because the guard's values only ever ARRIVE through it: until it lands,
-    # the in-memory gates are simply unset and recall runs on the same heuristic
-    # fallback it uses when calibration fails or has never run. A stale sidecar is
-    # never consulted at recall time — _restore_calibration_state is the only
-    # reader — so serving during the window cannot apply a gate measured on the
-    # wrong scoring function.
-    calibration_task: asyncio.Task | None = None
-    if EMBEDDING_MODE != "none":
-        calibration_task = _schedule_startup_calibration()
-
-    if TASK_QUEUE_ENABLED:
-        tasks._task_queue = tasks.MemoryTaskQueue()
-        await tasks._task_queue.start()
-    else:
-        logger.info("Task queue disabled")
-
     # The vendored run_mcp_server installs this itself, but this server has its
     # own main loop (it also serves HTTP) and therefore never goes through it —
     # so the filter has to be installed here, exactly as mcp_utils documents for
@@ -2674,10 +2651,48 @@ async def main():
     # 31-line pydantic ValidationError for a method the MCP schema does not know,
     # which is noise, not a fault: the probe is answered correctly either way.
     # The sibling servers in clotohub-servers got this in a1386b7; this repo was
-    # extracted before that and never received the port.
+    # extracted before that and never received the port. It sits outside the
+    # bug-268 try below: installing a logging filter cannot fail, and the
+    # structural test pins the call at function-body level, unnested.
     install_mgp_validation_filter()
 
+    # bug-268: everything past init_db runs inside the try so the finally's
+    # close_db() reaches every failure path. aiosqlite runs each connection on
+    # a NON-daemon worker thread; a startup failure that skipped close_db left
+    # that thread blocking interpreter exit — the process stayed alive with no
+    # MCP port bound, systemd counted it active, and Restart=always never
+    # fired (measured in production, 2026-08-31: the bug-267 guard raised and
+    # the outage was invisible until a manual kill).
+    calibration_task: asyncio.Task | None = None
     try:
+        if acl.is_active() and acl.active_config().per_subject_clients:
+            await _assert_no_reserved_agent_ids()
+
+        # Vector-similarity threshold startup guard (v2.4.24): restore persisted
+        # thresholds, or (re)calibrate on first run / embedding-dimension change even when
+        # AUTO_CALIBRATE is off. A stale threshold from a prior embedding model (e.g. a
+        # silent jina 768d -> bge-m3 1024d swap) is a known recall-contamination cause.
+        #
+        # bug-258: scheduled, not awaited. Awaiting here held the transport closed for
+        # the whole guard — and a recalibration is minutes of real embedding calls
+        # (median-of-K multiplied it by the draw count, and it runs once per agent), so
+        # a scoring-version bump turned every deploy into a multi-minute full outage
+        # (measured: 3.5 minutes for two agents on a 2400-row corpus). Binding first is
+        # safe because the guard's values only ever ARRIVE through it: until it lands,
+        # the in-memory gates are simply unset and recall runs on the same heuristic
+        # fallback it uses when calibration fails or has never run. A stale sidecar is
+        # never consulted at recall time — _restore_calibration_state is the only
+        # reader — so serving during the window cannot apply a gate measured on the
+        # wrong scoring function.
+        if EMBEDDING_MODE != "none":
+            calibration_task = _schedule_startup_calibration()
+
+        if TASK_QUEUE_ENABLED:
+            tasks._task_queue = tasks.MemoryTaskQueue()
+            await tasks._task_queue.start()
+        else:
+            logger.info("Task queue disabled")
+
         transport = config.transport()
         if transport == "stdio":
             await _run_stdio_server()

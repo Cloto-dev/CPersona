@@ -353,3 +353,73 @@ def test_reserved_agent_id_collisions():
     ids = {"claude-code", "agent.sapphy", "@me", "u-abcd1234abcd", "user-1"}
     assert acl.reserved_agent_id_collisions(ids) == ["@me", "u-abcd1234abcd"]
     assert acl.reserved_agent_id_collisions({"claude-code"}) == []
+
+
+def test_ledger_issued_aliases_are_exempt_from_the_collision_check():
+    """bug-267: an alias the ledger records is issued subject space, not a squatter."""
+    ids = {"@me", "u-abcd1234abcd", "u-0badc0dedead"}
+    known = {"u-abcd1234abcd"}
+    # The recorded alias is exempt; the unrecorded u- agent and @me still collide.
+    assert acl.reserved_agent_id_collisions(ids, known) == ["@me", "u-0badc0dedead"]
+    # @me is never exemptable — the ledger cannot issue it.
+    assert acl.reserved_agent_id_collisions({"@me"}, {"@me"}) == ["@me"]
+
+
+def test_issued_aliases_spans_issuers(tmp_path):
+    path = tmp_path / "ledger.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "aliases": {
+                    ISSUER: {"user-1": "u-abcd1234abcd", "user-2": "u-0123456789ab"},
+                    "https://other.example.com": {"user-1": "u-feedfacecafe"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    ledger = aliases.AliasLedger(str(path))
+    assert ledger.issued_aliases() == {
+        "u-abcd1234abcd",
+        "u-0123456789ab",
+        "u-feedfacecafe",
+    }
+
+
+@pytest.mark.asyncio
+async def test_boot_guard_exempts_aliases_the_ledger_issued(tmp_path):
+    """bug-267 end to end: the server's own issuance must not brick the next boot.
+
+    Mutation duty: dropping the ``known_aliases`` argument from the guard's
+    collision call (or the exemption clause from the collision function) turns
+    the first assertion into a raise; dropping the u- refusal entirely turns
+    the second one green-silent.
+    """
+    from cpersona import database, memory_handlers, server
+
+    await database.init_db()
+    _activate(tmp_path)
+    ledger = acl.active_ledger()
+    alias, issued = ledger.resolve_or_issue(ISSUER, "user-1")
+    assert issued
+    squatter = "u-0badc0dedead"
+    try:
+        stored = await memory_handlers.do_store(alias, {"content": "issued-alias row"})
+        assert stored["ok"] is True
+        # A database whose only reserved-prefix agent is a ledger-issued alias boots.
+        await server._assert_no_reserved_agent_ids()
+
+        # A u- agent the ledger does not record is still refused, by name.
+        stored = await memory_handlers.do_store(squatter, {"content": "squatter row"})
+        assert stored["ok"] is True
+        with pytest.raises(RuntimeError, match=squatter):
+            await server._assert_no_reserved_agent_ids()
+    finally:
+        # The suite shares one database file per session; leave no reserved-name
+        # rows behind for unrelated tests to trip over.
+        async with database.connection() as db:
+            await db.execute(
+                "DELETE FROM memories WHERE agent_id IN (?, ?)", (alias, squatter)
+            )
+            await db.commit()

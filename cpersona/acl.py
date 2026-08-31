@@ -898,21 +898,26 @@ def _wrap(name: str, handler):
     return guarded
 
 
-def reserved_agent_id_collisions(agent_ids) -> list[str]:
+def reserved_agent_id_collisions(agent_ids, known_aliases=frozenset()) -> list[str]:
     """Which of these agent ids collide with per-subject reserved names.
 
     Per-subject partitioning reserves two shapes in the agent namespace: the
     literal ``@me`` sentinel (a stored row under it could never be addressed —
     the guard rewrites the name before any query) and the ``u-`` alias prefix
-    (a pre-existing agent there is indistinguishable from an issued alias, so
-    the boundary could hand one subject another tenant's data). Checked at
-    startup, only when some client row declared per_subject: an existing
-    deployment that never opts in keeps every name it has.
+    (an agent there that the alias ledger does not record is indistinguishable
+    from an issued alias, so the boundary could hand one subject another
+    tenant's data). ``known_aliases`` — the ledger's issued set — is exempt
+    (bug-267): those names ARE issued aliases, and refusing them meant the
+    server's own issuance failed its next boot. The ``@me`` sentinel is never
+    exempt; the ledger cannot issue it. Checked at startup, only when some
+    client row declared per_subject: an existing deployment that never opts in
+    keeps every name it has.
     """
     return sorted(
         aid
         for aid in set(agent_ids)
-        if aid == SELF_SENTINEL or aid.startswith(ALIAS_PREFIX)
+        if aid == SELF_SENTINEL
+        or (aid.startswith(ALIAS_PREFIX) and aid not in known_aliases)
     )
 
 
