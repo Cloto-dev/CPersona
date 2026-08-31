@@ -1,0 +1,58 @@
+name: docs (published)
+
+# Checks the SITE, not the source. Every other documentation gate reads files in
+# the repository, which is why none of them can see this failure: the published
+# site can stop matching the source without any source being wrong.
+#
+# The path that gets there is in the docs workflow itself. It cancels an
+# in-progress run when another push arrives on the same ref, and its triggers are
+# path-filtered — so a push touching a documentation path can have its deploy
+# cancelled by a following push that touches none, which starts no run to replace
+# it. Nothing retries and nothing reports; the source stays correct and the site
+# keeps serving what it served before.
+#
+# Runs on a schedule rather than after a deploy, deliberately. The drift this
+# looks for is defined by a deploy NOT happening, so hanging the check off a
+# deploy would tie it to the event whose absence is the defect — and a check that
+# runs right after publishing also races the CDN and reports lag as staleness.
+# A daily run has neither problem, and catches drift that arrives with no commit
+# at all.
+#
+# There is deliberately no pull_request trigger: on a branch the published site
+# SHOULD differ from the build, so running this there would fail by design and be
+# ignored into uselessness. That leaves the script itself unexercised by PRs, so
+# the part of it that decides — the URL mapping, and keeping "the site is behind"
+# separate from "the site could not be reached" — is covered by unit tests in the
+# suite, which every PR runs.
+
+on:
+  schedule:
+    # Daily. The failure is silent and open-ended, so what matters is that some
+    # run happens without anyone remembering to ask, not that it happens quickly.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Deliberately NOT cancel-in-progress. This workflow exists because a cancelled
+  # run left work undone; cancelling its own runs would reproduce the shape of
+  # the defect inside the detector.
+  group: docs-live
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Build the site the way the deploying workflow builds it
+        # Same pinned versions as docs.yml. A different generator version would
+        # produce different bytes and report drift that is the build's, not the
+        # site's — the comparison is only meaningful between identical builders.
+        run: uvx --with mkdocs-material==9.7.7 --with mkdocs-static-i18n==1.3.1 mkdocs build --strict
+      - name: Compare every published page against that build
+        run: python3 scripts/check-docs-live.py --site site

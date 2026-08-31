@@ -1845,3 +1845,79 @@ def test_no_workflow_reads_the_version_from_pyproject():
         "these workflows still read the version literal out of pyproject.toml, which no "
         f"longer carries one: {offenders}"
     )
+
+
+# The published-site checker's own unit: it must distinguish the two findings it
+# reports, and must refuse to pass on an empty comparison.
+#
+# The checker itself runs against the network on a schedule, so nothing in this
+# suite exercises its fetching. What is pinned here is the part that decides — the
+# URL mapping and the comparison — because a checker that mapped pages to the
+# wrong URLs, or that treated "nothing to compare" as agreement, would report a
+# green that means nothing. That is the failure mode it was written to end.
+
+
+def _docs_live_module():
+    spec = importlib.util.spec_from_file_location(
+        "check_docs_live", pathlib.Path(__file__).parent.parent / "scripts" / "check-docs-live.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_built_pages_map_to_their_published_urls(tmp_path):
+    """Directory-style URLs, and the root page at the base itself."""
+    live = _docs_live_module()
+    (tmp_path / "index.html").write_text("root")
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "index.html").write_text("tools")
+    (tmp_path / "ja" / "tools").mkdir(parents=True)
+    (tmp_path / "ja" / "tools" / "index.html").write_text("ja tools")
+
+    urls = {url for url, _ in live.page_urls(tmp_path, "https://example.test/CPersona/")}
+    assert urls == {
+        "https://example.test/CPersona/",
+        "https://example.test/CPersona/tools/",
+        "https://example.test/CPersona/ja/tools/",
+    }
+    # A base without its trailing slash must not produce "…CPersonatools/".
+    urls_no_slash = {url for url, _ in live.page_urls(tmp_path, "https://example.test/CPersona")}
+    assert urls_no_slash == urls
+
+
+def test_an_empty_site_is_not_agreement(tmp_path, capsys):
+    """Comparing nothing must fail, not pass — the vacuous-green class."""
+    live = _docs_live_module()
+    assert live.page_urls(tmp_path, "https://example.test/") == []
+
+
+def test_drift_and_unreachable_are_reported_separately(tmp_path, monkeypatch):
+    """A site that is behind and a site that cannot be seen are different answers.
+
+    Collapsing them would send a reader to republish the docs when the real
+    finding was that the check could not reach the host at all.
+    """
+    live = _docs_live_module()
+    (tmp_path / "same").mkdir()
+    (tmp_path / "same" / "index.html").write_bytes(b"identical")
+    (tmp_path / "stale").mkdir()
+    (tmp_path / "stale" / "index.html").write_bytes(b"new content")
+    (tmp_path / "gone").mkdir()
+    (tmp_path / "gone" / "index.html").write_bytes(b"whatever")
+
+    def fake_fetch(url):
+        if url.endswith("/same/"):
+            return b"identical", None
+        if url.endswith("/stale/"):
+            return b"old content", None
+        return None, "HTTP 404"
+
+    monkeypatch.setattr(live, "fetch", fake_fetch)
+    drifted, unreachable, checked = live.compare(tmp_path, "https://example.test/", jobs=2)
+
+    assert checked == 3
+    assert drifted == ["https://example.test/stale/"]
+    assert unreachable == ["https://example.test/gone/ (HTTP 404)"]
+    # The matching page appears in neither list — a finding must name a real page.
+    assert not any("/same/" in entry for entry in drifted + unreachable)
