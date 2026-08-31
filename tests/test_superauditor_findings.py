@@ -207,10 +207,18 @@ def _runners_that_stamp_severity() -> set[str]:
     return stamping
 
 
-# Runners that override the registry default. The first three carry more than
+# Runners that override the registry default. The first four carry more than
 # one severity and are tiered in findings.py; the last two stamp a single
 # explicit value (critical) on every finding they emit.
-_TIERED_RUNNERS = {"check_null_embedding", "check_null_episode_embedding", "check_schema_objects"}
+_TIERED_RUNNERS = {
+    "check_null_embedding",
+    "check_null_episode_embedding",
+    "check_schema_objects",
+    # Two of its four states are observations at the registry default and two
+    # are stamped warn, so it is tiered in fact — listing it as single-valued
+    # would make severity_for_kind report info for a degraded index.
+    "check_vector_index",
+}
 _SINGLE_VALUE_RUNNERS = {"check_fts_integrity", "check_sqlite_integrity"}
 
 
