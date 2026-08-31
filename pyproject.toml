@@ -1,6 +1,9 @@
 [project]
 name = "cpersona"
-version = "2.5.8a1"
+# Derived from cpersona/__init__.py (see [tool.hatch.version] below), so the
+# wheel's metadata and the version the running server reports come from one
+# string instead of two that have to be kept equal.
+dynamic = ["version"]
 # The tool count here is gated by scripts/check-docs-facts.py. The GitHub
 # repository description carries the same sentence and CANNOT be gated — it is
 # not a file in this tree — so changing this line means also running:
@@ -120,6 +123,9 @@ cpersona = "cpersona.server:run"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "cpersona/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 # Package layout: the server modules live under cpersona/, including the

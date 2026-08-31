@@ -471,7 +471,8 @@ _SESSION_KEY_PROPERTY = {
     "description": (
         "Opaque session identity you declare — a partition hint, NOT authentication. "
         "It scopes this process's per-session state: the degraded-recall advisory's "
-        '"already told you" memory, and who armed a no-persist pause. It does NOT '
+        '"already told you" memory, and which no-persist pause applies to this call. '
+        "It does NOT "
         "filter stored data (use agent_id / project_id / channel for that), and it "
         "never reaches the database. Omit it to share one bucket with every other "
         "caller that omits it, which is the behaviour that predates this parameter."
@@ -519,8 +520,10 @@ async def do_pause_persistence(
 async def do_resume_persistence(session_key: str = "") -> dict:
     """Re-enable persistence immediately, clearing this bucket's active TTL.
 
-    A caller clears its own bucket only: ``was_active`` reports whether *this* key was
-    paused, and a declared caller can neither clear nor observe another session's pause.
+    A caller clears the bucket its key names and no other: ``was_active`` reports whether
+    *this* key was paused. Reaching a different key's pause requires sending that key —
+    which nothing prevents, because the key is compared and never verified. The partition
+    is between keys, not between callers.
     """
     key, declared = resolve_session_key(session_key)
     return session.resume_for(key, declared)
@@ -557,8 +560,11 @@ registry.auto_tool(
     "answer normally, except that recall suppresses its recall_count / "
     "last_recalled_at bump — a write that would otherwise move ranking state during "
     "a paused session. **Blast radius follows session_key (response `scope`). Pass the "
-    'same session_key here and on your write calls and the pause is yours alone '
-    '(`scope: "session"`): no other session is silenced, and none can clear it. Omit '
+    'same session_key here and on your write calls and the pause covers that key alone '
+    '(`scope: "session"`): a session that sends a different key is neither silenced by '
+    "it nor able to clear it. The key is a partition hint, not a credential — it is "
+    "compared, never verified — so anyone who sends the same string shares the pause. "
+    "Omit "
     'it and you arm the bucket every keyless caller shares (`scope: "process"`) — on a '
     "streamable-HTTP deployment a single process serves every connected client, so a "
     "keyless pause silences writes for every other keyless session until resume or TTL "

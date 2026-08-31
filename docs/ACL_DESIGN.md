@@ -246,7 +246,7 @@ alongside the implementation, independent of which way §9-D6 resolves).
 | `export_memories` | read-write; **while `CPERSONA_EXPORT_DIR` is unset (the shipped default) the demand escalates to `"*"`** — the path argument is caller-chosen anywhere on the filesystem, so the blast radius is not one agent's data (§9-D4, second amendment from the pre-merge review) | `agent_id` argument |
 | `import_memories` | read-write; same `"*"` escalation while `CPERSONA_EXPORT_DIR` is unset | `target_agent_id`; empty = "as recorded in file" → `"*"` |
 | `merge_memories` | `copy`: read(source) + read-write(target). `move`: read-write on **both** (move deletes source rows) | `source_agent_id` + `target_agent_id` |
-| `pause_persistence`, `resume_persistence` | read-write on `"*"` (process-wide switch affects every agent's writes) | global |
+| `pause_persistence`, `resume_persistence` | read-write on `"*"` — the demand cannot depend on an argument the caller may omit, and the keyless form still silences every keyless caller's writes across every agent. A declared `session_key` narrows the *effect* to that key; it does not narrow the *demand* | global |
 | `persistence_status`, `get_queue_status`, `get_operating_context` | unscoped read: allowed for **any authenticated principal** (no per-agent data; §9-D5) | none |
 
 Resolution rules the table relies on:

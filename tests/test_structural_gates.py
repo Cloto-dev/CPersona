@@ -1746,3 +1746,75 @@ def test_pause_seam_gate_reaches_the_whole_package():
     )
     # A sub-package added later must be in scope, which glob('*.py') would miss.
     assert len(scanned) >= len({p.name for p in PKG.glob("*.py")}) - 1
+
+
+# Gate 18 (2.5.8): every surface that names a version names the same one, and the
+# version a running instance reports is the version its own source carries.
+#
+# The instrument is the source and the shipped manifests, not a running server,
+# because the failure this gate exists for is invisible at runtime: a production
+# instance was measured reporting a version four releases behind the code that was
+# actually serving requests. The root `server.py` shim puts the repository root
+# first on sys.path, so a checkout serves every request while an older installed
+# distribution can sit in site-packages unnoticed — and `importlib.metadata`, which
+# the version reporter used to consult, answers for the install.
+#
+# The repair moved the string into cpersona/__init__.py and had the build derive
+# the distribution metadata from it (`[tool.hatch.version]`). That makes the wheel
+# case true by construction, which is why the wheel half of this claim is asserted
+# in CI's `wheel-smoke` job instead of here: only an installed artifact can show
+# that the derivation actually took. What is left for the source to police is the
+# manifests, which are hand-written and cannot be derived — server.json is read by
+# the MCP registry, not by the build.
+#
+# uv.lock is deliberately NOT in this list: with a dynamic version it no longer
+# records one, so the surface that used to rot silently (measured two releases
+# behind, gated by nothing) is gone rather than guarded.
+_VERSION_MANIFEST = pathlib.Path(__file__).parent.parent / "server.json"
+
+
+def _declared_versions(manifest: dict) -> dict[str, str]:
+    """Every version string `server.json` carries, keyed by where it lives."""
+    found = {"$.version": manifest.get("version")}
+    for i, package in enumerate(manifest.get("packages") or []):
+        found[f"$.packages[{i}].version"] = package.get("version")
+    return {where: value for where, value in found.items() if value is not None}
+
+
+def _version_disagreements(manifest: dict, source_version: str) -> list[str]:
+    return [
+        f"{where} says {value!r}, cpersona.__version__ says {source_version!r}"
+        for where, value in _declared_versions(manifest).items()
+        if value != source_version
+    ]
+
+
+def test_every_manifest_version_matches_the_package():
+    """A hand-written manifest that disagrees with the code ships a false version."""
+    import json
+
+    import cpersona
+
+    manifest = json.loads(_VERSION_MANIFEST.read_text())
+    declared = _declared_versions(manifest)
+    assert declared, "server.json carried no version at all — the gate would pass vacuously"
+    assert not _version_disagreements(manifest, cpersona.__version__), (
+        "server.json disagrees with cpersona/__init__.py: "
+        + "; ".join(_version_disagreements(manifest, cpersona.__version__))
+    )
+
+
+def test_version_gate_has_teeth():
+    """The comparison must fail on a disagreement, and must not pass vacuously."""
+    good = {"version": "9.9.9", "packages": [{"identifier": "cpersona", "version": "9.9.9"}]}
+    assert _version_disagreements(good, "9.9.9") == []
+
+    # One surface left behind is the whole failure mode — a bump that missed a file.
+    stale_top = {"version": "9.9.8", "packages": [{"identifier": "cpersona", "version": "9.9.9"}]}
+    assert len(_version_disagreements(stale_top, "9.9.9")) == 1
+
+    stale_package = {"version": "9.9.9", "packages": [{"identifier": "cpersona", "version": "9.9.8"}]}
+    assert len(_version_disagreements(stale_package, "9.9.9")) == 1
+
+    # A manifest that names no version must not read as agreement.
+    assert _declared_versions({}) == {}

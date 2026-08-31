@@ -7,9 +7,9 @@ implementation shared by the MCP tools, the pytest fixtures, and the
 behaviour live there, response envelopes live here.
 """
 
-import importlib.metadata
 import logging
 
+from cpersona import __version__
 from cpersona import checks as checks_registry
 from cpersona import config
 from cpersona import findings as findings_seam
@@ -528,7 +528,17 @@ async def do_get_session_findings(
 
 
 def _server_version() -> str:
-    try:
-        return importlib.metadata.version("cpersona")
-    except importlib.metadata.PackageNotFoundError:  # pragma: no cover - source checkout without install
-        return "unknown"
+    """The version of the code answering this request — not of any install beside it.
+
+    Reads the package's own ``__version__`` rather than the installed
+    distribution's metadata. The two are the same string by construction in a
+    wheel (hatch derives the metadata from it), and they can differ by any
+    amount on the clone path the root ``server.py`` shim exists to support: that
+    launcher puts the repository root first on ``sys.path``, so the checkout
+    serves every request while an older distribution can still sit in
+    site-packages. Asking ``importlib.metadata`` there answers for the install,
+    which is the one thing this field promises it is not — measured on a
+    production instance quoting a version four releases behind the code it was
+    running. ``wheel-smoke`` asserts the two agree in an installed environment,
+    so the derivation cannot rot unnoticed."""
+    return __version__

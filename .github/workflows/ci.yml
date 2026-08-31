@@ -126,6 +126,13 @@ jobs:
     # user's machine, as an ImportError, at first use. So this job builds the
     # wheel, installs it into a clean environment with no repository on the path,
     # and imports the server for real.
+    #
+    # 2.5.8: it also holds the half of the version claim the suite cannot. Gate 18
+    # checks the hand-written manifests against cpersona/__init__.py, but the
+    # distribution's metadata is *derived* from that file by the build, and only an
+    # installed artifact can show the derivation actually took. Getting it wrong is
+    # again invisible where it happens — a production instance was measured
+    # reporting a version four releases behind the code serving its requests.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -156,6 +163,17 @@ jobs:
           print('shipped vendored modules:', shipped)
           assert 'llm_provider.py' not in shipped, 'the exclusion did not take effect'
           print('checks registered:', len(cpersona.checks.HEALTH_CHECK_NAMES))
+          import importlib.metadata
+          installed = importlib.metadata.version('cpersona')
+          reported = cpersona.maintenance_handlers._server_version()
+          print('dist metadata:', installed, '| __version__:', cpersona.__version__, '| reported:', reported)
+          assert installed == cpersona.__version__, (
+              'the wheel metadata (%s) and the package source (%s) disagree — the '
+              'hatch version derivation did not take' % (installed, cpersona.__version__)
+          )
+          assert reported == cpersona.__version__, (
+              'the server reports %s while running %s' % (reported, cpersona.__version__)
+          )
           "
 
   mutation-proof:

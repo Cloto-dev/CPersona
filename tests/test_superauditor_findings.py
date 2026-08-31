@@ -16,13 +16,13 @@ tier entry (the C6 exhaustiveness rule applied to this server's shape).
 """
 
 import ast
-import importlib.metadata
 import json
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
+import cpersona
 from cpersona import session
 from cpersona import acl, checks, findings, maintenance_handlers, server, vector
 from cpersona.database import get_db
@@ -258,7 +258,15 @@ async def test_empty_database_delivers_no_findings_with_the_full_response_shape(
     assert response["capped_kinds"] == []
     assert response["per_kind_limit"] == findings.DEFAULT_PER_KIND_LIMIT
     assert response["summary"] == "Storage findings: none."
-    assert response["_meta"]["server_version"] == importlib.metadata.version("cpersona")
+    # Against the package's own version, not the installed distribution's metadata.
+    # Comparing to importlib.metadata is what this assertion used to do, and it could
+    # not fail the way the field actually breaks: on the clone path the checkout serves
+    # every request while an older distribution sits in site-packages, so the reporter
+    # and the yardstick were wrong together. A production instance was measured quoting
+    # a version four releases behind the code it was running, with this test green.
+    # The wheel case — that the distribution metadata is derived from this same string —
+    # is asserted in CI's wheel-smoke job, which is the only place an install exists.
+    assert response["_meta"]["server_version"] == cpersona.__version__
     assert "identity_shared" not in response  # stdio: sessions are not shared
 
 
