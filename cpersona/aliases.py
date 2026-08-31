@@ -111,6 +111,21 @@ class AliasLedger:
         """The alias already issued for this pair, or None. Never issues."""
         return self._aliases.get(issuer, {}).get(subject)
 
+    def issued_aliases(self) -> set[str]:
+        """Every alias this ledger records, across issuers.
+
+        The boot collision check exempts these (bug-267): an alias the ledger
+        records is an issued subject space — the server's own prior issuance —
+        not a pre-existing agent squatting on the prefix. Without the
+        exemption, the first restart after an alias is minted fails the boot
+        check on the server's own data.
+        """
+        return {
+            alias
+            for subjects in self._aliases.values()
+            for alias in subjects.values()
+        }
+
     def resolve_or_issue(self, issuer: str, subject: str) -> tuple[str, bool]:
         """The alias for this pair, issuing and persisting one on first sight.
 

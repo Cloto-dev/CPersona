@@ -3877,6 +3877,34 @@
       "expected": "present",
       "summary": "(MEDIUM) The published OAuth identifiers were not the ones the operator configured. AnyHttpUrl normalises a path-less URL by appending a slash, so CPERSONA_OAUTH_AUTHORIZATION_SERVERS=https://as.example was published as https://as.example/ — measured against the live deployment, whose authorization server returns issuer https://as.example with no slash. RFC 8414 section 3.3 requires the issuer read back to be identical to the value the client started from and says the response MUST NOT be used otherwise; RFC 9728 section 3.3 states the same for resource, which went unnoticed only because the deployed resource carries a path. Two independent causes had to be removed together: this server converted the strings to AnyHttpUrl before handing them over, and the SDK's metadata models are themselves typed with AnyHttpUrl, so passing the raw string through the old models still published the altered value (both measured).",
       "fix_note": "Keep the operator's strings verbatim in the discovery config — AnyHttpUrl validates them and no longer decides what is published — and set url_preserve_empty_path on the SDK's metadata models before the document is built, which is the same one-line fix upstream applied in modelcontextprotocol/python-sdk#2925 (closing #2883) and shipped in SDK 2.0. The local half is a no-op against an SDK that already carries the flag, so it retires itself when the 2.x upgrade lands. Pinned by tests that configure both spellings and assert the document reproduces each; mutation-tested by removing each half separately (5 tests red either way). Two existing tests had encoded the normalised form and were corrected."
+    },
+    {
+      "id": "bug-267",
+      "category": "fail-closed-overreach",
+      "severity": "HIGH",
+      "status": "fixed",
+      "version": "2.5.7",
+      "discovered": "2026-08-31T03:04:00Z",
+      "file": "cpersona/server.py",
+      "pattern": "bug-267",
+      "expected": "present",
+      "summary": "(HIGH) The per-subject boot guard refused the server's own issuance. _assert_no_reserved_agent_ids enumerated u- prefixed agent ids without consulting the alias ledger, so the first restart after any alias was minted failed startup on legitimate data — measured in production on 2026-08-31: the guard raised on two ledger-issued aliases and took the deployment down. Enabling per_subject therefore bricked on the first restart after first real use.",
+      "fixed_in": "2.5.7",
+      "fix_note": "The collision check takes the ledger's issued set and exempts it; @me is never exemptable (the ledger cannot issue it), and an unrecorded u- agent still refuses by name. Renaming the aliases instead was rejected: they are the data the boundary exists to protect, and the old message's operator instruction (merge_memories) would have destroyed the partitioning it was meant to restore."
+    },
+    {
+      "id": "bug-268",
+      "category": "invisible-outage",
+      "severity": "HIGH",
+      "status": "fixed",
+      "version": "2.5.7",
+      "discovered": "2026-08-31T03:04:00Z",
+      "file": "cpersona/server.py",
+      "pattern": "bug-268",
+      "expected": "present",
+      "summary": "(HIGH) A startup failure after init_db left a half-alive process instead of exiting. The failure path skipped close_db, and aiosqlite runs each connection on a non-daemon worker thread, so the interpreter's shutdown join blocked forever: the process stayed alive with no MCP port bound, systemd counted it active, and Restart=always never fired — an invisible outage that needed a manual kill (measured in production 2026-08-31, triggered by the bug-267 guard).",
+      "fixed_in": "2.5.7",
+      "fix_note": "Everything past init_db moved inside the existing try/finally so close_db (and queue/client shutdown) reach every failure path; the process now exits and systemd's restart policy owns recovery. Exiting via os._exit was rejected: it would also skip cleanup on the healthy shutdown path and hide any future leak the join would have surfaced."
     }
   ]
 }

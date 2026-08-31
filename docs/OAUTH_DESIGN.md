@@ -389,9 +389,12 @@ addressable. Four refusals keep the sentinel from widening anything:
   names is not the caller, and honoring it would hand the delegate the impersonated subject's
   alias.
 - At startup with `per_subject` configured, a database already using the reserved names — the
-  literal `@me`, or any agent under the `u-` prefix — refuses to serve: a stored `@me` row could
-  never be addressed again, and a pre-existing `u-` agent is indistinguishable from an issued
-  alias. Deployments that never opt in keep every name they have.
+  literal `@me`, or an agent under the `u-` prefix that the alias ledger does not record —
+  refuses to serve: a stored `@me` row could never be addressed again, and an unrecorded `u-`
+  agent is indistinguishable from an issued alias. Aliases the ledger records are exempt: they
+  are the server's own prior issuance, and refusing them made the first restart after the first
+  real use fail on legitimate data (measured in production, 2026-08-31). Deployments that never
+  opt in keep every name they have.
 - An issuer whose metadata declares only pairwise subject identifiers is refused while
   `per_subject` is configured: a pairwise `sub` names a (person, client) pair, not a person, so the
   ledger key would silently split one person's memory per client. Absence of the field is not a
