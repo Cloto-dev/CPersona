@@ -1626,6 +1626,13 @@ registry.auto_tool(
     {
         "type": "object",
         "properties": {
+            # NOT _SESSION_KEY_PROPERTY_SHORT, and not an oversight. The shared
+            # text says the key "selects which no-persist pause applies to this
+            # call" — true of every tool that carries it except this one, which
+            # consults no pause at all. Replacing this with the shared text to
+            # make the surface uniform would make it uniformly false here. What
+            # the key does on this tool is mark a keyless remote response
+            # identity_shared, which is what it says.
             "session_key": {
                 "type": "string",
                 "description": "Opaque client-declared session identity (partition hint, not "

@@ -2046,7 +2046,20 @@ def _confine_io_path(path: str) -> str | None:
 
 
 async def do_export_memories(agent_id: str, output_path: str, include_embeddings: bool = False) -> dict:
-    """Export memories, episodes, and profiles to a JSONL file."""
+    """Export memories, episodes, and profiles to a JSONL file.
+
+    **Deliberately not gated on no-persist, and it takes no ``session_key``.**
+    A pause means "do not write to my memory"; this writes a file the caller
+    asked for and not a single row. Gating it would return a fabricated
+    all-zero tally that hides what a real export would have produced — the
+    failure bug-048 and bug-079 corrected on the merge and import previews,
+    where a read path had been short-circuited by the write guard. Because it
+    consults no pause, a session key here would decide nothing, and it would be
+    a description every client loads for a parameter that cannot act.
+
+    Pinned by ``test_export_is_not_gated_by_a_pause``: if this ever grows a
+    pause gate, that test names why it should not have one.
+    """
     confined = _confine_io_path(output_path)
     if confined is None:
         return error_response(f"output_path rejected (path traversal or outside export dir): {output_path}")

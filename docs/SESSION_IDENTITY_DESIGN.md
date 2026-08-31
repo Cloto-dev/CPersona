@@ -222,6 +222,11 @@ along in the same commit:
 The description is written once and shared by every schema that uses it, so the
 number above is one shared text, not five copies of a longer one.
 
+Every figure in this section is reproducible with `scripts/measure-tool-list.py`,
+which prices a named parameter by deleting it from the live payload. The script
+exists because this section promises that a measurement decides the next stage,
+and a promise nobody can re-run is one that gets quoted from memory instead.
+
 ### What stage 2 was measured against
 
 Stage 2 was gated on this number, and four arms were measured before choosing —

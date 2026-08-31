@@ -2201,12 +2201,12 @@
       "version": "2.5.2a1",
       "commit": "7d4bf60",
       "file": "cpersona/session.py",
-      "pattern": "\"scope\": _scope\\(declared\\)",
+      "pattern": "def _scope\\(declared: bool\\) -> str:",
       "expected": "present",
       "status": "fixed",
       "category": "no-persist-transparency",
       "fixed_in": "2.5.2a2",
-      "fix_note": "Transparency-only treatment (no per-session state added; pause is still accepted on HTTP). Added an additive scope=process key to the pause, resume and status response payloads in the CPersona handlers (the shared vendored no_persist is untouched so CScheduler's shape is unchanged), rewrote the three tool descriptions to state the pause is process-wide and silences writes for every connected session under HTTP, and corrected the no_persist module docstring's false per-session claim. Regression: tests/test_252a2_i5.py. 2.5.7 (stage 2) superseded this in the safe direction: the pause is now keyed per declared session_key, so `scope` answers session for a declared caller and process only for the shared keyless bucket it still describes honestly. The marker moved to the one place that renders the field (cpersona/session.py::_scope), because the server-side comment it used to pin described a global that no longer exists."
+      "fix_note": "Transparency-only treatment (no per-session state added; pause is still accepted on HTTP). Added an additive scope=process key to the pause, resume and status response payloads in the CPersona handlers (the shared vendored no_persist is untouched so CScheduler's shape is unchanged), rewrote the three tool descriptions to state the pause is process-wide and silences writes for every connected session under HTTP, and corrected the no_persist module docstring's false per-session claim. Regression: tests/test_252a2_i5.py. 2.5.7 (stage 2) superseded this in the safe direction: the pause is now keyed per declared session_key, so `scope` answers session for a declared caller and process only for the shared keyless bucket it still describes honestly. The marker moved to cpersona/session.py::_scope, because the server-side comment it used to pin described a global that no longer exists. It is anchored on the function definition rather than on a rendering site: the field is rendered in four places, so a pattern matching those would still pass after the field was dropped from three of them — precise about what it pins rather than appearing to pin more than it does. Per-control coverage is carried by tests/test_257_session_key_stage2.py::test_scope_is_reported_on_all_three_controls, which asserts pause, resume and status each report it."
     },
     {
       "id": "bug-152",

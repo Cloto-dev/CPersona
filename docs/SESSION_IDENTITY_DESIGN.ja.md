@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:da25885b215cdd4706492c9929f1fa832534c884 -->
+<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:1fa32be7ccac19ea0c3eef0acf6392afc010bbc8 -->
 
 # 申告型セッション同一性 (`session_key`)
 
@@ -207,6 +207,10 @@ SuperAuditor 標準 §7 が想定し姉妹実装が持っているもの — は
 
 説明文は 1 つを書いて全スキーマで共有しているので、上の数値は共有された 1 つのテキストで
 あって、長い文章の 5 コピーではありません。
+
+本節の数値はすべて `scripts/measure-tool-list.py` で再現できます。指定したパラメータを live
+payload から削って値付けするスクリプトです。これが存在するのは、本節が「計測が次の段階を
+決める」と約束しているからです — 誰も再実行できない約束は、記憶から引用される約束になります。
 
 ### 段階 2 は何に対して測られたか { #what-stage-2-was-measured-against }
 
