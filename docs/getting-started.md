@@ -61,10 +61,18 @@ Run it with `python -m cpersona` (or `python server.py`).
 
 ## 2. Set up an embedding server (recommended)
 
+CPersona strongly recommends connecting to a compatible embedding server.
+Running CPersona without an embedding backend is supported as a fallback
+configuration, but is not recommended for normal operation.
+
 Vector search is the strongest of the three retrieval layers, and it is the
 only one that needs an external process. Without it CPersona still runs — on
 FTS5 + keyword search — and
 [says so on every recall](operations.md#detecting-a-dead-embedding-server).
+
+CEmbedding is the reference and recommended embedding backend. Any other
+embedding server that satisfies the contract below is equally supported and
+equally recommended — the choice of backend is yours.
 
 ### The contract
 

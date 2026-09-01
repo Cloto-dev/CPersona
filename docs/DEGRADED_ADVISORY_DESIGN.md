@@ -8,7 +8,7 @@
 
 ## 1. Motivation
 
-The `cpersona-setup` SKILL runs an **install-time** self-check. That is a snapshot: it
+The bundled skill runs a **setup-time** self-check. That is a snapshot: it
 proves the embedding backend was reachable *at install*. It cannot catch embedding that
 **drifts into a degraded state afterwards** — the process dies, the DB is copied to another
 machine, a port changes, or a startup race leaves `mode=http` pointing at nothing.
@@ -100,7 +100,7 @@ The health state is placed the same way — a module singleton, reset on restart
 | 5 | **Dynamic evidence** embedded into both full and short payloads (e.g. `mode=http / POST http://127.0.0.1:8401/embed failed: connection refused`). Template = static skeleton, problem = dynamic slot. | `health.evidence` populated by the probe (Route B) — the actual captured error string. |
 | 6 | **Payload = struct** `{degraded, severity, reason, evidence, runbook}`. The agent renders/localizes it (language + tone are the agent's domain). Imperative phrasing ("notify the user: ...") raises relay odds. | `advisory` field value is this struct; rendering left to the client. |
 | 7 | **Carrier = the `recall` response advisory field**. MCP cannot push → honest reach is "fault surfaces on the *next* recall". Relay is best-effort and must say so. | New `advisory` key alongside `messages`. |
-| 8 | **On by default / env opt-out** (do not nag a deliberate FTS-only deployment). Safe-by-default. | `CPERSONA_DEGRADED_ADVISORY` (default `true`). |
+| 8 | **On by default / env opt-out.** The opt-out records an operator who accepts running without an embedding backend — a supported fallback, not a recommendation. Safe-by-default. | `CPERSONA_DEGRADED_ADVISORY` (default `true`). |
 | 9 | **`fault` runbook skeleton**: state + measured evidence / impact (plain) / investigation steps / repair commands / one plain user-facing sentence / opt-out env. | Static template strings in `health.py`. |
 
 ---
@@ -212,8 +212,8 @@ a **short** struct on subsequent recalls within the same outage.
 
 `runbook` for `fault` (full, point 9 skeleton): state + measured evidence / plain-language
 impact / investigation steps (process alive? port? `curl` result? model downloaded?) /
-repair commands (start the embedding server / re-run bootstrap / fix URL+port) / one plain
-user-facing sentence / the opt-out env. Phrased imperatively to raise relay odds (point 6).
+repair commands (start the embedding server / fix URL+port / re-run the setup steps if the
+backend must be reinstalled) / one plain user-facing sentence / the opt-out env. Phrased imperatively to raise relay odds (point 6).
 
 ### 4.6 Env opt-out (point 8)
 
@@ -221,7 +221,8 @@ user-facing sentence / the opt-out env. Phrased imperatively to raise relay odds
 DEGRADED_ADVISORY_ENABLED = os.environ.get("CPERSONA_DEGRADED_ADVISORY", "true").lower() == "true"
 ```
 
-On by default; opt-out silences a deliberate FTS-only deployment.
+On by default. Opting out silences the advisory for an operator who accepts running
+without an embedding backend; it does not make that configuration a recommended one.
 
 ### 4.7 Tests
 
@@ -318,9 +319,9 @@ first got 1067 characters with the imperative, the second got 107 without it.
 An outage is rare and the runbook is the point of the feature, so paying for it on every
 recall beats paying silence on every session but one.
 
-A `hint` still downgrades. `mode=none` is permanent, so the exemption would repeat a
-650-character runbook on every recall forever — and it would land on exactly the
-deliberate keyword-only deployment that point 8 exists to leave alone.
+A `hint` still downgrades. `mode=none` is permanent, so the exemption would repeat the
+full runbook on every recall forever, and running without an embedding backend is a
+standing condition rather than an outage to be escalated.
 
 **The payload says which rule is in force.** `advisory_scope` is `"process"` when the
 suppression state is shared and `"session"` when the process is the session, so a client

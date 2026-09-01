@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:96a9008f03151ab8e2d0bcd9372846683048acf3 -->
+<!-- i18n-source: docs/getting-started.md@blob:1c78ddffee61fc53be55a37d8276c5b04eb18fc4 -->
 
 # はじめに
 
@@ -63,9 +63,17 @@ pip install .
 
 ## 2. 埋め込みサーバーを立てる (推奨) { #2-set-up-an-embedding-server-recommended }
 
+CPersona は、契約を満たす埋め込みサーバーへの接続を強く推奨します。埋め込み
+バックエンド無しでの実行はサポートされる fallback 構成ですが、通常運用では
+推奨されません。
+
 ベクトル検索は 3 つの検索層の中で最も強く、外部プロセスを必要とする唯一の層です。
 無くても CPersona は動き — FTS5 + キーワード検索で — かつ
 [その旨を毎回の recall で伝えます](operations.md#detecting-a-dead-embedding-server)。
+
+CEmbedding は参照実装であり第一推奨のバックエンドです。下記の契約を満たす他の
+埋め込みサーバーも同等にサポートされ、同等に推奨されます — バックエンドの選択は
+利用者に委ねられています。
 
 ### 契約 { #the-contract }
 

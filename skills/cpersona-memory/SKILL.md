@@ -51,9 +51,10 @@ If CPersona tools are **not** connected and the user wants memory, go to
 ## Setup
 
 CPersona is a Python MCP server. Installing it has two parts: the **memory
-server** and an optional but strongly recommended **embedding server** (it
-powers the vector-search layer; without it CPersona still runs on FTS5 +
-keyword only).
+server** and a strongly recommended **embedding server** (it powers the
+vector-search layer). Running without an embedding backend is supported as a
+fallback — CPersona then serves FTS5 + keyword only — but it is not
+recommended for normal operation.
 
 **Prerequisites:** Python 3.11+ (Git only for from-source installs).
 
@@ -90,10 +91,14 @@ Or install it onto your PATH with `pip install "cembedding[onnx]"`, then run
 https://github.com/Cloto-dev/CEmbedding.git`, `pip install ".[onnx]"`, run with
 `python -m cembedding`.
 
-> Without an embedding server, set `EMBEDDING_MODE=none`. Vector search (the
-> strongest retrieval layer) is then disabled and recall falls back to FTS5 +
-> keyword. CPersona v2.4.33+ will *tell* you when it is running degraded (see
-> Troubleshooting) instead of silently serving reduced recall.
+> CEmbedding is the reference and recommended backend; any other server
+> satisfying the contract above is equally supported and equally recommended.
+>
+> Without an embedding server, set `EMBEDDING_MODE=none`. That configuration is
+> supported as a fallback but is not recommended for normal operation: vector
+> search (the strongest retrieval layer) is disabled and recall falls back to
+> FTS5 + keyword. CPersona v2.4.33+ will *tell* you when it is running degraded
+> (see Troubleshooting) instead of silently serving reduced recall.
 
 ### 3. Register with the MCP client
 
@@ -365,9 +370,10 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
   HTTP endpoint is unreachable — process died, port changed, DB copied to a
   host without the embedding server, or a startup race). **Surface this to the
   user** instead of quietly serving keyword-only recall, and follow the
-  `runbook` (usually: start/point the embedding server, then recall again). Opt
-  out with `CPERSONA_DEGRADED_ADVISORY=false` for a deliberate keyword-only
-  deployment.
+  `runbook` (usually: start/point the embedding server, then recall again).
+  `CPERSONA_DEGRADED_ADVISORY=false` silences the advisory — set it to record that
+  the operator accepts running without an embedding backend, which is a supported
+  fallback and not a recommended configuration.
 - **Vector search disabled** — embedding server not reachable. Check it's
   running on the configured `EMBEDDING_HTTP_URL` and that `EMBEDDING_MODE=http`.
 - **Nothing recalls after moving machines** — the DB moved but the embedding
