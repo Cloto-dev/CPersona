@@ -3,8 +3,8 @@
 CPersona's ``recall`` silently degrades to keyword/FTS-only when the embedding backend
 is unavailable — either because it is unconfigured (``mode=none``) or because a
 configured http endpoint is unreachable (the process died, the port changed, the DB was
-copied to a host without the embedding server, a startup race). The install-time
-``cpersona-setup`` SKILL self-check is a snapshot and cannot catch post-install drift.
+copied to a host without the embedding server, a startup race). The setup-time self-check
+in the bundled skill is a snapshot and cannot catch post-install drift.
 This module is the runtime guard: a process-level health state machine, fed by a
 measurement at the embedding boundary (``vector.py``), read by ``do_recall`` to attach an
 ``advisory`` to the recall response so the calling agent can notify the user.
@@ -111,14 +111,16 @@ FAULT_RUNBOOK_FULL = (
     "Investigate: (1) is the embedding server process alive? (2) is its port reachable "
     "from this host? (3) curl the embedding URL; (4) was the embedding model downloaded on "
     "this machine?\n\n"
-    "Repair: start (or restart) the embedding server, or re-run the cpersona bootstrap "
-    "script, or correct the embedding URL/port env (EMBEDDING_HTTP_URL / "
-    "CPERSONA_EMBEDDING_URL) and restart CPersona.\n\n"
+    "Repair: start (or restart) the embedding server, or correct the embedding URL/port env "
+    "(EMBEDDING_HTTP_URL / CPERSONA_EMBEDDING_URL) and restart CPersona. If the backend has "
+    "to be reinstalled, follow the setup steps in the bundled skill — any server "
+    "implementing the CPersona embedding contract will do, and CEmbedding is the reference "
+    "implementation.\n\n"
     "Plain version for the user: \"My long-term memory search is running in a reduced mode "
     "right now, so I might miss things I would normally remember — it needs the embedding "
     "service brought back up.\"\n\n"
-    "To silence this advisory (e.g. an intentional keyword-only deployment) set "
-    "CPERSONA_DEGRADED_ADVISORY=false."
+    "To silence this advisory set CPERSONA_DEGRADED_ADVISORY=false. That stops the report, "
+    "not the degradation: recall stays keyword/FTS-only until the backend is reachable."
 )
 
 FAULT_RUNBOOK_SHORT = (
@@ -127,18 +129,26 @@ FAULT_RUNBOOK_SHORT = (
 )
 
 HINT_RUNBOOK_FULL = (
-    "**Notify the user:** CPersona is running WITHOUT embeddings (mode=none), so recall is "
-    "keyword/FTS-only — semantic similarity search is off. This is fine for a deliberate "
-    "keyword-only setup, but differently-worded memories may not be found.\n\n"
-    "To enable semantic recall: set the embedding env (EMBEDDING_MODE=http + "
-    "EMBEDDING_HTTP_URL, or run the cpersona bootstrap which configures a local embedding "
-    "server) and restart CPersona.\n\n"
-    "Plain version for the user: \"My memory search is in keyword-only mode — turning on "
-    "the embedding service would let me recall by meaning, not just exact words.\"\n\n"
-    "To silence this advisory set CPERSONA_DEGRADED_ADVISORY=false."
+    "**Notify the user:** CPersona is running WITHOUT an embedding backend (mode=none), so "
+    "recall is keyword/FTS-only — semantic similarity search is off. This configuration is "
+    "supported as a fallback, but it is NOT recommended for normal operation: memories "
+    "phrased differently from the query are silently missed, and so are older ones.\n\n"
+    "To enable semantic recall: start an embedding server that implements the CPersona "
+    "embedding contract, then set EMBEDDING_MODE=http and EMBEDDING_HTTP_URL to its /embed "
+    "endpoint and restart CPersona. Any conforming server works and is equally supported; "
+    "CEmbedding is the reference implementation. Setup steps live in the bundled skill and "
+    "in the Getting Started guide.\n\n"
+    "Plain version for the user: \"My memory search is in keyword-only mode — connecting an "
+    "embedding service would let me recall by meaning, not just exact words.\"\n\n"
+    "To silence this advisory set CPERSONA_DEGRADED_ADVISORY=false. That records an "
+    "operator who accepts the supported-but-not-recommended standalone configuration; it "
+    "does not make running without an embedding backend the recommended one."
 )
 
-HINT_RUNBOOK_SHORT = "Reminder: embeddings are off (mode=none); recall is keyword/FTS-only."
+HINT_RUNBOOK_SHORT = (
+    "Reminder: no embedding backend is configured (mode=none); recall stays keyword/FTS-only. "
+    "Supported as a fallback, not recommended for normal operation."
+)
 
 
 def observe_config() -> None:

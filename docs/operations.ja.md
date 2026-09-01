@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:6b7dea5b31c0eb0f522276a34c4c370076724d2d -->
+<!-- i18n-source: docs/operations.md@blob:9704ba8aece1e746c89a9bf1e42be4cb4fcf42cb -->
 
 # 運用 Runbook
 
@@ -83,9 +83,10 @@
    プロセスが自分専用なら `session`、HTTP トランスポートでは状態がサーバー全体の
    ものなので `process` になります。共有サーバーでは、fault は自分のセッションが
    見たと仮定せず完全版 runbook を繰り返します (bug-251)。
-   `CPERSONA_DEGRADED_ADVISORY=false` での無効化は、
-   意図的に keyword のみで運用する場合に限ってください。設計:
-   [DEGRADED_ADVISORY_DESIGN](DEGRADED_ADVISORY_DESIGN.md)。
+   `CPERSONA_DEGRADED_ADVISORY=false` は advisory を黙らせます。埋め込み
+   バックエンド無しでの運用を運用者が受け入れたことを記録する用途で設定して
+   ください — これはサポートされる fallback であって、推奨構成ではありません。
+   設計: [DEGRADED_ADVISORY_DESIGN](DEGRADED_ADVISORY_DESIGN.md)。
 2. **store 応答の `embedded`。** 全ての書き込みが、自分の埋め込みが永続化された
    かどうかを報告します。サーバー停止中に行われた書き込みは `embedded: false`
    で返り、それらの行は修復可能です (次項)。

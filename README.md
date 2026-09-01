@@ -68,7 +68,7 @@ uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
 EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
 ```
 
-Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/CPersona/getting-started/#the-contract) works. Without one, cpersona runs on FTS5 + keyword search and tells you it is degraded.
+Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/CPersona/getting-started/#the-contract) works and is equally recommended; CEmbedding is the reference implementation. Running without an embedding backend is supported as a fallback — cpersona then serves FTS5 + keyword search and tells you it is degraded — but it is not recommended for normal operation.
 
 **3. Register it with your MCP client**
 

@@ -75,9 +75,10 @@ exist, and the calling agent should be instructed to watch the first:
    "you were already told"; `advisory_scope` says who "you" was — `session` when
    the process is yours alone, `process` on the HTTP transport, where the state
    is the whole server's. On a shared server a fault repeats its full runbook
-   rather than assume your session saw it (bug-251). Opt out with
-   `CPERSONA_DEGRADED_ADVISORY=false` only for a deliberate keyword-only
-   deployment. Design: [DEGRADED_ADVISORY_DESIGN](DEGRADED_ADVISORY_DESIGN.md).
+   rather than assume your session saw it (bug-251). `CPERSONA_DEGRADED_ADVISORY=false`
+   silences the advisory: set it to record that the operator accepts running without an
+   embedding backend, which is a supported fallback and not a recommended configuration.
+   Design: [DEGRADED_ADVISORY_DESIGN](DEGRADED_ADVISORY_DESIGN.md).
 2. **`embedded` on store responses.** Every write reports whether its
    embedding was persisted. Writes made while the server is down come back
    `embedded: false` — those rows are repairable (next item).
