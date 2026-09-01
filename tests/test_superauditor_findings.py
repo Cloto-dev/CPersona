@@ -389,6 +389,26 @@ async def test_shared_transport_without_a_session_key_is_marked(db, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_a_key_that_resolves_to_the_shared_bucket_is_still_marked(db, monkeypatch):
+    """bug-272: the flag follows resolution, not the raw argument's truthiness.
+
+    Both values below are truthy strings that ``resolve_session_key`` deliberately
+    refuses to treat as a declaration: whitespace-only, because a client template
+    rendering an unset variable must not mint a private bucket, and TRANSPORT_KEY
+    itself, because it names the bucket every keyless caller already shares. Reading
+    the raw argument let either one silence the honesty flag while landing in exactly
+    the bucket the flag exists to report.
+    """
+    monkeypatch.setenv("CPERSONA_TRANSPORT", "http")
+    for undeclared in ("   ", session.TRANSPORT_KEY):
+        response = await maintenance_handlers.do_get_session_findings(session_key=undeclared)
+        assert response["identity_shared"] is True, (
+            f"session_key={undeclared!r} resolves to the shared bucket, so the response "
+            "must say so"
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_crashed_probe_is_a_finding_not_a_failed_pull(db, monkeypatch):
     """A partial result names the probe that could not run; the rest is delivered."""
     await _insert(db, agent_id="p1")  # missing_profile still fires
