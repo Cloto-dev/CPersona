@@ -195,7 +195,11 @@ async def _probe_embedding_health() -> tuple[bool, str | None]:
 ### 4.4 `do_recall` integration
 
 At `do_recall` entry, `health.observe_config()`. The recall path feeds `observe_ok()` /
-`observe_failure()` from the outcome of the embedding call itself. Before `return {"messages": messages}`:
+`observe_failure()` from the outcome of the embedding call itself — `observe_ok()` only
+when that outcome reports `attempted`, because the client answers a repeated single-text
+embed from its TTL cache without a request leaving the process, and a value it never went
+out for is not an observation of the backend (bug-248). A cache hit leaves the state where
+the last real call put it. Before `return {"messages": messages}`:
 
 ```python
 advisory = health.maybe_advisory()  # None when healthy/opted-out; full or short struct otherwise
