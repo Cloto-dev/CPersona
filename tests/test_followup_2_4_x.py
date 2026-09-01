@@ -18,6 +18,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from cpersona._vendored_mcp_common.embedding_client import EmbedOutcome  # noqa: E402
 from cpersona import session
 from cpersona import database, maintenance_handlers, memory_handlers, vector
 from cpersona.database import get_db
@@ -108,6 +109,10 @@ async def test_remote_search_falls_back_to_local_on_timeout(clean_db, monkeypatc
         async def embed(self, texts):
             # Local fallback needs a query embedding; empty corpus -> [] result.
             return [[0.0] * 8 for _ in texts]
+
+        async def embed_with_outcome(self, texts):
+            result = await self.embed(texts)
+            return result, EmbedOutcome(attempted=True, ok=bool(result))
 
     monkeypatch.setattr(vector, "VECTOR_SEARCH_MODE", "remote")
     monkeypatch.setattr(vector, "_embedding_client", _FakeClient())

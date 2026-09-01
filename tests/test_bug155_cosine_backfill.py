@@ -53,7 +53,7 @@ import pytest_asyncio  # noqa: E402
 
 from cpersona import memory_handlers as M  # noqa: E402
 from cpersona import vector as V  # noqa: E402
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient, EmbedOutcome  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
 AGENT = "agent.bug155"
@@ -104,6 +104,10 @@ class _Counting:
     async def embed(self, texts: list[str]) -> list[list[float]] | None:
         self.embed_calls.append(list(texts))
         return [_embed(t) for t in texts]
+
+    async def embed_with_outcome(self, texts: list[str]):
+        result = await self.embed(texts)
+        return result, EmbedOutcome(attempted=True, ok=bool(result))
 
     @staticmethod
     def pack_embedding(embedding: list[float]) -> bytes:

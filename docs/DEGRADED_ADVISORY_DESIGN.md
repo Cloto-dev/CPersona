@@ -1,6 +1,7 @@
 # Dense-Degraded Runtime Detection + Advisory Context Injection
 
-**Status**: design (Route B accepted for the 2.4.x line; Route A planned for 2.5.0)
+**Status**: implemented. Route B shipped on the 2.4.x line; Route A replaced it — the
+evidence now comes from the embedding call that failed, and the probe is gone (§6).
 **Decision**: project owner + claude-code, 2026-06-28 (handoff: CPersona memory `id 1165`, `agent_id=claude-web`, `project_id=cloto`)
 **Scope**: surgical patch — no SCHEMA change, no new tool. A new response field + a process-level health state + one env var.
 
@@ -97,7 +98,7 @@ The health state is placed the same way — a module singleton, reset on restart
 | 2 | **State machine, 4 states**: `unknown` / `healthy` / `hint` / `fault`. Process-level (reset on restart). | New `health.py` module singleton (mirrors no-persist module-state). |
 | 3 | **Severity split**: `hint` = embedding unset (`mode=none`, FTS-only, static → immediate). `fault` = `mode=http` but endpoint unreachable (promote on **2 consecutive** failures; debounce single blips per the CoreML-hang precedent). | `hint` set from `config.EMBEDDING_MODE`; `fault` gated by a consecutive-failure counter. |
 | 4 | **Firing by transition**: each `healthy→degraded` first transition emits one **full ~1000-char** template; subsequent recalls during the *same* outage emit a **short ~100-char** reminder; `healthy` is **completely silent**. | `health` records `advisory_emitted_for_current_outage`; `do_recall` chooses full vs short vs none. |
-| 5 | **Dynamic evidence** embedded into both full and short payloads (e.g. `mode=http / POST http://127.0.0.1:8401/embed failed: connection refused`). Template = static skeleton, problem = dynamic slot. | `health.evidence` populated by the probe (Route B) — the actual captured error string. |
+| 5 | **Dynamic evidence** embedded into both full and short payloads (e.g. `mode=http / POST http://127.0.0.1:8401/embed failed: connection refused`). Template = static skeleton, problem = dynamic slot. | `health.evidence` carries the error captured by the embedding call itself. |
 | 6 | **Payload = struct** `{degraded, severity, reason, evidence, runbook}`. The agent renders/localizes it (language + tone are the agent's domain). Imperative phrasing ("notify the user: ...") raises relay odds. | `advisory` field value is this struct; rendering left to the client. |
 | 7 | **Carrier = the `recall` response advisory field**. MCP cannot push → honest reach is "fault surfaces on the *next* recall". Relay is best-effort and must say so. | New `advisory` key alongside `messages`. |
 | 8 | **On by default / env opt-out.** The opt-out records an operator who accepts running without an embedding backend — a supported fallback, not a recommendation. Safe-by-default. | `CPERSONA_DEGRADED_ADVISORY` (default `true`). |
@@ -109,10 +110,13 @@ The health state is placed the same way — a module singleton, reset on restart
 
 ### 4.1 Why Route B now
 
-`embed()` lives in `_vendored_mcp_common/` — shared common, vendored into CPersona. Making
-`embed()` itself surface `{attempted, ok, error}` (Route A) requires a clotohub-servers
-common bump + re-vendor and ripples to every other consumer. That contradicts the handoff's
-"surgical patch / no new tool / 2.4.x QOL line" framing.
+`embed()` lives in `_vendored_mcp_common/` — a shared client vendored into CPersona. At the
+time, making `embed()` itself surface `{attempted, ok, error}` was judged to require a
+release of the upstream package and a change every consumer would have to absorb, which
+contradicted the "surgical patch / no new tool / 2.4.x QOL line" framing.
+
+That premise did not survive contact with the change (§6): an additive method left the
+existing entry point untouched, so no consumer had to absorb anything.
 
 Route B keeps the change **cpersona-only**: `embed()` is left untouched; CPersona derives
 health from (a) `config.EMBEDDING_MODE` for the static `hint` case and (b) **its own
@@ -153,8 +157,11 @@ Key transitions:
 
 ### 4.3 The probe
 
-When `_search_vector` calls `embed([query])` (`vector.py:182`) and gets a falsy result while
-`EMBEDDING_MODE != "none"`, CPersona runs `_probe_embedding_health()`:
+> **Superseded by §6.** The probe described here no longer exists. It is kept because the
+> reason it was needed is the reason the current design looks the way it does.
+
+When `_search_vector` called `embed([query])` and got a falsy result while
+`EMBEDDING_MODE != "none"`, CPersona ran `_probe_embedding_health()`:
 
 ```python
 async def _probe_embedding_health() -> tuple[bool, str | None]:
@@ -177,15 +184,18 @@ async def _probe_embedding_health() -> tuple[bool, str | None]:
 - The probe's captured error is the **dynamic evidence** (point 5).
 - Debounce (point 3): two consecutive probe failures promote `HINT`/`HEALTHY`→`FAULT`.
 
-> **Note on the double-I/O / race**: Route B's probe is a *separate* POST from the real
-> recall-path `embed()` call, so in principle the probe could disagree with the real call
-> (one succeeds, the other fails). This is acceptable for a best-effort advisory and is
-> exactly the seam Route A removes in 2.5.0 (§6).
+> **The double-I/O and the disagreement it allowed**: the probe was a *separate* POST from
+> the real recall-path `embed()` call, so the two could disagree — and the direction that
+> mattered was the probe succeeding while the real call failed, because the branch then
+> recorded health as OK on a recall that returned nothing. The probe also carried the local
+> server's payload shape to `_http_url`, which an api-mode client does not have, so that
+> mode could only ever produce "embedding client unavailable" instead of evidence. Both are
+> gone with the probe (§6).
 
 ### 4.4 `do_recall` integration
 
 At `do_recall` entry, `health.observe_config()`. The recall path feeds `observe_ok()` /
-`observe_failure()` via the probe. Before `return {"messages": messages}`:
+`observe_failure()` from the outcome of the embedding call itself. Before `return {"messages": messages}`:
 
 ```python
 advisory = health.maybe_advisory()  # None when healthy/opted-out; full or short struct otherwise
@@ -242,13 +252,20 @@ without an embedding backend; it does not make that configuration a recommended 
 
 ---
 
-## 6. Route A — planned for CPersona 2.5.0
+## 6. Route A — shipped
 
-When a major version makes the cross-repo common bump acceptable, fold the detection into
-the boundary itself: `EmbeddingClient.embed()` returns `{attempted, ok, error}` (or raises a
-typed error) natively instead of collapsing to `None`. Then the CPersona-local probe (§4.3)
-is **removed** and the health state is fed directly from the real recall-path `embed()`
-result.
+The detection is folded into the boundary itself, and the probe (§4.3) is **removed**: the
+health state is fed directly from the real recall-path call.
+
+It did not need the breaking change §4.1 assumed. `embed()` keeps its signature and its
+return values exactly; an additive `embed_with_outcome()` returns the same value alongside
+`{attempted, ok, error}`, and the recall path calls that one. Nothing else had to change,
+which is why this landed on the 2.5.x line rather than waiting for a major version.
+
+The outcome is returned to the caller rather than stored on the client, so two concurrent
+embeds cannot read each other's result. One case is worth naming: a 2xx response carrying
+no embeddings is reported as a failure, because it is one for the caller — and it is
+exactly what a separate probe got wrong, since the probe saw the same success code.
 
 **Why the layering is clean (forward-compat)**: Route B's **advisory contract is the stable
 interface** — the payload struct `{degraded, severity, reason, evidence, runbook}` and the
@@ -278,12 +295,12 @@ where they conflict.
    `do_recall`'s result, so it must **forward** `recall_result.get("advisory")` explicitly
    or the advisory is dropped. It must NOT call `maybe_advisory()` again (that would flip
    full→short within one logical recall).
-3. **Probe placement** (refines §4.3). `_probe_embedding_health()` lives in `vector.py`
-   (needs `_embedding_client` + `httpx`; keeps `health.py` free of a `vector` import so the
-   graph stays `config ← health ← vector ← memory_handlers`). It uses a short dedicated
-   `PROBE_TIMEOUT_SECS=3.0` (not the 30s embed timeout) and is gated by `health.is_faulted()`
-   so probe I/O is bounded to the 2-probe promotion window; recovery is observed on the embed
-   **success** path, not by re-probing.
+3. **Probe placement** (refines §4.3; **superseded by §6** — the probe and its dedicated
+   timeout are gone, and the failure path no longer needs the `health.is_faulted()` gate
+   that existed to bound probe I/O). The observation point is still the local embed path in
+   `vector.py`, and `health.py` still takes no `vector` import, so the dependency graph is
+   unchanged: `config ← health ← vector ← memory_handlers`. Recovery is still observed on
+   the embed **success** path.
 4. **Remote-search swallow needs no separate hook** (refines §2.2). On
    `VECTOR_SEARCH_MODE=="remote"` a remote failure falls through to the instrumented local
    embed path, so only the local path is wired (production uses local mode).

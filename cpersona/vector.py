@@ -22,10 +22,6 @@ from cpersona.utils import episode_timestamp
 
 logger = logging.getLogger(__name__)
 
-# Short, dedicated timeout for the degraded-advisory health probe — do NOT inherit the
-# embed client's 30s timeout, so a hung endpoint does not add it again to a failing recall.
-PROBE_TIMEOUT_SECS = 3.0
-
 
 _embedding_client: EmbeddingClient | None = None
 
@@ -177,30 +173,6 @@ def _escape_like_prefix(s: str) -> str:
     if not s:
         return ""
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-
-
-async def _probe_embedding_health() -> tuple[bool, str | None]:
-    """Non-swallowing health POST to the embedding endpoint to capture the real error.
-
-    ``EmbeddingClient.embed()`` swallows the transport error and returns ``None``, so when an
-    embed fails we re-probe here to recover the actual failure string for the advisory's
-    evidence slot (Route B). Returns ``(ok, evidence)``: ``(True, None)`` on a 2xx, else
-    ``(False, "mode=<m> / POST <url> failed: <error>")``. Uses a short dedicated timeout so a
-    hung endpoint does not add the full embed timeout again.
-    """
-    client = _embedding_client
-    if client is None or not client._http_url or client._client is None:
-        return False, "embedding client unavailable"
-    try:
-        resp = await client._client.post(
-            client._http_url,
-            json={"texts": ["health-probe"]},
-            timeout=PROBE_TIMEOUT_SECS,
-        )
-        resp.raise_for_status()
-        return True, None
-    except Exception as e:
-        return False, f"mode={client.mode} / POST {client._http_url} failed: {e}"
 
 
 # One batched hydration statement stays well under SQLite's bound-variable ceiling
@@ -857,18 +829,19 @@ async def _search_vector(
 
     import numpy as np
 
-    embeddings = await _embedding_client.embed([query])
+    embeddings, outcome = await _embedding_client.embed_with_outcome([query])
     if not embeddings or not embeddings[0]:
         # The client exists here (mode != "none"), so a falsy embed of the query text
-        # itself is a genuine embed failure, not an empty-corpus no-match. Re-probe to
-        # capture the real error for the degraded-advisory, unless already latched into
-        # fault (bounds probe I/O to the promotion window; recovery is seen on success).
-        if not health.is_faulted():
-            ok, evidence = await _probe_embedding_health()
-            if ok:
-                health.observe_ok()
-            else:
-                health.observe_failure(evidence)
+        # itself is a genuine embed failure, not an empty-corpus no-match. The call that
+        # failed now carries its own evidence, so there is nothing left to re-probe.
+        #
+        # Reading the real call rather than a second one removes a disagreement that was
+        # possible before: the probe could come back 2xx while the recall's own embed had
+        # failed, and this branch would then record health as OK while returning nothing.
+        # It also reaches the modes the probe could not — the probe posted the local
+        # server's payload shape to `_http_url`, which an api-mode client does not even
+        # have, so `mode=api` could only ever produce "embedding client unavailable".
+        health.observe_failure(outcome.error or "the embedding call produced no usable vector")
         return []
     health.observe_ok()  # embed succeeded — re-arm after any prior degradation
     query_vec = np.array(embeddings[0], dtype=np.float32)
