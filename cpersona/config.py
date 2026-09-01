@@ -150,8 +150,9 @@ EMBEDDING_CACHE_TTL = _parse_int("CPERSONA_EMBEDDING_CACHE_TTL", 300)
 # Degraded-advisory runtime guard (v2.4.33): when embeddings are unavailable at runtime
 # (mode=none, or a configured http endpoint is unreachable) do_recall attaches an
 # `advisory` to its response so the calling agent can self-report the degradation
-# instead of silently serving keyword/FTS-only recall. On by default; opt out for a
-# deliberate FTS-only deployment. See health.py + docs/DEGRADED_ADVISORY_DESIGN.md.
+# instead of silently serving keyword/FTS-only recall. On by default; opting out records
+# an operator who accepts a supported-but-not-recommended standalone deployment, and it
+# stops the report rather than the degradation. See health.py + DEGRADED_ADVISORY_DESIGN.
 DEGRADED_ADVISORY_ENABLED = os.environ.get("CPERSONA_DEGRADED_ADVISORY", "true").lower() == "true"
 
 TASK_QUEUE_ENABLED = os.environ.get("CPERSONA_TASK_QUEUE_ENABLED", "true").lower() == "true"

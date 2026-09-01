@@ -5,10 +5,12 @@ description: >-
   MCP server. Use this skill whenever the user wants Claude to remember things
   between conversations, asks to install or set up CPersona / a memory server,
   or when CPersona tools are available and the conversation contains decisions,
-  rules, preferences, or a session boundary worth recording. Covers install,
-  MCP-client configuration, the embedding server, the day-to-day
-  store / recall / archive workflow, and persisting the memory policy into
-  the user's CLAUDE.md so the triggers survive without this skill loaded.
+  rules, preferences, or a session boundary worth recording, or when a recall
+  comes back degraded or the user says memory search stopped working. Covers
+  install, MCP-client configuration, the embedding server, the day-to-day
+  store / recall / archive workflow, diagnosing and repairing a degraded
+  embedding backend, and persisting the memory policy into the user's
+  CLAUDE.md so the triggers survive without this skill loaded.
 ---
 
 # CPersona — persistent memory for Claude
@@ -42,9 +44,12 @@ Activate this skill when any of the following is true:
 - CPersona MCP tools (`store`, `recall`, `archive_episode`, …) are connected
   **and** the current turn contains a decision, a standing rule/preference, a
   bug finding, or a session boundary (start/end).
+- A `recall` response carries an `advisory` field, a `store` response comes back
+  `embedded: false`, or the user reports that memory search has got worse.
 
 If CPersona tools are **not** connected and the user wants memory, go to
-**Setup**. If they are connected, go to **Usage**.
+**Setup**. If they are connected, go to **Usage** — or to **When recall is
+degraded** if a signal in the last bullet is what brought you here.
 
 ---
 
@@ -360,24 +365,54 @@ Branch on failure, not on the absence of success — two shapes carry no `ok` at
 
 ---
 
-## Troubleshooting
+## When recall is degraded
 
-- **Recall results look thin / off-topic, or an `advisory` field appears on a
-  `recall` response** — CPersona v2.4.33+ attaches
-  `advisory = {degraded, severity, reason, evidence, runbook, advisory_scope}`
-  when it is
-  running **degraded** (embeddings unavailable: `EMBEDDING_MODE=none`, or the
-  HTTP endpoint is unreachable — process died, port changed, DB copied to a
-  host without the embedding server, or a startup race). **Surface this to the
-  user** instead of quietly serving keyword-only recall, and follow the
-  `runbook` (usually: start/point the embedding server, then recall again).
-  `CPERSONA_DEGRADED_ADVISORY=false` silences the advisory — set it to record that
-  the operator accepts running without an embedding backend, which is a supported
-  fallback and not a recommended configuration.
-- **Vector search disabled** — embedding server not reachable. Check it's
-  running on the configured `EMBEDDING_HTTP_URL` and that `EMBEDDING_MODE=http`.
-- **Nothing recalls after moving machines** — the DB moved but the embedding
-  server didn't, or the embedding model/dimension changed. CPersona
+Vector search is the one retrieval layer that lives outside the database, so it
+is the one that can fail. CPersona reports that rather than quietly serving
+less: a degraded `recall` response carries
+`advisory = {degraded, severity, reason, evidence, runbook, advisory_scope}`.
+**Surface it to the user** instead of serving keyword-only recall in silence,
+and follow its `runbook`.
+
+Two conditions produce it, and they are different conversations:
+
+- **`severity: "hint"`** — no embedding backend is configured (`mode=none`).
+  A **supported** configuration, whether chosen deliberately or never set up,
+  and **not recommended for normal operation**: recall then matches on shared
+  words, so a memory phrased differently from the question can be missed, and
+  so can older ones. Say what it costs and offer to connect a backend. Do not
+  present it as a fault — nothing is broken.
+- **`severity: "fault"`** — a backend *is* configured and stopped answering
+  (the process died, the port moved, the model was never downloaded on this
+  host, the database was copied to a machine without the server). Raised after
+  two consecutive failures, so it is not a blip. `evidence` names the mode, the
+  endpoint and the failure and carries no credential — quote it to the user.
+
+Signals for when you are looking rather than being told: `store` responses
+carry `embedded`, and `check_health(agent_id, fix=true)` reports
+`embedding_backend_unreachable` with that same evidence. `check_health(fix=false)`
+makes no network call and says so (`embedding_backend_not_probed`) — a quiet
+`fix=false` run is not evidence that the backend is up. An *unconfigured*
+backend is deliberately not a health finding; the advisory owns that state.
+`CPERSONA_DEGRADED_ADVISORY=false` silences the report, not the degradation.
+
+**Repairs are proposals.** Starting a process, editing an MCP client config, or
+changing an environment variable follows the approval rules you already operate
+under: show the exact change, ask, then verify. Nothing decays while you wait —
+the memories are intact and writes keep succeeding.
+
+**Full walkthrough — diagnose, explain, propose, repair, verify:**
+[`references/embedding-backend-repair.md`](references/embedding-backend-repair.md).
+It carries both setup paths (the reference backend and any conforming server),
+the causes of a fault in the order worth checking, the verification sequence,
+and the backfill for rows written while the backend was down.
+
+### Other symptoms
+
+- **Vector search disabled** — the embedding server is not reachable. Confirm it
+  is running at the configured URL and that the mode is `http`.
+- **Nothing recalls after moving machines** — the database moved and the
+  embedding server did not, or the embedding model/dimension changed. CPersona
   recalibrates on a dimension change; otherwise run `calibrate_threshold`.
 
 ---
