@@ -185,17 +185,39 @@ async def test_duplicate_content_prefers_shared_channel_survivor(clean_db):
 
 
 class _FailingEmbeddingClient:
+    """A backend that is down, reported the way the real client reports it.
+
+    The real client catches its own transport errors and returns no embeddings with the
+    reason in the outcome; it does not raise. A double that raises instead exercises a
+    branch production never takes, which is how the failure-reporting half of bug-129
+    stayed dead while its regressions passed.
+    """
+
+    EVIDENCE = "mode=http / POST http://127.0.0.1:8401/embed failed: ConnectError: connection refused"
+
     def __init__(self):
         self.calls = 0
 
     async def embed(self, texts):
+        result, _ = await self.embed_with_outcome(texts)
+        return result
+
+    async def embed_with_outcome(self, texts):
+        from cpersona._vendored_mcp_common.embedding_client import EmbedOutcome
+
         self.calls += 1
-        raise RuntimeError("backend unavailable")
+        return None, EmbedOutcome(attempted=True, ok=False, error=self.EVIDENCE)
 
 
 class _BatchEmbeddingClient:
     def __init__(self):
         self.calls = []
+
+    async def embed_with_outcome(self, texts):
+        from cpersona._vendored_mcp_common.embedding_client import EmbedOutcome
+
+        result = await self.embed(texts)
+        return result, EmbedOutcome(attempted=True, ok=bool(result), error=None)
 
     async def embed(self, texts):
         self.calls.append(texts)

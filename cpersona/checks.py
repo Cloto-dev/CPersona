@@ -580,10 +580,36 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
         )
         for start in range(0, len(rows), EMBED_BATCH_SIZE):
             chunk = rows[start : start + EMBED_BATCH_SIZE]
+            # bug-274: bug-129 wired this loop to feed the health breaker, and that fix was
+            # recorded as done. It never fired on the failure that matters most. The call
+            # it watched reports an unreachable endpoint by returning no embeddings, not
+            # by raising, so the `except` below stayed dead on that path, the loop that
+            # follows fell through on an empty sequence, and a re-embed pass that did no
+            # work reported success. Reading the outcome the call now carries is what
+            # makes the failure legible here.
+            #
+            # Only failures are reported. Recovery stays on the recall path's embed
+            # success, which is the asymmetry bug-129 already chose: clearing the state
+            # from here would let a maintenance run erase a fault a user's recall had just
+            # latched, along with the record of which sessions had been told about it.
+            failure: str | None = None
+            embeddings = None
             try:
-                embeddings = await vector._embedding_client.embed([text for _, text in chunk])
-            except Exception:
-                health.observe_failure("prefetch embed failed")
+                embeddings, outcome = await vector._embedding_client.embed_with_outcome(
+                    [text for _, text in chunk]
+                )
+                # `error` is set for a failed request and for a misconfigured mode, and is
+                # absent when there is simply no backend to call — which is a standing
+                # condition reported by observe_config(), not a fault to promote here.
+                failure = outcome.error
+            except Exception as exc:
+                # Transport failure arrives through the outcome above, so reaching here
+                # means something outside that contract broke. Name the exception type:
+                # this string is the `evidence` slot of the advisory a user reads, and the
+                # constant that used to sit here said nothing about what went wrong.
+                failure = f"prefetch embed raised {type(exc).__name__}"
+            if failure:
+                health.observe_failure(failure)
                 if health.is_faulted():
                     return out
                 continue

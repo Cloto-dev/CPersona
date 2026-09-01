@@ -1885,7 +1885,7 @@
       "status": "fixed",
       "category": "health-check",
       "fixed_in": "2.5.0",
-      "fix_note": "Prefetch now skips an already faulted backend, embeds rows in chunks of 32, records chunk failures, and exits once the breaker latches. Regression: test_audit_2500b3.py::test_prefetch_null_embeddings_skips_faulted_backend and test_audit_2500b3.py::test_prefetch_null_embeddings_batches_rows."
+      "fix_note": "Prefetch now skips an already faulted backend, embeds rows in chunks of 32, records chunk failures, and exits once the breaker latches. Regression: test_audit_2500b3.py::test_prefetch_null_embeddings_skips_faulted_backend and test_audit_2500b3.py::test_prefetch_null_embeddings_batches_rows. CORRECTION (bug-274): the \"records chunk failures\" half never fired. It sat in an `except` clause, and the embedding call reports transport failure by returning no embeddings rather than by raising, so the branch was dead on an unreachable endpoint. Neither named regression drove it — one asserts the backend is skipped when already faulted (the client is never called) and the other covers batching on the success path — and the only failing double raised, which the real client does not. Repaired in 2.5.9."
     },
     {
       "id": "bug-130",
@@ -3975,6 +3975,21 @@
       "category": "gate-reach",
       "fix_sketch": "Compare the path relative to the package root instead of the base name, and assert the exemption set by relative path in the reach test.",
       "note": "Deferred from the 2.5.8 review."
+    },
+    {
+      "id": "bug-274",
+      "summary": "(HIGH) The NULL-embedding prefetch reported a failing backend to the health breaker only from an `except` that the most likely failure never reaches: the embedding call reports an unreachable endpoint by returning no embeddings rather than by raising. A re-embed pass with the backend down zipped against an empty sequence, wrote nothing, told health nothing, and reported success. The evidence it did pass on the rare raising path was a constant that named neither the mode nor the endpoint.",
+      "severity": "HIGH",
+      "discovered": "2026-09-01T01:20:00Z",
+      "version": "2.5.8",
+      "file": "cpersona/checks.py",
+      "pattern": "bug-274",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "fixed_in": "2.5.9",
+      "fix_note": "The prefetch reads the outcome the embedding call now carries and reports `outcome.error`, so an unreachable endpoint promotes the breaker and reaches the advisory with the failing call's own evidence. Recovery deliberately stays on the recall path: clearing health from a maintenance run would erase a fault a user's recall had just latched. Regressions: test_prefetch_health_feedback.py (four cases; two mutations were run — dropping the report kills three of them and dropping only the outcome read kills the two that cover it, so the cases are differentiated rather than all-or-nothing). Test doubles that offered `embed` but not `embed_with_outcome` were aligned with the client contract; one of them had been masking this class by raising where the real client does not.",
+      "note": "Found while wiring the failure evidence through, not by a failing check. bug-129 recorded this feed as part of its fix and was marked fixed; see the note added there."
     }
   ]
 }
