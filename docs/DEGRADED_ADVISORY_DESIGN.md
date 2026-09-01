@@ -274,9 +274,17 @@ refactor (probe → embed() result), not a redesign. The user-facing contract is
 the evidence is *upgraded* from a separate probe POST to the actual recall-path call,
 eliminating the §4.3 double-I/O and the probe-vs-real-call race.
 
-Cross-repo cost to budget for 2.5.0: clotohub-servers `servers/common/` change →
-`clotohub-servers-common` bump → re-vendor into CPersona → revalidate other consumers
-(CScheduler embedding, etc.).
+What the cross-repo cost turned out to be: an additive method upstream, then a re-vendor
+here. No existing entry point changed, so no other consumer had anything to absorb or
+revalidate.
+
+One correction to carry forward, because the estimate above assumed otherwise. The vendored
+copy here is byte-identical to the upstream it syncs from, but that upstream is not the only
+lineage of this client: a sibling lineage, maintained separately, carries a transport mode
+and a broader failure catch that the upstream does not have. An additive change made
+upstream does not reach it, and syncing it backwards would delete what it has. Planning work
+on this client as though one canonical copy existed is how a change silently misses half its
+callers.
 
 ---
 
@@ -332,9 +340,10 @@ quietly became "on the next recall of one session, once per outage".
 Measured through the real transport, two clients in one process during one outage: the
 first got 1067 characters with the imperative, the second got 107 without it.
 
-**The rule now.** A `fault` does not downgrade while the process serves several sessions.
-An outage is rare and the runbook is the point of the feature, so paying for it on every
-recall beats paying silence on every session but one.
+**The rule now.** For a caller that declares no session identity, a `fault` does not
+downgrade while the process serves several sessions. An outage is rare and the runbook is
+the point of the feature, so paying for it on every recall beats paying silence on every
+session but one.
 
 A `hint` still downgrades. `mode=none` is permanent, so the exemption would repeat the
 full runbook on every recall forever, and running without an embedding backend is a
@@ -346,8 +355,16 @@ can tell a reminder it never received from a follow-up to one it did. The no-per
 toggle discloses its blast radius the same way; this advisory used to degrade its own
 payload silently instead.
 
-**Why not per session.** Nothing at the recall seam identifies a session to key on. The
-HTTP mode is stateless, so no session survives a request, and the ACL principal carries
-only a client id — two windows sharing one credential are one principal. A caller-supplied
-key would give one, at the cost of an argument every client has to pass; `advisory_scope`
-is the field that would then start answering `"session"`, with no change of shape.
+**Per session, since.** The paragraph this replaces recorded per-session suppression as out
+of reach: nothing at the recall seam identified a session to key on, the HTTP mode is
+stateless so no session survives a request, and the ACL principal carries only a client id —
+two windows sharing one credential are one principal. What was missing was an identity the
+*caller* declares rather than one the transport supplies, and that is what shipped. A caller
+that declares a session key gets suppression keyed on that session, so every session in an
+outage is told once, and `advisory_scope` answers `"session"` for it — the field the earlier
+paragraph named, with the change of shape it predicted, which is none.
+
+The `fault` exemption above is deliberately not applied to a declared key. The exemption
+compensates for missing identity; where identity is present, repeating a full runbook to a
+session that already received it would reinstate the cost the exemption exists to avoid. A
+caller that declares nothing keeps the keyless behaviour unchanged.
