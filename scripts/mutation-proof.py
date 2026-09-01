@@ -272,6 +272,20 @@ MUTATIONS: list[Mutation] = [
         breaks="ragged embedding dims reach the matmul; calibration crashes or scores garbage",
         expect="test_calibrate_survives_mixed_embedding_dims",
     ),
+    # -----------------------------------------------------------------------
+    # MemoryTaskQueue attribution (tasks.py) — the map that decides whose pause
+    # governs a queued row. _forget_session covers the paths the queue drives;
+    # rows also vanish underneath it, and only the reconcile pass sees those.
+    # -----------------------------------------------------------------------
+    Mutation(
+        id="M13",
+        target="queue attribution reconcile",
+        file="cpersona/tasks.py",
+        find="await self._forget_vanished_rows()",
+        replace="pass",
+        breaks="attributions for rows deleted outside the queue leak until the cap evicts a live one (bug-270)",
+        expect="test_attribution_does_not_outlive_the_row (the out-of-band delete case)",
+    ),
 ]
 
 

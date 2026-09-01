@@ -3929,12 +3929,13 @@
       "discovered": "2026-08-31T09:00:00Z",
       "version": "2.5.8",
       "file": "cpersona/tasks.py",
-      "pattern": "_task_sessions",
+      "pattern": "bug-270",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-claim",
-      "fix_sketch": "Either drop the attribution on the three row-deleting paths, or narrow the claim in the docstring and the design note to the paths that actually hold it, and widen the test to cover whichever set is chosen.",
-      "note": "Deferred from the 2.5.8 review."
+      "note": "Deferred from the 2.5.8 review; picked up in the 2.5.9 line. No wrong pause decision was possible either before or after: an enqueue always writes or clears the entry for its row id before that id is read, so a reused row id cannot inherit a stale key. The cost was cap pressure and early eviction of a live entry.",
+      "fixed_in": "2.5.9",
+      "fix_note": "Took neither branch of the fix_sketch literally. Dropping the attribution on the three row-deleting paths would be correct only until a fourth deleter is written, and would have a health probe and two admin handlers reach into in-process queue state to do it; narrowing the claim would leave the leak in place. The queue instead ends every drain pass by reconciling the map against the rows that still exist, which covers any path that deletes a row, including ones not yet written. The query asks only about the ids the map holds, so it is bounded by the attribution cap rather than by the queue, and the ids are snapshotted before it runs so a row attributed concurrently cannot be forgotten by it. It is called where the pass ends rather than in a finally: a reconcile that raised inside one would turn a drain that succeeded into a drain that aborted, and an aborted pass is re-armed anyway. The docstring and the design note now describe that mechanism, and the test named for the invariant gained the out-of-band case it always claimed — asserted through the handler that really deletes the rows. Mutation M13 covers the reconcile call."
     },
     {
       "id": "bug-271",
@@ -3943,12 +3944,13 @@
       "discovered": "2026-08-31T09:00:00Z",
       "version": "2.5.8",
       "file": "cpersona/session.py",
-      "pattern": "still true and still the widest honest answer",
+      "pattern": "bug-271",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-claim",
-      "fix_sketch": "Correct the docstring. Changing the reported value itself is a contract change and needs its own decision, since consumers branch on the two strings.",
-      "note": "Deferred from the 2.5.8 review. The behaviour is as designed; the finding is about the accuracy of one word."
+      "note": "Deferred from the 2.5.8 review; picked up in the 2.5.9 line. The behaviour is as designed; the finding was about the accuracy of one word.",
+      "fixed_in": "2.5.9",
+      "fix_note": "Corrected the docstring and left the reported value alone, as the fix_sketch reasoned: consumers branch on the two strings, so changing what is reported is a contract change with its own decision to make. The docstring now says what `process` names — the widest bucket, not the widest radius — and states the loss explicitly: before the pause was per-session the two were the same thing, and a keyless pause no longer reaches a declared session's writes. The tool description already stated the radius correctly and is the surface a caller reads, so it needed nothing."
     },
     {
       "id": "bug-272",
