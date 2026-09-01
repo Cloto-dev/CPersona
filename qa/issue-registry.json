@@ -3957,12 +3957,13 @@
       "discovered": "2026-08-31T09:00:00Z",
       "version": "2.5.8",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "not session_key",
+      "pattern": "bug-272",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "consistency",
-      "fix_sketch": "Resolve the argument through the session seam and branch on the resolved `declared` flag, as every other handler does.",
-      "note": "Deferred from the 2.5.8 review. Predates the stage 2 work; it became the sole deviation once that work made the seam canonical."
+      "note": "Deferred from the 2.5.8 review; picked up in the 2.5.9 line. Predated the stage 2 work and became the sole deviation once that work made the seam canonical.",
+      "fixed_in": "2.5.9",
+      "fix_note": "Resolved the argument through the session seam and branched on the resolved `declared` flag, matching every other handler. Two truthy strings were slipping through, not one: whitespace-only, which the resolver strips so a client template rendering an unset variable cannot mint a bucket, and the literal TRANSPORT_KEY, which names the bucket every keyless caller already shares — the raw test let either silence the honesty flag while landing in exactly the bucket the flag reports. Rejected the narrower repair of stripping the argument in place: it fixes the whitespace half and leaves the sentinel half, and it re-implements a decision the seam is the one owner of. The claim that this was the last raw call site was re-counted rather than inherited: three sites compare `session_key` without the resolver, and the other two are correct by contract (tasks.py takes an already-resolved key whose default is the sentinel, session.py compares inside the seam)."
     },
     {
       "id": "bug-273",
@@ -3971,12 +3972,13 @@
       "discovered": "2026-08-31T09:00:00Z",
       "version": "2.5.8",
       "file": "tests/test_structural_gates.py",
-      "pattern": "path.name == _PAUSE_SEAM",
+      "pattern": "bug-273",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "Compare the path relative to the package root instead of the base name, and assert the exemption set by relative path in the reach test.",
-      "note": "Deferred from the 2.5.8 review."
+      "note": "Deferred from the 2.5.8 review; picked up in the 2.5.9 line. Same class as the Gate 10b finding earlier in the line — an exemption applies to paths, and a gate's green means only what its own patterns reach.",
+      "fixed_in": "2.5.9",
+      "fix_note": "Both exemptions in `_pause_seam_files` now compare the path relative to the package root, so only `cpersona/session.py` is the seam and a `session.py` inside a future sub-package is scanned like any other module. Widening the exemption alone would have been half a fix: the companion reach test asserted the same bare name against a set of relative posix paths, so it agreed with the defect and would have kept agreeing. It gets a new case that walks a synthetic tree containing `sub/session.py` — asserted synthetically on purpose, because the real package has no such file, which is why the defect was invisible in-tree and would have stayed invisible until someone added one. Mutation-checked: restoring the base-name exemption fails that one test and no other."
     },
     {
       "id": "bug-274",

@@ -527,7 +527,14 @@ async def do_get_session_findings(
     delivered = findings_seam.deliver_issues(issues, per_kind_limit)
     if include_summary:
         delivered["summary"] = findings_seam.render_summary(delivered)
-    if config.transport() != "stdio" and not session_key:
+    # The flag answers "did this call land in the shared bucket?", which is what
+    # resolve_session_key decides — not whether the argument was a non-empty string.
+    # A whitespace-only value (a client template rendering an unset variable) and the
+    # literal TRANSPORT_KEY both resolve as undeclared precisely so they cannot mint a
+    # bucket of their own; reading the raw argument here let both of them suppress the
+    # honesty flag while sharing the bucket with every keyless caller (bug-272).
+    _key, declared = resolve_session_key(session_key)
+    if config.transport() != "stdio" and not declared:
         delivered["identity_shared"] = True
     delivered["_meta"] = {"server_version": _server_version()}
     return delivered

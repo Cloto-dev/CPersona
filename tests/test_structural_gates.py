@@ -1696,10 +1696,20 @@ def _pause_switch_call_sites(tree, module_alias=None):
     return hits
 
 
-def _pause_seam_files():
-    """Every shipped module the gate applies to (the vendored tree is exempt)."""
-    for path in sorted(PKG.rglob("*.py")):
-        if _VENDORED_PKG in path.parts or path.name == _PAUSE_SEAM:
+def _pause_seam_files(root=None):
+    """Every shipped module the gate applies to (the vendored tree is exempt).
+
+    Both exemptions are decided on the path *relative to the package root*, not on
+    a bare file name: the seam is one specific file, and a ``session.py`` added
+    inside a sub-package later is a second implementation, which is the exact thing
+    this gate exists to catch. Exempting it by name would drop it from the scan
+    silently (bug-273). ``root`` is a seam for the reach test to walk a synthetic
+    tree; production callers pass nothing.
+    """
+    root = PKG if root is None else root
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if _VENDORED_PKG in rel.parts or rel.as_posix() == _PAUSE_SEAM:
             continue
         yield path
 
@@ -1778,6 +1788,35 @@ def test_pause_seam_gate_reaches_the_whole_package():
     )
     # A sub-package added later must be in scope, which glob('*.py') would miss.
     assert len(scanned) >= len({p.name for p in PKG.glob("*.py")}) - 1
+
+
+def test_the_seam_exemption_is_one_path_not_a_file_name(tmp_path):
+    """bug-273: only cpersona/session.py is exempt — not every file so named.
+
+    Asserted on a synthetic tree because the real package has no sub-package
+    ``session.py``, which is the point: the defect was invisible in-tree and would
+    have stayed invisible until the day someone added one. A name-based exemption
+    passes the assertions above unchanged, so this is the case that separates them.
+    """
+    (tmp_path / _PAUSE_SEAM).write_text("", encoding="utf-8")
+    (tmp_path / "server.py").write_text("", encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "__init__.py").write_text("", encoding="utf-8")
+    (sub / _PAUSE_SEAM).write_text("", encoding="utf-8")
+    vendored = tmp_path / _VENDORED_PKG
+    vendored.mkdir()
+    (vendored / _PAUSE_SEAM).write_text("", encoding="utf-8")
+
+    scanned = {p.relative_to(tmp_path).as_posix() for p in _pause_seam_files(tmp_path)}
+
+    assert f"sub/{_PAUSE_SEAM}" in scanned, (
+        "a session.py inside a sub-package is a second pause implementation, not the "
+        "seam; exempting it by file name drops it from the scan silently"
+    )
+    assert scanned == {"server.py", "sub/__init__.py", f"sub/{_PAUSE_SEAM}"}, (
+        f"exactly the top-level seam and the vendored tree are exempt; got {sorted(scanned)}"
+    )
 
 
 # Gate 18 (2.5.8): every surface that names a version names the same one, and the
