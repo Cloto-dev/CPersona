@@ -56,7 +56,13 @@ DEFAULT_PER_KIND_LIMIT = 5
 # and tests/test_superauditor_findings.py pins that inventory against the
 # source, so a new escalation rule cannot appear without a tier entry.
 _TIERED_CHECKS = frozenset(
-    {"null_embedding", "null_episode_embedding", "schema_objects", "vector_index"}
+    {
+        "null_embedding",
+        "null_episode_embedding",
+        "schema_objects",
+        "vector_index",
+        "embedding_backend",
+    }
 )
 
 _TIER_KINDS: dict[str, str] = {
@@ -74,6 +80,12 @@ _TIER_KINDS: dict[str, str] = {
     # exists and has stopped being used: reads stay correct either way, so
     # neither is critical, but silence is how they went unnoticed for a week.
     "vector_index_degraded": "warn",
+    # embedding_backend: the registry default (info) covers the two states that are not
+    # defects — no backend configured, and a run that did not probe one. The state the
+    # runner stamps warn is a backend that is configured and did not answer: reads stay
+    # correct because recall falls back, so it is not critical, but it was invisible on
+    # this surface, which is the whole reason the check exists.
+    "embedding_backend_unreachable": "warn",
     # Not a probe — a probe that could not run (see module docstring).
     "check_crashed": "warn",
 }
@@ -124,6 +136,10 @@ def finding_kind(issue: dict) -> str:
         if stamped == "info":
             return f"{check}_expected"
         return check
+    if check == "embedding_backend":
+        # warn is the runner's stamp for "configured and not answering"; the other
+        # states are configuration facts, not defects.
+        return "embedding_backend_unreachable" if stamped == "warn" else "embedding_backend"
     if check == "vector_index":
         # warn is the runner's stamp for "an index exists and is not being
         # used"; the unstamped states are observations, not defects.

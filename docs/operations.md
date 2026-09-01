@@ -83,12 +83,16 @@ exist, and the calling agent should be instructed to watch the first:
    embedding was persisted. Writes made while the server is down come back
    `embedded: false` — those rows are repairable (next item).
 3. **`check_health(agent_id, fix=true)`** detects rows stored with NULL
-   embeddings and re-embeds them once the server is back. Caveat: when the
-   embedding endpoint is unreachable at check time, the dimension check is
-   *skipped*, not failed — there is currently no dedicated red check for
-   "endpoint unreachable" itself, so do not read a green `check_health` as
-   proof the embedding server is up; the `advisory` surface is what watches
-   liveness.
+   embeddings and re-embeds them once the server is back. The dimension check
+   still *skips* rather than fails when the endpoint is unreachable, but the
+   endpoint itself is now watched: `embedding_backend` reports `warn` with the
+   failing call's own evidence when a configured backend does not answer.
+4. **Read `check_health(fix=false)` for what it is.** It makes no network call,
+   so it cannot test liveness. It says so — `embedding_backend` returns
+   `not_probed` — rather than leaving you to infer health from silence. A fault
+   a recall already latched is still reported there. With no backend configured
+   this check is quiet by design: that is a supported configuration, and the
+   `advisory` surface is where it is raised.
 
 ## Tuning recall
 
