@@ -168,6 +168,54 @@ async def test_rows_written_after_the_build_are_still_found(corpus, taken):
 
 
 @pytest.mark.asyncio
+async def test_a_row_embedded_after_the_build_is_still_found(corpus, taken):
+    """bug-278: the watermark cannot answer for a row that existed but had no vector.
+
+    The builder collects rows that have an embedding, so a NULL row is in neither
+    the matrix nor the excluded list; its id is at or below the watermark, so the
+    tail did not read it either. Filling the embedding in — which is exactly what
+    check_health(fix=True) does to every NULL row it finds — used to leave the row
+    in no set the index path consults, and recall answered successfully with one
+    memory fewer.
+
+    Asserted as an equivalence against the scan rather than as membership: the
+    claim is that the two paths return the same rows, and a membership assertion
+    would still pass if the index path found the row and mis-ordered it.
+    """
+    # Stored with a vector and then blanked, because the helper writes a real one:
+    # what matters is the state the builder sees, which is embedding IS NULL.
+    await _store(corpus, f"{TOPIC} not embedded yet", created_at="2026-03-01 00:00:04",
+                 embedding=_SHARED)
+    await corpus.execute(
+        "UPDATE memories SET embedding = NULL WHERE content = ?", (f"{TOPIC} not embedded yet",)
+    )
+    await corpus.commit()
+
+    result = await vector_index.build_index(corpus, "memories")
+    assert result["built"], result
+
+    # The maintenance path fills it in. Same dimension, no re-tag, no delete.
+    row = await corpus.execute_fetchall(
+        "SELECT id FROM memories WHERE embedding IS NULL"
+    )
+    assert row, "the fixture no longer produces a NULL-embedding row"
+    await corpus.execute(
+        "UPDATE memories SET embedding = ? WHERE id = ?",
+        (np.array(_SHARED, dtype=np.float32).tobytes(), row[0][0]),
+    )
+    await corpus.commit()
+
+    rows = await _search(corpus)
+    assert taken["index"] >= 1, "the index path was not taken; the comparison is vacuous"
+    assert [r["id"] for r in rows] == [r["id"] for r in await _search_without_index(corpus)], (
+        "a row embedded after the build must reach the answer through the exact tail"
+    )
+    assert any("not embedded yet" in r["content"] for r in rows), (
+        "the row the scan returns is missing from the index path's answer"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_tail_row_older_than_the_index_lands_in_the_right_place(corpus, taken):
     """An ordered merge, not a prepend.
 

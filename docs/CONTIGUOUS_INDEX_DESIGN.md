@@ -159,6 +159,20 @@ rebuild schedule:
 5. **The tail read is the shape SQLite is best at** — the newest few rows in
    index order.
 
+**The watermark answers one question, and it is not the only one that matters.**
+It says whether a row existed at build time. It cannot say whether that row had
+an embedding at build time, and those come apart for every row the builder
+skipped because its vector was still NULL: such a row is not in the matrix, its
+id is at or below the watermark so the tail does not read it either, and the
+moment maintenance fills the embedding in the scan returns it and the index does
+not. That is the silent withholding this section opens by ruling out, reached
+through `check_health(fix=True)`, whose prefetch exists to fill exactly those
+rows (bug-278). So the build names them too: `unembedded_ids` sits beside
+`excluded_ids` in the header and rides the same exact tail read. The cap covers
+the two lists together, because they are bound into one statement, and a corpus
+that exceeds it declines to build rather than shipping an index that cannot name
+its own holes.
+
 **The merge is an ordered merge, not a concatenation.** It is tempting to assume
 the tail is uniformly newer than the index and simply prepend it. Nothing
 promises that: the import path carries a restored record's original `created_at`

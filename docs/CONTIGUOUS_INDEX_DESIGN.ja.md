@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:75eb250126f55166b176683a5ee5de3bed13edb3 -->
+<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:083bb8ce55b3455f9a858ca190375c27d6670855 -->
 
 # 連続配置埋め込み索引
 
@@ -140,6 +140,16 @@ id をヘッダに列挙します。クエリ経路は後述の tail 読み出�
    が fail-closed で落とします。索引に delete も修復も compaction も要りません —— 壊れ
    たら捨てて作り直します。
 5. **tail の読み出しは SQLite が最も得意な形** (索引順の最新数行) です。
+
+**watermark が答えられる問いは 1 つで、重要な問いはそれだけではありません。** watermark が言えるのは
+「その行が build 時に存在したか」であり、「その行が build 時に embedding を持っていたか」は言えません。
+ベクトルがまだ NULL で builder が飛ばした行では、この 2 つが分かれます — その行は行列に入らず、id は
+watermark 以下なので tail も読まず、保守が embedding を埋めた瞬間に scan は返し索引は返さなくなります。
+これは本節が冒頭で否定している「沈黙のうちに取りこぼす」状態そのもので、しかも到達経路は
+`check_health(fix=True)` — その prefetch はまさにそういう行を埋めるために存在します (bug-278)。
+そこで build はそれらも名指しします: `unembedded_ids` がヘッダで `excluded_ids` の隣に並び、同じ exact な
+tail 読み出しに乗ります。上限は 2 つのリストの合計に掛かります (同じ文にバインドされるため)。超えた
+コーパスは、自分の穴を名指しできない索引を出荷するのではなく、build を辞退します。
 
 **merge は ordered merge であって concatenation ではありません。** tail は索引より一様
 に新しいと仮定して前に繋ぎたくなりますが、それを保証するものはありません: import 経路
