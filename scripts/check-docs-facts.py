@@ -48,6 +48,11 @@ DOC_FILES = [
     ROOT / "README.md",
     ROOT / "SUPPORT.md",
     ROOT / "skills" / "cpersona-memory" / "SKILL.md",
+    # The skill's on-demand reference. It ships on the user's disk with the
+    # package exactly as SKILL.md does, and it is the page that names commands,
+    # environment variables and endpoints for someone whose install is already
+    # broken — the reader least able to absorb a stale instruction.
+    ROOT / "skills" / "cpersona-memory" / "references" / "embedding-backend-repair.md",
     ROOT / "docs" / "index.md",
     ROOT / "docs" / "getting-started.md",
     ROOT / "docs" / "architecture.md",

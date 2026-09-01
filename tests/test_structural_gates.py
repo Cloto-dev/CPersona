@@ -1025,6 +1025,38 @@ def test_shipped_skill_lists_every_registered_tool():
 
 
 # --------------------------------------------------------------------------------------
+# Gate 10b: the skill's own relative links resolve on the user's disk.
+#
+# The skill moved its repair walkthrough into a reference file the agent loads on demand,
+# and nothing else watches that link. The documentation site's anchor check reads the
+# built site, and skills/ is not part of it, so a renamed or unshipped reference file
+# would leave SKILL.md pointing at nothing with every gate still green — the same defect
+# class as the bootstrap script the skill used to tell readers to run.
+#
+# Checked on the source tree; that the tree is what ships is a packaging claim, held by
+# the force-include of skills/ into the wheel.
+# --------------------------------------------------------------------------------------
+
+
+def test_shipped_skill_relative_links_resolve():
+    import re
+
+    skill_dir = PKG.parent / "skills" / "cpersona-memory"
+    skill = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    targets = [
+        m.group(1)
+        for m in re.finditer(r"\]\(([^)#:]+\.md)\)", skill)
+        if not m.group(1).startswith(("http", "/"))
+    ]
+    assert targets, "gate collapsed — no relative links found in the shipped skill"
+    broken = sorted(t for t in targets if not (skill_dir / t).is_file())
+    assert not broken, (
+        "the shipped agent skill links to files that do not exist beside it, so a reader "
+        f"following them lands nowhere: {broken}"
+    )
+
+
+# --------------------------------------------------------------------------------------
 # Gate 11 (C23, 2.5.2b1): every tool-level failure answers in one shape.
 #
 # The surface used to fail two ways: five sites returned {"ok": False, "error": ...} and
