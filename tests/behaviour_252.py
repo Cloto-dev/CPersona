@@ -66,7 +66,7 @@ import numpy as np  # noqa: E402
 
 from cpersona import session  # noqa: E402
 from cpersona import admin_handlers, maintenance_handlers, memory_handlers, utils, vector  # noqa: E402
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient, EmbedOutcome  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
 FAKE_DIM = 64
@@ -517,6 +517,14 @@ def install_remote(ctx: Ctx, payload: dict | None, error: Exception | None = Non
         _client = FakeHTTP(ctx.out, payload, error)
         mode = "remote"
 
+        async def embed_with_outcome(self, texts):
+            result = await self.embed(texts)
+            return result, EmbedOutcome(
+                attempted=True,
+                ok=bool(result),
+                error=None if result else "test double produced no embeddings",
+            )
+
         async def embed(self, texts):
             return [fake_embed_one(t) for t in texts]
 
@@ -533,6 +541,14 @@ def install_local(ctx: Ctx) -> None:
         _http_url = None
         _client = None
         mode = "fake"
+
+        async def embed_with_outcome(self, texts):
+            result = await self.embed(texts)
+            return result, EmbedOutcome(
+                attempted=True,
+                ok=bool(result),
+                error=None if result else "test double produced no embeddings",
+            )
 
         async def embed(self, texts):
             return [fake_embed_one(t) for t in texts]
@@ -748,7 +764,7 @@ async def _(ctx):
     return await vector._search_vector(ctx.db, "a1", "apples", 10, min_similarity=0.0, source_id="discord:_2")
 
 
-@scenario("sv-local-empty-embed", "_search_vector", "local scan: an empty query embedding returns [] via the health probe", seed=seed_corpus)
+@scenario("sv-local-empty-embed", "_search_vector", "local scan: an empty query embedding returns [] and records the failure", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
 
@@ -756,6 +772,14 @@ async def _(ctx):
         _http_url = None
         _client = None
         mode = "fake"
+
+        async def embed_with_outcome(self, texts):
+            result = await self.embed(texts)
+            return result, EmbedOutcome(
+                attempted=True,
+                ok=bool(result),
+                error=None if result else "test double produced no embeddings",
+            )
 
         async def embed(self, texts):
             return []

@@ -1,8 +1,9 @@
-<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:236dc2b8fc3356d1308168162229bc5ca239309f -->
+<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:f9572588f85c49df771ae56a5ecdd76ddae02d84 -->
 
 # dense 劣化のランタイム検知 + advisory のコンテキスト注入
 
-**ステータス**: 設計 (Route B を 2.4.x ラインで採用。Route A は 2.5.0 で予定)
+**ステータス**: 実装済。Route B は 2.4.x ラインで出荷し、Route A がそれを置き換えました —
+証跡は失敗した埋め込み呼び出し自身から得られ、プローブは撤去されています (§6)。
 **決定**: プロジェクトオーナー + claude-code、2026-06-28 (引き継ぎ: CPersona memory `id 1165`, `agent_id=claude-web`, `project_id=cloto`)
 **範囲**: 外科的パッチ — SCHEMA 変更なし、新規ツールなし。応答フィールド 1 つ + プロセスレベルの health 状態 + 環境変数 1 つ。
 
@@ -103,7 +104,7 @@ advisory はここに兄弟フィールドとして付きます。`test_do_recal
 | 2 | **状態機械、4 状態**: `unknown` / `healthy` / `hint` / `fault`。プロセスレベル (再起動時にリセット)。 | `health.py` のモジュールシングルトンを新設 (no-persist のモジュール状態に倣う)。 |
 | 3 | **深刻度の分割**: `hint` = 埋め込み未設定 (`mode=none`、FTS のみ、静的 → 即時)。`fault` = `mode=http` だがエンドポイントに到達不能 (**連続 2 回**の失敗で昇格。単発のブレは CoreML ハングの前例に倣ってデバウンスする)。 | `hint` は `config.EMBEDDING_MODE` から設定。`fault` は連続失敗カウンタでゲートする。 |
 | 4 | **遷移で発火**: `healthy→degraded` の最初の遷移ごとに **~1000 文字のフル**テンプレートを 1 回だけ出す。*同一*障害中の以降の recall では **~100 文字のショート**リマインダを出す。`healthy` は**完全に沈黙**する。 | `health` が `advisory_emitted_for_current_outage` を記録し、`do_recall` がフル / ショート / なしを選ぶ。 |
-| 5 | **動的な証跡**をフルとショートの両方のペイロードに埋め込む (例: `mode=http / POST http://127.0.0.1:8401/embed failed: connection refused`)。テンプレート = 静的な骨組み、問題 = 動的なスロット。 | `health.evidence` はプローブ (Route B) が埋める — 実際に捕捉したエラー文字列。 |
+| 5 | **動的な証跡**をフルとショートの両方のペイロードに埋め込む (例: `mode=http / POST http://127.0.0.1:8401/embed failed: connection refused`)。テンプレート = 静的な骨組み、問題 = 動的なスロット。 | `health.evidence` は埋め込み呼び出し自身が捕捉したエラーを運ぶ。 |
 | 6 | **ペイロード = 構造体** `{degraded, severity, reason, evidence, runbook}`。レンダリングとローカライズはエージェントが行う (言語と口調はエージェントの領分)。命令形の言い回し (「ユーザーに通知せよ: ...」) は伝達される確率を上げる。 | `advisory` フィールドの値がこの構造体。レンダリングはクライアントに委ねる。 |
 | 7 | **搬送路 = `recall` 応答の advisory フィールド**。MCP は push できない → 正直に言える到達範囲は「fault は*次の* recall で表面化する」。伝達はベストエフォートであり、そう明記しなければならない。 | `messages` と並ぶ `advisory` キーを新設。 |
 | 8 | **既定で on / 環境変数で opt-out。** opt-out は、埋め込みバックエンド無しでの運用を運用者が受け入れたことを記録します — サポートされる fallback であって推奨ではありません。安全側が既定。 | `CPERSONA_DEGRADED_ADVISORY` (既定 `true`)。 |
@@ -115,11 +116,13 @@ advisory はここに兄弟フィールドとして付きます。`test_do_recal
 
 ### 4.1 なぜ今 Route B なのか { #41-why-route-b-now }
 
-`embed()` は `_vendored_mcp_common/` にあります — 共有 common を CPersona へ vendor
-したものです。`embed()` 自身に `{attempted, ok, error}` を表出させる (Route A) には
-clotohub-servers の common bump + 再 vendor が必要で、他のすべての consumer に
-波及します。これは引き継ぎの「外科的パッチ / 新規ツールなし / 2.4.x QOL ライン」
-という枠組みに反します。
+`embed()` は `_vendored_mcp_common/` にあります — 共有クライアントを CPersona へ vendor
+したものです。当時の判断では、`embed()` 自身に `{attempted, ok, error}` を表出させるには
+上流パッケージのリリースと、全 consumer が吸収すべき変更が要るとされ、「外科的パッチ /
+新規ツールなし / 2.4.x QOL ライン」という枠組みに反するとされました。
+
+この前提は実際の変更 (§6) を通りませんでした: additive なメソッドは既存の入口を一切
+変えないため、どの consumer も何も吸収する必要がありませんでした。
 
 Route B は変更を **cpersona だけ**に留めます: `embed()` には手を触れず、CPersona は
 health を (a) 静的な `hint` のケースについては `config.EMBEDDING_MODE` から、
@@ -162,9 +165,11 @@ FAULT_PROMOTE_THRESHOLD = 2  # consecutive failures before healthy->fault (point
 
 ### 4.3 プローブ { #43-the-probe }
 
-`_search_vector` が `embed([query])` を呼び (`vector.py:182`)、
-`EMBEDDING_MODE != "none"` の状態で falsy な結果を得たとき、CPersona は
-`_probe_embedding_health()` を実行します:
+> **§6 により置き換え済。** ここで説明するプローブはもう存在しません。これが必要だった
+> 理由が、現在の設計がこの形をしている理由なので残してあります。
+
+`_search_vector` が `embed([query])` を呼び、`EMBEDDING_MODE != "none"` の状態で
+falsy な結果を得たとき、CPersona は `_probe_embedding_health()` を実行していました:
 
 ```python
 async def _probe_embedding_health() -> tuple[bool, str | None]:
@@ -189,15 +194,17 @@ async def _probe_embedding_health() -> tuple[bool, str | None]:
 - デバウンス (項目 3): プローブの連続 2 回の失敗で `HINT`/`HEALTHY`→`FAULT` へ
   昇格します。
 
-> **二重 I/O / 競合についての注記**: Route B のプローブは、実際の recall 経路の
-> `embed()` 呼び出しとは*別の* POST です。そのため原理的にはプローブと実呼び出しが
-> 食い違い得ます (片方が成功し、もう片方が失敗する)。ベストエフォートの advisory と
-> しては許容範囲であり、まさにこの継ぎ目を Route A が 2.5.0 で取り除きます (§6)。
+> **二重 I/O と、それが許していた食い違い**: プローブは実際の recall 経路の `embed()`
+> 呼び出しとは*別の* POST でした。そのため両者は食い違い得ます — そして問題になる向きは
+> 「プローブが成功し実呼び出しが失敗する」方でした。この分岐は、何も返さなかった recall に
+> 対して health を OK として記録してしまうからです。さらにプローブはローカルサーバー用の
+> ペイロード形状を `_http_url` に POST するため、それを持たない api モードでは証跡ではなく
+> "embedding client unavailable" しか出せませんでした。どちらもプローブと共に消えています (§6)。
 
 ### 4.4 `do_recall` への統合 { #44-do_recall-integration }
 
-`do_recall` の入口で `health.observe_config()` を呼びます。recall 経路はプローブ
-経由で `observe_ok()` / `observe_failure()` に供給します。
+`do_recall` の入口で `health.observe_config()` を呼びます。recall 経路は埋め込み
+呼び出し自身の結果から `observe_ok()` / `observe_failure()` に供給します。
 `return {"messages": messages}` の直前で:
 
 ```python
@@ -261,13 +268,20 @@ advisory を黙らせます。その構成が推奨になるわけではあり�
 
 ---
 
-## 6. Route A — CPersona 2.5.0 で予定 { #6-route-a-planned-for-cpersona-250 }
+## 6. Route A — 出荷済 { #6-route-a-shipped }
 
-メジャーバージョンによってリポジトリをまたぐ common bump が許容できるようになった
-時点で、検知を境界そのものへ畳み込みます: `EmbeddingClient.embed()` が `None` へ
-潰れる代わりに、ネイティブに `{attempted, ok, error}` を返す (あるいは型付きエラーを
-送出する) ようにします。そうすれば CPersona ローカルのプローブ (§4.3) は**削除**され、
-health 状態は実際の recall 経路の `embed()` の結果から直接供給されます。
+検知は境界そのものへ畳み込まれ、プローブ (§4.3) は**削除**されました。health 状態は
+実際の recall 経路の呼び出しから直接供給されます。
+
+§4.1 が想定した破壊的変更は不要でした。`embed()` はシグネチャも戻り値もそのままで、
+additive な `embed_with_outcome()` が同じ値と併せて `{attempted, ok, error}` を返し、
+recall 経路がそちらを呼びます。他に変える必要が無かったため、メジャーバージョンを待たず
+2.5.x ラインで着地しています。
+
+outcome は client に保持せず呼び出し元へ返すので、並行する 2 つの embed が互いの結果を
+読むことはありません。1 つ挙げておく価値があるのは、**埋め込みを含まない 2xx 応答を失敗
+として報告する**点です。呼び出し元にとってそれは失敗であり、しかも別建てのプローブが
+まさに取り違えていたケース (同じ成功コードを見てしまう) だからです。
 
 **なぜこの層分けが綺麗なのか (前方互換性)**: Route B の **advisory 契約が安定した
 インターフェース**です — ペイロード構造体
@@ -297,13 +311,12 @@ Route B の実装中に判明した精緻化です。前の各節と衝突する
    `messages` しか取り出しません。そのため `recall_result.get("advisory")` を明示的に
    **転送**しなければ advisory は落ちます。`maybe_advisory()` を再度呼んではなりません
    (MUST NOT) — 1 回の論理的な recall の中でフル→ショートに切り替わってしまうためです。
-3. **プローブの配置** (§4.3 の詳細化)。`_probe_embedding_health()` は `vector.py` に
-   置きます (`_embedding_client` と `httpx` が必要であり、また `health.py` に `vector` の
-   import を持ち込まないことで依存グラフを `config ← health ← vector ← memory_handlers`
-   に保つため)。専用の短い `PROBE_TIMEOUT_SECS=3.0` を使い (embed の 30 秒タイムアウトでは
-   ありません)、`health.is_faulted()` でゲートされるため、プローブの I/O は 2 回の
-   プローブによる昇格ウィンドウに限定されます。復旧は embed の**成功**経路で観測され、
-   再プローブによってではありません。
+3. **プローブの配置** (§4.3 の詳細化、**§6 により置き換え済** — プローブと専用
+   タイムアウトは撤去され、失敗経路はプローブ I/O を有界にするための
+   `health.is_faulted()` ゲートを必要としなくなりました)。観測点は今も `vector.py` の
+   ローカル embed 経路であり、`health.py` は `vector` を import しないままなので依存
+   グラフは不変です: `config ← health ← vector ← memory_handlers`。復旧は今も embed の
+   **成功**経路で観測されます。
 4. **リモート検索の握り潰しに別途フックは不要** (§2.2 の詳細化)。
    `VECTOR_SEARCH_MODE=="remote"` の場合、リモートの失敗は計測を仕込んだローカルの embed
    経路へフォールスルーします。そのため配線するのはローカル経路だけです (本番はローカル

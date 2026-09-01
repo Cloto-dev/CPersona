@@ -6096,7 +6096,7 @@
     "thresholds": {}
   },
   "sv-local-empty-embed": {
-    "covers": "local scan: an empty query embedding returns [] via the health probe",
+    "covers": "local scan: an empty query embedding returns [] and records the failure",
     "db": {
       "episodes": [
         {

@@ -23,6 +23,7 @@ from cpersona import config # noqa: E402
 from cpersona import health # noqa: E402
 from cpersona import memory_handlers as M # noqa: E402
 from cpersona import vector # noqa: E402
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -231,29 +232,163 @@ class _FakeHTTPClient:
         return _Resp()
 
 
-class _FakeEmbeddingClient:
-    def __init__(self, exc=None):
-        self.mode = "http"
-        self._http_url = "http://127.0.0.1:9/embed"
-        self._client = _FakeHTTPClient(exc)
+# --- the evidence comes from the call that failed, not from a second one ---------------
+#
+# These replace two tests that called a `_probe_embedding_health()` helper directly. The
+# helper sent a second POST after a failed embed, purely to recover an error string. It is
+# gone: `embed_with_outcome()` returns the evidence alongside the value, so the tests now
+# drive the real recall path and read what it recorded.
+
+
+class _CountingTransport:
+    """Stands in for httpx.AsyncClient. Counts POSTs so a second one cannot hide."""
+
+    def __init__(self, exc=None, payload=None):
+        self._exc = exc
+        self._payload = payload if payload is not None else {"embeddings": [[1.0, 0.0]]}
+        self.post_count = 0
+
+    async def post(self, url, json=None, **kwargs):
+        self.post_count += 1
+        if self._exc:
+            raise self._exc
+
+        payload = self._payload
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return payload
+
+        return _Resp()
+
+
+def _failing_client(exc=None):
+    """A real EmbeddingClient over a fake transport, so the outcome logic is the real one."""
+    client = EmbeddingClient(mode="http", http_url="http://127.0.0.1:9/embed")
+    client._client = _CountingTransport(exc or httpx.ConnectError("connection refused"))
+    return client
+
+
+async def _recall_once(monkeypatch, client):
+    monkeypatch.setattr(vector, "_embedding_client", client)
+    return await vector._search_vector(_FakeDB(), "agent.t", "any query", limit=5)
 
 
 @pytest.mark.asyncio
-async def test_probe_reports_failure(monkeypatch):
-    monkeypatch.setattr(
-        vector, "_embedding_client", _FakeEmbeddingClient(httpx.ConnectError("connection refused"))
+async def test_a_a_failed_embed_carries_its_own_evidence_into_health(monkeypatch):
+    """Test A: the real failure reaches the health layer, with the real error in it."""
+    client = _failing_client()
+
+    assert await _recall_once(monkeypatch, client) == []
+    assert not health.is_faulted()  # debounced
+    assert await _recall_once(monkeypatch, client) == []
+
+    assert health.is_faulted()
+    advisory = health.maybe_advisory()
+    assert advisory["severity"] == "fault"
+    assert "ConnectError" in advisory["evidence"]
+    assert "connection refused" in advisory["evidence"]
+    assert "127.0.0.1:9/embed" in advisory["evidence"]
+
+
+@pytest.mark.asyncio
+async def test_b_a_failing_recall_sends_exactly_one_request(monkeypatch):
+    """Test B: the point of the change. One recall, one POST — the probe is gone.
+
+    Counted rather than timed: "no second request" is the claim, and a faster recall
+    would be consistent with the probe still being sent to a closer endpoint.
+    """
+    client = _failing_client()
+
+    await _recall_once(monkeypatch, client)
+
+    assert client._client.post_count == 1, (
+        f"a failing recall sent {client._client.post_count} requests; the second one is "
+        "the probe this change removed"
     )
-    ok, evidence = await vector._probe_embedding_health()
-    assert ok is False
-    assert "POST http://127.0.0.1:9/embed failed" in evidence
-    assert "connection refused" in evidence
 
 
 @pytest.mark.asyncio
-async def test_probe_reports_ok(monkeypatch):
-    monkeypatch.setattr(vector, "_embedding_client", _FakeEmbeddingClient(None))
-    ok, evidence = await vector._probe_embedding_health()
-    assert ok is True and evidence is None
+async def test_b_the_probe_helper_is_gone(monkeypatch):
+    """Test B, the other half: the counter above cannot notice a probe that is
+    reintroduced somewhere the fake transport does not see, so name the helper too."""
+    assert not hasattr(vector, "_probe_embedding_health")
+    assert not hasattr(vector, "PROBE_TIMEOUT_SECS")
+
+
+@pytest.mark.asyncio
+async def test_c_the_advisory_payload_keeps_its_shape(monkeypatch):
+    """Test C: the contract callers read is unchanged by the swap of signal source."""
+    client = _failing_client()
+    await _recall_once(monkeypatch, client)
+    await _recall_once(monkeypatch, client)
+
+    advisory = health.maybe_advisory()
+
+    assert set(advisory) == {
+        "degraded",
+        "severity",
+        "reason",
+        "evidence",
+        "runbook",
+        "advisory_scope",
+    }
+    assert advisory["degraded"] is True
+    assert "Notify the user" in advisory["runbook"]
+
+
+@pytest.mark.asyncio
+async def test_d_a_single_failure_is_still_debounced(monkeypatch):
+    """Test D: one blip must not raise an advisory. The threshold did not move."""
+    await _recall_once(monkeypatch, _failing_client())
+
+    assert health.maybe_advisory() is None
+    assert not health.is_faulted()
+
+
+@pytest.mark.asyncio
+async def test_a_success_still_clears_the_degraded_state(monkeypatch):
+    """Recovery is read from the same call, so a working recall must re-arm health."""
+    failing = _failing_client()
+    await _recall_once(monkeypatch, failing)
+    await _recall_once(monkeypatch, failing)
+    assert health.is_faulted()
+
+    working = EmbeddingClient(mode="http", http_url="http://127.0.0.1:9/embed")
+    working._client = _CountingTransport()
+    await _recall_once(monkeypatch, working)
+
+    assert not health.is_faulted()
+    assert health.maybe_advisory() is None
+
+
+@pytest.mark.asyncio
+async def test_e_the_plain_embed_entry_point_is_unchanged(monkeypatch):
+    """Test E: every other consumer calls `embed()`, which must not have moved.
+
+    store, the maintenance re-embed and the admin paths all read this one method. The
+    values below are the pre-change ones — an `embeddings: []` response reaches a caller
+    as `[]`, not as `None`, and both are falsy, so a substitution would pass unnoticed.
+    """
+    ok = EmbeddingClient(mode="http", http_url="http://x/embed")
+    ok._client = _CountingTransport()
+    assert await ok.embed(["a"]) == [[1.0, 0.0]]
+
+    empty = EmbeddingClient(mode="http", http_url="http://x/embed")
+    empty._client = _CountingTransport(payload={"embeddings": []})
+    assert await empty.embed(["a"]) == []
+
+    missing = EmbeddingClient(mode="http", http_url="http://x/embed")
+    missing._client = _CountingTransport(payload={"dimensions": 2})
+    assert await missing.embed(["a"]) is None
+
+    dead = _failing_client()
+    assert await dead.embed(["a"]) is None
+
+    assert await EmbeddingClient(mode="none").embed(["a"]) is None
 
 
 # --- 2.5.0: the recall limit cap is layered — library clamps to the scan

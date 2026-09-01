@@ -9,13 +9,15 @@ This module is the runtime guard: a process-level health state machine, fed by a
 measurement at the embedding boundary (``vector.py``), read by ``do_recall`` to attach an
 ``advisory`` to the recall response so the calling agent can notify the user.
 
-This is "Route B" (cpersona-local). The vendored ``EmbeddingClient.embed()`` swallows the
-real error and returns ``None`` for both ``mode=none`` and an http failure —
-indistinguishable to callers. Route B works around that without touching vendored common:
-``vector.py`` runs a short health-probe to capture the real error string. Route A
-(CPersona 2.5.0) makes ``embed()`` surface ``{attempted, ok, error}`` natively and removes
-the probe; the advisory contract here (the payload struct + the ``do_recall`` ``advisory``
-field) is the stable interface that survives that swap.
+The evidence comes from the embedding call that actually failed. ``embed()`` returns
+``None`` for both ``mode=none`` and a transport failure, indistinguishable to callers, so
+this used to be recovered by sending a *second* request after the first one failed. That
+probe could come back 2xx while the real call failed — recording health as OK on a recall
+that returned nothing — and it posted the local server's payload shape, which an api-mode
+client has no endpoint for. ``embed_with_outcome()`` now returns ``{attempted, ok, error}``
+alongside the same value, and the probe is gone. What did not change is the interface this
+module presents: the payload struct and the ``do_recall`` ``advisory`` field are the same,
+which is what made the swap a change of signal source rather than a redesign.
 
 States
 ------

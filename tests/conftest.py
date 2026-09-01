@@ -59,8 +59,8 @@ def fake_embed_one(text: str) -> list[float]:
 
 class FakeEmbeddingClient:
     """Drop-in for ``vector._embedding_client`` with no network. Mirrors only the surface
-    the store and local vector-search paths touch: ``embed()``, ``mode``, ``_http_url``,
-    ``_client``."""
+    the store and local vector-search paths touch: ``embed()``, ``embed_with_outcome()``,
+    ``mode``, ``_http_url``, ``_client``."""
 
     mode = "fake"
     _http_url = None
@@ -68,6 +68,22 @@ class FakeEmbeddingClient:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         return [fake_embed_one(t) for t in texts]
+
+    async def embed_with_outcome(self, texts: list[str]):
+        """The detailed entry point the recall path reads, derived from ``embed()``.
+
+        A double that only offers ``embed()`` sends the recall path into an
+        ``AttributeError`` rather than the branch under test, so the surface has to grow
+        with the client's. Derived rather than hand-written so the two cannot disagree.
+        """
+        from cpersona._vendored_mcp_common.embedding_client import EmbedOutcome
+
+        result = await self.embed(texts)
+        return result, EmbedOutcome(
+            attempted=True,
+            ok=bool(result),
+            error=None if result else "test double produced no embeddings",
+        )
 
     @staticmethod
     def pack_embedding(embedding: list[float]) -> bytes:
