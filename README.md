@@ -61,14 +61,16 @@ uvx cpersona          # run directly, no install step
 pip install cpersona  # or install it
 ```
 
-**2. Run an embedding server** (recommended — it powers the vector layer)
+**2. Run an embedding server** — strongly recommended; it powers the vector layer
 
 ```bash
 uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
 EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
 ```
 
-Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/CPersona/getting-started/#the-contract) works and is equally recommended; CEmbedding is the reference implementation. Running without an embedding backend is supported as a fallback — cpersona then serves FTS5 + keyword search and tells you it is degraded — but it is not recommended for normal operation.
+Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/CPersona/getting-started/#the-contract) works and is equally recommended; CEmbedding is the reference implementation. The choice of backend is yours — the recommendation is to connect one, not to connect that one.
+
+**Without a backend, cpersona still runs** — FTS5 + keyword search, and it says on every recall that it is degraded rather than quietly returning less. That is a supported fallback, not a recommended way to run: recall then matches on shared words, so a memory phrased differently from your question can be missed, and so can an older one.
 
 **3. Register it with your MCP client**
 
@@ -83,9 +85,10 @@ walkthrough: [Getting Started](https://cloto-dev.github.io/CPersona/getting-star
 
 ## What You Get
 
-- **Hybrid search** — vector, FTS5 (trigram, so it works on Japanese and other
-  space-less scripts) and keyword, fused by rank or relative score. The FTS and
-  keyword layers rescue what vectors miss: identifiers, error strings, exact names.
+- **Hybrid search** — vector (the layer an embedding server powers), FTS5
+  (trigram, so it works on Japanese and other space-less scripts) and keyword,
+  fused by rank or relative score. The FTS and keyword layers rescue what vectors
+  miss: identifiers, error strings, exact names.
 - **Three memory types** — facts, session summaries and an accumulated profile.
 - **Zero LLM dependency** — cpersona never calls a generative model; your agent
   summarizes and hands over the result. Recall is deterministic given a calibrated
