@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:751464dcaa057c02d2e8b30c410a272385cdc58f -->
+<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:2a500686bd204c8600e4d490b8df7ce3a38b8deb -->
 
 # dense 劣化のランタイム検知 + advisory のコンテキスト注入
 
@@ -320,10 +320,15 @@ Route B の実装中に判明した精緻化です。前の各節と衝突する
    (MUST NOT) — 1 回の論理的な recall の中でフル→ショートに切り替わってしまうためです。
 3. **プローブの配置** (§4.3 の詳細化、**§6 により置き換え済** — プローブと専用
    タイムアウトは撤去され、失敗経路はプローブ I/O を有界にするための
-   `health.is_faulted()` ゲートを必要としなくなりました)。観測点は今も `vector.py` の
-   ローカル embed 経路であり、`health.py` は `vector` を import しないままなので依存
-   グラフは不変です: `config ← health ← vector ← memory_handlers`。復旧は今も embed の
-   **成功**経路で観測されます。
+   `health.is_faulted()` ゲートを必要としなくなりました)。`health.py` は `vector` を
+   import しないままなので依存グラフは不変です: `config ← health ← vector ← memory_handlers`。
+
+   観測点は 2 つあり、対称ではありません。recall 経路の embed は失敗と復旧の両方を報告し、
+   保守の再埋め込みは失敗のみを報告します。復旧を recall 側に残すのは意図的です — 保守実行が
+   状態を消すと、利用者の recall が直前に latch した fault と、どのセッションに既に通知したか
+   の記録を消してしまいます。2 つ目の観測点は保守側のブレーカーと共に追加されたもので、
+   `vector.py` の外で health に書き込む唯一の場所です。「観測点」を単数で書く doc は、最初の
+   ビルドを説明していてコードを説明していません。
 4. **リモート検索の握り潰しに別途フックは不要** (§2.2 の詳細化)。
    `VECTOR_SEARCH_MODE=="remote"` の場合、リモートの失敗は計測を仕込んだローカルの embed
    経路へフォールスルーします。そのため配線するのはローカル経路だけです (本番はローカル
