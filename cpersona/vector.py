@@ -442,10 +442,13 @@ async def _index_tail_rows(
 ):
     """The rows the index cannot answer for, read exactly.
 
-    Two disjoint groups, both bounded: everything written since the build
-    (`id > watermark`), and the rows the fixed-width format could not spell,
-    which the build named for exactly this purpose. Without the second the index
-    would silently stop returning them.
+    Three disjoint groups, all bounded: everything written since the build
+    (`id > watermark`); the rows the fixed-width format could not spell; and the
+    rows that carried no embedding when the build ran (bug-278). The build names
+    the last two for exactly this purpose. Without them the index would silently
+    stop returning rows the scan still returns — and the third group is the one
+    routine maintenance creates, since filling a NULL embedding is what
+    check_health(fix=True) does.
 
     Returns None when a tail row carries a foreign embedding width. The live scan
     applies its window BEFORE skipping such rows, so their presence changes which
@@ -458,15 +461,19 @@ async def _index_tail_rows(
     src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
     src_params = (src_like,) if src_like else ()
 
-    excluded = index.excluded_ids
-    holes = f" OR id IN ({','.join('?' * len(excluded))})" if excluded else ""
+    # One IN clause for both named groups: they are disjoint by construction (a row
+    # with no embedding is not in the meta query that produces the excluded list) and
+    # the query treats them identically — read this id exactly, whatever the watermark
+    # says. The build caps their sum for this reason.
+    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids)
+    holes = f" OR id IN ({','.join('?' * len(holes_ids))})" if holes_ids else ""
     rows = await db.execute_fetchall(
         f"""SELECT id, created_at, embedding, length(embedding)
            FROM memories
            WHERE (id > ?{holes}) AND embedding IS NOT NULL AND {iso.clause}{src_clause}
            ORDER BY created_at DESC, id ASC
            LIMIT ?""",
-        (index.watermark, *excluded, *iso.params, *src_params, scan_limit),
+        (index.watermark, *holes_ids, *iso.params, *src_params, scan_limit),
     )
     if any(r[3] != index.dim * 4 for r in rows):
         return None

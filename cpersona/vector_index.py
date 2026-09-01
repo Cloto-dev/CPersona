@@ -41,7 +41,11 @@ from cpersona.isolation import isolation_where
 from cpersona.utils import SCORING_VERSION
 
 MAGIC = b"CPXIDX01"
-FORMAT_VERSION = 1
+# 2 (bug-278): the header gained unembedded_ids. A sidecar written by the previous
+# builder has no record of the rows it skipped for a NULL embedding, so a new reader
+# cannot make it correct — it can only be rebuilt. Bumping the version turns those
+# files into IndexUnusable, which the query path already answers by using the scan.
+FORMAT_VERSION = 2
 HEADER_ALIGN = 64
 
 # `created_at` is TEXT with a one-second-resolution default. Fixed-width ASCII in
@@ -78,6 +82,9 @@ class VectorIndex:
     count: int
     watermark: int
     excluded_ids: tuple[int, ...]
+    #: ids at or below the watermark that had no embedding when the index was
+    #: built. Read exactly, like excluded_ids — see bug-278.
+    unembedded_ids: tuple[int, ...]
     embedding_model: str
     scoring_version: str
     ids: np.ndarray  # int64[count]
@@ -157,6 +164,17 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     if not meta:
         return {"built": False, "reason": "no embedded rows", "watermark": watermark}
 
+    # bug-278: the rows at or below the watermark that carry no embedding YET. The
+    # watermark answers "did this row exist at build time"; it cannot answer "did this
+    # row have an embedding at build time", and those are different questions for any
+    # row that gets embedded later — which is what check_health(fix=True) does to every
+    # NULL row it finds. Such a row is in neither the matrix (the meta query requires an
+    # embedding) nor the tail (its id is at or below the watermark), so once its
+    # embedding lands it is returned by the scan and by nothing else. Naming them here
+    # puts them in the same exact tail read the non-canonical rows already ride.
+    null_sql = f"SELECT id FROM {table} WHERE embedding IS NULL AND id <= ?{iso.and_clause}"
+    unembedded = [int(r[0]) for r in await db.execute_fetchall(null_sql, (watermark, *iso.params))]
+
     # A single width, or no index. The live scan applies its window BEFORE it
     # skips foreign-width rows: it ranks whatever survives inside the newest
     # MAX_MEMORIES rows. An index that holds only one width cannot reproduce that
@@ -190,10 +208,17 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
             continue
         kept.append(r)
 
-    if len(excluded) > MAX_EXCLUDED_IDS:
+    # Both lists are bound into the same IN clause on every query, so the cap is on
+    # their sum. Declining is the same answer a mixed-width corpus already gets: an
+    # index that cannot name all its holes would be approximate, and this file format
+    # does not approximate.
+    if len(excluded) + len(unembedded) > MAX_EXCLUDED_IDS:
         return {
             "built": False,
-            "reason": f"{len(excluded)} rows carry a non-canonical created_at (cap {MAX_EXCLUDED_IDS})",
+            "reason": (
+                f"{len(excluded)} rows carry a non-canonical created_at and "
+                f"{len(unembedded)} carry no embedding yet (cap {MAX_EXCLUDED_IDS} combined)"
+            ),
             "watermark": watermark,
         }
     count = len(kept)
@@ -213,6 +238,7 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
         "count": count,
         "watermark": watermark,
         "excluded_ids": excluded,
+        "unembedded_ids": unembedded,
         "fingerprint": {
             # The dimension is the part that actually guards. This codebase
             # already treats EMBEDDING_MODEL as a label that can be stale or
@@ -374,6 +400,7 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
         count=count,
         watermark=int(header["watermark"]),
         excluded_ids=tuple(int(i) for i in header.get("excluded_ids", ())),
+        unembedded_ids=tuple(int(i) for i in header.get("unembedded_ids", ())),
         embedding_model=str(fingerprint.get("embedding_model", "")),
         scoring_version=str(fingerprint.get("scoring_version", "")),
         ids=ids,
