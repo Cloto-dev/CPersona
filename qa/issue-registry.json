@@ -4067,6 +4067,21 @@
       "category": "index-divergence",
       "fix_sketch": "Do NOT add `AND embedding IS NOT NULL` to that hydrate. It is shared with the keyword and FTS retrievers, whose hits are not required to carry an embedding at all — that is the standalone, keyword-only configuration the product supports — so the predicate would silently drop legitimate results from the one path that has to work without a backend. The check belongs where the claim is made: the index path should confirm that the ids it took from the matrix still carry an embedding, which is one bounded read it can fold into the tail it already issues, or the matrix positions should be filtered against that read before the merge. Whichever, the test to pin is an equivalence of the two paths' row sets across a valid->NULL transition, and it must be paired with one asserting that a keyword-only recall still returns rows with no embedding.",
       "note": "Found while fixing bug-278 and deliberately not folded into it: the one-line repair that looks right is the one that breaks keyword-only recall, and that deserves its own change and its own test rather than riding along. Reachability is bounded the same way as bug-278 — the index is operator-opt-in in this release, nothing in the shipped server builds it — but the trigger is the same routine maintenance run."
+    },
+    {
+      "id": "bug-284",
+      "summary": "(MEDIUM) The advisory mutation lane bounds the number of mutants it will run but not the time they take, so a run that fits the cap can still be killed by the job's ceiling — and because the lane is continue-on-error, that death is silent. The cap is a count (default 60) and cosmic-ray runs the test command once per mutant; the command carries -x, so a killed mutant returns early while a surviving one pays for the whole suite. At the suite's measured size a worst case inside the cap is roughly 46 minutes against a 20-minute ceiling. Measured on 2026-09-01: a run started at 22:17:21 was cancelled at 22:37:36, exactly at the ceiling, having written no report. On the pull request the outcome was indistinguishable from a lane that ran and found nothing, which is the failure that matters — the lane exists to measure, and an unmeasured commit that reads as a measured one is worse than no lane.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-01T22:37:36Z",
+      "version": "2.5.9a2",
+      "file": "scripts/mutation-diff.py",
+      "pattern": "bug-284",
+      "expected": "present",
+      "status": "fixed",
+      "fixed_in": "2.5.9",
+      "category": "silent-failure",
+      "fix_note": "Two halves, and neither is sufficient alone. The bound is now priced rather than guessed: the run times one unmutated suite, converts a wall-clock budget (default 900s, under the 20-minute ceiling) into a number of mutants it can afford, and refuses as 'capped' with the price stated when the diff needs more. Pricing off the worst case is deliberate — a mutant that dies early is cheap, so an estimate assuming early death stops bounding exactly when the diff is weakly tested, which is when the lane has something to say. A baseline that does not pass yields 'unpriced' rather than a number, because timing a broken suite prices nothing. The second half removes the silence: a step that runs even when the previous one was cancelled writes 'did-not-complete — treat it as unmeasured, not as clean' into the job summary when no report exists. The lane stays advisory; continue-on-error was never the defect, and gating on it would institutionalise a number nobody has validated yet.",
+      "note": "Found by being blocked by it: a HIGH fix (bug-278) sat waiting on a lane that had already stopped measuring. Validated before shipping — the pricing helper was exercised against fast, slow and failing commands, and the workflow step's body was extracted verbatim and run under bash in both branches (report present, report absent). The variable in that step was renamed off `status` because it is read-only in some shells; the step runs under bash, where it would have worked, but the rename costs nothing."
     }
   ]
 }
