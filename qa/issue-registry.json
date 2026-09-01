@@ -4082,6 +4082,63 @@
       "category": "silent-failure",
       "fix_note": "Two halves, and neither is sufficient alone. The bound is now priced rather than guessed: the run times one unmutated suite, converts a wall-clock budget (default 900s, under the 20-minute ceiling) into a number of mutants it can afford, and refuses as 'capped' with the price stated when the diff needs more. Pricing off the worst case is deliberate — a mutant that dies early is cheap, so an estimate assuming early death stops bounding exactly when the diff is weakly tested, which is when the lane has something to say. A baseline that does not pass yields 'unpriced' rather than a number, because timing a broken suite prices nothing. The second half removes the silence: a step that runs even when the previous one was cancelled writes 'did-not-complete — treat it as unmeasured, not as clean' into the job summary when no report exists. The lane stays advisory; continue-on-error was never the defect, and gating on it would institutionalise a number nobody has validated yet.",
       "note": "Found by being blocked by it: a HIGH fix (bug-278) sat waiting on a lane that had already stopped measuring. Validated before shipping — the pricing helper was exercised against fast, slow and failing commands, and the workflow step's body was extracted verbatim and run under bash in both branches (report present, report absent). The variable in that step was renamed off `status` because it is read-only in some shells; the step runs under bash, where it would have worked, but the rename costs nothing."
+    },
+    {
+      "id": "bug-280",
+      "summary": "(MEDIUM) Three recipes in the shipped skill cannot be followed as written, and the worst of them fails silently. The backup instruction is `sqlite3 \"$DB\" \".backup 'b.db'\"`, but `$DB` is defined nowhere in the skill or the docs — the variable a reader who followed setup actually has is CPERSONA_DB_PATH. With DB unset the command expands to `sqlite3 \"\"`, which opens an empty transient database and backs that up, so the reader is told their memory is backed up and it is not. Separately, both from-source recipes clone a repository and never enter it: CPersona's says clone, create a venv, `pip install .`, which installs whatever is in the directory the reader started in, and CEmbedding's says clone then `pip install \".[onnx]\"` with the same defect. The CEmbedding from-source line also drops the two things its own PATH recipe two lines above keeps — the model download and EMBEDDING_PROVIDER=onnx_jina_v5_nano — so a reader who follows it starts a server that ignores the model it just downloaded.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-02T00:00:00Z",
+      "version": "2.5.9a2",
+      "file": "skills/cpersona-memory/SKILL.md",
+      "pattern": "substitute the path you set as",
+      "expected": "present",
+      "status": "fixed",
+      "category": "unfollowable-instruction",
+      "note": "Found by the v2.5.8..v2.5.9a2 release-gate audit, which was asked to verify every command, path, flag and environment variable in the skill against the tree rather than reason about them. The finder also reported that the PATH recipe omits EMBEDDING_PROVIDER; that half is wrong — it is present — and only the from-source line drops it. Verified by reading both recipes. The corrected form was checked the same way the defect was found: no backup line in the skill now expands a shell variable.",
+      "fixed_in": "2.5.9",
+      "fix_note": "Both clone recipes gained the `cd` they were missing, and the CEmbedding source line gained the model download and EMBEDDING_PROVIDER its own PATH recipe two lines above already had, with a sentence saying why they are not optional. The backup command took the longer repair. Renaming $DB to $CPERSONA_DB_PATH was drafted first and rejected on measurement: that name is set in the MCP client's config JSON, not exported into the reader's shell, so the substitution would have reproduced the same silent `sqlite3 \"\"` under a more convincing name. Both call sites now show a literal path and say where its value comes from. The lesson is the one the finding is an instance of: an instruction is verified by asking whether the reader's environment actually holds what it references, not by whether the name is spelled correctly."
+    },
+    {
+      "id": "bug-281",
+      "summary": "(LOW) The repair reference calls a recall the read-only liveness test and states there is no side effect on stored data, without naming the configuration in which that is false. With CPERSONA_CONFIDENCE_ENABLED=true a successful non-deep recall that is not gate-fallback and not paused updates recall_count and last_recalled_at for the rows it returned. The flag ships off, so the sentence is true for a default install and false for one that turned confidence on — which the production instance has. The page's own purpose makes the omission matter: it is the page a reader consults while diagnosing, and it recommends running the test repeatedly.",
+      "severity": "LOW",
+      "discovered": "2026-09-02T00:00:00Z",
+      "version": "2.5.9a2",
+      "file": "skills/cpersona-memory/references/embedding-backend-repair.md",
+      "pattern": "read-only liveness test",
+      "expected": "present",
+      "status": "open",
+      "category": "doc-claim",
+      "fix_sketch": "State the condition rather than weakening the sentence to uselessness: the recall writes ranking state when confidence is enabled, and does not when it is off or when the session is paused — that last clause is worth keeping because it is what makes the test safe during a no-persist window. Do not change the code to match the doc; the bump is deliberate and its own comment explains why making it unconditional was rejected.",
+      "note": "Found by the release-gate audit and confirmed by reading the gate in do_recall: the write is guarded by `not deep and not gate_fallback and recall_counts and not session.is_paused_for(...)`, and recall_counts is populated only under the confidence flag."
+    },
+    {
+      "id": "bug-282",
+      "summary": "(MEDIUM) The documentation gate that verifies environment-variable names against the source only reads Markdown table rows, so a name written inline — as a bullet or in a code fence — is unchecked. The reference page shipped in this release writes its setup variables inline, which puts every one of them outside the gate. Measured by mutation: renaming CPERSONA_EMBEDDING_URL to CPERSONA_EMBEDDING_URl in that page's inline bullet leaves check-docs-facts at exit 0, although no such name exists anywhere in the source. The gate's guarantee is that a documented variable is a real one; for this page it guarantees nothing, and the page is the one a reader with a broken install is sent to.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-02T00:00:00Z",
+      "version": "2.5.9a2",
+      "file": "scripts/check-docs-facts.py",
+      "pattern": "def check_env_tables",
+      "expected": "present",
+      "status": "open",
+      "category": "gate-reach",
+      "fix_sketch": "Scan for the CPERSONA_ prefix wherever it appears in the tracked docs rather than only inside table rows, and keep the table-shaped check as it is — the two answer different questions (is this name real, versus is this table complete). Expect the widened scan to surface names that are deliberately illustrative; those want an explicit allowlist rather than a narrower scan, because narrowing is how the gate got here. Prove the widening with the same mutation that exposed the gap: a typo in an inline bullet must fail the gate.",
+      "note": "Found by the release-gate audit and reproduced before filing. Same class as the pause-seam exemption (bug-273) and Gate 10b: a gate is green only over the surface its own pattern reaches, and the surface here is narrower than the docs it is trusted for."
+    },
+    {
+      "id": "bug-283",
+      "summary": "(LOW) The mutation harness refuses to run against a dirty tree so that its results describe the release candidate, but the check reads only unstaged changes: `git diff --name-only` with no --cached. A staged edit to a target file with a clean working tree passes the guard, so the harness can apply its mutants on top of code that is not the candidate and report that every seam is pinned for a tree nobody is shipping. The failure is quiet in the direction that matters — the run goes green.",
+      "severity": "LOW",
+      "discovered": "2026-09-02T00:00:00Z",
+      "version": "2.5.9a2",
+      "file": "scripts/mutation-proof.py",
+      "pattern": "def tree_is_clean",
+      "expected": "present",
+      "status": "open",
+      "category": "gate-reach",
+      "fix_sketch": "Ask git for both the staged and the unstaged sets (`git diff --name-only` plus `git diff --cached --name-only`, or `git status --porcelain` filtered to the target files) before deciding the tree is clean. The assertion to add alongside is the one the guard exists to support: stage a target file and require the harness to refuse.",
+      "note": "Found by the release-gate audit while reviewing the gate scripts, and confirmed by reading tree_is_clean. Not reproduced by staging a file, because doing so in this working tree would have disturbed the release branch."
     }
   ]
 }

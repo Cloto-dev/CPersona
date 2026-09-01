@@ -73,8 +73,8 @@ uvx cpersona          # run directly
 ```
 
 From source (development): `git clone https://github.com/Cloto-dev/cpersona.git`,
-`python -m venv .venv && source .venv/bin/activate`, `pip install .`, run with
-`python -m cpersona`.
+`cd cpersona`, `python -m venv .venv && source .venv/bin/activate`,
+`pip install .`, run with `python -m cpersona`.
 
 ### 2. Install the embedding server (recommended)
 
@@ -93,8 +93,12 @@ EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding   
 Or install it onto your PATH with `pip install "cembedding[onnx]"`, then run
 `cembedding-download-model --model jina-v5-nano` and
 `EMBEDDING_PROVIDER=onnx_jina_v5_nano cembedding`. From source: `git clone
-https://github.com/Cloto-dev/CEmbedding.git`, `pip install ".[onnx]"`, run with
-`python -m cembedding`.
+https://github.com/Cloto-dev/CEmbedding.git`, `cd CEmbedding`,
+`pip install ".[onnx]"`, then `cembedding-download-model --model jina-v5-nano`
+and `EMBEDDING_PROVIDER=onnx_jina_v5_nano python -m cembedding` — the download
+and the provider are not optional here any more than in the recipe above; a
+server started without them serves a different backend than the one just
+downloaded.
 
 > CEmbedding is the reference and recommended backend; any other server
 > satisfying the contract above is equally supported and equally recommended.
@@ -333,7 +337,9 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 - **`CPERSONA_MAX_MEMORIES` is the vector scan window, not a cap** — raise it
   via env for large corpora; FTS/keyword reach the full history regardless.
 - **Backup is not `cp`**: the DB runs WAL — use
-  `sqlite3 "$DB" ".backup 'b.db'"` (or `VACUUM INTO`), and keep the live DB
+  `sqlite3 /absolute/path/cpersona.db ".backup 'b.db'"` (or `VACUUM INTO`) —
+  substitute the path you set as `CPERSONA_DB_PATH` in the client config, which
+  is not exported into your shell — and keep the live DB
   out of cloud-sync folders.
 - **Indexing documents into CPersona?** Use a dedicated `agent_id` and the
   rebuild or content-hash patterns in the runbook — and recalibrate after
@@ -425,8 +431,8 @@ and the backfill for rows written while the backend was down.
 - 30 tools · Schema v13 (auto-migrating) · ~17,700 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
-  `sqlite3 "$DB" ".backup 'backup.db'"` (WAL-safe — a plain `cp` of a live DB
-  is not).
+  `sqlite3 /absolute/path/cpersona.db ".backup 'backup.db'"`, substituting the
+  path from the client config (WAL-safe — a plain `cp` of a live DB is not).
 - Benchmarked on LMEB (22 retrieval tasks, Mean NDCG@10). The measured figures
   and the regime behind them live in the
   [benchmarks](https://cloto-dev.github.io/CPersona/) — cite those rather than a
