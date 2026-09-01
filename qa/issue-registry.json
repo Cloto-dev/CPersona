@@ -3914,12 +3914,13 @@
       "discovered": "2026-08-31T09:00:00Z",
       "version": "2.5.8",
       "file": "cpersona/session.py",
-      "pattern": "_MAX_PAUSED_SESSIONS",
+      "pattern": "bug-269",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
-      "fix_sketch": "Fail safe instead: refuse a new pause once the map is full rather than dropping one already granted, or surface the eviction on the response of the write that outlived it. Refusing is the honest direction — an error the caller can read beats a guarantee that quietly stopped holding.",
-      "note": "Deferred from the 2.5.8 review. Reaching the cap needs that many distinct declared keys in one process, which no measured deployment approaches; the defect is the direction of the failure, not its likelihood."
+      "fixed_in": "2.5.9",
+      "fix_note": "Took the fix_sketch's first branch: the pause map no longer evicts at all. At the cap pause_for raises PauseCapacityError instead of deleting a live entry, so a granted pause holds until its TTL or an explicit resume, and the failure lands on the caller making the request rather than on a session that could not see it. Rejected the sketch's second branch (surface the eviction on the write that outlived it): telling the evictor is not actionable for them, and telling the victim needs a tombstone map whose own bounded eviction would be silent in the same way — the defect one level down. PauseCapacityError subclasses ValueError so it rides the channel do_pause_persistence already turns into {ok:false, error}. Decay runs before the cap check, so the cap counts live pauses and a full map recovers on its own; re-arming a key already in the map is never refused. The denial a full map now produces is loud, where the revocation it replaces was silent — the safe direction of the same failure.",
+      "note": "Deferred from the 2.5.8 review; picked up in the 2.5.9 line. Reaching the cap needs that many distinct declared keys live in one process, which no measured deployment approaches — the fix changes the direction of the failure, not its likelihood, and deliberately leaves the cap itself alone."
     },
     {
       "id": "bug-270",

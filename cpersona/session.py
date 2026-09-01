@@ -106,11 +106,31 @@ _MAX_PAUSED_SESSIONS = 256
 
 # key -> deadline. Bounded for the same reason the advisory map is: the key space
 # is client-supplied and a client that rotates keys must not grow it without
-# limit. Eviction here is NOT as safe as it is there — forgetting a pause resumes
-# writes for that session — so the cap is high enough that reaching it means a
-# client is rotating keys per call, and eviction is nearest-deadline-first so the
-# entry closest to expiring anyway is the one that goes.
+# limit. What the two maps must NOT share is the policy at the cap, and bug-269
+# is what happens when they do. Forgetting that a session was already told an
+# advisory costs a repeated notice. Forgetting a pause resumes that session's
+# writes — and the map evicted the nearest deadline, silently, on behalf of a
+# DIFFERENT caller arming a pause of its own. The session that lost its pause got
+# no signal at all: `store` kept answering like any successful write, and only an
+# explicit persistence_status revealed the guarantee had stopped holding. The
+# policy also selected against ordinary use, since a caller on the default TTL is
+# nearer its deadline than one holding the maximum.
+#
+# So this map does not evict. A pause, once granted, holds until its TTL or an
+# explicit resume; at the cap the NEW request is refused instead, which moves the
+# failure onto the caller who is making it and can read the answer. Refusing was
+# also the direction the defect's own registry entry recorded: an error a caller
+# can read beats a guarantee that quietly stopped holding.
 _pauses: dict[str, datetime] = {}
+
+
+class PauseCapacityError(ValueError):
+    """Arming this pause would have required revoking a live one, so it was refused.
+
+    A ``ValueError`` subclass because that is the channel ``do_pause_persistence``
+    already turns into an error response; the distinct type is what lets a caller —
+    and a test — tell a capacity refusal apart from a malformed TTL.
+    """
 
 
 def _now() -> datetime:
@@ -158,14 +178,28 @@ def pause_for(session_key: str, declared: bool, ttl_seconds: int) -> dict:
     """Arm this key's pause for ``ttl_seconds``. Last-write-wins, no stacking.
 
     Raises ``ValueError`` for a non-int or non-positive TTL; values above the
-    ceiling are clamped.
+    ceiling are clamped. Raises :class:`PauseCapacityError` (a ``ValueError``) when
+    the map is full of live pauses, rather than revoking one to make room — see
+    the note on ``_pauses``. Re-arming a key that is already paused is never
+    refused: it occupies a slot it already holds.
+
+    The cap counts *live* pauses. Decay runs first, so an entry whose TTL has
+    elapsed frees its slot before the check, and a full map recovers on its own.
     """
     ttl_seconds = _validate_ttl(ttl_seconds)
     now = _now()
     _decay(now)
     deadline = now + timedelta(seconds=ttl_seconds)
     if session_key not in _pauses and len(_pauses) >= _MAX_PAUSED_SESSIONS:
-        del _pauses[min(_pauses, key=_pauses.__getitem__)]
+        # bug-269: refuse, do not evict. Granting here would silently lift a pause
+        # this caller never armed and cannot see.
+        nearest = min(_pauses.values())
+        raise PauseCapacityError(
+            f"persistence was NOT paused: {_MAX_PAUSED_SESSIONS} sessions already hold a "
+            f"live pause on this process, and granting another would revoke one of them. "
+            f"The earliest frees at {nearest.isoformat()}; resume_persistence on a key you "
+            f"no longer need frees one now."
+        )
     _pauses[session_key] = deadline
     return {
         "paused": True,

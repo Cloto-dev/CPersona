@@ -377,30 +377,76 @@ def test_re_arming_replaces_the_ttl_rather_than_stacking(clock):
 # ---------------------------------------------------------------------------
 
 
-def test_the_pause_map_is_capped_and_evicts_the_nearest_deadline():
-    """The key space is client-supplied; a key-rotating client must not grow it.
-
-    Eviction here is not as safe as the advisory map's — forgetting a pause
-    resumes that session's writes — so the entry that goes is the one closest to
-    expiring anyway, which is the smallest possible difference from doing nothing.
-    """
-    session.pause_for("soonest", True, 60)
+def _fill_the_pause_map(soonest_ttl=60):
+    """A full map: one entry near its deadline, the rest far from theirs."""
+    session.pause_for("soonest", True, soonest_ttl)
     for n in range(session._MAX_PAUSED_SESSIONS - 1):
         session.pause_for(f"s-{n}", True, 3600)
     assert len(session._pauses) == session._MAX_PAUSED_SESSIONS
-    assert session.is_paused_for("soonest")
 
-    session.pause_for("one-too-many", True, 3600)
 
+def test_the_pause_map_is_capped_and_refuses_rather_than_revoking():
+    """bug-269: a granted pause holds until its TTL or a resume. Nothing revokes it.
+
+    The map used to evict the nearest deadline to make room. That lifted a pause on
+    behalf of a *different* caller arming one of its own, with no signal reaching the
+    session that lost it — `store` kept answering like any successful write. The
+    nearest-deadline rule also selected against ordinary use: a caller on the default
+    TTL is nearer its deadline than one holding the maximum, so the entry dropped was
+    the one least likely to belong to the key rotator the cap exists for.
+    """
+    _fill_the_pause_map()
+    before = dict(session._pauses)
+
+    with pytest.raises(session.PauseCapacityError) as refused:
+        session.pause_for("one-too-many", True, 3600)
+
+    assert session._pauses == before, "a refused pause still disturbed the map"
+    assert session.is_paused_for("soonest"), "the nearest deadline was revoked anyway"
+    assert not session.is_paused_for("one-too-many")
     assert len(session._pauses) == session._MAX_PAUSED_SESSIONS, (
         "the map grew past the cap — a client rotating keys can now exhaust memory"
     )
-    assert not session.is_paused_for("soonest"), "eviction did not take the nearest deadline"
+    message = str(refused.value)
+    assert "NOT paused" in message, "the refusal has to say the pause did not happen"
+    assert "resume_persistence" in message, "and name the way out"
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_reaches_the_caller_as_a_failed_tool_response():
+    """The refusal is only worth anything if it survives the handler.
+
+    ``PauseCapacityError`` subclasses ``ValueError`` precisely so it rides the channel
+    ``do_pause_persistence`` already turns into ``{ok: False, error: ...}``. A caller
+    that branches on ``ok`` must not read this as a pause it now holds.
+    """
+    _fill_the_pause_map()
+
+    out = await server.do_pause_persistence(ttl_seconds=3600, session_key="one-too-many")
+
+    assert out["ok"] is False
+    assert "NOT paused" in out["error"]
+    assert out.get("paused") is not True
+    assert not session.is_paused_for("one-too-many")
+
+
+def test_an_expired_entry_frees_its_slot_so_a_full_map_recovers():
+    """The cap counts live pauses, not keys ever seen — decay runs before the check.
+
+    Without this the first 256 keys a process ever saw would own the pause surface for
+    the life of the process, which is a denial the fix would have introduced.
+    """
+    _fill_the_pause_map(soonest_ttl=1)
+    session._pauses["soonest"] = session._now() - timedelta(seconds=1)
+
+    session.pause_for("one-too-many", True, 3600)
+
     assert session.is_paused_for("one-too-many")
-    assert session.is_paused_for("s-0"), "eviction took a far-deadline entry as well"
+    assert not session.is_paused_for("soonest"), "the expired entry should be gone"
+    assert len(session._pauses) == session._MAX_PAUSED_SESSIONS
 
 
-def test_re_arming_an_existing_key_at_the_cap_evicts_nothing():
+def test_re_arming_an_existing_key_at_the_cap_is_neither_refused_nor_costly():
     """Refreshing a pause is not a new session, so it must not cost another one."""
     for n in range(session._MAX_PAUSED_SESSIONS):
         session.pause_for(f"s-{n}", True, 3600)
