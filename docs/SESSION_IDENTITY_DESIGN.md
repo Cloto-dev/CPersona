@@ -294,10 +294,13 @@ in-process maps — not persistent rows.
   told, so the worst case is a repeated notice — the safe direction.
 - Pause entries are bounded by a cap too, but **eviction there is not the safe
   direction**: forgetting a pause resumes writes for that session. The two maps
-  therefore do not share a policy. The pause cap is high enough that reaching it
-  means a client is rotating keys per call, and the entry evicted is the one
-  whose deadline is nearest, so the pause that would have expired first is the
-  one that expires early.
+  therefore do not share a policy — **the pause map does not evict at all**. A
+  pause, once granted, holds until its TTL or an explicit resume; at the cap the
+  *new* request is refused, so the failure lands on the caller making it, who can
+  read the answer, instead of on a session that would never learn its guarantee
+  had stopped holding. The cap counts live pauses, and decay runs before the
+  check, so a full map recovers on its own. Re-arming a key that is already
+  paused is never refused: it occupies a slot it already holds.
 - The queue's task-to-key attribution is in-process and entries are deleted with
   the task rows they describe, so it cannot outlive the queue.
 - A process restart drops all three, which is correct: no session survives it.
@@ -386,6 +389,6 @@ Two consequences follow, and neither is optional:
   pauses and kept when a different key does; an unattributed row is gated on
   the transport bucket.
 - Mutation proof: removing the `strip()`, the empty-string guard, the advisory
-  eviction cap, the pause eviction cap, the per-session branch of the pause
-  lookup, the TTL substitution in the skipped-write reason, and the queue's
+  eviction cap, the pause map's refusal at the cap, the per-session branch of the
+  pause lookup, the TTL substitution in the skipped-write reason, and the queue's
   attribution lookup each fail a test that names the defect.
