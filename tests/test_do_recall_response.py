@@ -272,6 +272,13 @@ def _failing_client(exc=None):
     return client
 
 
+def _answering_client():
+    """The same real client, over a transport that answers. Its embed cache is real too."""
+    client = EmbeddingClient(mode="http", http_url="http://127.0.0.1:9/embed")
+    client._client = _CountingTransport()
+    return client
+
+
 async def _recall_once(monkeypatch, client):
     monkeypatch.setattr(vector, "_embedding_client", client)
     return await vector._search_vector(_FakeDB(), "agent.t", "any query", limit=5)
@@ -449,3 +456,65 @@ def test_recall_tool_schemas_cap_limit_at_100():
         limit_schema = tools[name].inputSchema["properties"]["limit"]
         assert limit_schema["maximum"] == 100, f"{name}: agent-facing limit cap missing"
         assert limit_schema["minimum"] == 0, f"{name}: limit minimum missing"
+
+
+# --- bug-248: a cache hit is not an observation of the backend ------------------------
+#
+# `embed_with_outcome` answers a repeated single-text query from the client's TTL LRU
+# cache without a request leaving the process (attempted=False, ok=True). Re-arming on
+# that cleared a latched fault, dropped the evidence a user was about to be shown, and
+# zeroed the two-strike debounce — so a dead backend read as healthy for as long as the
+# query repeated inside the cache TTL. These drive the real client and the real cache;
+# the transport's POST count is what proves a call did or did not go out.
+
+
+@pytest.mark.asyncio
+async def test_a_cached_embed_does_not_clear_a_latched_fault(monkeypatch):
+    client = _answering_client()
+    await _recall_once(monkeypatch, client)  # one real round trip, warming the cache
+    assert client._client.post_count == 1
+
+    for _ in range(health.FAULT_PROMOTE_THRESHOLD):  # the backend then dies
+        health.observe_failure("mode=http / POST http://127.0.0.1:9/embed failed")
+    assert health.is_faulted()
+
+    await _recall_once(monkeypatch, client)  # the same query — served from cache
+
+    assert client._client.post_count == 1, "a cache hit must not issue a request"
+    assert health.is_faulted(), "a cache hit must not clear a fault it never tested"
+    assert health.observed_state()["evidence"], "nor discard the evidence for the user"
+
+
+@pytest.mark.asyncio
+async def test_a_cached_embed_does_not_zero_the_two_strike_debounce(monkeypatch):
+    """The quieter half of the defect: no fault to clear, but the counter reset anyway.
+
+    ``observe_ok`` zeroes ``_consecutive_failures``, so a cache hit between two genuine
+    failures made the second one a first — and the advisory needed a third before it
+    could fire.
+    """
+    client = _answering_client()
+    await _recall_once(monkeypatch, client)  # warms the cache; health is healthy
+    assert client._client.post_count == 1
+
+    health.observe_failure("first genuine failure")
+    await _recall_once(monkeypatch, client)  # cache hit, no request
+    health.observe_failure("second genuine failure")
+
+    assert client._client.post_count == 1
+    assert health.is_faulted(), "the second consecutive failure must still promote"
+
+
+@pytest.mark.asyncio
+async def test_an_embed_that_reached_the_backend_still_re_arms(monkeypatch):
+    """The fix gates recovery on a real round trip; it does not remove recovery."""
+    client = _answering_client()
+    for _ in range(health.FAULT_PROMOTE_THRESHOLD):
+        health.observe_failure("backend down")
+    assert health.is_faulted()
+
+    monkeypatch.setattr(vector, "_embedding_client", client)
+    await vector._search_vector(_FakeDB(), "agent.t", "a query never embedded before", limit=5)
+
+    assert client._client.post_count == 1, "a fresh query must miss the cache"
+    assert not health.is_faulted(), "a call that reached the backend still clears the fault"

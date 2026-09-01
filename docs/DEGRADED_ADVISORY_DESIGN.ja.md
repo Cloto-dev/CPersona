@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:2a500686bd204c8600e4d490b8df7ce3a38b8deb -->
+<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:353e912c11cd273dcab2d0f53459263ad03710aa -->
 
 # dense 劣化のランタイム検知 + advisory のコンテキスト注入
 
@@ -204,7 +204,11 @@ async def _probe_embedding_health() -> tuple[bool, str | None]:
 ### 4.4 `do_recall` への統合 { #44-do_recall-integration }
 
 `do_recall` の入口で `health.observe_config()` を呼びます。recall 経路は埋め込み
-呼び出し自身の結果から `observe_ok()` / `observe_failure()` に供給します。
+呼び出し自身の結果から `observe_ok()` / `observe_failure()` に供給します — ただし
+`observe_ok()` はその結果が `attempted` を報告した時だけです。クライアントは同一の
+単一テキスト埋め込みを TTL キャッシュから返し、その際プロセスの外へ要求は出ません。
+出ていない呼び出しの値はバックエンドの観測ではないからです (bug-248)。キャッシュ
+ヒットは、最後の実際の呼び出しが置いた状態をそのまま残します。
 `return {"messages": messages}` の直前で:
 
 ```python

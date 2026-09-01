@@ -64,9 +64,10 @@ something that used to work and stopped.
   state and re-arms the full runbook, and a failure feeds the fault counter.
   There is no separate probe to run and no side effect on stored data. The
   caveat: a single-text embed is cached for five minutes, and a cache hit
-  counts as a success without a request leaving the process. **Test with a
-  query you have not just used**, or the answer describes the cache rather than
-  the backend.
+  returns the stored vector without a request leaving the process. It no longer
+  clears the degraded state — an advisory therefore survives a repeated query —
+  but it cannot confirm a repair either. **Test with a query you have not just
+  used**, or the answer describes the cache rather than the backend.
 - **`embedded` on a `store` response** — `false` means the write landed without
   a vector. The memory is saved and searchable by keyword; the vector is
   repairable later (§6).
@@ -76,7 +77,9 @@ something that used to work and stopped.
 - **`check_health(agent_id, fix=false)`** — makes no network call, so it cannot
   test liveness, and says so: `embedding_backend_not_probed` (`info`). A fault
   a recall already latched is still reported. Do not read a quiet `fix=false`
-  run as evidence that the backend is up.
+  run as evidence that the backend is up. A `fix=true` run reports the same
+  finding when the probe hit the embed cache instead of the endpoint; its
+  `reason` field distinguishes `served_from_cache` from `no_probe_on_this_run`.
 - **No backend configured is deliberately not a `check_health` finding.** It is
   permanent, it was never confusable with "the server is up", and a finding
   that can never be resolved teaches an operator to skim past the check. That
@@ -207,12 +210,16 @@ what the outage left behind.
 
 1. **`curl` the endpoint** (command above) — the backend answers at all.
 2. **Run a `recall` with a query you have not just used** — no `advisory` on the
-   response. A successful embed clears the degraded state, so this is the check
-   that says CPersona itself is satisfied. A repeated query can be answered from
-   the five-minute embed cache, which would prove nothing about the backend.
+   response. An embed that reaches the backend clears the degraded state, so this
+   is the check that says CPersona itself is satisfied. A repeated query can be
+   answered from the five-minute embed cache; that hit clears nothing, so a
+   still-present advisory after one would tell you about the cache, not the
+   backend.
 3. **`store` a fact** — the response carries `embedded: true`.
 4. **`check_health(agent_id, fix=true)`** — no `embedding_backend` finding, and
-   the rows written during the outage are re-embedded.
+   the rows written during the outage are re-embedded. A `not_probed` finding
+   with `reason: served_from_cache` means step 4 asked the cache, not the
+   backend; re-run it once the entry expires.
 
 A green step 2 with a skipped step 4 leaves the user with working recall over a
 corpus that still has holes in it.

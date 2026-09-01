@@ -843,7 +843,19 @@ async def _search_vector(
         # have, so `mode=api` could only ever produce "embedding client unavailable".
         health.observe_failure(outcome.error or "the embedding call produced no usable vector")
         return []
-    health.observe_ok()  # embed succeeded — re-arm after any prior degradation
+    if outcome.attempted:
+        # bug-248: only a call that actually reached the backend is an observation of it.
+        # A repeated single-text query is answered from the client's process-local TTL LRU
+        # cache without a request leaving the process (attempted=False, ok=True), and
+        # re-arming on that cleared a latched fault, dropped the evidence a user was about
+        # to be shown, and zeroed the two-strike debounce — so the next genuine failure had
+        # to climb it again before the advisory could fire. A dead backend read as healthy
+        # for as long as the query repeated within the cache TTL.
+        #
+        # Leaving the state untouched (rather than treating a cache hit as a failure) is
+        # what a cache hit actually licenses: it says nothing about the backend either way,
+        # so the last real observation remains the most recent thing known about it.
+        health.observe_ok()  # embed succeeded — re-arm after any prior degradation
     query_vec = np.array(embeddings[0], dtype=np.float32)
     query_dim = len(query_vec)
     # effective_min_sim computed once near the top (shared with the remote branch, bug-027).

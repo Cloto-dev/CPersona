@@ -87,11 +87,15 @@ exist, and the calling agent should be instructed to watch the first:
    still *skips* rather than fails when the endpoint is unreachable, but the
    endpoint itself is now watched: `embedding_backend` reports `warn` with the
    failing call's own evidence when a configured backend does not answer.
-4. **Read `check_health(fix=false)` for what it is.** It makes no network call,
-   so it cannot test liveness. It says so — `embedding_backend` returns
-   `not_probed` — rather than leaving you to infer health from silence. A fault
-   a recall already latched is still reported there. With no backend configured
-   this check is quiet by design: that is a supported configuration, and the
+4. **Read `not_probed` for what it is.** `check_health(fix=false)` makes no
+   network call, so it cannot test liveness. It says so — `embedding_backend`
+   returns `not_probed` — rather than leaving you to infer health from silence.
+   A `fix=true` run returns it too when the probe was answered from the
+   embedding client's five-minute embed cache: the dimension comes back without
+   a request reaching the endpoint, so nothing was learned about it either way.
+   The finding's `reason` says which of the two happened. A fault a recall
+   already latched is still reported there. With no backend configured this
+   check is quiet by design: that is a supported configuration, and the
    `advisory` surface is where it is raised.
 
 ## Tuning recall

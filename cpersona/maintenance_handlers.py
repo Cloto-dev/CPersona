@@ -66,7 +66,13 @@ async def do_check_health(
     if fix:
         async with connection() as db:
             embedding_cache = await checks_registry.prefetch_null_embeddings(db, agent_id)
-        embedding_cache["expected_dim"] = await checks_registry.probe_embedding_dim()
+        expected_dim, reached_backend = await checks_registry.probe_embedding_dim()
+        embedding_cache["expected_dim"] = expected_dim
+        # bug-248: the dimension and the liveness it used to imply are separate facts. A
+        # probe served from the embedding client's cache returns the right dimension
+        # without a request leaving the process, so check_embedding_backend reads this
+        # flag rather than the presence of a number before it says "connected".
+        embedding_cache["dim_probe_reached_backend"] = reached_backend
 
     # bug-254: the REPORT-ONLY whole-database scan leaves the write seam for the
     # same reason the embedding round-trips did. check_sqlite_integrity runs

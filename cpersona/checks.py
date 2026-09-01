@@ -451,15 +451,24 @@ def _reembeddable(null_count: int, *, blobs_expected: bool = True) -> int:
     return min(null_count, REEMBED_ROW_CAP)
 
 
-async def probe_embedding_dim() -> int | None:
+async def probe_embedding_dim() -> tuple[int | None, bool]:
     """One live probe embed, meant to run OUTSIDE the write lock (bug-083).
     do_check_health(fix=True) calls this in the unlocked prefetch phase and passes the
     result through embedding_cache["expected_dim"], so check_embedding_dimension no
     longer holds the shared write lock across an embedding HTTP round-trip. None means
     the probe failed (or no client) — the dimension check then skips, same as a failed
-    live probe."""
+    live probe.
+
+    Returns ``(dimension, reached_backend)``. The two are separate because they are
+    separately true (bug-248). This probe embeds the constant ``"test"``, which makes it
+    the most cache-warm key in the process, and the client answers a repeated single-text
+    embed from its TTL LRU cache without issuing a request. A cached vector still has the
+    right *length*, so the dimension is returned and check_embedding_dimension keeps
+    working — but it is not evidence the endpoint is up, and reading it as such let a dead
+    backend be reported as connected. Only ``reached_backend`` may carry a liveness claim.
+    """
     if not vector._embedding_client:
-        return None
+        return None, False
     # bug-274 (same class as the prefetch below): this probe is the ONLY network call the
     # unlocked phase makes when no row needs re-embedding, so a database that is fully
     # embedded and a backend that is down produced silence together. The call reports a
@@ -469,11 +478,11 @@ async def probe_embedding_dim() -> int | None:
         emb, outcome = await vector._embedding_client.embed_with_outcome(["test"])
     except Exception as exc:
         health.observe_failure(f"dimension probe raised {type(exc).__name__}")
-        return None
+        return None, True
     if outcome.error:
         health.observe_failure(outcome.error)
-        return None
-    return len(emb[0]) if emb and emb[0] else None
+        return None, outcome.attempted
+    return (len(emb[0]) if emb and emb[0] else None), outcome.attempted
 
 
 
@@ -494,10 +503,16 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
 
     - **unreachable** — ``warn``. Configured and not answering. Reads stay correct, so it
       is not ``critical``; it was invisible, which is why it is here.
-    - **not probed** — ``info``. Under ``fix=False`` nothing calls the backend, so the
-      only honest answer is that liveness was not tested this run. Saying nothing would
-      re-create the silence this check exists to remove.
+    - **not probed** — ``info``. Liveness was not tested on this run, for either of two
+      reasons the finding names in ``reason``. Under ``fix=False`` nothing calls the
+      backend at all. Under ``fix=True`` the probe can be served from the embedding
+      client's cache: it embeds a constant, so it is the most cache-warm key in the
+      process, and a cached vector carries the right dimension without a request leaving
+      it (bug-248). Reading that number as an answer let a dead backend report as
+      connected — this check being answered by the very silence it was built to remove.
+      Saying nothing in either case would re-create that silence.
     - **connected** — no finding, the same way every other check reports "nothing wrong".
+      Claimed only for a probe that reached the backend.
 
     **No backend configured is not reported here**, and that is a decision rather than an
     omission. It is the one state that was never confusable with "the server is up" —
@@ -512,7 +527,12 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
         return []
 
     observed = health.observed_state()
-    probed = (embedding_cache or {}).get("expected_dim")
+    cache = embedding_cache or {}
+    probed = cache.get("expected_dim")
+    # bug-248: whether the probe reached the backend, not whether it produced a number.
+    # The dimension can come from the client's embed cache, which answers without a
+    # request leaving the process; only a call that went out can support "connected".
+    reached_backend = bool(cache.get("dim_probe_reached_backend"))
 
     if probed is None and embedding_cache is not None:
         unreachable = True
@@ -535,15 +555,30 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
             }
         ]
 
-    if embedding_cache is None:
+    if embedding_cache is None or not reached_backend:
+        # bug-248: two ways for liveness to go untested, and the third state already
+        # existed for exactly this. Under fix=False nothing calls the backend. Under
+        # fix=True the call can be served from the client's embed cache, which returns
+        # the right dimension without reaching the endpoint — that used to fall through
+        # to "connected", so the check built to remove this silence was answered by it.
+        from_cache = embedding_cache is not None
         return [
             {
                 "type": "embedding_backend_not_probed",
                 "status": "not_probed",
                 "last_observed": observed["state"],
+                "reason": "served_from_cache" if from_cache else "no_probe_on_this_run",
                 "hint": (
-                    "liveness was not tested on this run — it is probed under fix=true. "
-                    "A finding-free result here is not evidence the backend is up"
+                    (
+                        "the dimension probe was answered from the embedding client's "
+                        "cache, so no request reached the backend on this run; re-run "
+                        "once the cache entry expires to test liveness"
+                    )
+                    if from_cache
+                    else (
+                        "liveness was not tested on this run — it is probed under fix=true. "
+                        "A finding-free result here is not evidence the backend is up"
+                    )
                 ),
             }
         ]

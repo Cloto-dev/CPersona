@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:80d37e964b0df68d77089116ceb7067c090f3aec -->
+<!-- i18n-source: docs/operations.md@blob:b066bfae199587b6eaf528a11832fcc5e0d34511 -->
 
 # 運用 Runbook
 
@@ -95,9 +95,12 @@
    次元チェックは今も*失敗ではなくスキップ*されますが、エンドポイント自体は
    見張られるようになりました: 構成済みのバックエンドが応答しない時、
    `embedding_backend` が失敗した呼び出し自身の証跡を添えて `warn` を報告します。
-4. **`check_health(fix=false)` はそのままの意味で読んでください。** ネットワーク
-   呼び出しを行わないので生存を検査できません。沈黙から健全性を推測させる代わりに、
-   `embedding_backend` が `not_probed` を返してそう述べます。recall が既に latch した
+4. **`not_probed` はそのままの意味で読んでください。** `check_health(fix=false)` は
+   ネットワーク呼び出しを行わないので生存を検査できません。沈黙から健全性を推測させる
+   代わりに、`embedding_backend` が `not_probed` を返してそう述べます。`fix=true` の実行
+   でも、probe が埋め込みクライアントの 5 分間キャッシュから応答された場合には同じものを
+   返します: 次元はエンドポイントに要求が届かないまま返るので、そこからは何も分かりません。
+   2 つのどちらであったかは finding の `reason` が述べます。recall が既に latch した
    fault はそこでも報告されます。バックエンド未構成の場合、このチェックは意図的に
    沈黙します — それはサポートされた構成であり、提起するのは `advisory` の面です。
 
