@@ -192,6 +192,12 @@ def observe_failure(evidence: str | None) -> None:
     """
     global _state, _severity, _reason, _evidence, _consecutive_failures, _advisory_emitted
     _consecutive_failures += 1
+    # Keep the reason even below the threshold. The debounce exists to decide when to
+    # RAISE a fault, not to decide whether the reason is worth remembering: a reader that
+    # asks why a single probe came back empty was being told "no detail captured" while
+    # the failing call had said exactly why. Promotion below still prefers the newest
+    # non-empty reason, which is what it did before.
+    _evidence = evidence or _evidence
     if _consecutive_failures >= FAULT_PROMOTE_THRESHOLD:
         if _state != FAULT:
             # fresh promotion from unknown/healthy — arm the full template for
@@ -201,7 +207,24 @@ def observe_failure(evidence: str | None) -> None:
         _state = FAULT
         _severity = "fault"
         _reason = "embedding endpoint unreachable; recall fell back to keyword/FTS-only"
-        _evidence = evidence or _evidence
+
+
+def observed_state() -> dict:
+    """The current state, read without touching the advisory's suppression memory.
+
+    A reader that wants to *display* the state must not call :func:`maybe_advisory` to
+    get it: that call is what decides whether the next recall receives the full runbook
+    or the short reminder, so reading through it would consume a user's one full delivery
+    on a maintenance surface they never saw. This returns the same facts and decides
+    nothing.
+    """
+    return {
+        "state": _state,
+        "severity": _severity,
+        "reason": _reason,
+        "evidence": _evidence,
+        "consecutive_failures": _consecutive_failures,
+    }
 
 
 def is_faulted() -> bool:

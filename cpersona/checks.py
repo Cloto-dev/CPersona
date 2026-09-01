@@ -460,11 +460,95 @@ async def probe_embedding_dim() -> int | None:
     live probe."""
     if not vector._embedding_client:
         return None
+    # bug-274 (same class as the prefetch below): this probe is the ONLY network call the
+    # unlocked phase makes when no row needs re-embedding, so a database that is fully
+    # embedded and a backend that is down produced silence together. The call reports a
+    # dead endpoint by returning nothing rather than by raising, so read the outcome.
+    # Failure only, for the reason stated on the prefetch: recovery stays with recall.
     try:
-        emb = await vector._embedding_client.embed(["test"])
-        return len(emb[0]) if emb and emb[0] else None
-    except Exception:
+        emb, outcome = await vector._embedding_client.embed_with_outcome(["test"])
+    except Exception as exc:
+        health.observe_failure(f"dimension probe raised {type(exc).__name__}")
         return None
+    if outcome.error:
+        health.observe_failure(outcome.error)
+        return None
+    return len(emb[0]) if emb and emb[0] else None
+
+
+
+async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
+    """Report what the embedding backend is doing, using state that already exists.
+
+    ``docs/operations.md`` used to warn its readers, in prose, that a green
+    ``check_health`` is not evidence the embedding server is up: an unreachable endpoint
+    made the dimension check *skip*, and nothing else on this surface watched liveness.
+    This turns that warning into a finding.
+
+    No new state machine and no new I/O (both ruled out on this task). The unlocked
+    prefetch phase already probes the backend and hands the result over as
+    ``embedding_cache["expected_dim"]``; a configured client with no dimension back is a
+    backend that did not answer. What was missing was a reader.
+
+    Four states, and the distinction that matters is between the first two:
+
+    - **unreachable** — ``warn``. Configured and not answering. Reads stay correct, so it
+      is not ``critical``; it was invisible, which is why it is here.
+    - **not probed** — ``info``. Under ``fix=False`` nothing calls the backend, so the
+      only honest answer is that liveness was not tested this run. Saying nothing would
+      re-create the silence this check exists to remove.
+    - **connected** — no finding, the same way every other check reports "nothing wrong".
+
+    **No backend configured is not reported here**, and that is a decision rather than an
+    omission. It is the one state that was never confusable with "the server is up" —
+    there is no server to be up — so it is not part of the sentence this check exists to
+    make true. It is also permanent, and a finding that can never be resolved is the
+    crying-wolf cost that teaches an operator to skim past this check. The state already
+    has an owner: ``observe_config()`` raises the hint that reaches the user on the
+    surface they actually read, and it downgrades there for this same reason (a standing
+    condition, not an outage).
+    """
+    if not vector._embedding_client:
+        return []
+
+    observed = health.observed_state()
+    probed = (embedding_cache or {}).get("expected_dim")
+
+    if probed is None and embedding_cache is not None:
+        unreachable = True
+    else:
+        # Nothing probed on this run. A fault latched by a recall is still evidence.
+        unreachable = health.is_faulted()
+
+    if unreachable:
+        return [
+            {
+                "type": "embedding_backend_unreachable",
+                "status": "unreachable",
+                "severity": "warn",
+                "evidence": observed["evidence"] or "no detail captured",
+                "semantic_recall": "degraded — recall is falling back to keyword/FTS",
+                "hint": (
+                    "the configured embedding backend did not answer; restart or "
+                    "reconfigure it, then re-run this check to confirm recovery"
+                ),
+            }
+        ]
+
+    if embedding_cache is None:
+        return [
+            {
+                "type": "embedding_backend_not_probed",
+                "status": "not_probed",
+                "last_observed": observed["state"],
+                "hint": (
+                    "liveness was not tested on this run — it is probed under fix=true. "
+                    "A finding-free result here is not evidence the backend is up"
+                ),
+            }
+        ]
+
+    return []
 
 
 async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
@@ -2020,6 +2104,9 @@ HEALTH_CHECKS: list[Check] = [
     Check("oversized_content", "warn", True, check_oversized_content),
     Check("duplicate_content", "warn", True, check_duplicate_content),
     Check("embedding_dimension", "critical", True, check_embedding_dimension),
+    # info by default: "no backend configured" is a supported configuration, not a
+    # defect. The runner stamps warn for the one state that is (bug-274).
+    Check("embedding_backend", "info", False, check_embedding_backend),
     Check("null_embedding", "warn", True, check_null_embedding),
     Check("null_episode_embedding", "warn", True, check_null_episode_embedding),
     Check("fts_integrity", "warn", True, check_fts_integrity),
@@ -2101,7 +2188,14 @@ def merge_issues(*groups: list[dict]) -> list[dict]:
 
 # bug-083: embedding_dimension is cache-aware too — it consumes the pre-probed
 # "expected_dim" instead of live-embedding under the write lock.
-_EMBEDDING_CHECKS = {"null_embedding", "null_episode_embedding", "embedding_dimension"}
+_EMBEDDING_CHECKS = {
+    "null_embedding",
+    "null_episode_embedding",
+    "embedding_dimension",
+    # Reads expected_dim to tell an unreachable backend from an unprobed run;
+    # without the cache it cannot, and says so rather than assuming health.
+    "embedding_backend",
+}
 
 
 async def run_health_checks(

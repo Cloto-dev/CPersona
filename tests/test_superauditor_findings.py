@@ -218,6 +218,10 @@ _TIERED_RUNNERS = {
     # are stamped warn, so it is tiered in fact — listing it as single-valued
     # would make severity_for_kind report info for a degraded index.
     "check_vector_index",
+    # Three of its four states sit at the registry default and one is stamped warn, so
+    # it is tiered for the same reason vector_index is: listing it as single-valued
+    # would make severity_for_kind report info for a backend that is not answering.
+    "check_embedding_backend",
 }
 _SINGLE_VALUE_RUNNERS = {"check_fts_integrity", "check_sqlite_integrity"}
 
