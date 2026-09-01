@@ -115,8 +115,42 @@ class MemoryTaskQueue:
         self._task_sessions[task_id] = session_key
 
     def _forget_session(self, task_id: int) -> None:
-        """Drop a row's attribution. Called wherever the row itself goes away."""
+        """Drop a row's attribution, on the paths this queue owns.
+
+        Those are not the only ways a row goes away, which is what
+        :meth:`_forget_vanished_rows` is for.
+        """
         self._task_sessions.pop(task_id, None)
+
+    async def _forget_vanished_rows(self) -> None:
+        """Drop attributions whose queue rows are gone (bug-270).
+
+        Rows disappear underneath this queue as well as through it: agent-data
+        deletion, a move-mode merge and the stale-queue repair each delete from
+        ``pending_memory_tasks`` without going through the queue at all, and the
+        drain already knows it (the archive_episode block reads its own DELETE's
+        rowcount for exactly that reason). Calling _forget_session from those three
+        sites would be correct only until the fourth one is written, and would make
+        a health probe and two admin handlers reach into in-process queue state to
+        do it. Reconciling against the rows that exist covers any path, including
+        ones not yet written.
+
+        The query is bounded by the attribution cap, not by the queue: it asks only
+        about ids this map holds. Ids attributed after the snapshot are not in it,
+        so a row enqueued while this runs cannot be forgotten by it.
+        """
+        held = list(self._task_sessions)
+        if not held:
+            return
+        placeholders = ",".join("?" * len(held))
+        async with connection() as db:
+            rows = await db.execute_fetchall(
+                f"SELECT id FROM pending_memory_tasks WHERE id IN ({placeholders})", held
+            )
+        live = {row[0] for row in rows}
+        for task_id in held:
+            if task_id not in live:
+                self._forget_session(task_id)
 
     def _session_for(self, task_id: int) -> str:
         """The key whose pause governs this row; the shared bucket if unattributed."""
@@ -164,6 +198,11 @@ class MemoryTaskQueue:
         while self._running:
             task = await self._fetch_next()
             if task is None:
+                # The pass is over. Reconcile here rather than in a finally: a
+                # reconciliation that raised inside one would turn a drain that
+                # succeeded into a drain that aborted, and an aborted pass is
+                # re-armed by _loop, so the next one reconciles anyway.
+                await self._forget_vanished_rows()
                 break
 
             task_id, task_type, agent_id, payload, retries = task

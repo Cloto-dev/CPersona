@@ -301,8 +301,13 @@ in-process maps — not persistent rows.
   had stopped holding. The cap counts live pauses, and decay runs before the
   check, so a full map recovers on its own. Re-arming a key that is already
   paused is never refused: it occupies a slot it already holds.
-- The queue's task-to-key attribution is in-process and entries are deleted with
-  the task rows they describe, so it cannot outlive the queue.
+- The queue's task-to-key attribution is in-process. The queue drops an entry on
+  every path it drives itself, and rows also vanish underneath it — agent-data
+  deletion, a move-mode merge and the stale-queue repair each delete from the
+  table without going through the queue — so a drain pass ends by reconciling the
+  map against the rows that still exist. Naming those three deleters instead would
+  be correct only until the fourth one is written, and would have a health probe
+  and two admin handlers reach into in-process queue state to do it.
 - A process restart drops all three, which is correct: no session survives it.
   A queued row that outlives the restart falls back to the transport bucket.
 
@@ -387,8 +392,10 @@ Two consequences follow, and neither is optional:
   built by concatenation so the test cannot satisfy its own pattern.
 - Queue attribution: a task enqueued under one key is dropped when that key
   pauses and kept when a different key does; an unattributed row is gated on
-  the transport bucket.
+  the transport bucket; and a row deleted out of band — by the handler that
+  really deletes it — leaves no attribution behind after the next drain pass.
 - Mutation proof: removing the `strip()`, the empty-string guard, the advisory
   eviction cap, the pause map's refusal at the cap, the per-session branch of the
-  pause lookup, the TTL substitution in the skipped-write reason, and the queue's
-  attribution lookup each fail a test that names the defect.
+  pause lookup, the TTL substitution in the skipped-write reason, the queue's
+  attribution lookup, and the queue's reconcile pass each fail a test that names
+  the defect.

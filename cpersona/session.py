@@ -161,9 +161,19 @@ def _validate_ttl(ttl_seconds: int) -> int:
 def _scope(declared: bool) -> str:
     """What a pause on this caller's bucket actually covers.
 
-    ``session`` for a declared key. ``process`` for a keyless caller, which is
-    still true and still the widest honest answer: every keyless caller on this
-    process shares the one bucket, and under stdio that process is the session.
+    ``session`` for a declared key. ``process`` for a keyless caller: every keyless
+    caller on this process shares the one bucket, and under stdio that process is
+    the session.
+
+    bug-271: ``process`` names the widest *bucket*, not the widest radius. Before
+    the pause was per-session it was both — a keyless pause stopped every write in
+    the process. It no longer reaches a declared session's writes, so a caller that
+    pauses keylessly for a benchmark can still be contaminated by a concurrent
+    declared session, which could not happen before. The word is kept because
+    consumers branch on these two strings and changing the value is a contract
+    change with its own decision to make; what was wrong was the docstring calling
+    it the widest honest answer. The tool description states the radius correctly
+    and is the surface a caller reads.
     """
     return "session" if declared else "process"
 

@@ -642,7 +642,16 @@ async def test_an_unattributed_task_is_gated_on_the_transport_bucket(clean_db, m
 
 @pytest.mark.asyncio
 async def test_attribution_does_not_outlive_the_row(clean_db, monkeypatch):
-    """The map has no owner but the queue, so every exit from the queue clears it."""
+    """Every way a row leaves the queue clears its attribution.
+
+    Three of the cases below are paths the queue drives itself. The fourth is a
+    row deleted from underneath it, which is the case the name always claimed and
+    the body did not reach (bug-270): agent-data deletion, a move-mode merge and
+    the stale-queue repair each delete from ``pending_memory_tasks`` without going
+    through the queue. The queue answers that class by reconciling against the rows
+    that exist at the end of a drain pass, so this asserts on the behaviour rather
+    than on the three call sites — a fourth deleter would be covered too.
+    """
 
     async def spy_update_profile(agent_id, payload, session_key=""):
         return {"ok": True, "profiles_updated": 1}
@@ -659,6 +668,50 @@ async def test_attribution_does_not_outlive_the_row(clean_db, monkeypatch):
     session.pause_for(A, True, 120)
     await _drain_once(queue)
     assert dropped not in queue._task_sessions, "a dropped task kept its attribution"
+    session.resume_for(A, True)
+
+    # A row deleted out from under the queue, by the real handler that does it.
+    vanished = await queue.enqueue("update_profile", "agent-A", [{"content": "x"}], session_key=A)
+    assert queue._task_sessions[vanished] == A
+    await admin_handlers.do_delete_agent_data("agent-A")
+    rows = await clean_db.execute_fetchall(
+        "SELECT COUNT(*) FROM pending_memory_tasks WHERE id = ?", (vanished,)
+    )
+    assert rows[0][0] == 0, "the fixture no longer exercises an out-of-band delete"
+    await _drain_once(queue)
+    assert vanished not in queue._task_sessions, (
+        "a row deleted outside the queue left its attribution behind, spending the cap "
+        "and evicting a live entry early"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_asks_only_about_the_ids_it_holds(clean_db, monkeypatch):
+    """The reconcile query is bounded by the attribution cap, not by the queue.
+
+    A whole-table scan here would grow with the queue, which is the resource the
+    map was capped to stay independent of. It also must not forget a live row: the
+    ids are snapshotted before the query, so an attribution added while it runs is
+    outside the set it can act on.
+    """
+    queue = tasks.MemoryTaskQueue()
+    held = await queue.enqueue("update_profile", "agent-A", [{"content": "x"}], session_key=A)
+    other = await queue.enqueue("update_profile", "agent-B", [{"content": "y"}], session_key=B)
+    queue._forget_session(other)  # queued, but not attributed
+
+    asked: list[tuple] = []
+    real_fetchall = type(clean_db).execute_fetchall
+
+    async def spy_fetchall(self, sql, params=()):
+        if "pending_memory_tasks" in sql and "SELECT id FROM" in sql:
+            asked.append(tuple(params))
+        return await real_fetchall(self, sql, params)
+
+    monkeypatch.setattr(type(clean_db), "execute_fetchall", spy_fetchall)
+    await queue._forget_vanished_rows()
+
+    assert asked == [(held,)], f"the reconcile query was not bounded by the held ids: {asked}"
+    assert queue._task_sessions[held] == A, "a live row lost its attribution"
 
 
 def test_the_literal_transport_key_is_not_a_declared_session():
