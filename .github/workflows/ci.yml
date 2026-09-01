@@ -239,6 +239,28 @@ jobs:
         env:
           MUTATION_DIFF_BASE: origin/${{ github.base_ref }}
         run: uv run python scripts/mutation-diff.py --json-out mutation-diff-report.json
+      - name: Say so when the measurement did not happen
+        # The lane is advisory, so its step cannot fail the build — which is
+        # correct, and is also why a run killed by the ceiling above says nothing
+        # at all. Then "measured and found nothing" and "never measured" read the
+        # same on the PR. This step runs even when the previous one was cancelled
+        # and writes the distinction into the summary the reader actually sees.
+        if: always()
+        run: |
+          if [ -f mutation-diff-report.json ]; then
+            reported=$(python3 -c "import json;print(json.load(open('mutation-diff-report.json'))['status'])")
+            echo "mutation-diff reported: $reported"
+          else
+            {
+              echo "## Mutation-diff (advisory)"
+              echo
+              echo "**status:** \`did-not-complete\` — no report was written, so this lane measured"
+              echo "nothing on this commit. The usual cause is the job's timeout killing the run"
+              echo "mid-execution. Treat it as unmeasured, not as clean."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "mutation-diff produced no report — unmeasured, not clean."
+          fi
+
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4

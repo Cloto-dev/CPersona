@@ -43,6 +43,7 @@ import argparse
 import json
 import os
 import re
+import time
 import sqlite3
 import subprocess
 import sys
@@ -164,6 +165,37 @@ def _read_session(session: Path) -> list[tuple]:
         con.close()
 
 
+def config_test_command(config_path: Path) -> str:
+    """The command cosmic-ray runs once per mutant, read from its own config."""
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("test-command"):
+            return stripped.split("=", 1)[1].strip().strip('"')
+    raise SystemExit(f"{config_path}: no test-command; cannot price a mutant")
+
+
+def measure_mutant_cost(config_path: Path) -> tuple[float | None, str]:
+    """Seconds one mutant can cost, measured rather than assumed.
+
+    cosmic-ray runs the test command once per mutant, and the command carries
+    `-x`, so a KILLED mutant returns at the first failing test while a SURVIVING
+    one pays for the whole suite. The worst case is therefore one full suite per
+    mutant, and the worst case is what a bound has to be built on: an estimate
+    that assumes mutants die early is an estimate that stops bounding exactly
+    when the diff is weakly tested, which is when this lane has something to say.
+
+    Returns (seconds, note). Seconds is None when the baseline run does not pass,
+    because then the number would price a broken suite rather than a mutant.
+    """
+    command = config_test_command(config_path)
+    start = time.monotonic()
+    proc = subprocess.run(command, shell=True, cwd=REPO, capture_output=True, text=True)
+    elapsed = time.monotonic() - start
+    if proc.returncode != 0:
+        return None, f"baseline `{command}` exited {proc.returncode} in {elapsed:.0f}s"
+    return elapsed, f"measured `{command}` at {elapsed:.0f}s"
+
+
 def count_pending(session: Path) -> int:
     """In-scope mutants awaiting exec = mutants with no result row yet.
     Filter-skipped mutants already carry a (SKIPPED) result row and so are
@@ -254,6 +286,15 @@ def write_summary(report: dict, path: str | None) -> None:
         lines += [f"**status:** `{status}` — {report.get('reason', '')}", ""]
     if report.get("changed_files"):
         lines += [f"**base:** `{report['base']}` · **changed files:** {len(report['changed_files'])}", ""]
+    if status == "capped" and report.get("mutant_seconds"):
+        lines += [
+            f"**price:** {report['in_scope']} mutants × {report['mutant_seconds']}s measured = up to "
+            f"{report['in_scope'] * report['mutant_seconds'] / 60:.0f} min · **budget:** "
+            f"{report['budget_seconds'] / 60:.0f} min · **affords:** {report.get('affordable')} mutants",
+            "",
+            "_Not executed. A priced refusal is a measurement; a run killed by the job ceiling is not._",
+            "",
+        ]
     if status in ("ok", "capped"):
         c = report.get("counts", {})
         rate = report.get("survival_rate")
@@ -302,7 +343,17 @@ def main(argv: list[str] | None = None) -> int:
         "--cap",
         type=int,
         default=int(os.environ.get("MUTATION_DIFF_CAP", "60")),
-        help="Max in-scope mutants to execute; above this the run is reported as capped and NOT executed (bounds CI time).",
+        help="Absolute ceiling on in-scope mutants, independent of timing. The budget below is the bound that normally binds.",
+    )
+    parser.add_argument(
+        "--budget-seconds",
+        type=int,
+        default=int(os.environ.get("MUTATION_DIFF_BUDGET_SECONDS", "900")),
+        help=(
+            "Wall-clock seconds the mutant execution may occupy. The run prices one mutant by timing an "
+            "unmutated suite, converts the budget into a mutant count, and reports 'capped' rather than "
+            "starting work it cannot finish. Default 900 leaves headroom under the job's 20-minute ceiling."
+        ),
     )
     parser.add_argument(
         "--session-dir",
@@ -384,6 +435,52 @@ def main(argv: list[str] | None = None) -> int:
             summary_path,
         )
         return 0
+
+    # bug-284: price the work before starting it. The count cap above is a guess about how
+    # long a mutant takes; this is a measurement of it. A count that fits the cap
+    # can still exceed the job's ceiling — that is what happened on 2026-09-01,
+    # where a run inside the cap was killed at 20 minutes and reported nothing at
+    # all, so "the measurement did not happen" and "nothing to report" looked the
+    # same to the reader.
+    unit_seconds, unit_note = measure_mutant_cost(config_path)
+    if unit_seconds is None:
+        emit(
+            {
+                **base_report,
+                "status": "unpriced",
+                "reason": f"cannot price a mutant: {unit_note}. Not executed — a run that cannot be bounded is not started.",
+                "in_scope": pending,
+                "counts": {},
+                "survivors": [],
+            },
+            args.json_out,
+            summary_path,
+        )
+        return 0
+
+    affordable = int(args.budget_seconds // unit_seconds) if unit_seconds > 0 else pending
+    if pending > affordable:
+        emit(
+            {
+                **base_report,
+                "status": "capped",
+                "reason": (
+                    f"{pending} in-scope mutants need up to {pending * unit_seconds / 60:.0f} min "
+                    f"({unit_note}); the budget is {args.budget_seconds / 60:.0f} min, which affords "
+                    f"{affordable}. Not executed — reporting the price beats being killed mid-run."
+                ),
+                "in_scope": pending,
+                "budget_seconds": args.budget_seconds,
+                "mutant_seconds": round(unit_seconds, 1),
+                "affordable": affordable,
+                "counts": {},
+                "survivors": [],
+            },
+            args.json_out,
+            summary_path,
+        )
+        return 0
+    base_report = {**base_report, "budget_seconds": args.budget_seconds, "mutant_seconds": round(unit_seconds, 1)}
 
     run(["cosmic-ray", "exec", str(config_path), str(session)])
     result = classify(session, REPO, active)
