@@ -48,8 +48,14 @@ class CountingEmbedder:
         self.calls: list[list[str]] = []
 
     async def embed(self, texts):
+        result, _ = await self.embed_with_outcome(texts)
+        return result
+
+    async def embed_with_outcome(self, texts):
+        from cpersona._vendored_mcp_common.embedding_client import EmbedOutcome
+
         self.calls.append(list(texts))
-        return [[0.1, 0.2, 0.3] for _ in texts]
+        return [[0.1, 0.2, 0.3] for _ in texts], EmbedOutcome(attempted=True, ok=True)
 
     @staticmethod
     def pack_embedding(values):

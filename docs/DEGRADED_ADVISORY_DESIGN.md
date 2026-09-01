@@ -305,10 +305,16 @@ where they conflict.
    full→short within one logical recall).
 3. **Probe placement** (refines §4.3; **superseded by §6** — the probe and its dedicated
    timeout are gone, and the failure path no longer needs the `health.is_faulted()` gate
-   that existed to bound probe I/O). The observation point is still the local embed path in
-   `vector.py`, and `health.py` still takes no `vector` import, so the dependency graph is
-   unchanged: `config ← health ← vector ← memory_handlers`. Recovery is still observed on
-   the embed **success** path.
+   that existed to bound probe I/O). `health.py` still takes no `vector` import, so the
+   dependency graph is unchanged: `config ← health ← vector ← memory_handlers`.
+
+   Two points observe, and they are not symmetric. The recall path's embed reports both
+   failure and recovery; the maintenance re-embed reports failure only. Recovery stays with
+   recall on purpose: a maintenance run that cleared the state would erase a fault a user's
+   recall had just latched, along with the record of which sessions had already been told
+   about it. The second point was added with the maintenance breaker and is the one place
+   outside `vector.py` that writes health — a doc that says "the observation point" in the
+   singular is describing the first build, not the code.
 4. **Remote-search swallow needs no separate hook** (refines §2.2). On
    `VECTOR_SEARCH_MODE=="remote"` a remote failure falls through to the instrumented local
    embed path, so only the local path is wired (production uses local mode).
