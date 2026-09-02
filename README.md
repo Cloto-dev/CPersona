@@ -9,7 +9,7 @@
 Give Claude persistent memory across sessions.
 Single SQLite file. 30 tools. Zero LLM dependency.
 
-[![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE) [![Sponsor](https://img.shields.io/badge/sponsor-Cloto--dev-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Cloto-dev)
 
 [Documentation](https://cloto-dev.github.io/CPersona/) · [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) · [Architecture](https://cloto-dev.github.io/CPersona/architecture/) · [Tools](https://cloto-dev.github.io/CPersona/tools/) · [PyPI](https://pypi.org/project/cpersona/) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
 
@@ -158,6 +158,24 @@ even when you are not certain — a configuration problem mistaken for a bug mea
 the documentation was unclear, which is a defect of its own. Report security
 vulnerabilities privately via
 [SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md).
+
+## Sponsorship
+
+CPersona is MIT-licensed and stays fully usable whether or not anyone sponsors
+it. Sponsorship buys no feature, no release tier and no position in the issue
+queue — issues are triaged by impact, reproducibility and safety, and that does
+not change for anyone.
+
+If CPersona has earned a place in your workflow and you would like the work to
+continue, you can [sponsor Cloto-dev on GitHub](https://github.com/sponsors/Cloto-dev).
+The same page covers CPersona, ClotoCore and the other projects published
+under that account; sponsorship goes toward development time, testing
+and infrastructure, documentation and maintenance.
+
+Money is not the only thing that helps, and it is not the thing this project
+needs most. Starring the repository, saying which part of the setup was
+confusing, filing a reproducible issue, or correcting a sentence in the
+documentation all move it forward.
 
 ## License
 

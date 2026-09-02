@@ -1,0 +1,4 @@
+# GitHub renders this as the "Sponsor" button on the repository page.
+# One account funds every project published under Cloto-dev, so the
+# button points at the account listing rather than a per-repository one.
+github: Cloto-dev
