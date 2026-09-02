@@ -581,6 +581,32 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
     if not merged_ids:
         return [], np.empty((0, query_dim), dtype=np.float32)
 
+    if not from_tail and _is_ascending_run(from_index):
+        # The ordinary shape -- one agent, no axis narrowing, nothing written
+        # since the build -- selects a contiguous run of the file in file order,
+        # and the gather below then copies that run out of the mapped file one
+        # scattered row at a time to rebuild a matrix that is already there.
+        # Measured at 100,000 rows x 1024 dims, the gather is 440 ms of a 498 ms
+        # vector arm against 26 ms for the same matmul over a view of the same
+        # rows -- 4.8x on the term that is 88% of the time. A scattered gather
+        # faults the mapped pages in scattered order; a matmul over a view
+        # streams them (benchmarks/measurements/results-contiguous-index.md).
+        #
+        # A view of exactly the selected rows, and never "multiply the whole file
+        # and then take the scores that were wanted": for a contiguous run the
+        # view is the same bytes in the same order with the same row count, so
+        # the scores are identical bit for bit, while the same measurement shows
+        # a scattered selection scored that way DIFFERS -- it changes the
+        # summation order, which is the exactness this design is built on. Hence
+        # a condition this narrow rather than a general fast path.
+        #
+        # The slice is a read-only view into the mapped file, which is safe
+        # because the candidate matrix is only ever read: its one consumer is
+        # `_cosine_matrix`, whose `mat @ query_vec` allocates its own result.
+        # Anything here that wrote into the matrix would have to copy first.
+        start = from_index[0]
+        return merged_ids, index.embeddings[start:start + len(from_index)]
+
     mat = np.empty((len(merged_ids), query_dim), dtype=np.float32)
     if from_index:
         # One vectorised gather: a memcpy out of the mapped file, never a Python
@@ -589,6 +615,27 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
     for slot, blob in from_tail:
         mat[slot] = np.frombuffer(blob, dtype=np.float32)
     return merged_ids, mat
+
+
+def _is_ascending_run(positions: list[int]) -> bool:
+    """Whether these positions are `a, a+1, ..., a+n-1`, in that order.
+
+    Spelled exactly rather than cheaply: the span test (`last - first == n - 1`)
+    also admits `[0, 0, 1, 3]`, and the caller uses this answer to let one slice
+    of the mapped file stand in for the rows the selection names -- a predicate
+    that is right about the common case and wrong about an unusual one would
+    return the wrong rows rather than the slow ones. The walk is O(n) over a
+    selection already bounded by the scan window, against the row-by-row copy of
+    that same selection it decides whether to skip.
+
+    An empty selection is not a run: the caller cannot reach it (it returns the
+    empty matrix earlier), and answering True would hand back a zero-row slice
+    of the file on some future path that could.
+    """
+    if not positions:
+        return False
+    first = positions[0]
+    return all(p == first + offset for offset, p in enumerate(positions))
 
 async def _scan_memories_local(
     db: aiosqlite.Connection,

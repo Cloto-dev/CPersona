@@ -80,6 +80,16 @@ class LocalEmbeddingClient:
             out.append(vec.astype(np.float32).tolist())
         return out
 
+    async def embed_with_outcome(self, texts):
+        """The entry point the recall path reads since the failure side learned to
+        ask whether a call was attempted. A double that offers only ``embed()``
+        sends the arm under measurement into an ``AttributeError`` instead of the
+        matmul. Derived from ``embed()`` so the two cannot disagree."""
+        from cpersona._vendored_mcp_common.embedding_client import EmbedOutcome
+
+        result = await self.embed(texts)
+        return result, EmbedOutcome(attempted=True, ok=bool(result), error=None)
+
     @staticmethod
     def pack_embedding(embedding):
         return struct.pack(f"<{len(embedding)}f", *embedding)

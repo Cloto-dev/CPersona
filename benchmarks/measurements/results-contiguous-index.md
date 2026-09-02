@@ -114,6 +114,75 @@ predicted. The non-vector part — the lexical arms, fusion, scoring and hydrate
 sits at 21 ms (10k) and 241 ms (100k) and was unchanged by the index, as
 expected.
 
-So the honest reading is that **the next tier cannot be chosen from this run.**
-The contiguous-view fix has to land first; only then does the remaining time
-describe anything about what to build next.
+So the honest reading was that **the next tier could not be chosen from this
+run.** The contiguous-view fix had to land first; the section below is that
+measurement.
+
+## The contiguous view, measured
+
+Same machine, same script, same regime (1024 dims, response limit 10, median of
+25 queries at 10k and 15 at 100k, both arms warmed). `_merge_index_and_tail`
+now hands `index.embeddings[a:a+n]` to the matmul as a view — no copy — when the
+selection is all-index and one contiguous run, and gathers exactly as before
+otherwise. Before/after here is the code, not the index: each row is the
+index-served arm, with the SQL scan of the same run beside it for scale.
+
+| Corpus / window | scan | index, gather | index, view | view vs gather | view vs scan |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10,000 / 10,000 | 72.4 ms | 44.1 ms | **23.1 ms** | 1.91x | 3.14x |
+| 100,000 / 10,000 | 69.7 ms | 55.4 ms | **34.1 ms** | 1.62x | 2.04x |
+| 100,000 / 100,000 | 609.1 ms | 541.3 ms | **211.8 ms** | 2.56x | 2.88x |
+
+`do_recall` at 100,000 / 100,000: 788 → **446 ms** (1.77x on the whole path);
+at 10,000 / 10,000: 66 → **45 ms**. The non-vector part is unchanged in every
+row (22 ms / 220 ms / 235–247 ms), as it must be.
+
+The scan column moved between the two runs (the earlier table has 611 → 469 for
+the last row; today the same master code measured 611 → 541), so the gather
+column is re-measured here rather than copied. The *shape* is the same either
+way: the gather barely beat the scan at the large window, and the view is
+where the index starts to pay.
+
+### Still not 7x, and where the rest now goes
+
+Segment profile of the index-served arm at 100,000 / 100,000 with the view in
+place, median of 12 queries:
+
+| Segment | Median | Share |
+| --- | ---: | ---: |
+| `_search_vector` total | 252.5 ms | |
+| `_index_phase1` | 215.5 ms | 85% |
+| ├ `_merge_index_and_tail` (the interleave loop; the view itself is free) | 79.0 ms | 31% |
+| │ └ `_is_ascending_run` | 7.1 ms | 3% |
+| ├ `_index_rows_lost_embedding` (the `IN (…)` probe over the selection) | 72.5 ms | 29% |
+| ├ `_index_tail_rows` | 13.5 ms | 5% |
+| ├ `select` | 0.2 ms | <1% |
+| └ unattributed inside phase 1 (the `int(index.ids[p])` list, mapping) | ~50 ms | ~20% |
+| `_cosine_matrix` (the matmul) | 24.0 ms | 10% |
+| outside phase 1 (embed, top-k, hydrate) | ~37 ms | ~15% |
+
+The gather term is gone — the matmul over the view is 24 ms, which is the
+floor this arm can reach on this machine. What remains is **Python-level O(n)
+work over the selection**: the interleave loop walks 100,000 positions one
+tuple comparison at a time even when there is no tail to interleave, the
+lost-embedding probe binds 100,000 parameters into one `IN` clause, and the
+ids for that probe are built one numpy scalar at a time. Together they are
+~200 ms of the 212. None of them touches the bytes the design is about, and
+none was visible while the gather was 440 ms.
+
+The 7x prediction was for the *bytes* — SQLite materialisation versus a
+sequential read — and on that term the view delivers it: 440 ms of gather
+became a 24 ms matmul (18x). The arm as a whole is 2.9x over the scan because
+the arm was never only bytes. Each of the three remaining terms has an obvious
+shape (an all-index selection needs no interleave; a probe over a contiguous
+id run needs no parameter list), but each changes what a function promises,
+not just how fast it runs, so they are recorded here and left for their own
+change.
+
+**One of them is also a correctness bound, not just a cost.** The probe's
+parameter count equals the selection size, and SQLite's default
+`SQLITE_MAX_VARIABLE_NUMBER` is 32,766. This machine's build allows 250,000,
+which is why a 100,000-row window ran at all here; a build with the default
+limit — the macOS Python that produced the earlier measurements is one — raises
+`too many SQL variables` from that probe at any window above 32,766 once an
+index exists. That is filed separately; it is not a property of the view.

@@ -1992,3 +1992,91 @@ def test_drift_and_unreachable_are_reported_separately(tmp_path, monkeypatch):
     assert unreachable == ["https://example.test/gone/ (HTTP 404)"]
     # The matching page appears in neither list — a finding must name a real page.
     assert not any("/same/" in entry for entry in drifted + unreachable)
+
+
+# --------------------------------------------------------------------------------------
+# Gate 16 (stale-double class): every embedding-client double offers what production calls.
+#
+# The recall path grew `embed_with_outcome()` so the failure side could ask whether a call
+# was attempted. The test fixture's double followed; two benchmark doubles did not, and
+# nothing said so until each harness was run and died with an AttributeError inside the
+# very arm it exists to measure — one of them the equivalence gate that is supposed to
+# certify the contiguous index. A double that offers less than the client is a harness
+# that measures nothing, and it fails only when someone runs it by hand.
+#
+# The required surface is derived from production's own calls on `_embedding_client`,
+# so the gate moves when the contract moves instead of listing a snapshot of it.
+# --------------------------------------------------------------------------------------
+
+
+# The request paths a double stands in for. server.py owns the client's lifecycle
+# (initialize at startup, close at shutdown) and a harness installs its double after
+# that boundary, so those two calls are not part of the surface a double must offer.
+_EMBEDDING_REQUEST_PATH_MODULES = (
+    "vector.py", "memory_handlers.py", "admin_handlers.py", "checks.py",
+)
+
+
+def _embedding_client_methods_production_calls() -> set[str]:
+    names: set[str] = set()
+    for source in (PKG / m for m in _EMBEDDING_REQUEST_PATH_MODULES):
+        for match in re.finditer(r"_embedding_client\.([A-Za-z_]\w*)\s*\(", source.read_text(encoding="utf-8")):
+            names.add(match.group(1))
+    return names
+
+
+def _embedding_client_doubles(paths):
+    """(path, class name, method names) for every class that defines `embed`."""
+    found = []
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            methods = {
+                item.name
+                for item in node.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            if "embed" in methods:
+                found.append((path, node.name, methods))
+    return found
+
+
+def _embedding_double_paths():
+    root = PKG.parent
+    return sorted(root.glob("benchmarks/**/*.py")) + [root / "tests" / "conftest.py"]
+
+
+def test_embedding_client_doubles_offer_what_production_calls():
+    required = _embedding_client_methods_production_calls()
+    assert "embed_with_outcome" in required, (
+        "gate collapsed — production no longer calls embed_with_outcome, re-derive the class"
+    )
+    doubles = _embedding_client_doubles(_embedding_double_paths())
+    assert len(doubles) >= 3, f"gate collapsed — expected the known doubles, found {doubles}"
+    missing = {
+        f"{path.relative_to(PKG.parent)}::{name}": sorted(required - methods)
+        for path, name, methods in doubles
+        if required - methods
+    }
+    assert not missing, (
+        "an embedding-client double lacks a method production calls, so the harness that "
+        f"uses it dies before reaching the path it measures: {missing}"
+    )
+
+
+def test_embedding_double_gate_has_teeth(tmp_path):
+    stale = tmp_path / "stale_double.py"
+    stale.write_text(
+        "class Stale:\n"
+        "    async def embed(self, texts):\n"
+        "        return [[0.0]]\n",
+        encoding="utf-8",
+    )
+    (path, name, methods), = _embedding_client_doubles([stale])
+    assert name == "Stale"
+    assert "embed_with_outcome" not in methods, "the gate must see a double that lacks the method"
+    assert _embedding_client_methods_production_calls() - methods, (
+        "the gate must report the missing surface for a double that offers only embed()"
+    )

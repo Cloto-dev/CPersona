@@ -346,3 +346,126 @@ async def test_a_foreign_width_row_written_after_the_build_falls_back(corpus, ta
     actual = await _search(corpus)
     assert actual == expected
     assert taken["index"] == 0, "a tail row of another width must send the query back to SQL"
+
+
+async def _built_index(db):
+    """Build the index over the fixture corpus and map it."""
+    result = await vector_index.build_index(db, "memories")
+    assert result["built"], result
+    index = vector_index.load_index("memories")
+    assert index is not None and index.count > 6, (
+        "these tests slice positions out of the file and need rows to slice"
+    )
+    return index
+
+
+def _tail_row(mem_id: int, created_at: str, embedding):
+    """One row in the shape `_index_tail_rows` hands to the merge."""
+    blob = np.array(embedding, dtype=np.float32).tobytes()
+    return (mem_id, created_at, blob, len(blob))
+
+
+def _gathered(index, positions, tail, scan_limit, query_dim, monkeypatch):
+    """The same merge with the contiguous view refused: the copy path, exactly.
+
+    Written as a monkeypatch of the predicate rather than as a re-implementation
+    of the gather here, so the comparison is against the code that ships instead
+    of against a second copy of it that could agree by being wrong the same way.
+    """
+    monkeypatch.setattr(vector, "_is_ascending_run", lambda positions: False)
+    try:
+        return vector._merge_index_and_tail(index, positions, tail, scan_limit, query_dim)
+    finally:
+        monkeypatch.undo()
+
+
+@pytest.mark.asyncio
+async def test_a_contiguous_all_index_selection_is_read_as_a_view(corpus):
+    """No copy for the shape the whole change exists for.
+
+    Asserted as `shares_memory` and not as latency, because latency is not
+    testable here and because the failure this guards against — a return to
+    gathering unconditionally — produces identical answers. Every other test in
+    this file would stay green through it, so without this assertion the only
+    evidence that the fast path is still taken is a benchmark nobody runs on a
+    pull request.
+    """
+    index = await _built_index(corpus)
+    positions = np.arange(1, 5, dtype=np.int64)
+
+    merged_ids, mat = vector._merge_index_and_tail(index, positions, [], 100, index.dim)
+
+    assert merged_ids == [int(index.ids[p]) for p in positions]
+    assert np.shares_memory(mat, index.embeddings), (
+        "a contiguous, all-index selection must be handed to the matmul as a slice "
+        "of the mapped file, not copied out of it row by row"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_selection_with_a_tail_row_is_copied(corpus):
+    """A tail row's vector is not in the file, so no slice of the file can hold it."""
+    index = await _built_index(corpus)
+    positions = np.arange(0, 4, dtype=np.int64)
+    # Older than every indexed row, so it lands at the end of the merge rather
+    # than at the front: the interleave, not a prepend, decides where it goes.
+    tail = [_tail_row(10_000, "2025-01-01 00:00:00", _SHARED)]
+
+    merged_ids, mat = vector._merge_index_and_tail(index, positions, tail, 100, index.dim)
+
+    assert merged_ids[-1] == 10_000
+    assert not np.shares_memory(mat, index.embeddings), (
+        "a matrix holding a row that is not in the file must be a copy"
+    )
+    assert np.array_equal(mat[-1], np.array(_SHARED, dtype=np.float32))
+
+
+@pytest.mark.asyncio
+async def test_a_scattered_selection_is_copied(corpus):
+    """A gap in the positions is what makes the copy necessary rather than slow.
+
+    A slice cannot spell `0, 2, 3`, and the alternative the measurement rejected
+    — score every row and then take the wanted scores — changes the summation
+    order for exactly this shape. So the scattered case must keep the gather.
+    """
+    index = await _built_index(corpus)
+    positions = np.array([0, 2, 3], dtype=np.int64)
+
+    merged_ids, mat = vector._merge_index_and_tail(index, positions, [], 100, index.dim)
+
+    assert merged_ids == [int(index.ids[p]) for p in (0, 2, 3)]
+    assert not np.shares_memory(mat, index.embeddings), (
+        "a selection with a gap must not be served as a slice: the slice would "
+        "carry the row between the two the caller asked for"
+    )
+    assert np.array_equal(mat, np.asarray(index.embeddings)[[0, 2, 3]])
+
+
+@pytest.mark.asyncio
+async def test_the_view_scores_bit_for_bit_like_the_copy(corpus, monkeypatch):
+    """The exactness the view is only allowed to exist under.
+
+    Mid-file rather than from position 0, because a run starting at 0 would also
+    pass if the slice ignored its start; and through `_cosine_matrix`, because
+    the claim is about the scores the ranking uses, not about the bytes on the
+    way in. Bitwise equality, not `allclose`: the index is permitted to change
+    latency and nothing else, and a float32 difference of one ulp is a different
+    answer at a tie.
+    """
+    index = await _built_index(corpus)
+    positions = np.arange(2, 6, dtype=np.int64)
+    query = np.array(fake_embed_one(TOPIC), dtype=np.float32)
+
+    view_ids, view_mat = vector._merge_index_and_tail(index, positions, [], 100, index.dim)
+    copy_ids, copy_mat = _gathered(index, positions, [], 100, index.dim, monkeypatch)
+
+    assert np.shares_memory(view_mat, index.embeddings), "the view path was not taken"
+    assert not np.shares_memory(copy_mat, index.embeddings), "the copy path was not taken"
+    assert view_ids == copy_ids, "the view changed which rows the merge names"
+
+    view_scores = vector._cosine_matrix(query, view_mat)
+    copy_scores = vector._cosine_matrix(query, copy_mat)
+    assert view_scores.dtype == copy_scores.dtype
+    assert view_scores.tobytes() == copy_scores.tobytes(), (
+        "the view must score identically to the copy, bit for bit"
+    )
