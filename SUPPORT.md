@@ -98,7 +98,7 @@ discretion and must not be relied upon.
 | Line | Tier | Frozen | Decision | Notes |
 | --- | --- | --- | --- | --- |
 | 2.4.x | **Stable** | — | certified (before v1.4 of the standard; no record) | The marketplace serves this line by default. Enters Grace 30 days after a successor line is certified Stable. |
-| 2.5.x | **Current** | not yet | — | Latest release: 2.5.10. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Not yet frozen; certification has not started. |
+| 2.5.x | **Current** | not yet | — | Latest release: 2.5.11. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Not yet frozen; certification has not started. |
 
 Freeze, decision, certification and EOL dates — and the link to each
 certification record — are recorded in this table as they occur.
