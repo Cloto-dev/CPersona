@@ -79,12 +79,14 @@ dependencies = [
 # Rendered in the PyPI sidebar. Issues is the one that closes the loop: a user
 # who installs from PyPI and hits a defect otherwise has no path back here.
 # Changelog points at Releases because this repository keeps no CHANGELOG.md —
-# the release notes are the changelog.
+# the release notes are the changelog. Funding is a label PyPI knows: it is
+# rendered with its own icon rather than as another anonymous link.
 Homepage = "https://github.com/Cloto-dev/cpersona"
 Repository = "https://github.com/Cloto-dev/cpersona"
 Issues = "https://github.com/Cloto-dev/cpersona/issues"
 Changelog = "https://github.com/Cloto-dev/cpersona/releases"
 Documentation = "https://cloto-dev.github.io/CPersona/"
+Funding = "https://github.com/sponsors/Cloto-dev"
 
 [dependency-groups]
 # Test toolchain (installed by `uv sync --dev`; used locally and in CI).
