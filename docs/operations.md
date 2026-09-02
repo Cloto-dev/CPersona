@@ -56,6 +56,10 @@ the backup forms above touch:
   above still comes back with no vector arm. `check_health` reports it as
   `no_local_vector_fallback`; back the index up with the same schedule, or
   keep `STORE_BLOB=true` so the `.db` stays self-sufficient.
+- **Not** `<CPERSONA_DB_PATH>.memories.vecindex`, the contiguous vector
+  index. It is derived from the database and is rebuilt, never restored: a
+  backup that includes it wastes space, and a restore that brings back a stale
+  one is corrected by the next build. See [the contiguous vector index](#the-contiguous-vector-index).
 
 Keep the live database **outside cloud-sync folders** (Dropbox, Drive, etc.):
 sync clients interact badly with SQLite WAL files. Sync the *backups* instead.
@@ -219,6 +223,65 @@ for large corpora; [contract §4](behavior-contracts.md#4-the-vector-scan-window
 FTS and keyword channels reach the full history, and old rows sink through
 windows and decay rather than being deleted.
 
+## The contiguous vector index
+
+The local vector scan reads every embedding in its window out of SQLite one
+row at a time, and that read — not the arithmetic — is where the scan's time
+goes. The contiguous index is a file beside the database that holds the same
+embeddings in the layout the arithmetic wants, so the scan reads them in one
+pass. Same rows, same scores, same order; only the latency changes. On the
+reference machine at 100,000 rows the vector arm went from 604 ms to 77 ms.
+
+**It is a derived artifact.** The database is the only source of truth; the
+index is a projection of it and is treated the way a cache is treated: not
+backed up, never repaired, safe to delete at any time. If anything about it
+looks wrong, delete the file and build again.
+
+**Building it** is an operator action. Nothing in the running server builds
+or refreshes the index; the entry point is a command, made for a cron job or
+a systemd timer:
+
+```bash
+python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" build
+python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" status
+```
+
+`build` reads the database (it never writes to it) and replaces the index
+atomically; the server picks the new file up on its next query, with no
+restart. It exits 0 when built and 1 when it declined, printing why — a
+corpus with no embedded rows, or one that carries two embedding widths at
+once (the transient state of a model change; build again when the
+re-embedding has finished). `status` reports whether an index is present and
+usable, how many rows it holds, and how many rows have been written since it
+was built; it exits 1 when there is no index and 2 when the file exists but
+cannot be used. Add `--json` to either for a machine-readable line.
+
+**What happens between builds.** The index knows the highest row id that
+existed when it was built. Rows written after that are not in it, and are not
+lost: every query reads them from the database exactly, as the scan always
+did, and merges them with the indexed rows. So a late rebuild never changes an
+answer. It only grows the part of each query that is still read row by row,
+until latency drifts back toward the unindexed figure. Rebuild frequency is a
+performance setting, not a correctness one: nightly is a reasonable default,
+hourly for a corpus that grows fast, and `status` shows how far behind the
+index is at any moment.
+
+**When the index is not used.** The scan the index replaces is still there
+and is the fallback. Recall falls back to it — slower, and still correct —
+when the file is missing, when it fails its own integrity check, when the
+query vector's width does not match the index, and when a row the index holds
+has since lost its embedding under a maintenance repair. Each of these is
+reported where an operator reads health: `check_health` raises
+`vector_index_absent` (with the count of rows it would cover) when there is no
+index and `vector_index_unusable` when the file cannot be trusted, and the
+server logs a warning on every query it had to hand back to the scan. An
+index that has quietly been unusable for a week would otherwise read as
+"somehow not faster", which is the failure the reporting exists to prevent.
+
+There is no configuration for the index. Its path is derived from
+`CPERSONA_DB_PATH`, and the scan window it serves is the same
+`CPERSONA_MAX_MEMORIES` the scan uses.
+
 ## Maintenance cadence
 
 - **Monthly**: `check_health(agent_id, fix=true)` — deterministic integrity
@@ -226,6 +289,9 @@ windows and decay rather than being deleted.
   pass; a logical `export_memories` backup.
 - **After corpus upheaval** (bulk import, rebuild, model change):
   `calibrate_threshold(agent_id)`.
+- **On a timer, if the vector index is in use**: `python -m cpersona.vector_index
+  build` — nightly by default; see [the contiguous vector index](#the-contiguous-vector-index)
+  for what a late rebuild costs (latency, never correctness).
 - **Version upgrades**: the schema migrates itself forward; calibration is
   fingerprinted to the scoring function and embedding dimension, and the
   server recalibrates at first boot when either changes (v2.5.2+).

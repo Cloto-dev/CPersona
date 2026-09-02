@@ -438,34 +438,158 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
     )
 
 
-def _main() -> int:  # pragma: no cover - operator entry point
-    import argparse
-    import asyncio
+# --------------------------------------------------------------------------------------
+# Operator entry point: `python -m cpersona.vector_index build|status`.
+# --------------------------------------------------------------------------------------
 
-    ap = argparse.ArgumentParser(description="Build the contiguous embedding index.")
+
+def _build_parser():
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        prog="python -m cpersona.vector_index",
+        description=(
+            "Build or inspect the contiguous embedding index, a derived file beside "
+            "the database that the local vector scan reads instead of SQLite rows. "
+            "It is never repaired: delete it and build again."
+        ),
+    )
+    ap.add_argument(
+        "--db",
+        help=(
+            "Path to the cpersona SQLite database. Resolution order: the --db value, "
+            "else $CPERSONA_DB_PATH, else the relative 'data/cpersona.db' from the "
+            "current working directory. The index is written beside it."
+        ),
+    )
     ap.add_argument("--table", default="memories", choices=("memories", "episodes"))
-    args = ap.parse_args()
+    ap.add_argument("--json", action="store_true", help="Emit the result as JSON")
+    sub = ap.add_subparsers(dest="command", required=True)
+    sub.add_parser(
+        "build",
+        help="Write the index from the database (read-only against it). Exit 0 when "
+        "built, 1 when the builder declined (the reason is printed), 2 on error.",
+    )
+    sub.add_parser(
+        "status",
+        help="Report the index beside the database. Exit 0 when a usable index is "
+        "present, 1 when there is none, 2 when the file exists but cannot be used.",
+    )
+    return ap
+
+
+async def _status(table: str) -> dict:
+    """What an operator can act on: present / usable / how far behind the database."""
+    import datetime as _dt
+
+    path = index_path(table)
+    if not os.path.exists(path):
+        return {"table": table, "path": path, "present": False}
+    try:
+        index = load_index(table)
+    except IndexUnusable as exc:
+        return {
+            "table": table, "path": path, "present": True, "usable": False,
+            "reason": str(exc),
+            "hint": "delete the file and build again; it is a derived artifact and is never repaired",
+        }
+    assert index is not None
+    from cpersona.database import connection
+
+    # Rows the index cannot answer for and the scan reads exactly: everything
+    # written since the build, on every axis. A deliberate global count, spelled
+    # the way the isolation gate requires one to be spelled.
+    iso = isolation_where(agent_id=None)
+    async with connection() as db:
+        row = await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM {table} WHERE id > ? AND embedding IS NOT NULL{iso.and_clause}",
+            (index.watermark, *iso.params),
+        )
+    st = os.stat(path)
+    return {
+        "table": table,
+        "path": path,
+        "present": True,
+        "usable": True,
+        "rows": index.count,
+        "dim": index.dim,
+        "watermark": index.watermark,
+        "rows_since_build": int(row[0][0]),
+        "bytes": st.st_size,
+        "built_at": _dt.datetime.fromtimestamp(st.st_mtime, tz=_dt.timezone.utc).isoformat(),
+    }
+
+
+def _render(result: dict, as_json: bool) -> str:
+    if as_json:
+        return json.dumps(result, sort_keys=True)
+    if "built" in result:
+        if result["built"]:
+            return (
+                f"built {result['path']}: {result['count']} rows x {result['dim']} dims, "
+                f"watermark {result['watermark']}, {result['bytes']} bytes"
+            )
+        return f"not built: {result.get('reason', 'unknown reason')}"
+    if not result["present"]:
+        return f"no index at {result['path']} (the scan reads SQLite rows directly)"
+    if not result["usable"]:
+        return f"unusable index at {result['path']}: {result['reason']} -- {result['hint']}"
+    return (
+        f"index at {result['path']}: {result['rows']} rows x {result['dim']} dims, "
+        f"watermark {result['watermark']}, {result['rows_since_build']} rows written since "
+        f"the build, built {result['built_at']}"
+    )
+
+
+def main(argv: list | None = None) -> int:
+    import asyncio
+    import sys
+
+    args = _build_parser().parse_args(argv)
+    if args.db:
+        if not os.path.exists(args.db):
+            print(f"error: database not found: {args.db}", file=sys.stderr)
+            return 2
+        # Both readers of the path: the module attribute (index_path) and the
+        # environment the database module reads when it is first imported.
+        os.environ["CPERSONA_DB_PATH"] = args.db
+        config.DB_PATH = args.db
 
     async def run() -> int:
         # The read seam, not get_db(): the commit/rollback boundary belongs to
         # database.py, and a builder that only reads has no business owning one.
+        from cpersona import database
         from cpersona.database import close_db, connection
 
+        # An operator tool does not migrate, and must not create a database behind
+        # a mistyped path. Restored afterwards: this is process state, and the
+        # in-process callers of main() (tests) share the process.
+        skip_before = database.SKIP_BOOT_MIGRATIONS
+        database.SKIP_BOOT_MIGRATIONS = True
         try:
-            async with connection() as db:
-                result = await build_index(db, args.table)
+            if args.command == "build":
+                async with connection() as db:
+                    result = await build_index(db, args.table)
+                code = 0 if result.get("built") else 1
+            else:
+                result = await _status(args.table)
+                code = 0 if result.get("usable") else (2 if result["present"] else 1)
+        except Exception as exc:  # noqa: BLE001 — the reason must reach the operator
+            print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 2
         finally:
+            database.SKIP_BOOT_MIGRATIONS = skip_before
             # Every aiosqlite connection owns a non-daemon worker thread; without
             # this the process would not exit after printing.
             await close_db()
-        print(json.dumps(result, sort_keys=True))
-        return 0 if result.get("built") else 1
+        print(_render(result, args.json))
+        return code
 
     return asyncio.run(run())
 
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(_main())
+    raise SystemExit(main())
 
 
 # --------------------------------------------------------------------------------------
