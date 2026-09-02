@@ -397,23 +397,59 @@ async def _index_phase1(
     """
     try:
         index = vector_index.cached_index("memories")
+        if index is None or index.dim != query_dim:
+            return None
+        # Inside the guard (bug-276). Selection used to sit outside it, so any
+        # exception raised while selecting escaped into recall instead of
+        # falling back — which is the one thing a derived, optional artifact
+        # must never do to the query it was meant to accelerate.
+        positions = vector_index.select(
+            index,
+            agent_id=agent_id,
+            project_id=project_id,
+            channel=channel,
+            source_id=source_id,
+            limit=scan_limit,
+        )
     except vector_index.IndexUnusable as exc:
         # Visible, not just logged at debug: an index that has been unusable for
         # a week otherwise reads as "somehow not faster", which is a failure this
         # project has already made once.
         logger.warning("Vector index unusable, falling back to the live scan: %s", exc)
         return None
-    if index is None or index.dim != query_dim:
+    except Exception:  # noqa: BLE001 — fail open, deliberately
+        # The backstop, not the fix: the two type errors this was filed for are
+        # repaired at their sources. It is here because the claim to hold is
+        # "recall survives a broken index", and that claim cannot rest on having
+        # enumerated every way a mapped file and a numpy filter can fail. The
+        # scan below is always correct, so falling back costs latency and
+        # nothing else.
+        logger.warning("Vector index raised, falling back to the live scan", exc_info=True)
         return None
 
-    positions = vector_index.select(
-        index,
-        agent_id=agent_id,
-        project_id=project_id,
-        channel=channel,
-        source_id=source_id,
-        limit=scan_limit,
-    )
+    if await _index_rows_lost_embedding(
+        db,
+        [int(index.ids[p]) for p in positions],
+    ):
+        # bug-279, the mirror of bug-278: maintenance blanks an embedding in
+        # place (the content sanitiser rewrites the text and nulls the vector;
+        # the dimension repair nulls a mismatched one), and the matrix keeps the
+        # bytes. The scan drops such a row — every phase filters
+        # `embedding IS NOT NULL` — so continuing here would rank a row by a
+        # vector that no longer exists and return one the scan excludes.
+        #
+        # Dropping the positions instead would still not match: the scan's window
+        # is the newest `scan_limit` rows THAT HAVE an embedding, so removing k
+        # rows from a saturated selection leaves the index short by k rows the
+        # scan reaches. That divergence is invisible on any corpus smaller than
+        # the window, which is where a test would look. Handing the question back
+        # to the scan is exact at every window size, and it is what this function
+        # already does for the other condition it cannot reproduce.
+        logger.warning(
+            "Vector index holds rows whose embedding was cleared since the build; "
+            "falling back to the live scan until it is rebuilt"
+        )
+        return None
 
     tail = await _index_tail_rows(
         db,
@@ -428,6 +464,29 @@ async def _index_phase1(
         return None
 
     return _merge_index_and_tail(index, positions, tail, scan_limit, query_dim)
+
+
+async def _index_rows_lost_embedding(db: aiosqlite.Connection, ids: list[int]) -> bool:
+    """Whether any of these indexed ids no longer carries an embedding.
+
+    An existence probe rather than a list: the caller only needs to know whether
+    to hand the query back to the scan, so `LIMIT 1` lets SQLite stop at the
+    first hit. The ids are the selection, so this is bounded by the scan window
+    and not by the corpus.
+
+    No isolation clause: these ids came from a selection that already applied the
+    axes, and the question here is about the row's embedding rather than its
+    ownership. Narrowing further could only make the probe miss a row it should
+    have caught, which is the direction that fails silently.
+    """
+    if not ids:
+        return False
+    ph = ",".join("?" * len(ids))
+    row = await db.execute_fetchall(
+        f"SELECT 1 FROM memories WHERE id IN ({ph}) AND embedding IS NULL LIMIT 1",
+        tuple(ids),
+    )
+    return bool(row)
 
 
 async def _index_tail_rows(
