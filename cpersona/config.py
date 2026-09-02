@@ -137,6 +137,14 @@ FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 # Without the generic fallback a catalog-installed cpersona ran with embeddings
 # silently off (recall degraded to FTS-only) — bug-001.
 EMBEDDING_MODE = os.environ.get("CPERSONA_EMBEDDING_MODE") or os.environ.get("EMBEDDING_MODE", "none")
+
+# The values the client can act on. Anything else reaches every embed as a
+# per-call failure that never leaves the process (bug-275), which recall then had
+# to classify after the fact. Validated once at startup instead — see
+# `assert_embedding_mode_supported`. Not enforced at import: this module is
+# imported by tools that never embed, and a value they will not use is not their
+# problem to fail on.
+SUPPORTED_EMBEDDING_MODES = ("none", "http", "api")
 EMBEDDING_URL = os.environ.get("CPERSONA_EMBEDDING_URL") or os.environ.get("EMBEDDING_HTTP_URL", "")
 EMBEDDING_API_KEY = os.environ.get("CPERSONA_EMBEDDING_API_KEY") or os.environ.get("EMBEDDING_API_KEY", "")
 EMBEDDING_API_URL = os.environ.get("CPERSONA_EMBEDDING_API_URL") or os.environ.get("EMBEDDING_API_URL", "https://api.openai.com/v1/embeddings")
@@ -361,3 +369,26 @@ def shared_transport() -> bool:
     A sessionful HTTP mode would keep the second answer and change this one.
     """
     return transport() == "streamable-http"
+
+
+def assert_embedding_mode_supported(mode: str | None = None) -> None:
+    """Fail at startup on an embedding mode the client cannot act on (bug-275).
+
+    Left unchecked, an unsupported value did not stop anything: it produced a
+    failed outcome at every embed, with `attempted=False` because no request was
+    ever issued, and the operator was told the endpoint was unreachable. One loud
+    failure at boot is cheaper than a per-call one that has to be classified.
+
+    Raising rather than falling back to `none`: `none` is a supported
+    configuration that disables semantic recall deliberately, so silently
+    substituting it would give a misconfigured server the same shape as a
+    correctly configured one — the silence this whole area keeps being repaired
+    for.
+    """
+    value = EMBEDDING_MODE if mode is None else mode
+    if value not in SUPPORTED_EMBEDDING_MODES:
+        raise ValueError(
+            f"CPERSONA_EMBEDDING_MODE={value!r} is not supported; expected one of "
+            f"{', '.join(SUPPORTED_EMBEDDING_MODES)}. Use 'none' to run without an "
+            "embedding backend (recall becomes keyword/FTS-only)."
+        )

@@ -907,7 +907,13 @@ async def _search_vector(
         # It also reaches the modes the probe could not — the probe posted the local
         # server's payload shape to `_http_url`, which an api-mode client does not even
         # have, so `mode=api` could only ever produce "embedding client unavailable".
-        health.observe_failure(outcome.error or "the embedding call produced no usable vector")
+        health.observe_failure(
+            outcome.error or "the embedding call produced no usable vector",
+            # bug-275: the success side below has asked this since bug-248; the
+            # failure side believed a dead endpoint without asking. A call that
+            # never left the process is evidence about configuration, not reach.
+            attempted=outcome.attempted,
+        )
         return []
     if outcome.attempted:
         # bug-248: only a call that actually reached the backend is an observation of it.

@@ -480,7 +480,7 @@ async def probe_embedding_dim() -> tuple[int | None, bool]:
         health.observe_failure(f"dimension probe raised {type(exc).__name__}")
         return None, True
     if outcome.error:
-        health.observe_failure(outcome.error)
+        health.observe_failure(outcome.error, attempted=outcome.attempted)
         return None, outcome.attempted
     return (len(emb[0]) if emb and emb[0] else None), outcome.attempted
 
@@ -541,15 +541,26 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
         unreachable = health.is_faulted()
 
     if unreachable:
+        # bug-275: "no dimension came back" is not the same fact as "the backend did
+        # not answer". A failure that never reached it says nothing about the
+        # endpoint, and the repair named below would send the operator to restart a
+        # service that was never contacted. The axis is already decided at the
+        # observation point, so read it rather than re-deriving it here.
+        misconfigured = observed.get("fault_kind") == "misconfigured"
         return [
             {
-                "type": "embedding_backend_unreachable",
-                "status": "unreachable",
+                "type": "embedding_backend_misconfigured" if misconfigured else "embedding_backend_unreachable",
+                "status": "misconfigured" if misconfigured else "unreachable",
                 "severity": "warn",
                 "evidence": observed["evidence"] or "no detail captured",
                 "semantic_recall": "degraded — recall is falling back to keyword/FTS",
                 "hint": (
-                    "the configured embedding backend did not answer; restart or "
+                    "no request reached a backend: CPERSONA_EMBEDDING_MODE is not one of "
+                    "none, http, api (http also needs CPERSONA_EMBEDDING_URL, api needs "
+                    "CPERSONA_EMBEDDING_API_KEY). Correct it and restart CPersona — the "
+                    "embedding server itself is not involved"
+                    if misconfigured
+                    else "the configured embedding backend did not answer; restart or "
                     "reconfigure it, then re-run this check to confirm recovery"
                 ),
             }

@@ -4004,12 +4004,12 @@
       "discovered": "2026-09-02T00:00:00Z",
       "version": "2.5.9a2",
       "file": "cpersona/vector.py",
-      "pattern": "outcome\\.error or \"the embedding call produced no usable vector\"",
+      "pattern": "bug-275",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "misclassified-failure",
-      "fix_sketch": "Let the classification follow `attempted` the way the success side already does. A failure with attempted=False is a configuration fault, not an outage: it wants its own reason and a repair that names the mode variable, on both the advisory (vector.py) and the maintenance finding (checks.py, whose 'unreachable' branch reads only whether a dimension came back). Validating the mode at startup is the complementary half and probably the cheaper one — an invalid value would then fail once, loudly, at boot instead of arriving at every call site as a per-call failure. Do not respond by suppressing the advisory: recall really is degraded, and the operator does need to be told.",
-      "note": "Found by the v2.5.8..v2.5.9a2 release-gate audit and reproduced end to end before filing: EmbeddingClient(mode='openai') after initialize() returns the outcome above; two observe_failure calls reach state 'fault'; maybe_advisory() and check_embedding_backend() both render the wording quoted in the summary. Same class as bug-248 (a cache hit is not an observation) but on the failure side — that fix asked whether a call reached the backend before believing a success, and this one does not ask before believing a failure."
+      "note": "Found by the v2.5.8..v2.5.9a2 release-gate audit and reproduced end to end before filing. Same class as bug-248 (a cache hit is not an observation) but on the failure side: that fix asked whether a call reached the backend before believing a success, and this one did not ask before believing a failure. Both mutations were checked to kill only their own targets.",
+      "fix_note": "Both halves, because either alone leaves the other's failure mode. (1) The classification follows attempted the way the success side has since bug-248: observe_failure takes it, latches a fault_kind of misconfigured when nothing was contacted, and both surfaces read that — the advisory picks a runbook that names CPERSONA_EMBEDDING_MODE and drops the four network-layer steps, and check_embedding_backend emits embedding_backend_misconfigured instead of _unreachable. fault_kind is kept beside the state rather than made a state of its own: recall is degraded identically either way, and the states are what decide whether an advisory fires at all. The advisory is NOT suppressed. (2) The mode is validated once at startup, before the client is built. It raises rather than falling back to 'none', because 'none' is a supported configuration that disables semantic recall deliberately — silently substituting it would give a misconfigured server the same shape as a correct one, which is the silence this area keeps being repaired for. Nothing in _vendored_mcp_common was touched: that is the cross-consumer axis (common bump + re-vendor), a different cost class, and the classification belongs to the reporting surfaces rather than to the client."
     },
     {
       "id": "bug-276",
@@ -4105,12 +4105,12 @@
       "discovered": "2026-09-02T00:00:00Z",
       "version": "2.5.9a2",
       "file": "skills/cpersona-memory/references/embedding-backend-repair.md",
-      "pattern": "read-only liveness test",
+      "pattern": "CPERSONA_CONFIDENCE_ENABLED=true",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-claim",
-      "fix_sketch": "State the condition rather than weakening the sentence to uselessness: the recall writes ranking state when confidence is enabled, and does not when it is off or when the session is paused — that last clause is worth keeping because it is what makes the test safe during a no-persist window. Do not change the code to match the doc; the bump is deliberate and its own comment explains why making it unconditional was rejected.",
-      "note": "Found by the release-gate audit and confirmed by reading the gate in do_recall: the write is guarded by `not deep and not gate_fallback and recall_counts and not session.is_paused_for(...)`, and recall_counts is populated only under the confidence flag."
+      "note": "Found by the release-gate audit and confirmed by reading the gate in do_recall: the write is guarded by `not deep and not gate_fallback and recall_counts and not session.is_paused_for(...)`, and recall_counts is populated only under the confidence flag.",
+      "fix_note": "Stated the condition rather than weakening the sentence: the recall writes recall_count and last_recalled_at when confidence is enabled, does not when it is off, and does not while the session is paused — that last clause kept deliberately, because it is what makes the test safe during a no-persist window. The code was not changed to match the doc; the bump is deliberate and its own comment explains why making it unconditional was rejected. The pattern now anchors on the env name the page had to gain, which the widened docs-facts gate (bug-282) also checks is a real one."
     },
     {
       "id": "bug-282",

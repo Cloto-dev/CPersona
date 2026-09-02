@@ -59,11 +59,17 @@ something that used to work and stopped.
   reminder. `advisory_scope` says whose "already told" state you are seeing:
   `session` when the caller declared a session key, `process` when the state is
   the whole server's and the transport is shared.
-- **Running a `recall` is the read-only liveness test — with one caveat.** It
-  embeds the query through the real client, so a success clears the degraded
-  state and re-arms the full runbook, and a failure feeds the fault counter.
-  There is no separate probe to run and no side effect on stored data. The
-  caveat: a single-text embed is cached for five minutes, and a cache hit
+- **Running a `recall` is the liveness test — with two caveats.** It embeds the
+  query through the real client, so a success clears the degraded state and
+  re-arms the full runbook, and a failure feeds the fault counter. There is no
+  separate probe to run. The first caveat is that it is not always read-only:
+  with `CPERSONA_CONFIDENCE_ENABLED=true` a successful, non-deep recall that is
+  not a gate fallback updates `recall_count` and `last_recalled_at` on the rows
+  it returns. The flag ships off, so a default install is unaffected — but this
+  page tells you to run the test repeatedly, and an install that turned
+  confidence on is ranking on state those runs move. It writes nothing while the
+  session is paused, which is what keeps the test safe during a no-persist
+  window. The second caveat: a single-text embed is cached for five minutes, and a cache hit
   returns the stored vector without a request leaving the process. It no longer
   clears the degraded state — an advisory therefore survives a repeated query —
   but it cannot confirm a repair either. **Test with a query you have not just
