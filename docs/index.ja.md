@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:d347d1c2bca465bef6414ec6bad508251d09342d -->
+<!-- i18n-source: docs/index.md@blob:e571df03c42f22ce20d624c886b381d899c476e8 -->
 
 # CPersona ドキュメント
 
@@ -45,7 +45,7 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 
     ---
 
-    30 個のツールを目的別にまとめ、各ツールから「驚きうる契約」へリンクしています。
+    31 個のツールを目的別にまとめ、各ツールから「驚きうる契約」へリンクしています。
 
     [:octicons-arrow-right-24: ツール一覧](tools.md)
 

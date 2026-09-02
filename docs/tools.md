@@ -2,7 +2,7 @@
 
 > **Applies to: CPersona 2.5.x.** The authoritative description of every
 > argument is the tool's own MCP description — your client reads it, and it
-> ships with the version you are running. This page groups the **30 tools** by
+> ships with the version you are running. This page groups the **31 tools** by
 > what you reach for them for, and links to the contract when a tool behaves in
 > a way its name does not suggest.
 
@@ -76,6 +76,24 @@ detail that matters when you tighten `limit`.
 the form to use in CI. Cadence guidance is in the
 [operations runbook](operations.md#maintenance-cadence).
 
+## Server version
+
+| Tool | What it does |
+|---|---|
+| `check_update` | Whether a newer release of the server itself exists — or whether the release you are running has been **withdrawn** (PyPI yank), which an installed server can otherwise never learn. The check runs once per process start and is cached for 24h; this tool reads that verdict, `refresh=true` re-fetches, and `apply=true` runs the update (pip and source-checkout installs only) |
+
+The same verdict rides on `recall` as an `update` key — once per session, absent
+when there is nothing to say — and appears in `check_health` as an
+`update_available` (info) or `version_yanked` (warn) issue. Nothing is ever
+installed as a side effect: `apply=true` is the only thing that installs
+anything, and a **restart is always required** afterwards, because the process
+that ran the install is still running the old code. Under `uvx` the tool
+declines to install and tells you why: the environment is a cache entry keyed by
+the launch arguments, so the change belongs in your MCP client's config
+(`uvx cpersona@latest`). `CPERSONA_UPDATE_CHECK=false` disables the feature
+entirely, including the one outbound request
+([what it sends](architecture.md#transports)).
+
 ## Session controls
 
 | Tool | What it does |
@@ -106,7 +124,7 @@ without a `persisted` key at all.
 ## Isolation arguments
 
 The three isolation axes are not offered uniformly. `agent_id` is accepted by
-most tools (22 of 30); `project_id` by six; and `channel` by exactly four —
+most tools (22 of 31); `project_id` by six; and `channel` by exactly four —
 `store`, `recall`, `recall_with_context` and `archive_episode`. They are
 independent axes rather than one nested hierarchy, and reads treat an empty
 value differently from an omitted one — see

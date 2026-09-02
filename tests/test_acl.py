@@ -285,8 +285,8 @@ async def test_unclassified_tool_is_denied_at_runtime(tmp_path):
 # ---------------------------------------------------------------------------
 
 # Tools whose readOnlyHint=False annotation coexists with a read-level baseline
-# classification because an argument escalates them (fix=true).
-_ESCALATING_READ_TOOLS = {"check_health", "deep_check"}
+# classification because an argument escalates them (fix=true, apply=true).
+_ESCALATING_READ_TOOLS = {"check_health", "deep_check", "check_update"}
 
 
 def _baseline_required(tool: str) -> int:

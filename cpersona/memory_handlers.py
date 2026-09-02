@@ -24,6 +24,7 @@ from cpersona.isolation import isolation_where
 from cpersona import health
 from cpersona import scope_stats
 from cpersona import session
+from cpersona import update_check
 from cpersona import vector
 from cpersona.session import resolve_session_key
 from cpersona.config import (
@@ -1444,6 +1445,16 @@ async def do_recall(
     advisory = health.maybe_advisory(session_key_resolved, session_key_declared)
     if advisory is not None:
         result["advisory"] = advisory
+    # Same contract as `advisory` above, and the same reason it rides on recall:
+    # this is the one call every connected agent makes, so it is the only place a
+    # notice reaches the operator without anyone going looking for it. Reads the
+    # verdict the startup task left in memory — no fetch, no file, no latency —
+    # and is absent unless there is something to say (a response key that is
+    # present-and-empty on every other call changes the shape of the whole
+    # surface to say nothing).
+    update = update_check.notice(session_key_resolved, session_key_declared)
+    if update is not None:
+        result["update"] = update
     return result
 
 
@@ -1573,6 +1584,13 @@ async def do_recall_with_context(
     advisory = recall_result.get("advisory")
     if advisory is not None:
         result["advisory"] = advisory
+    # Forwarded for the same reason and with the same prohibition: update_check.notice()
+    # is what CONSUMES this session's one delivery, so calling it again here would spend
+    # it on a response the caller already has — and, on the keyless path, silence the
+    # notice for every later recall in the process.
+    update = recall_result.get("update")
+    if update is not None:
+        result["update"] = update
     return result
 
 

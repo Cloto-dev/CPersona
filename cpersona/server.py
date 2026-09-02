@@ -78,10 +78,12 @@ from cpersona.config import (
 )
 from cpersona import config
 from cpersona import operating_context
+from cpersona import update_check
 from cpersona.session import resolve_session_key
 from cpersona.database import close_db, init_db
 from cpersona.maintenance_handlers import (
     do_check_health,
+    do_check_update,
     do_deep_check,
     do_get_session_findings,
     do_migrate_channel_axis,
@@ -1748,6 +1750,61 @@ registry.auto_tool(
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 
+registry.auto_tool(
+    "check_update",
+    "Report whether a newer release of this server exists, and — only if you ask — "
+    "install it. The check itself runs ONCE per process start, in a background task "
+    "that nothing waits on, and its verdict is cached for 24h "
+    "(CPERSONA_UPDATE_CHECK_INTERVAL_SECONDS) in a file beside the database; a bare "
+    "call here reads that verdict and reaches neither the network nor the disk. "
+    "`state` is one of: ok (running the newest release) / newer (a newer final "
+    "release exists — pre-releases are never proposed) / yanked (every file of the "
+    "RUNNING version has been withdrawn on PyPI; `reason` carries the publisher's "
+    "text) / unlisted (this version is not on the index at all — a development "
+    "checkout; not a defect) / unknown (no check has completed, e.g. no network) / "
+    "disabled. `install` names how this process was installed (uvx / pip / checkout / "
+    "unknown) and the exact command that would update it. "
+    "refresh=true performs the fetch now (3s budget) and updates the cache. "
+    "apply=true runs that command as an argv list (never a shell), returning "
+    "exit_code and the last 40 lines of output — supported for pip and checkout "
+    "installs only; under uvx the environment is a cache entry keyed by the launch "
+    "arguments, so the update belongs in your client's config (uvx cpersona@latest), "
+    "and an install here would be discarded on the next launch. "
+    "Updating is NEVER automatic and never a side effect of any other call. "
+    "A RESTART IS ALWAYS REQUIRED afterwards: this process keeps serving the old "
+    "code until it is replaced. "
+    "Unaffected by pause_persistence — an install writes no memory row, so a "
+    "no-persist session can still repair a withdrawn version. "
+    "Set CPERSONA_UPDATE_CHECK=false to disable the feature entirely: no fetch, no "
+    "cache, no notice on recall or check_health, and this tool answers "
+    "state=disabled.",
+    {
+        "type": "object",
+        "properties": {
+            "refresh": {
+                "type": "boolean",
+                "description": "Fetch the package index now instead of reading the "
+                "cached verdict (3s budget; a failure answers state=unknown).",
+                "default": False,
+            },
+            "apply": {
+                "type": "boolean",
+                "description": "Run the detected update command (pip / checkout installs "
+                "only). Off by default; a restart is required afterwards.",
+                "default": False,
+            },
+        },
+    },
+    do_check_update,
+    [("refresh", bool, False), ("apply", bool, False)],
+    # apply=true installs software into this environment. The annotation states
+    # the worst case the tool can be called with, not the common one, so a host
+    # gating on the hint cannot be walked past by an argument (the bug-054
+    # annotation-truthfulness class).
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+
+
 # Capability guard (docs/ACL_DESIGN.md §5.2): wrap every handler registered
 # above. Installed unconditionally — with no active ACL configuration the wrap
 # passes straight through (legacy mode, zero decisions). This line must stay
@@ -2565,6 +2622,42 @@ def _schedule_startup_calibration() -> asyncio.Task:
     return task
 
 
+def _schedule_startup_update_check() -> asyncio.Task:
+    """Run the new-release check as a background task.
+
+    Same shape as the calibration guard above and for the same reason: nothing
+    on the serving path waits for it, so it must not hold the transport closed
+    while a package index answers. The done-callback exists because a task
+    created and never awaited swallows its exception for the whole session —
+    and while update_check is written so that every expected failure (offline,
+    proxy, 500, malformed body) already resolves to state=unknown in silence, a
+    callback that assumed that would be trusting the code under it to be
+    correct. Anything reaching here is a defect in the check, not an outage,
+    which is why it is logged at warning while the outage cases are logged at
+    debug.
+    """
+
+    async def _run():
+        verdict = await update_check.run_startup_check()
+        logger.info("Update check: %s", verdict.get("state"))
+
+    task = asyncio.create_task(_run())
+
+    def _report(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            logger.warning(
+                "Update check raised instead of reporting state=unknown; no version "
+                "notice will be attached this session: %r",
+                exc,
+            )
+
+    task.add_done_callback(_report)
+    return task
+
+
 async def _run_stdio_server():
     """Run the stdio transport, entering the ACL "local" principal first.
 
@@ -2736,6 +2829,7 @@ async def main():
     # fired (measured in production, 2026-08-31: the bug-267 guard raised and
     # the outage was invisible until a manual kill).
     calibration_task: asyncio.Task | None = None
+    update_task: asyncio.Task | None = None
     try:
         if acl.is_active() and acl.active_config().per_subject_clients:
             await _assert_no_reserved_agent_ids()
@@ -2759,6 +2853,12 @@ async def main():
         if EMBEDDING_MODE != "none":
             calibration_task = _schedule_startup_calibration()
 
+        # One outbound GET per process start, on a task nothing awaits (see
+        # _schedule_startup_update_check). CPERSONA_UPDATE_CHECK=false makes
+        # run_startup_check a no-op rather than skipping the schedule here, so
+        # there is one place that decides what "disabled" means.
+        update_task = _schedule_startup_update_check()
+
         if TASK_QUEUE_ENABLED:
             tasks._task_queue = tasks.MemoryTaskQueue()
             await tasks._task_queue.start()
@@ -2781,6 +2881,12 @@ async def main():
             calibration_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await calibration_task
+        # Same treatment, weaker justification needed: the check is bounded at
+        # three seconds, so this only matters for a shutdown inside that window.
+        if update_task is not None and not update_task.done():
+            update_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await update_task
         if tasks._task_queue:
             await tasks._task_queue.stop()
         await close_db()

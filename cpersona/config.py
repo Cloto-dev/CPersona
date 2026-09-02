@@ -165,6 +165,28 @@ DEGRADED_ADVISORY_ENABLED = os.environ.get("CPERSONA_DEGRADED_ADVISORY", "true")
 
 TASK_QUEUE_ENABLED = os.environ.get("CPERSONA_TASK_QUEUE_ENABLED", "true").lower() == "true"
 
+# New-release detection (cpersona/update_check.py). On by default: a memory
+# server is installed once and then left alone, so the process answering
+# today's recall can be several releases behind — or running a release its
+# publisher has since withdrawn — with nothing in the running system saying so.
+#
+# What being on costs: ONE outbound GET to the package index per process start
+# (cached for UPDATE_CHECK_INTERVAL_SECONDS), issued by a background task that
+# nothing waits on and bounded end to end by update_check.TIMEOUT_SECONDS. It
+# sends no data about this deployment — it asks for the public index page of
+# this project and reads the answer.
+#
+# Setting it to false is total, not partial: no fetch, no cache read, no notice
+# on any surface, and check_update answers `state=disabled`. That is the switch
+# for an air-gapped or egress-controlled deployment, and for an operator who
+# wants no outbound connection they did not ask for. Updating is never
+# automatic either way.
+UPDATE_CHECK_ENABLED = os.environ.get("CPERSONA_UPDATE_CHECK", "true").lower() == "true"
+# How long a fetched verdict stays usable. A release is not news twice a day,
+# and the sidecar makes a restart loop cost one request rather than one per
+# start.
+UPDATE_CHECK_INTERVAL_SECONDS = _parse_int("CPERSONA_UPDATE_CHECK_INTERVAL_SECONDS", 86400)
+
 # Process-local cache for the per-scope aggregates every recall reads (the
 # confidence span's MIN/MAX and the gate pool's COUNTs — see scope_stats.py).
 # They are full scans over the isolation scope whose answers change only when a

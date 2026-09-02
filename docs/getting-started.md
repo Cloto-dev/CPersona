@@ -59,6 +59,11 @@ pip install .
 Run it with `python -m cpersona` (or `python server.py`).
 </details>
 
+At startup the server checks pypi.org for a newer release and tells the calling
+agent through `recall` (and `check_health`); `check_update` answers on demand.
+Set `CPERSONA_UPDATE_CHECK=false` to turn that off. Updating is never
+automatic — it needs an explicit `check_update(apply=true)` and a restart.
+
 ## 2. Set up an embedding server (recommended)
 
 CPersona strongly recommends connecting to a compatible embedding server.

@@ -427,6 +427,26 @@ def _health_demands(args: dict) -> list[tuple[str, int]]:
     return [(_agent_arg(args), required)]
 
 
+def _update_demands(args: dict) -> list[tuple[str, int]]:
+    """check_update: process-wide, and ``apply=true`` escalates it to a write.
+
+    Process-wide because the version of the running code is not one agent's
+    data — no argument narrows it, so the all-agents demand is intrinsic the
+    way it is for the persistence switch. Escalating rather than write-always
+    because the two calls are not the same act: reading the verdict changes
+    nothing, while ``apply`` installs software into the environment every agent
+    this process serves shares. Same shape as ``fix=true`` on check_health.
+    """
+    required = PERM_WRITE if args.get("apply") else PERM_READ
+    return [(WILDCARD, required)]
+
+
+_update_demands._sweep_cause = lambda args: (  # type: ignore[attr-defined]
+    "the running server's version is a property of the process, not of any agent's "
+    "data, so no argument narrows this call to one agent"
+)
+
+
 def _merge_demands(args: dict) -> list[tuple[str, int]]:
     source = _agent_arg(args, "source_agent_id")
     target = _agent_arg(args, "target_agent_id")
@@ -506,6 +526,8 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
         required=PERM_READ,
     ),
     "migrate_channel_axis": _scoped(PERM_WRITE),
+    # Read at baseline, read-write with apply=true (see _update_demands).
+    "check_update": _update_demands,
 }
 
 
