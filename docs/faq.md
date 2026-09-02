@@ -133,3 +133,10 @@ future lines stay within deterministic SQL + pure-function processing, return
 reference-traceable results rather than generated text, and never modify or
 replace the underlying memories. Semantic summarization remains the calling
 agent's job (`archive_episode` is where its results land).
+
+### Do I have to sponsor anything to use CPersona?
+
+No. It is MIT-licensed, and nothing is withheld from anyone who does not
+sponsor — no paid tier, no sponsor-only build, and no effect on how issues are
+triaged. [Sponsorship](sponsorship.md) says what it does and does not buy, and
+lists the ways to help that cost nothing.

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:089ad49232cfb0e14c4625b1e430c91b71de7852 -->
+<!-- i18n-source: docs/index.md@blob:3fcdc1f019c768d9be67fa38ea2c2137051209b5 -->
 
 # CPersona ドキュメント
 
@@ -147,3 +147,10 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 [`cpersona-memory` skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
 はエージェントに store / recall / archive の日常ワークフローを教え、正確な詳細は
 このサイトへリンクで戻します。
+
+## 支援について { #sponsorship }
+
+CPersona は MIT ライセンスで、それはこの先も変わりません。役に立って、
+この作業が続いてほしいと思っていただけたなら、[支援のページ](sponsorship.md)に
+「支援が買うもの・買わないもの」と、この規模のプロジェクトではより重要な
+「お金がかからない助け方」を書いています。

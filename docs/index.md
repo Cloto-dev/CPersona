@@ -152,3 +152,10 @@ A machine-readable index of these pages is published at
 [`cpersona-memory` skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
 teaches an agent the day-to-day store / recall / archive workflow and links
 back here for the canonical detail.
+
+## Sponsorship
+
+CPersona is MIT-licensed and stays that way regardless. If it has become useful
+and you want the work to continue, [sponsorship](sponsorship.md) explains what
+it does and does not buy — and the ways to help that cost nothing, which for a
+project this size matter more.

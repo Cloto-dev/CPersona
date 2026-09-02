@@ -52,6 +52,7 @@ note and the pages above disagree, the pages above win.
 
 ## Optional
 
+- [Sponsorship](https://cloto-dev.github.io/CPersona/sponsorship/): what sponsoring does and does not buy, where it goes, and the ways to help that cost nothing
 - [Repository](https://github.com/Cloto-dev/cpersona): source, README quick start, issues
 - [PyPI](https://pypi.org/project/cpersona/): pip / uvx installation
 - [Bundled agent skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory): teaches an MCP agent the store / recall / archive workflow and the CLAUDE.md policy block

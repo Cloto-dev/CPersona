@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/faq.md@blob:86a1a9f9e3a4e31bd285794bcdb2f0f855c20604 -->
+<!-- i18n-source: docs/faq.md@blob:061f9f9e52a506188c4abc04505c22a636e7cd02 -->
 
 # FAQ
 
@@ -129,3 +129,10 @@ recall で負けることはあります。「失われては困る」→ lock�
 範囲に留まり、生成文ではなく出典を追跡できる結果を返し、元の記憶を改変・置換
 しません。意味的な要約は従来どおり呼び出し側エージェントの仕事です
 (その結果の置き場が `archive_episode` です)。
+
+### 支援しないと CPersona は使えませんか？ { #do-i-have-to-sponsor-anything-to-use-cpersona }
+
+いいえ。MIT ライセンスであり、支援しない人に対して何かを出し惜しみすることは
+ありません — 有料ティアも、支援者限定ビルドも無く、issue の扱いにも影響しません。
+[支援について](sponsorship.md)に「買うもの・買わないもの」と、お金がかからない
+助け方を書いています。

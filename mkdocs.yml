@@ -83,6 +83,7 @@ plugins:
             Using CPersona: 使い方
             Operating: 運用
             Project standards: プロジェクト標準
+            Sponsorship: 支援について
             Design notes: 設計ノート
             Access and identity: アクセスと同一性
             Retrieval and storage: 検索と保存
@@ -187,3 +188,7 @@ nav:
           - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
       - Reliability:
           - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md
+  # Last on purpose: it asks for something, and every page above answers
+  # something. A reader looking for how the software works never has to
+  # scroll past it.
+  - Sponsorship: sponsorship.md
