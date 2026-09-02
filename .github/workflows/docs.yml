@@ -27,6 +27,7 @@ on:
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
       - "scripts/check-docs-index.py"
+      - "scripts/check-mermaid.mjs"
       - "scripts/check-heading-parity.py"
       - "scripts/check-i18n-coverage.py"
       - "scripts/check-i18n-drift.py"
@@ -40,6 +41,7 @@ on:
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
       - "scripts/check-docs-index.py"
+      - "scripts/check-mermaid.mjs"
       - "scripts/check-heading-parity.py"
       - "scripts/check-i18n-coverage.py"
       - "scripts/check-i18n-drift.py"
@@ -73,6 +75,14 @@ jobs:
         # other docs gate starts from a page it was handed, so a page no index
         # points at is not an input to any of them.
         run: python3 scripts/check-docs-index.py
+      - name: Diagram sources parse (blocking)
+        # mkdocs turns a ```mermaid block into <pre class="mermaid"> and stops;
+        # the parser runs in the reader's browser. A broken diagram therefore
+        # builds green and renders nothing. Installed here rather than carried
+        # as a committed dependency because it is only ever run by this step.
+        run: |
+          npm install --no-save --no-audit --no-fund mermaid@11.17.2 jsdom@30.0.1
+          node scripts/check-mermaid.mjs docs
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Build site (strict)

@@ -7,37 +7,17 @@
 
 ## The pieces
 
-```
-                         ┌─────────────────────────────────────┐
-                         │            MCP Host                 │
-                         │   (Claude Desktop / Claude Code)    │
-                         └──────────────┬──────────────────────┘
-                                        │ MCP (JSON-RPC)
-                         ┌──────────────▼──────────────────────┐
-                         │           cpersona                  │
-                         │         (server.py)                 │
-                         │                                     │
-                         │  ┌─────────┐  ┌─────────┐           │
-                         │  │  store  │  │ recall  │  ...      │
-                         │  └────┬────┘  └────┬────┘           │
-                         │       │            │                │
-                         │  ┌────▼────────────▼─────────────┐  │
-                         │  │         SQLite DB             │  │
-                         │  │                               │  │
-                         │  │  memories   (content + embed) │  │
-                         │  │  episodes   (summaries)       │  │
-                         │  │  profiles   (attributes)      │  │
-                         │  │  memories_fts (FTS5 index)    │  │
-                         │  │  episodes_fts (FTS5 index)    │  │
-                         │  │  pending_memory_tasks (queue) │  │
-                         │  └───────────────────────────────┘  │
-                         │                                     │
-                         └──────────────┬──────────────────────┘
-                                        │ HTTP
-                         ┌──────────────▼──────────────────────┐
-                         │       Embedding Server              │
-                         │  (jina-v5-nano ONNX, 768d)          │
-                         └─────────────────────────────────────┘
+```mermaid
+flowchart TB
+    host["MCP host<br>Claude Desktop / Claude Code"]
+    subgraph cp["cpersona (server.py)"]
+        tools["MCP tools<br>store · recall · archive_episode · …"]
+        db[("SQLite database<br>memories — content + embedding<br>episodes — summaries<br>profiles — attributes<br>memories_fts / episodes_fts — FTS5<br>pending_memory_tasks — queue")]
+        tools --> db
+    end
+    embed["Embedding server<br>jina-v5-nano ONNX, 768d"]
+    host -- "MCP (JSON-RPC)" --> tools
+    tools -. "HTTP — optional, and the only network boundary" .-> embed
 ```
 
 Two things follow from this shape and are worth stating plainly:
@@ -93,10 +73,25 @@ retriever, it stands in for it.
 
 The pipeline in `rrf` mode:
 
-```
-Query → ┌── Vector search (cosine similarity) ──────────┐
-        ├── FTS5 over memories (keyword LIKE fallback) ─┼── fusion → quality gate → limit → reverse
-        └── FTS5 over episodes ────────────────────────┘
+```mermaid
+flowchart LR
+    q(["Query"])
+    v["Vector search<br>cosine similarity"]
+    fm["FTS5 over memories<br>keyword LIKE fallback"]
+    fe["FTS5 over episodes"]
+    fuse["Fusion<br>rrf · rsf · cascade"]
+    gate["Quality gate<br>calibrated threshold"]
+    lim["limit"]
+    rev["reverse<br>the last element is the best match"]
+    q --> v
+    q --> fm
+    q --> fe
+    v --> fuse
+    fm --> fuse
+    fe --> fuse
+    fuse --> gate
+    gate --> lim
+    lim --> rev
 ```
 
 Four stages deserve individual attention, because each has a caller-visible

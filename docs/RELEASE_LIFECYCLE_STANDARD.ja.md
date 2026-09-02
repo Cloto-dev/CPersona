@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELEASE_LIFECYCLE_STANDARD.md@blob:48937930e48d73bd5b2829612c4e47ab9c8bf805 -->
+<!-- i18n-source: docs/RELEASE_LIFECYCLE_STANDARD.md@blob:a0a7c6a0d5f197f7b14960ac13bea541d5f0d7bf -->
 
 # リリースライフサイクル標準 (v1.3)
 
@@ -46,17 +46,17 @@ security updates") および Linux カーネルの stable ルールに一致し�
 
 ## 2. ライフサイクル { #2-lifecycle }
 
-```
-X.Y.0aN → X.Y.0bN (→ X.Y.0rcN if needed) → X.Y.0     [Experimental]
-                                              │  release gate passed
-                                              ▼
-                                           Current
-                                              │  production soak + maintainer certification
-                                              ▼
-                                           Stable ──── the previously Stable line enters Grace
-                                              │  a successor line is certified Stable
-                                              ▼
-                                     Grace (30 days) → EOL
+```mermaid
+flowchart TB
+    pre["X.Y.0aN → X.Y.0bN → (必要なら X.Y.0rcN) → X.Y.0<br>Experimental"]
+    cur["Current"]
+    sta["Stable"]
+    gra["Grace (30 日)"]
+    eol["EOL"]
+    pre -- "リリースゲート通過" --> cur
+    cur -- "本番 soak + メンテナ認証" --> sta
+    sta -- "後継ラインが Stable に認証され、<br>この版は Grace に入る" --> gra
+    gra --> eol
 ```
 
 ### 2.1 Pre-release (Experimental) { #21-pre-releases-experimental }

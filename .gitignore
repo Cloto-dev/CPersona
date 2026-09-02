@@ -25,3 +25,7 @@ build/
 /.mutation-diff/
 /mutation-diff-report.json
 site/
+
+# The docs workflow installs mermaid + jsdom here with --no-save to parse the
+# diagram sources (scripts/check-mermaid.mjs). Nothing is committed from it.
+node_modules/

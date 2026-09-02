@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:aeb412e667b407ee830e3095b1bbde8bb59bbd94 -->
+<!-- i18n-source: docs/architecture.md@blob:75f19aed86533c49152d258805296831446d2daa -->
 
 # アーキテクチャ
 
@@ -10,37 +10,17 @@
 
 ## 構成要素 { #the-pieces }
 
-```
-                         ┌─────────────────────────────────────┐
-                         │            MCP Host                 │
-                         │   (Claude Desktop / Claude Code)    │
-                         └──────────────┬──────────────────────┘
-                                        │ MCP (JSON-RPC)
-                         ┌──────────────▼──────────────────────┐
-                         │           cpersona                  │
-                         │         (server.py)                 │
-                         │                                     │
-                         │  ┌─────────┐  ┌─────────┐           │
-                         │  │  store  │  │ recall  │  ...      │
-                         │  └────┬────┘  └────┬────┘           │
-                         │       │            │                │
-                         │  ┌────▼────────────▼─────────────┐  │
-                         │  │         SQLite DB             │  │
-                         │  │                               │  │
-                         │  │  memories   (content + embed) │  │
-                         │  │  episodes   (summaries)       │  │
-                         │  │  profiles   (attributes)      │  │
-                         │  │  memories_fts (FTS5 index)    │  │
-                         │  │  episodes_fts (FTS5 index)    │  │
-                         │  │  pending_memory_tasks (queue) │  │
-                         │  └───────────────────────────────┘  │
-                         │                                     │
-                         └──────────────┬──────────────────────┘
-                                        │ HTTP
-                         ┌──────────────▼──────────────────────┐
-                         │       Embedding Server              │
-                         │  (jina-v5-nano ONNX, 768d)          │
-                         └─────────────────────────────────────┘
+```mermaid
+flowchart TB
+    host["MCP ホスト<br>Claude Desktop / Claude Code"]
+    subgraph cp["cpersona (server.py)"]
+        tools["MCP ツール<br>store · recall · archive_episode · …"]
+        db[("SQLite データベース<br>memories — 本文 + 埋め込み<br>episodes — セッション要約<br>profiles — 属性<br>memories_fts / episodes_fts — FTS5<br>pending_memory_tasks — キュー")]
+        tools --> db
+    end
+    embed["埋め込みサーバー<br>jina-v5-nano ONNX, 768 次元"]
+    host -- "MCP (JSON-RPC)" --> tools
+    tools -. "HTTP — 任意であり、唯一のネットワーク境界" .-> embed
 ```
 
 この形から出てくる帰結が 2 つあり、はっきり述べておく価値があります:
@@ -95,10 +75,25 @@ episodes に対する FTS5。
 
 `rrf` モードでのパイプライン:
 
-```
-Query → ┌── Vector search (コサイン類似度) ──────────────┐
-        ├── FTS5 over memories (keyword LIKE fallback) ─┼── 融合 → 品質ゲート → limit → 反転
-        └── FTS5 over episodes ────────────────────────┘
+```mermaid
+flowchart LR
+    q(["クエリ"])
+    v["ベクトル検索<br>コサイン類似度"]
+    fm["FTS5 (memories)<br>keyword LIKE フォールバック"]
+    fe["FTS5 (episodes)"]
+    fuse["融合<br>rrf · rsf · cascade"]
+    gate["品質ゲート<br>較正済みしきい値"]
+    lim["limit で打ち切り"]
+    rev["反転<br>最後の要素が最良一致"]
+    q --> v
+    q --> fm
+    q --> fe
+    v --> fuse
+    fm --> fuse
+    fe --> fuse
+    fuse --> gate
+    gate --> lim
+    lim --> rev
 ```
 
 4 つの段階には個別に注意を払う価値があります。いずれも呼び出し側から見える帰結を

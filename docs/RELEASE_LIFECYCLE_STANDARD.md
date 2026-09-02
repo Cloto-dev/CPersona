@@ -42,17 +42,17 @@ bug fixes and security updates") and the Linux kernel stable rules.
 
 ## 2. Lifecycle
 
-```
-X.Y.0aN → X.Y.0bN (→ X.Y.0rcN if needed) → X.Y.0     [Experimental]
-                                              │  release gate passed
-                                              ▼
-                                           Current
-                                              │  production soak + maintainer certification
-                                              ▼
-                                           Stable ──── the previously Stable line enters Grace
-                                              │  a successor line is certified Stable
-                                              ▼
-                                     Grace (30 days) → EOL
+```mermaid
+flowchart TB
+    pre["X.Y.0aN → X.Y.0bN → (X.Y.0rcN if needed) → X.Y.0<br>Experimental"]
+    cur["Current"]
+    sta["Stable"]
+    gra["Grace (30 days)"]
+    eol["EOL"]
+    pre -- "release gate passed" --> cur
+    cur -- "production soak + maintainer certification" --> sta
+    sta -- "a successor line is certified Stable,<br>so this line enters Grace" --> gra
+    gra --> eol
 ```
 
 ### 2.1 Pre-releases (Experimental)

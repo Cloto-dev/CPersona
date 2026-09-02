@@ -111,6 +111,8 @@ extra_css:
 
 markdown_extensions:
   - admonition
+  # Grid cards on the index page are markdown inside a <div>, which needs this.
+  - md_in_html
   # Translated pages carry explicit heading ids ({ #english-slug }) so that a
   # heading rendered in Japanese keeps the anchor its English source generated.
   # Without it, adding a translation silently breaks every cross-page anchor
@@ -120,7 +122,23 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.highlight
-  - pymdownx.superfences
+  # Icons in the index page's cards. The tags below are why every script in
+  # scripts/ parses this file by hand instead of with yaml.safe_load, which
+  # refuses them.
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  # Diagrams. The blocks these render replaced hand-drawn box art, which could
+  # not reflow on a narrow screen and scrolled sideways instead. Note that the
+  # theme fetches mermaid from unpkg at view time, so a diagram is the third
+  # third-party origin a reader's browser contacts (the other two are the
+  # theme's own web fonts) and the one that does not degrade to something
+  # readable when it fails.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
 
 # Grouped by what the reader came to do, not by file kind. The flat list this
 # replaced put nine undifferentiated pages above one "Design documents" drawer,
