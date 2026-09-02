@@ -195,3 +195,44 @@ of it, and on a realistic query the three largest terms are now FTS5 over
 the matching rows, the indexed memory arm and — under the production
 configuration — the temporal span. The order of the next two goals did not
 change; their shares did.
+
+## The scope aggregates, cached
+
+Same machine, same script, same regime (100,000 memories + 20,000 episodes,
+window 100,000, both indexes built), production configuration, one change:
+the three per-scope aggregates — the confidence span's `MIN/MAX(timestamp)`
+and the gate pool's two `COUNT(*)` — are served from a process-local cache
+(`cpersona/scope_stats.py`) instead of being re-derived on every recall.
+The two columns are the same tree run with `CPERSONA_SCOPE_STATS_CACHE`
+off and on, so nothing else differs.
+
+| Set | `do_recall` off → on | span off → on | `COUNT(*)` ×2 off → on | vector arm |
+| --- | ---: | ---: | ---: | ---: |
+| broad | 433.9 → **360.4 ms** | 72.9 → — | 7.3 → — | 88.8 / 94.3 |
+| narrow | 177.8 → **95.6 ms** | 73.5 → — | 8.5 → — | 93.1 / 93.1 |
+| none | 158.5 → **150.7 ms** | 6.1 (×0.1) → — | 8.3 → — | 92.7 / 93.2 |
+
+"—" means the statement did not appear in the profile at all: the profiler
+runs 12 queries per set and the entry filled by the first is served to the
+other eleven, since the only write between them — the recall-count
+bookkeeping — declares itself neutral to these aggregates. On the narrow
+set, where the recall was 41% span, the whole query is now the vector arm
+(93 of 96 ms). On the broad set the saving is the same 80 ms but FTS5 over
+the matching rows (215 ms) still dominates, which is tier 5's problem, not
+this one's.
+
+Before the cache was built, a smaller measurement on the development
+machine settled which half of the span statement was expensive: dropping
+the `datetime()` predicate alone took 32.1 ms to 29.7 ms, while a covering
+index on `(agent_id, project_id, channel, timestamp)` took it to 5.3 ms.
+The cost is the row walk over the isolation scope (the existing isolation
+index carries neither `channel` nor `timestamp`), not the function call —
+so the index-based alternative is a schema change, and the cache, which is
+not, went first. The 5.3 ms is also the floor for that alternative: the
+`project_id IN (?, '')` predicate defeats SQLite's MIN/MAX-by-index
+shortcut, so even the covering index is walked, not probed.
+
+What the cache does not do: a writer in another process is seen only when
+the entry ages out (`CPERSONA_SCOPE_STATS_TTL_SECONDS`, 60 by default); a
+write by this process invalidates exactly. The numbers above are for the
+recall path only; the first recall on a cold scope still pays the scans.
