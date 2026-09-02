@@ -12,4 +12,4 @@
 # importlib.metadata would answer for the distribution rather than for the code
 # actually serving the request. Measured on a production instance: the source
 # was four releases ahead of the dist-info the server was quoting.
-__version__ = "2.5.9"
+__version__ = "2.5.10"
