@@ -2073,7 +2073,8 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                 "memories_with_local_embedding": embedded,
                 "hint": (
                     "the local vector scan reads embeddings from SQLite row by row; "
-                    "building the contiguous index removes that cost"
+                    "building the contiguous index removes that cost: "
+                    "python -m cpersona.vector_index --db <path> build"
                 ),
             }
         ]
