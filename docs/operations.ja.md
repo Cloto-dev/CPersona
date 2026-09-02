@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:8c595aba1d7631151c0a30abed4545a27b160998 -->
+<!-- i18n-source: docs/operations.md@blob:7602bdccf03e88ae3a06cdb79d7da193f5d90081 -->
 
 # 運用 Runbook
 
@@ -61,7 +61,7 @@
   がゼロの状態で復元されます。`check_health` は `no_local_vector_fallback` と
   して報告します。索引も同じ頻度でバックアップするか、`STORE_BLOB=true` のまま
   にして `.db` を自己完結に保ってください。
-- **`<CPERSONA_DB_PATH>.memories.vecindex` (連続ベクトル索引) は含めない。**
+- **`<CPERSONA_DB_PATH>.memories.vecindex` と `.episodes.vecindex` (連続ベクトル索引) は含めない。**
   データベースから導出される派生物で、リストアするものではなく作り直すものです。
   バックアップに含めても容量の無駄で、古い索引が戻ってきても次の build で正されます。
   [連続ベクトル索引](#the-contiguous-vector-index) を参照。
@@ -227,6 +227,10 @@ skip** であること ([契約 §5](behavior-contracts.md#5-dedup-semantics-ski
 データベース脇のファイルで、走査はそれを一度に読みます。行も、スコアも、順序も同じで、変わる
 のはレイテンシだけです。基準機では 100,000 行でベクトル側が 604 ms から 77 ms になりました。
 
+索引はテーブルごとに 1 つです。memories と episodes は別々に走査されるので、ファイルも別で、
+build も検査もそれぞれ行います。索引の無い episodes テーブルは、その 5 倍の行数を持つ索引済み
+memories テーブルよりクエリあたりの費用が高いので、片方を build する運用なら両方 build します。
+
 **派生物です。** 正本はデータベースだけで、索引はその射影です。キャッシュと同じ扱いをします:
 バックアップしない、修復しない、いつ消しても安全。何かおかしく見えたら、ファイルを消して
 build し直してください。
@@ -236,10 +240,12 @@ systemd timer から呼ぶためのコマンドです:
 
 ```bash
 python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" build
+python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" --table episodes build
 python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" status
+python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" --table episodes status
 ```
 
-`build` はデータベースを読むだけで (書き込みはしません)、索引をアトミックに置き換えます。
+`--table` でファイルを選びます (既定は `memories`)。`build` はデータベースを読むだけで (書き込みはしません)、索引をアトミックに置き換えます。
 サーバーは次のクエリで新しいファイルを拾うので、再起動は不要です。build できれば exit 0、
 辞退したら exit 1 で理由を印字します — 埋め込み済みの行が無い、または 2 種類の埋め込み幅が
 同時に存在する (モデル変更の途中の一時的な状態。再埋め込みが終わってから build し直します)。
@@ -259,7 +265,7 @@ python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" status
 その後のメンテナンス修復で埋め込みを失った — これらの時、recall は走査に戻ります (遅いが正しい)。
 いずれも運用者が health を読む場所に報告されます: `check_health` は索引が無ければ
 `vector_index_absent` (カバーできる行数つき)、ファイルが信頼できなければ
-`vector_index_unusable` を出し、サーバーは走査に戻したクエリごとに warning をログに出します。
+`vector_index_unusable` を出し (テーブルごとに 1 行、それぞれ `table` を名乗ります)、サーバーは走査に戻したクエリごとに warning をログに出します。
 こうしないと、1 週間静かに使えなかった索引が「なぜか速くならない」としか見えません。
 報告はその失敗を防ぐためにあります。
 

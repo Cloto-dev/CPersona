@@ -165,3 +165,33 @@ Three things this table says that the goal's question did not ask:
   it was observed firing outside the `none` set.
 - The `execute` path (the recall-count bump under confidence) was not wrapped;
   it is inside the ≤ 9 ms the stage table leaves unattributed.
+
+## The episode index, measured
+
+Same machine, same script, same regime, one change: the episode table has its
+own contiguous index and the episode scan is served from it the way the
+memory scan is (both indexes built before the after-column was measured).
+
+| Corpus / config / set | `do_recall` before → after | vector arm before → after | episode part before → after |
+| --- | ---: | ---: | ---: |
+| 100k + 20k ep / default / broad | 497.2 → **362.0 ms** | 227.8 → **93.3 ms** | 96.2 → ~13 |
+| 100k + 20k ep / default / narrow | 238.4 → **102.8 ms** | 226.4 → 93.0 ms | 95.8 → ~13 |
+| 100k + 20k ep / default / none | 297.0 → **158.3 ms** | 228.7 → 93.0 ms | 96.2 → ~13 |
+| 100k + 20k ep / production / broad | 569.2 → **431.4 ms** | 224.3 → 89.7 ms | 96.9 → ~13 |
+| 100k + 20k ep / production / narrow | 315.1 → **177.3 ms** | 227.8 → 92.9 ms | 96.2 → ~13 |
+| 10k + 2k ep / default / broad | 48.3 → **38.1 ms** | 21.0 → 11.1 ms | 9.5 → ~1.5 |
+| 10k + 2k ep / default / narrow | 23.4 → **13.0 ms** | 21.0 → 10.8 ms | 9.5 → ~1.5 |
+
+The episode part after is the sum of what the index path issues for the
+table: the lost-embedding probe (6.1 ms at 20,000 rows — the same row walk
+recorded for memories under the tier-2 leftovers goal, scaled to the table),
+the empty-tail query (2.5 ms), and a matmul over 20,000 × 1024 float32
+(~5 ms). The 4 KB-per-row materialisation that was 96 ms is gone, and the
+vector arm as a whole is back to the number the memory index alone had
+reached on a corpus without episodes (77–80 ms), plus the episode matmul.
+
+What this moves in the ranked table above: the episode scan leaves the top
+of it, and on a realistic query the three largest terms are now FTS5 over
+the matching rows, the indexed memory arm and — under the production
+configuration — the temporal span. The order of the next two goals did not
+change; their shares did.
