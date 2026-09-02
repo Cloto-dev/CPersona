@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:8683b41a3403e3572f7a25fb148271b0b1984b74 -->
+<!-- i18n-source: docs/index.md@blob:089ad49232cfb0e14c4625b1e430c91b71de7852 -->
 
 # CPersona ドキュメント
 
@@ -23,17 +23,113 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 
 ## 目的別ガイド { #where-to-go }
 
-| したいこと | 読むページ |
-|---|---|
-| インストール・セットアップ | [はじめに (Getting Started)](getting-started.md) |
-| 依存してよい挙動を知る | [挙動契約 (Behavior Contracts)](behavior-contracts.md) |
-| 30 個のツールが何をするか見る | [ツール一覧](tools.md) |
-| 検索と保存の仕組みを理解する | [アーキテクチャ](architecture.md) |
-| 運用: バックアップ・チューニング・劣化検知・コーパス索引 | [運用 Runbook](operations.md) |
-| 環境変数を調べる | [設定リファレンス](configuration.md) |
-| よくある質問への短い回答 | [FAQ](faq.md) |
-| サブシステムがなぜその形なのかを知る | 設計ノート (サイドバー) |
-| リリースティアとサポート期間 | [リリースライフサイクル標準](RELEASE_LIFECYCLE_STANDARD.md) + [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) |
+<div class="grid cards" markdown>
+
+-   :material-rocket-launch:{ .lg .middle } **はじめに**
+
+    ---
+
+    インストールし、MCP クライアントに登録し、接続を端から端まで検証します。
+
+    [:octicons-arrow-right-24: はじめに](getting-started.md)
+
+-   :material-sitemap:{ .lg .middle } **アーキテクチャ**
+
+    ---
+
+    ストレージ構成、3 つの検索器、そして融合 → ゲート → 反転のパイプラインを図で。
+
+    [:octicons-arrow-right-24: アーキテクチャ](architecture.md)
+
+-   :material-toolbox:{ .lg .middle } **ツール一覧**
+
+    ---
+
+    30 個のツールを目的別にまとめ、各ツールから「驚きうる契約」へリンクしています。
+
+    [:octicons-arrow-right-24: ツール一覧](tools.md)
+
+-   :material-handshake:{ .lg .middle } **挙動契約**
+
+    ---
+
+    依存してよい挙動。ここを変えることは好みの問題ではなくバグである、という形で
+    書かれています。
+
+    [:octicons-arrow-right-24: 挙動契約](behavior-contracts.md)
+
+-   :material-cog:{ .lg .middle } **設定リファレンス**
+
+    ---
+
+    全環境変数と既定値、そして HTTP トランスポートが応答を始めるための要件。
+
+    [:octicons-arrow-right-24: 設定リファレンス](configuration.md)
+
+-   :material-lifebuoy:{ .lg .middle } **運用 Runbook**
+
+    ---
+
+    バックアップ、劣化検知、recall を調整する順序、日本語コーパス、保守の周期。
+
+    [:octicons-arrow-right-24: 運用 Runbook](operations.md)
+
+-   :material-help-circle:{ .lg .middle } **FAQ**
+
+    ---
+
+    運用者が実際に訊く質問への短い回答。それぞれ詳細を持つページへ送ります。
+
+    [:octicons-arrow-right-24: FAQ](faq.md)
+
+-   :material-shield-check:{ .lg .middle } **品質保証**
+
+    ---
+
+    リリースがどう検査されるか: 監査ラウンド、バグ登録簿、構造ゲート、変異証明。
+
+    [:octicons-arrow-right-24: 品質保証](quality-assurance.md)
+
+</div>
+
+## 設計ノートと標準 { #design-notes-and-standards }
+
+ガイドの下には 2 種類のページがあり、それぞれ別の問いに答えます。
+
+**プロジェクト標準** は、リリース・監査報告・生成されるポリシーブロックが
+どうあるべきかを定めます。このプロジェクト以外にも採用されうる形で書かれています。
+
+- [リリースライフサイクル標準](RELEASE_LIFECYCLE_STANDARD.md) — ティア定義
+  (Stable / Current)、リスク駆動の pre-release ladder、サポート期間。本リポジトリが
+  運用している実体は
+  [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) です。
+- [SuperAuditor 標準](SUPERAUDITOR_STANDARD.md) — findings を報告するための pull
+  契約。深刻度の語彙、上限の意味論、そして「何を検出するか」については意図的に
+  何も定めないこと。
+- [CLAUDE.md ポリシー標準](CLAUDE_MD_POLICY_STANDARD.md) — プロジェクトの skill が
+  常時ロードされるエージェント記憶へマーカー付きポリシーブロックをどう書き込むか、
+  そして skill だけではその保証を担えない理由。
+
+**設計ノート** は、ある挙動がどう決まったかを、却下された経路も含めて記録した
+ものです。ある時点の記録なので、上のガイドと食い違う場合はガイドが優先します。
+
+- [クライアント別の権限 (ACL)](ACL_DESIGN.md) — 名前付きベアラトークン、
+  エージェント単位の読み書き権限、既定拒否。
+- [OAuth 対応](OAUTH_DESIGN.md) — リソースサーバーのメタデータとトークン検証、
+  比較した 3 経路、subject 単位の境界。
+- [サーバー供給の運用コンテキスト](OPERATING_CONTEXT_DESIGN.md) — 接続中の全 MCP
+  クライアントへ運用者の指示を配布する仕組み。
+- [申告型セッション同一性](SESSION_IDENTITY_DESIGN.md) — streamable-HTTP では
+  1 プロセスが 1 セッションではない理由と、`session_key` がどのプロセス全体の状態を
+  分割し直すか。
+- [アクセス元の記録](MEMORY_ORIGIN_DESIGN.md) — `agent_id` が誰も名指さない経路の
+  ために、観測した呼び出し元を各行へ記録する。
+- [recall プレビュー階層](RECALL_PREVIEW_TIER_DESIGN.md) — プレビューの切り詰めと
+  `get_contents` による展開経路。
+- [埋め込み索引の連続配置](CONTIGUOUS_INDEX_DESIGN.md) — ベクトル走査の読み出しを
+  SQLite の行から連続配置の sidecar へ移す。答えはビット単位で同一。
+- [埋め込み劣化の通知](DEGRADED_ADVISORY_DESIGN.md) — 埋め込み層が死んだとき、
+  静かに質を落とすのではなく recall がそれを報告する仕組み。
 
 ## 3 つの記憶タイプ { #the-three-memory-types }
 

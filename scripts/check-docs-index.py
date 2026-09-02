@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Blocking check: is every documentation page reachable from both indexes?
+"""Blocking check: is every documentation page reachable from every index?
 
-The site has two indexes over the same set of pages, written for two different
-readers, and they are maintained by hand:
+The site has three indexes over the same set of pages, written for three
+different readers, and all three are maintained by hand:
 
-  mkdocs.yml `nav:`   the human index — the sidebar
+  mkdocs.yml `nav:`   the sidebar — what a reader scans while already on a page
+  docs/index.md       the home page — cards for the guides, and the only place
+                      a design note's one-line description is written for a
+                      person rather than for a machine
   docs/llms.txt       the machine index — what an agent fetches to find out
                       which pages exist before it fetches any of them
 
@@ -28,8 +31,9 @@ What is checked, in both directions:
   * every `docs/*.md` appears in `nav:` exactly once (mkdocs logs unlisted
     pages at INFO, which `--strict` does not promote — it is not a detector)
   * every `nav:` entry points at a file that exists
-  * every page in `nav:` has a link in `llms.txt`
+  * every page in `nav:` has a link in `llms.txt` and in `index.md`
   * every site link in `llms.txt` points at a page that is in `nav:`
+  * every page link in `index.md` points at a page that is in `nav:`
   * those links use this site's `site_url` and the directory form mkdocs
     publishes (`.../page/`), so a rename of the site does not leave absolute
     links pointing into the old one
@@ -58,10 +62,17 @@ SITE_URL = re.compile(r"^site_url:\s*(?P<url>\S+)\s*$")
 MD_LINK = re.compile(r"\[(?P<label>[^\]]+)\]\((?P<url>[^)\s]+)\)")
 
 # The site root. `llms.txt` opens by describing the site itself, which is what
-# index.md is — a second link to it under "Docs" would be the same page twice.
-# Listed here rather than left implicit so that the next page exempted has to
-# say why in the same place.
+# index.md is — a second link to it under "Docs" would be the same page twice,
+# and the home page linking to itself is the same redundancy. Listed here
+# rather than left implicit so that the next page exempted has to say why in
+# the same place.
 LLMS_EXEMPT = {"index.md"}
+HOME = "index.md"
+
+# A relative link to a sibling page, which is how index.md addresses the rest
+# of the site. Absolute links (the repository, SUPPORT.md on GitHub) are not
+# an index over docs/ and are ignored.
+HOME_LINK = re.compile(r"^(?P<page>[A-Za-z0-9_.-]+\.md)(?:#[^)]*)?$")
 
 failures: list[str] = []
 
@@ -131,6 +142,17 @@ def llms_links(base: str) -> dict[str, str]:
     return found
 
 
+def home_links() -> set[str]:
+    """Sibling pages docs/index.md links to, by path."""
+    text = (DOCS / HOME).read_text()
+    found: set[str] = set()
+    for m in MD_LINK.finditer(text):
+        hit = HOME_LINK.match(m.group("url"))
+        if hit:
+            found.add(hit.group("page"))
+    return found
+
+
 def main() -> int:
     base = site_url()
     nav = nav_pages()
@@ -174,6 +196,25 @@ def main() -> int:
                 "llms.txt already describes — drop the link or drop the exemption."
             )
 
+    if (DOCS / HOME).exists():
+        linked = home_links()
+        for page in nav:
+            if page == HOME:
+                continue
+            if page not in linked:
+                fail(
+                    f"docs/{HOME} does not link docs/{page}. The home page is the only "
+                    "index a person reads — a page missing from it exists for an agent "
+                    "reading llms.txt and for nobody else."
+                )
+        for page in sorted(linked - seen):
+            fail(
+                f"docs/{HOME} links {page}, which is not in mkdocs.yml `nav:` "
+                "(renamed or removed)."
+            )
+    else:
+        fail(f"docs/{HOME} is missing — the home page is one of the three indexes.")
+
     if failures:
         for msg in failures:
             print(f"::error file=docs/llms.txt,line=1::docs index: {msg}")
@@ -181,7 +222,11 @@ def main() -> int:
         print(f"{len(failures)} docs index finding(s)", file=sys.stderr)
         return 1
 
-    print(f"docs index: OK ({len(nav)} pages in nav, {len(nav) - len(LLMS_EXEMPT)} in llms.txt)")
+    print(
+        f"docs index: OK ({len(nav)} pages in nav, "
+        f"{len(nav) - len(LLMS_EXEMPT)} in llms.txt, "
+        f"{len(nav) - 1} linked from {HOME})"
+    )
     return 0
 
 

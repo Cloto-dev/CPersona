@@ -19,17 +19,122 @@ different operating points.
 
 ## Where to go
 
-| You want to… | Read |
-|---|---|
-| Install and set up | [Getting Started](getting-started.md) |
-| Know what behaviors you can rely on | [Behavior Contracts](behavior-contracts.md) |
-| See what each of the 30 tools does | [Tools](tools.md) |
-| Understand how retrieval and storage work | [Architecture](architecture.md) |
-| Run it well: backup, tuning, degradation, corpus indexing | [Operations Runbook](operations.md) |
-| Look up an environment variable | [Configuration](configuration.md) |
-| Quick answers to common operator questions | [FAQ](faq.md) |
-| Understand why a subsystem works the way it does | Design notes (sidebar) |
-| Release tiers and support windows | [Release lifecycle standard](RELEASE_LIFECYCLE_STANDARD.md) + [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) |
+<div class="grid cards" markdown>
+
+-   :material-rocket-launch:{ .lg .middle } **Getting Started**
+
+    ---
+
+    Install it, register it with an MCP client, and verify the connection end
+    to end.
+
+    [:octicons-arrow-right-24: Getting Started](getting-started.md)
+
+-   :material-sitemap:{ .lg .middle } **Architecture**
+
+    ---
+
+    Storage layout, the three retrievers, and the fusion → gate → reverse
+    pipeline, drawn.
+
+    [:octicons-arrow-right-24: Architecture](architecture.md)
+
+-   :material-toolbox:{ .lg .middle } **Tools**
+
+    ---
+
+    All 30 tools grouped by purpose, each linked to the contract it can
+    surprise you with.
+
+    [:octicons-arrow-right-24: Tools](tools.md)
+
+-   :material-handshake:{ .lg .middle } **Behavior Contracts**
+
+    ---
+
+    The behaviours you may rely on, stated so that changing one is a bug and
+    not a preference.
+
+    [:octicons-arrow-right-24: Behavior Contracts](behavior-contracts.md)
+
+-   :material-cog:{ .lg .middle } **Configuration**
+
+    ---
+
+    Every environment variable with its default, and what the HTTP transport
+    requires before it will serve.
+
+    [:octicons-arrow-right-24: Configuration](configuration.md)
+
+-   :material-lifebuoy:{ .lg .middle } **Operations Runbook**
+
+    ---
+
+    Backup, degradation detection, the order to tune recall in, Japanese
+    corpora, maintenance cadence.
+
+    [:octicons-arrow-right-24: Operations Runbook](operations.md)
+
+-   :material-help-circle:{ .lg .middle } **FAQ**
+
+    ---
+
+    Short answers to the questions operators actually ask, each pointing at
+    the page that carries the detail.
+
+    [:octicons-arrow-right-24: FAQ](faq.md)
+
+-   :material-shield-check:{ .lg .middle } **Quality Assurance**
+
+    ---
+
+    How a release is gated: audit rounds, the bug ledger, structural CI gates,
+    mutation proof.
+
+    [:octicons-arrow-right-24: Quality Assurance](quality-assurance.md)
+
+</div>
+
+## Design notes and standards
+
+Below the guides sit two kinds of page, and they answer different questions.
+
+**Project standards** say what a release, an audit report or a generated policy
+block MUST look like. They are written to be adopted by projects other than
+this one.
+
+- [Release lifecycle standard](RELEASE_LIFECYCLE_STANDARD.md) — tier definitions
+  (Stable / Current), the risk-triggered pre-release ladder, and support
+  windows. The instance this repository runs is
+  [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
+- [SuperAuditor standard](SUPERAUDITOR_STANDARD.md) — the pull contract for
+  reporting findings: severity vocabulary, cap semantics, and a deliberate
+  silence on what a server chooses to detect.
+- [CLAUDE.md policy standard](CLAUDE_MD_POLICY_STANDARD.md) — how a project's
+  skill writes a marker-wrapped policy block into always-loaded agent memory,
+  and why a skill alone cannot carry that guarantee.
+
+**Design notes** record how one behaviour was decided, the routes that were
+rejected included. They are point-in-time records: where a note and the guides
+above disagree, the guides win.
+
+- [Per-client capabilities (ACL)](ACL_DESIGN.md) — named bearer tokens,
+  per-agent read/write grants, deny-by-default.
+- [OAuth support](OAUTH_DESIGN.md) — resource-server metadata and token
+  verification, the three routes weighed, and the per-subject boundary.
+- [Server-served operating context](OPERATING_CONTEXT_DESIGN.md) — distributing
+  operator instructions to every connected MCP client.
+- [Declared session identity](SESSION_IDENTITY_DESIGN.md) — why one process is
+  not one session under streamable-HTTP, and which process-global state
+  `session_key` re-partitions.
+- [Recorded access origin](MEMORY_ORIGIN_DESIGN.md) — recording the observed
+  caller on each stored row, for the paths where `agent_id` names nobody.
+- [Recall preview tier](RECALL_PREVIEW_TIER_DESIGN.md) — preview truncation and
+  the `get_contents` expansion path.
+- [Contiguous embedding index](CONTIGUOUS_INDEX_DESIGN.md) — moving the vector
+  scan's read off SQLite rows onto a contiguous sidecar, bit-identically.
+- [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
+  reports a dead embedding layer instead of quietly getting worse.
 
 ## The three memory types
 
