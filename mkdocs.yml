@@ -21,12 +21,40 @@ theme:
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
+  # Verified against the installed 9.7.7 build rather than the feature list in
+  # the docs: every flag below was found in the theme's own templates or its
+  # bundled JS, so none of them is an Insiders-only name that would be read and
+  # silently ignored.
   features:
     - navigation.sections
     - navigation.top
+    # Breadcrumbs. The nav groups pages three levels deep, and until now a
+    # reader who arrived from a search result or an external link had nothing on
+    # the page saying which group they had landed in.
+    - navigation.path
+    # Previous / next at the foot of every page, so the twenty pages can be read
+    # as a sequence and not only as a lookup table.
+    - navigation.footer
+    # The address bar follows the section being read, which makes "link me to
+    # the part that says X" work by copying the URL.
+    - navigation.tracking
     - content.action.edit
     - content.code.copy
     - search.suggest
+    # Highlights the searched terms on the page the reader opens, rather than
+    # dropping them at the top of a long page to find it themselves.
+    - search.highlight
+    # The table of contents scrolls to keep the current section in view.
+    - toc.follow
+  #
+  # navigation.instant is deliberately NOT enabled. Instant loading swaps the
+  # document without re-running scripts in the head, and the language routing in
+  # overrides/main.html is exactly that: an inline head script carrying
+  # per-page alternates rendered by the template. It would keep working on first
+  # load and quietly stop on every navigation after it — and check-lang-routing.js
+  # models first-load behaviour, so the gate would stay green while it broke.
+  # Turning it on means moving the router onto the theme's document$ observable
+  # first, and extending that check to cover the instant path.
 
 plugins:
   - search
