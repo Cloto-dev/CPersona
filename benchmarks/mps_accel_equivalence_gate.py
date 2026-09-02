@@ -209,8 +209,11 @@ async def gate(args):
 def _index_paths():
     from cpersona import vector_index
 
-    base = vector_index.index_path("memories")
-    return (base, base + ".tmp")
+    paths = []
+    for table in ("memories", "episodes"):
+        base = vector_index.index_path(table)
+        paths += [base, base + ".tmp"]
+    return tuple(paths)
 
 
 def _remove_index():
@@ -357,6 +360,16 @@ async def gate_sidecar(args):
             built_indexes += 1
             logger.info("index built: %d rows x %dd, watermark %d",
                         build["count"], build["dim"], build["watermark"])
+            # The episode table has its own file and is served by the same read
+            # path. An eval corpus without episodes declines with "no embedded
+            # rows", which is the state the index is allowed not to exist in;
+            # any other refusal is a gate failure like the one above.
+            ep_build = await vector_index.build_index(db, "episodes")
+            if ep_build.get("built"):
+                logger.info("episode index built: %d rows", ep_build["count"])
+            elif ep_build.get("reason") != "no embedded rows":
+                failures.append(f"{task_name}: episode index build declined ({ep_build.get('reason')})")
+                logger.error("MISMATCH %s", failures[-1])
 
             # Pass 2 — the same queries, the same corpus, the index in place.
             before = taken["index"]
