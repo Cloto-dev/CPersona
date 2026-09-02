@@ -25,6 +25,7 @@ the line (e.g. 2.4.x), not to an individual version.
 | --- | --- | --- |
 | **Stable** | Certified by the maintainer after production soak. Recommended for all users; the marketplace serves this line by default. | Critical bug fixes, data-loss fixes, and security fixes only (backported at the maintainer's discretion). |
 | **Current** | The newest release line. It has passed the full release gate (test suite, lint, issue-registry verification, comprehensive audits) but has not yet earned the production-soak certification. | All bug fixes land here first — this is where development happens. |
+| **Candidate** | A line that is no longer the newest but whose certification has not concluded — its successor's first final release arrived before its decision. No channel serves it; it is reachable by exact version. | Critical, security and data-loss fixes are backported when feasible; other fixes at the maintainer's discretion. |
 | **Experimental** | Alpha / beta (and, when needed, rc) pre-releases of the next line. Opt-in only; no guarantees of any kind. | Fixes ship in the next pre-release. |
 
 Naming note: **Current** follows the Node.js release vocabulary — the newest
@@ -59,10 +60,16 @@ X.Y.0aN → X.Y.0bN (→ X.Y.0rcN if needed) → X.Y.0     [Experimental]
 
 ### Promotion to Stable
 
-Promotion is an explicit, event-based maintainer decision — there is no fixed
-clock. Guideline: several weeks of production soak with no new critical or
-high-severity defects. The certification date is recorded in the Status table
-below; it also starts the superseded line's grace window.
+Promotion runs on a bounded clock (standard §2.3, v1.4): the maintainer
+declares the line **frozen** on a recorded date; it soaks in the production
+deployment for **21 days**, taking freeze-eligible fixes only; on day 21 the
+maintainer records a decision. The line is certified unless a critical or
+high-severity defect found during the soak is still open, or its fix has not
+been released, deployed and observed for 7 days — in which case the decision
+is negative and at most one 14-day re-review follows. The freeze date, the
+decision date and a link to the certification record are recorded in the
+Status table below; the certification date also starts the superseded
+line's grace window. A line that is never frozen is never certified.
 
 ### Grace window
 
@@ -88,12 +95,13 @@ discretion and must not be relied upon.
 
 ## Status
 
-| Line | Tier | Notes |
-| --- | --- | --- |
-| 2.4.x | **Stable** | Certified Stable; the marketplace serves this line by default. Enters Grace 30 days after 2.5.x is certified Stable. |
-| 2.5.x | **Current** | Latest release: 2.5.10. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Awaiting production-soak certification to Stable. |
+| Line | Tier | Frozen | Decision | Notes |
+| --- | --- | --- | --- | --- |
+| 2.4.x | **Stable** | — | certified (before v1.4 of the standard; no record) | The marketplace serves this line by default. Enters Grace 30 days after a successor line is certified Stable. |
+| 2.5.x | **Current** | not yet | — | Latest release: 2.5.10. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Not yet frozen; certification has not started. |
 
-Certification and EOL dates are recorded in this table as they occur.
+Freeze, decision, certification and EOL dates — and the link to each
+certification record — are recorded in this table as they occur.
 
 ## Known issues
 

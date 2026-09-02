@@ -1,4 +1,4 @@
-# Release Lifecycle Standard (v1.3)
+# Release Lifecycle Standard (v1.4)
 
 A three-tier release lifecycle and support standard for Cloto-family
 projects. This document is the **specification**; a repository adopting it
@@ -30,7 +30,8 @@ tier attaches to the **line**, not to an individual version.
 | Tier | Meaning | Fix policy |
 | --- | --- | --- |
 | **Stable** | Certified by the maintainer after production soak. Recommended for all users; default distribution channel (e.g. the marketplace pin) serves this line. | Critical bug fixes, data-loss fixes, and security fixes only, backported at the maintainer's discretion. |
-| **Current** | The newest release line. Passed the repository's full release gate but not yet production-certified. | All bug fixes land here first; this is where development happens. |
+| **Current** | The newest release line. Passed the repository's full release gate but not yet production-certified. Exactly one line is Current at any time. | All bug fixes land here first; this is where development happens. |
+| **Candidate** | A line that is no longer the newest but whose certification (§2.3) has not concluded — its successor's first final release arrived before its decision. No distribution channel serves it (§4); it is reachable by exact version. | Critical, security and data-loss fixes are backported when technically feasible; other fixes at the maintainer's discretion. |
 | **Experimental** | Alpha / beta (and, when needed, rc) pre-releases of the next line. Opt-in only; no guarantees. | Fixes ship in the next pre-release. |
 
 Vocabulary note: **Current** follows the Node.js release-phase vocabulary
@@ -49,8 +50,12 @@ flowchart TB
     sta["Stable"]
     gra["Grace (30 days)"]
     eol["EOL"]
+    cand["Candidate"]
     pre -- "release gate passed" --> cur
-    cur -- "production soak + maintainer certification" --> sta
+    cur -- "freeze + 21-day soak + certification decision" --> sta
+    cur -- "a successor's first final release<br>arrives before the decision" --> cand
+    cand -- "certification decision" --> sta
+    cand -- "its successor is certified Stable<br>(whether or not this line was)" --> gra
     sta -- "a successor line is certified Stable,<br>so this line enters Grace" --> gra
     gra --> eol
 ```
@@ -83,12 +88,45 @@ and comprehensive multi-agent audits for substantial batches.
 
 ### 2.3 Certification (promotion to Stable)
 
-An explicit, event-based maintainer decision — **no fixed clock**.
-Guideline: several weeks of production soak with no new critical or
-high-severity defects. The certification date is recorded in the repo's
-`SUPPORT.md` status table; it also starts the superseded line's grace
-window. Each adopting repository names its soak environment (for cpersona:
-the production ClotoCore deployment).
+Certification is an explicit maintainer decision taken on a **bounded
+clock** (v1.4). v1.3 had no clock; its open-ended soak let one line's
+defect record hold up its successor's release, and its definition of
+Current left no tier for a line superseded before certification. All
+dates are calendar days in UTC.
+
+1. **Freeze.** The maintainer declares the line frozen — a dated event
+   recorded in the repo's `SUPPORT.md` status table. From that date the
+   line takes freeze-eligible fixes only (§2.6); a feature release
+   withdraws the freeze.
+2. **Soak.** The frozen line runs in the repository's named soak
+   environment (for cpersona: the production ClotoCore deployment) for
+   **21 days**. The assessment covers the line as of its newest release on
+   the decision date.
+3. **Decision.** On freeze + 21 days the maintainer records one of two
+   outcomes. The line is **certified** unless a critical or high-severity
+   defect found during the soak fails either test on the decision date:
+   it is still open, or its fix has not been released, deployed to the
+   soak environment and observed there for at least **7 days**. Issue
+   closure alone satisfies neither test — the deployed artifact is what is
+   being certified. Otherwise the decision is **negative**, not deferred.
+4. **Re-review (at most once).** Within 14 days of a negative decision the
+   maintainer MAY declare a re-review; a second decision is taken 14 days
+   after the declaration, on the same tests, as a delta verification of
+   the named fixes. If the fix changes a public contract, a default, a
+   data format or a schema, the line is re-frozen instead (a new 21 days).
+   A second negative decision, or no re-review declared within the 14
+   days, **concludes** certification without certifying.
+
+Certification does not require the line to be the newest one: a line that
+became a Candidate (§1) is decided on the same clock. When a line is
+certified while a newer line is already Stable, the certification is
+recorded and the line enters Grace at once — the Stable pin never moves
+backward (§4).
+
+The certification date is recorded in the status table; it starts the
+superseded Stable line's grace window (§2.4). Lines that are never frozen
+are never certified: a Candidate whose freeze has not been declared by the
+time its successor is certified enters Grace with it.
 
 ### 2.4 Grace window
 
@@ -98,6 +136,15 @@ EOL.
 
 - The clock anchors on the certification event; patch releases inside the
   window do NOT reset it.
+- A **Candidate** line (§1) — certified late, concluded without
+  certification, or never frozen — enters Grace when its successor is
+  certified Stable, with the same 30-day window. Until then it keeps the
+  Candidate fix policy. Support is withdrawn on the availability of a
+  certified replacement, not on the outcome of the line's own decision.
+- Several lines MAY be in Grace at the same time. Each window's end date is
+  fixed when it starts; a later certification neither shortens nor resets
+  an earlier one, and starts Grace only for the line it directly
+  supersedes.
 - Fixes for issues accepted within the window may ship after it closes.
 - If a transition requires a database schema or data migration (cpersona
   line transitions preserve the DB schema; the MCP tool contract is not
@@ -118,11 +165,18 @@ end of the line's development. A line in **Current** MAY take feature releases
 - Each in-line release chooses its own path by the risk trigger in §2.1:
   additive feature releases may go direct-to-final; rollback-unsafe changes
   belong to the **next** line (`X.(Y+1).0`), not to an in-line release.
-- Certification (§2.3) assesses the line **as of its newest release**. A
-  feature release shipped during the soak therefore effectively restarts the
-  soak assessment: the maintainer certifies the line including that release,
-  or not at all. Shipping features into a line under active certification
-  review is a deliberate trade-off, not a loophole.
+- A **frozen** line (§2.3) takes freeze-eligible fixes only. A change is
+  freeze-eligible when all three hold: it references a canonical defect or
+  security record; it restores behaviour that a contract, the documentation
+  or the pre-freeze release established; and it adds no tool, option,
+  response field, default, supported configuration, schema or migration
+  beyond what restoring that behaviour strictly needs. Every other
+  user-visible change is a feature, whatever its size, and targets the next
+  line — "additive" or "rollback-safe" does not admit it to a frozen line.
+  A fix release does not restart the 21 days; it starts the 7-day post-fix
+  observation of §2.3. A feature release, or a fix that is itself
+  rollback-unsafe, withdraws the freeze: the maintainer either re-declares
+  it (a new 21 days) or leaves the line unfrozen.
 - A **Stable** line takes no feature releases — its fix policy (§1) already
   restricts it to critical, data-loss, and security fixes. Features always
   target the Current (or next Experimental) line.
@@ -163,6 +217,33 @@ spaces from corrupting each other:
   Audit ids may accompany canonical ids as cross-references in PR bodies and
   audit reports (`bug-114 (H-03)`); they never appear alone in code.
 
+### 2.9 Provisional parameters and their review
+
+The 21-day soak, the 7-day post-fix observation, the single re-review and
+its 14-day windows (§2.3) were set in v1.4 without operating history. They
+are scheduling parameters that give the lifecycle liveness; they are not
+measured confidence thresholds, and elapsed time in one soak environment
+does not establish that every supported configuration was exercised. What
+a certification asserts is exactly what the certification record (§3)
+says was observed.
+
+The maintainer reviews these parameters in the next revision of this
+standard after the first two concluded certification attempts across the
+adopting repositories, or by 2027-03-01, whichever comes first — and
+earlier if two consecutive decisions are negative, or a line concludes
+without certification after its re-review. A trigger obliges a review and
+a recorded outcome (§8), not a predetermined change.
+
+### 2.10 Emergency pin rollback and decertification
+
+Certification is a recorded event and is not rewritten. If a severe defect
+surfaces in a Stable line after certification, two separate, dated actions
+exist: an **emergency rollback** moves the default distribution pin to the
+previous certified line as an incident action, recorded in the status
+table and reverted when the fix ships; a **decertification** withdraws the
+line's Stable status and starts its Grace window. Neither is implied by
+the other.
+
 ## 3. Required artifacts (per adopting repository)
 
 1. `SUPPORT.md` — operative policy: tier table, lifecycle summary, and the
@@ -173,10 +254,24 @@ spaces from corrupting each other:
 
 cpersona's `SUPPORT.md` / `SECURITY.md` are the reference templates.
 
+4. A **certification record** per decision (v1.4), linked from the status
+   table: the frozen line and the exact release assessed, the freeze and
+   decision dates, the deployment timestamp in the soak environment, the
+   operation counts by tool or major code path over the soak, the
+   transports and configurations exercised, the corpus size, and the
+   configurations known not to have been exercised. The record is what
+   the word "certified" refers to.
+
 ## 4. Distribution mapping
 
 - **Marketplace / hub**: the default pin serves the **Stable** line; the pin
-  flips on certification, not on release.
+  flips on certification, not on release. Channel invariants (v1.4):
+  `stable` resolves to exactly one line, the newest certified non-EOL one;
+  `current` resolves to exactly one line, the newest final; neither moves
+  to a lower version except by the emergency rollback of §2.10. A
+  Candidate line has no channel and is reachable by exact version only;
+  an adopter that offers exact or per-line pins documents whether they
+  follow patch releases.
 - **PyPI / registries**: `latest` naturally resolves to Current's newest
   final release; Experimental stays behind the pre-release flag.
 - **GitHub Releases**: pre-releases carry the "Pre-release" flag; the
@@ -217,11 +312,27 @@ clean cycle passes.
 
 | Repository | Standard version | Adopted | Notes |
 | --- | --- | --- | --- |
-| cpersona | v1.3 | 2026-07-09 | Pilot / reference implementation (policy operation). Tracks the newest standard version (canonical home). |
-| ClotoCore | v1.3 | 2026-07-12 | Second pilot / reference implementation (structural enforcement via update-channel + signed-manifest pipeline, `docs/RELEASE_PIPELINE_DESIGN.md`). |
+| cpersona | v1.4 | 2026-07-09 | Pilot / reference implementation (policy operation). Tracks the newest standard version (canonical home). |
+| ClotoCore | v1.3 | 2026-07-12 | Second pilot / reference implementation (structural enforcement via update-channel + signed-manifest pipeline, `docs/RELEASE_PIPELINE_DESIGN.md`). Its manifest derives a release's channel from the pre-release suffix and `stable_line` alone and already resolves `current` to the newest final, so v1.4's Candidate tier needs no pipeline change; the row moves to v1.4 when that repository adopts the freeze / decision vocabulary and the certification record. |
 
 ## 8. Changelog
 
+- **v1.4 (2026-09-02)** — Bounded certification (§2.3): a dated freeze, a
+  21-day soak, a decision that is negative rather than deferred, a test
+  against the deployed artifact rather than issue closure, and at most one
+  re-review. A **Candidate** tier (§1) for a line superseded before its
+  decision, so a successor's final release no longer waits for the
+  predecessor's certification; Grace anchored to the availability of a
+  certified replacement (§2.4); freeze-eligible fixes defined (§2.6);
+  provisional parameters with a review obligation (§2.9); emergency
+  rollback and decertification as separate recorded actions (§2.10); a
+  certification record (§3) and channel invariants (§4). Surfaced by
+  cpersona 2.5.x, where the open-ended soak coupled the 2.6.0 release date
+  to 2.5.x's defect record and the "newest line" definition of Current left
+  no tier for 2.5.x once 2.6.0 shipped. Reviewed against Node.js's
+  scheduled LTS transition, the Linux and Rust release practice of shipping
+  with known regressions but keeping critical defects out, Debian's
+  oldstable overlap, and RFC 6410's removal of an unobserved review rule.
 - **v1.3 (2026-07-23)** — Audit finding-identifier convention (§2.8):
   severity-initial report ids, canonical-registry-id-only in the tree,
   canonical assignment before implementation. Surfaced by the cpersona
