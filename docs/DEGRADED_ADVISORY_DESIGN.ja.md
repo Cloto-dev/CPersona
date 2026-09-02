@@ -1,6 +1,6 @@
-<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:353e912c11cd273dcab2d0f53459263ad03710aa -->
+<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:d00fd3d713ecb53636192e0ec97f2f8772e5c825 -->
 
-# dense 劣化のランタイム検知 + advisory のコンテキスト注入
+# 埋め込み劣化: ランタイム検知 + advisory 注入
 
 **ステータス**: 実装済。Route B は 2.4.x ラインで出荷し、Route A がそれを置き換えました —
 証跡は失敗した埋め込み呼び出し自身から得られ、プローブは撤去されています (§6)。

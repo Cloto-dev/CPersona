@@ -31,7 +31,7 @@ Normative documents. They state what a release, an audit report or a generated
 policy block MUST look like, and they are written to be adopted by projects
 other than this one.
 
-- [Release lifecycle](https://cloto-dev.github.io/CPersona/RELEASE_LIFECYCLE_STANDARD/): tier definitions (Stable / Current), the risk-triggered pre-release ladder, support windows
+- [Release lifecycle standard](https://cloto-dev.github.io/CPersona/RELEASE_LIFECYCLE_STANDARD/): tier definitions (Stable / Current), the risk-triggered pre-release ladder, support windows
 - [SuperAuditor standard](https://cloto-dev.github.io/CPersona/SUPERAUDITOR_STANDARD/): the pull contract for reporting findings — severity vocabulary, cap semantics, and the deliberate silence on what a server detects
 - [CLAUDE.md policy standard](https://cloto-dev.github.io/CPersona/CLAUDE_MD_POLICY_STANDARD/): how a project's skill generates a marker-wrapped policy block into always-loaded agent memory, and why a skill alone cannot carry that guarantee
 
@@ -41,14 +41,14 @@ Point-in-time records of how one behavior was decided, including the routes
 that were rejected. They are not the current-state reference — where a design
 note and the pages above disagree, the pages above win.
 
-- [ACL / per-client capabilities](https://cloto-dev.github.io/CPersona/ACL_DESIGN/): named bearer tokens, per-agent read/write grants, deny-by-default
+- [Per-client capabilities (ACL)](https://cloto-dev.github.io/CPersona/ACL_DESIGN/): named bearer tokens, per-agent read/write grants, deny-by-default
 - [OAuth support](https://cloto-dev.github.io/CPersona/OAUTH_DESIGN/): resource-server metadata and token verification, the three routes weighed and why issuance is delegated to an external provider, the per-subject boundary
-- [Operating context](https://cloto-dev.github.io/CPersona/OPERATING_CONTEXT_DESIGN/): distributing operator instructions to all connected MCP clients
-- [Session identity](https://cloto-dev.github.io/CPersona/SESSION_IDENTITY_DESIGN/): the declared `session_key`, why one process is not one session under streamable-HTTP, and which process-global state it re-partitions
-- [Memory origin](https://cloto-dev.github.io/CPersona/MEMORY_ORIGIN_DESIGN/): recording the observed caller on each stored row, for the paths where `agent_id` names nobody
+- [Server-served operating context](https://cloto-dev.github.io/CPersona/OPERATING_CONTEXT_DESIGN/): distributing operator instructions to all connected MCP clients
+- [Declared session identity](https://cloto-dev.github.io/CPersona/SESSION_IDENTITY_DESIGN/): the declared `session_key`, why one process is not one session under streamable-HTTP, and which process-global state it re-partitions
+- [Recorded access origin](https://cloto-dev.github.io/CPersona/MEMORY_ORIGIN_DESIGN/): recording the observed caller on each stored row, for the paths where `agent_id` names nobody
 - [Recall preview tier](https://cloto-dev.github.io/CPersona/RECALL_PREVIEW_TIER_DESIGN/): preview truncation and the get_contents expansion path
 - [Contiguous embedding index](https://cloto-dev.github.io/CPersona/CONTIGUOUS_INDEX_DESIGN/): moving the vector scan's read off SQLite rows onto a contiguous sidecar, with bit-identical answers
-- [Degraded-mode advisory](https://cloto-dev.github.io/CPersona/DEGRADED_ADVISORY_DESIGN/): how recall reports a dead embedding layer instead of silently degrading
+- [Embedding degradation advisory](https://cloto-dev.github.io/CPersona/DEGRADED_ADVISORY_DESIGN/): how recall reports a dead embedding layer instead of silently degrading
 
 ## Optional
 

@@ -1,4 +1,4 @@
-# Dense-Degraded Runtime Detection + Advisory Context Injection
+# Embedding Degradation: Runtime Detection + Advisory Injection
 
 **Status**: implemented. Route B shipped on the 2.4.x line; Route A replaced it — the
 evidence now comes from the embedding call that failed, and the probe is gone (§6).

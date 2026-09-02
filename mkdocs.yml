@@ -59,19 +59,19 @@ plugins:
             Access and identity: アクセスと同一性
             Retrieval and storage: 検索と保存
             Reliability: 信頼性
-            Release lifecycle: リリースライフサイクル
+            Release lifecycle standard: リリースライフサイクル標準
             # The section heading was translated while the pages under it were
             # not, so the Japanese nav listed English titles under a Japanese
             # header. A nav label is translated here; the page itself is
             # translated by adding <page>.ja.md.
-            ACL / per-client capabilities: ACL / クライアント別ケーパビリティ
+            Per-client capabilities (ACL): クライアント別の権限 (ACL)
             OAuth support: OAuth 対応
-            Degraded-mode advisory: 縮退モードの通知
-            Operating context: 運用コンテキスト
+            Embedding degradation advisory: 埋め込み劣化の通知
+            Server-served operating context: サーバー供給の運用コンテキスト
             Recall preview tier: recall プレビュー階層
-            Session identity: セッション同一性
-            Memory origin: 記憶の発信元
-            Contiguous embedding index: 連続配置埋め込み索引
+            Declared session identity: 申告型セッション同一性
+            Recorded access origin: アクセス元の記録
+            Contiguous embedding index: 埋め込み索引の連続配置
             CLAUDE.md policy standard: CLAUDE.md ポリシー標準
             SuperAuditor standard: SuperAuditor 標準
 
@@ -124,20 +124,20 @@ nav:
   # look like, and other repositories adopt them. Kept apart from Design notes,
   # which only explain how this server arrived at one of its own behaviors.
   - Project standards:
-      - Release lifecycle: RELEASE_LIFECYCLE_STANDARD.md
+      - Release lifecycle standard: RELEASE_LIFECYCLE_STANDARD.md
       - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
       - CLAUDE.md policy standard: CLAUDE_MD_POLICY_STANDARD.md
   # Point-in-time design records, subdivided by subject because the group grows
   # by roughly a page a month and a flat list of ten stops being an index.
   - Design notes:
       - Access and identity:
-          - ACL / per-client capabilities: ACL_DESIGN.md
+          - Per-client capabilities (ACL): ACL_DESIGN.md
           - OAuth support: OAUTH_DESIGN.md
-          - Operating context: OPERATING_CONTEXT_DESIGN.md
-          - Session identity: SESSION_IDENTITY_DESIGN.md
-          - Memory origin: MEMORY_ORIGIN_DESIGN.md
+          - Server-served operating context: OPERATING_CONTEXT_DESIGN.md
+          - Declared session identity: SESSION_IDENTITY_DESIGN.md
+          - Recorded access origin: MEMORY_ORIGIN_DESIGN.md
       - Retrieval and storage:
           - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
           - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
       - Reliability:
-          - Degraded-mode advisory: DEGRADED_ADVISORY_DESIGN.md
+          - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md

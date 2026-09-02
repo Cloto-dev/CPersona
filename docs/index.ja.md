@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:f01ee2407a21a0486ae177725942e402f25f9f4f -->
+<!-- i18n-source: docs/index.md@blob:8683b41a3403e3572f7a25fb148271b0b1984b74 -->
 
 # CPersona ドキュメント
 
@@ -32,8 +32,8 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 | 運用: バックアップ・チューニング・劣化検知・コーパス索引 | [運用 Runbook](operations.md) |
 | 環境変数を調べる | [設定リファレンス](configuration.md) |
 | よくある質問への短い回答 | [FAQ](faq.md) |
-| サブシステムの設計を理解する | 設計ドキュメント (サイドバー) |
-| リリースティアとサポート期間 | [リリースライフサイクル](RELEASE_LIFECYCLE_STANDARD.md) + [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) |
+| サブシステムがなぜその形なのかを知る | 設計ノート (サイドバー) |
+| リリースティアとサポート期間 | [リリースライフサイクル標準](RELEASE_LIFECYCLE_STANDARD.md) + [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) |
 
 ## 3 つの記憶タイプ { #the-three-memory-types }
 

@@ -28,8 +28,8 @@ different operating points.
 | Run it well: backup, tuning, degradation, corpus indexing | [Operations Runbook](operations.md) |
 | Look up an environment variable | [Configuration](configuration.md) |
 | Quick answers to common operator questions | [FAQ](faq.md) |
-| Understand a subsystem's design | Design documents (sidebar) |
-| Release tiers and support windows | [Release lifecycle](RELEASE_LIFECYCLE_STANDARD.md) + [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) |
+| Understand why a subsystem works the way it does | Design notes (sidebar) |
+| Release tiers and support windows | [Release lifecycle standard](RELEASE_LIFECYCLE_STANDARD.md) + [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) |
 
 ## The three memory types
 
