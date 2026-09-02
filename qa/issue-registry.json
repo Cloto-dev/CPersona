@@ -4032,12 +4032,12 @@
       "discovered": "2026-09-02T00:00:00Z",
       "version": "2.5.9a2",
       "file": "cpersona/tasks.py",
-      "pattern": "await self\\._forget_vanished_rows\\(\\)",
+      "pattern": "bug-277",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-claim",
-      "fix_sketch": "Reach the reconcile on every way a pass can end, without letting it convert a successful drain into a failed one — those are the two constraints, and the original placement satisfied only the second. A `finally` that swallows and logs its own exception does both; so does reconciling at the top of the next pass instead of the end of this one, which additionally covers the never-started queue. Whichever is chosen, the claim to pin is the one the design note makes ('a drain pass ends by reconciling the map against the rows that still exist'), so the test should abort a pass and then assert the map is clean — not assert that a particular call site was reached.",
-      "note": "Found by the v2.5.8..v2.5.9a2 release-gate audit and reproduced before filing. Same class as bug-270 itself: a claim stated more strongly than the code holds it. The consequence is unchanged from bug-270 — cap pressure and an early eviction of a live entry, no wrong pause decision — which is why this is LOW despite being a recurrence. The audit found it by being handed the registry's known-issue list for these files and told to name any id it saw recurring, which is what it did."
+      "note": "Found by the v2.5.8..v2.5.9a2 release-gate audit and reproduced before filing. Same class as bug-270 itself: a claim stated more strongly than the code holds it. The consequence is unchanged from bug-270 — cap pressure and an early eviction of a live entry, no wrong pause decision — which is why this is LOW despite being a recurrence. The audit found it by being handed the registry's known-issue list for these files and told to name any id it saw recurring, which is what it did.",
+      "fix_note": "Moved the reconcile into a finally that swallows and logs its own exception, which is the one shape that satisfies both constraints: it is reached however a pass ends, and it cannot turn a drain that succeeded into a drain that aborted — the thing the original placement was right about. The justification that replaced it misread 're-arming': _loop catches, logs and returns to awaiting the event, so the loop survived but no further pass was scheduled, and with no later enqueue none ever runs. Reconciling at the top of the next pass was the other candidate and was not taken: it has the same hole for a queue whose loop never runs again, and it delays the cleanup by one pass for no gain. The test aborts a pass and asserts the map is clean, which is the claim the design note makes, rather than asserting a call site was reached; a third case pins that the ordinary pass still reconciles, since a finally that never ran would otherwise satisfy the other two."
     },
     {
       "id": "bug-278",
