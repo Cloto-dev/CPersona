@@ -139,6 +139,21 @@ class LookupEmbeddingClient:
             results.append(emb)
         return results
 
+    async def embed_with_outcome(self, texts: list[str]):
+        """The entry point the recall path reads since the failure side learned
+        to ask whether a call was attempted. A double that offers only
+        ``embed()`` sends the path under measurement into an ``AttributeError``
+        instead of the branch it exists to exercise. Derived from ``embed()``
+        so the two cannot disagree."""
+        from cpersona._vendored_mcp_common.embedding_client import EmbedOutcome
+
+        result = await self.embed(texts)
+        return result, EmbedOutcome(
+            attempted=True,
+            ok=bool(result),
+            error=None if result else "no pre-computed embedding for this text",
+        )
+
     @staticmethod
     def pack_embedding(embedding: list[float]) -> bytes:
         import struct

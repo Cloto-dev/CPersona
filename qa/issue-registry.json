@@ -4139,6 +4139,20 @@
       "category": "gate-reach",
       "note": "Found by the release-gate audit while reviewing the gate scripts, and confirmed by reading tree_is_clean. Not reproduced by staging a file, because doing so in this working tree would have disturbed the release branch.",
       "fix_note": "tree_is_clean now asks git for the staged set as well as the unstaged one. The end-of-run `git diff --quiet` check was deliberately left alone: a mutant left on disk is by construction an unstaged write, and widening that one would trip on staged work the run never touched. The test pins the query and not only the verdict — a guard that refused everything would satisfy a verdict-only assertion while measuring nothing — and it runs against a stubbed git rather than staging a file in the real tree."
+    },
+    {
+      "id": "bug-285",
+      "summary": "(MEDIUM) The lost-embedding probe that guards the contiguous index binds one SQL parameter per selected row, so a scan window above SQLite's variable limit turns the index from an accelerator into a hard failure. `_index_rows_lost_embedding` builds `IN (?, ?, ...)` with one placeholder per id in the selection, and the selection is the scan window. SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 32,766 (3.32+); the probe raises `sqlite3.OperationalError: too many SQL variables` at any window above it, and the call sits outside the `IndexUnusable` guard in `_index_phase1`, so the error escapes `_search_vector` and the recall fails instead of falling back to the scan. Reproduced on macOS Python 3.11 (SQLite 3.50.4, limit 32,766) with CPERSONA_MAX_MEMORIES=40000 and an index built over 40,000 rows: every recall raised. The reference measurement machine's build allows 250,000 variables, which is why the 100,000-row window measured there ran at all. The same probe is also 72 ms of a 212 ms arm at that window — cost and correctness share a cause, the parameter list scaling with the selection.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-02T07:10:00Z",
+      "version": "2.5.9",
+      "file": "cpersona/vector.py",
+      "pattern": "def _index_rows_lost_embedding",
+      "expected": "present",
+      "status": "open",
+      "category": "silent-failure",
+      "fix_sketch": "Bound the probe by the selection's shape rather than by its size: for the common all-index case the selected ids are one contiguous id range, so `WHERE id BETWEEN ? AND ? AND embedding IS NULL LIMIT 1` asks the same question with two parameters; for a scattered selection, chunk the ids at a fixed size well under the smallest limit a supported build ships with. Whichever shape is used, the probe must stay inside a guard that degrades to the scan on an operational error — a derived, optional artifact must never turn a query into a failure. Add a test that runs the index path at a window above 32,766 against `sqlite3.connect(...).getlimit(SQLITE_LIMIT_VARIABLE_NUMBER)` lowered via `setlimit`, so the failure is reproducible on every build rather than only on ones that ship the default.",
+      "note": "Found by the segment profile taken after the contiguous-view change (benchmarks/measurements/results-contiguous-index.md), which showed the probe as the second-largest term, and confirmed as a failure rather than a cost by running the measurement script on a build with the default limit. Registered open: the view change it was found under does not touch the probe, and the fix changes what the function promises (its bound) rather than only its speed."
     }
   ]
 }
