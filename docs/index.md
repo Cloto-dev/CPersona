@@ -153,7 +153,7 @@ A machine-readable index of these pages is published at
 teaches an agent the day-to-day store / recall / archive workflow and links
 back here for the canonical detail.
 
-## Sponsorship
+## :material-gift-outline: Sponsorship { #sponsorship }
 
 CPersona is MIT-licensed and stays that way regardless. If it has become useful
 and you want the work to continue, [sponsorship](sponsorship.md) explains what

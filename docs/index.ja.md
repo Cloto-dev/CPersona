@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:3fcdc1f019c768d9be67fa38ea2c2137051209b5 -->
+<!-- i18n-source: docs/index.md@blob:d347d1c2bca465bef6414ec6bad508251d09342d -->
 
 # CPersona ドキュメント
 
@@ -148,7 +148,7 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 はエージェントに store / recall / archive の日常ワークフローを教え、正確な詳細は
 このサイトへリンクで戻します。
 
-## 支援について { #sponsorship }
+## :material-gift-outline: 支援について { #sponsorship }
 
 CPersona は MIT ライセンスで、それはこの先も変わりません。役に立って、
 この作業が続いてほしいと思っていただけたなら、[支援のページ](sponsorship.md)に
