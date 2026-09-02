@@ -14,6 +14,11 @@ Checked facts and their sources of truth:
   schema version  SCHEMA_VERSION literal in cpersona/database.py
   env defaults    static parse of cpersona/config.py, compared against every
                   markdown table row in docs/ that names a `CPERSONA_*` var
+  env names       every `CPERSONA_*` token in the checked pages, wherever it is
+                  written, must be a name the package actually reads — the
+                  table-row reading above left inline bullets and code fences
+                  unchecked, which is where the broken-install reference page
+                  writes all of its variables
   latest release  the newest final `vX.Y.Z` git tag, compared against every
                   "latest v2.5.4" / "Latest release: 2.5.4" claim. Version
                   freshness is the one fact that rots on a schedule — it goes
@@ -354,6 +359,66 @@ def check_env_tables(env_defaults: dict[str, str]) -> None:
                     f"{rel}: `{var}` documented default `{documented}` != "
                     f"config.py default `{actual}`"
                 )
+
+
+# A `CPERSONA_*` token anywhere in a page. The trailing `*` is kept because
+# prose uses it to name a family (`CPERSONA_CALIBRATE_*`); the bare prefix
+# `CPERSONA_` is not matched, since `+` requires at least one character after
+# the underscore and pages legitimately name the prefix itself.
+_ENV_NAME = re.compile(r"CPERSONA_[A-Za-z0-9_]+\*?")
+
+
+def known_env_names() -> set[str]:
+    """Every `CPERSONA_*` name the package reads, as written in its source."""
+    package_source = "\n".join(p.read_text() for p in (ROOT / "cpersona").glob("*.py"))
+    return set(re.findall(r"""["'](CPERSONA_[A-Z0-9_]+)["']""", package_source))
+
+
+def env_name_violations(text: str, known: set[str]) -> list[tuple[int, str]]:
+    """(line, token) for every `CPERSONA_*` name in `text` the source never reads.
+
+    Split out from the file walk so it can be exercised on a page's text with a
+    mutation applied — the gap this closes was found that way, and proving the
+    repair should not require writing a mutated page to disk.
+    """
+    found: list[tuple[int, str]] = []
+    reported: set[str] = set()
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for token in _ENV_NAME.findall(line):
+            if token in reported:
+                continue
+            if token.endswith("*"):
+                # A family name is checked through its members, not waived. An
+                # allowlist entry would stop checking the prefix itself; this
+                # way a typo in the prefix still fails, and narrowing is how
+                # the gate got here.
+                if any(name.startswith(token[:-1]) for name in known):
+                    continue
+            elif token in known:
+                continue
+            reported.add(token)
+            found.append((lineno, token))
+    return found
+
+
+def check_env_names() -> None:
+    """Every `CPERSONA_*` name a page writes must be one the source reads.
+
+    `check_env_tables` reads table rows only, so a name written as a bullet or
+    inside a code fence went unchecked — and the reference page a reader with a
+    broken install is sent to writes all of its variables that way, which put
+    every one of them outside the gate (bug-282). Measured by mutation before
+    this existed: a typo in that page's inline bullet left the gate at exit 0.
+
+    This answers only "is this name real". Whether a *table* is complete and
+    states the current default stays with `check_env_tables`; the two questions
+    are different and widening one is not a reason to drop the other.
+    """
+    known = known_env_names()
+    for doc in DOC_FILES:
+        rel = doc.relative_to(ROOT)
+        for lineno, token in env_name_violations(doc.read_text(), known):
+            fail(f"{rel}:{lineno}: names `{token}`, which no environment variable the source reads matches")
 
 
 _AXIS_COUNT_CLAIMS = (
@@ -721,6 +786,7 @@ def main() -> int:
     check_tool_and_schema_claims(tool_count, schema_version)
     check_manifest_version(project_version)
     check_env_tables(env_defaults)
+    check_env_names()
     check_volatile_claims(stats)
     check_release_claims(finals)
     check_axis_claims(acceptance)

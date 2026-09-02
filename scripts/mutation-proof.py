@@ -23,7 +23,9 @@ Usage:
     uv run python scripts/mutation-proof.py            # all mutations
     uv run python scripts/mutation-proof.py --id M01   # one, for iterating
 
-Safety: the working tree must be clean for the target files. Each mutation is
+Safety: the working tree must be clean for the target files, staged edits
+included — a mutant applied over a staged change describes a tree nobody is
+shipping, and that run still goes green. Each mutation is
 applied by exact string replacement and reverted in a finally block; the run
 ends by asserting `git diff --quiet` so a crash can never leave a mutant on
 disk. Mutants are never committed.
@@ -294,7 +296,13 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 
 def tree_is_clean(files: set[str]) -> bool:
+    # bug-283: staged edits count. `git diff` alone reports only the unstaged set, so a
+    # target file that was edited and then `git add`ed reads as clean, and the
+    # run measures mutants applied on top of code nobody is shipping — while
+    # reporting every seam pinned. The failure is quiet in the green direction,
+    # which is the one direction this guard exists to rule out.
     out = run(["git", "diff", "--name-only"]).stdout.split()
+    out += run(["git", "diff", "--cached", "--name-only"]).stdout.split()
     dirty = files & set(out)
     if dirty:
         print(f"!! working tree has uncommitted changes in target files: {sorted(dirty)}")

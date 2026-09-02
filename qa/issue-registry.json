@@ -4119,12 +4119,12 @@
       "discovered": "2026-09-02T00:00:00Z",
       "version": "2.5.9a2",
       "file": "scripts/check-docs-facts.py",
-      "pattern": "def check_env_tables",
+      "pattern": "bug-282",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "Scan for the CPERSONA_ prefix wherever it appears in the tracked docs rather than only inside table rows, and keep the table-shaped check as it is — the two answer different questions (is this name real, versus is this table complete). Expect the widened scan to surface names that are deliberately illustrative; those want an explicit allowlist rather than a narrower scan, because narrowing is how the gate got here. Prove the widening with the same mutation that exposed the gap: a typo in an inline bullet must fail the gate.",
-      "note": "Found by the release-gate audit and reproduced before filing. Same class as the pause-seam exemption (bug-273) and Gate 10b: a gate is green only over the surface its own pattern reaches, and the surface here is narrower than the docs it is trusted for."
+      "note": "Found by the release-gate audit and reproduced before filing. Same class as the pause-seam exemption (bug-273) and Gate 10b: a gate is green only over the surface its own pattern reaches, and the surface here is narrower than the docs it is trusted for.",
+      "fix_note": "Widened the reading rather than the exemption list: a new check_env_names scans every CPERSONA_* token in the tracked pages, and check_env_tables keeps the table-row reading untouched because the two answer different questions (is this name real, versus is this table complete). The one construct the widening surfaced was `CPERSONA_CALIBRATE_*`, a family named in prose; it is satisfied by requiring a real member with that prefix rather than by an allowlist entry, so a typo in the prefix itself still fails — allowlisting the token would have given that up, and narrowing is how the gate got here. The scan is split into env_name_violations(text, known) so the repair is proved on a page's text with the mutation applied, without writing a mutated page to disk."
     },
     {
       "id": "bug-283",
@@ -4133,12 +4133,12 @@
       "discovered": "2026-09-02T00:00:00Z",
       "version": "2.5.9a2",
       "file": "scripts/mutation-proof.py",
-      "pattern": "def tree_is_clean",
+      "pattern": "bug-283",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "Ask git for both the staged and the unstaged sets (`git diff --name-only` plus `git diff --cached --name-only`, or `git status --porcelain` filtered to the target files) before deciding the tree is clean. The assertion to add alongside is the one the guard exists to support: stage a target file and require the harness to refuse.",
-      "note": "Found by the release-gate audit while reviewing the gate scripts, and confirmed by reading tree_is_clean. Not reproduced by staging a file, because doing so in this working tree would have disturbed the release branch."
+      "note": "Found by the release-gate audit while reviewing the gate scripts, and confirmed by reading tree_is_clean. Not reproduced by staging a file, because doing so in this working tree would have disturbed the release branch.",
+      "fix_note": "tree_is_clean now asks git for the staged set as well as the unstaged one. The end-of-run `git diff --quiet` check was deliberately left alone: a mutant left on disk is by construction an unstaged write, and widening that one would trip on staged work the run never touched. The test pins the query and not only the verdict — a guard that refused everything would satisfy a verdict-only assertion while measuring nothing — and it runs against a stubbed git rather than staging a file in the real tree."
     }
   ]
 }
