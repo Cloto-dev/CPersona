@@ -24,7 +24,7 @@ your token budget; the calling agent (you) does all summarization. (Embedding
 is separate: `EMBEDDING_MODE=api` bills per store and per recall against
 `CPERSONA_EMBEDDING_API_URL`. The local `http` mode and `none` cost nothing.)
 
-- **30 tools**, single SQLite file, MIT licensed.
+- **31 tools**, single SQLite file, MIT licensed.
 - Works with Claude Desktop, Claude Code, and any MCP host.
 - Repo: <https://github.com/Cloto-dev/cpersona>
 
@@ -307,6 +307,12 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
   cut). The form to read at the end of a session, before deciding whether to repair.
 - `export_memories` / `import_memories` — JSONL portability (idempotent import).
 - `merge_memories` — atomically fold one agent's data into another, de-duped.
+- `check_update()` — is a newer release of the server itself available, or has
+  the running one been withdrawn. The same verdict arrives unasked as an
+  `update` key on a `recall` response (once per session): relay its `message`
+  and `install.command` to the user. Never call `check_update(apply=true)`
+  without the user's explicit go-ahead — it installs software, and the server
+  must be restarted afterwards.
 
 ### Operating knowledge (canonical: `docs/`)
 
@@ -359,6 +365,7 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 | Portability | `export_memories`, `import_memories`, `merge_memories` |
 | Channels / multi-user | `migrate_channel_axis` (plus `channel` on `store` / `recall`, and `source_id` on `recall` — a write carries its producer in `message.source.id`, which `recall(source_id=…)` prefix-matches) |
 | Health | `check_health`, `deep_check`, `get_session_findings`, `get_queue_status` |
+| Server version | `check_update` — is a newer (or a withdrawn) release of the server itself in play; installing one is opt-in and needs a restart |
 | Operator context | `get_operating_context` |
 
 Argument details live in each tool's MCP description; the grouped reference
@@ -428,7 +435,7 @@ and the backfill for rows written while the backend was down.
 
 ## Key facts
 
-- 30 tools · Schema v13 (auto-migrating) · ~18,350 LOC Python across focused modules · MIT.
+- 31 tools · Schema v13 (auto-migrating) · ~19,800 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 /absolute/path/cpersona.db ".backup 'backup.db'"`, substituting the

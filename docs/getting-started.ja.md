@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:1c78ddffee61fc53be55a37d8276c5b04eb18fc4 -->
+<!-- i18n-source: docs/getting-started.md@blob:0ea0323ff403a6e887aea698b92c706bbee6b439 -->
 
 # はじめに
 
@@ -60,6 +60,12 @@ pip install .
 
 実行は `python -m cpersona` (または `python server.py`)。
 </details>
+
+サーバーは起動時に pypi.org へ新しいリリースの有無を問い合わせ、結果を `recall`
+(および `check_health`) を通じて呼び出し側のエージェントに伝えます。必要なときは
+`check_update` で照会できます。`CPERSONA_UPDATE_CHECK=false` で無効化できます。
+更新が自動で行われることはありません — 明示的な `check_update(apply=true)` と
+再起動が必要です。
 
 ## 2. 埋め込みサーバーを立てる (推奨) { #2-set-up-an-embedding-server-recommended }
 

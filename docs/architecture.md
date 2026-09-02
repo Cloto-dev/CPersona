@@ -214,3 +214,17 @@ v2.5.3 made that refusal **unconditional**; earlier versions inferred it from
 the bind address, which is not a reachability boundary. The requirements and
 per-client ACLs are covered in
 [Remote HTTP transport](configuration.md#remote-http-transport).
+
+Under stdio the client owns the process and the server opens **no listening
+port** — nothing can connect to it. It is not, however, entirely offline: by
+default it makes one *outbound* connection per process start, to `pypi.org`,
+asking for this project's public package index and reading the answer. That is
+how it can tell you a newer release exists, or that the release you are running
+has been withdrawn. It sends nothing about this deployment — no identifier, no
+corpus, no configuration; the request is the same one any `pip install` makes,
+and the User-Agent is httpx's default. What it keeps is a small JSON file
+beside the database (`update-check.json`) holding the verdict and when it was
+fetched, so a restart inside the next 24 hours makes no request at all. Set
+`CPERSONA_UPDATE_CHECK=false` to switch the whole thing off: no fetch, no file,
+no notice. Nothing is ever installed without an explicit
+[`check_update(apply=true)`](tools.md#server-version).

@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Cloto-dev/cpersona",
   "title": "CPersona",
-  "description": "Persistent AI memory in one SQLite file: 3-layer hybrid search, confidence scoring, 30 tools.",
+  "description": "Persistent AI memory in one SQLite file: 3-layer hybrid search, confidence scoring, 31 tools.",
   "version": "2.5.10",
   "websiteUrl": "https://github.com/Cloto-dev/cpersona#readme",
   "repository": {
@@ -38,6 +38,11 @@
           "name": "CPERSONA_RECALL_MODE",
           "description": "Recall fusion strategy: 'rrf' (default), 'rsf', or 'cascade'.",
           "default": "rrf"
+        },
+        {
+          "name": "CPERSONA_UPDATE_CHECK",
+          "description": "Check the package index once per process start for a newer (or withdrawn) release and report it through recall / check_health / check_update. Set to false for no outbound request at all. Updating is never automatic.",
+          "default": "true"
         }
       ]
     }

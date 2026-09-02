@@ -14,6 +14,7 @@ from cpersona import checks as checks_registry
 from cpersona import config
 from cpersona import findings as findings_seam
 from cpersona import session
+from cpersona import update_check
 from cpersona import vector
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where
@@ -238,6 +239,23 @@ async def do_check_health(
     # verdict measured after the commit (bug-059), so a repaired database is not
     # reported unhealthy for the issues it just fixed. On a fix=False run the two
     # are the same run.
+    # The one finding on this surface that is not about the database (2.5.11).
+    # It reads the verdict the startup check left in memory — no fetch, no file,
+    # no repair — so it costs a check_health run nothing and cannot fail one.
+    # Appended after the residual re-run because it is not a residue of anything:
+    # a fix run cannot install software, and re-deriving it would only invite the
+    # summary and the issue list to disagree.
+    #
+    # Counted in severity_summary like every other issue, because a list whose
+    # entries are not all counted makes both numbers unreadable. What that costs
+    # is bounded and deliberate: `update_available` is info, which never moves
+    # `status`; only a running version whose files were ALL withdrawn is warn, and
+    # `degraded` is the honest verdict for a server running a release its
+    # publisher retracted.
+    for issue in update_check.health_issues():
+        issues.append(issue)
+        severity_summary[issue["severity"]] += 1
+
     result = {
         "total_memories": total,
         "issues": issues,
@@ -538,6 +556,59 @@ async def do_get_session_findings(
         delivered["identity_shared"] = True
     delivered["_meta"] = {"server_version": _server_version()}
     return delivered
+
+
+async def do_check_update(refresh: bool = False, apply: bool = False) -> dict:
+    """Report whether a newer release of this server exists, and optionally install it.
+
+    Three modes, and only one of them touches anything:
+
+    - default — answers from the verdict the startup check left in memory (or
+      says ``unknown`` if none completed). No network, no disk, no delay.
+    - ``refresh=true`` — performs the fetch now, bounded by
+      ``update_check.TIMEOUT_SECONDS``, and updates both the cache and the
+      in-memory verdict.
+    - ``apply=true`` — runs the detected update command as an argv list. Never
+      implicit, never a shell string, and never enough on its own: the process
+      that answered this call keeps running the old code until it is restarted.
+
+    ``apply`` is deliberately NOT gated on the no-persist pause. The pause
+    exists so a benchmark or throwaway session leaves no trace in the corpus,
+    and installing a package writes no memory row — refusing here would extend
+    a data-hygiene switch into an unrelated operation and leave an operator
+    unable to repair a yanked install without first clearing it.
+    """
+    if refresh:
+        # Its result is not read here: refresh() stores what it fetched, and
+        # current() is the one reader of that state. Two ways to obtain the same
+        # verdict is how the two start to disagree.
+        await update_check.refresh()
+    current = update_check.current()
+    install = update_check.detect_install(current.get("available"))
+    result = {
+        "enabled": current["enabled"],
+        "state": current["state"],
+        "kind": current.get("kind"),
+        "running": current["running"],
+        "available": current.get("available"),
+        "reason": current.get("reason"),
+        "checked_at": current.get("checked_at"),
+        "refreshed": bool(refresh),
+        "install": update_check._public_install(install),
+        "_meta": {"server_version": _server_version()},
+    }
+    if current.get("kind"):
+        result["message"] = update_check.describe(current, install)
+    if apply:
+        if not current["enabled"]:
+            result["apply_result"] = {
+                "applied": False,
+                "reason": "update checking is disabled (CPERSONA_UPDATE_CHECK=false), so "
+                "there is no verdict to act on",
+            }
+        else:
+            result["apply_result"] = await update_check.apply()
+    return result
 
 
 def _server_version() -> str:

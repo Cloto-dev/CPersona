@@ -9,7 +9,7 @@ dynamic = ["version"]
 # not a file in this tree — so changing this line means also running:
 #   gh repo edit Cloto-dev/cpersona --description "<this string>"
 # Both said 29 for two releases while every gated page said 30 (2026-08-31).
-description = "CPersona — Persistent AI memory server with 3-layer hybrid search, confidence scoring, and 30 tools. MIT licensed."
+description = "CPersona — Persistent AI memory server with 3-layer hybrid search, confidence scoring, and 31 tools. MIT licensed."
 requires-python = ">=3.11"
 license = {text = "MIT"}
 readme = "README.md"

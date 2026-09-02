@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:454305964ed6898da7ac7736a17e29641870e1bb -->
+<!-- i18n-source: docs/configuration.md@blob:2e010e3d8279bd586ef1071ed9385d47215041fe -->
 
 # 設定リファレンス
 
@@ -30,6 +30,8 @@
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。autocut は類似度スケールのシグナル — confidence スコアリング下、あるいは `cascade` が作る生 cosine だけの均質なリスト — に対して発火し、`rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。したがってこのつまみが働くかどうかを決めるのは融合モードです |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | 融合後の品質ゲート。無効化は最終手段です: フィルタはプール規模のヒューリスティックにフォールバックし、粗くはなりますが弱い一致は依然として弾かれます — 失うのはこのコーパスに対して測定された動作点です |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | 埋め込みが利用不能な間、recall 応答に `advisory` を付ける ([runbook](operations.md#detecting-a-dead-embedding-server)) |
+| `CPERSONA_UPDATE_CHECK` | `true` | プロセス起動ごとに 1 回 pypi.org を参照し、このサーバーの新しい — あるいは撤回された — リリースを検出して `recall` / `check_health` / `check_update` で報告する ([何を送るか](architecture.md#transports))。`false` で機能全体を無効化します: リクエストもキャッシュファイルも通知もありません。どちらの設定でも更新が自動で行われることはありません |
+| `CPERSONA_UPDATE_CHECK_INTERVAL_SECONDS` | `86400` | その判定が有効な期間。データベースの隣の `update-check.json` にキャッシュされ、この時間内の再起動ではリクエストが発生しません |
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `true` | エピソード境界ペナルティ ([契約 §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | 境界より前の記憶に対する 1 時間あたりの減衰率 |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | ペナルティの下限 (古い記憶でも最大で半分まで) |

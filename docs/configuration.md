@@ -26,6 +26,8 @@
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | Result sets smaller than this are never autocut. Autocut fires on similarity-scale signals — under confidence scoring, or on the homogeneous raw-cosine list `cascade` produces — and is deliberately inert under `rsf`/`rrf` ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)), so the fusion mode decides whether this knob does anything |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | The post-fusion quality gate. Disabling it is a last resort: filtering falls back to the pool-size heuristic, which is coarser but still rejects weak matches — what you lose is the operating point measured for this corpus |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | Attach an `advisory` to recall responses while embeddings are unavailable ([runbook](operations.md#detecting-a-dead-embedding-server)) |
+| `CPERSONA_UPDATE_CHECK` | `true` | Check pypi.org once per process start for a newer — or withdrawn — release of this server, and report it through `recall` / `check_health` / `check_update` ([what it sends](architecture.md#transports)). `false` disables the feature entirely: no request, no cache file, no notice. Updating is never automatic either way |
+| `CPERSONA_UPDATE_CHECK_INTERVAL_SECONDS` | `86400` | How long that verdict stays usable, cached in `update-check.json` beside the database — a restart inside the window makes no request |
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `true` | Episode boundary penalty ([contract §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | Penalty decay rate per hour before the boundary |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | Penalty floor (older memories are at most halved) |
