@@ -75,6 +75,12 @@ plugins:
             CLAUDE.md policy standard: CLAUDE.md ポリシー標準
             SuperAuditor standard: SuperAuditor 標準
 
+# Sidebar category labels only. Kept as a stylesheet rather than an override
+# so that the theme keeps owning the markup — this file changes two colours and
+# states the measured before/after for each.
+extra_css:
+  - stylesheets/extra.css
+
 markdown_extensions:
   - admonition
   # Translated pages carry explicit heading ids ({ #english-slug }) so that a

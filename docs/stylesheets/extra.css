@@ -1,0 +1,47 @@
+/* Sidebar category labels, one step dimmer than the theme's default.
+ *
+ * The nav groups pages by what the reader came to do, so the group labels are
+ * signposts rather than destinations — none of them is a page, and the two
+ * outer levels are not even clickable. At the theme's default weights they
+ * competed with the page titles underneath them, which is the opposite of what
+ * a signpost should do.
+ *
+ * Measured against the built theme (mkdocs-material 9.7.7) rather than guessed:
+ *
+ *   level                       selector                        before -> after
+ *   top-level section           .md-nav__item--section > label   .54/.56 -> .46/.48
+ *   nested sub-section          .md-nav__item--nested > label    .87/.82 -> .58/.60
+ *   page links (untouched)      .md-nav__link                    .87/.82
+ *
+ * Material already dimmed the top level (--md-default-fg-color--light); the
+ * nested level it did not, which is why the sub-sections read as the brightest
+ * thing in the sidebar. Both alphas are set here as one pair of variables so
+ * the relationship between the levels stays visible and adjustable in one edit.
+ *
+ * The two schemes are given separately because the theme's own palettes are:
+ * light lays black over white, slate lays a near-white hue over dark, and an
+ * alpha that reads as "one step back" on one is not the same number on the
+ * other. `[data-md-color-scheme="slate"]` matches the attribute the theme puts
+ * on <body>, so the toggle keeps working without a media query.
+ */
+
+:root {
+  --cp-nav-category-color: rgba(0, 0, 0, 0.46);
+  --cp-nav-subcategory-color: rgba(0, 0, 0, 0.58);
+}
+
+[data-md-color-scheme="slate"] {
+  --cp-nav-category-color: hsla(var(--md-hue), 15%, 90%, 0.48);
+  --cp-nav-subcategory-color: hsla(var(--md-hue), 15%, 90%, 0.60);
+}
+
+/* Scoped to the primary sidebar: the table of contents on the right is built
+ * from the same md-nav classes, and dimming a heading the reader is actively
+ * tracking is a different question from dimming a static signpost. */
+.md-nav--primary .md-nav__item--section > .md-nav__link[for] {
+  color: var(--cp-nav-category-color);
+}
+
+.md-nav--primary .md-nav__item--nested:not(.md-nav__item--section) > .md-nav__link[for] {
+  color: var(--cp-nav-subcategory-color);
+}
