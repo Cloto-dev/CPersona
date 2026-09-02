@@ -602,35 +602,27 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
     ids are assigned fresh, so an old export restored into a newer database
     produces new ids bearing old timestamps. Both runs are already ordered, so
     merging them costs nothing over prepending and does not have the failure mode.
+
+    When the tail is empty there is nothing to interleave: the output is the
+    selection itself, in the order `select()` already returns it, and it is
+    taken as one numpy slice rather than walked one position at a time. Measured
+    at 100,000 rows the walk was 79 ms of a 212 ms arm for a comparison it never
+    needed to make (benchmarks/measurements/results-contiguous-index.md). The
+    walk stays for the shape that needs it, and a test pins that the empty-tail
+    shape does not enter it.
     """
     import numpy as np
 
-    created = index.created_at
-    ids_arr = index.ids
-
-    merged_ids: list[int] = []
-    from_index: list[int] = []   # positions in the index, in output order
-    index_slots: list[int] = []  # where each of those lands in the matrix
-    from_tail: list[tuple[int, bytes]] = []
-
-    i = j = 0
-    while len(merged_ids) < scan_limit and (i < len(positions) or j < len(tail)):
-        take_index = j >= len(tail)
-        if not take_index and i < len(positions):
-            pos = positions[i]
-            t_created = tail[j][1].encode("ascii")
-            # created_at DESC, then id ASC: the exact key the SQL ORDER BY spells.
-            take_index = (created[pos], -int(ids_arr[pos])) > (t_created, -int(tail[j][0]))
-        if take_index:
-            pos = int(positions[i])
-            index_slots.append(len(merged_ids))
-            from_index.append(pos)
-            merged_ids.append(int(ids_arr[pos]))
-            i += 1
-        else:
-            from_tail.append((len(merged_ids), tail[j][2]))
-            merged_ids.append(int(tail[j][0]))
-            j += 1
+    if not tail:
+        positions = np.asarray(positions, dtype=np.int64)[:scan_limit]
+        merged_ids = index.ids[positions].tolist()
+        from_index = positions
+        from_tail: list[tuple[int, bytes]] = []
+        index_slots = np.arange(len(positions))
+    else:
+        merged_ids, from_index, index_slots, from_tail = _interleave_index_and_tail(
+            index, positions, tail, scan_limit
+        )
 
     if not merged_ids:
         return [], np.empty((0, query_dim), dtype=np.float32)
@@ -658,11 +650,11 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
         # because the candidate matrix is only ever read: its one consumer is
         # `_cosine_matrix`, whose `mat @ query_vec` allocates its own result.
         # Anything here that wrote into the matrix would have to copy first.
-        start = from_index[0]
+        start = int(from_index[0])
         return merged_ids, index.embeddings[start:start + len(from_index)]
 
     mat = np.empty((len(merged_ids), query_dim), dtype=np.float32)
-    if from_index:
+    if len(from_index):
         # One vectorised gather: a memcpy out of the mapped file, never a Python
         # object per row, which is the 72.9% this whole change is about.
         mat[index_slots] = index.embeddings[from_index]
@@ -671,25 +663,67 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
     return merged_ids, mat
 
 
-def _is_ascending_run(positions: list[int]) -> bool:
+def _interleave_index_and_tail(index, positions, tail, scan_limit: int):
+    """The merge walk: one tuple comparison per output row, for a non-empty tail.
+
+    Returns `(merged_ids, from_index, index_slots, from_tail)` — the ids in
+    output order, the index positions taken and the output slots they land in,
+    and the tail rows taken with theirs. Separate from `_merge_index_and_tail`
+    so that the shape which does not need the walk can be pinned as not paying
+    for it.
+    """
+    created = index.created_at
+    ids_arr = index.ids
+
+    merged_ids: list[int] = []
+    from_index: list[int] = []   # positions in the index, in output order
+    index_slots: list[int] = []  # where each of those lands in the matrix
+    from_tail: list[tuple[int, bytes]] = []
+
+    i = j = 0
+    while len(merged_ids) < scan_limit and (i < len(positions) or j < len(tail)):
+        take_index = j >= len(tail)
+        if not take_index and i < len(positions):
+            pos = positions[i]
+            t_created = tail[j][1].encode("ascii")
+            # created_at DESC, then id ASC: the exact key the SQL ORDER BY spells.
+            take_index = (created[pos], -int(ids_arr[pos])) > (t_created, -int(tail[j][0]))
+        if take_index:
+            pos = int(positions[i])
+            index_slots.append(len(merged_ids))
+            from_index.append(pos)
+            merged_ids.append(int(ids_arr[pos]))
+            i += 1
+        else:
+            from_tail.append((len(merged_ids), tail[j][2]))
+            merged_ids.append(int(tail[j][0]))
+            j += 1
+    return merged_ids, from_index, index_slots, from_tail
+
+
+def _is_ascending_run(positions) -> bool:
     """Whether these positions are `a, a+1, ..., a+n-1`, in that order.
 
     Spelled exactly rather than cheaply: the span test (`last - first == n - 1`)
     also admits `[0, 0, 1, 3]`, and the caller uses this answer to let one slice
     of the mapped file stand in for the rows the selection names -- a predicate
     that is right about the common case and wrong about an unusual one would
-    return the wrong rows rather than the slow ones. The walk is O(n) over a
-    selection already bounded by the scan window, against the row-by-row copy of
-    that same selection it decides whether to skip.
+    return the wrong rows rather than the slow ones. Element-wise against the
+    arithmetic progression it claims to be, in numpy rather than one Python
+    comparison per position: the same exact test, measured 7 ms cheaper at
+    100,000 rows.
 
     An empty selection is not a run: the caller cannot reach it (it returns the
     empty matrix earlier), and answering True would hand back a zero-row slice
     of the file on some future path that could.
     """
-    if not positions:
+    import numpy as np
+
+    arr = np.asarray(positions)
+    if arr.size == 0:
         return False
-    first = positions[0]
-    return all(p == first + offset for offset, p in enumerate(positions))
+    first = int(arr[0])
+    return bool(np.array_equal(arr, np.arange(first, first + arr.size)))
 
 async def _scan_memories_local(
     db: aiosqlite.Connection,

@@ -226,3 +226,52 @@ Two measurements that shaped the statement rather than the design:
   rowid lookups each cost 41 ms end to end, against 25 ms for the range —
   the bytes SQLite reads are the same, and the parameter binding is not
   where the time goes.
+
+### The walk, removed for the shape that never needed it
+
+Same machine, same script, same regime. `_merge_index_and_tail` no longer
+enters the interleave walk when the tail is empty — the selection is the
+answer, in the order `select()` already returns it, taken as one numpy slice —
+and `_is_ascending_run` tests the run element-wise in numpy instead of one
+Python comparison per position. The walk itself is unchanged and still runs
+for a non-empty tail. Before/after is the code again: the probe bound above is
+in both columns.
+
+| Corpus / window | scan | index, before | index, after | after vs before | after vs scan |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10,000 / 10,000 | 79.2 ms | 15.5 ms | **8.8 ms** | 1.76x | 9.03x |
+| 100,000 / 100,000 | 603.7 ms | 145.6 ms | **77.4 ms** | 1.88x | **7.80x** |
+
+`do_recall` at 100,000 / 100,000: 367 → **299 ms**; at 10,000 / 10,000:
+37.6 → **30.5 ms**. The non-vector part is unchanged (22 ms / 221 ms).
+
+The 7x that was predicted for the arm before any of this was measured is now
+the arm's number, one change later than the prediction expected: the
+prediction was for the bytes, and the bytes were 18x by the view; what the
+walk and the probe added on top was Python-level O(n) that the sync harness
+never had to pay. The segment profile at 100,000 / 100,000, median of 12:
+
+| Segment | Median | Share |
+| --- | ---: | ---: |
+| `_search_vector` total | 76.6 ms | |
+| `_index_phase1` | 43.5 ms | 57% |
+| ├ `_index_rows_lost_embedding` | 29.0 ms | 38% |
+| ├ `_index_tail_rows` | 12.7 ms | 17% |
+| ├ `_merge_index_and_tail` (was 69–93 ms) | 1.4 ms | 2% |
+| │ └ `_is_ascending_run` (was 7 ms) | 0.2 ms | <1% |
+| └ `select` | 0.2 ms | <1% |
+| `_cosine_matrix` (the matmul) | 23.7 ms | 31% |
+| outside phase 1 (embed, top-k, hydrate) | ~9 ms | ~12% |
+
+The matmul is not yet the dominant term: the probe is, at 29 ms, for the
+reason recorded above — SQLite walking the rows in the range — and the tail
+query is 13 ms for a tail that is empty (it still runs the isolation query
+with `LIMIT scan_limit` to learn that). Both are now larger than everything
+else in the arm combined, and neither is where the design's bytes are. The
+partial index that answers the probe in microseconds remains a schema
+decision; the tail query is worth a look of its own.
+
+`profile_index_path.py` alongside this file is the segment profile that
+produced both tables, in-tree from this change on; the perf script removes
+its scratch corpus at exit unless `PERF_INDEX_DIR` names where to keep it
+(eight runs had left 4.6 GB in `/tmp` on the reference machine).
