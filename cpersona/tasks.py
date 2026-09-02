@@ -195,106 +195,121 @@ class MemoryTaskQueue:
 
     async def _drain(self, admin_handlers, memory_handlers):
         """Drain all currently-pending tasks in FIFO order."""
-        while self._running:
-            task = await self._fetch_next()
-            if task is None:
-                # The pass is over. Reconcile here rather than in a finally: a
-                # reconciliation that raised inside one would turn a drain that
-                # succeeded into a drain that aborted, and an aborted pass is
-                # re-armed by _loop, so the next one reconciles anyway.
-                await self._forget_vanished_rows()
-                break
+        try:
+            while self._running:
+                task = await self._fetch_next()
+                if task is None:
+                    break
 
-            task_id, task_type, agent_id, payload, retries = task
-            # If the session re-enters no-persist after this task was
-            # enqueued, drop it instead of writing late — the user's
-            # ephemeral intent overrides queued work that pre-dates it.
-            # WHOSE pause: the session that enqueued the row, not whichever one
-            # happens to be paused while the worker runs. A parallel session's
-            # pause must not discard work it never asked for, which is exactly
-            # what a single global flag did.
-            task_session_key = self._session_for(task_id)
-            if session.is_paused_for(task_session_key):
-                logger.info(
-                    "MemoryTaskQueue: skipping task %d (%s) under no-persist mode",
-                    task_id,
-                    task_type,
-                )
-                await self._delete_task(task_id)
-                continue
-            logger.info(
-                "MemoryTaskQueue: processing %s (task_id=%d, agent=%s, retry=%d/%d)",
-                task_type,
-                task_id,
-                agent_id,
-                retries,
-                TASK_MAX_RETRIES,
-            )
-            try:
-                if task_type == "update_profile":
-                    # bug-090: a handler-returned failure dict is a FAILURE, not a
-                    # success to delete-and-log-completed — route it into the retry
-                    # path like a raise. (The upsert itself is idempotent, so the
-                    # separate delete transaction below is redo-safe.)
-                    # Same key the gate above consulted: the handler re-checks its
-                    # own pause, and defaulting there would make it ask about the
-                    # shared bucket instead of this row's session.
-                    result = await admin_handlers.do_update_profile(
-                        agent_id, payload, session_key=task_session_key
+                task_id, task_type, agent_id, payload, retries = task
+                # If the session re-enters no-persist after this task was
+                # enqueued, drop it instead of writing late — the user's
+                # ephemeral intent overrides queued work that pre-dates it.
+                # WHOSE pause: the session that enqueued the row, not whichever one
+                # happens to be paused while the worker runs. A parallel session's
+                # pause must not discard work it never asked for, which is exactly
+                # what a single global flag did.
+                task_session_key = self._session_for(task_id)
+                if session.is_paused_for(task_session_key):
+                    logger.info(
+                        "MemoryTaskQueue: skipping task %d (%s) under no-persist mode",
+                        task_id,
+                        task_type,
                     )
-                    if isinstance(result, dict) and (result.get("error") or result.get("ok") is False):
-                        raise RuntimeError(f"handler returned failure: {result.get('error') or result}")
                     await self._delete_task(task_id)
-                elif task_type == "archive_episode":
-                    # bug-089: prepare (embedding HTTP) outside the lock, then run
-                    # the episode INSERT and the task-row delete in ONE transaction.
-                    # As two commits, a crash between them replayed the bare INSERT
-                    # on the next boot and duplicated the episode; a failure of the
-                    # delete alone had the same effect (at-least-once redo against a
-                    # non-idempotent insert). A legacy history-only payload (no
-                    # summary) raises here and lands in the retry/discard path below
-                    # — visible, instead of a silent bogus "completed".
-                    row = await memory_handlers._prepare_episode_row(agent_id, payload, summary="")
-                    async with transaction() as db:
-                        # bug-109: the task-row DELETE doubles as the claim token.
-                        # rowcount 0 means the row vanished during the unlocked
-                        # prepare window — a delete_agent_data / merge move wiped
-                        # the agent (bug-093 purge) — so inserting now would
-                        # resurrect data for a deleted agent. Delete-first makes
-                        # the whole unit self-cancelling in that case.
-                        cur = await db.execute(
-                            "DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,)
+                    continue
+                logger.info(
+                    "MemoryTaskQueue: processing %s (task_id=%d, agent=%s, retry=%d/%d)",
+                    task_type,
+                    task_id,
+                    agent_id,
+                    retries,
+                    TASK_MAX_RETRIES,
+                )
+                try:
+                    if task_type == "update_profile":
+                        # bug-090: a handler-returned failure dict is a FAILURE, not a
+                        # success to delete-and-log-completed — route it into the retry
+                        # path like a raise. (The upsert itself is idempotent, so the
+                        # separate delete transaction below is redo-safe.)
+                        # Same key the gate above consulted: the handler re-checks its
+                        # own pause, and defaulting there would make it ask about the
+                        # shared bucket instead of this row's session.
+                        result = await admin_handlers.do_update_profile(
+                            agent_id, payload, session_key=task_session_key
                         )
-                        # The attribution is NOT dropped here. This block is a
-                        # transaction: an insert that raises rolls the DELETE back and
-                        # the task row survives to be retried — but a dict mutation
-                        # does not roll back, so forgetting here would strand the
-                        # retry in the shared keyless bucket. A session that armed a
-                        # no-persist pause in the meantime would then have its episode
-                        # written anyway. Dropping it belongs on the paths that end the
-                        # task: the completion below, and _delete_task.
-                        if cur.rowcount:
-                            await memory_handlers._insert_episode_row(db, row)
-                        else:
-                            logger.info(
-                                "MemoryTaskQueue: task %d vanished during prepare "
-                                "(agent wiped) — skipping insert",
-                                task_id,
+                        if isinstance(result, dict) and (result.get("error") or result.get("ok") is False):
+                            raise RuntimeError(f"handler returned failure: {result.get('error') or result}")
+                        await self._delete_task(task_id)
+                    elif task_type == "archive_episode":
+                        # bug-089: prepare (embedding HTTP) outside the lock, then run
+                        # the episode INSERT and the task-row delete in ONE transaction.
+                        # As two commits, a crash between them replayed the bare INSERT
+                        # on the next boot and duplicated the episode; a failure of the
+                        # delete alone had the same effect (at-least-once redo against a
+                        # non-idempotent insert). A legacy history-only payload (no
+                        # summary) raises here and lands in the retry/discard path below
+                        # — visible, instead of a silent bogus "completed".
+                        row = await memory_handlers._prepare_episode_row(agent_id, payload, summary="")
+                        async with transaction() as db:
+                            # bug-109: the task-row DELETE doubles as the claim token.
+                            # rowcount 0 means the row vanished during the unlocked
+                            # prepare window — a delete_agent_data / merge move wiped
+                            # the agent (bug-093 purge) — so inserting now would
+                            # resurrect data for a deleted agent. Delete-first makes
+                            # the whole unit self-cancelling in that case.
+                            cur = await db.execute(
+                                "DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,)
                             )
-                else:
-                    logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
-                    await self._delete_task(task_id)
+                            # The attribution is NOT dropped here. This block is a
+                            # transaction: an insert that raises rolls the DELETE back and
+                            # the task row survives to be retried — but a dict mutation
+                            # does not roll back, so forgetting here would strand the
+                            # retry in the shared keyless bucket. A session that armed a
+                            # no-persist pause in the meantime would then have its episode
+                            # written anyway. Dropping it belongs on the paths that end the
+                            # task: the completion below, and _delete_task.
+                            if cur.rowcount:
+                                await memory_handlers._insert_episode_row(db, row)
+                            else:
+                                logger.info(
+                                    "MemoryTaskQueue: task %d vanished during prepare "
+                                    "(agent wiped) — skipping insert",
+                                    task_id,
+                                )
+                    else:
+                        logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
+                        await self._delete_task(task_id)
 
-                self._forget_session(task_id)
-                logger.info("MemoryTaskQueue: completed %s (task_id=%d)", task_type, task_id)
+                    self._forget_session(task_id)
+                    logger.info("MemoryTaskQueue: completed %s (task_id=%d)", task_type, task_id)
+                except Exception as e:
+                    logger.error("MemoryTaskQueue: task %d (%s) failed: %s", task_id, task_type, e)
+                    if retries + 1 >= TASK_MAX_RETRIES:
+                        logger.error("MemoryTaskQueue: task %d exceeded max retries, discarding", task_id)
+                        await self._delete_task(task_id)
+                    else:
+                        await self._increment_retry(task_id)
+                        await asyncio.sleep(TASK_RETRY_DELAY)
+        finally:
+            # bug-277: on every way a pass can end, not only the one that ends by
+            # finding the queue empty. The earlier placement rested on an aborted
+            # pass being re-armed, but re-arming means the loop survived — it goes
+            # back to waiting on the event, and with no later enqueue no further
+            # pass ever runs. The map then keeps entries whose rows are gone, which
+            # is the state bug-270 was fixed to prevent.
+            #
+            # Swallowed and logged rather than allowed to propagate, which is the
+            # constraint the original placement was right about: a reconciliation
+            # that raised in here would turn a drain that succeeded into a drain
+            # that aborted.
+            try:
+                await self._forget_vanished_rows()
             except Exception as e:
-                logger.error("MemoryTaskQueue: task %d (%s) failed: %s", task_id, task_type, e)
-                if retries + 1 >= TASK_MAX_RETRIES:
-                    logger.error("MemoryTaskQueue: task %d exceeded max retries, discarding", task_id)
-                    await self._delete_task(task_id)
-                else:
-                    await self._increment_retry(task_id)
-                    await asyncio.sleep(TASK_RETRY_DELAY)
+                logger.warning(
+                    "MemoryTaskQueue: attribution reconcile failed, entries may be stale: %s",
+                    e,
+                )
 
     async def _fetch_next(self) -> tuple | None:
         # The queue is a global FIFO by design — typed no-filter helper (the

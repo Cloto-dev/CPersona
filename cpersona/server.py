@@ -2675,6 +2675,13 @@ async def main():
     # docstring for what a restart loop costs when this runs last instead.
     _preflight_http_auth()
 
+    # bug-275: before the client, because an unsupported mode is a startup
+    # failure and not a per-call one. Constructing the client anyway produced a
+    # server that ran, answered every recall in keyword/FTS-only mode, and
+    # reported the embedding endpoint as unreachable although nothing was ever
+    # contacted.
+    config.assert_embedding_mode_supported()
+
     if EMBEDDING_MODE != "none":
         # _vendored_mcp_common.EmbeddingClient takes env-derived config via constructor
         # args (it does no env reading of its own), so cache size / TTL /

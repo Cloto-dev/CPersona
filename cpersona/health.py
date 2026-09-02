@@ -90,6 +90,12 @@ _severity: str | None = None
 _reason: str | None = None
 _evidence: str | None = None
 _consecutive_failures: int = 0
+# bug-275: which kind of fault is latched. `unreachable` is the backend answering
+# nothing; `misconfigured` is a failure that never reached it, which the outcome
+# already distinguishes with `attempted`. Kept beside the state rather than as a
+# state of its own: recall is degraded identically either way, and the states are
+# what decides whether an advisory fires at all.
+_fault_kind: str = "unreachable"
 _advisory_emitted: bool = False
 
 # Suppression memory for callers that declare a session_key: the keys already
@@ -128,6 +134,36 @@ FAULT_RUNBOOK_FULL = (
 FAULT_RUNBOOK_SHORT = (
     "Reminder: the embedding backend is still unreachable ({evidence}); recall remains "
     "keyword/FTS-only."
+)
+
+# bug-275: a failure that never reached the backend is a configuration fault, and
+# the repair for one is nothing like the repair for the other. The four
+# investigation steps above are all network-layer — is the process alive, is the
+# port reachable, curl the URL, was the model downloaded — and every one of them
+# is wasted on a mode string the client never recognised. Recall really is
+# degraded either way, so the advisory still fires; what changes is where it
+# sends the reader.
+CONFIG_RUNBOOK_FULL = (
+    "**Notify the user:** CPersona's semantic (vector) recall is DEGRADED and has fallen "
+    "back to keyword/FTS-only search, because the embedding backend was never contacted: "
+    "{evidence}.\n\n"
+    "Impact: recall still returns results, but only on shared keywords — memories phrased "
+    "differently from the query, and older memories, may be silently missed.\n\n"
+    "This is a configuration fault, not an outage. The embedding server, its port and its "
+    "model are not involved and do not need investigating.\n\n"
+    "Repair: correct CPERSONA_EMBEDDING_MODE (accepted values: none, http, api) and "
+    "restart CPersona. `none` is a supported configuration and disables semantic recall "
+    "deliberately; `http` additionally needs CPERSONA_EMBEDDING_URL, and `api` needs "
+    "CPERSONA_EMBEDDING_API_KEY.\n\n"
+    "Plain version for the user: \"My long-term memory search is running in a reduced mode "
+    "because it is misconfigured — no search service was ever contacted.\"\n\n"
+    "To silence this advisory set CPERSONA_DEGRADED_ADVISORY=false. That stops the report, "
+    "not the degradation."
+)
+
+CONFIG_RUNBOOK_SHORT = (
+    "Reminder: the embedding backend is still not being contacted ({evidence}); recall "
+    "remains keyword/FTS-only."
 )
 
 HINT_RUNBOOK_FULL = (
@@ -174,16 +210,18 @@ def observe_config() -> None:
 def observe_ok() -> None:
     """Record a successful embed: clear any degraded state and re-arm the full template."""
     global _state, _severity, _reason, _evidence, _consecutive_failures, _advisory_emitted
+    global _fault_kind
     _state = HEALTHY
     _severity = None
     _reason = None
     _evidence = None
     _consecutive_failures = 0
     _advisory_emitted = False
+    _fault_kind = "unreachable"
     _told_sessions.clear()
 
 
-def observe_failure(evidence: str | None) -> None:
+def observe_failure(evidence: str | None, *, attempted: bool = True) -> None:
     """Record a confirmed probe failure; promote to ``fault`` after the threshold.
 
     A single failure is debounced (state unchanged) so a transient blip does not raise a
@@ -191,7 +229,13 @@ def observe_failure(evidence: str | None) -> None:
     the next recall. Keeps the last good evidence string if a later call passes ``None``.
     """
     global _state, _severity, _reason, _evidence, _consecutive_failures, _advisory_emitted
+    global _fault_kind
     _consecutive_failures += 1
+    # bug-275: the success side has asked whether the call reached the backend since
+    # bug-248; the failure side believed one without asking. A failure with
+    # attempted=False is evidence about this process's configuration and none at all
+    # about the endpoint, so it must not be reported as an endpoint that went quiet.
+    _fault_kind = "unreachable" if attempted else "misconfigured"
     # Keep the reason even below the threshold. The debounce exists to decide when to
     # RAISE a fault, not to decide whether the reason is worth remembering: a reader that
     # asks why a single probe came back empty was being told "no detail captured" while
@@ -206,7 +250,11 @@ def observe_failure(evidence: str | None) -> None:
             _told_sessions.clear()
         _state = FAULT
         _severity = "fault"
-        _reason = "embedding endpoint unreachable; recall fell back to keyword/FTS-only"
+        _reason = (
+            "embedding endpoint unreachable; recall fell back to keyword/FTS-only"
+            if _fault_kind == "unreachable"
+            else "embedding backend never contacted (configuration); recall fell back to keyword/FTS-only"
+        )
 
 
 def observed_state() -> dict:
@@ -224,6 +272,9 @@ def observed_state() -> dict:
         "reason": _reason,
         "evidence": _evidence,
         "consecutive_failures": _consecutive_failures,
+        # Additive (bug-275). Readers that report a repair need to know which one
+        # applies; the maintenance check reads this rather than re-deriving it.
+        "fault_kind": _fault_kind,
     }
 
 
@@ -284,7 +335,10 @@ def _build_payload(full: bool, shared: bool, declared: bool = False) -> dict:
     if _severity == "hint":
         runbook = HINT_RUNBOOK_FULL if full else HINT_RUNBOOK_SHORT
     else:
-        template = FAULT_RUNBOOK_FULL if full else FAULT_RUNBOOK_SHORT
+        if _fault_kind == "misconfigured":
+            template = CONFIG_RUNBOOK_FULL if full else CONFIG_RUNBOOK_SHORT
+        else:
+            template = FAULT_RUNBOOK_FULL if full else FAULT_RUNBOOK_SHORT
         runbook = template.format(evidence=evidence)
     return {
         "degraded": True,
@@ -299,6 +353,7 @@ def _build_payload(full: bool, shared: bool, declared: bool = False) -> dict:
 def _reset() -> None:
     """Test-only: restore all module state to its initial values."""
     global _state, _severity, _reason, _evidence, _consecutive_failures, _advisory_emitted
+    global _fault_kind
     _told_sessions.clear()
     _state = UNKNOWN
     _severity = None
@@ -306,3 +361,4 @@ def _reset() -> None:
     _evidence = None
     _consecutive_failures = 0
     _advisory_emitted = False
+    _fault_kind = "unreachable"
