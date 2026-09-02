@@ -228,7 +228,21 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     agents, agent_ix = _intern([r[1] for r in kept])
     projects, project_ix = _intern([r[2] for r in kept])
     channels, channel_ix = _intern([r[3] for r in kept])
-    sources, source_ix = _intern([r[6] for r in kept] if table == "memories" else [])
+    # str() at the boundary (bug-276). `json_extract(source, '$.id')` returns
+    # whatever type the JSON held, and SQLite hands back a JSON number as an int.
+    # Mixing types here is not a filtering problem, it is a build failure: the
+    # sorted string table compares its values, and `int < str` raises. Normalising
+    # once, where the column is read, also makes the table match what the scan
+    # compares against — its LIKE coerces the number to text — so the two paths
+    # answer the same question rather than two different ones.
+    #
+    # Computed once and used for both the table and the per-row codes below: two
+    # spellings of the same normalisation is how one of them ends up looking the
+    # value up under a key the other never wrote.
+    row_sources = (
+        [None if r[6] is None else str(r[6]) for r in kept] if table == "memories" else [None] * len(kept)
+    )
+    sources, source_ix = _intern(row_sources)
 
     header = {
         "format": FORMAT_VERSION,
@@ -276,8 +290,8 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
             fh.write(
                 np.array(
                     [
-                        NULL_CODE if (table != "memories" or r[6] is None) else source_ix[r[6]]
-                        for r in kept
+                        NULL_CODE if value is None else source_ix[value]
+                        for value in row_sources
                     ],
                     dtype="<i4",
                 ).tobytes()
@@ -367,7 +381,14 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
     if header.get("format") != FORMAT_VERSION:
         raise IndexUnusable(f"{src}: format {header.get('format')} != {FORMAT_VERSION}")
 
-    dim, count = int(header["dim"]), int(header["count"])
+    try:
+        dim, count = int(header["dim"]), int(header["count"])
+    except (KeyError, TypeError, ValueError) as exc:
+        # A header that parsed as JSON but does not spell its own geometry is a
+        # file that does not hold together, which is what IndexUnusable means.
+        # Raising KeyError/ValueError instead would escape the caller's guard —
+        # the same shape of hole as the unguarded select() call (bug-276).
+        raise IndexUnusable(f"{src}: header lacks a usable dim/count ({exc!r})") from exc
     base = len(MAGIC) + 4 + header_len
     expect = base + count * (8 + dim * 4 + 4 * len(_AXIS_FIELDS) + CREATED_AT_WIDTH)
     if size != expect:
@@ -527,7 +548,14 @@ def select(
         # per-row test is integer membership. A NULL source id carries NULL_CODE
         # and matches nothing, exactly as LIKE against NULL does.
         codes = np.array(
-            [i for i, v in enumerate(index.sources) if v is not None and v.startswith(source_id)],
+            # str(): `json_extract(source, '$.id')` hands back whatever type the
+            # JSON held, and SQLite returns a JSON number as an int. The scan
+            # this mirrors filters with LIKE, which coerces the number to text
+            # and matches it (bug-276) — so a non-string id must be compared the
+            # same way here, not raise. The obligation above is one-directional:
+            # matching a row the authority would drop costs wasted work, while
+            # raising takes down the query the index exists to accelerate.
+            [i for i, v in enumerate(index.sources) if v is not None and str(v).startswith(source_id)],
             dtype="<i4",
         )
         mask &= np.isin(index.source_code, codes)
