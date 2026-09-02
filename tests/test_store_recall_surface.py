@@ -235,8 +235,12 @@ def _install_fake_recall(monkeypatch, rows, mode="rsf", confidence=True):
 
     fake = _FakeDB()
 
+    # One double stands in for both seams, and the write seam takes a keyword
+    # (transaction(scope_stats_neutral=...)). Accepting and ignoring it keeps the
+    # double honest: a signature that refuses it turns the recall-count bump into a
+    # TypeError the handler swallows as "non-fatal", i.e. a silently skipped write.
     @contextlib.asynccontextmanager
-    async def fake_cm():
+    async def fake_cm(**_seam_kwargs):
         yield fake
 
     async def fake_driver(db, agent_id, query, limit, deep, channel="", exclude_set=None,

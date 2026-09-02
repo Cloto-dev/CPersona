@@ -37,6 +37,22 @@ def write_lock() -> asyncio.Lock:
     return _write_lock
 
 
+# Bumped on every committed write (unless the committer declares itself
+# scope_stats_neutral, see transaction()) and on every re-point of the connection
+# singletons. Read by cpersona.scope_stats to decide whether a cached per-scope
+# aggregate is still current. It only sees writes THIS process commits through
+# the seam; a writer in another process is bounded by that module's TTL instead.
+# A plain int rather than a per-table or per-scope counter: the cache it serves
+# is wholesale-invalidated, which is the only scheme that cannot be defeated by a
+# write site nobody remembered to annotate.
+_write_generation = 0
+
+
+def write_generation() -> int:
+    """The current write generation (see ``_write_generation``)."""
+    return _write_generation
+
+
 # --------------------------------------------------------------------------------------
 # 2.5.0 C-seam: the connection context managers every DB access goes through.
 #
@@ -123,7 +139,7 @@ async def read_snapshot():
 
 
 @contextlib.asynccontextmanager
-async def transaction():
+async def transaction(scope_stats_neutral: bool = False):
     """Write seam: write_lock + [writes] + commit, rollback on any exception.
 
     The single owner of the commit/rollback boundary on the shared connection
@@ -133,12 +149,28 @@ async def transaction():
     never call another transaction()-holding handler (asyncio.Lock is not
     reentrant), and must never perform network I/O (the bug-072 class: an
     embedding HTTP round-trip under the lock stalls every writer; both enforced
-    by test_structural_gates)."""
+    by test_structural_gates).
+
+    ``scope_stats_neutral`` withholds the write-generation bump for a body whose
+    statements provably cannot move the per-scope aggregates cpersona.scope_stats
+    caches — i.e. they touch no row count (no INSERT, no DELETE) and no
+    ``timestamp`` column. Default False, because "this write changes nothing that
+    is cached" is a claim about the statements, and the safe answer for an
+    unexamined body is to invalidate. Passing True for a body that does not hold
+    the invariant makes the cache serve numbers the database has moved past, with
+    no error anywhere."""
+    global _write_generation
     db = await get_db()
     async with _write_lock:
         try:
             yield db
             await db.commit()
+            # After the commit, never on the rollback path: a generation bumped
+            # for work that was undone only costs a recomputation, but a commit
+            # that does not bump it serves a stale aggregate for the rest of the
+            # process's life.
+            if not scope_stats_neutral:
+                _write_generation += 1
         except BaseException:
             await db.rollback()
             raise
@@ -383,7 +415,7 @@ async def get_db() -> aiosqlite.Connection:
     every later caller on the memoised fast path with a half-initialised
     connection. A failed boot now leaves ``_db`` unset and the connection
     closed; a retried call re-runs the idempotent ladder."""
-    global _db
+    global _db, _write_generation
     if _db is not None:
         return _db
     async with _init_lock:
@@ -407,6 +439,11 @@ async def get_db() -> aiosqlite.Connection:
                 await db.close()
             raise
         _db = db
+        # A newly opened connection may be a DIFFERENT database (the test
+        # harnesses re-point DB_PATH, and a bare `database._db = None` re-point
+        # never reaches close_db) — anything cached against the old one has to
+        # miss.
+        _write_generation += 1
     return _db
 
 
@@ -703,7 +740,10 @@ async def close_db():
     re-points the module globals (test reboot harnesses, embedded re-init)
     must go through this helper instead of assigning ``None`` directly.
     """
-    global _db, _read_db, _read_db_owner
+    global _db, _read_db, _read_db_owner, _write_generation
+    # The connections are going away; whatever was cached against them describes
+    # a database this process may never see again.
+    _write_generation += 1
     if _read_db is not None:
         if _read_db is not _db:
             await _read_db.close()

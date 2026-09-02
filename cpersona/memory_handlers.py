@@ -22,6 +22,7 @@ from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where
 
 from cpersona import health
+from cpersona import scope_stats
 from cpersona import session
 from cpersona import vector
 from cpersona.session import resolve_session_key
@@ -1019,28 +1020,18 @@ async def _apply_recall_scoring(
         # default ranks on a different signal set than one with confidence on.
         # Documented rather than changed: making the bump unconditional would move
         # ranking state, which 2.5.2 deliberately holds still (charter §5).
-        # bug-107: the temporal span is computed over the SAME isolation scope as
-        # the recall — an agent-wide MIN/MAX let timestamps from unrelated
-        # projects/channels scale a tightly-scoped recall's confidence curve.
-        # Callers that score corpus-wide (gate calibration) keep the defaults.
-        range_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
-        # bug-237: exclude non-timestamps in SQL rather than trusting MIN/MAX. `timestamp`
-        # is TEXT NOT NULL but freely allows '' (import_memories defaults a missing field
-        # to it, and an explicit "timestamp": "" is stored verbatim), and under BINARY
-        # collation '' sorts first — so ONE such row collapsed MIN() to '', the falsy
-        # guard below skipped the whole block, and the scope lost both the range scaling
-        # and the bug-207 age anchor. The undated rows then fell back to "half the
-        # minimum range" (12 h) and outranked every dated row on the time axis: the
-        # presence of exactly the row bug-207 exists to place correctly is what disabled
-        # the anchor that would have placed it.
-        range_row = await db.execute_fetchall(
-            f"SELECT MIN(timestamp), MAX(timestamp) FROM memories "
-            f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{range_iso.and_clause}",
-            range_iso.params,
+        # The span is read over the SAME isolation scope as the recall (bug-107),
+        # and excludes rows whose timestamp is '' or unparseable (bug-237) — both
+        # constraints, and the statement that carries them, live in scope_stats.py,
+        # which also serves the identical query from a process-local cache. The
+        # falsy guard below is the bug-237 one: it stays here because what an
+        # absent span means is a scoring decision, not a storage one.
+        min_ts, max_ts = await scope_stats.get_span(
+            db, agent_id, project_id=project_id, channel=channel
         )
-        if range_row and range_row[0][0] and range_row[0][1]:
-            oldest = _parse_timestamp_utc(range_row[0][0])
-            newest = _parse_timestamp_utc(range_row[0][1])
+        if min_ts and max_ts:
+            oldest = _parse_timestamp_utc(min_ts)
+            newest = _parse_timestamp_utc(max_ts)
             if oldest and newest:
                 time_range_hours = max(0.0, (newest - oldest).total_seconds() / 3600)
                 # bug-207: the span above is the corpus's internal width; this is where it
@@ -1218,19 +1209,15 @@ async def do_recall(
         # computed over `memories` alone but applied to every row the retrievers found —
         # episodes and the profile sentinel included — so an agent holding only episodes
         # (session-summary-only client; memories removed by delete_memory/health repair
-        # while its episodes stayed) scored count 0 and had every episode blocked. Scoped
-        # like the recall itself, for the same reason bug-107 scoped the temporal span:
-        # a tightly-scoped recall must not be gated by another project's volume.
-        pool_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
-        memory_count = (
-            await db.execute_fetchall(
-                f"SELECT COUNT(*) FROM memories{pool_iso.where}", pool_iso.params
-            )
-        )[0][0] + (
-            await db.execute_fetchall(
-                f"SELECT COUNT(*) FROM episodes{pool_iso.where}", pool_iso.params
-            )
-        )[0][0]
+        # while its episodes stayed) scored count 0 and had every episode blocked. The
+        # two COUNTs are scoped like the recall itself, for the same reason bug-107
+        # scoped the temporal span: a tightly-scoped recall must not be gated by another
+        # project's volume. Summing them HERE (rather than in scope_stats) keeps the two
+        # tables separately visible to anything else that reads the same scope.
+        pool_memories, pool_episodes = await scope_stats.get_pool_counts(
+            db, agent_id, project_id=project_id, channel=channel
+        )
+        memory_count = pool_memories + pool_episodes
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26/27: use the calibrated gate for whichever branch is active.
@@ -1432,7 +1419,16 @@ async def do_recall(
             # its commit cannot flush another handler's partial transaction.
             try:
                 placeholders = ",".join("?" * len(returned_ids))
-                async with transaction() as db:
+                # scope_stats_neutral: the statement below touches neither the row
+                # count nor a `timestamp` column — it increments recall_count and
+                # writes last_recalled_at on rows that already exist — so it cannot
+                # move the per-scope aggregates scope_stats caches. Without this the
+                # bookkeeping write would invalidate, on every confidence-on recall,
+                # the entry that same recall just filled: the cache would be dead in
+                # exactly the configuration it exists for. The claim is about THESE
+                # statements; adding an INSERT/DELETE, or a `timestamp` update, to
+                # this body means dropping the keyword.
+                async with transaction(scope_stats_neutral=True) as db:
                     await db.execute(
                         f"UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime('now') WHERE id IN ({placeholders})",
                         returned_ids,
