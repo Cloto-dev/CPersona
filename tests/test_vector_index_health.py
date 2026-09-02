@@ -178,3 +178,78 @@ async def test_the_check_is_registered_and_report_only(db):
         "an index is a derived artifact: the repair is to delete it, which is not this "
         "check's business and would need the repairable contract if it were"
     )
+
+
+# --------------------------------------------------------------------------------------
+# The episode table has its own index, and its own line in the report.
+# --------------------------------------------------------------------------------------
+
+
+async def _insert_episodes(db, count, *, dim=DIM):
+    await db.executemany(
+        "INSERT INTO episodes (agent_id, project_id, channel, summary, keywords, embedding,"
+        " start_time, resolved, created_at) VALUES (?, '', '', ?, '', ?, NULL, 0, ?)",
+        [
+            (
+                AGENT, f"episode {n}", _blob(10_000 + n, dim),
+                f"2026-03-02 {n // 3600 % 24:02d}:{n // 60 % 60:02d}:{n % 60:02d}",
+            )
+            for n in range(count)
+        ],
+    )
+    await db.commit()
+
+
+def _clean_episode_index():
+    path = vector_index.index_path("episodes")
+    for p in (path, path + ".tmp"):
+        if os.path.exists(p):
+            os.unlink(p)
+
+
+@pytest_asyncio.fixture
+async def db_with_episodes(db):
+    _clean_episode_index()
+    await db.execute("DELETE FROM episodes")
+    await db.commit()
+    yield db
+    await db.execute("DELETE FROM episodes")
+    await db.commit()
+    _clean_episode_index()
+
+
+@pytest.mark.asyncio
+async def test_each_table_reports_its_own_absence(db_with_episodes):
+    """A memory index that exists says nothing about the episode one."""
+    db = db_with_episodes
+    await _insert(db, 50)
+    await _insert_episodes(db, checks.INDEX_MATTERS_ROWS)
+    assert (await vector_index.build_index(db, "memories"))["built"]
+    issues = await _run(db)
+    assert [(i["type"], i["table"]) for i in issues] == [("vector_index_absent", "episodes")]
+    assert issues[0]["episodes_with_local_embedding"] == checks.INDEX_MATTERS_ROWS
+    assert "--table episodes" in issues[0]["hint"]
+
+
+@pytest.mark.asyncio
+async def test_both_indexes_healthy_say_nothing(db_with_episodes):
+    db = db_with_episodes
+    await _insert(db, 50)
+    await _insert_episodes(db, 50)
+    assert (await vector_index.build_index(db, "memories"))["built"]
+    assert (await vector_index.build_index(db, "episodes"))["built"]
+    assert await _run(db) == []
+
+
+@pytest.mark.asyncio
+async def test_an_episode_index_that_does_not_hold_together_names_its_table(db_with_episodes):
+    db = db_with_episodes
+    await _insert_episodes(db, 50)
+    assert (await vector_index.build_index(db, "episodes"))["built"]
+    path = vector_index.index_path("episodes")
+    with open(path, "r+b") as fh:
+        fh.truncate(os.path.getsize(path) - 8)
+    issues = await _run(db)
+    assert [(i["type"], i["table"], i["severity"]) for i in issues] == [
+        ("vector_index_unusable", "episodes", "warn")
+    ]

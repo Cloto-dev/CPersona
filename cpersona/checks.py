@@ -2017,6 +2017,9 @@ INDEX_MATTERS_ROWS = 1000
 INDEX_TAIL_RATIO = 0.2
 
 
+INDEX_TABLES = ("memories", "episodes")
+
+
 async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[dict]:
     """Report what the contiguous embedding index is doing, or why it is not.
 
@@ -2041,92 +2044,110 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
 
     A fourth line reports a healthy index whose tail has grown past
     ``INDEX_TAIL_RATIO``, which is the one form of staleness this design admits.
+
+    One index per table, and the same four states for each: the episode scan is
+    served from its own file, and the two can be in different states (built
+    nightly for one, never for the other). Every finding names its ``table``.
     """
-    from cpersona import vector_index
+    # Nested rather than module-level: the severity inventory
+    # (tests/test_superauditor_findings.py) walks each ``check_*`` runner's own
+    # body for the severities it stamps, and a helper outside it would hide them.
+    async def one(table: str) -> list[dict]:
+        from cpersona import vector_index
 
-    iso = isolation_where(agent_id=agent_id or None)
-    embedded = (
-        await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM memories WHERE embedding IS NOT NULL{iso.and_clause}",
-            iso.params,
-        )
-    )[0][0]
+        iso = isolation_where(agent_id=agent_id or None)
+        embedded = (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM {table} WHERE embedding IS NOT NULL{iso.and_clause}",
+                iso.params,
+            )
+        )[0][0]
 
-    try:
-        index = vector_index.cached_index("memories")
-    except vector_index.IndexUnusable as exc:
-        return [
-            {
-                "type": "vector_index_unusable",
-                "severity": "warn",
-                "detail": str(exc),
-                "hint": "delete the file; it is a derived artifact and is rebuilt, never repaired",
-            }
-        ]
+        try:
+            index = vector_index.cached_index(table)
+        except vector_index.IndexUnusable as exc:
+            return [
+                {
+                    "type": "vector_index_unusable",
+                    "severity": "warn",
+                    "table": table,
+                    "detail": str(exc),
+                    "hint": "delete the file; it is a derived artifact and is rebuilt, never repaired",
+                }
+            ]
 
-    if index is None:
-        if embedded < INDEX_MATTERS_ROWS:
-            return []
-        return [
-            {
-                "type": "vector_index_absent",
-                "memories_with_local_embedding": embedded,
-                "hint": (
-                    "the local vector scan reads embeddings from SQLite row by row; "
-                    "building the contiguous index removes that cost: "
-                    "python -m cpersona.vector_index --db <path> build"
-                ),
-            }
-        ]
+        if index is None:
+            if embedded < INDEX_MATTERS_ROWS:
+                return []
+            return [
+                {
+                    "type": "vector_index_absent",
+                    "table": table,
+                    f"{table}_with_local_embedding": embedded,
+                    "hint": (
+                        f"the local vector scan reads {table} embeddings from SQLite row by row; "
+                        "building the contiguous index removes that cost: "
+                        f"python -m cpersona.vector_index --db <path> --table {table} build"
+                    ),
+                }
+            ]
 
-    # The widths the corpus actually holds. More than one means a model swap is
-    # in flight: the builder declines while that is true, because the live scan
-    # windows before it skips foreign-width rows and a single-width index cannot
-    # reproduce that window.
-    # Deliberately global, unlike the counts above: the builder declines while
-    # ANY row in the table carries another width, so an agent-scoped question
-    # would answer "no drift" about a corpus the builder is refusing. A width is
-    # not corpus content, so this discloses nothing agent-scoped (the bug-062
-    # rule is about sizes and contents).
-    all_axes = isolation_where(agent_id=None)
-    widths = {
-        r[0]
-        for r in await db.execute_fetchall(
-            f"SELECT DISTINCT length(embedding) FROM memories"
-            f" WHERE embedding IS NOT NULL{all_axes.and_clause}",
-            all_axes.params,
-        )
-    }
-    if widths and widths != {index.dim * 4}:
-        return [
-            {
-                "type": "vector_index_dimension_drift",
-                "severity": "warn",
-                "index_dim": index.dim,
-                "corpus_widths_bytes": sorted(widths),
-                "hint": (
-                    "the index is not being used; rebuild it once the corpus carries "
-                    "one embedding width again"
-                ),
-            }
-        ]
+        # The widths the corpus actually holds. More than one means a model swap is
+        # in flight: the builder declines while that is true, because the live scan
+        # windows before it skips foreign-width rows and a single-width index cannot
+        # reproduce that window.
+        # Deliberately global, unlike the counts above: the builder declines while
+        # ANY row in the table carries another width, so an agent-scoped question
+        # would answer "no drift" about a corpus the builder is refusing. A width is
+        # not corpus content, so this discloses nothing agent-scoped (the bug-062
+        # rule is about sizes and contents).
+        all_axes = isolation_where(agent_id=None)
+        widths = {
+            r[0]
+            for r in await db.execute_fetchall(
+                f"SELECT DISTINCT length(embedding) FROM {table}"
+                f" WHERE embedding IS NOT NULL{all_axes.and_clause}",
+                all_axes.params,
+            )
+        }
+        if widths and widths != {index.dim * 4}:
+            return [
+                {
+                    "type": "vector_index_dimension_drift",
+                    "severity": "warn",
+                    "table": table,
+                    "index_dim": index.dim,
+                    "corpus_widths_bytes": sorted(widths),
+                    "hint": (
+                        "the index is not being used; rebuild it once the corpus carries "
+                        "one embedding width again"
+                    ),
+                }
+            ]
 
-    tail = (
-        await db.execute_fetchall(
-            f"SELECT COUNT(*) FROM memories WHERE id > ? AND embedding IS NOT NULL{iso.and_clause}",
-            (index.watermark, *iso.params),
-        )
-    )[0][0]
-    if index.count and tail > index.count * INDEX_TAIL_RATIO:
-        return [
-            {
-                "type": "vector_index_tail_grown",
-                "indexed_rows": index.count,
-                "rows_past_watermark": tail,
-                "hint": "rebuild the index; a long tail is read exactly on every query",
-            }
-        ]
-    return []
+        tail = (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM {table} WHERE id > ? AND embedding IS NOT NULL{iso.and_clause}",
+                (index.watermark, *iso.params),
+            )
+        )[0][0]
+        if index.count and tail > index.count * INDEX_TAIL_RATIO:
+            return [
+                {
+                    "type": "vector_index_tail_grown",
+                    "table": table,
+                    "indexed_rows": index.count,
+                    "rows_past_watermark": tail,
+                    "hint": "rebuild the index; a long tail is read exactly on every query",
+                }
+            ]
+        return []
+
+    issues: list[dict] = []
+    for table in INDEX_TABLES:
+        issues.extend(await one(table))
+    return issues
+
 
 class Check:
     """A registered health check: metadata + runner (see module docstring)."""

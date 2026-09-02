@@ -213,11 +213,15 @@ the system's health will meet it.
   Those buy resident memory, which is a different problem with a different
   acceptable-degradation question; mixing them in would cost the exactness that
   makes this change gateable against the existing suite.
-- **Episodes, in the first wave.** The episode scan is structurally the same and
-  the format applies to it unchanged, but episodes are a fifth of the rows. Once
-  the memory arm is several times faster the bottleneck moves somewhere that has
-  not been measured, and that measurement — not a guess made now — is what
-  should decide where the next change goes.
+- **Episodes, in the first wave** — and then not left out. The episode scan is
+  structurally the same and the format applied to it unchanged, but episodes
+  were a fifth of the rows, so the first wave indexed memories only and left
+  the next step to a measurement. The measurement said the unindexed episode
+  scan cost more per query than the indexed memory scan of a table five times
+  its size, so the episode table now has its own index file, served by the same
+  read path. Episodes carry no `source` column; the read path applies the
+  episode scan's source rule before it consults the index, so the index is never
+  asked about a column the table lacks.
 - **Repair.** The index is a derived artifact: it is not backed up, and it is
   never fixed. It is deleted and rebuilt.
 - **Re-tagging after a build.** Moving a row to another project or channel

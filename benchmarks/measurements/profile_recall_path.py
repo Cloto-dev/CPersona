@@ -230,10 +230,11 @@ async def run(args) -> dict:
     vector._embedding_client = client
     server_mod._embedding_client = client
     agent = "perf.index"
-    index_file = vector_index.index_path("memories")
-    for path in (index_file, index_file + ".tmp"):
-        if os.path.exists(path):
-            os.unlink(path)
+    for table in ("memories", "episodes"):
+        index_file = vector_index.index_path(table)
+        for path in (index_file, index_file + ".tmp"):
+            if os.path.exists(path):
+                os.unlink(path)
 
     missing = [
         f"{module}.{name}"
@@ -272,6 +273,12 @@ async def run(args) -> dict:
                 build = await vector_index.build_index(db, "memories")
                 assert build.get("built"), build
                 report["index_built"] = {k: build[k] for k in ("count", "watermark", "bytes")}
+                if n_episodes:
+                    ep_build = await vector_index.build_index(db, "episodes")
+                    assert ep_build.get("built"), ep_build
+                    report["episode_index_built"] = {
+                        k: ep_build[k] for k in ("count", "watermark", "bytes")
+                    }
             # aiosqlite's connection is per `connection()`; do_recall opens its own.
         for set_name in args.sets:
             make = QUERY_SETS[set_name]
