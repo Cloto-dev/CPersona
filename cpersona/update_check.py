@@ -763,6 +763,22 @@ def detect_install(available: str | None = None) -> dict:
             "argv_steps": steps,
             "note": "",
             "restart_required": True,
+            # Internal (dropped by `_public_install`): what `apply` needs to
+            # tell an operator whose tree is not on a branch what to run
+            # instead. Built HERE rather than there because `version_ok` is the
+            # one gate that keeps a string that arrived over the network out of
+            # text that reads as a command, and one gate is easier to keep than
+            # two.
+            "repo_dir": repo_dir,
+            "detached_command": " && ".join(
+                [
+                    f"git -C {repo_dir} fetch --tags",
+                    f"git -C {repo_dir} checkout v{available}"
+                    if version_ok
+                    else f"git -C {repo_dir} checkout <the release tag>",
+                    " ".join([*_installer_prefix(), repo_dir]),
+                ]
+            ),
         }
 
     steps = [[*_installer_prefix(), "--upgrade", spec]]
@@ -782,7 +798,7 @@ async def apply() -> dict:
     """Run the detected update command. Never called except by an explicit
     ``check_update(apply=true)``.
 
-    Refuses rather than improvises in three cases, each of which would
+    Refuses rather than improvises in four cases, each of which would
     otherwise produce a command that appears to work:
 
     - nothing newer is known — there is no version to install, and installing
@@ -791,7 +807,21 @@ async def apply() -> dict:
     - ``uvx`` — the environment this process runs in is a cache entry keyed by
       the launch arguments, so a successful install here is discarded on the
       next launch and the operator is left believing they upgraded;
-    - ``unknown`` — an install we cannot name is one we cannot safely replace.
+    - ``unknown`` — an install we cannot name is one we cannot safely replace;
+    - a checkout that is not on a branch — ``git pull`` has nothing to
+      fast-forward from a detached HEAD and stops with "You are not currently
+      on a branch", which is true but does not tell the operator what to do
+      next. This one is a check on the repository's STATE, not on the install
+      method, which is why it lives here and not in the empty ``argv_steps``
+      that answers "is there something to execute": state cannot be read
+      without running a command, and :func:`detect_install` is free of I/O on
+      purpose — it is also called while rendering a ``recall`` notice and a
+      ``check_health`` report, and neither may pay for a subprocess.
+
+    A probe that cannot answer (no git, not a repository) is NOT a refusal: it
+    proceeds, and the ``git pull`` step reports what it finds. Refusing on a
+    failed probe would turn "we could not tell" into "you may not", and the
+    step that follows already answers honestly.
 
     Executed as an argv list through ``create_subprocess_exec``: no shell, so
     no metacharacter in any string (the version came off the network) can
@@ -818,6 +848,16 @@ async def apply() -> dict:
             "reason": f"apply is not available for a {install['method']} install",
             "install": _public_install(install),
         }
+    if install["method"] == METHOD_CHECKOUT and await _on_branch(install["repo_dir"]) is False:
+        return {
+            "applied": False,
+            "reason": (
+                "this checkout is not on a branch (detached HEAD), so there is nothing "
+                "for `git pull` to fast-forward; check the release out by tag instead, "
+                f"then restart: {install['detached_command']}"
+            ),
+            "install": _public_install(install),
+        }
 
     output: list[str] = []
     exit_code = 0
@@ -834,6 +874,29 @@ async def apply() -> dict:
         "restart_required": True,
         "install": _public_install(install),
     }
+
+
+async def _on_branch(repo_dir: str) -> bool | None:
+    """Is this working tree on a branch? ``None`` when the question could not
+    be asked at all.
+
+    ``git symbolic-ref -q HEAD`` answers in the exit code and nothing else:
+    ``0`` on a branch, ``1`` when HEAD is not a symbolic ref (a detached
+    checkout — ``-q`` keeps that expected case off stderr), ``128`` when the
+    directory is not a repository, ``127`` from :func:`_run_step` when git is
+    not on PATH. Only the first two are answers; everything else is "could not
+    tell", and the caller proceeds on it rather than inventing a refusal.
+
+    The three-valued return is the whole point: a ``bool`` would have to fold
+    "not a repository" into one of the two answers, and either choice is a lie
+    that changes what ``apply`` does.
+    """
+    code, _ = await _run_step(["git", "-C", repo_dir, "symbolic-ref", "-q", "HEAD"])
+    if code == 0:
+        return True
+    if code == 1:
+        return False
+    return None
 
 
 async def _run_step(argv: list[str]) -> tuple[int, str]:

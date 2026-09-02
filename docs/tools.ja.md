@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:3096b0eebee62b236b930b2ea8e23524f12e8447 -->
+<!-- i18n-source: docs/tools.md@blob:3431c3aa1addf03f085059a094d347d1468f62c5 -->
 
 # ツール一覧
 
@@ -92,7 +92,11 @@
 です — インストールを実行したプロセス自身は古いコードのまま動いているからです。
 `uvx` の場合はインストールを拒否し、理由を伝えます: 実行環境は起動引数をキーとする
 キャッシュエントリなので、変更すべきは MCP クライアント側の設定です
-(`uvx cpersona@latest`)。`CPERSONA_UPDATE_CHECK=false` は、唯一の外向きリクエストを
+(`uvx cpersona@latest`)。**ブランチ上にない**ソースチェックアウト — リリースタグに
+留め置いたクローンで、配備の仕方としては普通のものです — も同じように拒否されます:
+detached `HEAD` からは `git pull` が fast-forward する先を持たないため、ツールは何も
+実行する前に拒み、代わりに使うべき `git fetch --tags && git checkout <tag>` の形を
+答えます。`CPERSONA_UPDATE_CHECK=false` は、唯一の外向きリクエストを
 含めて機能全体を無効化します ([何を送るか](architecture.md#transports))。
 
 ## セッション制御 { #session-controls }
