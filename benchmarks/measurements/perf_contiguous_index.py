@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import json
 import os
+import shutil
 import statistics
 import struct
 import sys
@@ -43,8 +45,15 @@ import time
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
 
-SCRATCH = os.environ.get("PERF_INDEX_DIR") or tempfile.mkdtemp(prefix="perf-index-")
-os.makedirs(SCRATCH, exist_ok=True)
+SCRATCH = os.environ.get("PERF_INDEX_DIR")
+if SCRATCH:
+    os.makedirs(SCRATCH, exist_ok=True)
+else:
+    # A 100,000-row corpus at production width is ~870 MB. Nothing about a
+    # measurement is worth keeping in it, so an unnamed scratch directory goes
+    # away with the process; name one with PERF_INDEX_DIR to keep it.
+    SCRATCH = tempfile.mkdtemp(prefix="perf-index-")
+    atexit.register(shutil.rmtree, SCRATCH, ignore_errors=True)
 os.environ["CPERSONA_DB_PATH"] = os.path.join(SCRATCH, "perf_index.db")
 os.environ["CPERSONA_EMBEDDING_MODE"] = "http"  # a client must exist; ours is local
 os.environ["CPERSONA_OPERATING_CONTEXT"] = "off"
