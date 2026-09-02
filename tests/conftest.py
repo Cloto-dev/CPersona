@@ -107,6 +107,31 @@ def fake_embedding_client(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_scope_stats_cache():
+    """Empty the per-scope aggregate cache around every test.
+
+    ``scope_stats`` invalidates on ``database.write_generation()``, which the write seam
+    bumps after each commit — so production, where the seam is the only committer
+    (structural Gate 1), invalidates exactly. The suite is the exception: most fixtures
+    write with ``get_db()`` + ``db.commit()`` directly, and that commit is invisible to
+    the counter. Left alone, one test's cached scope sizes another's quality gate: a
+    file whose earlier test recalled 2 rows under an agent id made a later test's 51
+    freshly inserted rows score as a corpus of 2, and its profile row was gate-blocked
+    for a reason nothing in that test mentions. Order-dependent, so it appears and
+    disappears with unrelated edits.
+
+    Clearing between tests removes the cross-test half. A test that writes AROUND the
+    seam and then recalls twice in one body can still read a stale count — write through
+    ``do_store`` (or call ``scope_stats.clear()``) when that is the shape you need.
+    """
+    from cpersona import scope_stats
+
+    scope_stats.clear()
+    yield
+    scope_stats.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_leaked_mgp_log_filter():
     """Fail the test that leaves an MGP validation filter on a live log handler.
 

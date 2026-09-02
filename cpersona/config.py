@@ -165,6 +165,22 @@ DEGRADED_ADVISORY_ENABLED = os.environ.get("CPERSONA_DEGRADED_ADVISORY", "true")
 
 TASK_QUEUE_ENABLED = os.environ.get("CPERSONA_TASK_QUEUE_ENABLED", "true").lower() == "true"
 
+# Process-local cache for the per-scope aggregates every recall reads (the
+# confidence span's MIN/MAX and the gate pool's COUNTs — see scope_stats.py).
+# They are full scans over the isolation scope whose answers change only when a
+# row is written, so a read-heavy deployment re-derives the same numbers from a
+# scan on every call. On by default; turning it off recomputes every time, which
+# is the pre-cache behaviour and the reference an equivalence run compares
+# against.
+SCOPE_STATS_CACHE_ENABLED = os.environ.get("CPERSONA_SCOPE_STATS_CACHE", "true").lower() == "true"
+# How long a cached entry may outlive a write made by ANOTHER process on the same
+# file (this process's own writes invalidate exactly, by generation). It bounds
+# staleness rather than preventing it: the cached values scale a confidence curve
+# and size the gate pool, so a delay of this order changes how rows are scored,
+# never which rows exist. Lower it for a shared file with an active second writer;
+# 0 disables reuse entirely (every lookup recomputes).
+SCOPE_STATS_TTL_SECONDS = _parse_float("CPERSONA_SCOPE_STATS_TTL_SECONDS", 60.0)
+
 CONFIDENCE_ENABLED = os.environ.get("CPERSONA_CONFIDENCE_ENABLED", "false").lower() == "true"
 COSINE_FLOOR = _parse_float("CPERSONA_COSINE_FLOOR", 0.20)
 COSINE_CEIL = _parse_float("CPERSONA_COSINE_CEIL", 0.75)

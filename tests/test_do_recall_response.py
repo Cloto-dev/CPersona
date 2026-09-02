@@ -80,8 +80,12 @@ def _patch(monkeypatch):
     # 2.5.0 C-seam: do_recall reads through connection() and bumps recall counts
     # through transaction(), so the DB fake is injected at the seam CMs (get_db is
     # internal to cpersona.database now).
+    # One double stands in for both seams, and the write seam takes a keyword
+    # (transaction(scope_stats_neutral=...)). Accepting and ignoring it keeps the
+    # double honest: a signature that refuses it turns the recall-count bump into a
+    # TypeError the handler swallows as "non-fatal", i.e. a silently skipped write.
     @contextlib.asynccontextmanager
-    async def fake_cm():
+    async def fake_cm(**_seam_kwargs):
         yield fake
 
     monkeypatch.setattr(M, "connection", fake_cm)
