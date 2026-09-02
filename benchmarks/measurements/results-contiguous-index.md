@@ -186,3 +186,43 @@ which is why a 100,000-row window ran at all here; a build with the default
 limit — the macOS Python that produced the earlier measurements is one — raises
 `too many SQL variables` from that probe at any window above 32,766 once an
 index exists. That is filed separately; it is not a property of the view.
+
+### The probe, bounded by shape
+
+Re-profiled at 100,000 / 100,000 on the same machine after the probe was
+bounded by the selection's shape (a contiguous run of ids is asked with
+`BETWEEN` and two parameters; a scattered selection in chunks of 500), median
+of 12 queries:
+
+| Segment | Before | After |
+| --- | ---: | ---: |
+| `_index_rows_lost_embedding` | 72.5 ms | 36.5 ms |
+
+The other segments moved between runs by more than this change touches
+(`_merge_index_and_tail` 69–93 ms across three runs on the same tree), so
+only the probe's row is updated; the rest of the table above stands as the
+shape of the arm, not as figures to subtract from.
+
+What is left in the 36 ms is not the parameter list. Timed as a bare
+statement on the corpus the profile built, the range form takes 25 ms and
+its plan is `SEARCH memories USING INTEGER PRIMARY KEY (rowid>? AND
+rowid<?)` — SQLite walks the 100,000 rows in the range to test
+`embedding IS NULL` on each, and at 4 KB a row that is a 400 MB pass through
+the page cache. `SELECT COUNT(*)` over the same range costs the same 18 ms
+for the same reason. A partial index (`ON memories(id) WHERE embedding IS
+NULL`) answers the same statement in 0.005 ms, because the rows it has to
+visit are exactly the ones that lost their vector, normally none; it is a
+schema change and is recorded here for the decision, not made.
+
+Two measurements that shaped the statement rather than the design:
+
+- The agent predicate the isolation gate asks every agent-scoped read to
+  carry made the planner choose the isolation index and walk every row of
+  the agent per statement: 43 ms for the range form, and 3.0 s for the
+  chunked form because each of the 200 chunks repeated the walk. Written as
+  `+agent_id = ?` the term no longer constrains an index, the id term stays
+  the access path, and the chunked form over the whole corpus is 41 ms.
+- The chunked form is not the slow path it looks like: 200 statements of 500
+  rowid lookups each cost 41 ms end to end, against 25 ms for the range —
+  the bytes SQLite reads are the same, and the parameter binding is not
+  where the time goes.

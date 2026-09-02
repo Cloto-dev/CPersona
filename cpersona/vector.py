@@ -427,10 +427,18 @@ async def _index_phase1(
         logger.warning("Vector index raised, falling back to the live scan", exc_info=True)
         return None
 
-    if await _index_rows_lost_embedding(
-        db,
-        [int(index.ids[p]) for p in positions],
-    ):
+    try:
+        lost = await _index_rows_lost_embedding(db, index.ids[positions], agent_id=agent_id)
+    except Exception:  # noqa: BLE001 — fail open, deliberately
+        # bug-285: the probe used to sit outside every guard, so an operational
+        # error raised by it (a parameter list longer than the build's
+        # SQLITE_MAX_VARIABLE_NUMBER) escaped into recall instead of falling
+        # back. The bound is repaired inside the probe; this is the same claim
+        # as the guard above — "recall survives a broken index" — extended to
+        # the one statement the index path issues against the database.
+        logger.warning("Vector index probe raised, falling back to the live scan", exc_info=True)
+        return None
+    if lost:
         # bug-279, the mirror of bug-278: maintenance blanks an embedding in
         # place (the content sanitiser rewrites the text and nulls the vector;
         # the dimension repair nulls a mismatched one), and the matrix keeps the
@@ -466,27 +474,73 @@ async def _index_phase1(
     return _merge_index_and_tail(index, positions, tail, scan_limit, query_dim)
 
 
-async def _index_rows_lost_embedding(db: aiosqlite.Connection, ids: list[int]) -> bool:
+# Rows per `IN (...)` when the selection is scattered. Well under 999, the
+# compile-time SQLITE_MAX_VARIABLE_NUMBER of every SQLite before 3.32.0, so the
+# probe fits on the smallest build a supported Python links against.
+_LOST_EMBEDDING_PROBE_CHUNK = 500
+
+# `+agent_id`: the unary plus stops the planner from constraining the isolation
+# index with this term, so the id term stays the access path. Measured without
+# it at 100,000 rows: the planner walked every row of the agent per statement,
+# 43 ms for the range form instead of 25 and 3.0 s for the chunked form.
+_LOST_EMBEDDING_RANGE_SQL = (
+    "SELECT 1 FROM memories WHERE id BETWEEN ? AND ? AND +agent_id = ?"
+    " AND embedding IS NULL LIMIT 1"
+)
+
+
+def _lost_embedding_chunk_sql(count: int) -> str:
+    ph = ",".join("?" * count)
+    return (
+        f"SELECT 1 FROM memories WHERE id IN ({ph}) AND +agent_id = ?"
+        " AND embedding IS NULL LIMIT 1"
+    )
+
+
+async def _index_rows_lost_embedding(db: aiosqlite.Connection, ids, *, agent_id: str) -> bool:
     """Whether any of these indexed ids no longer carries an embedding.
 
     An existence probe rather than a list: the caller only needs to know whether
     to hand the query back to the scan, so `LIMIT 1` lets SQLite stop at the
-    first hit. The ids are the selection, so this is bounded by the scan window
-    and not by the corpus.
+    first hit.
 
-    No isolation clause: these ids came from a selection that already applied the
-    axes, and the question here is about the row's embedding rather than its
-    ownership. Narrowing further could only make the probe miss a row it should
+    Bounded by the selection's *shape*, not its size (bug-285). One parameter
+    per id made the statement's width the scan window, and a window above the
+    build's SQLITE_MAX_VARIABLE_NUMBER (32,766 on the default build) turned the
+    index from an accelerator into `too many SQL variables` on every recall. The
+    ordinary all-index selection is one contiguous run of ids, which BETWEEN
+    asks about with two parameters; a scattered selection (an axis filter that
+    skips rows) is asked in fixed-size chunks that fit every supported build.
+
+    The ids came from a selection that already applied every axis, so the
+    question here is about the row's embedding rather than its ownership. The
+    agent predicate is carried anyway: it cannot exclude a selected row (the
+    selection admits only this agent's rows) and it keeps the statement inside
+    the isolation contract every agent-scoped read is held to. No other axis is
+    added — narrowing further could only make the probe miss a row it should
     have caught, which is the direction that fails silently.
+
+    The unary plus on `agent_id` in both statements is load-bearing — see the
+    note on `_LOST_EMBEDDING_RANGE_SQL`; a test pins the plan.
     """
-    if not ids:
+    import numpy as np
+
+    ids = np.asarray(ids)
+    n = len(ids)
+    if n == 0:
         return False
-    ph = ",".join("?" * len(ids))
-    row = await db.execute_fetchall(
-        f"SELECT 1 FROM memories WHERE id IN ({ph}) AND embedding IS NULL LIMIT 1",
-        tuple(ids),
-    )
-    return bool(row)
+    lo, hi = int(ids.min()), int(ids.max())
+    if hi - lo + 1 == n:
+        # Ids are unique, so a span equal to the count means every id in
+        # [lo, hi] is selected and the range asks exactly the same question.
+        row = await db.execute_fetchall(_LOST_EMBEDDING_RANGE_SQL, (lo, hi, agent_id))
+        return bool(row)
+    for start in range(0, n, _LOST_EMBEDDING_PROBE_CHUNK):
+        chunk = ids[start : start + _LOST_EMBEDDING_PROBE_CHUNK].tolist()
+        row = await db.execute_fetchall(_lost_embedding_chunk_sql(len(chunk)), (*chunk, agent_id))
+        if row:
+            return True
+    return False
 
 
 async def _index_tail_rows(
