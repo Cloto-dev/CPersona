@@ -383,8 +383,14 @@ async def _index_phase1(
     source_id: str,
     scan_limit: int,
     query_dim: int,
+    table: str = "memories",
 ):
     """Phase 1 from the contiguous index, or None to use the SQL scan.
+
+    `table` names which scan this stands in for. The two tables share the file
+    format, the selection and the merge; they differ in one column — episodes
+    carry no `source`, so `source_id` is meaningless there and the caller passes
+    it empty (the episode scan applies its own source rule before it gets here).
 
     Returns `(ids, matrix)` in the scan's own order — `created_at` DESC, then
     `id` ASC — so everything downstream (the threshold, the stable top-`limit`
@@ -396,7 +402,7 @@ async def _index_phase1(
     rests on that staying true.
     """
     try:
-        index = vector_index.cached_index("memories")
+        index = vector_index.cached_index(table)
         if index is None or index.dim != query_dim:
             return None
         # Inside the guard (bug-276). Selection used to sit outside it, so any
@@ -428,7 +434,9 @@ async def _index_phase1(
         return None
 
     try:
-        lost = await _index_rows_lost_embedding(db, index.ids[positions], agent_id=agent_id)
+        lost = await _index_rows_lost_embedding(
+            db, index.ids[positions], agent_id=agent_id, table=table
+        )
     except Exception:  # noqa: BLE001 — fail open, deliberately
         # bug-285: the probe used to sit outside every guard, so an operational
         # error raised by it (a parameter list longer than the build's
@@ -467,6 +475,7 @@ async def _index_phase1(
         channel=channel,
         source_id=source_id,
         scan_limit=scan_limit,
+        table=table,
     )
     if tail is None:
         return None
@@ -483,21 +492,28 @@ _LOST_EMBEDDING_PROBE_CHUNK = 500
 # index with this term, so the id term stays the access path. Measured without
 # it at 100,000 rows: the planner walked every row of the agent per statement,
 # 43 ms for the range form instead of 25 and 3.0 s for the chunked form.
-_LOST_EMBEDDING_RANGE_SQL = (
-    "SELECT 1 FROM memories WHERE id BETWEEN ? AND ? AND +agent_id = ?"
-    " AND embedding IS NULL LIMIT 1"
-)
-
-
-def _lost_embedding_chunk_sql(count: int) -> str:
-    ph = ",".join("?" * count)
+def _lost_embedding_range_sql(table: str = "memories") -> str:
     return (
-        f"SELECT 1 FROM memories WHERE id IN ({ph}) AND +agent_id = ?"
+        f"SELECT 1 FROM {table} WHERE id BETWEEN ? AND ? AND +agent_id = ?"
         " AND embedding IS NULL LIMIT 1"
     )
 
 
-async def _index_rows_lost_embedding(db: aiosqlite.Connection, ids, *, agent_id: str) -> bool:
+# The memories form, kept under the name the plan test pins.
+_LOST_EMBEDDING_RANGE_SQL = _lost_embedding_range_sql("memories")
+
+
+def _lost_embedding_chunk_sql(count: int, table: str = "memories") -> str:
+    ph = ",".join("?" * count)
+    return (
+        f"SELECT 1 FROM {table} WHERE id IN ({ph}) AND +agent_id = ?"
+        " AND embedding IS NULL LIMIT 1"
+    )
+
+
+async def _index_rows_lost_embedding(
+    db: aiosqlite.Connection, ids, *, agent_id: str, table: str = "memories"
+) -> bool:
     """Whether any of these indexed ids no longer carries an embedding.
 
     An existence probe rather than a list: the caller only needs to know whether
@@ -533,11 +549,13 @@ async def _index_rows_lost_embedding(db: aiosqlite.Connection, ids, *, agent_id:
     if hi - lo + 1 == n:
         # Ids are unique, so a span equal to the count means every id in
         # [lo, hi] is selected and the range asks exactly the same question.
-        row = await db.execute_fetchall(_LOST_EMBEDDING_RANGE_SQL, (lo, hi, agent_id))
+        row = await db.execute_fetchall(_lost_embedding_range_sql(table), (lo, hi, agent_id))
         return bool(row)
     for start in range(0, n, _LOST_EMBEDDING_PROBE_CHUNK):
         chunk = ids[start : start + _LOST_EMBEDDING_PROBE_CHUNK].tolist()
-        row = await db.execute_fetchall(_lost_embedding_chunk_sql(len(chunk)), (*chunk, agent_id))
+        row = await db.execute_fetchall(
+            _lost_embedding_chunk_sql(len(chunk), table), (*chunk, agent_id)
+        )
         if row:
             return True
     return False
@@ -552,6 +570,7 @@ async def _index_tail_rows(
     channel: str,
     source_id: str,
     scan_limit: int,
+    table: str = "memories",
 ):
     """The rows the index cannot answer for, read exactly.
 
@@ -570,7 +589,10 @@ async def _index_tail_rows(
     means a model swap began after the build; the scan handles it correctly.
     """
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
-    src_like = _escape_like_prefix(source_id)
+    # Only memories carry a source column; the episode caller passes source_id
+    # empty, and the guard here is what keeps a non-empty one from becoming a
+    # reference to a column the table does not have.
+    src_like = _escape_like_prefix(source_id) if table == "memories" else ""
     src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
     src_params = (src_like,) if src_like else ()
 
@@ -582,7 +604,7 @@ async def _index_tail_rows(
     holes = f" OR id IN ({','.join('?' * len(holes_ids))})" if holes_ids else ""
     rows = await db.execute_fetchall(
         f"""SELECT id, created_at, embedding, length(embedding)
-           FROM memories
+           FROM {table}
            WHERE (id > ?{holes}) AND embedding IS NOT NULL AND {iso.clause}{src_clause}
            ORDER BY created_at DESC, id ASC
            LIMIT ?""",
@@ -898,6 +920,10 @@ async def _scan_episodes_local(
     effective_min_sim: float,
     src_like: str,
     channel: str,
+    *,
+    limit: int | None = None,
+    agent_id: str = "",
+    project_id: str | None = None,
 ) -> list[tuple[float, dict]]:
     """Cosine-rank episode summaries, structurally mirroring the memory scan.
 
@@ -914,54 +940,108 @@ async def _scan_episodes_local(
     silently defeated semantic episode recall on exactly that grounding path.
     The remote episode fetch carries the same channel predicate and gate, so both
     vector branches stay symmetric (bug-046/075).
+
+    Two phases, like the memory scan (bug-249): phase 1 ranks `(id, embedding)`
+    over the window and phase 2 hydrates the summary only for the rows that
+    cleared the threshold and the top-`limit` cut. The split is what lets the
+    contiguous index supply phase 1 here as it does for memories — the episode
+    table was measured to cost more per query, unindexed, than the indexed
+    memory table five times its size (benchmarks/measurements/
+    results-recall-path-profile.md). The source rule above is applied before
+    either phase, so the index is never asked about a column episodes lack.
+
+    `limit` bounds the hydrate by the same argument as for memories: the caller
+    takes `heapq.nlargest(limit, ...)` over memories and episodes together, and
+    an episode with `limit` episodes ranked above it cannot place whatever the
+    memories do. `None` keeps every survivor (the pre-split behaviour); the
+    caller passes its response limit.
     """
     if src_like and not channel:
         return []
 
-    ep_rows = await db.execute_fetchall(
-        f"""SELECT id, summary, start_time, embedding, resolved, created_at
-           FROM episodes
-           WHERE {iso.clause} AND embedding IS NOT NULL
-           ORDER BY created_at DESC
-           LIMIT ?""",
-        (*iso.params, scan_limit),
+    supplied = await _index_phase1(
+        db,
+        agent_id=agent_id,
+        project_id=project_id,
+        channel=channel,
+        source_id="",
+        scan_limit=scan_limit,
+        query_dim=query_dim,
+        table="episodes",
     )
-    if not ep_rows:
+    if supplied is not None:
+        valid_ids, mat = supplied
+        if not valid_ids:
+            return []
+        ep_sims = _cosine_matrix(query_vec, mat)
+    else:
+        ep_rows = await db.execute_fetchall(
+            f"""SELECT id, embedding
+               FROM episodes
+               WHERE {iso.clause} AND embedding IS NOT NULL
+               ORDER BY created_at DESC, id ASC
+               LIMIT ?""",
+            (*iso.params, scan_limit),
+        )
+        if not ep_rows:
+            return []
+
+        valid_ids = []
+        ep_blobs = []
+        for row in ep_rows:
+            blob = row[1]
+            if blob and len(blob) == query_dim * 4:
+                valid_ids.append(row[0])
+                ep_blobs.append(blob)
+
+        if not valid_ids:
+            return []
+
+        ep_sims = _cosine_batch(query_vec, query_dim, ep_blobs)
+
+    # Survivors keep the scan's order, for the same reason as in the memory
+    # scan: the caller's nlargest is stable, and this order is its tie-break.
+    survivors = [
+        (valid_ids[i], float(sim_val))
+        for i, sim_val in enumerate(ep_sims)
+        if sim_val >= effective_min_sim
+    ]
+    if not survivors:
         return []
 
-    valid_ep_rows = []
-    ep_blobs = []
-    for row in ep_rows:
-        blob = row[3]
-        if blob and len(blob) == query_dim * 4:
-            valid_ep_rows.append(row)
-            ep_blobs.append(blob)
+    if limit is not None and limit < len(survivors):
+        keep = heapq.nlargest(limit, range(len(survivors)), key=lambda i: (survivors[i][1], -i))
+        survivors = [survivors[i] for i in sorted(keep)]
 
-    if not valid_ep_rows:
-        return []
-
-    ep_sims = _cosine_batch(query_vec, query_dim, ep_blobs)
+    payload = await _fetch_rows_by_id(
+        db,
+        f"SELECT id, summary, start_time, resolved, created_at FROM episodes WHERE id IN ({{ph}})"
+        f"{iso.and_clause}",
+        [ep_id for ep_id, _ in survivors],
+        tuple(iso.params),
+    )
 
     candidates: list[tuple[float, dict]] = []
-    for i, sim_val in enumerate(ep_sims):
-        if sim_val >= effective_min_sim:
-            ep_id, summary, start_time, _, ep_resolved, ep_created_at = valid_ep_rows[i]
-            sim = float(sim_val)
-            candidates.append(
-                (
-                    sim,
-                    {
-                        "id": ep_id,
-                        "_rid": ("ep", ep_id),
-                        "_cosine": sim,
-                        "content": f"[Episode] {summary}",
-                        "source": {"System": "episode"},
-                        # bug-213: start_time is nullable; created_at is not.
-                        "timestamp": episode_timestamp(start_time, ep_created_at),
-                        "_resolved": bool(ep_resolved),
-                    },
-                )
+    for ep_id, sim in survivors:
+        row = payload.get(ep_id)
+        if row is None:
+            continue
+        _, summary, start_time, ep_resolved, ep_created_at = row
+        candidates.append(
+            (
+                sim,
+                {
+                    "id": ep_id,
+                    "_rid": ("ep", ep_id),
+                    "_cosine": sim,
+                    "content": f"[Episode] {summary}",
+                    "source": {"System": "episode"},
+                    # bug-213: start_time is nullable; created_at is not.
+                    "timestamp": episode_timestamp(start_time, ep_created_at),
+                    "_resolved": bool(ep_resolved),
+                },
             )
+        )
     return candidates
 
 
@@ -1085,7 +1165,8 @@ async def _search_vector(
         agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
     )
     candidates += await _scan_episodes_local(
-        db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel
+        db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel,
+        limit=limit, agent_id=agent_id, project_id=project_id,
     )
 
     top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
