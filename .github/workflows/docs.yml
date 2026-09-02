@@ -26,6 +26,7 @@ on:
       - "overrides/**"
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
+      - "scripts/check-docs-index.py"
       - "scripts/check-heading-parity.py"
       - "scripts/check-i18n-coverage.py"
       - "scripts/check-i18n-drift.py"
@@ -38,6 +39,7 @@ on:
       - "overrides/**"
       - ".github/workflows/docs.yml"
       - "scripts/check-doc-anchors.py"
+      - "scripts/check-docs-index.py"
       - "scripts/check-heading-parity.py"
       - "scripts/check-i18n-coverage.py"
       - "scripts/check-i18n-drift.py"
@@ -62,6 +64,15 @@ jobs:
           # blob, and the updater refuses to fall back to a full re-translation
           # — so without history the job reports and stops instead of working.
           fetch-depth: 0
+      - name: Documentation index coverage (blocking)
+        # Runs before the build because it reads the sources, and because the
+        # thing it catches is cheap to catch early. mkdocs logs a page that is
+        # missing from `nav:` at INFO, which --strict does not promote, and
+        # nothing at all watched docs/llms.txt — the machine-readable index had
+        # silently fallen six pages behind when this step was written. Every
+        # other docs gate starts from a page it was handed, so a page no index
+        # points at is not an input to any of them.
+        run: python3 scripts/check-docs-index.py
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Build site (strict)
