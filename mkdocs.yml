@@ -52,7 +52,13 @@ plugins:
             Configuration: 設定リファレンス
             FAQ: FAQ
             Quality Assurance: 品質保証
-            Design documents: 設計ドキュメント
+            Using CPersona: 使い方
+            Operating: 運用
+            Project standards: プロジェクト標準
+            Design notes: 設計ノート
+            Access and identity: アクセスと同一性
+            Retrieval and storage: 検索と保存
+            Reliability: 信頼性
             Release lifecycle: リリースライフサイクル
             # The section heading was translated while the pages under it were
             # not, so the Japanese nav listed English titles under a Japanese
@@ -82,25 +88,50 @@ markdown_extensions:
   - pymdownx.highlight
   - pymdownx.superfences
 
+# Grouped by what the reader came to do, not by file kind. The flat list this
+# replaced put nine undifferentiated pages above one "Design documents" drawer,
+# and the drawer was the fastest-growing part of the site — four pages in the
+# twelve days before this regrouping. Two consequences it had: normative
+# standards sat beside per-feature rationale, with one of them (the release
+# lifecycle) stranded outside the group entirely, and docs/llms.txt fell six
+# pages behind without any gate noticing. scripts/check-docs-index.py is the
+# detector for the second; this structure is the fix for the first.
+#
+# Paths are deliberately unchanged. Every published URL is derived from the
+# filename, so moving files here would 404 the README's absolute links, the
+# PyPI page and every external inbound link, and would touch the ~75 source and
+# test comments that cite `docs/<PAGE>.md` as the authority for a behavior.
+# Grouping is free of all of that: it is a nav-only change.
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Architecture: architecture.md
-  - Behavior Contracts: behavior-contracts.md
-  - Tools: tools.md
-  - Operations Runbook: operations.md
-  - Configuration: configuration.md
-  - FAQ: faq.md
-  - Quality Assurance: quality-assurance.md
-  - Design documents:
-      - ACL / per-client capabilities: ACL_DESIGN.md
-      - OAuth support: OAUTH_DESIGN.md
-      - Degraded-mode advisory: DEGRADED_ADVISORY_DESIGN.md
-      - Operating context: OPERATING_CONTEXT_DESIGN.md
-      - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
-      - CLAUDE.md policy standard: CLAUDE_MD_POLICY_STANDARD.md
+  - Using CPersona:
+      - Tools: tools.md
+      - Configuration: configuration.md
+      - Behavior Contracts: behavior-contracts.md
+      - FAQ: faq.md
+  - Operating:
+      - Operations Runbook: operations.md
+      - Quality Assurance: quality-assurance.md
+  # Normative: these say what a release, an audit report or a policy block MUST
+  # look like, and other repositories adopt them. Kept apart from Design notes,
+  # which only explain how this server arrived at one of its own behaviors.
+  - Project standards:
+      - Release lifecycle: RELEASE_LIFECYCLE_STANDARD.md
       - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
-      - Session identity: SESSION_IDENTITY_DESIGN.md
-      - Memory origin: MEMORY_ORIGIN_DESIGN.md
-      - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
-  - Release lifecycle: RELEASE_LIFECYCLE_STANDARD.md
+      - CLAUDE.md policy standard: CLAUDE_MD_POLICY_STANDARD.md
+  # Point-in-time design records, subdivided by subject because the group grows
+  # by roughly a page a month and a flat list of ten stops being an index.
+  - Design notes:
+      - Access and identity:
+          - ACL / per-client capabilities: ACL_DESIGN.md
+          - OAuth support: OAUTH_DESIGN.md
+          - Operating context: OPERATING_CONTEXT_DESIGN.md
+          - Session identity: SESSION_IDENTITY_DESIGN.md
+          - Memory origin: MEMORY_ORIGIN_DESIGN.md
+      - Retrieval and storage:
+          - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
+          - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
+      - Reliability:
+          - Degraded-mode advisory: DEGRADED_ADVISORY_DESIGN.md
