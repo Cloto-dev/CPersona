@@ -655,15 +655,33 @@ class _FakeProcess:
         return self._output, b""
 
 
-def _spy_exec(monkeypatch, code=0, output=b"Successfully installed cpersona-2.5.11\n"):
+def _spy_exec(
+    monkeypatch,
+    code=0,
+    output=b"Successfully installed cpersona-2.5.11\n",
+    branch_code=0,
+):
+    """Record every spawn; answer the branch probe separately from the steps.
+
+    ``git symbolic-ref`` is not one of the update steps — it is the question
+    ``apply`` asks before running them — so a single ``code`` for both would
+    make "the pull failed" and "the tree is detached" the same fixture, and no
+    test could tell the two refusals apart. ``branch_code`` defaults to 0 (on a
+    branch), which is the state every pre-existing test was written in.
+    """
     seen: list[tuple[tuple, dict]] = []
 
     async def fake_exec(*argv, **kwargs):
         seen.append((argv, kwargs))
+        if "symbolic-ref" in argv:
+            return _FakeProcess(branch_code, b"refs/heads/main\n" if branch_code == 0 else b"")
         return _FakeProcess(code, output)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     return seen
+
+
+_PROBE = ("git", "-C", "/srv/cpersona", "symbolic-ref", "-q", "HEAD")
 
 
 @pytest.mark.asyncio
@@ -693,6 +711,7 @@ async def test_apply_on_a_checkout_pulls_then_installs(monkeypatch):
     result = await update_check.apply()
     assert result["applied"] is True
     assert [argv for argv, _ in seen] == [
+        _PROBE,
         ("git", "-C", "/srv/cpersona", "pull"),
         (sys.executable, "-m", "pip", "install", "/srv/cpersona"),
     ]
@@ -707,7 +726,59 @@ async def test_apply_stops_at_the_first_failing_step(monkeypatch):
     seen = _spy_exec(monkeypatch, code=1, output=b"fatal: could not read from remote\n")
     result = await update_check.apply()
     assert result["applied"] is False and result["exit_code"] == 1
-    assert len(seen) == 1, "the install ran after the pull failed"
+    assert [argv for argv, _ in seen] == [
+        _PROBE,
+        ("git", "-C", "/srv/cpersona", "pull"),
+    ], "the install ran after the pull failed"
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_a_checkout_that_is_not_on_a_branch(monkeypatch):
+    """Production runs its clone at a detached tag. `git pull` there stops with
+    "You are not currently on a branch" — true, and useless: it names the state
+    but not the way out. Refuse before spawning it, and name the way out."""
+    _install(monkeypatch, "checkout")
+    await _seed_newer(monkeypatch)
+    seen = _spy_exec(monkeypatch, branch_code=1)
+    result = await update_check.apply()
+    assert result["applied"] is False
+    assert [argv for argv, _ in seen] == [_PROBE], "apply ran a step on a detached checkout"
+    assert "detached HEAD" in result["reason"]
+    assert "git -C /srv/cpersona fetch --tags" in result["reason"]
+    assert "git -C /srv/cpersona checkout v2.5.11" in result["reason"]
+    assert f"{sys.executable} -m pip install /srv/cpersona" in result["reason"]
+    # The refusal is a state, not a capability: the method still advertises the
+    # command it would have run, so `check_update` keeps saying the same thing.
+    assert result["install"]["method"] == "checkout"
+    assert result["install"]["command"].startswith("git -C /srv/cpersona pull && ")
+
+
+@pytest.mark.asyncio
+async def test_a_branch_probe_that_cannot_answer_does_not_refuse(monkeypatch):
+    """128 is "not a repository", not "detached". Turning a probe we could not
+    run into a refusal would replace an honest failure from the step itself
+    with a verdict we never established."""
+    _install(monkeypatch, "checkout")
+    await _seed_newer(monkeypatch)
+    seen = _spy_exec(monkeypatch, branch_code=128)
+    result = await update_check.apply()
+    assert result["applied"] is True
+    assert [argv for argv, _ in seen][1:] == [
+        ("git", "-C", "/srv/cpersona", "pull"),
+        (sys.executable, "-m", "pip", "install", "/srv/cpersona"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_branch_probe_never_runs_off_the_checkout_path(monkeypatch):
+    """A pip install has no working tree to be detached from. Asking anyway
+    would spend a subprocess on a question with no bearing on the answer."""
+    _install(monkeypatch, "pip")
+    await _seed_newer(monkeypatch)
+    seen = _spy_exec(monkeypatch)
+    result = await update_check.apply()
+    assert result["applied"] is True
+    assert not any("symbolic-ref" in argv for argv, _ in seen)
 
 
 @pytest.mark.asyncio

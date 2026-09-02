@@ -90,7 +90,11 @@ anything, and a **restart is always required** afterwards, because the process
 that ran the install is still running the old code. Under `uvx` the tool
 declines to install and tells you why: the environment is a cache entry keyed by
 the launch arguments, so the change belongs in your MCP client's config
-(`uvx cpersona@latest`). `CPERSONA_UPDATE_CHECK=false` disables the feature
+(`uvx cpersona@latest`). A source checkout that is **not on a branch** — a clone
+parked at a release tag, which is a normal way to deploy one — is declined the
+same way: `git pull` has nothing to fast-forward from a detached `HEAD`, so the
+tool refuses before running anything and answers with the `git fetch --tags &&
+git checkout <tag>` form to use instead. `CPERSONA_UPDATE_CHECK=false` disables the feature
 entirely, including the one outbound request
 ([what it sends](architecture.md#transports)).
 
