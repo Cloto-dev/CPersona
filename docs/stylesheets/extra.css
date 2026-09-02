@@ -1,47 +1,51 @@
-/* Sidebar category labels, one step dimmer than the theme's default.
+/* Sidebar sub-category labels, one step dimmer than the theme's default.
  *
  * The nav groups pages by what the reader came to do, so the group labels are
- * signposts rather than destinations — none of them is a page, and the two
- * outer levels are not even clickable. At the theme's default weights they
- * competed with the page titles underneath them, which is the opposite of what
- * a signpost should do.
+ * signposts rather than destinations. mkdocs-material already treats the
+ * top-level section that way (--md-default-fg-color--light) but leaves a
+ * nested sub-section at the ordinary link weight, which made the sub-sections
+ * the brightest thing in the sidebar once the nav grew a third level. That is
+ * the one level this file changes:
  *
- * Measured against the built theme (mkdocs-material 9.7.7) rather than guessed:
+ *   level                    selector                        before -> after
+ *   top-level section        .md-nav__item--section > label   .54/.56 (theme)
+ *   nested sub-section       .md-nav__item--nested > label    .87/.82 -> .58/.60
+ *   page links (untouched)   .md-nav__link                    .87/.82
  *
- *   level                       selector                        before -> after
- *   top-level section           .md-nav__item--section > label   .54/.56 -> .46/.48
- *   nested sub-section          .md-nav__item--nested > label    .87/.82 -> .58/.60
- *   page links (untouched)      .md-nav__link                    .87/.82
+ * The top level is deliberately NOT overridden here, and an earlier revision
+ * of this file that took it to .46/.48 was reverted. Measured against both
+ * palettes: WCAG AA for text this size (under 18.66px bold / 24px) wants
+ * 4.5:1, which needs alpha >= 0.535, and .46/.48 gives 3.47:1 light and
+ * 3.72:1 dark. The theme's own .54/.56 sits just above that line at 4.59:1 and
+ * 4.91:1 — it is tuned to the threshold, not chosen loosely, so moving it down
+ * "a little" leaves compliance. The exception in WCAG 1.4.3 for inactive user
+ * interface components does not rescue it: that covers disabled controls, not
+ * a static heading that carries structure, even though these labels do carry
+ * pointer-events: none. Reading the value from the theme rather than pinning a
+ * compliant number of our own also means a future palette change carries this
+ * along instead of silently stranding it.
  *
- * Material already dimmed the top level (--md-default-fg-color--light); the
- * nested level it did not, which is why the sub-sections read as the brightest
- * thing in the sidebar. Both alphas are set here as one pair of variables so
- * the relationship between the levels stays visible and adjustable in one edit.
+ * The sub-section value that remains is checked the same way: .58 is 5.32:1 on
+ * white and .60 is 5.16:1 on the slate ground, both clear of the line.
  *
- * The two schemes are given separately because the theme's own palettes are:
- * light lays black over white, slate lays a near-white hue over dark, and an
- * alpha that reads as "one step back" on one is not the same number on the
- * other. `[data-md-color-scheme="slate"]` matches the attribute the theme puts
- * on <body>, so the toggle keeps working without a media query.
+ * The two schemes carry separate values because the palettes are not mirror
+ * images — light lays black over white, slate lays a near-white hue over dark,
+ * and an alpha that reads as "one step back" on one is not the same number on
+ * the other. `[data-md-color-scheme="slate"]` matches the attribute the theme
+ * puts on <body>, so the toggle keeps working without a media query.
  */
 
 :root {
-  --cp-nav-category-color: rgba(0, 0, 0, 0.46);
   --cp-nav-subcategory-color: rgba(0, 0, 0, 0.58);
 }
 
 [data-md-color-scheme="slate"] {
-  --cp-nav-category-color: hsla(var(--md-hue), 15%, 90%, 0.48);
   --cp-nav-subcategory-color: hsla(var(--md-hue), 15%, 90%, 0.60);
 }
 
 /* Scoped to the primary sidebar: the table of contents on the right is built
  * from the same md-nav classes, and dimming a heading the reader is actively
  * tracking is a different question from dimming a static signpost. */
-.md-nav--primary .md-nav__item--section > .md-nav__link[for] {
-  color: var(--cp-nav-category-color);
-}
-
 .md-nav--primary .md-nav__item--nested:not(.md-nav__item--section) > .md-nav__link[for] {
   color: var(--cp-nav-subcategory-color);
 }

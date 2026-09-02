@@ -75,9 +75,9 @@ plugins:
             CLAUDE.md policy standard: CLAUDE.md ポリシー標準
             SuperAuditor standard: SuperAuditor 標準
 
-# Sidebar category labels only. Kept as a stylesheet rather than an override
-# so that the theme keeps owning the markup — this file changes two colours and
-# states the measured before/after for each.
+# Sidebar sub-category labels only. Kept as a stylesheet rather than an
+# override so that the theme keeps owning the markup — this file changes one
+# colour, and records why the level above it is left to the theme.
 extra_css:
   - stylesheets/extra.css
 
