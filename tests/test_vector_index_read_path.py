@@ -277,6 +277,137 @@ async def test_a_row_the_format_cannot_spell_stays_reachable(corpus, taken):
     assert actual == expected, "an excluded row must still reach the answer"
 
 
+# The tail read, named by the one expression no other statement in `vector.py`
+# selects. `ORDER BY created_at DESC, id ASC` would not do: the live scan
+# carries it too, and `_search_vector` searches episodes as well as memories —
+# so a test keyed on the ORDER BY sees the episode scan and reports the memories
+# tail read that is not there.
+_TAIL_READ = "length(embedding)"
+_TAIL_PROBE = "SELECT EXISTS"
+
+
+@pytest.fixture
+def statements(monkeypatch, corpus):
+    """Every statement the read path issues on this connection, in order.
+
+    The gate this file tests is invisible in the answer by construction — it
+    only ever skips a statement that could not have returned a row — so the
+    answer cannot show whether it fired. The statement list can.
+    """
+    seen: list[str] = []
+    real = corpus.execute_fetchall
+
+    async def recording(sql, *args, **kwargs):
+        seen.append(sql)
+        return await real(sql, *args, **kwargs)
+
+    monkeypatch.setattr(corpus, "execute_fetchall", recording)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_an_empty_tail_is_settled_on_the_rowid_alone(corpus, taken, statements):
+    """The steady state does not pay for the read that discovers it is empty.
+
+    Nothing written since the build and no named holes: the tail statement
+    cannot return a row, and finding that out used to cost a walk of the
+    isolation index — 12.53 ms of a 49.92 ms arm at 100,000 rows. The rowid
+    range answers it instead.
+    """
+    result = await vector_index.build_index(corpus, "memories")
+    assert result["built"] and result["excluded"] == 0, result
+    statements.clear()
+
+    rows = await _search(corpus)
+    assert taken["index"] == 1, "the index path was not taken; the statement list is vacuous"
+    assert rows, "the corpus must return rows, or an empty tail proves nothing"
+    assert any(_TAIL_PROBE in s for s in statements), statements
+    assert not [s for s in statements if _TAIL_READ in s], (
+        "an empty tail must not read the table it cannot find a row in"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_row_written_after_the_build_still_reaches_the_tail_read(corpus, taken, statements):
+    """The positive claim: the gate is a gate, not an unconditional skip.
+
+    Without this, an implementation that always returned an empty tail would
+    pass the test above and lose every row written since the build — and it
+    would lose them silently, which is the failure this index is least allowed
+    to have.
+    """
+    await vector_index.build_index(corpus, "memories")
+    await _store(
+        corpus, f"{TOPIC} freshly written", created_at="2026-03-01 00:00:09",
+        embedding=_SHARED,
+    )
+    await corpus.commit()
+    statements.clear()
+
+    rows = await _search(corpus)
+    assert taken["index"] >= 1
+    assert [s for s in statements if _TAIL_READ in s], (
+        "a row exists past the watermark, so the tail read must be issued"
+    )
+    assert rows and "freshly written" in rows[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_named_hole_is_read_even_though_nothing_is_past_the_watermark(
+    corpus, taken, statements
+):
+    """The gate's one exception, and the mutation it is here to catch.
+
+    An excluded row is below the watermark — it existed when the build ran — so
+    the rowid range is empty while the tail still has a row to fetch. A gate
+    that consulted the range alone would drop it, and drop it in exactly the
+    shape where the range says there is nothing to do.
+    """
+    await _store(
+        corpus, f"{TOPIC} odd stamp", created_at="2026-03-01T00:00:05", embedding=_SHARED
+    )
+    await corpus.commit()
+    expected = await _search(corpus)
+
+    result = await vector_index.build_index(corpus, "memories")
+    assert result["excluded"] == 1, "the fixture must produce a hole below the watermark"
+    statements.clear()
+
+    actual = await _search(corpus)
+    assert taken["index"] == 1
+    assert [s for s in statements if _TAIL_READ in s], (
+        "a named hole must be read whatever the rowid range says"
+    )
+    assert actual == expected, "the gate dropped a row the scan returns"
+
+
+@pytest.mark.asyncio
+async def test_the_probe_is_answered_by_the_rowid(corpus):
+    """Pinned because the whole point is which access path answers it.
+
+    A probe planned as a scan would replace the read it stands in front of with
+    a walk of the same table, which is the cost it exists to remove — and it
+    would do so while returning the same answer, so only the plan can say.
+    """
+    for table in ("memories", "episodes"):
+        plan = " ".join(
+            row[-1]
+            for row in await corpus.execute_fetchall(
+                "EXPLAIN QUERY PLAN " + vector._tail_exists_sql(table), (0, AGENT)
+            )
+        )
+        assert "INTEGER PRIMARY KEY" in plan, plan
+        # Not `"SCAN" not in plan`: the outer query has no table, and SQLite
+        # spells that "SCAN CONSTANT ROW". What must not appear is a scan of
+        # the table being probed.
+        assert f"SCAN {table}" not in plan, plan
+        # The agent term must not become the access path: served by the
+        # isolation index it walks every row this agent owns, which is the
+        # walk the probe replaces.
+        assert f"idx_{table}_agent" not in plan, plan
+        assert f"idx_{table}_isolation" not in plan, plan
+
+
 @pytest.mark.asyncio
 async def test_absent_index_falls_back(corpus, taken):
     expected = await _search(corpus)
