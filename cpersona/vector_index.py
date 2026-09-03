@@ -58,8 +58,11 @@ CREATED_AT_WIDTH = 19
 # record's own value through) is named in the header so the query path can union
 # it into the exact tail read. Past this many, naming them stops being cheaper
 # than not having an index: the build declines instead, which leaves the caller
-# on the path that was always correct.
-MAX_EXCLUDED_IDS = 1000
+# on the path that was always correct. The number itself is a corpus-scale
+# setting and lives with the others in config, where the measurement that sizes
+# it is written down; this module binds it once so a test can steer the cap by
+# patching this name.
+MAX_EXCLUDED_IDS = config.VECTOR_INDEX_MAX_EXCLUDED_IDS
 
 # Only agent_id is compared for equality; the other three axes are compared
 # against a small set. Either way the per-row test is an integer one.
