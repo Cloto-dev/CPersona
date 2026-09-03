@@ -600,3 +600,164 @@ async def test_the_view_scores_bit_for_bit_like_the_copy(corpus, monkeypatch):
     assert view_scores.tobytes() == copy_scores.tobytes(), (
         "the view must score identically to the copy, bit for bit"
     )
+
+
+# ---------------------------------------------------------------------------
+# The holes ride as one parameter, not one per id
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tail_calls(monkeypatch, corpus):
+    """(sql, params) for every statement the read path issues, not just the sql.
+
+    The `statements` fixture above answers "was the tail read issued". This one
+    answers "how was it bound", which is a different question and the one the
+    cap on named holes turns into a correctness question: a placeholder per id
+    makes the hole list a list of SQL variables too.
+    """
+    seen: list[tuple[str, tuple]] = []
+    real = corpus.execute_fetchall
+
+    async def recording(sql, params=(), *args, **kwargs):
+        seen.append((sql, tuple(params)))
+        return await real(sql, params, *args, **kwargs)
+
+    monkeypatch.setattr(corpus, "execute_fetchall", recording)
+    return seen
+
+
+def _with_holes(index, holes):
+    """The same index file, read as though the build had named these holes."""
+    return type(index)(**{**index.__dict__, "excluded_ids": tuple(holes)})
+
+
+async def _tail_binding(corpus, tail_calls, index, holes):
+    """Issue the tail read for `holes` and return the (sql, params) it bound."""
+    tail_calls.clear()
+    rows = await vector._index_tail_rows(
+        corpus, _with_holes(index, holes),
+        agent_id=AGENT, project_id=None, channel="", source_id="", scan_limit=100,
+    )
+    assert rows is not None, "the fixture corpus must not look like a width mismatch"
+    calls = [c for c in tail_calls if _TAIL_READ in c[0]]
+    assert len(calls) == 1, calls
+    return calls[0]
+
+
+@pytest.mark.asyncio
+async def test_the_hole_list_does_not_become_a_list_of_sql_variables(corpus, tail_calls):
+    """Structural, because the answer cannot show it.
+
+    A placeholder per hole id returns exactly the same rows — until the id count
+    plus the watermark, the isolation terms and the limit passes
+    SQLITE_MAX_VARIABLE_NUMBER, which is 999 on every SQLite built before 3.32.0
+    and is the build `_LOST_EMBEDDING_PROBE_CHUNK` in the same module exists to
+    keep working. The cap on named holes was raised past that line, so what
+    stops the statement from failing on those builds is the shape of the
+    binding, and only the binding can be asserted here: a machine whose SQLite
+    allows 32,766 variables answers the per-id form correctly and proves
+    nothing.
+    """
+    index = await _built_index(corpus)
+    ids = [int(i) for i in index.ids]
+
+    few_sql, few_params = await _tail_binding(corpus, tail_calls, index, ids[:3])
+    many_sql, many_params = await _tail_binding(
+        corpus, tail_calls, index, ids[:3] + list(range(100_000, 103_000))
+    )
+
+    assert "json_each" in few_sql, few_sql
+    assert len(many_params) == len(few_params), (
+        "the parameter count grew with the hole count: the holes are bound one "
+        "placeholder per id again, and the cap on named holes is a cap on SQL "
+        f"variables ({len(few_params)} -> {len(many_params)})"
+    )
+    assert few_sql == many_sql, "the statement text must not depend on how many holes there are"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_hole_list_binds_nothing_extra(corpus, tail_calls):
+    """The steady state's statement is the one it was before the holes moved.
+
+    Not merely tidiness: the empty shape is the one whose plan the tests above
+    pin, and a `json_each` over an empty array would be a table-valued function
+    in the WHERE of every tail read the index ever issues.
+    """
+    index = await _built_index(corpus)
+    # Watermark 0, so the range term alone has rows to find and the read is
+    # issued even with no holes named.
+    empty = type(index)(
+        **{**index.__dict__, "excluded_ids": (), "unembedded_ids": (), "watermark": 0}
+    )
+    tail_calls.clear()
+    rows = await vector._index_tail_rows(
+        corpus, empty,
+        agent_id=AGENT, project_id=None, channel="", source_id="", scan_limit=100,
+    )
+    assert rows, "the corpus must be past the watermark, or this proves nothing"
+    sql, params = next(c for c in tail_calls if _TAIL_READ in c[0])
+    assert "json_each" not in sql, sql
+    assert " OR id IN" not in sql, sql
+
+    _, one_params = await _tail_binding(corpus, tail_calls, index, [int(index.ids[0])])
+    assert len(params) == len(one_params) - 1, (
+        "a named hole must cost exactly one parameter, and no holes must cost none"
+    )
+
+
+@pytest.mark.asyncio
+async def test_more_holes_than_a_small_build_has_variables_still_reach_the_answer(
+    corpus, taken, monkeypatch
+):
+    """The functional half: a hole embedded after the build is still returned,
+    at a hole count past the 999-variable line.
+
+    The corpus shape is the one a bulk import leaves behind — thousands of rows
+    written before the embedding backlog drains — which is exactly the corpus
+    that both wants an index and names the most holes.
+    """
+    monkeypatch.setattr(vector_index, "MAX_EXCLUDED_IDS", 20_000)
+
+    await corpus.executemany(
+        "INSERT INTO memories (agent_id, project_id, channel, content, source, timestamp,"
+        " created_at, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+        [
+            (AGENT, "", "", f"backlog row {n}", '{"type": "User", "id": "user-a"}',
+             "2026-03-01T00:00:00+00:00", "2026-03-01 00:00:03")
+            for n in range(1200)
+        ],
+    )
+    # The one that gets embedded later: tied with the corpus and newest, so its
+    # absence would be visible in the leading row rather than buried under the
+    # response limit.
+    await _store(corpus, f"{TOPIC} drained late", created_at="2026-03-01 00:00:06",
+                 embedding=_SHARED)
+    await corpus.execute(
+        "UPDATE memories SET embedding = NULL WHERE content = ?", (f"{TOPIC} drained late",)
+    )
+    await corpus.commit()
+
+    result = await vector_index.build_index(corpus, "memories")
+    assert result["built"], result
+    index = vector_index.load_index("memories")
+    assert len(index.unembedded_ids) > 999, (
+        "the index must name more holes than the smallest supported SQLite has "
+        f"variables, or the test is not about that ({len(index.unembedded_ids)})"
+    )
+
+    row = await corpus.execute_fetchall(
+        "SELECT id FROM memories WHERE content = ?", (f"{TOPIC} drained late",)
+    )
+    await corpus.execute(
+        "UPDATE memories SET embedding = ? WHERE id = ?",
+        (np.array(_SHARED, dtype=np.float32).tobytes(), row[0][0]),
+    )
+    await corpus.commit()
+
+    rows = await _search(corpus)
+    assert taken["index"] >= 1, "the index path was not taken; the comparison is vacuous"
+    assert rows and "drained late" in rows[0]["content"], (
+        "a hole embedded after the build must reach the answer through the exact tail"
+    )
+    assert [r["id"] for r in rows] == [r["id"] for r in await _search_without_index(corpus)]

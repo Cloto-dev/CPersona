@@ -116,6 +116,52 @@ RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT"
 # test instrument rather than a configuration; `_chunked_cosine_scan` carries
 # the measurements.
 VECTOR_SCAN_CHUNK_ROWS = max(1, _parse_int("CPERSONA_VECTOR_SCAN_CHUNK_ROWS", 512))
+# Rows the contiguous vector index may name as holes — the rows it could not put
+# in the file (a non-canonical `created_at`) plus the rows that carried no
+# embedding when the build ran. The index reads them by id out of the live table
+# on every query, so this bounds that read; past it the builder declines to build
+# at all, because an index that cannot name all its holes would answer
+# approximately and this file format does not approximate.
+#
+# 10,000 is 6.7% of a 150,000-row corpus, which is the state a bulk import leaves
+# behind while the embedding backlog drains — the case where declining to build
+# hurts most, since that corpus is exactly the one that needs the index. The
+# worst case is that every named hole has since gained an embedding and is
+# therefore read in full: measured at 150,000 rows of 1024-d float32, 1,000 holes
+# cost 8.8 ms and 5,000 cost 34.5 ms, so 10,000 interpolates to roughly 65 ms per
+# query. That is the price of having an index at all versus not having one, and
+# it decays to nothing at the next rebuild, which absorbs the holes.
+#
+# The holes are bound as a single JSON array (see `_index_tail_rows`), so this
+# number is not also a count of SQL variables.
+VECTOR_INDEX_MAX_EXCLUDED_IDS = max(0, _parse_int("CPERSONA_VECTOR_INDEX_MAX_EXCLUDED_IDS", 10000))
+# NULL-embedding rows one `check_health(fix=true)` run re-embeds. Prefetch and
+# repair read the same number, and the `repairable` count is bounded by it — a
+# fixer that reaches 5,000 rows must not report 50,000 as repairable.
+#
+# 5,000 is 3.3% of a 150,000-row corpus per run. At the previous 500, draining a
+# 50,000-row backlog took 100 fix runs, and the two caps compound: while the
+# backlog exceeds VECTOR_INDEX_MAX_EXCLUDED_IDS the index cannot be built either,
+# so the corpus stays on the live scan for as long as the drain takes. The
+# embedding calls happen BEFORE the write lock is taken (prefetch), so what this
+# number bounds is prefetch wall time and the number of locked UPDATEs — not HTTP
+# round-trips made while holding the lock.
+REEMBED_ROW_CAP = max(1, _parse_int("CPERSONA_REEMBED_ROW_CAP", 5000))
+# Embedded rows `deep_near_duplicate` compares, bounding an O(n^2) dense cosine
+# matrix (`unit @ unit.T` plus `np.triu`) — the memory, not the time, is what
+# decides this one. Measured on 1024-d float32: n=1,000 is 17 ms / 17 MB peak,
+# n=2,000 is 18 ms / 52 MB, n=5,000 is 103 ms / 266 MB, n=10,000 is 392 ms /
+# 982 MB. 5,000 covers 3.3% of a 150,000-row corpus for a transient 266 MB;
+# 10,000 would ask an 8 GB machine for a gigabyte of scratch space inside a
+# maintenance call, so the sample stays a sample.
+NEAR_DUPLICATE_ROW_CAP = max(2, _parse_int("CPERSONA_NEAR_DUPLICATE_ROW_CAP", 5000))
+# Offending source rows `check_invalid_source_type` classifies per run. It bounds
+# the JSON parsing a plain `check_health` does — microseconds per row, so this is
+# an order of magnitude cheaper than the two caps above and can afford to be the
+# largest. 10,000 is 6.7% of a 150,000-row corpus. Past the cap the sample is
+# incomplete and the check declines to downgrade its own severity, so the cap
+# costs a verdict, not correctness.
+INVALID_SOURCE_CLASSIFY_CAP = max(1, _parse_int("CPERSONA_INVALID_SOURCE_CLASSIFY_CAP", 10000))
 # 16000, raised from 2000, because the old cap was destroying the part
 # of a memory that is worth the most. Long records put the conclusion first and
 # the hard-won detail last, so cutting the tail on every write removed exactly
@@ -308,7 +354,14 @@ CALIBRATE_SAMPLE_SIZE = _parse_int("CPERSONA_CALIBRATE_SAMPLE_SIZE", 200)
 # value (e.g. 20000) allocates multi-GB transient arrays and OOM-kills the whole
 # server process, taking recall down for every agent on the shared connection.
 # Mirrors the _clamp_limit discipline already applied to the recall/list handlers.
-CALIBRATE_MAX_SAMPLE = max(1, _parse_int("CPERSONA_CALIBRATE_MAX_SAMPLE", 2000))
+#
+# 5,000, raised from 2,000: the same matrix NEAR_DUPLICATE_ROW_CAP bounds, so the
+# same measurement decides it (1024-d float32) — n=2,000 is 18 ms / 52 MB peak,
+# n=5,000 is 103 ms / 266 MB, n=10,000 is 392 ms / 982 MB. A threshold calibrated
+# on 2,000 rows of a 150,000-row corpus samples 1.3% of it; 5,000 samples 3.3%
+# for a transient the machine calibration already runs on can hold. The ceiling
+# is what stops the OOM, so it moves only as far as a measured allocation.
+CALIBRATE_MAX_SAMPLE = max(1, _parse_int("CPERSONA_CALIBRATE_MAX_SAMPLE", 5000))
 CALIBRATE_Z_FACTOR = _parse_float("CPERSONA_CALIBRATE_Z_FACTOR", 1.0)
 CALIBRATE_FLOOR = _parse_float("CPERSONA_CALIBRATE_FLOOR", 0.05)
 # v2.4.24 — calibration method. "percentile" sets the threshold at a quantile of

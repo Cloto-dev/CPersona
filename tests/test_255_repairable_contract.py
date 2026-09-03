@@ -445,11 +445,11 @@ async def test_report_only_checks_are_left_alone(db):
 # The one declaration the corpus-level tests above cannot pin
 #
 # Every other check's `repairable` is a row count the seeded corpus can express.
-# The re-embed bound is different on two axes the corpus cannot reach: a cap of
-# 500 (a seeder would have to insert 501 rows to feel it) and a configuration in
-# which the repair does not run at all. Both were measured surviving a mutation
-# while the rest of this file stayed green, which is the only reason to know they
-# needed their own test.
+# The re-embed bound is different on two axes the corpus cannot reach: a cap in
+# the thousands (a seeder would have to insert REEMBED_ROW_CAP + 1 rows to feel
+# it) and a configuration in which the repair does not run at all. Both were
+# measured surviving a mutation while the rest of this file stayed green, which
+# is the only reason to know they needed their own test.
 # ---------------------------------------------------------------------------
 
 
@@ -461,9 +461,12 @@ async def test_report_only_checks_are_left_alone(db):
 )
 def test_reembeddable_never_claims_more_than_one_run_repairs(monkeypatch, null_count, expected):
     """A backlog is not a repair. `_reembed_null_rows` takes REEMBED_ROW_CAP rows
-    per run, so a 5,000-row NULL corpus is 500 rows of available action and 4,500
-    rows of next time — declaring the backlog would describe work this run will
-    not do, which is the same overstatement as counting locked rows."""
+    per run, so a NULL corpus several times that size is one cap of available
+    action and the rest of next time — declaring the backlog would describe work
+    this run will not do, which is the same overstatement as counting locked
+    rows. Parametrised off the constant rather than off its value: the cap is a
+    corpus-scale setting now, and a test that spelled the number would pin a
+    default while claiming to pin a contract."""
     monkeypatch.setattr(vector, "_embedding_client", object())
 
     assert checks._reembeddable(null_count) == expected
