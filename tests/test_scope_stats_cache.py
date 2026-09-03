@@ -35,12 +35,18 @@ QUERY = "deployment rollback"
 SEED_CONTENT = "session {i}: deployment rollback of the billing service"
 TTL = 60.0
 
-_SPAN = "SELECT MIN(timestamp), MAX(timestamp) FROM memories"
+# Two statements, not one: SQLite's MIN/MAX optimisation wants a single aggregate,
+# so the span is asked as two seeks rather than one walk. Both are listed, so a
+# change that stopped issuing either would be visible here.
+_SPAN = (
+    "SELECT MIN(timestamp) FROM memories",
+    "SELECT MAX(timestamp) FROM memories",
+)
 _COUNTS = ("SELECT COUNT(*) FROM memories", "SELECT COUNT(*) FROM episodes")
 # The statements this cache exists to stop re-issuing. Matched on statement text rather
 # than by spying on scope_stats itself, so a call site that stops going through the
 # helper (and starts scanning again) still counts.
-_AGGREGATES = (_SPAN,) + _COUNTS
+_AGGREGATES = _SPAN + _COUNTS
 
 
 @pytest.fixture(autouse=True)
@@ -142,7 +148,7 @@ async def test_a_second_recall_in_one_scope_reads_no_aggregates(
             f"the first recall never issued `{prefix}` — this test is not measuring "
             f"what it claims to; statements seen: {_matching(sql_spy, *_AGGREGATES)}"
         )
-    assert bool(_matching(sql_spy, _SPAN)) is confidence, (
+    assert bool(_matching(sql_spy, *_SPAN)) is confidence, (
         "the span is read exactly when the confidence score needs it"
     )
 
@@ -170,8 +176,8 @@ async def test_confidence_off_never_reads_the_span(clean_db, monkeypatch, fake_c
     sql_spy.clear()
     for _ in range(3):
         await memory_handlers.do_recall(AGENT, QUERY, limit=5)
-    assert _matching(sql_spy, _SPAN) == [], (
-        f"a confidence-off recall computed the temporal span: {_matching(sql_spy, _SPAN)}"
+    assert _matching(sql_spy, *_SPAN) == [], (
+        f"a confidence-off recall computed the temporal span: {_matching(sql_spy, *_SPAN)}"
     )
 
 
@@ -339,7 +345,7 @@ async def test_the_two_halves_are_stamped_independently(clean_db, fake_clock, sq
 
         sql_spy.clear()
         span = await scope_stats.get_span(db, AGENT)
-        assert _matching(sql_spy, _SPAN), "the span half was never computed, so it must be read"
+        assert _matching(sql_spy, *_SPAN), "the span half was never computed, so it must be read"
         assert span[0] and span[1], f"the seeded rows have timestamps: {span}"
 
 

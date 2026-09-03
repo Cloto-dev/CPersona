@@ -236,3 +236,71 @@ What the cache does not do: a writer in another process is seen only when
 the entry ages out (`CPERSONA_SCOPE_STATS_TTL_SECONDS`, 60 by default); a
 write by this process invalidates exactly. The numbers above are for the
 recall path only; the first recall on a cold scope still pays the scans.
+
+## The span, seeked
+
+The cache above removes the span from a read-heavy stretch, but it is dropped by
+every commit — the write generation moves on any store — so the first recall
+after any write pays the statement again. This is that statement, measured with
+the cache off so the shape of the read is what is being compared.
+
+Two changes, and neither works alone. The statement is split into two, one
+aggregate each, because SQLite's MIN/MAX optimisation applies to a single
+aggregate: `MIN(x), MAX(x)` in one SELECT is a walk over any index. And an index
+carries the column being aggregated directly behind the one axis every read
+constrains, so a seek to either end is a seek and not a scan.
+
+Reference machine, production config, 100,000 memories + 20,000 episodes, cache
+off, median of 12 queries per set:
+
+| | Before | After |
+| --- | ---: | ---: |
+| span statements, broad | 73.77 ms | **0.174 ms** |
+| span statements, narrow | 73.35 ms | **0.196 ms** |
+| `do_recall`, broad | 389.9 ms | 313.8 ms |
+| `do_recall`, narrow | 127.7 ms | **54.6 ms** (2.34x) |
+| `fts:memories` (untouched) | 212.76 ms | 212.25 ms |
+| `fts:episodes` (untouched) | 45.99 ms | 46.16 ms |
+
+The untouched statements are what say the two runs are comparable.
+
+### The column order, and a measurement that had to be redone
+
+The first order tried here was the isolation order — `(agent_id, project_id,
+channel, timestamp)` — chosen because it matches the predicate. It was measured
+at 26 ms a statement, still a walk, and the plan gave no hint: an index whose
+ordering column sits behind an unconstrained axis is reported in exactly the same
+words as one being seeked.
+
+The mistake was in the scope shape the first measurement used. It narrowed the
+project AND the channel, and `channel=''` means "every channel" — so the ordinary
+recall constrains neither axis, and everything before `timestamp` in the index
+has to be an equality for `timestamp` to order anything. Measured across the four
+shapes recall actually produces, at 100,000 rows:
+
+| Scope shape | isolation idx | a,p,c,ts | a,ts | a,p,ts | **a,ts,p,c** |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| agent only | 25.9 ms | 12.7 | 0.002 | 13.3 | **0.001** |
+| global pool only | 16.8 ms | 9.2 | 2.761 | 0.002 | **0.727** |
+| a project's gamma union | 21.2 ms | 11.6 | 0.002 | 0.004 | **0.002** |
+| that plus a channel | 24.5 ms | 0.007 | 0.002 | 0.004 | **0.002** |
+
+`(agent_id, timestamp, project_id, channel)` has the best worst case: the two
+axes a read may leave open ride along as payload, present so the filter can be
+tested without touching a row, but not between the seek and its target.
+
+Because the plan cannot tell a seek from a walk, the test that pins this counts
+virtual-machine steps and compares the two orders on the same corpus — the wrong
+order is what calibrates "walked", so there is no constant to go stale.
+
+### What the timestamps in a real corpus look like
+
+Asked before assuming, on a live 2,977-row corpus. No empty stamps and none
+unparseable — but five spellings, and three offsets: `+00:00` (2,456 rows), `Z`
+(503) and `+09:00` (10). The offsets matter because both aggregates order the
+column as TEXT, and an ISO-8601 stamp's byte order is its chronological order
+only while the offsets agree: seven places in that corpus where the byte order
+runs backwards in time, and one 237-row scope whose reported span starts 0.16 h
+after its actual oldest row. Registered as bug-286 and deliberately not repaired
+here — the split preserves that behaviour exactly, and changing it would move a
+scoring input rather than the cost of reading one.
