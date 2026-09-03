@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:e5b601994e2ecfa0f5b1b281e6b659a576984960 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:d4f167ea65d97ba4ff6809b54ba75bb9736de2f9 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -127,9 +127,11 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 同じリストの先頭から切り詰められます。決めるのは遠方の何行が投票できるかだけで、
 行のスコア計算には一切関与しません。
 
-大きなコーパスに対する**サポートされた答えは環境変数を上げること**です —
-この定数は回避策を設計すべき限界ではなく、つまみとして存在しています。
-コスト目安: 768 次元 float32 の埋め込みは 1 行あたり約 3 KB なので、
+**ウィンドウを上げることは、同じ動作で到達範囲を伸ばし、新しさの優遇を消します**
+— 実測では、古い答えの 5 点に対して最近の答えで NDCG@10 を 20 点失いました
+(`REACH_AND_RECENCY_PLAN.md`)。したがってこれは値段の付いたつまみであって、大きな
+コーパスに対するサポートされた答えではなく、既定値は far の票に値段が付くまで
+動きません。コスト目安: 768 次元 float32 の埋め込みは 1 行あたり約 3 KB なので、
 10,000 行のウィンドウでは最悪ケースで 1 回の recall あたり約 60 MB を読みます
 (記憶 + エピソード)。reach を有効にした場合のコストも同じ形で効きます: 1 回の
 recall が現在より `CPERSONA_VECTOR_REACH` − `CPERSONA_MAX_MEMORIES` 行だけ多く

@@ -128,8 +128,11 @@ the list the reach produces on its own; above `0`, the smaller of that and the
 number given, taken from the head of the same list, so it decides how many far
 rows may vote and nothing about how any row is scored.
 
-**Raising the env var is the supported answer** for larger corpora — the
-constant exists as a knob, not a limit to engineer around. Cost estimate: a
+**Raising the window extends the reach and removes the prior in the same
+motion** — measured, it cost 20 NDCG@10 points on recent answers for 5 on old
+ones (`REACH_AND_RECENCY_PLAN.md`), so it is a knob with a price rather than
+the supported answer for a larger corpus, and the default does not move until
+the far vote is priced. Cost estimate: a
 768-dimension float32 embedding is ~3 KB/row, so a 10,000-row window reads up
 to ~60 MB per recall in the worst case (memories + episodes). Turning the reach
 on costs the same way, per row: a recall reads `CPERSONA_VECTOR_REACH` −
