@@ -268,8 +268,45 @@ reason recorded above — SQLite walking the rows in the range — and the tail
 query is 13 ms for a tail that is empty (it still runs the isolation query
 with `LIMIT scan_limit` to learn that). Both are now larger than everything
 else in the arm combined, and neither is where the design's bytes are. The
-partial index that answers the probe in microseconds remains a schema
-decision; the tail query is worth a look of its own.
+tail query is worth a look of its own.
+
+### The probe, answered from an index
+
+The partial index recorded above as a decision has been made. Both arms below
+are the same script, the same machine and the same regime, differing only in
+whether boot creates `idx_memories_lost_embedding` — the before arm is the
+code with that block removed, run rather than remembered:
+
+| Segment | Before | After |
+| --- | ---: | ---: |
+| `_search_vector` total | 77.92 ms | **49.92 ms** |
+| ├ `_index_rows_lost_embedding` | 29.19 ms | **0.27 ms** |
+| ├ `_index_phase1` | 21.47 ms | 7.00 ms |
+| ├ `_index_tail_rows` | 12.55 ms | 12.53 ms |
+| ├ `_merge_index_and_tail` | 1.40 ms | 1.40 ms |
+| `_cosine_matrix` (the matmul) | 24.27 ms | 23.99 ms |
+
+**1.56x on the arm**, and every segment the change does not touch is
+unmoved to the second decimal — which is also what says the two runs are
+comparable at all. The before arm reproduces the 29.0 ms in the table above
+on a tree several changes later, so that figure was the probe and not the
+day it was measured.
+
+**The matmul is now the dominant term** (48% of the arm), which is the state
+the design was aiming at: what remains is the arithmetic, not the bookkeeping
+around it. The probe's 0.27 ms is not the 0.005 ms a bare statement costs —
+the difference is building the id array and crossing into SQLite twelve times
+per query, not the lookup.
+
+It needs no schema version. An index is neither a column, a row, nor a read
+contract: a copy of a real database carrying it was opened by the shipped
+build, which has no code for it, and that build answered four recalls
+bit-identically, left the index in place, and kept its recorded schema
+version unchanged. So it is created where the isolation index already is —
+idempotent, non-fatal, outside the migration ladder — and an existing
+database picks it up on its next boot. One-time cost at 100,000 rows with
+3 KB rows: `CREATE INDEX` 53 ms, +0.8 MB on disk, and a per-write cost that
+does not separate from the blob write it rides along with.
 
 `profile_index_path.py` alongside this file is the segment profile that
 produced both tables, in-tree from this change on; the perf script removes

@@ -967,6 +967,21 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "severity": "warn",
         "sql": "CREATE INDEX idx_episodes_agent ON episodes(agent_id, created_at DESC)",
     },
+    # Losing either of these costs the index-served arm its cheapest question
+    # (see PROBE_INDEX_SQL in database.py): the lost-embedding probe goes back
+    # to walking the id range, ~29 ms per recall at 100,000 rows. Warn, not
+    # critical — no answer changes, and boot recreates them anyway; registering
+    # them is what lets check_health(fix=True) restore one without a restart.
+    "idx_memories_lost_embedding": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_memories_lost_embedding ON memories(id) WHERE embedding IS NULL",
+    },
+    "idx_episodes_lost_embedding": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_episodes_lost_embedding ON episodes(id) WHERE embedding IS NULL",
+    },
 }
 
 _SQL_NORMALIZE = re.compile(r"\s+")
