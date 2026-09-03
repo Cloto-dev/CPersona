@@ -121,7 +121,7 @@ of rows that exist today does not move.
 
 ### 3.2 Relative-score fusion
 
-Under `CPERSONA_RECALL_FUSION=rsf` each channel's raw scores are min-max
+Under `CPERSONA_RECALL_MODE=rsf` each channel's raw scores are min-max
 normalised per query and the sum is divided by the number of active
 channels. A far list fused as a fourth channel keeps the near rows' normalised
 values (their min and max are computed within their own list) but changes the

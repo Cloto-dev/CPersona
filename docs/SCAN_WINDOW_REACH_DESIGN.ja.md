@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/SCAN_WINDOW_REACH_DESIGN.md@blob:30e3c21ca811647b483c7b7a5f3da193ed354f2f -->
+<!-- i18n-source: docs/SCAN_WINDOW_REACH_DESIGN.md@blob:dfe1cd685a7ae3e5adbe26e02c4519402ebfa9dd -->
 
 # ベクトル走査窓の「到達範囲」と「新しさの優遇」
 
@@ -104,7 +104,7 @@ search そのものであって、そちらには固有の未決事項がある 
 
 ### 3.2 relative-score fusion { #32-relative-score-fusion }
 
-`CPERSONA_RECALL_FUSION=rsf` では各チャネルの生スコアをクエリごとに min-max 正規化し、
+`CPERSONA_RECALL_MODE=rsf` では各チャネルの生スコアをクエリごとに min-max 正規化し、
 合計を有効チャネル数で割る。far リストを 4 本目のチャネルとして融合すると near の行の
 正規化値は保たれる (min と max は自分のリスト内で計算される) が、すべての行で除数が
 3 から 4 になり、コサインスケールのゲートに対して全融合スコアが下がる。代わりに far の
