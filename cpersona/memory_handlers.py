@@ -336,7 +336,14 @@ async def _recall_cascade(
     project_id: str | None = None,
     source_id: str = "",
 ) -> list[dict]:
-    """Original cascading recall: stages fill remaining slots sequentially."""
+    """Original cascading recall: stages fill remaining slots sequentially.
+
+    Unchanged by `CPERSONA_VECTOR_REACH`: the far list is a second ranked list
+    for a fusion to weigh against the first, and this recall fuses nothing — it
+    concatenates stages in stage order. Adding far rows here would append older,
+    lower-ranked candidates behind the vector stage rather than let them compete,
+    which is not what the setting is for (docs/SCAN_WINDOW_REACH_DESIGN.md §3).
+    """
     results: list[dict] = []
     seen_ids: set = set()
     _excl = exclude_set or set()
@@ -403,11 +410,32 @@ async def _recall_rrf(
 
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
+        # One call to the vector retriever, as always. `far_out` collects the
+        # second ranked list it produces when CPERSONA_VECTOR_REACH is set above
+        # the scan window, and stays empty otherwise.
+        far_results: list[dict] = []
         vector_results = await _search_vector(
             db, agent_id, query, limit, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
+            far_out=far_results,
         )
         for rank, row in enumerate(vector_results):
+            if _content_excluded(row.get("content", ""), _excl):
+                continue
+            rid = row.get("_rid", ("mem", row["id"]))
+            if rid not in doc_map:
+                doc_map[rid] = row
+            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+
+        # The far list (CPERSONA_VECTOR_REACH, empty unless it is set above the
+        # scan window) is one more ranked list, fused exactly like the others: a
+        # row's reciprocal-rank contribution is a function of its rank on its own
+        # list, so appending a list leaves every existing row with the vote it
+        # already had. The two vector lists are disjoint by scan position, so no
+        # row is counted twice and the most a single row can still reach is three
+        # votes — which is the per-row maximum the legacy quality gate rescales
+        # its threshold by. See docs/SCAN_WINDOW_REACH_DESIGN.md §3.1.
+        for rank, row in enumerate(far_results):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
             rid = row.get("_rid", ("mem", row["id"]))
@@ -504,21 +532,42 @@ async def _recall_rsf(
     """
     doc_map: dict[tuple, dict] = {}
     vec_raw: dict[tuple, float | None] = {}
+    far_raw: dict[tuple, float | None] = {}
     ep_raw: dict[tuple, float | None] = {}
     mem_raw: dict[tuple, float | None] = {}
     _excl = exclude_set or set()
 
     rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
-        for row in await _search_vector(
+        far_rows: list[dict] = []
+        near_rows = await _search_vector(
             db, agent_id, query, limit, min_similarity=rsf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
-        ):
+            far_out=far_rows,
+        )
+        for row in near_rows:
             if _content_excluded(row.get("content", ""), _excl):
                 continue
             rid = row.get("_rid", ("mem", row["id"]))
             doc_map.setdefault(rid, row)
             vec_raw[rid] = row.get("_cosine", 0.0)
+
+        # The far list is a fourth CHANNEL here, not a fourth rank list, and
+        # unlike under rrf that is not free: each channel is min-max normalised
+        # within itself and the sum is divided by the number of active channels,
+        # so a far list that exists lowers every fused score against the
+        # cosine-scale gate. Merging the far rows into the vector channel instead
+        # would move the near rows' own min and max. Neither is bit-preserving
+        # once the far list exists; the setting's measurement is registered for
+        # the shipped rrf mode, and no claim is made about this one until it is
+        # measured (docs/SCAN_WINDOW_REACH_DESIGN.md §3.2). With the reach off
+        # the list is empty, so the divisor and every score are what they were.
+        for row in far_rows:
+            if _content_excluded(row.get("content", ""), _excl):
+                continue
+            rid = row.get("_rid", ("mem", row["id"]))
+            doc_map.setdefault(rid, row)
+            far_raw[rid] = row.get("_cosine", 0.0)
 
     # Episodes lack per-user source tagging (mirrors _recall_rrf gating).
     if FTS_ENABLED and (not source_id or channel):
@@ -541,7 +590,7 @@ async def _recall_rsf(
             bm = row.get("_bm25")
             mem_raw[rid] = -bm if bm is not None else None
 
-    active = [ch for ch in (vec_raw, ep_raw, mem_raw) if ch]
+    active = [ch for ch in (vec_raw, far_raw, ep_raw, mem_raw) if ch]
     n_active = len(active) or 1
     fused: dict[tuple, float] = {}
     for ch in active:
