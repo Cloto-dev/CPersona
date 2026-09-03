@@ -433,10 +433,17 @@ async def test_do_recall_limit_above_100_is_not_clamped(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_do_recall_limit_clamps_to_scan_window(monkeypatch):
-    """The library ceiling is the vector scan window (MAX_MEMORIES), not unbounded."""
+async def test_do_recall_limit_clamps_to_library_ceiling(monkeypatch):
+    """The library ceiling is bounded, and it is its own bound.
+
+    It used to be the vector scan window itself, which meant widening the window
+    for a larger corpus widened this response bound by the same factor. The pin
+    that matters is still "not unbounded"; which constant supplies the number is
+    now a separate decision, and `test_library_recall_limit_decoupled.py` is
+    where that separation is held.
+    """
     seen = _patch_capture_limit(monkeypatch)
-    monkeypatch.setattr(M, "MAX_MEMORIES", 500)
+    monkeypatch.setattr(M, "RECALL_LIBRARY_MAX_LIMIT", 500)
     await M.do_recall("agent.t", "x", limit=99999)
     assert seen["limit"] == 500
 

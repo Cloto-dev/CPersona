@@ -38,6 +38,7 @@ from cpersona.config import (
     FTS_ENABLED,
     MAX_MEMORIES,
     MAX_METADATA_LENGTH,
+    RECALL_LIBRARY_MAX_LIMIT,
     RECALL_MODE,
     REMOTE_INDEX_TIMEOUT_SECS,
     RRF_K,
@@ -1164,14 +1165,32 @@ async def do_recall(
     # negative limit otherwise flows to SQLite as `LIMIT -1` (unbounded full-corpus
     # scan + O(N) scoring on the hot path) and to `results[:limit]` as a silent
     # tail-drop. do_recall_with_context delegates here, so this covers both entries.
-    # 2.5.0: the ceiling is the vector scan window (MAX_MEMORIES), not
-    # 100 — the library layer bounds resource use only. The context-explosion cap
-    # for agents lives at the MCP boundary (the recall tools' JSON Schema declares
-    # `maximum: 100`); library callers (bench full-ranking, bulk export, future
-    # rerank) may legitimately request full depth. In rrf mode the fusion-list
-    # depth tracks `limit`, so the old in-library 100 cap silently collapsed
-    # deep-ranking quality (bge-m3 LongMemEval 81.17 -> 48.98).
-    limit = _clamp_limit(limit, MAX_MEMORIES)
+    # 2.5.0: the ceiling is not 100 — the library layer bounds resource use only.
+    # The context-explosion cap for agents lives at the MCP boundary (the recall
+    # tools' JSON Schema declares `maximum: 100`); library callers (bench
+    # full-ranking, bulk export, future rerank) may legitimately request full
+    # depth. In rrf mode the fusion-list depth tracks `limit`, so the old
+    # in-library 100 cap silently collapsed deep-ranking quality (bge-m3
+    # LongMemEval 81.17 -> 48.98).
+    #
+    # The ceiling is RECALL_LIBRARY_MAX_LIMIT rather than the vector scan window
+    # it used to be. Those are different questions — how far back the retriever
+    # looks, and how many rows one call may materialise — and while they shared a
+    # constant, widening the window for a larger corpus widened this bound by the
+    # same factor without anyone choosing to.
+    requested = limit
+    limit = _clamp_limit(limit, RECALL_LIBRARY_MAX_LIMIT)
+    if requested > limit:
+        # Said out loud, because this is the failure mode of the 100 cap above:
+        # a clamp that bites does not raise, it returns a worse ranking that
+        # looks like a result. A bench reading its own scores cannot tell the
+        # two apart; a line in the log can.
+        logger.warning(
+            "recall limit %d reduced to the library ceiling %d "
+            "(raise CPERSONA_RECALL_LIBRARY_MAX_LIMIT for a deeper ranking)",
+            requested,
+            limit,
+        )
 
     # Detect the static degraded case (mode=none) before dispatch; the runtime fault case
     # is observed at the embedding boundary in vector._search_vector. See health.py.
