@@ -48,6 +48,7 @@ note and the pages above disagree, the pages above win.
 - [Recorded access origin](https://cloto-dev.github.io/CPersona/MEMORY_ORIGIN_DESIGN/): recording the observed caller on each stored row, for the paths where `agent_id` names nobody
 - [Recall preview tier](https://cloto-dev.github.io/CPersona/RECALL_PREVIEW_TIER_DESIGN/): preview truncation and the get_contents expansion path
 - [Contiguous embedding index](https://cloto-dev.github.io/CPersona/CONTIGUOUS_INDEX_DESIGN/): moving the vector scan's read off SQLite rows onto a contiguous sidecar, with bit-identical answers
+- [Reach and recency in the scan window](https://cloto-dev.github.io/CPersona/SCAN_WINDOW_REACH_DESIGN/): why widening the vector scan window loses recent answers, and the second ranked list that lets reach move without removing the recency prior
 - [Embedding degradation advisory](https://cloto-dev.github.io/CPersona/DEGRADED_ADVISORY_DESIGN/): how recall reports a dead embedding layer instead of silently degrading
 
 ## Optional
