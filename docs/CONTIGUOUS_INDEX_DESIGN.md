@@ -40,6 +40,18 @@ order is not reproducible by a hand-written loop. Since a row's dot product does
 not depend on any other row, keeping the same `mat @ query_vec` call means the
 scores are identical and the existing equivalence gate keeps its teeth.
 
+One qualification, measured after the fact while the fallback scan was made to
+read its window in chunks: "the same call" has to mean the same bytes in the
+same *shape*. A row's dot product does not depend on the other rows, but the
+BLAS chooses its kernel from the row count, and below a platform-dependent
+threshold the last bits move — on Apple Accelerate, matrices under 64 rows at 64
+dimensions and under 16 rows at 768 disagree with the whole-window result by
+about one ULP, while every larger matrix agrees bit for bit. The index scores the
+selected rows as one matrix and the scan now scores chunks of at least 512 rows
+(a short tail is merged into the chunk before it), so both stay above any
+threshold measured so far; the tests measure it on the machine they run on
+rather than assume it.
+
 ## 2. The invariants the index must preserve
 
 **The scan window stays `MAX_MEMORIES`.** An index can afford to look at the

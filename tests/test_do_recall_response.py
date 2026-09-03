@@ -34,6 +34,33 @@ def _reset_health():
     health._reset()
 
 
+class _FakeStatement:
+    """What a connection's `execute` hands back, in both shapes its callers use.
+
+    Awaitable for a statement that is simply run (the recall-count bump), and an
+    async context manager over a cursor for the vector scan, which walks its
+    window in chunks rather than materialising it. A double that returned only
+    the first shape sends the scan into "coroutine does not support the
+    asynchronous context manager protocol" instead of the empty window this file
+    means to give it.
+    """
+
+    def __await__(self):
+        async def _ran():
+            return None
+
+        return _ran().__await__()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return None
+
+    async def fetchmany(self, size=None):
+        return []
+
+
 class _FakeDB:
     """Answers only the queries do_recall / _apply_recall_scoring issue."""
 
@@ -52,9 +79,9 @@ class _FakeDB:
     def __init__(self):
         self.executed: list[str] = []
 
-    async def execute(self, sql, params=()):
+    def execute(self, sql, params=()):
         self.executed.append(" ".join(sql.split()))
-        return None
+        return _FakeStatement()
 
     async def commit(self):
         return None

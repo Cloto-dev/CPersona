@@ -17,6 +17,7 @@ from cpersona import vector_index
 from cpersona.config import (
     MAX_MEMORIES,
     REMOTE_SEARCH_TIMEOUT_SECS,
+    VECTOR_SCAN_CHUNK_ROWS,
     VECTOR_SEARCH_MODE,
 )
 from cpersona.utils import episode_timestamp
@@ -817,6 +818,160 @@ def _is_ascending_run(positions) -> bool:
     first = int(arr[0])
     return bool(np.array_equal(arr, np.arange(first, first + arr.size)))
 
+
+async def _chunked_cosine_scan(
+    db: aiosqlite.Connection,
+    sql: str,
+    params: tuple,
+    query_vec,
+    query_dim: int,
+    effective_min_sim: float,
+    limit: int | None,
+) -> list[tuple[int, int, float]]:
+    """Cosine-rank a scan window without ever holding the window in memory.
+
+    Returns the survivors as `(ordinal, id, score)` in scan order. `ordinal` is
+    the row's position among the rows that passed the WIDTH FILTER, which is the
+    position the tie-break has always used -- a skipped row must not advance it,
+    or two corpora that differ only in a foreign-width row would break ties
+    differently. `limit` is the pre-hydrate cut its caller applies; `None` keeps
+    every survivor.
+
+    The window used to be read with one `execute_fetchall`: a list holding one
+    blob object per row, and then `b"".join` over that list, so the whole window
+    existed twice at once. Measured at 20,000 rows x 768 dimensions, peak
+    allocation was 127.3 MB against a 61.4 MB window -- 2.07x, as the two copies
+    predict -- which extrapolates to about 6.1 GB at 1,000,000 rows. An 8 GB
+    machine does not answer slowly there, it is killed, and the one path whose
+    job is to answer when the index cannot is then not a fallback. Reading the
+    cursor `VECTOR_SCAN_CHUNK_ROWS` rows at a time holds at most `2 * chunk - 1`
+    rows (the lookahead below merges a short tail into the chunk before it), so
+    1,023 rows at the default: 3.1 MB of embedding, and 4.8 MB of peak once
+    `_cosine_batch` joins them. Measured on a window whose remainder is the
+    worst case (20,991 rows x 768 dimensions): 4.8 MB against 133.6 MB for the
+    old shape -- 0.08x instead of 2.07x, and flat in the size of the window.
+
+    It is not a speed change and must not be sold as one. On that window the
+    SQLite row read is 70.8% of the old shape and the join, the unpack and the
+    matmul together are 12.2%; end to end the chunked form measured 24.2 ms
+    against 28.1 ms, which is the same order.
+
+    The cut is a bounded heap for the same reason. `heapq.nlargest` over every
+    row that cleared the threshold would be exact but would hold a list whose
+    length tracks the window -- and the fusion callers pass a deliberately
+    permissive threshold, so that list is a FRACTION of the window rather than a
+    constant. The heap key is `(score, -ordinal)` and it keeps the largest
+    `limit` of them, which is the set `nlargest(limit, key=(score, -ordinal))`
+    names: highest score first, earlier scan position wins a tie. Exact rather
+    than approximate, because that key is a total order (ordinals are unique).
+
+    On exactness, measured rather than assumed -- and the measurement did not
+    say what the design expected. A row's dot product does not depend on the
+    other rows in the matrix, so chunking looks like it cannot change a score.
+    It can: `mat @ query_vec` is dispatched to the platform BLAS, and the BLAS
+    picks its kernel from the ROW COUNT. Measured on this machine (Accelerate,
+    aarch64, numpy 2.4.6) over 2,400 rows of 64 dimensions, every matrix of 64
+    rows or more agrees bit for bit with the same rows scored inside the whole
+    window, while every smaller one disagrees by about one ULP on a quarter
+    (chunks of 1) to a half (chunks of 7) of its rows. At 768 dimensions the
+    switch sits at 16 rows instead.
+
+    So no matrix that is scored may be small, and the loop below is shaped by
+    that rather than by the read:
+
+    - A window that fits in ONE chunk is one matmul over exactly the rows the
+      single-statement scan multiplied, so it is identical by construction, on
+      any platform. That is the shipped shape for any corpus under 512 rows.
+    - Above that, every scored matrix is `chunk` rows or `chunk + window %
+      chunk`, because a short tail is carried into the chunk before it instead
+      of being scored alone. Without that, `window % chunk` rows below the
+      switch point moved by one ULP: measured at 2,050 rows in chunks of 512,
+      one of the last two moved, and at 2,100 rows, 27 of the last 52 did. With
+      it, both windows are bit-identical to the single matmul.
+    - A chunk size below the switch point moves scores throughout, and a
+      one-ULP move changes the ANSWER wherever the cut falls among rows that
+      close. On a deliberately tie-dense corpus (2,400 rows, 218 sharing one
+      vector exactly and 343 more a single ULP away, queried with that vector),
+      chunks of 7 with a limit of 25 returned 24 different ids out of 25 --
+      because the cut lands inside the tie group, where a last-place move is
+      the whole decision. Sizes that small are a test instrument, not a
+      configuration; the shipped default is 8x the larger measured switch
+      point, and the merge keeps the tail there too.
+
+    `tests/test_chunked_exact_scan.py` measures each of these on the machine it
+    runs on rather than trusting this note.
+    """
+    survivors: list[tuple[int, int, float]] = []
+    # (score, -ordinal, id): a min-heap of the best `limit` so far, so the row
+    # popped is the lowest score and, among equal scores, the latest in scan
+    # order -- the one `nlargest` on the same key would have dropped.
+    best: list[tuple[float, int, int]] = []
+    width = query_dim * 4
+    # Read at call time, not at import: a chunk size baked into a default
+    # argument could not be turned down by a test or by the environment.
+    # max(1, ...) because a fetchmany(0) returns no rows forever, which would
+    # make an empty answer look like an empty corpus.
+    chunk_rows = max(1, VECTOR_SCAN_CHUNK_ROWS)
+    ordinal = 0
+
+    # `async with`, so the statement is finalised on the way out however the way
+    # out is taken -- returning, raising, or being cancelled at an await inside
+    # the loop. Nothing here catches: a scan that cannot read its window must
+    # fail loudly rather than return a short answer that looks like a small
+    # corpus.
+    async with db.execute(sql, params) as cur:
+        batch = await cur.fetchmany(chunk_rows)
+        while batch:
+            # One batch of lookahead, and the reason is the note above: no
+            # matrix that is scored may be small. A window that does not divide
+            # evenly ends in `window % chunk` rows, and scoring those few alone
+            # is exactly the case the BLAS answers differently -- so the short
+            # tail is carried into the chunk before it instead. Never more than
+            # one batch ahead: reading the remainder until it is big enough
+            # would be an unbounded read wearing a bound's clothing.
+            pending: list = []
+            if len(batch) == chunk_rows:
+                pending = await cur.fetchmany(chunk_rows)
+                if pending and len(pending) < chunk_rows:
+                    batch = [*batch, *pending]
+                    pending = []
+
+            # Rows whose embedding is a foreign width are skipped rather than
+            # reshaped: a mid-flight model swap leaves a mixed-dimension corpus
+            # behind, and one stale row must not take the whole scan down.
+            ids = []
+            blobs = []
+            for row in batch:
+                blob = row[1]
+                if blob and len(blob) == width:
+                    ids.append(row[0])
+                    blobs.append(blob)
+
+            if ids:
+                # THE existing batched unpack + matmul, per chunk. No arithmetic
+                # is written here: a second implementation of the dot product is
+                # what the exactness of this path is spent on.
+                for row_id, sim_val in zip(ids, _cosine_batch(query_vec, query_dim, blobs)):
+                    position = ordinal
+                    ordinal += 1
+                    if sim_val < effective_min_sim:
+                        continue
+                    score = float(sim_val)
+                    if limit is None:
+                        survivors.append((position, row_id, score))
+                        continue
+                    heapq.heappush(best, (score, -position, row_id))
+                    if len(best) > limit:
+                        heapq.heappop(best)
+
+            batch = pending
+
+    if limit is None:
+        return survivors
+    # Back into scan order, which is the order the caller's own tie-break reads.
+    return sorted((-neg_position, row_id, score) for score, neg_position, row_id in best)
+
+
 async def _scan_memories_local(
     db: aiosqlite.Connection,
     iso: IsolationFilter,
@@ -888,6 +1043,23 @@ async def _scan_memories_local(
         if not valid_ids:
             return []
         sims = _cosine_matrix(query_vec, mat)
+        # Survivors keep the scan's order (created_at DESC): heapq.nlargest in
+        # _search_vector is stable, so this order is what breaks a tie between two
+        # equally-similar rows, and nothing below may reorder them.
+        survivors = [
+            (valid_ids[i], float(sim_val))
+            for i, sim_val in enumerate(sims)
+            if sim_val >= effective_min_sim
+        ]
+        if limit < len(survivors):
+            # The stable top-`limit`: score first, scan position as the tie-break, which
+            # is the order `sorted(..., reverse=True)` -- and therefore `nlargest` --
+            # would have produced. Re-sorted back into scan order so the ties the caller
+            # breaks are the ties it broke before.
+            keep = heapq.nlargest(
+                limit, range(len(survivors)), key=lambda i: (survivors[i][1], -i)
+            )
+            survivors = [survivors[i] for i in sorted(keep)]
     else:
         # ''=global (knob2 v2): a stored channel of '' matches every channel-scoped
         # recall (as on the remote by-id path in _search_vector_remote) -- the
@@ -899,48 +1071,31 @@ async def _scan_memories_local(
         # just presentation. SQLite already returned this order (equal index keys
         # come back by rowid ascending) and adding the term was measured to keep
         # the same plan -- so this states a contract rather than changing one.
-        rows = await db.execute_fetchall(
-            f"""SELECT id, embedding
+        #
+        # Read in chunks, and the threshold and the top-`limit` cut applied as the
+        # chunks arrive: the statement is the same one, but the window no longer
+        # exists in memory all at once (see _chunked_cosine_scan). The survivors it
+        # returns are already thresholded, already cut, and already back in scan
+        # order, which is the same list the lines above build for the index path.
+        survivors = [
+            (row_id, score)
+            for _, row_id, score in await _chunked_cosine_scan(
+                db,
+                f"""SELECT id, embedding
                FROM memories
                WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}
                ORDER BY created_at DESC, id ASC
                LIMIT ?""",
-            (*iso.params, *src_params, scan_limit),
-        )
-        if not rows:
-            return []
+                (*iso.params, *src_params, scan_limit),
+                query_vec,
+                query_dim,
+                effective_min_sim,
+                limit,
+            )
+        ]
 
-        valid_ids = []
-        blobs = []
-        for row in rows:
-            blob = row[1]
-            if blob and len(blob) == query_dim * 4:
-                valid_ids.append(row[0])
-                blobs.append(blob)
-
-        if not valid_ids:
-            return []
-
-        sims = _cosine_batch(query_vec, query_dim, blobs)
-
-    # Survivors keep the scan's order (created_at DESC): heapq.nlargest in
-    # _search_vector is stable, so this order is what breaks a tie between two
-    # equally-similar rows, and nothing below may reorder them.
-    survivors = [
-        (valid_ids[i], float(sim_val))
-        for i, sim_val in enumerate(sims)
-        if sim_val >= effective_min_sim
-    ]
     if not survivors:
         return []
-
-    if limit < len(survivors):
-        # The stable top-`limit`: score first, scan position as the tie-break, which
-        # is the order `sorted(..., reverse=True)` -- and therefore `nlargest` --
-        # would have produced. Re-sorted back into scan order so the ties the caller
-        # breaks are the ties it broke before.
-        keep = heapq.nlargest(limit, range(len(survivors)), key=lambda i: (survivors[i][1], -i))
-        survivors = [survivors[i] for i in sorted(keep)]
 
     # The hydrate re-applies the isolation axes and the source filter. That is
     # NOT the bug-100 fail-closed argument (that one guards ids supplied by the
@@ -1044,44 +1199,42 @@ async def _scan_episodes_local(
         if not valid_ids:
             return []
         ep_sims = _cosine_matrix(query_vec, mat)
+        # Survivors keep the scan's order, for the same reason as in the memory
+        # scan: the caller's nlargest is stable, and this order is its tie-break.
+        survivors = [
+            (valid_ids[i], float(sim_val))
+            for i, sim_val in enumerate(ep_sims)
+            if sim_val >= effective_min_sim
+        ]
+        if limit is not None and limit < len(survivors):
+            keep = heapq.nlargest(
+                limit, range(len(survivors)), key=lambda i: (survivors[i][1], -i)
+            )
+            survivors = [survivors[i] for i in sorted(keep)]
     else:
-        ep_rows = await db.execute_fetchall(
-            f"""SELECT id, embedding
+        # The same chunked read as the memory scan, and the same reason for it:
+        # this window is materialised one chunk at a time rather than whole.
+        # `limit` is `None` here when the caller wants every survivor, which the
+        # helper honours by skipping the cut entirely.
+        survivors = [
+            (row_id, score)
+            for _, row_id, score in await _chunked_cosine_scan(
+                db,
+                f"""SELECT id, embedding
                FROM episodes
                WHERE {iso.clause} AND embedding IS NOT NULL
                ORDER BY created_at DESC, id ASC
                LIMIT ?""",
-            (*iso.params, scan_limit),
-        )
-        if not ep_rows:
-            return []
+                (*iso.params, scan_limit),
+                query_vec,
+                query_dim,
+                effective_min_sim,
+                limit,
+            )
+        ]
 
-        valid_ids = []
-        ep_blobs = []
-        for row in ep_rows:
-            blob = row[1]
-            if blob and len(blob) == query_dim * 4:
-                valid_ids.append(row[0])
-                ep_blobs.append(blob)
-
-        if not valid_ids:
-            return []
-
-        ep_sims = _cosine_batch(query_vec, query_dim, ep_blobs)
-
-    # Survivors keep the scan's order, for the same reason as in the memory
-    # scan: the caller's nlargest is stable, and this order is its tie-break.
-    survivors = [
-        (valid_ids[i], float(sim_val))
-        for i, sim_val in enumerate(ep_sims)
-        if sim_val >= effective_min_sim
-    ]
     if not survivors:
         return []
-
-    if limit is not None and limit < len(survivors):
-        keep = heapq.nlargest(limit, range(len(survivors)), key=lambda i: (survivors[i][1], -i))
-        survivors = [survivors[i] for i in sorted(keep)]
 
     payload = await _fetch_rows_by_id(
         db,
