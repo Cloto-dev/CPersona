@@ -68,6 +68,24 @@ MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
 # vector retriever, so the default must comfortably exceed a real corpus.
 # Benchmarks on larger corpora raise it via the env var instead of patching code.
 MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
+# The library layer's own ceiling on a caller-supplied `limit`. It used to BE
+# MAX_MEMORIES, which coupled two bounds that answer different questions: how far
+# back the vector retriever looks, and how many rows one call may materialise.
+# Raising the scan window for a larger corpus therefore raised a response bound
+# by the same factor, silently — the mirror of the rule stated on
+# MAX_CONTENT_LENGTH below, where a write bound was kept from enlarging the read
+# budgets. Pinned at what the coupling happened to produce (the shipped
+# MAX_MEMORIES default), so the window can move on its own.
+#
+# This is the LIBRARY bound, not the agent-facing one: the recall tools' JSON
+# Schema declares `maximum: 100`, and that is what bounds a context window. This
+# one bounds resource use for callers that legitimately ask for full depth —
+# benchmark full-ranking, bulk export, a future rerank — and in rrf mode the
+# fusion-list depth tracks `limit`, so a ceiling that bites collapses deep-ranking
+# quality rather than merely trimming a response. It bit once already, at 100
+# (bge-m3 LongMemEval 81.17 -> 48.98), which is why a bench that reaches it is
+# told so rather than left to read the damage off its own scores.
+RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", 10000))
 # 16000, raised from 2000, because the old cap was destroying the part
 # of a memory that is worth the most. Long records put the conclusion first and
 # the hard-won detail last, so cutting the tail on every write removed exactly
