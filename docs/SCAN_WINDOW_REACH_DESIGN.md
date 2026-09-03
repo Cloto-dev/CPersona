@@ -1,6 +1,8 @@
 # Reach and Recency in the Vector Scan Window
 
-Status: proposed for the 2.5.x line, default off. `SCHEMA_VERSION` stays 13,
+Status: shipped in the 2.5.x line, default off; measured, and the measurement did not
+pass — see `REACH_AND_RECENCY_PLAN.md` for the results and what the 2.6 line does
+about them. This page stays the reference for the mechanism. `SCHEMA_VERSION` stays 13,
 no new runtime dependency is added, and with the new setting at its default
 the answers are the ones the current scan already returns — bit for bit,
 including the order of equally-similar rows.

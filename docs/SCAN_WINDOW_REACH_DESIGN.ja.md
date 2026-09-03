@@ -1,8 +1,9 @@
-<!-- i18n-source: docs/SCAN_WINDOW_REACH_DESIGN.md@blob:dfe1cd685a7ae3e5adbe26e02c4519402ebfa9dd -->
+<!-- i18n-source: docs/SCAN_WINDOW_REACH_DESIGN.md@blob:823d0f9233d20c5daecd2ec801f70de4bff3e896 -->
 
 # ベクトル走査窓の「到達範囲」と「新しさの優遇」
 
-Status: 2.5.x 系に提案、既定は off。`SCHEMA_VERSION` は 13 のまま、新しいランタイム依存は
+Status: 2.5.x 系で出荷済、既定は off。計測済みで、計測は通らなかった — 結果と 2.6 系の対応は
+`REACH_AND_RECENCY_PLAN.md` を参照。本ページは機構の参照として残る。`SCHEMA_VERSION` は 13 のまま、新しいランタイム依存は
 増えず、新設定が既定値のあいだは現行の走査が返す答えとビット単位で一致する
 (類似度が等しい行の並びを含む)。
 

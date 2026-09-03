@@ -49,6 +49,7 @@ note and the pages above disagree, the pages above win.
 - [Recall preview tier](https://cloto-dev.github.io/CPersona/RECALL_PREVIEW_TIER_DESIGN/): preview truncation and the get_contents expansion path
 - [Contiguous embedding index](https://cloto-dev.github.io/CPersona/CONTIGUOUS_INDEX_DESIGN/): moving the vector scan's read off SQLite rows onto a contiguous sidecar, with bit-identical answers
 - [Reach and recency in the scan window](https://cloto-dev.github.io/CPersona/SCAN_WINDOW_REACH_DESIGN/): why widening the vector scan window loses recent answers, and the second ranked list that lets reach move without removing the recency prior
+- [Reach, recency and the far vote](https://cloto-dev.github.io/CPersona/REACH_AND_RECENCY_PLAN/): three measurements of the scan window, the reach and the far list's length in one account, and the plan for pricing the far vote in the 2.6 line
 - [Embedding degradation advisory](https://cloto-dev.github.io/CPersona/DEGRADED_ADVISORY_DESIGN/): how recall reports a dead embedding layer instead of silently degrading
 
 ## Optional
