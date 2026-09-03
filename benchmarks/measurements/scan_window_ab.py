@@ -1,7 +1,11 @@
 """Scan-window default A/B — does a wider vector window pay for itself?
 
-Pre-registration: `prereg-scan-window-default-ab.md`, next to this file. Read
-it first; this module only executes what that document fixed.
+Pre-registrations: `prereg-scan-window-default-ab.md` and, on the same
+instrument, `prereg-scan-window-reach-ab.md`, both next to this file. Read them
+first; this module only executes what those documents fixed. The reach
+measurement changes no part of the instrument — same seed, same scene layout,
+same strata, same metrics — it adds arms that also set `CPERSONA_VECTOR_REACH`,
+two controls and one exploratory reading.
 
 `CPERSONA_MAX_MEMORIES` is how many of the newest rows the vector arm ranks per
 recall. It ships at 10,000, which on a six-figure corpus leaves most of the
@@ -47,6 +51,16 @@ Usage (from the repo root):
 
     uv run python benchmarks/measurements/scan_window_ab.py run \\
         --workdir /tmp/window-ab --json results.json
+
+The exploratory matrix (`EXPLORATORY_SPEC`) is a second `run` with its own
+`--spec`, fewer rotations and its own `--workdir` — the builds and the arm
+files belong to the matrix that produced them, and a shared directory would
+let one matrix answer for the other:
+
+    uv run python benchmarks/measurements/scan_window_ab.py run \\
+        --workdir /tmp/window-ab-exploratory --rotations 6 \\
+        --spec <EXPLORATORY_SPEC — the constant of that name below> \\
+        --json results-exploratory.json
 
 Sub-commands (`build` / `arm` / `score`) exist so a long run can be resumed
 without re-storing 237,655 rows.
@@ -376,7 +390,7 @@ async def build(args: argparse.Namespace) -> None:
 # arm: one window, one recall pass
 # ---------------------------------------------------------------------------
 
-def _set_env(db_path: str, window: int) -> None:
+def _set_env(db_path: str, window: int, reach: int = 0) -> None:
     """Shipped defaults except for what a benchmark cannot have (no network).
 
     The truncation layers stay ON: they are the mechanisms a larger candidate
@@ -391,6 +405,11 @@ def _set_env(db_path: str, window: int) -> None:
     os.environ["CPERSONA_FTS_ENABLED"] = "true"
     os.environ["CPERSONA_TASK_QUEUE_ENABLED"] = "false"
     os.environ["CPERSONA_MAX_MEMORIES"] = str(window)
+    # Pinned rather than defaulted-by-absence: the setting's off state is a
+    # number (a reach at or below the window is an empty region), so an
+    # inherited `CPERSONA_VECTOR_REACH` must be overwritten, not left to decide
+    # an arm. 0 is the store path's value — `build` runs no recall.
+    os.environ["CPERSONA_VECTOR_REACH"] = str(reach)
     # The recall regime is whatever ships, so it is *removed* from the
     # environment rather than pinned here: an inherited override (the Track B
     # launcher exports two of these) would otherwise ride into the run, and a
@@ -404,7 +423,7 @@ def _set_env(db_path: str, window: int) -> None:
 
 async def arm(args: argparse.Namespace) -> None:
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    _set_env(args.db, args.window)
+    _set_env(args.db, args.window, args.reach)
 
     import cpersona.config as config
     import cpersona.memory_handlers as mh
@@ -417,6 +436,14 @@ async def arm(args: argparse.Namespace) -> None:
             f"scan window did not take: config says {config.MAX_MEMORIES}, "
             f"asked for {args.window}"
         )
+    # Asked of the config the process actually imported, for the same reason the
+    # window is: an arm whose setting did not take is a failed arm, not a data
+    # point (`prereg-scan-window-reach-ab.md`, Instrument).
+    if config.VECTOR_REACH != args.reach:
+        raise SystemExit(
+            f"vector reach did not take: config says {config.VECTOR_REACH}, "
+            f"asked for {args.reach}"
+        )
     regime = {
         "recall_mode": config.RECALL_MODE,
         "fused_gate": config.FUSED_GATE_ENABLED,
@@ -424,6 +451,7 @@ async def arm(args: argparse.Namespace) -> None:
         "confidence": config.CONFIDENCE_ENABLED,
         "min_similarity": config.VECTOR_MIN_SIMILARITY,
         "scan_window": config.MAX_MEMORIES,
+        "reach": config.VECTOR_REACH,
     }
 
     emb = LookupEmbeddingClient()
@@ -434,14 +462,53 @@ async def arm(args: argparse.Namespace) -> None:
     texts = [q["text"] for q in plan["queries"]]
     emb.preload(texts, np.stack(cache.get_many(texts)))
 
+    # What each retriever handed the fusion, per query. The fused answer cannot
+    # show this: near-list identity is a claim about the vector retriever's own
+    # list, and "which list did this row come from" is a claim about the four
+    # inputs. Wrapped in `memory_handlers`, where the fusion looks the names up,
+    # rather than in `vector` — `_search_vector` is bound into that namespace at
+    # import, so patching the source module would not be seen by the caller.
+    tapped: dict[str, list[str]] = {}
+
+    def _ids(rows: list[dict] | None) -> list[str]:
+        """Retriever rows as the dataset document ids `ids` is written in.
+
+        `do_recall` reports a row as its `msg_id`; episodes have none and are
+        left out of `ids` for that reason, so they are left out here too.
+        """
+        return [r["msg_id"] for r in (rows or []) if r.get("msg_id")]
+
+    def _tap_vector(fn):
+        async def call(*a, **kw):
+            near = await fn(*a, **kw)
+            tapped["near"] = _ids(near)
+            # The far list is an out-parameter: it is the caller's list, and it
+            # is what the caller fuses, so it is read where the caller left it.
+            tapped["far"] = _ids(kw.get("far_out"))
+            return near
+        return call
+
+    def _tap(name: str, fn):
+        async def call(*a, **kw):
+            rows = await fn(*a, **kw)
+            tapped[name] = _ids(rows)
+            return rows
+        return call
+
+    mh._search_vector = _tap_vector(mh._search_vector)
+    mh._search_episodes_fts = _tap("ep_fts", mh._search_episodes_fts)
+    mh._search_memories_keyword = _tap("mem_kw", mh._search_memories_keyword)
+
     from cpersona.database import get_db, close_db
     db = await get_db()
 
-    out = {"window": args.window, "limit": args.limit, "label": args.label,
+    out = {"window": args.window, "reach": args.reach, "limit": args.limit,
+           "label": args.label,
            "rotation": plan["rotation"], "corpus_size": plan["corpus_size"],
            "regime": regime, "results": {}}
     t0 = time.time()
     for q in plan["queries"]:
+        tapped.clear()
         t = time.perf_counter()
         res = await mh.do_recall(agent_id=AGENT_ID, query=q["text"], limit=args.limit)
         ms = (time.perf_counter() - t) * 1000
@@ -456,6 +523,13 @@ async def arm(args: argparse.Namespace) -> None:
             "returned": len(messages),
             "ms": round(ms, 2),
             "gate_fallback": bool(res.get("gate_fallback")),
+            # The four lists the fusion weighed, whole: each is at most `limit`
+            # long, and a truncated one would answer "was this row a far-only
+            # vote?" with a guess.
+            "near": tapped.get("near", []),
+            "far": tapped.get("far", []),
+            "ep_fts": tapped.get("ep_fts", []),
+            "mem_kw": tapped.get("mem_kw", []),
         }
     # The claim that arms may share one database: this regime writes nothing.
     # Checked after every arm rather than once, so a future version that starts
@@ -472,7 +546,7 @@ async def arm(args: argparse.Namespace) -> None:
         )
 
     Path(args.out).write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
-    print(f"  arm {args.label} (window {args.window}): "
+    print(f"  arm {args.label} (window {args.window}, reach {args.reach}): "
           f"{len(plan['queries'])} queries in {time.time() - t0:.0f}s")
 
 
@@ -516,9 +590,13 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
     for label in labels:
         base_of.setdefault(limit_of[label], label)
 
+    reach_of = {a["label"]: a.get("reach", 0) for _, arms in groups for a in arms}
+
     acc: dict[tuple[str, str], dict[str, list]] = {}
     paired: dict[tuple[str, str], list[tuple[float, float]]] = {}
     disturb: dict[tuple[str, str], dict[str, list]] = {}
+    control: dict[tuple[str, str], dict[str, int]] = {}
+    far_only: dict[str, dict[str, int]] = {}
 
     for plan, arms in groups:
         by_label = {a["label"]: a for a in arms}
@@ -553,8 +631,46 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
                     y = a and a["results"].get(q["id"])
                     if not x or not y:
                         continue
-                    paired.setdefault((label, stratum), []).append(
-                        (_ndcg_at_k(rels, x["ids"], 10), _ndcg_at_k(rels, y["ids"], 10)))
+                    nx, ny = _ndcg_at_k(rels, x["ids"], 10), _ndcg_at_k(rels, y["ids"], 10)
+                    paired.setdefault((label, stratum), []).append((nx, ny))
+
+                    # The two controls the reach pre-registration reads before
+                    # anything else. Both are counted, not asserted: this
+                    # function scores, and what a violated control means for the
+                    # measurement is the report's decision, not the scorer's.
+                    #
+                    # near_list_identity — the design's "every existing list is
+                    # untouched" claim. It is a claim about the vector arm's own
+                    # list, so the fused answer cannot check it; arms that
+                    # recorded no lists (an older arm file) are not counted.
+                    c = control.setdefault((label, stratum), {
+                        "near_n": 0, "near_differs": 0, "ids_identical": 0})
+                    if "near" in x and "near" in y:
+                        c["near_n"] += 1
+                        c["near_differs"] += int(x["near"] != y["near"])
+                    # ids_identical — how the off-is-identical and the replicate
+                    # controls are read: both must be every query.
+                    c["ids_identical"] += int(x["ids"] == y["ids"])
+
+                    # Exploratory: where did the rows that displaced the answer
+                    # come from? Only for a label that runs a far list, only on
+                    # the near stratum, and only on the queries that LOST NDCG
+                    # against the base — the reading exists to say whether a
+                    # per-list weight is the next candidate, and a row that
+                    # displaced nothing says nothing about that.
+                    if reach_of.get(label, 0) > 0 and stratum == "near" and ny < nx - 1e-9:
+                        f = far_only.setdefault(label, {
+                            "near_losers": 0, "displacing_rows": 0, "far_only_rows": 0})
+                        f["near_losers"] += 1
+                        base_top = set(x["ids"][:10])
+                        displacing = [d for d in y["ids"][:10] if d not in base_top]
+                        f["displacing_rows"] += len(displacing)
+                        far_ids = set(y.get("far", []))
+                        voted_elsewhere = (set(y.get("near", [])) | set(y.get("ep_fts", []))
+                                           | set(y.get("mem_kw", [])))
+                        f["far_only_rows"] += sum(
+                            1 for d in displacing if d in far_ids and d not in voted_elsewhere)
+
                     sx, sy = x["ids"][:10], y["ids"][:10]
                     d = disturb.setdefault((label, stratum), {
                         "set": [], "order": [], "jaccard": []})
@@ -570,7 +686,8 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
         "corpus_size": groups[0][0]["corpus_size"],
         "seed": groups[0][0]["seed"],
         "regime": groups[0][1][0]["regime"],
-        "arms": [], "delta": [], "disturbance": [],
+        "arms": [], "delta": [], "disturbance": [], "controls": [],
+        "exploratory": {"far_only_votes": []},
     }
     for label in labels:
         for stratum in ("near", "far", "all"):
@@ -578,7 +695,8 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
             if not cell:
                 continue
             report["arms"].append({
-                "label": label, "window": windows[label], "limit": limits[label],
+                "label": label, "window": windows[label],
+                "reach": reach_of.get(label, 0), "limit": limits[label],
                 "stratum": stratum, "n": len(cell["ndcg"]),
                 "ndcg@10": round(_mean(cell["ndcg"]), 2),
                 "recall@10": round(_mean(cell["recall"]) * 100, 2),
@@ -608,6 +726,21 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
             "top10_order_changed_pct": round(sum(d["order"]) / n * 100, 1),
             "mean_jaccard": round(_mean(d["jaccard"]), 3),
         })
+    for (label, stratum), c in control.items():
+        n = len(paired.get((label, stratum), []))
+        report["controls"].append({
+            "pair": f"{base_of[limit_of[label]]} -> {label}", "stratum": stratum,
+            "n": n,
+            "near_list_compared": c["near_n"],
+            "near_list_differs": c["near_differs"],
+            "ids_identical": c["ids_identical"],
+            "ids_identical_pct": round(c["ids_identical"] / n * 100, 1) if n else 0.0,
+        })
+    for label, f in far_only.items():
+        report["exploratory"]["far_only_votes"].append({
+            "label": label, "reach": reach_of.get(label, 0), "stratum": "near",
+            **f,
+        })
     return report
 
 
@@ -615,12 +748,13 @@ def print_report(report: dict) -> None:
     print(f"\ncorpus {report['corpus_size']} rows, seed {report['seed']}, "
           f"rotations {report['rotations']}")
     print(f"regime {report['regime']}\n")
-    hdr = (f"{'arm':<8}{'window':>9}{'limit':>6}{'stratum':>9}{'n':>5}"
+    hdr = (f"{'arm':<8}{'window':>9}{'reach':>9}{'limit':>6}{'stratum':>9}{'n':>5}"
            f"{'ndcg@10':>9}{'rec@10':>8}{'mrr':>7}{'ret':>7}{'p50ms':>9}{'p95ms':>9}")
     print(hdr)
     print("-" * len(hdr))
     for a in report["arms"]:
-        print(f"{a['label']:<8}{a['window']:>9}{a['limit']:>6}{a['stratum']:>9}{a['n']:>5}"
+        print(f"{a['label']:<8}{a['window']:>9}{a.get('reach', 0):>9}{a['limit']:>6}"
+              f"{a['stratum']:>9}{a['n']:>5}"
               f"{a['ndcg@10']:>9.2f}{a['recall@10']:>8.2f}{a['mrr']:>7.3f}"
               f"{a['returned_mean']:>7.2f}"
               f"{a['latency_p50_ms']:>9.1f}{a['latency_p95_ms']:>9.1f}")
@@ -633,30 +767,94 @@ def print_report(report: dict) -> None:
     for d in report["disturbance"]:
         print(f"{d['pair']:<14}{d['stratum']:>6}  set±{d['top10_set_changed_pct']:>5.1f}%  "
               f"order±{d['top10_order_changed_pct']:>5.1f}%  jaccard={d['mean_jaccard']:.3f}")
+    if report.get("controls"):
+        print("\ncontrols  (near lists that differ: 0 expected where the two arms share a "
+              "window; identical fused ids: 100% expected for a replicate and for a reach "
+              "equal to the window)")
+        for c in report["controls"]:
+            print(f"{c['pair']:<14}{c['stratum']:>6}  n={c['n']:<5} "
+                  f"near_list_differs={c['near_list_differs']}/{c['near_list_compared']}   "
+                  f"ids_identical={c['ids_identical']}/{c['n']} "
+                  f"({c['ids_identical_pct']:.1f}%)")
+    votes = report.get("exploratory", {}).get("far_only_votes") or []
+    if votes:
+        print("\nEXPLORATORY — not part of the decision rule")
+        print("far-only votes: among the near-stratum queries that lost NDCG@10 against "
+              "their base arm,\nthe top-10 rows that were not in the base's top ten, and "
+              "how many of those carried\na far-list vote and no other.")
+        for v in votes:
+            print(f"  {v['label']:<8} reach={v['reach']:<8} near_losers={v['near_losers']:<5} "
+                  f"displacing_rows={v['displacing_rows']:<6} "
+                  f"far_only_rows={v['far_only_rows']}")
 
 
 # ---------------------------------------------------------------------------
 # run: the pre-registered matrix
 # ---------------------------------------------------------------------------
 
-# The pre-registered matrix, as an arm spec: label:window:limit. "A-rep"
-# repeats the shipped window as the noise band — with calibration off and one
-# database, the two A runs must agree exactly.
-DEFAULT_SPEC = f"A:{NARROW_WINDOW}:10,B:{WIDE_WINDOW}:10,A-rep:{NARROW_WINDOW}:10"
+# The pre-registered matrix of `prereg-scan-window-reach-ab.md`, as an arm
+# spec: label:window:reach:limit.
+#
+# "A-rep" repeats the shipped setting as the noise band — with calibration off
+# and one database, the two A runs must agree exactly. "A0" is the
+# off-is-identical control: a reach EQUAL to the window is the setting's off
+# state written as a number, and it must not run a far scan that returns
+# nothing and moves a tie somewhere. "S" is the separation itself, reaching
+# where the wide-window arm of the previous measurement reached.
+DEFAULT_SPEC = (
+    f"A:{NARROW_WINDOW}:0:10,"
+    f"A-rep:{NARROW_WINDOW}:0:10,"
+    f"A0:{NARROW_WINDOW}:{NARROW_WINDOW}:10,"
+    f"S:{NARROW_WINDOW}:{WIDE_WINDOW}:10"
+)
+
+# The exploratory matrix of the same pre-registration — a smaller reach, two
+# reaches past the end of the corpus, and the pair at the MCP cap. Run as a
+# separate `run` with its own `--workdir` and fewer rotations; none of it may
+# move the decision rule.
+EXPLORATORY_SPEC = (
+    f"A:{NARROW_WINDOW}:0:10,"
+    f"S50:{NARROW_WINDOW}:50000:10,"
+    f"D:{NARROW_WINDOW}:300000:10,"
+    f"E:{NARROW_WINDOW}:500000:10,"
+    f"A100:{NARROW_WINDOW}:0:100,"
+    f"S100:{NARROW_WINDOW}:{WIDE_WINDOW}:100"
+)
 
 
-def parse_spec(spec: str) -> list[tuple[str, int, int]]:
+def parse_spec(spec: str) -> list[tuple[str, int, int, int]]:
+    """`label:window:reach:limit`, or `label:window:limit` with the reach off.
+
+    The three-field form is the spec the window measurement was run with, and
+    it still means what it meant: reach 0, no far list. Keeping it parseable is
+    what lets that measurement's spec be replayed against this harness.
+    """
     arms = []
     for part in spec.split(","):
         fields = part.split(":")
-        if len(fields) != 3:
-            raise SystemExit(f"arm spec {part!r} is not label:window:limit")
-        arms.append((fields[0], int(fields[1]), int(fields[2])))
+        if len(fields) == 3:
+            label, window, limit = fields
+            reach = "0"
+        elif len(fields) == 4:
+            label, window, reach, limit = fields
+        else:
+            raise SystemExit(
+                f"arm spec {part!r} is not label:window:reach:limit "
+                "(nor the older label:window:limit)"
+            )
+        arms.append((label, int(window), int(reach), int(limit)))
     return arms
 
 
-def _arm_path(work: Path, rot: int, label: str, limit: int) -> Path:
-    return work / f"arm-r{rot}-{label}-limit{limit}.json"
+def _arm_path(work: Path, rot: int, label: str, reach: int, limit: int) -> Path:
+    """The reach is in the filename, not only in the label.
+
+    Two arms of one matrix can share a label and a limit and differ in the
+    reach — and a resumed run reuses whatever file is already there, so a
+    filename that cannot tell them apart would silently answer one arm with the
+    other's results.
+    """
+    return work / f"arm-r{rot}-{label}-reach{reach}-limit{limit}.json"
 
 
 def run(args: argparse.Namespace) -> None:
@@ -670,15 +868,17 @@ def run(args: argparse.Namespace) -> None:
     for rot in range(args.rotations):
         plan = work / f"plan-r{rot}.json"
         db = work / "corpus.db"
-        outs = [_arm_path(work, rot, label, limit) for label, _, limit in spec]
+        outs = [_arm_path(work, rot, label, reach, limit)
+                for label, _, reach, limit in spec]
         if args.rerun or not all(o.exists() for o in outs):
             _self(["build", "--db", str(db), "--plan", str(plan), "--seed", str(args.seed),
                    "--rotation", str(rot), "--task", args.task, "--lmeb", args.lmeb,
                    "--cache", args.cache, "--cache-label", args.cache_label])
-            for (label, window, limit), out in zip(spec, outs):
+            for (label, window, reach, limit), out in zip(spec, outs):
                 if out.exists() and not args.rerun:
                     continue
                 _self(["arm", "--db", str(db), "--plan", str(plan), "--window", str(window),
+                       "--reach", str(reach),
                        "--limit", str(limit), "--label", label, "--out", str(out),
                        "--cache", args.cache, "--cache-label", args.cache_label])
         groups.append((json.loads(plan.read_text(encoding="utf-8")),
@@ -728,6 +928,7 @@ def main() -> None:
     a.add_argument("--db", required=True)
     a.add_argument("--plan", required=True)
     a.add_argument("--window", type=int, required=True)
+    a.add_argument("--reach", type=int, default=0)
     a.add_argument("--limit", type=int, default=10)
     a.add_argument("--label", default="arm")
     a.add_argument("--out", required=True)
@@ -761,8 +962,9 @@ def main() -> None:
         groups = []
         for rot in range(rotations):
             plan = json.loads((work / f"plan-r{rot}.json").read_text(encoding="utf-8"))
-            arms = [json.loads(_arm_path(work, rot, label, limit).read_text(encoding="utf-8"))
-                    for label, _, limit in spec]
+            arms = [json.loads(
+                        _arm_path(work, rot, label, reach, limit).read_text(encoding="utf-8"))
+                    for label, _, reach, limit in spec]
             groups.append((plan, arms))
         report = score(groups)
         print_report(report)
