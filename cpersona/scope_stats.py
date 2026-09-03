@@ -136,12 +136,43 @@ async def get_span(
     # minimum range" (12 h) and outranked every dated row on the time axis: the
     # presence of exactly the row bug-207 exists to place correctly is what disabled
     # the anchor that would have placed it.
-    row = await db.execute_fetchall(
-        f"SELECT MIN(timestamp), MAX(timestamp) FROM memories "
-        f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause}",
-        iso.params,
+    #
+    # Two statements, one aggregate each, because SQLite's MIN/MAX optimisation
+    # requires exactly one: `MIN(x), MAX(x)` in a single SELECT can only ever be
+    # a walk, even over a perfect covering index. Split, each half is a seek to
+    # one end of idx_memories_span — 5.3 ms to 0.007 ms at 100,000 rows, and
+    # 10.6 ms to 0.007 ms against what shipped before the index existed.
+    #
+    # The `datetime()` test stays. It was assumed to be what made this
+    # unindexable, and it is not: the seek stops at the FIRST row satisfying the
+    # whole WHERE, so the function is evaluated on the rows actually visited —
+    # one, normally. Its cost is the number of unparseable rows sitting at that
+    # end of the scope, not the size of the scope: measured at 0.007 ms with
+    # none, 0.012 ms with 100 and 0.248 ms with 5,000, the answer identical to
+    # the single-statement form in every case. So the bug-237 predicate is kept
+    # rather than traded away for the index, and the hole it plugs stays plugged.
+    #
+    # The pair is no longer read atomically. Under the ordinary shape — rows
+    # arriving, none leaving — that can only widen the range by a row written
+    # between the two statements. A delete landing there could invert it, and
+    # the call site already floors the range at zero, which is also what it does
+    # for a scope with one row. Both are far inside what this cache already
+    # accepts: a TTL that serves BOTH numbers up to a minute stale.
+    #
+    # bug-286, open and deliberately not fixed here: both aggregates order the
+    # column as TEXT, and an ISO-8601 stamp's byte order is its chronological
+    # order only while every stamp in the scope carries the same UTC offset. A
+    # corpus holding both '+00:00' and '+09:00' therefore has scopes whose
+    # reported span is a pair of real stamps that are not its oldest and newest.
+    # This predates the split above and is unchanged by it; repairing it moves a
+    # scoring input, which is a different decision from making the read cheap.
+    sql = (
+        f"SELECT {{agg}}(timestamp) FROM memories "
+        f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause}"
     )
-    span = (row[0][0], row[0][1]) if row else (None, None)
+    lo = await db.execute_fetchall(sql.format(agg="MIN"), iso.params)
+    hi = await db.execute_fetchall(sql.format(agg="MAX"), iso.params)
+    span = (lo[0][0] if lo else None, hi[0][0] if hi else None)
     _store(key, "span", span, generation, now)
     return span
 

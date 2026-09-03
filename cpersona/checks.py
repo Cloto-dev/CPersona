@@ -982,6 +982,18 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "severity": "warn",
         "sql": "CREATE INDEX idx_episodes_lost_embedding ON episodes(id) WHERE embedding IS NULL",
     },
+    # Losing this one sends the confidence span back to walking the isolation
+    # scope, ~72 ms per recall at 100,000 rows (see SPAN_INDEX_SQL). Warn for the
+    # same reasons: no answer changes, boot recreates it, and registering it is
+    # what lets check_health(fix=True) restore it without a restart.
+    "idx_memories_span": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": (
+            "CREATE INDEX idx_memories_span"
+            " ON memories(agent_id, timestamp, project_id, channel)"
+        ),
+    },
 }
 
 _SQL_NORMALIZE = re.compile(r"\s+")

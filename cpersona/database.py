@@ -291,6 +291,45 @@ CREATE INDEX IF NOT EXISTS idx_episodes_lost_embedding
     ON episodes(id) WHERE embedding IS NULL;
 """
 
+# The confidence path reads MIN/MAX(timestamp) over the isolation scope on every
+# recall that returns a row, to place each row inside the corpus's own temporal
+# span (bug-107 / bug-207). The isolation index cannot serve it — it carries
+# (agent_id, project_id, created_at) and so has neither the channel axis nor the
+# column being aggregated, leaving SQLite to read row bodies: 72 ms at 100,000
+# rows on the reference machine (benchmarks/measurements/results-recall-path-profile.md).
+#
+# The column order is the whole design, and it is not the isolation order. A seek
+# to one end needs the aggregated column to be what orders the entries, so
+# `timestamp` sits directly after the one axis every read constrains, and the two
+# axes a read MAY leave open ride along as payload — present, so the filter is
+# testable without touching a row, but not between the seek and its target.
+#
+# Measured at 100,000 rows against the four scope shapes recall actually produces
+# (agent only / global pool only / a project's gamma union / that plus a channel),
+# comparing this order against (agent, project, channel, timestamp) and two others:
+#
+#   shape                    isolation idx   a,p,c,ts   a,ts    a,p,ts   THIS
+#   agent only                     25.9        12.7     0.002    13.3    0.001
+#   project '' (global only)       16.8         9.2     2.761     0.002  0.727
+#   project 'X' (gamma union)      21.2        11.6     0.002     0.004  0.002
+#   project 'X' + channel          24.5         0.007   0.002     0.004  0.002
+#
+# The isolation order seeks only when all three axes are narrowed, which is the
+# rarest shape: `channel=''` means "every channel" (knob2 v2), so the ordinary
+# recall leaves that axis open and an index that puts it before `timestamp` is
+# left walking. This order has the best worst case of the four.
+#
+# Both halves are needed. The index without the split in scope_stats.py is still a
+# walk — SQLite's MIN/MAX optimisation wants a single aggregate — and the split
+# without the index is worse than what it replaces (15.4 ms against 10.6).
+#
+# Kept out of the migration ladder for the same reasons as the two above, and
+# memories-only because the span is read from memories alone.
+SPAN_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_memories_span
+    ON memories(agent_id, timestamp, project_id, channel);
+"""
+
 FTS_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
     summary,
@@ -747,6 +786,14 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
         await db.executescript(PROBE_INDEX_SQL)
     except Exception as e:
         logger.warning("lost-embedding probe index creation failed (non-fatal): %s", e)
+
+    # Same placement and the same non-fatal contract again: without it the span
+    # statements walk the scope instead of seeking, which costs latency on every
+    # recall that returns a row, and nothing else.
+    try:
+        await db.executescript(SPAN_INDEX_SQL)
+    except Exception as e:
+        logger.warning("span index creation failed (non-fatal): %s", e)
 
     # Only advance the recorded version if the ladder completed cleanly. A
     # withheld stamp leaves `current` unchanged so the next boot re-runs the
