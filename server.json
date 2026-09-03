@@ -3,7 +3,7 @@
   "name": "io.github.Cloto-dev/cpersona",
   "title": "CPersona",
   "description": "Persistent AI memory in one SQLite file: 3-layer hybrid search, confidence scoring, 31 tools.",
-  "version": "2.5.11",
+  "version": "2.5.12a1",
   "websiteUrl": "https://github.com/Cloto-dev/cpersona#readme",
   "repository": {
     "url": "https://github.com/Cloto-dev/cpersona",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "cpersona",
-      "version": "2.5.11",
+      "version": "2.5.12a1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
