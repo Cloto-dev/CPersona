@@ -36,6 +36,23 @@ The generic aliases `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL`
 are also accepted (the `CPERSONA_`-prefixed form wins when both are set) — the
 marketplace catalog and the Quick Start use the generic names.
 
+## Corpus scale caps
+
+These bound work that grows with the corpus: index maintenance, health repair
+and calibration sampling. Each is an absolute row count that was sized against a
+corpus of roughly 10,000 rows, where it covered the whole thing — against a
+150,000-row corpus the same number is a sample. A cap that bites never raises an
+error, it returns a smaller answer, so raise these deliberately rather than
+waiting for a symptom.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_VECTOR_INDEX_MAX_EXCLUDED_IDS` | `10000` | Rows the vector index may name as *holes* — rows it could not place in the file (a non-standard `created_at`) plus rows that carried no embedding when the build ran. They are read by id from the live table on every query. Past this many the index declines to build at all, which leaves recall on the (correct, slower) full scan — the state a bulk import produces while its embedding backlog drains. The default covers 6.7% of a 150,000-row corpus; the worst case, every named hole having since gained an embedding, costs roughly 65 ms per query until the next rebuild absorbs them |
+| `CPERSONA_REEMBED_ROW_CAP` | `5000` | Rows without an embedding that one `check_health(fix=true)` run re-embeds, and the ceiling on the `repairable` count it reports. Embedding happens before the write lock is taken, so this bounds prefetch wall time and the number of locked `UPDATE`s. Raise it to drain a large backlog in fewer runs: at the previous default of 500, a 50,000-row backlog took 100 runs, and while a backlog exceeds `CPERSONA_VECTOR_INDEX_MAX_EXCLUDED_IDS` the index cannot be built either |
+| `CPERSONA_NEAR_DUPLICATE_ROW_CAP` | `5000` | Embedded rows `deep_near_duplicate` compares. The comparison is O(n²) in memory: measured on 1024-dimension vectors, 5,000 rows peak at 266 MB for about 100 ms, and 10,000 rows at 982 MB — which is why the default samples rather than covering a large corpus |
+| `CPERSONA_INVALID_SOURCE_CLASSIFY_CAP` | `10000` | Offending `source` rows one `check_invalid_source_type` run classifies. The cost is JSON parsing per row (microseconds), so this can afford to be larger than the caps above. Past the cap the sample is incomplete and the check declines to downgrade its own severity — the cap costs a verdict, not correctness |
+| `CPERSONA_CALIBRATE_MAX_SAMPLE` | `5000` | Hard ceiling on `calibrate_threshold`'s `sample_size`, whatever the caller asks for. It feeds the same O(n²) matrix as the near-duplicate cap and exists to stop an unbounded value from exhausting memory for every agent on the connection, so raise it only as far as the machine can hold (see the measurements above) |
+
 ## Remote (HTTP) transport
 
 The default transport is stdio, where the MCP client owns the process and no

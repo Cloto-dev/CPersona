@@ -4,6 +4,7 @@ Holds the module-level `_embedding_client` singleton, set by `server.main()` at 
 """
 
 import heapq
+import json
 import logging
 
 import aiosqlite
@@ -650,14 +651,34 @@ async def _index_tail_rows(
     src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
     src_params = (src_like,) if src_like else ()
 
-    holes = f" OR id IN ({','.join('?' * len(holes_ids))})" if holes_ids else ""
+    # The holes travel as ONE parameter — a JSON array — rather than one placeholder
+    # per id. A placeholder per id makes the cap on named holes a cap on SQL
+    # variables as well: at 1,000 holes the statement already binds 1,000 ids plus
+    # the watermark, the isolation parameters and the limit, past the 999
+    # SQLITE_MAX_VARIABLE_NUMBER every SQLite older than 3.32.0 is compiled with —
+    # the same builds `_LOST_EMBEDDING_PROBE_CHUNK` in this module says must keep
+    # working. Raising the cap for a six-figure corpus would make that a certainty
+    # instead of a boundary case.
+    #
+    # Binding was never what the read costs. Measured at 150,000 rows of 1024-d
+    # float32: 1,000 holes 10.1 ms per-id vs 8.8 ms as json_each, 5,000 holes
+    # 34.7 vs 34.5 ms, and 50,000 holes raised `too many SQL variables` per-id
+    # while json_each answered in 325 ms. What is being paid for is reading the
+    # hole rows that have since gained an embedding, 4 KB of blob each.
+    #
+    # JSON1 is not a new requirement: the source filter three lines up already
+    # calls `json_extract` on this same statement.
+    holes = " OR id IN (SELECT value FROM json_each(?))" if holes_ids else ""
+    # Empty stays byte-identical to a statement that never had the clause, and
+    # binds no extra parameter: a test pins the plan of the empty-tail shape.
+    holes_params = (json.dumps([int(i) for i in holes_ids]),) if holes_ids else ()
     rows = await db.execute_fetchall(
         f"""SELECT id, created_at, embedding, length(embedding)
            FROM {table}
            WHERE (id > ?{holes}) AND embedding IS NOT NULL AND {iso.clause}{src_clause}
            ORDER BY created_at DESC, id ASC
            LIMIT ?""",
-        (index.watermark, *holes_ids, *iso.params, *src_params, scan_limit),
+        (index.watermark, *holes_params, *iso.params, *src_params, scan_limit),
     )
     if any(r[3] != index.dim * 4 for r in rows):
         return None

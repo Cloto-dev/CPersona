@@ -81,7 +81,7 @@ import logging
 import re
 import sqlite3
 
-from cpersona import health, operating_context, vector
+from cpersona import config, health, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
@@ -108,15 +108,19 @@ SEVERITIES = ("info", "warn", "critical")
 NULL_EMBEDDING_CRITICAL_RATIO = 0.5
 FTS_DESYNC_CRITICAL_RATIO = 0.05
 NEAR_DUPLICATE_COSINE = 0.97
-NEAR_DUPLICATE_ROW_CAP = 1000
+# Embedded rows deep_near_duplicate compares, bounding its O(n^2) dense cosine
+# matrix. Sized in config, where the measured time and peak memory behind the
+# number are written down; bound here so a test can steer it by patching this
+# name, as the other two caps below are.
+NEAR_DUPLICATE_ROW_CAP = config.NEAR_DUPLICATE_ROW_CAP
 # Offending source rows classified per check_invalid_source_type run. Bounds the
 # JSON parsing a plain check_health does; past it the sample is incomplete and
 # the check declines to downgrade its own severity.
-INVALID_SOURCE_CLASSIFY_CAP = 1000
+INVALID_SOURCE_CLASSIFY_CAP = config.INVALID_SOURCE_CLASSIFY_CAP
 # NULL-embedding rows one run re-embeds (prefetch and repair read the same
-# number, and `repairable` is bounded by it — a fixer that reaches 500 rows must
-# not report 5,000 as repairable).
-REEMBED_ROW_CAP = 500
+# number, and `repairable` is bounded by it — a fixer that reaches the cap must
+# not report the whole backlog as repairable).
+REEMBED_ROW_CAP = config.REEMBED_ROW_CAP
 # Texts per /embed request when re-embedding in bulk. This is the largest batch
 # CPersona ever sends, which is the number the getting-started contract quotes to
 # anyone writing their own embedding backend — named rather than inlined so the
@@ -617,7 +621,7 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     if not _blobs_are_stored():
         # bug-182: a memory BLOB is not written in this configuration, so nothing
         # downstream may apply one — computing them is one embed round-trip per
-        # NULL row (up to 500) burned on every fix run. Episodes stay: they carry
+        # NULL row (up to REEMBED_ROW_CAP) burned on every fix run. Episodes stay: they carry
         # a BLOB regardless of the storage policy.
         tables = [t for t in tables if t[0] != "memories"]
     for table, text_col in tables:
