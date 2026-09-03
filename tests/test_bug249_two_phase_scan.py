@@ -446,6 +446,32 @@ async def test_the_bound_keeps_the_highest_scoring_survivors(corpus):
 # ---------------------------------------------------------------------------
 
 
+class _RecordingCursor:
+    """The ranking statement's cursor, recording the rows the scan pulls off it.
+
+    Phase 1 walks its window in chunks, so the rows this statement materialises
+    are not all in existence at any one moment -- the proxy has to accumulate
+    them as they are fetched instead of receiving them in one list.
+    """
+
+    def __init__(self, opened, rows):
+        self._opened = opened
+        self._rows = rows
+        self._cur = None
+
+    async def __aenter__(self):
+        self._cur = await self._opened.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return await self._opened.__aexit__(*exc_info)
+
+    async def fetchmany(self, size=None):
+        batch = await self._cur.fetchmany(size)
+        self._rows.extend(batch)
+        return batch
+
+
 class _RecordingDb:
     """Pass-through connection proxy that records every statement and the text
     it materialises.
@@ -453,6 +479,12 @@ class _RecordingDb:
     A proxy rather than a monkeypatch of `_fetch_rows_by_id`: what has to be
     observed is the phase-1 SELECT itself -- its column list and the bytes it
     brings back -- and that statement is issued straight at the connection.
+
+    Both statement forms are proxied because the two phases no longer use the
+    same one: the hydrate materialises its rows, while the ranking read opens a
+    cursor and pulls chunks off it so the window is never in memory at once. A
+    double offering only `execute_fetchall` sends the scan into an
+    AttributeError rather than the branch under test.
     """
 
     def __init__(self, db):
@@ -463,6 +495,11 @@ class _RecordingDb:
         rows = await self._conn.execute_fetchall(sql, params)
         self.calls.append((sql, tuple(params), rows))
         return rows
+
+    def execute(self, sql, params=()):
+        rows = []
+        self.calls.append((sql, tuple(params), rows))
+        return _RecordingCursor(self._conn.execute(sql, params), rows)
 
     @staticmethod
     def text_chars(rows):
@@ -541,15 +578,17 @@ async def test_a_row_dropped_between_the_phases_is_skipped(corpus):
 
     class _RetaggingDb(_RecordingDb):
         async def execute_fetchall(self, sql, params=()):
-            rows = await self._conn.execute_fetchall(sql, params)
-            self.calls.append((sql, tuple(params), rows))
-            if len(self.calls) == 1:  # the ranking statement has just returned
+            # "Between the phases" is now the moment the hydrate is issued: the
+            # ranking read is a cursor walk, so the point at which it has
+            # finished is the point at which the only recorded statement is its
+            # own and the next one is about to run.
+            if len(self.calls) == 1:
                 await self._conn.execute(
                     "UPDATE memories SET agent_id = ? WHERE agent_id = ? AND content = ?",
                     (AGENT + ".moved", AGENT, TOPIC),
                 )
                 await self._conn.commit()
-            return rows
+            return await super().execute_fetchall(sql, params)
 
     rows = await corpus.execute_fetchall(
         "SELECT id FROM memories WHERE agent_id = ? AND content = ?", (AGENT, TOPIC)

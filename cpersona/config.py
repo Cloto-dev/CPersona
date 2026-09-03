@@ -86,6 +86,36 @@ MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
 # (bge-m3 LongMemEval 81.17 -> 48.98), which is why a bench that reaches it is
 # told so rather than left to read the damage off its own scores.
 RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", 10000))
+# How many embedding rows the fallback vector scan turns into a matrix at a
+# time. The scan reads `MAX_MEMORIES` rows of `(id, embedding)`; it used to
+# fetch all of them in one call and then join the blobs, which holds TWO copies
+# of the window at once -- the list of blobs and the joined bytes. Measured at
+# 20,000 rows x 768 dimensions, that is 2.07x the window, which extrapolates to
+# about 6.1 GB at 1,000,000 rows: the path that exists to answer when the index
+# cannot became an out-of-memory kill rather than a slow answer. Reading the
+# cursor in chunks makes the peak O(chunk) -- 0.08x of the same window,
+# measured 4.8 MB and flat in the window size.
+#
+# The bound is 2 * this - 1 rows in flight, not this many: 1,023 rows at the
+# default, 3.1 MB of embedding at 768 dimensions. The scan never scores a small
+# matrix, so a window's short tail (`window % chunk` rows) is carried into the
+# chunk before it rather than multiplied on its own. That is not tidiness --
+# the scores are a matmul, the BLAS selects its kernel by ROW COUNT, and below
+# some platform-dependent threshold the last bits move. Measured with Apple
+# Accelerate on aarch64 (numpy 2.4.6), the threshold is 64 rows at 64
+# dimensions and 16 rows at 768; those are observations of one platform, not
+# constants, so the scan is built to keep every matmul comfortably above any
+# such threshold rather than to know where it is.
+#
+# 512 x 768 x 4 bytes = 1.5 MB of embedding per chunk, which fits in L2/L3.
+# This bounds memory: it is NOT a latency knob (the read dominates the scan,
+# and the chunked form measured no slower), so lowering it does not make a
+# recall faster and raising it only raises the peak. It is not free to lower
+# either -- a chunk below the platform's threshold moves scores by about one
+# ULP, which at a tight cut changes which row is returned. A small value is a
+# test instrument rather than a configuration; `_chunked_cosine_scan` carries
+# the measurements.
+VECTOR_SCAN_CHUNK_ROWS = max(1, _parse_int("CPERSONA_VECTOR_SCAN_CHUNK_ROWS", 512))
 # 16000, raised from 2000, because the old cap was destroying the part
 # of a memory that is worth the most. Long records put the conclusion first and
 # the hard-won detail last, so cutting the tail on every write removed exactly
