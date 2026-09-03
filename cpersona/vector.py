@@ -17,6 +17,7 @@ from cpersona import vector_index
 from cpersona.config import (
     MAX_MEMORIES,
     REMOTE_SEARCH_TIMEOUT_SECS,
+    VECTOR_REACH,
     VECTOR_SCAN_CHUNK_ROWS,
     VECTOR_SEARCH_MODE,
 )
@@ -344,6 +345,23 @@ async def _search_vector_remote(
         return None
 
 
+def far_list_enabled() -> bool:
+    """Whether the vector arm produces a second, FAR list beside its usual one.
+
+    The one predicate every far path is gated on, so "off" is a single question
+    asked in a single place. `CPERSONA_VECTOR_REACH` at or below the scan window
+    means the region `[MAX_MEMORIES, VECTOR_REACH)` is empty, and an empty region
+    is not scanned: the far list must not exist as code that runs at the default
+    and returns nothing, because a scan that reads no rows still costs a
+    statement, a matrix and a merge on every recall the server answers.
+
+    Read from the module globals rather than closed over at import, for the same
+    reason the scan reads its chunk size at call time: a value baked into a
+    default argument could not be turned down by a test or by the environment.
+    """
+    return VECTOR_REACH > MAX_MEMORIES
+
+
 def _cosine_batch(query_vec, query_dim: int, blobs: list[bytes]):
     """Batched cosine similarity of `query_vec` against pre-filtered float32
     blobs (each MUST be exactly ``query_dim * 4`` bytes).
@@ -386,6 +404,7 @@ async def _index_phase1(
     scan_limit: int,
     query_dim: int,
     table: str = "memories",
+    scan_offset: int = 0,
 ):
     """Phase 1 from the contiguous index, or None to use the SQL scan.
 
@@ -397,6 +416,21 @@ async def _index_phase1(
     Returns `(ids, matrix)` in the scan's own order — `created_at` DESC, then
     `id` ASC — so everything downstream (the threshold, the stable top-`limit`
     cut, the hydrate) is handed exactly what the SQL read used to hand it.
+
+    `scan_offset` names where in that order the returned rows start: the far
+    list of `docs/SCAN_WINDOW_REACH_DESIGN.md` asks for scan positions
+    `[MAX_MEMORIES, VECTOR_REACH)`, which is this function's ordinary answer with
+    the first `scan_offset` rows dropped. It is 0 for every call the near list
+    makes, and at 0 every line below is the line that was there before.
+
+    The offset applies to the MERGED sequence, not to the selection: the rows
+    written since the build are read out of the live table and interleaved into
+    the index's own order, so they occupy scan positions like any other row.
+    Offsetting the selection alone would skip `scan_offset` INDEXED rows and then
+    hand back the tail as well — the newest rows in the corpus — which is the
+    near window's content appearing in the far list. Hence the selection and the
+    tail are both taken to `scan_offset + scan_limit` and the cut happens after
+    the merge.
 
     None is the ordinary answer, not a failure: no index yet, a dimension that
     does not match, or any condition under which this path cannot promise the
@@ -417,7 +451,7 @@ async def _index_phase1(
             project_id=project_id,
             channel=channel,
             source_id=source_id,
-            limit=scan_limit,
+            limit=scan_offset + scan_limit,
         )
     except vector_index.IndexUnusable as exc:
         # Visible, not just logged at debug: an index that has been unusable for
@@ -476,13 +510,15 @@ async def _index_phase1(
         project_id=project_id,
         channel=channel,
         source_id=source_id,
-        scan_limit=scan_limit,
+        scan_limit=scan_offset + scan_limit,
         table=table,
     )
     if tail is None:
         return None
 
-    return _merge_index_and_tail(index, positions, tail, scan_limit, query_dim)
+    return _merge_index_and_tail(
+        index, positions, tail, scan_limit, query_dim, scan_offset=scan_offset
+    )
 
 
 # Rows per `IN (...)` when the selection is scattered. Well under 999, the
@@ -686,7 +722,8 @@ async def _index_tail_rows(
     return rows
 
 
-def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: int):
+def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: int,
+                          *, scan_offset: int = 0):
     """Interleave two already-sorted runs on (created_at DESC, id ASC).
 
     Not a concatenation. It is tempting to assume everything in the tail is newer
@@ -703,18 +740,25 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
     needed to make (benchmarks/measurements/results-contiguous-index.md). The
     walk stays for the shape that needs it, and a test pins that the empty-tail
     shape does not enter it.
+
+    `scan_offset` skips that many rows of the merged order before the returned
+    `scan_limit` begins (the far list of `docs/SCAN_WINDOW_REACH_DESIGN.md`). The
+    skipped rows are dropped BEFORE the matrix is built, not sliced off it
+    afterwards: the empty-tail shape then still selects a contiguous run of the
+    file and still answers with a view of it, so the far list costs one matmul
+    over the rows it actually ranks rather than over everything above them too.
     """
     import numpy as np
 
     if not tail:
-        positions = np.asarray(positions, dtype=np.int64)[:scan_limit]
+        positions = np.asarray(positions, dtype=np.int64)[scan_offset:scan_offset + scan_limit]
         merged_ids = index.ids[positions].tolist()
         from_index = positions
         from_tail: list[tuple[int, bytes]] = []
         index_slots = np.arange(len(positions))
     else:
         merged_ids, from_index, index_slots, from_tail = _interleave_index_and_tail(
-            index, positions, tail, scan_limit
+            index, positions, tail, scan_limit, scan_offset=scan_offset
         )
 
     if not merged_ids:
@@ -756,7 +800,7 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
     return merged_ids, mat
 
 
-def _interleave_index_and_tail(index, positions, tail, scan_limit: int):
+def _interleave_index_and_tail(index, positions, tail, scan_limit: int, *, scan_offset: int = 0):
     """The merge walk: one tuple comparison per output row, for a non-empty tail.
 
     Returns `(merged_ids, from_index, index_slots, from_tail)` — the ids in
@@ -764,6 +808,13 @@ def _interleave_index_and_tail(index, positions, tail, scan_limit: int):
     and the tail rows taken with theirs. Separate from `_merge_index_and_tail`
     so that the shape which does not need the walk can be pinned as not paying
     for it.
+
+    `scan_offset` rows of the merged order are consumed and discarded before the
+    output starts. The walk still visits them — their position in the merged
+    order is exactly what decides which rows the far region contains, and that
+    is a question about both runs at once — but nothing they name is collected,
+    so no skipped row reaches the matrix. At the default of 0 the loop consumes
+    and appends in lockstep, which is what it did before this parameter existed.
     """
     created = index.created_at
     ids_arr = index.ids
@@ -774,7 +825,9 @@ def _interleave_index_and_tail(index, positions, tail, scan_limit: int):
     from_tail: list[tuple[int, bytes]] = []
 
     i = j = 0
-    while len(merged_ids) < scan_limit and (i < len(positions) or j < len(tail)):
+    consumed = 0
+    wanted = scan_offset + scan_limit
+    while consumed < wanted and (i < len(positions) or j < len(tail)):
         take_index = j >= len(tail)
         if not take_index and i < len(positions):
             pos = positions[i]
@@ -783,14 +836,17 @@ def _interleave_index_and_tail(index, positions, tail, scan_limit: int):
             take_index = (created[pos], -int(ids_arr[pos])) > (t_created, -int(tail[j][0]))
         if take_index:
             pos = int(positions[i])
-            index_slots.append(len(merged_ids))
-            from_index.append(pos)
-            merged_ids.append(int(ids_arr[pos]))
+            if consumed >= scan_offset:
+                index_slots.append(len(merged_ids))
+                from_index.append(pos)
+                merged_ids.append(int(ids_arr[pos]))
             i += 1
         else:
-            from_tail.append((len(merged_ids), tail[j][2]))
-            merged_ids.append(int(tail[j][0]))
+            if consumed >= scan_offset:
+                from_tail.append((len(merged_ids), tail[j][2]))
+                merged_ids.append(int(tail[j][0]))
             j += 1
+        consumed += 1
     return merged_ids, from_index, index_slots, from_tail
 
 
@@ -817,6 +873,32 @@ def _is_ascending_run(positions) -> bool:
         return False
     first = int(arr[0])
     return bool(np.array_equal(arr, np.arange(first, first + arr.size)))
+
+
+def _scan_offset_sql(scan_offset: int) -> tuple[str, tuple]:
+    """The `OFFSET` half of a scan window's `LIMIT`, or nothing at all.
+
+    One implementation for both scans, so the memory window and the episode
+    window cannot end up counting their far region from different places.
+
+    `OFFSET` applies where `LIMIT` applies — to the rows the statement returns,
+    before the in-Python width filter — so a scan position means the same thing
+    on both sides of the split: `LIMIT n OFFSET k` returns exactly the rows
+    `LIMIT k + n` would have returned with its first `k` dropped, whatever widths
+    they carry. A filter applied first would make the near and far regions
+    overlap, or leave a gap between them, wherever a mid-flight model swap left a
+    foreign-width row behind.
+
+    Nothing is appended at offset 0, so the statement the near list issues stays
+    byte-identical to the one it issued before this parameter existed.
+
+    The price is that SQLite walks the rows the offset skips. That is what the
+    index-less path already pays for its window, and a reach that makes it too
+    slow is a reason to build the contiguous index — which answers the same
+    question by slicing a file — rather than a reason for this path to
+    approximate.
+    """
+    return (" OFFSET ?", (scan_offset,)) if scan_offset else ("", ())
 
 
 async def _chunked_cosine_scan(
@@ -987,8 +1069,17 @@ async def _scan_memories_local(
     project_id: str | None,
     channel: str,
     source_id: str,
+    scan_offset: int = 0,
 ) -> list[tuple[float, dict]]:
-    """Cosine-rank the newest `scan_limit` memory rows against the query vector.
+    """Cosine-rank `scan_limit` memory rows against the query vector.
+
+    The rows are the newest ones: scan positions `[scan_offset, scan_offset +
+    scan_limit)` in the scan's own order (`created_at` DESC, `id` ASC). The near
+    list passes `scan_offset=0` and reads the newest `scan_limit` rows, which is
+    every call this function had before the far list existed; the far list passes
+    the near window's width, which is what makes the two regions disjoint by
+    construction rather than by a de-duplicating pass afterwards
+    (`docs/SCAN_WINDOW_REACH_DESIGN.md`).
 
     Two phases, because the ranking and the answer need different columns
     (bug-249). Phase 1 reads `(id, embedding)` for the whole scan window and
@@ -1037,6 +1128,7 @@ async def _scan_memories_local(
         source_id=source_id,
         scan_limit=scan_limit,
         query_dim=query_dim,
+        scan_offset=scan_offset,
     )
     if supplied is not None:
         valid_ids, mat = supplied
@@ -1077,6 +1169,11 @@ async def _scan_memories_local(
         # exists in memory all at once (see _chunked_cosine_scan). The survivors it
         # returns are already thresholded, already cut, and already back in scan
         # order, which is the same list the lines above build for the index path.
+        #
+        # The far list moves the window down the same statement instead of
+        # widening it (empty at offset 0, see _scan_offset_sql), so the chunked
+        # read keeps bounding the peak by the chunk rather than by the reach.
+        offset_clause, offset_params = _scan_offset_sql(scan_offset)
         survivors = [
             (row_id, score)
             for _, row_id, score in await _chunked_cosine_scan(
@@ -1085,8 +1182,8 @@ async def _scan_memories_local(
                FROM memories
                WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}
                ORDER BY created_at DESC, id ASC
-               LIMIT ?""",
-                (*iso.params, *src_params, scan_limit),
+               LIMIT ?{offset_clause}""",
+                (*iso.params, *src_params, scan_limit, *offset_params),
                 query_vec,
                 query_dim,
                 effective_min_sim,
@@ -1149,6 +1246,7 @@ async def _scan_episodes_local(
     limit: int | None = None,
     agent_id: str = "",
     project_id: str | None = None,
+    scan_offset: int = 0,
 ) -> list[tuple[float, dict]]:
     """Cosine-rank episode summaries, structurally mirroring the memory scan.
 
@@ -1180,6 +1278,12 @@ async def _scan_episodes_local(
     an episode with `limit` episodes ranked above it cannot place whatever the
     memories do. `None` keeps every survivor (the pre-split behaviour); the
     caller passes its response limit.
+
+    `scan_offset` moves this window down the scan order exactly as it does for
+    memories: the two tables are scanned under the same window today, so they are
+    split at the same position when the far list exists. An episode table smaller
+    than the near window simply has no far region, which is the empty answer and
+    not a special case.
     """
     if src_like and not channel:
         return []
@@ -1193,6 +1297,7 @@ async def _scan_episodes_local(
         scan_limit=scan_limit,
         query_dim=query_dim,
         table="episodes",
+        scan_offset=scan_offset,
     )
     if supplied is not None:
         valid_ids, mat = supplied
@@ -1215,7 +1320,9 @@ async def _scan_episodes_local(
         # The same chunked read as the memory scan, and the same reason for it:
         # this window is materialised one chunk at a time rather than whole.
         # `limit` is `None` here when the caller wants every survivor, which the
-        # helper honours by skipping the cut entirely.
+        # helper honours by skipping the cut entirely. The offset is the far
+        # list's, and episodes are split at the same position memories are.
+        offset_clause, offset_params = _scan_offset_sql(scan_offset)
         survivors = [
             (row_id, score)
             for _, row_id, score in await _chunked_cosine_scan(
@@ -1224,8 +1331,8 @@ async def _scan_episodes_local(
                FROM episodes
                WHERE {iso.clause} AND embedding IS NOT NULL
                ORDER BY created_at DESC, id ASC
-               LIMIT ?""",
-                (*iso.params, scan_limit),
+               LIMIT ?{offset_clause}""",
+                (*iso.params, scan_limit, *offset_params),
                 query_vec,
                 query_dim,
                 effective_min_sim,
@@ -1268,6 +1375,69 @@ async def _scan_episodes_local(
     return candidates
 
 
+async def _search_vector_far(
+    db: aiosqlite.Connection,
+    *,
+    iso: IsolationFilter,
+    src_clause: str,
+    src_params: tuple,
+    src_like: str,
+    limit: int,
+    query_vec,
+    query_dim: int,
+    effective_min_sim: float,
+    agent_id: str,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
+) -> list[dict]:
+    """The far list: the top `limit` rows among scan positions `[N, REACH)`.
+
+    Everything the near list does, one window further down the scan order —
+    the same suppliers, the same threshold, the same stable top-`limit` cut, the
+    same memories-then-episodes merge — so a row's place on this list is decided
+    the way its place on the other one would have been. What it is NOT is a
+    re-ranking or a re-weighting: a far row is returned with its cosine, exactly
+    as a near row is (`docs/SCAN_WINDOW_REACH_DESIGN.md` §5).
+
+    The two regions are disjoint by position, so no row can appear on both lists
+    and no row can be counted twice by the fusion that receives them.
+
+    Takes the prepared query vector rather than a query string: it is a second
+    list, not a second search, and embedding the query again would put a network
+    call and a health observation on the recall path for a vector the caller is
+    already holding.
+    """
+    if not far_list_enabled():
+        # The function's own contract for a direct caller. `_search_vector` asks
+        # the same predicate before it calls at all, so at the default this frame
+        # is not even entered — see the note there on why an empty scan is not an
+        # acceptable way for this setting to be switched off.
+        return []
+
+    # The near window's width IS the offset: the far region starts where the near
+    # one ends, which is what makes the two disjoint without a de-duplicating
+    # pass over the results.
+    scan_offset = MAX_MEMORIES
+    scan_limit = VECTOR_REACH - MAX_MEMORIES
+
+    # Memories first, then episodes, and `nlargest` over both — the same merge
+    # and the same tie-break the near list is built with.
+    candidates = await _scan_memories_local(
+        db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim,
+        effective_min_sim,
+        agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
+        scan_offset=scan_offset,
+    )
+    candidates += await _scan_episodes_local(
+        db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel,
+        limit=limit, agent_id=agent_id, project_id=project_id, scan_offset=scan_offset,
+    )
+
+    top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
+    return [c[1] for c in top_k]
+
+
 async def _search_vector(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -1277,8 +1447,31 @@ async def _search_vector(
     channel: str = "",
     project_id: str | None = None,
     source_id: str = "",
+    *,
+    far_out: list[dict] | None = None,
 ) -> list[dict]:
     """Search memories and episodes using vector cosine similarity.
+
+    Returns the vector arm's ranked list — the NEAR list, the newest
+    `MAX_MEMORIES` rows by scan position, which is the only list this returned
+    before `CPERSONA_VECTOR_REACH` existed and is bit-identical to it at the
+    default.
+
+    `far_out`, when a caller passes a list and the reach is set above the scan
+    window, receives the FAR list: the rows at scan positions
+    `[MAX_MEMORIES, VECTOR_REACH)`, ranked the same way, for the caller to fuse
+    as one more ranked list (`docs/SCAN_WINDOW_REACH_DESIGN.md`). It stays empty
+    otherwise, and a caller that passes nothing pays for nothing.
+
+    An out-parameter rather than a `(near, far)` return, for two reasons that
+    both outlive the taste question. The query must be embedded ONCE: a separate
+    far entry point would either embed the same text again — a network call, and
+    a health observation the recall did not make — or lean on a client-side cache
+    whose lifetime nothing here controls. And the vector arm is ONE retriever
+    making one call, which is what the pipeline documents and what a test pins by
+    counting calls; two lists out of two calls would read as a fourth channel
+    feeding the fusion, which is exactly what this is not (the far rows are
+    disjoint from the near ones, so no row gains a second vote).
 
     project_id (v2.4.17): γ filter applied to the row-fetch SQL after the
     cosine ranking. The remote vector namespace is still f'cpersona:{agent_id}'
@@ -1329,6 +1522,9 @@ async def _search_vector(
         channel=channel,
     )
     if remote_results is not None:
+        # The service answered, and its answer IS the result. The reach applies
+        # to the local scan only — the remote service ranks under its own window
+        # — so `far_out` is left as the caller handed it over: empty.
         return remote_results
 
     import numpy as np
@@ -1393,4 +1589,27 @@ async def _search_vector(
     )
 
     top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
+
+    # The far list, and the one place "off" is decided on this path. Asked here
+    # rather than only inside the call, so that at the default there is no call
+    # at all: a far scan that ran and returned nothing would still cost a
+    # statement, a matrix and a merge on every recall the server answers, and
+    # this setting has to be a guard rather than an empty scan.
+    if far_out is not None and far_list_enabled():
+        far_out.extend(await _search_vector_far(
+            db,
+            iso=iso,
+            src_clause=src_clause,
+            src_params=src_params,
+            src_like=src_like,
+            limit=limit,
+            query_vec=query_vec,
+            query_dim=query_dim,
+            effective_min_sim=effective_min_sim,
+            agent_id=agent_id,
+            project_id=project_id,
+            channel=channel,
+            source_id=source_id,
+        ))
+
     return [c[1] for c in top_k]

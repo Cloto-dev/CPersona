@@ -97,12 +97,44 @@ rows (memories and episodes are each scanned under the window). Rows older
 than the window are invisible to vector search — but remain reachable through
 the FTS and keyword channels, which are not window-limited.
 
+**The window is also a recency prior.** By keeping only the newest rows it
+hands every recent memory a candidate field of N instead of the whole corpus,
+and that is worth accuracy rather than costing it. Measured on 237,654 stored
+documents, widening the window from 10,000 to 200,000 gained 4.93 NDCG@10 where
+the answer lay below the window and lost 20.19 where it lay inside it, with no
+result truncated. The loss is rank displacement: the vector retriever hands the
+fusion its top `limit` rows, so a recent answer that ranked third among 10,000
+candidates and thirtieth among 200,000 is not lower on that list, it is *off*
+it, and its vote is gone. **So raising this number is not a pure relaxation** —
+it extends the reach by removing the prior.
+
+`CPERSONA_VECTOR_REACH` (default `0`) separates the two. It must be set **above**
+`CPERSONA_MAX_MEMORIES` to do anything; at or below it, nothing changes and no
+extra work runs. Above it, the rows between the window and the reach are ranked
+as a **second list** — same threshold, same cut, same tie-break — and handed to
+the fusion as one more ranked list. The window keeps its width, so every row
+that places today keeps the vote it has today and older rows can only be added.
+Two limits on where it applies: **fusion only** (`CPERSONA_RECALL_MODE=rrf` or
+`rsf`; `cascade` concatenates stages rather than fusing lists, so it ignores the
+setting), and **local vector search only** (with `CPERSONA_VECTOR_SEARCH_MODE=remote`
+the service ranks under its own window). Under `rsf` the far list is fused as a
+fourth channel, which lowers every fused score against the cosine-scale
+`min_score` because the sum is divided by the number of active channels; the
+setting's measurement is registered for `rrf`, and no claim is made about `rsf`.
+
 **Raising the env var is the supported answer** for larger corpora — the
 constant exists as a knob, not a limit to engineer around. Cost estimate: a
 768-dimension float32 embedding is ~3 KB/row, so a 10,000-row window reads up
-to ~60 MB per recall in the worst case (memories + episodes). No archival or
-thinning routine is required: the long-term model is *no physical deletion —
-old rows sink via windows and decay*.
+to ~60 MB per recall in the worst case (memories + episodes). Turning the reach
+on costs the same way, per row: a recall reads `CPERSONA_VECTOR_REACH` −
+`CPERSONA_MAX_MEMORIES` more embedding rows than it does today. With the
+contiguous vector index built that read is the index's fast path; without one it
+is the chunked table scan, whose latency at a reach of 200,000 on a 237,654-row
+corpus was roughly double the default's, with the keyword channel as the floor
+in both cases. Memory does not grow with either number beyond the chunk the scan
+holds and the index file it maps. No archival or thinning routine is required:
+the long-term model is *no physical deletion — old rows sink via windows and
+decay*.
 
 ## 5. Dedup semantics: skip, not upsert
 

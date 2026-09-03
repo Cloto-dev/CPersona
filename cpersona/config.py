@@ -68,6 +68,42 @@ MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
 # vector retriever, so the default must comfortably exceed a real corpus.
 # Benchmarks on larger corpora raise it via the env var instead of patching code.
 MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
+# The vector retriever's REACH: how many of the newest rows its arm may look at
+# IN TOTAL. `0` (the default) means "the same as the window", and the far list
+# below does not exist -- with the default set, none of that code runs.
+#
+# It is a second knob rather than a larger value for the first because
+# MAX_MEMORIES does two jobs at once. It bounds what a recall reads, which is
+# what it was named for; and by keeping only the NEWEST rows it also hands every
+# recent memory a candidate field of N instead of the whole corpus, which is a
+# recency prior that nothing named and nothing could turn off separately.
+# Widening the window removes the prior in the act of extending the reach.
+# Measured on 237,654 stored documents, a window of 200,000 instead of 10,000
+# gained +4.93 NDCG@10 where the answer lay below the window and lost 20.19
+# where it lay inside it, with nothing truncated
+# (benchmarks/measurements/results-scan-window-default-ab.md). The loss is rank
+# displacement: the arm hands the fusion its top `limit` rows, so a recent
+# answer that ranked third among 10,000 candidates and thirtieth among 200,000
+# is not lower on that list, it is OFF it, and its vote is gone.
+#
+# So the two are set separately. Above MAX_MEMORIES, the rows at scan positions
+# [MAX_MEMORIES, REACH) are ranked as a SECOND list -- same threshold, same
+# stable top-`limit` cut -- and handed to the fusion as one more ranked list.
+# The near list is untouched, so every row that places today keeps the vote it
+# has today, and rows past the window can only be added. Design and the
+# measurement that decides the values: docs/SCAN_WINDOW_REACH_DESIGN.md.
+#
+# What it must not be coupled to: the response `limit` (bug-085's rule holds for
+# both windows -- how far back the arm looks is not how many rows the caller
+# asked for), and the near window itself. Raising this one INSTEAD of raising
+# MAX_MEMORIES is the whole point; a change that moved them together would
+# reproduce the loss above.
+#
+# A value at or below MAX_MEMORIES is off rather than an error: the region
+# [MAX_MEMORIES, REACH) is empty by construction and the guard skips the scan
+# entirely instead of running one that returns nothing. Negative values clamp to
+# 0 for the same reason.
+VECTOR_REACH = max(0, _parse_int("CPERSONA_VECTOR_REACH", 0))
 # The library layer's own ceiling on a caller-supplied `limit`. It used to BE
 # MAX_MEMORIES, which coupled two bounds that answer different questions: how far
 # back the vector retriever looks, and how many rows one call may materialise.
