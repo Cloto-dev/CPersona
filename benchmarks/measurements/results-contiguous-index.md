@@ -312,3 +312,50 @@ does not separate from the blob write it rides along with.
 produced both tables, in-tree from this change on; the perf script removes
 its scratch corpus at exit unless `PERF_INDEX_DIR` names where to keep it
 (eight runs had left 4.6 GB in `/tmp` on the reference machine).
+
+### The tail, not read when it cannot hold a row
+
+The remaining non-arithmetic term. `_index_tail_rows` reads the rows the index
+cannot answer for, and in the steady state — nothing written since the build,
+no row the format could not spell — there are none. Discovering that still cost
+a walk of the isolation index, because the read carries an `ORDER BY` and a
+`LIMIT` and the planner has to reach the window before it can report it empty.
+
+`id > watermark AND agent_id = ?` is a *necessary* condition of that read's
+`WHERE`, so when nothing satisfies it, nothing satisfies the whole. Asked over
+the rowid alone (`SELECT EXISTS(… WHERE id > ? AND +agent_id = ?)`) it is a seek
+into the b-tree, and the walk it bounds is the rows written since the build
+rather than the corpus. The unary plus is load-bearing exactly as it is on the
+other probe: without it the planner answers from the isolation index and walks
+every row the agent owns, which is the walk being removed. The plan is pinned.
+
+The one exception is a named hole — an excluded or unembedded row, both of which
+sit *below* the watermark and are read by id whatever the range says. With one
+present the range stops being a necessary condition, so the gate does not fire.
+
+Both arms are the same tree, the same machine and the same regime, differing
+only by the gate (removed from the before arm by hand and run, not remembered):
+
+| Segment | Before | After |
+| --- | ---: | ---: |
+| `_search_vector` total | 48.31 ms | **35.66 ms** |
+| ├ `_index_tail_rows` | 12.44 ms | **0.08 ms** |
+| ├ `_index_phase1` | 6.93 ms | 0.98 ms |
+| ├ `_merge_index_and_tail` | 1.36 ms | 1.25 ms |
+| ├ `_index_rows_lost_embedding` | 0.27 ms | 0.27 ms |
+| `_cosine_matrix` (the matmul) | 24.16 ms | 24.16 ms |
+
+**1.35x on the arm**, and the matmul is identical to the second decimal — the
+same comparability check the previous table passed, and here it is exact.
+
+**The arm is now 68% matmul.** Of the 11.5 ms that is not, none is a single
+term worth naming: the largest is the merge at 1.25 ms. The bookkeeping this
+record opened by measuring at 88% of the arm is finished as a target.
+
+A gate that only ever skips a read that could not have returned a row is
+invisible in the answer, so the tests assert the statement list rather than the
+result: one that the empty case issues the probe and not the read, one that a
+row past the watermark still reaches the read, one that a named hole reaches it
+with nothing past the watermark. Each was confirmed by mutation — dropping the
+hole condition, a range that always matches, and an unconditional skip — and
+each mutation left the rest of the file green.
