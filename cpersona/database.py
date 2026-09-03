@@ -268,6 +268,29 @@ CREATE INDEX IF NOT EXISTS idx_episodes_isolation
     ON episodes(agent_id, project_id, created_at DESC);
 """
 
+# The contiguous vector index hands a selection of ids back to the scan whenever
+# any of them has lost its embedding since the index was built. That question is
+# asked on every index-served recall, and without an index SQLite answers it by
+# walking the rows in the id range to test each one — 29 ms at 100,000 rows on
+# the reference machine, which was 38% of the index-served arm and larger than
+# the matmul it exists to protect (benchmarks/measurements/results-contiguous-index.md).
+#
+# A partial index holds exactly the rows the probe is looking for, which is
+# normally none, so the same statement is answered from an empty (or tiny)
+# B-tree instead of from the table: 25.4 ms -> 0.003 ms at 50,000 rows.
+#
+# Kept out of the migration ladder for the same reason as the isolation index
+# above, and because it needs no version of its own: an index is neither a
+# column, a row, nor a read contract, so a build that knows nothing about it
+# opens the database, answers identically, and leaves it in place (measured
+# against the shipped build before this was added).
+PROBE_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_memories_lost_embedding
+    ON memories(id) WHERE embedding IS NULL;
+CREATE INDEX IF NOT EXISTS idx_episodes_lost_embedding
+    ON episodes(id) WHERE embedding IS NULL;
+"""
+
 FTS_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
     summary,
@@ -717,6 +740,13 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
         await db.executescript(ISOLATION_INDEX_SQL)
     except Exception as e:
         logger.warning("isolation index creation failed (non-fatal): %s", e)
+
+    # Same placement and the same non-fatal contract: losing this index costs
+    # latency on the index-served arm, never an answer.
+    try:
+        await db.executescript(PROBE_INDEX_SQL)
+    except Exception as e:
+        logger.warning("lost-embedding probe index creation failed (non-fatal): %s", e)
 
     # Only advance the recorded version if the ladder completed cleanly. A
     # withheld stamp leaves `current` unchanged so the next boot re-runs the

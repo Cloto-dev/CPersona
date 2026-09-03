@@ -212,6 +212,11 @@ async def test_the_probe_is_driven_by_the_id_term_not_the_isolation_index(corpus
     and walks every row of the agent per statement — 43 ms instead of 25 for
     the range form and 3.0 s instead of 41 ms for the chunked form at 100,000
     rows, because every chunk repeats the walk.
+
+    The id term is now served by the partial index rather than by the table's
+    rowid (that index is what makes the probe cost microseconds instead of a
+    walk); either is the id term driving the statement, and neither is the
+    isolation index this test exists to keep out.
     """
     for sql, params in (
         (vector._LOST_EMBEDDING_RANGE_SQL, (1, 40, AGENT)),
@@ -220,8 +225,90 @@ async def test_the_probe_is_driven_by_the_id_term_not_the_isolation_index(corpus
         plan = " ".join(
             row[-1] for row in await corpus.execute_fetchall("EXPLAIN QUERY PLAN " + sql, params)
         )
-        assert "INTEGER PRIMARY KEY" in plan, plan
-        assert "idx_memories" not in plan, plan
+        assert "INTEGER PRIMARY KEY" in plan or "idx_memories_lost_embedding" in plan, plan
+        assert "idx_memories_isolation" not in plan, plan
+        assert "idx_memories_agent" not in plan, plan
+
+
+@pytest.mark.asyncio
+async def test_the_range_form_is_answered_by_the_partial_index(corpus):
+    """Boot creates the index, and the range form — the ordinary shape — uses it.
+
+    The partial index holds only the rows that lost their embedding, normally
+    none, so the probe stops reading the table it used to walk: 25.4 ms to
+    0.003 ms at 50,000 rows. Only the plan can show that from a test, because
+    the answer is identical either way.
+
+    The chunked form is deliberately not asserted here — see the test below.
+    """
+    names = [
+        row[0]
+        for row in await corpus.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE '%lost_embedding'"
+        )
+    ]
+    assert sorted(names) == ["idx_episodes_lost_embedding", "idx_memories_lost_embedding"], names
+
+    for sql in (vector._LOST_EMBEDDING_RANGE_SQL, vector._lost_embedding_range_sql("episodes")):
+        plan = " ".join(
+            row[-1]
+            for row in await corpus.execute_fetchall(
+                "EXPLAIN QUERY PLAN " + sql, (1, ROWS, AGENT)
+            )
+        )
+        assert "lost_embedding" in plan, plan
+
+
+@pytest.mark.asyncio
+async def test_the_chunked_form_keeps_its_rowid_lookups(corpus):
+    """The scattered shape is not served by the index, and does not need to be.
+
+    `id IN (…)` over an INTEGER PRIMARY KEY is planned as one rowid lookup per
+    id, which is already logarithmic per id — the index would replace it with
+    nothing cheaper. Pinned so a future reader does not read the test above as
+    a claim about both forms, and so a planner change here is visible.
+    """
+    plan = " ".join(
+        row[-1]
+        for row in await corpus.execute_fetchall(
+            "EXPLAIN QUERY PLAN " + vector._lost_embedding_chunk_sql(3), (1, 2, 3, AGENT)
+        )
+    )
+    assert "INTEGER PRIMARY KEY" in plan, plan
+
+
+@pytest.mark.asyncio
+async def test_the_probe_answers_the_same_without_the_index(corpus):
+    """Dropping it costs time, never an answer — the reason it is 'warn'.
+
+    A database that has not been reopened since the index was added, or one an
+    operator dropped, must return exactly what an indexed one returns.
+    """
+    ids = [
+        row[0]
+        for row in await corpus.execute_fetchall(
+            "SELECT id FROM memories WHERE agent_id = ? ORDER BY id", (AGENT,)
+        )
+    ]
+    assert ids, "the corpus fixture stored nothing"
+    await _clear_embedding_of(corpus, "row 7")
+
+    with_index = await vector._index_rows_lost_embedding(corpus, ids, agent_id=AGENT)
+    await corpus.execute("DROP INDEX idx_memories_lost_embedding")
+    await corpus.commit()
+    try:
+        without_index = await vector._index_rows_lost_embedding(corpus, ids, agent_id=AGENT)
+    finally:
+        # The database is shared for the whole session: leaving it dropped would
+        # make an unrelated later test fail with no mention of this one.
+        await corpus.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_lost_embedding"
+            " ON memories(id) WHERE embedding IS NULL"
+        )
+        await corpus.commit()
+
+    assert with_index is True, "the probe did not see the cleared embedding"
+    assert without_index == with_index
 
 
 def test_the_chunk_fits_the_smallest_supported_build():
