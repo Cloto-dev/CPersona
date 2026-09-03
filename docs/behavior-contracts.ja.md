@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:af3f2b502b4be827d9dac8d32f24ca1175119a04 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:e5b601994e2ecfa0f5b1b281e6b659a576984960 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -120,6 +120,12 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 アクティブなチャネル数で割られる関係上、cosine スケールの `min_score` に対して
 融合スコア全体が下がります。この設定の事前登録された測定は `rrf` に対するもので、
 `rsf` については何の主張もしていません。
+
+`CPERSONA_VECTOR_FAR_LIMIT` (既定 `0`) は、その第 2 のリストのうち何行を融合層に
+渡すかを制限します。既定では応答の `limit` — つまり reach だけを設定したときに
+できるリストそのもの — で、`0` より大きくすると `limit` とその値の小さい方に、
+同じリストの先頭から切り詰められます。決めるのは遠方の何行が投票できるかだけで、
+行のスコア計算には一切関与しません。
 
 大きなコーパスに対する**サポートされた答えは環境変数を上げること**です —
 この定数は回避策を設計すべき限界ではなく、つまみとして存在しています。

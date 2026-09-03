@@ -17,6 +17,7 @@ from cpersona import vector_index
 from cpersona.config import (
     MAX_MEMORIES,
     REMOTE_SEARCH_TIMEOUT_SECS,
+    VECTOR_FAR_LIMIT,
     VECTOR_REACH,
     VECTOR_SCAN_CHUNK_ROWS,
     VECTOR_SEARCH_MODE,
@@ -1391,14 +1392,18 @@ async def _search_vector_far(
     channel: str,
     source_id: str,
 ) -> list[dict]:
-    """The far list: the top `limit` rows among scan positions `[N, REACH)`.
+    """The far list: the top rows among scan positions `[N, REACH)`.
 
     Everything the near list does, one window further down the scan order —
-    the same suppliers, the same threshold, the same stable top-`limit` cut, the
+    the same suppliers, the same threshold, the same stable top-k cut, the
     same memories-then-episodes merge — so a row's place on this list is decided
     the way its place on the other one would have been. What it is NOT is a
     re-ranking or a re-weighting: a far row is returned with its cosine, exactly
     as a near row is (`docs/SCAN_WINDOW_REACH_DESIGN.md` §5).
+
+    How many rows that is, is `limit` unless `CPERSONA_VECTOR_FAR_LIMIT` asks for
+    fewer. Shortening this list is a candidate-count bound — which far rows reach
+    the fusion — and leaves every row that does reach it scored as before.
 
     The two regions are disjoint by position, so no row can appear on both lists
     and no row can be counted twice by the fusion that receives them.
@@ -1421,20 +1426,32 @@ async def _search_vector_far(
     scan_offset = MAX_MEMORIES
     scan_limit = VECTOR_REACH - MAX_MEMORIES
 
+    # How long this list is allowed to be. `0` means the response `limit`, which
+    # is the list this function has always produced; a positive value shortens it
+    # and can never lengthen it, so `min` is the whole rule. Read from the module
+    # global at call time for the same reason `far_list_enabled` reads its two:
+    # a value closed over at import could not be turned down by a test or by the
+    # environment.
+    far_limit = min(limit, VECTOR_FAR_LIMIT) if VECTOR_FAR_LIMIT else limit
+
     # Memories first, then episodes, and `nlargest` over both — the same merge
-    # and the same tie-break the near list is built with.
+    # and the same tie-break the near list is built with. The per-table cut is
+    # the same number as the final one: a table cannot contribute more rows than
+    # the merged list can hold, and cutting each table at the response `limit`
+    # while the merge cuts at `far_limit` would read and rank rows that cannot
+    # place. The near list's cut is untouched; this is the far list's length.
     candidates = await _scan_memories_local(
-        db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim,
+        db, iso, src_clause, src_params, scan_limit, far_limit, query_vec, query_dim,
         effective_min_sim,
         agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
         scan_offset=scan_offset,
     )
     candidates += await _scan_episodes_local(
         db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel,
-        limit=limit, agent_id=agent_id, project_id=project_id, scan_offset=scan_offset,
+        limit=far_limit, agent_id=agent_id, project_id=project_id, scan_offset=scan_offset,
     )
 
-    top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
+    top_k = heapq.nlargest(far_limit, candidates, key=lambda x: x[0])
     return [c[1] for c in top_k]
 
 
