@@ -1,11 +1,14 @@
 """Scan-window default A/B — does a wider vector window pay for itself?
 
 Pre-registrations: `prereg-scan-window-default-ab.md` and, on the same
-instrument, `prereg-scan-window-reach-ab.md`, both next to this file. Read them
-first; this module only executes what those documents fixed. The reach
-measurement changes no part of the instrument — same seed, same scene layout,
-same strata, same metrics — it adds arms that also set `CPERSONA_VECTOR_REACH`,
-two controls and one exploratory reading.
+instrument, `prereg-scan-window-reach-ab.md` and
+`prereg-scan-window-far-limit-ab.md`, all next to this file. Read them first;
+this module only executes what those documents fixed. Neither later measurement
+changes any part of the instrument — same seed, same scene layout, same strata,
+same metrics — each adds arms: the reach measurement arms that also set
+`CPERSONA_VECTOR_REACH`, two controls and one exploratory reading, and the
+far-limit measurement arms that hold that reach and set
+`CPERSONA_VECTOR_FAR_LIMIT`, which cuts the far list to fewer rows.
 
 `CPERSONA_MAX_MEMORIES` is how many of the newest rows the vector arm ranks per
 recall. It ships at 10,000, which on a six-figure corpus leaves most of the
@@ -61,6 +64,9 @@ let one matrix answer for the other:
         --workdir /tmp/window-ab-exploratory --rotations 6 \\
         --spec <EXPLORATORY_SPEC — the constant of that name below> \\
         --json results-exploratory.json
+
+The far-limit matrices (`FAR_LIMIT_SPEC` and `FAR_LIMIT_EXPLORATORY_SPEC`) are
+run the same way, each in its own `--workdir`.
 
 Sub-commands (`build` / `arm` / `score`) exist so a long run can be resumed
 without re-storing 237,655 rows.
@@ -390,7 +396,7 @@ async def build(args: argparse.Namespace) -> None:
 # arm: one window, one recall pass
 # ---------------------------------------------------------------------------
 
-def _set_env(db_path: str, window: int, reach: int = 0) -> None:
+def _set_env(db_path: str, window: int, reach: int = 0, far_limit: int = 0) -> None:
     """Shipped defaults except for what a benchmark cannot have (no network).
 
     The truncation layers stay ON: they are the mechanisms a larger candidate
@@ -410,6 +416,10 @@ def _set_env(db_path: str, window: int, reach: int = 0) -> None:
     # inherited `CPERSONA_VECTOR_REACH` must be overwritten, not left to decide
     # an arm. 0 is the store path's value — `build` runs no recall.
     os.environ["CPERSONA_VECTOR_REACH"] = str(reach)
+    # Pinned for the same reason, and with the same off state: 0 means the far
+    # list is cut at the response `limit`, which is the list the reach arms
+    # already ran.
+    os.environ["CPERSONA_VECTOR_FAR_LIMIT"] = str(far_limit)
     # The recall regime is whatever ships, so it is *removed* from the
     # environment rather than pinned here: an inherited override (the Track B
     # launcher exports two of these) would otherwise ride into the run, and a
@@ -423,7 +433,7 @@ def _set_env(db_path: str, window: int, reach: int = 0) -> None:
 
 async def arm(args: argparse.Namespace) -> None:
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    _set_env(args.db, args.window, args.reach)
+    _set_env(args.db, args.window, args.reach, args.far_limit)
 
     import cpersona.config as config
     import cpersona.memory_handlers as mh
@@ -444,6 +454,11 @@ async def arm(args: argparse.Namespace) -> None:
             f"vector reach did not take: config says {config.VECTOR_REACH}, "
             f"asked for {args.reach}"
         )
+    if config.VECTOR_FAR_LIMIT != args.far_limit:
+        raise SystemExit(
+            f"far-list limit did not take: config says {config.VECTOR_FAR_LIMIT}, "
+            f"asked for {args.far_limit}"
+        )
     regime = {
         "recall_mode": config.RECALL_MODE,
         "fused_gate": config.FUSED_GATE_ENABLED,
@@ -452,6 +467,7 @@ async def arm(args: argparse.Namespace) -> None:
         "min_similarity": config.VECTOR_MIN_SIMILARITY,
         "scan_window": config.MAX_MEMORIES,
         "reach": config.VECTOR_REACH,
+        "far_limit": config.VECTOR_FAR_LIMIT,
     }
 
     emb = LookupEmbeddingClient()
@@ -503,7 +519,7 @@ async def arm(args: argparse.Namespace) -> None:
     db = await get_db()
 
     out = {"window": args.window, "reach": args.reach, "limit": args.limit,
-           "label": args.label,
+           "far_limit": args.far_limit, "label": args.label,
            "rotation": plan["rotation"], "corpus_size": plan["corpus_size"],
            "regime": regime, "results": {}}
     t0 = time.time()
@@ -546,7 +562,8 @@ async def arm(args: argparse.Namespace) -> None:
         )
 
     Path(args.out).write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
-    print(f"  arm {args.label} (window {args.window}, reach {args.reach}): "
+    print(f"  arm {args.label} (window {args.window}, reach {args.reach}, "
+          f"far limit {args.far_limit}): "
           f"{len(plan['queries'])} queries in {time.time() - t0:.0f}s")
 
 
@@ -591,6 +608,10 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
         base_of.setdefault(limit_of[label], label)
 
     reach_of = {a["label"]: a.get("reach", 0) for _, arms in groups for a in arms}
+    # `.get` with 0 for the same reason the reach uses it: an arm file written
+    # before this field existed ran the far list at the response limit, which is
+    # what 0 means.
+    far_limit_of = {a["label"]: a.get("far_limit", 0) for _, arms in groups for a in arms}
 
     acc: dict[tuple[str, str], dict[str, list]] = {}
     paired: dict[tuple[str, str], list[tuple[float, float]]] = {}
@@ -697,6 +718,7 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
             report["arms"].append({
                 "label": label, "window": windows[label],
                 "reach": reach_of.get(label, 0), "limit": limits[label],
+                "far_limit": far_limit_of.get(label, 0),
                 "stratum": stratum, "n": len(cell["ndcg"]),
                 "ndcg@10": round(_mean(cell["ndcg"]), 2),
                 "recall@10": round(_mean(cell["recall"]) * 100, 2),
@@ -748,13 +770,13 @@ def print_report(report: dict) -> None:
     print(f"\ncorpus {report['corpus_size']} rows, seed {report['seed']}, "
           f"rotations {report['rotations']}")
     print(f"regime {report['regime']}\n")
-    hdr = (f"{'arm':<8}{'window':>9}{'reach':>9}{'limit':>6}{'stratum':>9}{'n':>5}"
+    hdr = (f"{'arm':<8}{'window':>9}{'reach':>9}{'limit':>6}{'far':>5}{'stratum':>9}{'n':>5}"
            f"{'ndcg@10':>9}{'rec@10':>8}{'mrr':>7}{'ret':>7}{'p50ms':>9}{'p95ms':>9}")
     print(hdr)
     print("-" * len(hdr))
     for a in report["arms"]:
         print(f"{a['label']:<8}{a['window']:>9}{a.get('reach', 0):>9}{a['limit']:>6}"
-              f"{a['stratum']:>9}{a['n']:>5}"
+              f"{a.get('far_limit', 0):>5}{a['stratum']:>9}{a['n']:>5}"
               f"{a['ndcg@10']:>9.2f}{a['recall@10']:>8.2f}{a['mrr']:>7.3f}"
               f"{a['returned_mean']:>7.2f}"
               f"{a['latency_p50_ms']:>9.1f}{a['latency_p95_ms']:>9.1f}")
@@ -821,40 +843,73 @@ EXPLORATORY_SPEC = (
     f"S100:{NARROW_WINDOW}:{WIDE_WINDOW}:100"
 )
 
+# The far-limit matrix (`prereg-scan-window-far-limit-ab.md`): the same reach
+# the separation was measured at, with the far list cut to fewer rows.
+# `CPERSONA_VECTOR_REACH` decides which rows the far region holds and this
+# decides how many of them reach the fusion, so every arm past "S" differs from
+# it in one number. "A" is the shipped setting and "S" is the far list at full
+# length — the arm the previous measurement rejected — which is what the shorter
+# lists are read against.
+FAR_LIMIT_SPEC = (
+    f"A:{NARROW_WINDOW}:0:10:0,"
+    f"S:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0,"
+    f"F1:{NARROW_WINDOW}:{WIDE_WINDOW}:10:1,"
+    f"F2:{NARROW_WINDOW}:{WIDE_WINDOW}:10:2,"
+    f"F3:{NARROW_WINDOW}:{WIDE_WINDOW}:10:3,"
+    f"F5:{NARROW_WINDOW}:{WIDE_WINDOW}:10:5"
+)
 
-def parse_spec(spec: str) -> list[tuple[str, int, int, int]]:
-    """`label:window:reach:limit`, or `label:window:limit` with the reach off.
+# The exploratory reading of the same pre-registration: the shorter lists at the
+# reach of 50,000, which is where the exploratory sweep of the reach measurement
+# put the largest far-stratum gain. Run as a separate `run` with its own
+# `--workdir` and fewer rotations; none of it may move the decision rule.
+FAR_LIMIT_EXPLORATORY_SPEC = (
+    f"A:{NARROW_WINDOW}:0:10:0,"
+    f"S50:{NARROW_WINDOW}:50000:10:0,"
+    f"F2-50:{NARROW_WINDOW}:50000:10:2,"
+    f"F3-50:{NARROW_WINDOW}:50000:10:3"
+)
 
-    The three-field form is the spec the window measurement was run with, and
-    it still means what it meant: reach 0, no far list. Keeping it parseable is
-    what lets that measurement's spec be replayed against this harness.
+
+def parse_spec(spec: str) -> list[tuple[str, int, int, int, int]]:
+    """`label:window:reach:limit:farlimit`, and the two shorter forms before it.
+
+    Four fields is the spec the reach measurement was run with and means what it
+    meant: far limit 0, the far list cut at the response `limit`. Three fields is
+    the window measurement's, which also means reach 0 and no far list at all.
+    Both stay parseable so those measurements' specs can be replayed against this
+    harness rather than re-derived.
     """
     arms = []
     for part in spec.split(","):
         fields = part.split(":")
+        far_limit = "0"
         if len(fields) == 3:
             label, window, limit = fields
             reach = "0"
         elif len(fields) == 4:
             label, window, reach, limit = fields
+        elif len(fields) == 5:
+            label, window, reach, limit, far_limit = fields
         else:
             raise SystemExit(
-                f"arm spec {part!r} is not label:window:reach:limit "
-                "(nor the older label:window:limit)"
+                f"arm spec {part!r} is not label:window:reach:limit:farlimit "
+                "(nor the older label:window:reach:limit or label:window:limit)"
             )
-        arms.append((label, int(window), int(reach), int(limit)))
+        arms.append((label, int(window), int(reach), int(limit), int(far_limit)))
     return arms
 
 
-def _arm_path(work: Path, rot: int, label: str, reach: int, limit: int) -> Path:
-    """The reach is in the filename, not only in the label.
+def _arm_path(work: Path, rot: int, label: str, reach: int, limit: int,
+              far_limit: int) -> Path:
+    """Every setting that decides the arm is in the filename, not only the label.
 
-    Two arms of one matrix can share a label and a limit and differ in the
-    reach — and a resumed run reuses whatever file is already there, so a
-    filename that cannot tell them apart would silently answer one arm with the
-    other's results.
+    Two arms of one matrix can share a label and a limit and differ in the reach
+    or in the far-list limit — and a resumed run reuses whatever file is already
+    there, so a filename that cannot tell them apart would silently answer one
+    arm with the other's results.
     """
-    return work / f"arm-r{rot}-{label}-reach{reach}-limit{limit}.json"
+    return work / f"arm-r{rot}-{label}-reach{reach}-limit{limit}-far{far_limit}.json"
 
 
 def run(args: argparse.Namespace) -> None:
@@ -868,17 +923,17 @@ def run(args: argparse.Namespace) -> None:
     for rot in range(args.rotations):
         plan = work / f"plan-r{rot}.json"
         db = work / "corpus.db"
-        outs = [_arm_path(work, rot, label, reach, limit)
-                for label, _, reach, limit in spec]
+        outs = [_arm_path(work, rot, label, reach, limit, far_limit)
+                for label, _, reach, limit, far_limit in spec]
         if args.rerun or not all(o.exists() for o in outs):
             _self(["build", "--db", str(db), "--plan", str(plan), "--seed", str(args.seed),
                    "--rotation", str(rot), "--task", args.task, "--lmeb", args.lmeb,
                    "--cache", args.cache, "--cache-label", args.cache_label])
-            for (label, window, reach, limit), out in zip(spec, outs):
+            for (label, window, reach, limit, far_limit), out in zip(spec, outs):
                 if out.exists() and not args.rerun:
                     continue
                 _self(["arm", "--db", str(db), "--plan", str(plan), "--window", str(window),
-                       "--reach", str(reach),
+                       "--reach", str(reach), "--far-limit", str(far_limit),
                        "--limit", str(limit), "--label", label, "--out", str(out),
                        "--cache", args.cache, "--cache-label", args.cache_label])
         groups.append((json.loads(plan.read_text(encoding="utf-8")),
@@ -929,6 +984,7 @@ def main() -> None:
     a.add_argument("--plan", required=True)
     a.add_argument("--window", type=int, required=True)
     a.add_argument("--reach", type=int, default=0)
+    a.add_argument("--far-limit", type=int, default=0)
     a.add_argument("--limit", type=int, default=10)
     a.add_argument("--label", default="arm")
     a.add_argument("--out", required=True)
@@ -963,8 +1019,9 @@ def main() -> None:
         for rot in range(rotations):
             plan = json.loads((work / f"plan-r{rot}.json").read_text(encoding="utf-8"))
             arms = [json.loads(
-                        _arm_path(work, rot, label, reach, limit).read_text(encoding="utf-8"))
-                    for label, _, reach, limit in spec]
+                        _arm_path(work, rot, label, reach, limit,
+                                  far_limit).read_text(encoding="utf-8"))
+                    for label, _, reach, limit, far_limit in spec]
             groups.append((plan, arms))
         report = score(groups)
         print_report(report)

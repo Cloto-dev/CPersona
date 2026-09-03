@@ -749,3 +749,154 @@ async def test_a_far_region_spanning_several_chunks_is_still_exact(
     assert [(r["id"], r["_cosine"]) for r in far] == [
         (row_id, pytest.approx(score)) for row_id, score in expected
     ]
+
+
+# --------------------------------------------------------------------------
+# (10) `CPERSONA_VECTOR_FAR_LIMIT`: how many far rows reach the fusion
+# --------------------------------------------------------------------------
+#
+# The reach measurement rejected the far list at equal weight: 75% of the rows
+# that displaced a recent answer carried a far-list vote and no other, and the
+# near cost was nearly the same at a reach of 50,000 as at 300,000 — so it is the
+# far list's ten full-strength votes, not the depth they came from, that
+# displaces (`benchmarks/measurements/results-scan-window-reach-ab.md`). This
+# setting bounds that count. It is a candidate-count knob: it decides which far
+# rows reach the fusion, and changes nothing about how any row is scored, so the
+# rows it keeps are the ones the unbounded list led with, in the same order.
+
+
+def set_far_limit(monkeypatch, far_limit: int) -> None:
+    """The far list's length, patched where the far scan reads it."""
+    monkeypatch.setattr(vector, "VECTOR_FAR_LIMIT", far_limit)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("far_limit", [0, 50])
+async def test_a_far_limit_at_or_above_the_limit_is_the_far_list_it_always_was(
+    corpus, one_hot_client, monkeypatch, far_limit
+):
+    """`0` is the default and means the response `limit`; `50` is `min` doing its job.
+
+    Both are compared against the same oracle the unbounded far list is pinned
+    to, so this is the "the default reproduces today's list" claim and the "a
+    limit above the response size cannot lengthen it" claim in one statement. A
+    setting that took `VECTOR_FAR_LIMIT` on its own instead of the smaller of the
+    two would answer the `50` case with fifty rows.
+    """
+    set_reach(monkeypatch, NEAR, REACH)
+    set_far_limit(monkeypatch, far_limit)
+
+    near, far = await _search(corpus, limit=10)
+
+    expected = await _oracle(corpus, start=NEAR, stop=REACH, limit=10, min_sim=-1.0)
+    assert len(expected) == 10, "the fixture no longer fills a ten-row far list"
+    assert [(r["id"], r["_cosine"]) for r in far] == [
+        (row_id, pytest.approx(score)) for row_id, score in expected
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_far_limit_below_the_limit_keeps_the_head_of_the_same_list(
+    corpus, one_hot_client, monkeypatch
+):
+    """Three rows, and they are the first three of the ten — not three others.
+
+    That is what makes this a count rather than a re-ranking: the cut is applied
+    to a list already ordered the way the unbounded one is, so a shorter far list
+    holds exactly the rows the longer one led with. The near list is the list it
+    is with the reach off, and the two remain disjoint.
+    """
+    set_reach(monkeypatch, NEAR, 0)
+    baseline_near, _ = await _search(corpus, want_far=False)
+
+    set_reach(monkeypatch, NEAR, REACH)
+    set_far_limit(monkeypatch, 3)
+    near, far = await _search(corpus, limit=10)
+
+    expected = await _oracle(corpus, start=NEAR, stop=REACH, limit=10, min_sim=-1.0)
+    assert [(r["id"], r["_cosine"]) for r in far] == [
+        (row_id, pytest.approx(score)) for row_id, score in expected[:3]
+    ]
+    assert _ids_and_scores(near) == _ids_and_scores(baseline_near), (
+        "the far list's length reached the near list; the near cut is `limit` and "
+        "is not this setting's business"
+    )
+    assert not set(_ids(near)) & set(_ids(far))
+
+
+@pytest.mark.asyncio
+async def test_the_cut_is_taken_across_the_merge_and_not_per_table(
+    db, one_hot_client, monkeypatch
+):
+    """Two tables, a far limit of two, and two rows out — not two per table.
+
+    Memories and episodes are scanned under the same window and merged, so a cut
+    applied only to each table's own scan would hand the fusion one short list
+    per table instead of one short list. On this corpus every far episode outscores
+    every far memory, so the mistake is visible as a longer answer AND as rows
+    that the merged top two does not contain.
+    """
+    set_reach(monkeypatch, 5, 15)
+    set_far_limit(monkeypatch, 2)
+    await _seed_memories(db, [0.30 + n / 1024 for n in range(20)], total=20)
+    await _seed_episodes(
+        db,
+        [0.99] * 5 + [0.5 + n / 1024 for n in range(10)] + [0.95] * 5,
+        total=20,
+    )
+
+    near, far = await _search(db, limit=5)
+
+    expected = await _oracle(db, start=5, stop=15, limit=2, min_sim=-1.0, table="episodes")
+    assert _ids_and_scores(far) == [
+        (("ep", row_id), pytest.approx(score)) for row_id, score in expected
+    ], f"the far list is not the merged region's top two: {_ids_and_scores(far)}"
+    assert not set(_ids(far)) & set(_ids(near))
+
+
+@pytest.mark.asyncio
+async def test_the_fusion_receives_at_most_that_many_far_only_votes(
+    corpus, one_hot_client, monkeypatch
+):
+    """The point of the setting, measured where it acts: inside the fusion.
+
+    A row that scores with the reach on and did not score with it off reached the
+    fusion through the far list and through no other list — the near list is
+    identical between the two runs and the lexical lists do not know the setting
+    exists — so counting the rows the far list added counts far-only votes. With
+    the list cut to three there can be at most three, and every near row keeps the
+    exact fused score it had, which is the "on only adds" claim at the new length.
+
+    The unbounded run is here as the calibration: without it, "at most three" would
+    also pass against a fusion that received nothing at all.
+    """
+    set_reach(monkeypatch, NEAR, 0)
+    before = {r["_rid"]: r["_rrf_score"] for r in await M._recall_rrf(
+        corpus, AGENT, "row", 10, False
+    ) if "_rrf_score" in r and "_rid" in r}
+    assert before, "the reach-off run scored nothing; there is no claim to make"
+
+    set_reach(monkeypatch, NEAR, REACH)
+    set_far_limit(monkeypatch, 0)
+    unbounded = {r["_rid"] for r in await M._recall_rrf(corpus, AGENT, "row", 10, False)
+                 if "_rrf_score" in r and "_rid" in r}
+    assert len(unbounded - set(before)) > 3, (
+        "the full-length far list added no more than three rows on this corpus, so a "
+        f"bound of three would prove nothing: {len(unbounded - set(before))} added"
+    )
+
+    set_far_limit(monkeypatch, 3)
+    after_rows = await M._recall_rrf(corpus, AGENT, "row", 10, False)
+    after = {r["_rid"]: r["_rrf_score"] for r in after_rows
+             if "_rrf_score" in r and "_rid" in r}
+
+    far_only = set(after) - set(before)
+    assert far_only, "no far row reached the fusion, so the far list was cut to nothing"
+    assert len(far_only) <= 3, (
+        f"{len(far_only)} rows carried a far-only vote with the far list cut to three"
+    )
+    for rid, score in before.items():
+        assert after.get(rid) == pytest.approx(score), (
+            f"{rid} scored {after.get(rid)} with a three-row far list and {score} "
+            "without one; a shorter far list must still only add"
+        )

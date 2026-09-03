@@ -122,6 +122,12 @@ fourth channel, which lowers every fused score against the cosine-scale
 `min_score` because the sum is divided by the number of active channels; the
 setting's measurement is registered for `rrf`, and no claim is made about `rsf`.
 
+`CPERSONA_VECTOR_FAR_LIMIT` (default `0`) bounds how many rows of that second
+list are handed to the fusion — at the default, the response `limit`, which is
+the list the reach produces on its own; above `0`, the smaller of that and the
+number given, taken from the head of the same list, so it decides how many far
+rows may vote and nothing about how any row is scored.
+
 **Raising the env var is the supported answer** for larger corpora — the
 constant exists as a knob, not a limit to engineer around. Cost estimate: a
 768-dimension float32 embedding is ~3 KB/row, so a 10,000-row window reads up

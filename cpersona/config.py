@@ -104,6 +104,31 @@ MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
 # entirely instead of running one that returns nothing. Negative values clamp to
 # 0 for the same reason.
 VECTOR_REACH = max(0, _parse_int("CPERSONA_VECTOR_REACH", 0))
+# How many rows of the far list reach the fusion. `0` (the default) means "the
+# same as the response `limit`", which is the far list exactly as it is built
+# today -- same rows, same order, bit for bit -- so this setting is off unless
+# it is set. A positive value cuts the far list to `min(limit, N)` rows.
+#
+# It bounds a CANDIDATE COUNT and nothing else: it changes how many far rows the
+# fusion receives, not how any row is scored. A far row that survives the cut is
+# returned with its cosine and votes exactly as it does now.
+#
+# Why the length is the thing worth bounding. Measured on 237,654 stored
+# documents, a reach of 200,000 cost the near stratum 6.67 NDCG@10, and 75% of
+# the rows that displaced a recent answer carried a far-list vote and no other;
+# the exploratory sweep then found the near cost nearly the same at a reach of
+# 50,000 (-5.97) as at 300,000 (-8.49), so it is the far list's ten
+# full-strength votes, not the depth they were drawn from, that displaces
+# (benchmarks/measurements/results-scan-window-reach-ab.md). Shortening the list
+# attacks that directly, and does it as a count rather than as a weight -- a
+# per-list weight would be a scoring change, which this line does not make.
+#
+# What it must not be coupled to: the NEAR list's cut, which stays `limit` and is
+# not this knob's business (the near list is the one thing the reach design
+# promises is untouched); and the reach itself, which decides which rows the far
+# region holds, not how many of them are handed on. With the reach off there is
+# no far list and this setting is irrelevant.
+VECTOR_FAR_LIMIT = max(0, _parse_int("CPERSONA_VECTOR_FAR_LIMIT", 0))
 # The library layer's own ceiling on a caller-supplied `limit`. It used to BE
 # MAX_MEMORIES, which coupled two bounds that answer different questions: how far
 # back the vector retriever looks, and how many rows one call may materialise.
