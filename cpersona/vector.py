@@ -561,6 +561,36 @@ async def _index_rows_lost_embedding(
     return False
 
 
+# Two of the tail read's terms and none of the rest: `id` is `INTEGER PRIMARY
+# KEY` in both tables the index serves, so the range is a seek into the rowid
+# b-tree, and the walk it costs is bounded by the rows written since the build
+# rather than by the corpus. The embedding test, the project and channel axes
+# and the ORDER BY are all left out on purpose — none of them can turn an empty
+# result into a non-empty one, and each would put back some of the work the
+# question is asked to avoid.
+#
+# `+agent_id`: the unary plus keeps the planner from constraining the isolation
+# index with the agent term, which would walk every row of the agent instead of
+# the far shorter range. Same reason, and same measurement, as the probe above.
+def _tail_exists_sql(table: str = "memories") -> str:
+    return f"SELECT EXISTS(SELECT 1 FROM {table} WHERE id > ? AND +agent_id = ?)"
+
+
+async def _rows_written_since(
+    db: aiosqlite.Connection, watermark: int, *, agent_id: str, table: str = "memories"
+) -> bool:
+    """Whether this agent owns any row the build did not see.
+
+    Deliberately unguarded, like the statement it stands in front of: a failure
+    here is the database failing, and the live scan this path falls back to
+    reads the same database through the same connection. There is nothing to
+    fall back TO, which is why the index's other probe — which can fail because
+    of the index's own shape — is guarded and this one is not.
+    """
+    rows = await db.execute_fetchall(_tail_exists_sql(table), (watermark, agent_id))
+    return bool(rows and rows[0][0])
+
+
 async def _index_tail_rows(
     db: aiosqlite.Connection,
     index,
@@ -588,6 +618,30 @@ async def _index_tail_rows(
     difference here is a different answer rather than a slower one. That state
     means a model swap began after the build; the scan handles it correctly.
     """
+    # One IN clause for both named groups: they are disjoint by construction (a row
+    # with no embedding is not in the meta query that produces the excluded list) and
+    # the query treats them identically — read this id exactly, whatever the watermark
+    # says. The build caps their sum for this reason.
+    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids)
+
+    # The steady state — nothing written since the build, no named holes — is the
+    # shape the index exists for, and in it the statement below is structurally
+    # empty: `id > watermark AND agent_id = ?` is a necessary condition of its
+    # WHERE (agent_id is a string here, and isolation_where binds any string,
+    # '' included, as an exact match), so when no row satisfies that, none
+    # satisfies the whole. Discovering it still costs a walk of the isolation
+    # index, 12.53 ms of a 49.92 ms arm at 100,000 rows
+    # (benchmarks/measurements/results-contiguous-index.md). The same question
+    # asked over the rowid range is a seek.
+    #
+    # Gated on there being no holes, because a named hole is read by id WHATEVER
+    # the watermark says: with one present the range stops being a necessary
+    # condition, and the cheap question no longer decides the expensive one.
+    if not holes_ids and not await _rows_written_since(
+        db, index.watermark, agent_id=agent_id, table=table
+    ):
+        return []
+
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     # Only memories carry a source column; the episode caller passes source_id
     # empty, and the guard here is what keeps a non-empty one from becoming a
@@ -596,11 +650,6 @@ async def _index_tail_rows(
     src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
     src_params = (src_like,) if src_like else ()
 
-    # One IN clause for both named groups: they are disjoint by construction (a row
-    # with no embedding is not in the meta query that produces the excluded list) and
-    # the query treats them identically — read this id exactly, whatever the watermark
-    # says. The build caps their sum for this reason.
-    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids)
     holes = f" OR id IN ({','.join('?' * len(holes_ids))})" if holes_ids else ""
     rows = await db.execute_fetchall(
         f"""SELECT id, created_at, embedding, length(embedding)
