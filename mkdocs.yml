@@ -101,6 +101,7 @@ plugins:
             Declared session identity: 申告型セッション同一性
             Recorded access origin: アクセス元の記録
             Contiguous embedding index: 埋め込み索引の連続配置
+            Reach and recency in the scan window: 走査窓の到達範囲と新しさの優遇
             CLAUDE.md policy standard: CLAUDE.md ポリシー標準
             SuperAuditor standard: SuperAuditor 標準
 
@@ -186,6 +187,7 @@ nav:
       - Retrieval and storage:
           - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
           - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
+          - Reach and recency in the scan window: SCAN_WINDOW_REACH_DESIGN.md
       - Reliability:
           - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md
   # Last on purpose: it asks for something, and every page above answers

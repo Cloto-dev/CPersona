@@ -133,6 +133,9 @@ above disagree, the guides win.
   the `get_contents` expansion path.
 - [Contiguous embedding index](CONTIGUOUS_INDEX_DESIGN.md) — moving the vector
   scan's read off SQLite rows onto a contiguous sidecar, bit-identically.
+- [Reach and recency in the scan window](SCAN_WINDOW_REACH_DESIGN.md) — why
+  widening the vector scan window loses recent answers, and the second ranked
+  list that lets reach move without removing the recency prior.
 - [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
   reports a dead embedding layer instead of quietly getting worse.
 

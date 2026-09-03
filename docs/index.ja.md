@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:e571df03c42f22ce20d624c886b381d899c476e8 -->
+<!-- i18n-source: docs/index.md@blob:95fab62115514e524e88f91845892006c246cbe1 -->
 
 # CPersona ドキュメント
 
@@ -128,6 +128,9 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
   `get_contents` による展開経路。
 - [埋め込み索引の連続配置](CONTIGUOUS_INDEX_DESIGN.md) — ベクトル走査の読み出しを
   SQLite の行から連続配置の sidecar へ移す。答えはビット単位で同一。
+- [走査窓の到達範囲と新しさの優遇](SCAN_WINDOW_REACH_DESIGN.md) — ベクトル走査窓を
+  広げると最近の答えを失う理由と、新しさの優遇を奪わずに到達範囲を動かすための
+  2 本目の順位付きリスト。
 - [埋め込み劣化の通知](DEGRADED_ADVISORY_DESIGN.md) — 埋め込み層が死んだとき、
   静かに質を落とすのではなく recall がそれを報告する仕組み。
 
