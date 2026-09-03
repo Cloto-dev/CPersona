@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:95fab62115514e524e88f91845892006c246cbe1 -->
+<!-- i18n-source: docs/index.md@blob:b72652cd96b4830073f6fa6405b25d3ea07c7900 -->
 
 # CPersona ドキュメント
 
@@ -131,6 +131,8 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 - [走査窓の到達範囲と新しさの優遇](SCAN_WINDOW_REACH_DESIGN.md) — ベクトル走査窓を
   広げると最近の答えを失う理由と、新しさの優遇を奪わずに到達範囲を動かすための
   2 本目の順位付きリスト。
+- [到達範囲・新しさ・far の票](REACH_AND_RECENCY_PLAN.md) — 3 つの計測を 1 つの
+  記述にまとめ、確立したことと、2.6 系で far の票に値段を付ける計画。
 - [埋め込み劣化の通知](DEGRADED_ADVISORY_DESIGN.md) — 埋め込み層が死んだとき、
   静かに質を落とすのではなく recall がそれを報告する仕組み。
 

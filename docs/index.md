@@ -136,6 +136,9 @@ above disagree, the guides win.
 - [Reach and recency in the scan window](SCAN_WINDOW_REACH_DESIGN.md) — why
   widening the vector scan window loses recent answers, and the second ranked
   list that lets reach move without removing the recency prior.
+- [Reach, recency and the far vote](REACH_AND_RECENCY_PLAN.md) — the three
+  measurements in one account, what they establish, and the plan for pricing
+  the far vote in the 2.6 line.
 - [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
   reports a dead embedding layer instead of quietly getting worse.
 
