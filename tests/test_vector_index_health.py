@@ -90,6 +90,35 @@ async def test_no_index_on_a_corpus_large_enough_to_matter_is_an_observation(db)
 
 
 @pytest.mark.asyncio
+async def test_the_absent_line_carries_the_price_not_a_severity(db, monkeypatch):
+    """What grows with the corpus is the cost of not having an index, so that is
+    what the line states -- bytes the scan reads per query -- while the severity
+    stays the default. A larger corpus does not make absence more of a defect; it
+    makes it more expensive, and a warning about a configuration the operator
+    chose is a warning that teaches operators to ignore warnings.
+
+    The scan reads at most the window, so past ``MAX_MEMORIES`` the price stops
+    growing with the corpus: pinned by shrinking the window below the corpus.
+    """
+    from cpersona import config
+
+    rows = checks.INDEX_MATTERS_ROWS + 7
+    await _insert(db, rows)
+
+    (issue,) = await _run(db)
+    assert "severity" not in issue
+    assert issue["rows_scanned_per_query"] == rows
+    assert issue["embedding_bytes_read_per_query"] == rows * DIM * 4
+    assert "per query" in issue["hint"] and "--table memories build" in issue["hint"]
+
+    monkeypatch.setattr(config, "MAX_MEMORIES", rows - 100)
+    (capped,) = await _run(db)
+    assert capped["memories_with_local_embedding"] == rows, "the corpus count is not the window"
+    assert capped["rows_scanned_per_query"] == rows - 100
+    assert capped["embedding_bytes_read_per_query"] == (rows - 100) * DIM * 4
+
+
+@pytest.mark.asyncio
 async def test_a_healthy_index_says_nothing(db):
     await _insert(db, 50)
     assert (await vector_index.build_index(db, "memories"))["built"]

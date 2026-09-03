@@ -2110,13 +2110,36 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
         if index is None:
             if embedded < INDEX_MATTERS_ROWS:
                 return []
+            # Still ``info`` at any size, and deliberately so: no index is a state
+            # the operator chose (or was never told about), not a fault, and the
+            # scan it leaves recall on is correct. What changes with size is the
+            # price, so the price is what the line carries -- in bytes read per
+            # query rather than in a severity, because a warning about a
+            # configuration the operator selected teaches operators to ignore
+            # warnings. The scan reads at most the window, so a corpus beyond
+            # ``MAX_MEMORIES`` pays for the window, not for the corpus.
+            from cpersona.config import MAX_MEMORIES
+
+            width_row = await db.execute_fetchall(
+                f"SELECT length(embedding) FROM {table}"
+                f" WHERE embedding IS NOT NULL{iso.and_clause} LIMIT 1",
+                iso.params,
+            )
+            width = int(width_row[0][0]) if width_row and width_row[0][0] else 0
+            scanned = min(embedded, MAX_MEMORIES)
+            per_query = scanned * width
             return [
                 {
                     "type": "vector_index_absent",
                     "table": table,
                     f"{table}_with_local_embedding": embedded,
+                    "rows_scanned_per_query": scanned,
+                    "embedding_bytes_read_per_query": per_query,
                     "hint": (
-                        f"the local vector scan reads {table} embeddings from SQLite row by row; "
+                        f"the local vector scan reads {table} embeddings from SQLite row by row: "
+                        f"about {per_query / 1_000_000:.0f} MB per query at this size "
+                        "(measured 604 ms per query at 100,000 rows of 768 dimensions on the "
+                        "reference machine, against 77 ms with the index); "
                         "building the contiguous index removes that cost: "
                         f"python -m cpersona.vector_index --db <path> --table {table} build"
                     ),
