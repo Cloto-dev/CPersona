@@ -1,0 +1,25 @@
+# What the build stage is allowed to read.
+#
+# An allowlist, not a list of exclusions. A denylist fails silently in the
+# expensive direction: a directory added to the repository later is copied into
+# the build context by default, and nobody notices until the image is large or
+# something private is inside it. Before this file existed the Dockerfile's
+# `COPY . .` shipped .git, the built documentation site, node_modules and a
+# local virtualenv into the image.
+#
+# The admitted set is exactly what building the wheel reads, which is the same
+# set pyproject's sdist declares: the package, the skills it force-includes, and
+# the three files hatchling opens (metadata, readme, licence).
+*
+
+!cpersona/
+!skills/
+!pyproject.toml
+!README.md
+!LICENSE
+
+# Re-excluded after the directories above are admitted: compiled artifacts from
+# a host interpreter are not inputs, and a stale one can shadow the source it
+# was compiled from.
+**/__pycache__/
+**/*.pyc

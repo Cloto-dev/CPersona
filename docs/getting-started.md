@@ -59,6 +59,42 @@ pip install .
 Run it with `python -m cpersona` (or `python server.py`).
 </details>
 
+<details>
+<summary>In a container</summary>
+
+```bash
+git clone https://github.com/Cloto-dev/cpersona.git
+cd cpersona
+docker build -t cpersona .
+
+docker volume create cpersona-data
+docker run -d --name cpersona -p 8402:8402 \
+  -e CPERSONA_AUTH_TOKEN="$(openssl rand -hex 32)" \
+  -v cpersona-data:/data cpersona
+```
+
+No image is published, so the build step is yours; the repository is the
+distribution. Three things about this image are worth knowing before you run it:
+
+- **It serves the Streamable HTTP transport**, on 8402. To run the stdio
+  transport instead — the shape an MCP client spawns as a subprocess — pass
+  `-i` and name it: `docker run -i --rm -e CPERSONA_TRANSPORT=stdio -v
+  cpersona-data:/data cpersona`.
+- **It will not start without `CPERSONA_AUTH_TOKEN`**, and that is not this
+  image being strict. A published container port forwards to whatever the
+  process bound, so binding inside the container is not evidence that only the
+  container can reach it.
+- **Your memory lives on the volume, not in the container.** `/data` is where
+  the database goes; a container without a volume mounted there is a memory
+  server that forgets when it is replaced. A named volume (above) works as
+  shown. A bind-mounted host directory does not inherit ownership, so it has to
+  be writable by uid `10001` — or pass `--user "$(id -u)"`.
+
+Recall is keyword/FTS-only until you give it an embedding backend — see the next
+section, and pass `-e CPERSONA_EMBEDDING_MODE=http -e
+CPERSONA_EMBEDDING_URL=http://<host>:8401/embed` once you have one.
+</details>
+
 At startup the server checks pypi.org for a newer release and tells the calling
 agent through `recall` (and `check_health`); `check_update` answers on demand.
 Set `CPERSONA_UPDATE_CHECK=false` to turn that off. Updating is never
