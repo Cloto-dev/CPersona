@@ -1368,6 +1368,100 @@ async def _(ctx):
     return await memory_handlers.do_recall("a1", "xyzzyxyzzy", 5)
 
 
+# --- do_recall_with_context -------------------------------------------------
+#
+# Absent from the matrix until 2026-09-04, which left the merge-and-sort tail of
+# recall_with_context (memory_handlers._ts_sort_key onwards) unprotected. The
+# four scenarios below record what it does TODAY, including the property the
+# temporal-ordering work is about to change on purpose: `messages` is sorted by
+# the raw timestamp STRING, so entries whose UTC offsets differ come back in
+# byte order rather than in instant order. The fixture is built so the two
+# orders disagree -- a fixture where they agree cannot tell the two apart, and
+# a golden recorded from it would stay green through the fix. When that fix
+# lands, the diff in `rwc-mixed-offset` (and only there) is the review surface.
+
+
+def _ctx_user(content, ts, *, name="alice", user_id="u-1"):
+    return {"role": "user", "name": name, "user_id": user_id, "content": content, "timestamp": ts}
+
+
+def _ctx_assistant(content, ts):
+    return {"role": "assistant", "content": content, "timestamp": ts}
+
+
+@scenario("rwc-basic", "store-recall-health", "recall_with_context: user (name+user_id) and assistant entries, UTC Z stamps — merged with the seed hits and sorted; source shapes discord:<user_id> / Agent self", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5,
+        external_context=[
+            _ctx_user("what about the apples in the orchard?", "2026-01-01T00:00:02Z"),
+            _ctx_assistant("the orchard has apples and pears", "2026-01-01T00:00:06Z"),
+        ],
+    )
+
+
+# Every stamp below names an instant inside the seed corpus's second-by-second
+# window (00:00:01Z .. 00:00:09Z), but each is spelled so that its BYTE order
+# differs from its instant order:
+#   +09:00 spelling of 00:00:03Z sorts after every "…T00:00:0NZ" row ('9' > '0' at col 11)
+#   -05:00 spelling of 00:00:07Z sorts before all of them (the date part is 2025)
+#   +00:00 spelling of 00:00:05Z sorts before the seed row's "…05Z" ('+' < 'Z')
+#   fractional 00:00:01.5Z sorts before "…01Z" ('.' < 'Z') though it is later
+# The asserted disagreement is what makes this fixture able to fail.
+_RWC_MIXED = [
+    _ctx_user("apples at three, spelled in JST", "2026-01-01T09:00:03+09:00"),
+    _ctx_assistant("apples at seven, spelled in EST", "2025-12-31T19:00:07-05:00"),
+    _ctx_user("apples at five, spelled with +00:00", "2026-01-01T00:00:05+00:00", name="bob", user_id="u-2"),
+    _ctx_assistant("apples at one and a half, fractional", "2026-01-01T00:00:01.500000Z"),
+]
+
+
+def _rwc_mixed_orders_disagree() -> None:
+    """Fail loudly if someone edits _RWC_MIXED into a fixture that cannot fail."""
+    from cpersona.utils import _parse_timestamp_utc
+
+    stamps = [e["timestamp"] for e in _RWC_MIXED]
+    by_bytes = sorted(stamps)
+    by_instant = sorted(stamps, key=_parse_timestamp_utc)
+    assert by_bytes != by_instant, "rwc-mixed-offset fixture: byte order equals instant order -- cannot discriminate"
+
+
+@scenario("rwc-mixed-offset", "store-recall-health", "recall_with_context: external_context stamps in Z / +00:00 / +09:00 / -05:00 / fractional — TODAY sorted by raw string (byte order), which the temporal-ordering fix will change", seed=seed_corpus)
+async def _(ctx):
+    _rwc_mixed_orders_disagree()
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5, external_context=list(_RWC_MIXED),
+    )
+
+
+@scenario("rwc-invalid-timestamp-mixed", "store-recall-health", "recall_with_context: entries with an empty, an unparseable and a missing timestamp among valid ones — TODAY '' sorts first, garbage sorts by its bytes", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5,
+        external_context=[
+            _ctx_user("apples with an empty stamp", ""),
+            _ctx_assistant("apples with a garbage stamp", "not-a-timestamp"),
+            {"role": "user", "content": "apples with no stamp at all"},
+            _ctx_user("apples with a good stamp", "2026-01-01T00:00:04Z"),
+        ],
+    )
+
+
+@scenario("rwc-filter-only-roles", "store-recall-health", "recall_with_context: a system entry repeating a seed row's body suppresses that memory and is disclosed in context_filter_only (audit C13), never merged into messages", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5,
+        external_context=[
+            {"role": "system", "content": "apples and pears in the orchard", "timestamp": "2026-01-01T00:00:00Z"},
+            {"role": "tool", "content": "raspberry pi cluster wiring"},
+        ],
+    )
+
+
 # --- bug-155 cosine backfill ------------------------------------------------
 #
 # Pins the FTS-only-hit backfill path directly. A lexically-matching row is
