@@ -39,7 +39,7 @@ import os
 import pytest
 import pytest_asyncio
 
-from cpersona import admin_handlers, config, vector
+from cpersona import admin_handlers, config, fileperms, vector
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona.database import get_db
 from cpersona.utils import SCORING_VERSION
@@ -200,14 +200,19 @@ async def test_backup_failure_does_not_block_the_recalibration(monkeypatch, capl
     await _seed_embeddings(db, AGENT, 15, dim=8)
     _write_sidecar(_stale_sidecar())
 
-    real_open = open
+    # bug-289: the fault is injected at the seam the backup actually writes
+    # through, not at builtins.open. It used to be the latter, and when the
+    # write moved to fileperms the injection stopped firing -- the assertions
+    # below caught it, which is the only reason this comment exists. If the
+    # backup's writer moves again, move this with it.
+    real_open_private = fileperms.open_private
 
-    def failing_open(path, *args, **kwargs):
+    def failing_open_private(path, *args, **kwargs):
         if ".before-" in str(path):
             raise OSError("disk full")
-        return real_open(path, *args, **kwargs)
+        return real_open_private(path, *args, **kwargs)
 
-    monkeypatch.setattr("builtins.open", failing_open)
+    monkeypatch.setattr(fileperms, "open_private", failing_open_private)
     with caplog.at_level(logging.WARNING, logger="cpersona.admin_handlers"):
         status = await admin_handlers.ensure_calibrated_on_startup(
             auto_calibrate=False, on_model_change=True

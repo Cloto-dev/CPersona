@@ -61,6 +61,7 @@ import httpx
 
 from cpersona import __version__
 from cpersona import config
+from cpersona import fileperms
 
 logger = logging.getLogger(__name__)
 
@@ -405,8 +406,8 @@ def _write_cache(verdict: dict, fetched_at: str) -> None:
         path = cache_path()
         directory = os.path.dirname(path)
         if directory:
-            os.makedirs(directory, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
+            fileperms.makedirs_private(directory)
+        with fileperms.open_private(path, "w", encoding="utf-8") as handle:
             json.dump({"fetched_at": fetched_at, "running": verdict["running"], "verdict": verdict}, handle)
     except Exception as exc:  # noqa: BLE001
         logger.debug("update check: cache not written (%s)", exc)

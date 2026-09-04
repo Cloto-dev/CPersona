@@ -36,6 +36,8 @@ import re
 import secrets
 import tempfile
 
+from cpersona import fileperms
+
 logger = logging.getLogger(__name__)
 
 #: The reserved prefix. Every alias the ledger issues starts with it, the boot
@@ -179,7 +181,7 @@ class AliasLedger:
         )
         fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".alias_ledger.")
         try:
-            os.fchmod(fd, 0o600)
+            os.fchmod(fd, fileperms.PRIVATE_FILE_MODE)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(payload + "\n")
             os.replace(tmp_path, self._path)
