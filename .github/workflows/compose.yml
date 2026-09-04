@@ -1,0 +1,172 @@
+name: Compose
+
+# The pair, started and asked the question it exists to answer: can CPersona
+# reach an embedding service and get vectors back through it.
+#
+# Why this is its own workflow rather than a job in ci.yml: it builds two images
+# and downloads a model, and `paths` filters apply to a workflow, not to a job.
+# Every pull request should not pay for that; a change to the container files
+# should, and so should a week going by without anyone touching them.
+on:
+  pull_request:
+    paths: &container-paths
+      - compose.yaml
+      - compose.ci.yaml
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/compose.yml
+      - .github/scripts/**
+  push:
+    branches: [master]
+    paths: *container-paths
+  schedule:
+    # Weekly, because the embedding server is pinned to a revision of another
+    # repository and the base images move underneath both. A gate that only runs
+    # when these files change cannot see either.
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CPERSONA_AUTH_TOKEN: ci-token
+      CPERSONA_CI_TOKEN: ci-token
+      CPERSONA_PORT: "18402"
+      COMPOSE: -f compose.yaml -f compose.ci.yaml
+      # A pair of texts with no word in common. That is the whole design of this
+      # gate: FTS5 and keyword search cannot connect them, so a recall that finds
+      # the memory has been through the embedding service to do it.
+      MEMORY: The greenhouse tomatoes were harvested before the frost arrived
+      QUERY: picking vegetables ahead of cold weather
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fill the model volume
+        # Before `up`, deliberately. Left to itself the embedding server fetches
+        # its weights on the first request, with the port already accepting
+        # connections it cannot answer -- which reads as CPersona failing to
+        # reach it.
+        run: docker compose $COMPOSE run --rm embedding cembedding-download-model --model miniml
+
+      - name: Start the pair
+        run: |
+          set -uo pipefail
+          docker compose $COMPOSE up -d
+          .github/scripts/wait-for-healthy.sh cpersona-cpersona-1 120
+
+      - name: The pair embeds what it is given
+        # `embedded` on a store answers exactly one question -- did a vector get
+        # persisted -- and it is false when no backend answered. So this is the
+        # wait: the container healthcheck says the port is bound, and the model
+        # is still loading behind it for a while after that.
+        #
+        # `check_health` is not the instrument here. It reports
+        # embedding_backend_not_probed unless fix=true, and says so itself: a
+        # finding-free result is not evidence the backend is up.
+        #
+        # Each attempt carries its own text because storing the same content
+        # twice is a deduplicated no-op, which reports neither true nor false.
+        run: |
+          set -uo pipefail
+          for attempt in $(seq 1 30); do
+            out=$(.github/scripts/mcp-call.sh store \
+              "{\"agent_id\":\"warm-up\",\"message\":{\"content\":\"warm-up $attempt\"}}")
+            case "$out" in
+              *'\"embedded\": true'*) echo "embedded on attempt $attempt"; exit 0 ;;
+            esac
+            sleep 4
+          done
+          echo "::error::no store was embedded — CPersona never got a vector back from the embedding service"
+          echo "$out" | cut -c1-2000
+          docker compose $COMPOSE logs --tail 40
+          exit 1
+
+      - name: A memory is found by meaning, not by its words
+        # Two claims, and the second is the one worth having: the row comes back,
+        # and it comes back on the vector arm. `match_reason.signal` names the
+        # branch the ranking keyed on, so a lexical hit cannot be misread as a
+        # semantic one even if the wording of the pair above drifts.
+        run: |
+          set -uo pipefail
+          # A run gets its own agent, not its own text. Storing the same content
+          # twice is a deduplicated no-op that reports neither stored nor
+          # embedded, so a run against a volume an earlier one left behind would
+          # fail on its own leftovers; dedup is per agent, so a fresh agent id is
+          # enough to make the row new.
+          #
+          # Changing the text instead is what this first tried, and it broke the
+          # gate: appending the run id -- ten digits -- moved the vector enough
+          # that the row stopped coming back at all (cosine 0.467 with the plain
+          # sentence, below the quality gate with the digits). The text under
+          # test has to stay exactly the text that was measured.
+          agent=compose-gate-${GITHUB_RUN_ID:-$(date +%s)}
+          .github/scripts/mcp-call.sh store \
+            "{\"agent_id\":\"$agent\",\"message\":{\"content\":\"$MEMORY\"}}" > /tmp/stored.txt
+          case "$(cat /tmp/stored.txt)" in
+            *'\"embedded\": true'*) : ;;
+            *) echo "::error::the memory was stored without a vector"; cut -c1-2000 /tmp/stored.txt; exit 1 ;;
+          esac
+
+          out=$(.github/scripts/mcp-call.sh recall \
+            "{\"agent_id\":\"$agent\",\"query\":\"$QUERY\",\"limit\":5}")
+          case "$out" in
+            *"greenhouse tomatoes"*) : ;;
+            *) echo "::error::recall did not return the memory for a query that shares no word with it"
+               echo "$out" | cut -c1-2000
+               docker compose $COMPOSE logs --tail 40
+               exit 1 ;;
+          esac
+          case "$out" in
+            *'\"signal\": \"cosine\"'*) echo "found on the vector arm" ;;
+            *) echo "::error::the memory came back on some other arm than cosine — that is not what this gate claims to prove"
+               echo "$out" | cut -c1-2000
+               exit 1 ;;
+          esac
+
+      - name: The same query finds nothing without the embedding service
+        # The control. Without it the step above proves only that recall returned
+        # something, and it would pass just as well if FTS5 had matched the query
+        # -- which is exactly what this gate must not credit to vectors. Same
+        # image, same text, same query, no embedding wiring.
+        run: |
+          set -uo pipefail
+          image=$(docker compose $COMPOSE images -q cpersona | head -1)
+          if [ -z "$image" ]; then
+            echo "::error::could not resolve the image the pair is running"
+            exit 1
+          fi
+          docker run -d --name control -p 18403:8402 \
+            -e CPERSONA_AUTH_TOKEN=ci-token -e CPERSONA_UPDATE_CHECK=false "$image"
+          .github/scripts/wait-for-healthy.sh control 90
+
+          agent=compose-gate-${GITHUB_RUN_ID:-$(date +%s)}
+          stored=$(CPERSONA_CI_PORT=18403 .github/scripts/mcp-call.sh store \
+            "{\"agent_id\":\"$agent\",\"message\":{\"content\":\"$MEMORY\"}}")
+          out=$(CPERSONA_CI_PORT=18403 .github/scripts/mcp-call.sh recall \
+            "{\"agent_id\":\"$agent\",\"query\":\"$QUERY\",\"limit\":5}")
+          docker rm -f control >/dev/null
+
+          case "$stored" in
+            *'\"embedded\": false'*) : ;;
+            *) echo "::error::the control server reported a vector it has no backend to make"
+               echo "$stored" | cut -c1-2000; exit 1 ;;
+          esac
+          case "$out" in
+            *"greenhouse tomatoes"*)
+              echo "::error::the memory was found with no embedding backend — this query is answerable lexically, so the step above proves nothing about vectors"
+              echo "$out" | cut -c1-2000
+              exit 1 ;;
+          esac
+          echo "control: no vector, no hit — as it must be"
+
+      - name: Logs
+        if: always()
+        run: docker compose $COMPOSE logs --tail 80
+
+      - name: Stop
+        if: always()
+        run: |
+          docker rm -f control >/dev/null 2>&1 || true
+          docker compose $COMPOSE down -v --remove-orphans

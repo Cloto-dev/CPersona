@@ -95,6 +95,32 @@ section, and pass `-e CPERSONA_EMBEDDING_MODE=http -e
 CPERSONA_EMBEDDING_URL=http://<host>:8401/embed` once you have one.
 </details>
 
+<details>
+<summary>In containers, with an embedding server</summary>
+
+`compose.yaml` in this repository runs CPersona and CEmbedding together, wired
+to each other, so vector search works without a second setup:
+
+```bash
+export CPERSONA_AUTH_TOKEN=$(openssl rand -hex 32)
+docker compose run --rm embedding cembedding-download-model --model jina-v5-nano
+docker compose up -d
+```
+
+The middle line is not bookkeeping. Left alone, the embedding server downloads
+its weights on the first request — around 800 MB — with the port already
+accepting connections it cannot answer yet. Fetching them once into the volume
+turns that into a step you watch instead of a timeout you diagnose.
+
+Nothing publishes the embedding port: CPersona reaches it over the network
+compose creates, and that is its whole audience. Both images are built locally
+and the embedding server is pinned to a revision, so a later build gives you the
+same pair.
+
+Your memories are on the `cpersona-data` volume and the model on
+`embedding-model`; `docker compose down` leaves both, `down -v` deletes them.
+</details>
+
 At startup the server checks pypi.org for a newer release and tells the calling
 agent through `recall` (and `check_health`); `check_update` answers on demand.
 Set `CPERSONA_UPDATE_CHECK=false` to turn that off. Updating is never

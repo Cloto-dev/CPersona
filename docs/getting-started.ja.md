@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:75db6129f98b2f4ab3ef1db3bbdd96d4e5d913fc -->
+<!-- i18n-source: docs/getting-started.md@blob:fe18415c0cf818b85b802a610d3c1f9e0fe47989 -->
 
 # はじめに
 
@@ -95,6 +95,31 @@ docker run -d --name cpersona -p 8402:8402 \
 embedding backend を与えるまで recall は keyword/FTS のみです — 次の節を参照し、
 用意できたら `-e CPERSONA_EMBEDDING_MODE=http -e
 CPERSONA_EMBEDDING_URL=http://<host>:8401/embed` を渡してください。
+</details>
+
+<details>
+<summary>embedding サーバーごとコンテナで動かす</summary>
+
+このリポジトリの `compose.yaml` は CPersona と CEmbedding を互いに繋いだ状態で
+起動します。ベクトル検索を使うのに 2 つ目のセットアップは要りません:
+
+```bash
+export CPERSONA_AUTH_TOKEN=$(openssl rand -hex 32)
+docker compose run --rm embedding cembedding-download-model --model jina-v5-nano
+docker compose up -d
+```
+
+真ん中の行は事務手続きではありません。放っておくと embedding サーバーは最初の
+リクエストで重みを取りに行き (このモデルで約 800 MB)、その間ポートは接続を受け
+付けるのに応答できません。先にボリュームへ落としておくと、それは「診断すべき
+タイムアウト」ではなく「見ていればよい 1 ステップ」になります。
+
+embedding のポートは公開しません。CPersona は compose が作るネットワーク越しに
+到達し、それが読み手のすべてです。イメージはどちらも手元でビルドし、embedding
+サーバーはリビジョンで固定してあるので、後日ビルドしても同じ組になります。
+
+記憶は `cpersona-data` ボリューム、モデルは `embedding-model` に載ります。
+`docker compose down` はどちらも残し、`down -v` は消します。
 </details>
 
 サーバーは起動時に pypi.org へ新しいリリースの有無を問い合わせ、結果を `recall`
