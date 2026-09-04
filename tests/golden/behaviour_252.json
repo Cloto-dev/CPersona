@@ -12340,7 +12340,7 @@
     "thresholds": {}
   },
   "rwc-invalid-timestamp-mixed": {
-    "covers": "recall_with_context: entries with an empty, an unparseable and a missing timestamp among valid ones — TODAY '' sorts first, garbage sorts by its bytes",
+    "covers": "recall_with_context: entries with an empty, an unparseable and a missing timestamp among valid ones — all of them ahead of every dated row, in merge order (bug-287)",
     "db": {
       "episodes": [
         {
@@ -12501,6 +12501,15 @@
           "timestamp": ""
         },
         {
+          "content": "apples with a garbage stamp",
+          "context_type": "conversation",
+          "source": {
+            "id": "self",
+            "type": "Agent"
+          },
+          "timestamp": "not-a-timestamp"
+        },
+        {
           "content": "apples with no stamp at all",
           "context_type": "conversation",
           "source": {
@@ -12585,15 +12594,6 @@
             "System": "episode"
           },
           "timestamp": "2026-01-01T00:00:07Z"
-        },
-        {
-          "content": "apples with a garbage stamp",
-          "context_type": "conversation",
-          "source": {
-            "id": "self",
-            "type": "Agent"
-          },
-          "timestamp": "not-a-timestamp"
         }
       ]
     },
@@ -12601,7 +12601,7 @@
     "thresholds": {}
   },
   "rwc-mixed-offset": {
-    "covers": "recall_with_context: external_context stamps in Z / +00:00 / +09:00 / -05:00 / fractional — TODAY sorted by raw string (byte order), which the temporal-ordering fix will change",
+    "covers": "recall_with_context: external_context stamps in Z / +00:00 / +09:00 / -05:00 / fractional — merged at the instant each names, not at its spelling (bug-287)",
     "db": {
       "episodes": [
         {
@@ -12752,15 +12752,6 @@
     "result": {
       "messages": [
         {
-          "content": "apples at seven, spelled in EST",
-          "context_type": "conversation",
-          "source": {
-            "id": "self",
-            "type": "Agent"
-          },
-          "timestamp": "2025-12-31T19:00:07-05:00"
-        },
-        {
           "content": "apples at one and a half, fractional",
           "context_type": "conversation",
           "source": {
@@ -12782,6 +12773,16 @@
           "timestamp": "2026-01-01T00:00:03Z"
         },
         {
+          "content": "apples at three, spelled in JST",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:u-1",
+            "name": "alice",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T09:00:03+09:00"
+        },
+        {
           "content": "apples discussed in chat",
           "match_reason": {
             "cosine": 0.5544837998,
@@ -12792,16 +12793,6 @@
           "ref": "mem:4",
           "source": {},
           "timestamp": "2026-01-01T00:00:04Z"
-        },
-        {
-          "content": "apples at five, spelled with +00:00",
-          "context_type": "conversation",
-          "source": {
-            "id": "discord:u-2",
-            "name": "bob",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:05+00:00"
         },
         {
           "content": "apples from a tagged user",
@@ -12816,6 +12807,16 @@
             "id": "discord:42"
           },
           "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "content": "apples at five, spelled with +00:00",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:u-2",
+            "name": "bob",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:05+00:00"
         },
         {
           "content": "[Episode] orchard apples episode",
@@ -12846,14 +12847,13 @@
           "timestamp": "2026-01-01T00:00:07Z"
         },
         {
-          "content": "apples at three, spelled in JST",
+          "content": "apples at seven, spelled in EST",
           "context_type": "conversation",
           "source": {
-            "id": "discord:u-1",
-            "name": "alice",
-            "type": "User"
+            "id": "self",
+            "type": "Agent"
           },
-          "timestamp": "2026-01-01T09:00:03+09:00"
+          "timestamp": "2025-12-31T19:00:07-05:00"
         }
       ]
     },
