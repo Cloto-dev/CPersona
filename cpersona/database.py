@@ -4,9 +4,11 @@ import asyncio
 import contextlib
 import logging
 import os
+import stat
 
 import aiosqlite
 
+from cpersona import fileperms
 from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
@@ -492,7 +494,16 @@ async def get_db() -> aiosqlite.Connection:
             )
         db_dir = os.path.dirname(DB_PATH)
         if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+            fileperms.makedirs_private(db_dir)
+        # bug-289: SQLite creates the database at 0o666 & ~umask -- 0o644 under the
+        # default umask -- and copies that mode onto the -wal and -shm sidecars
+        # it derives from it, so the whole corpus ends up readable by every
+        # local account. Handing it a file that is already 0600 settles all
+        # three, and doing it here rather than chmod-ing afterwards leaves no
+        # window in which the corpus exists world-readable. An existing
+        # database keeps the mode its operator gave it.
+        if DB_PATH != ":memory:":
+            fileperms.create_private(DB_PATH)
         db = await aiosqlite.connect(DB_PATH)
         try:
             await _init_schema(db)
@@ -501,6 +512,7 @@ async def get_db() -> aiosqlite.Connection:
                 await db.close()
             raise
         _db = db
+        _warn_if_corpus_is_readable(DB_PATH)
         # A newly opened connection may be a DIFFERENT database (the test
         # harnesses re-point DB_PATH, and a bare `database._db = None` re-point
         # never reaches close_db) — anything cached against the old one has to
@@ -508,6 +520,38 @@ async def get_db() -> aiosqlite.Connection:
         _write_generation += 1
     return _db
 
+
+def _warn_if_corpus_is_readable(path: str) -> None:
+    """Say so, once per boot, when the database is not private (bug-289).
+
+    Pre-creation only protects a database this version created. An install that
+    upgrades keeps the 0644 file it already has, and the fix deliberately does
+    not chmod it -- an existing file's mode is the operator's. That leaves a
+    state nothing would otherwise report, so it is reported: this is the same
+    thing ``acl.py`` already does for the ACL file, applied to the surface that
+    holds strictly more (every memory, and via the -wal the ones not yet
+    checkpointed).
+
+    A warning rather than a repair, and never a refusal to start: an operator
+    who widened the mode on purpose -- a backup reader in the same group, say --
+    must not have that decision reverted by a version bump, and must certainly
+    not lose the service over it.
+    """
+    if path == ":memory:":
+        return
+    with contextlib.suppress(OSError):
+        mode = os.stat(path).st_mode
+        if mode & (stat.S_IRWXG | stat.S_IRWXO):
+            logger.warning(
+                "Database %s is group/world-accessible (mode %o); it holds every "
+                "stored memory, and its -wal sidecar holds the most recent ones. "
+                "New files are created private, but this one predates that and is "
+                "not modified automatically: chmod 600 %s* (and 700 its directory) "
+                "if other accounts exist on this host.",
+                path,
+                stat.S_IMODE(mode),
+                path,
+            )
 
 async def _init_schema(db: aiosqlite.Connection) -> None:
     """Run pragmas, schema, and the migration ladder on a fresh connection."""

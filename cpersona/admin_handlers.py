@@ -22,6 +22,7 @@ import httpx
 from cpersona.isolation import isolation_where
 
 from cpersona import config
+from cpersona import fileperms
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
@@ -956,7 +957,7 @@ def _save_calibration_state(
     path = _calibration_sidecar_path()
     tmp = f"{path}.tmp.{os.getpid()}"
     try:
-        with open(tmp, "w") as fh:
+        with fileperms.open_private(tmp, "w") as fh:
             json.dump(payload, fh)
         os.replace(tmp, path)
         return True
@@ -1036,7 +1037,7 @@ def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     backup = f"{path}.before-{version_tag}-{stamp}"
     try:
-        with open(path, "rb") as src, open(backup, "wb") as dst:
+        with open(path, "rb") as src, fileperms.open_private(backup, "wb") as dst:
             dst.write(src.read())
         _prune_calibration_backups(path)
         return backup
@@ -2068,7 +2069,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
 
     out_dir = os.path.dirname(output_path)
     if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+        fileperms.makedirs_private(out_dir)
 
     exported_memories = 0
     exported_episodes = 0
@@ -2095,7 +2096,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 counts.append(row[0])
             memory_count, episode_count, profile_count = counts
 
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            with fileperms.open_private(tmp_path, "w", encoding="utf-8") as f:
                 header = {
                     "_type": "header",
                     "version": "cpersona-export/1.0",

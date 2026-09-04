@@ -2214,3 +2214,165 @@ def test_the_storage_seam_exemption_is_one_path_not_a_file_name(tmp_path):
         "a second module named like the seam must stay in scope; it is a candidate "
         "second implementation, which is what the gate is for"
     )
+
+
+# ---------------------------------------------------------------------------
+# Gate: file creation goes through the permission seam (bug-289)
+#
+# Every file this package writes is either the corpus (the database and the
+# -wal / -shm sidecars SQLite derives from it, an export, the embedding index)
+# or something that decides who reaches it (the alias ledger, the calibration
+# sidecar). Created through a bare open(path, "w") each lands at 0o666 & ~umask
+# -- 0o644 under the default -- so on a shared host every local account can
+# read the whole corpus. Measured on a live deployment before the fix: the
+# database and both sidecars were 0o644.
+#
+# One call site out of eight got this right, which is exactly the shape of
+# invariant a gate exists for: the rule was known, and seven writers did not
+# know it. This is the same seam-ownership pattern as Gate 1 (the write lock)
+# and the storage seam -- the fix is not "remember the mode", it is "there is
+# one place that creates files".
+# ---------------------------------------------------------------------------
+
+_FILEPERMS_SEAM = "fileperms.py"
+
+# tempfile.mkstemp / mkdtemp are 0600 / 0700 by their own documented contract,
+# so a caller reaching for them is not bypassing anything and is not flagged.
+_CREATION_CALLS = {"makedirs", "mkdir"}
+_PATH_WRITE_METHODS = {"write_text", "write_bytes"}
+
+
+def _writes_a_new_path(tree):
+    """Every call that can bring a file or directory into existence.
+
+    Read modes are not this gate's business: ``open(p)`` and ``open(p, "rb")``
+    create nothing.
+    """
+    hits = []
+
+    def mode_arg(node):
+        if len(node.args) >= 2:
+            return node.args[1]
+        for kw in node.keywords:
+            if kw.arg == "mode":
+                return kw.value
+        return None
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+
+        if isinstance(func, ast.Name) and func.id == "open":
+            arg = mode_arg(node)
+            spelling = arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else ""
+            if any(ch in spelling for ch in "wax"):
+                hits.append((node.lineno, f'open(..., {spelling!r})'))
+            continue
+
+        if isinstance(func, ast.Attribute):
+            owner = func.value.id if isinstance(func.value, ast.Name) else None
+            if owner == "os" and func.attr in _CREATION_CALLS:
+                hits.append((node.lineno, f"os.{func.attr}"))
+            elif owner == "os" and func.attr == "open":
+                hits.append((node.lineno, "os.open"))
+            elif func.attr in _PATH_WRITE_METHODS:
+                hits.append((node.lineno, f"Path.{func.attr}"))
+
+    return hits
+
+
+def _fileperms_seam_files(root=None):
+    """Every shipped module the gate applies to.
+
+    Exemptions are decided on the path relative to the package root, the way the
+    pause and storage gates do it: a second ``fileperms.py`` under a sub-package
+    would be a second implementation, which is what the gate is for.
+    """
+    root = PKG if root is None else root
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if _VENDORED_PKG in rel.parts or rel.as_posix() == _FILEPERMS_SEAM:
+            continue
+        yield path
+
+
+def test_no_caller_creates_a_file_at_the_ambient_umask():
+    hits = []
+    for path in _fileperms_seam_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        hits.extend(f"{path.name}:{lineno} ({name})" for lineno, name in _writes_a_new_path(tree))
+
+    assert not hits, (
+        f"these call sites create a file or directory without going through the "
+        f"permission seam in cpersona/{_FILEPERMS_SEAM}: {hits}. A bare open(p, 'w') "
+        "takes its mode from whichever shell started the process -- 0o644 under the "
+        "default umask -- and everything this package writes is either the corpus or "
+        "something that decides who reaches it. Use fileperms.open_private(p, mode) "
+        "for a file this process writes, fileperms.create_private(p) for one another "
+        "library will open by name, and fileperms.makedirs_private(d) for the "
+        "directory either needs."
+    )
+
+    # The gate is only worth having while the seam it points at exists.
+    from cpersona import fileperms as seam
+
+    for name in ("open_private", "create_private", "makedirs_private"):
+        assert hasattr(seam, name), (
+            f"cpersona/{_FILEPERMS_SEAM} no longer provides {name}; re-read the seam "
+            "instead of deleting this gate"
+        )
+
+
+def test_fileperms_gate_has_teeth():
+    """Each creating spelling is caught, and reads are not."""
+    assert _writes_a_new_path(ast.parse('f = open(p, "w")\n')) == [(1, "open(..., 'w')")]
+    assert _writes_a_new_path(ast.parse('f = open(p, "wb")\n')) == [(1, "open(..., 'wb')")]
+    assert _writes_a_new_path(ast.parse('f = open(p, mode="a")\n')) == [(1, "open(..., 'a')")]
+    assert _writes_a_new_path(ast.parse("os.makedirs(d, exist_ok=True)\n")) == [(1, "os.makedirs")]
+    assert _writes_a_new_path(ast.parse("os.mkdir(d)\n")) == [(1, "os.mkdir")]
+    assert _writes_a_new_path(ast.parse("fd = os.open(p, flags, 0o600)\n")) == [(1, "os.open")]
+    assert _writes_a_new_path(ast.parse("Path(p).write_text(body)\n")) == [(1, "Path.write_text")]
+    assert _writes_a_new_path(ast.parse("Path(p).write_bytes(blob)\n")) == [(1, "Path.write_bytes")]
+
+    # Reads create nothing.
+    assert not _writes_a_new_path(ast.parse('f = open(p)\n'))
+    assert not _writes_a_new_path(ast.parse('f = open(p, "rb")\n'))
+    assert not _writes_a_new_path(ast.parse('f = open(p, encoding="utf-8")\n'))
+
+    # The one the finding is actually about: a new export-shaped writer that
+    # remembers the temp-file dance and forgets the mode.
+    reintroduced = (
+        "def dump(rows, dest):\n"
+        "    tmp = dest + '.tmp'\n"
+        '    with open(tmp, "w", encoding="utf-8") as f:\n'
+        "        f.write(rows)\n"
+        "    os.replace(tmp, dest)\n"
+    )
+    assert _writes_a_new_path(ast.parse(reintroduced)) == [(3, "open(..., 'w')")]
+
+    # Going through the seam is what the gate is asking for. So is mkstemp,
+    # which is 0600 by its own contract -- the alias ledger has always used it.
+    permitted = (
+        'with fileperms.open_private(tmp, "w") as f:\n'
+        "    f.write(payload)\n"
+        "fileperms.makedirs_private(d)\n"
+        "fileperms.create_private(db)\n"
+        "fd, tmp = tempfile.mkstemp(dir=d, prefix='.x.')\n"
+        "os.fchmod(fd, fileperms.PRIVATE_FILE_MODE)\n"
+    )
+    assert not _writes_a_new_path(ast.parse(permitted))
+
+
+def test_fileperms_gate_reaches_the_whole_package():
+    """The scan is package-wide and exempts exactly the seam and the vendored tree."""
+    scanned = {p.relative_to(PKG).as_posix() for p in _fileperms_seam_files()}
+    assert "database.py" in scanned and "admin_handlers.py" in scanned
+    assert "vector_index.py" in scanned and "update_check.py" in scanned
+    assert _FILEPERMS_SEAM not in scanned, (
+        "the seam itself must be exempt, or the gate flags its own owner"
+    )
+    assert not any(part.startswith("_vendored") for name in scanned for part in name.split("/")), (
+        "the vendored tree is re-synced from another repository and is not this gate's to police"
+    )
+    assert len(scanned) >= len({p.name for p in PKG.glob("*.py")}) - 1

@@ -105,6 +105,35 @@ certification record — are recorded in this table as they occur.
 
 ## Known issues
 
+- **All released versions through 2.5.11 — the database and every other file the
+  server writes are created at the ambient umask (bug-289, MEDIUM).** Only the
+  alias ledger asked for a mode. Everything else — the database, the `-wal` and
+  `-shm` files SQLite derives from it, an `export_memories` file (your whole
+  corpus as plain-text JSONL), the embedding index, the calibration sidecar —
+  was created as `0o666 & ~umask`, which under the default `umask 022` is
+  `0644`: **readable by every local account on the host**, inside directories
+  the server also created world-executable. The mode was never a property of
+  the data, so nothing in your configuration predicted it. This needs no
+  network exposure to matter; it is a defect on the local boundary, which the
+  HTTP transport's token does not cover. **Fixed after 2.5.11**: new files are
+  created `0600` and new directories `0700`, and the database is pre-created so
+  that SQLite gives its `-wal` and `-shm` the same mode.
+  **Upgrading does not repair the files you already have** — an existing file's
+  mode is the operator's, and the fix does not overwrite it. The server logs a
+  warning at boot naming the database when it finds one that is still readable.
+  On any host where other accounts exist, tighten them once by hand:
+
+  ```bash
+  DB="${CPERSONA_DB_PATH:-data/cpersona.db}"
+  chmod 700 "$(dirname "$DB")"   # the directory the server made for it
+  chmod 600 "$DB"*               # the database, its -wal and its -shm
+  ```
+
+  Any file `export_memories` wrote is a separate copy of the corpus and keeps
+  its own mode; tighten those wherever you sent them.
+
+  Details: `qa/issue-registry.json` (bug-289).
+
 - **All released versions through 2.5.4a2 — undated rows outrank every dated row
   under confidence scoring (bug-207, HIGH).** With `CPERSONA_CONFIDENCE_ENABLED=true`
   (not the default), a memory or episode whose timestamp is missing or unparseable

@@ -37,6 +37,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from cpersona import config
+from cpersona import fileperms
 from cpersona.isolation import isolation_where
 from cpersona.utils import SCORING_VERSION
 
@@ -275,7 +276,7 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
 
     tmp = f"{out}.tmp"
     try:
-        with open(tmp, "wb") as fh:
+        with fileperms.open_private(tmp, "wb") as fh:
             fh.write(MAGIC)
             fh.write(struct.pack("<I", len(blob)))
             fh.write(blob)
