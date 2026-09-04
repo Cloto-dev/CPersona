@@ -284,6 +284,43 @@ MAX_PROFILE_LENGTH = _parse_int("CPERSONA_MAX_PROFILE_LENGTH", 2000)
 # oversized_content check reports those after the fact, which is the right division
 # — bound what arrives from outside, detect what is being moved within.
 MAX_METADATA_LENGTH = _parse_int("CPERSONA_MAX_METADATA_LENGTH", 8000)
+
+# The caps above are the last line, not the first: every one of them is applied
+# by a tool handler, and a handler runs only after the ASGI body has been
+# received in full and json.loads has built the whole document. Measured on this
+# package's own transport, a 64 MiB POST reaches the tool surface with every byte
+# intact, whether it declares a Content-Length of 64 MiB, a Content-Length of 10,
+# or none at all — and the SDK buffers it (`await request.body()`) before parsing,
+# which costs a further 3.25x for a body of conversation turns. So the handler
+# caps bound what is STORED and bound nothing about what it costs to arrive.
+#
+# This is that missing bound, counted where the bytes actually appear: summed
+# across ASGI receive() events, so a chunked body and a lying Content-Length are
+# both measured rather than believed.
+#
+# The default is chosen from the payloads this server legitimately accepts, all
+# measured: the largest possible single store — content, metadata and source each
+# at their cap, in Japanese, JSON-escaped — is 144 KB, and a recall_with_context
+# carrying 200 conversation turns of 2000 characters is 407 KB. 4 MiB is ~29x the
+# first and ~10x the second. It is deliberately not derived from the caps above,
+# for the reason stated throughout this file: a later relaxation of a write cap
+# must not silently enlarge a transport budget.
+HTTP_MAX_BODY_BYTES = _parse_int("CPERSONA_HTTP_MAX_BODY_BYTES", 4194304)
+
+# What happens at the budget, and the honest name for where this line stands.
+#
+# `warn` (the default) accounts and reports; the body is still delivered whole.
+# That is the whole of it in 2.5.x, and it is not a half-measure: nobody — us
+# included — knows what an operator's real payload distribution looks like,
+# because until now nothing measured it. A cap that rejects before anyone has
+# seen the distribution is a cap set by guessing. Warning first means the number
+# above can be corrected from evidence while being wrong still costs a log line.
+#
+# `reject` answers 413 and stops reading. It is written, mounted and tested here
+# rather than in the release that turns it on, so that release changes a default
+# instead of adding a code path. `off` disables the accounting entirely.
+HTTP_BODY_LIMIT_MODE = os.environ.get("CPERSONA_HTTP_BODY_LIMIT_MODE", "warn").strip().lower()
+
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the

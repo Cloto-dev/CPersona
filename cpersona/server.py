@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 from mcp.server.stdio import stdio_server
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl, ValidationError
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 from cpersona import acl
 from cpersona._vendored_mcp_common import no_persist
@@ -2103,6 +2103,133 @@ def _bearer_credential(header: str) -> str:
     return header[7:] if header[:7].lower() == "bearer " else ""
 
 
+class RequestBodyBudgetMiddleware:
+    """Bound — or at minimum, measure — an HTTP request body as it arrives (bug-290).
+
+    Every payload cap this package has lives in a tool handler, and a handler is
+    the sixth thing that happens to a request: TCP, ASGI body, ``json.loads``,
+    MCP validation, dispatch, and only then ``MAX_CONTENT_LENGTH``. Measured on
+    this transport before this class existed, a 64 MiB POST arrived at the tool
+    surface entire, and the three ways a body can misdeclare its size — an
+    honest Content-Length, a Content-Length of 10 in front of 8 MiB, and no
+    Content-Length at all — were indistinguishable, because nothing was counting.
+
+    So the count happens where the bytes do: summed over ``receive()`` events.
+    A header is a claim; a chunk is evidence. That is also what makes the
+    accounting correct for chunked transfer, which has no length to read.
+
+    Placement is between CORS and authentication. Outside CORS would answer a
+    browser without the headers that let it read the answer; inside
+    ``BearerTokenMiddleware`` would leave any future middleware that reads a body
+    unmeasured. Note what the position does NOT buy: this counts bytes the
+    application pulls, and a 401 is returned without pulling any, so an
+    unauthenticated flood is refused before this sees it — by the credential
+    check, not by this budget.
+
+    ``mode`` decides what crossing the budget costs, and defaults to ``warn``
+    (config.HTTP_BODY_LIMIT_MODE): the body is delivered whole and the crossing
+    is reported. ``reject`` answers 413 and stops reading. Both paths are here
+    and both are tested, so turning enforcement on is a change of default rather
+    than a new code path written under release pressure.
+    """
+
+    def __init__(self, app, max_bytes: int | None = None, mode: str | None = None):
+        self.app = app
+        self.max_bytes = config.HTTP_MAX_BODY_BYTES if max_bytes is None else max_bytes
+        self.mode = (config.HTTP_BODY_LIMIT_MODE if mode is None else mode).strip().lower()
+        if self.mode not in ("warn", "reject", "off"):
+            # An operator who misspells the mode gets the documented default and
+            # is told, rather than silently getting whichever branch an unknown
+            # string happens to miss. Fail-safe, not fail-open: `warn` is the
+            # setting that changes nothing about what is served, and `off` — the
+            # other candidate for a fallback — would answer a typo by removing
+            # the measurement the typo was reaching for.
+            logger.warning(
+                "CPERSONA_HTTP_BODY_LIMIT_MODE=%r is not one of warn/reject/off; using 'warn'",
+                self.mode,
+            )
+            self.mode = "warn"
+        #: Requests whose body exceeded the budget, this process, all paths.
+        self.over_budget_requests = 0
+
+    def _report(self, scope, observed: int) -> None:
+        """Log a crossing, at the 1st, 10th, 100th ... occurrence.
+
+        One line per oversized request would bury the condition in the log an
+        operator is scanning for it; a warn-once would say nothing about whether
+        it kept happening. Decades are bounded in volume, carry the running
+        total, and need no clock — so the test for this asserts an exact set of
+        lines rather than a rate.
+        """
+        self.over_budget_requests += 1
+        n = self.over_budget_requests
+        while n % 10 == 0:
+            n //= 10
+        if n != 1:
+            return
+        logger.warning(
+            "HTTP request body exceeded CPERSONA_HTTP_MAX_BODY_BYTES on %s %s: "
+            "at least %d bytes against a budget of %d (mode=%s). Occurrence %d this process. "
+            "%s",
+            scope.get("method", "?"),
+            scope.get("path", "?"),
+            observed,
+            self.max_bytes,
+            self.mode,
+            self.over_budget_requests,
+            (
+                "The request was answered 413 and the rest of the body was not read."
+                if self.mode == "reject"
+                else "The body was served in full; raise the budget if this traffic is "
+                "legitimate, or set CPERSONA_HTTP_BODY_LIMIT_MODE=reject to refuse it."
+            ),
+        )
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or self.mode == "off":
+            await self.app(scope, receive, send)
+            return
+
+        state = {"seen": 0, "over": False, "answered": False}
+
+        async def budgeted_receive():
+            if state["answered"]:
+                # We have already responded 413. Starlette turns this into
+                # ClientDisconnect, which is the truth from the application's
+                # point of view: nothing further is coming.
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message.get("type") != "http.request":
+                return message
+            state["seen"] += len(message.get("body", b""))
+            if state["seen"] > self.max_bytes and not state["over"]:
+                state["over"] = True
+                self._report(scope, state["seen"])
+                if self.mode == "reject":
+                    state["answered"] = True
+                    response = JSONResponse(
+                        {"error": "payload_too_large", "max_bytes": self.max_bytes},
+                        status_code=413,
+                    )
+                    await response(scope, receive, send)
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def budgeted_send(message):
+            if state["answered"]:
+                # The 413 is already on the wire; a second response.start would
+                # be a protocol error, and the application only reached one
+                # because we cut its body off.
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, budgeted_receive, budgeted_send)
+        except ClientDisconnect:
+            if not state["answered"]:
+                raise
+
+
 class BearerTokenMiddleware:
     """Simple Bearer token authentication middleware.
 
@@ -2416,7 +2543,10 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
     Order is load-bearing: CORS is outermost so a browser preflight (which
     carries no Authorization header) is answered before authentication runs,
     and BearerTokenMiddleware sits in front of the MCP mounts so no
-    unauthenticated request can reach a tool.
+    unauthenticated request can reach a tool. RequestBodyBudgetMiddleware goes
+    between them (bug-290) — inside CORS so a 413 carries the headers that let a
+    browser read it, outside authentication so the body budget covers everything
+    downstream of it rather than only the mounts.
     """
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
@@ -2463,6 +2593,7 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
                 ],
                 expose_headers=["Mcp-Session-Id"],
             ),
+            Middleware(RequestBodyBudgetMiddleware),
             Middleware(
                 BearerTokenMiddleware,
                 auth_token=auth_token,
