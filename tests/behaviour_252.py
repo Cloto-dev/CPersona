@@ -65,7 +65,8 @@ os.environ.setdefault("CPERSONA_OPERATING_CONTEXT", "off")
 import numpy as np  # noqa: E402
 
 from cpersona import session  # noqa: E402
-from cpersona import admin_handlers, maintenance_handlers, memory_handlers, utils, vector  # noqa: E402
+from cpersona import admin_handlers, health, maintenance_handlers, memory_handlers  # noqa: E402
+from cpersona import scope_stats, utils, vector  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient, EmbedOutcome  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
@@ -341,6 +342,38 @@ class Scenario:
 
 
 async def _reset(db) -> None:
+    """Return the process to the state a scenario would see if it ran first.
+
+    Emptying the tables is not enough: the package keeps module-level state that
+    a scenario writes and the next one reads, and every such value is an input to
+    the NEXT observation. Two were found leaking (both by diffing every attribute
+    of every loaded `cpersona.*` module after a warm scenario against a virgin
+    process -- the narrow version of that audit, which looked only at `vector`,
+    `memory_handlers` and `config`, reported "none" while both were live):
+
+      scope_stats._cache    the per-scope pool counts and temporal span. Its two
+                            invalidation paths are BOTH blind here: the generation
+                            counter is bumped inside `database.py`'s write seam and
+                            these fixtures INSERT on the connection directly, and
+                            `SCOPE_STATS_TTL_SECONDS` cannot elapse between two
+                            scenarios microseconds apart. A stale count reaches
+                            `_adaptive_min_score` and the gate's `memory_count >= 100`
+                            volume rule, so a 6-row scenario running first made a
+                            106-row one answer with nothing at all.
+
+      health._state         and the advisory suppression beside it. `unknown` and
+                            `healthy` are silent, but `hint` (which this harness
+                            reaches, because it pins EMBEDDING_MODE=none) attaches
+                            a runbook to the recall response -- the FULL 1098-char
+                            one on the first firing of an episode and a 151-char
+                            reminder after. Which one a scenario records was
+                            therefore a fact about scenario ORDER.
+
+    The rule these two share: reach for the module's own reset hook rather than
+    its private container, and add one here for any module state a scenario can
+    write. A leak of this kind does not fail loudly -- it silently makes the
+    golden a recording of one particular ordering.
+    """
     session.reset_pauses_for_tests()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
@@ -350,6 +383,8 @@ async def _reset(db) -> None:
         await db.execute("DELETE FROM sqlite_sequence WHERE name = ?", (table,))
     await db.commit()
     vector._agent_thresholds.clear()
+    scope_stats.clear()
+    health._reset()
 
 
 def _mask_row_refs(calls: list[dict]) -> list[dict]:
