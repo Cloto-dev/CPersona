@@ -664,11 +664,9 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
                     return out
                 continue
             for (row_id, text), embedding in zip(chunk, embeddings or []):
-                if embedding:
-                    out[table][row_id] = (
-                        text,
-                        vector._embedding_client.pack_embedding(embedding),
-                    )
+                blob = vector.pack_for_storage(embedding)
+                if blob is not None:
+                    out[table][row_id] = (text, blob)
     return out
 
 
@@ -722,7 +720,7 @@ async def _reembed_null_rows(db, table: str, text_col: str, iso, embedding_cache
                 continue  # bug-083: no live embeds while the write lock is held
             else:
                 emb = await vector._embedding_client.embed([text])
-                blob = vector._embedding_client.pack_embedding(emb[0]) if emb and emb[0] else None
+                blob = vector.pack_for_storage(emb[0]) if emb else None
             if blob is not None:
                 cur = await db.execute(
                     f"UPDATE {table} SET embedding = ? WHERE id = ? AND embedding IS NULL AND {text_col} = ?",

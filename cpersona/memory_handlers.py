@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 
 import aiosqlite
 import httpx
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where
 
@@ -203,8 +202,8 @@ async def do_store(
     if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
             embeddings = await vector._embedding_client.embed([content])
-            if embeddings and embeddings[0]:
-                embedding_blob = EmbeddingClient.pack_embedding(embeddings[0])
+            if embeddings:
+                embedding_blob = vector.pack_for_storage(embeddings[0])
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as e:
             logger.warning("Embedding failed during store: %s", e)
 
@@ -2060,8 +2059,8 @@ async def _prepare_episode_row(
     if vector._embedding_client and summary:
         try:
             embeddings = await vector._embedding_client.embed([summary])
-            if embeddings and embeddings[0]:
-                embedding_blob = EmbeddingClient.pack_embedding(embeddings[0])
+            if embeddings:
+                embedding_blob = vector.pack_for_storage(embeddings[0])
         except Exception as e:
             logger.warning("Embedding failed for episode: %s", e)
 

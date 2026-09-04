@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 
 import httpx
 
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona.isolation import isolation_where
 
 from cpersona import config
@@ -414,8 +413,8 @@ async def do_update_memory(
     if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
             embeddings = await vector._embedding_client.embed([content])
-            if embeddings and embeddings[0]:
-                embedding_blob = EmbeddingClient.pack_embedding(embeddings[0])
+            if embeddings:
+                embedding_blob = vector.pack_for_storage(embeddings[0])
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as e:
             logger.warning("Embedding failed during update_memory: %s", e)
 
