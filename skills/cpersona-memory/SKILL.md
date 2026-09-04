@@ -167,21 +167,26 @@ Rules for writing the block (per the
   how an older `vN` block gets upgraded — with consent). Never touch content
   outside the markers.
 - Substitute `<AGENT_ID>` with the stable id chosen above before writing.
+- The block's last rule pairs this store with a client memory file that loads
+  every session. Offer it only if the client HAS one; the shape, the join
+  check that keeps the two in step, and why moving an existing corpus is not
+  a setup step are in
+  [always-loaded-index.md](references/always-loaded-index.md).
 
 The block (keep it verbatim apart from the substitution — it is budgeted at
 40 lines because `CLAUDE.md` costs context in every session, and every line
 is chosen to change behavior the agent would *not* show by default):
 
 ```markdown
-<!-- BEGIN cpersona-policy v1 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
 
 **Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
 the first substantive action. Prefer `recall_with_context` when conversation history is already
-at hand (it de-dupes and merges); add `deep=true` to halve the quality gate. Skip only for trivial
-one-shot questions.
+at hand; add `deep=true` when the first pass comes back thin. Skip only for trivial one-shot
+questions.
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
 "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
@@ -191,27 +196,26 @@ one-line record: hash, what changed, why.
 **Changing an existing rule** → `update_memory`, never delete + store. If the memory is locked:
 `unlock_memory` → `update_memory` → `lock_memory`.
 
-**Session end** — fire on closing phrases ("that's all for today", "wrap it up", "good night",
-"see you tomorrow") → first `store` + lock any unsaved decisions, then
-`archive_episode(agent_id, history=<the real turns>, summary=…, keywords=…, resolved=…)`.
-Compute `summary`/`keywords` yourself (the server never calls an LLM; providing them makes
-storage synchronous). Pass the REAL history — it sets the episode's start/end times from the
-turns' timestamps, but never reaches the embedding, which comes from `summary` alone.
-`resolved=true` decays finished topics out of recall only under `CPERSONA_CONFIDENCE_ENABLED=true`.
+**Session end** — fire on closing phrases ("that's all for today", "wrap it up", "good night") →
+first `store` + lock any unsaved decisions, then `archive_episode(agent_id, history=<the REAL
+turns>, summary=…, keywords=…, resolved=…)`, computing `summary` and `keywords` yourself.
 
 **"Don't save this" / benchmark sessions** → `pause_persistence(ttl_seconds=1800)`;
-`resume_persistence()` (or TTL expiry) restores. Reads still answer, minus the writes inside
-them: `recall` withholds its `recall_count` bump, `check_health`/`deep_check` drop to
-`fix=false`, `migrate_channel_axis` is forced to dry-run.
+`resume_persistence()` (or TTL expiry) restores. Reads still answer, minus the writes inside them.
 
 **Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
-and follow its runbook (usually: start or repoint the embedding server, then recall again).
-Never quietly serve keyword-only recall.
+and follow its runbook. Never quietly serve keyword-only recall.
 
-**Quality & maintenance** — if recall feels off, `set_recall_precision`
-(strict/balanced/lenient) is the one policy knob; run `calibrate_threshold(agent_id)` after
-the corpus changes substantially. Monthly: `check_health(agent_id, fix=true)`. For
-Japanese/CJK-heavy corpora set `CPERSONA_RECALL_MODE=rsf`.
+**Quality** — if recall feels off, `set_recall_precision` (strict/balanced/lenient) is the one
+policy knob; run `calibrate_threshold(agent_id)` after the corpus changes substantially.
+Monthly: `check_health(agent_id, fix=true)`.
+
+**If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
+as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that
+changes behaviour>` — with the body stored here under `message.id="memory-index:<slug>"` and content
+starting `[<slug>]`, so a line tells you what to `recall`. Recall is ranked and may not surface a
+memory; the index always arrives. Its size cap fails **silently** when exceeded, so consolidate at
+80%, not at the limit. Never migrate existing memories into this store without asking first.
 
 Details, setup, and troubleshooting: the `cpersona-memory` skill.
 <!-- END cpersona-policy -->
