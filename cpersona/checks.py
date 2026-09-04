@@ -348,6 +348,68 @@ async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
     ]
 
 
+# SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999 on older builds; stay under it.
+_NONFINITE_REPAIR_CHUNK = 500
+
+
+async def check_nonfinite_embedding(db, agent_id: str, fix: bool) -> list[dict]:
+    """Find stored vectors holding NaN or an infinity, and null them so they refill.
+
+    The write path refuses these now (``vector.pack_for_storage``), but that only
+    stops new ones. A corpus embedded before that seam existed, or by a backend
+    that answered with a NaN, still holds them -- and reading the row back cannot
+    repair the vector, because the number that would have been there is gone.
+
+    So the repair is the one ``embedding_dimension`` already uses for a vector it
+    cannot trust: set it to NULL and let the re-embed pass fill it from the content,
+    which is still intact. That is the same judgement the write side makes -- a
+    missing vector is a gap that can be filled, and a NaN vector is not a gap -- and
+    it means this check does not have to decide anything about ranking. It removes
+    the bad input; the ordinary paths then do what they always did.
+
+    Nothing here changes what a recall returns until a fix pass runs. That is the
+    point: detection and repair are a maintenance action a human triggers, not a
+    silent change of behaviour under every query.
+
+    Why in Python and not in SQL: SQLite cannot look inside a float32 blob. The
+    scan reads the blobs it must and asks ``vector.stored_blob_is_finite``, so the
+    verdict is the write seam's neighbour rather than a second idea of "finite".
+    """
+    iso = isolation_where(agent_id=agent_id or None)
+    findings = []
+    for table in ("memories", "episodes"):
+        rows = await db.execute_fetchall(
+            f"SELECT id, embedding FROM {table} WHERE embedding IS NOT NULL{iso.and_clause}",
+            iso.params,
+        )
+        bad = [int(r[0]) for r in rows if not vector.stored_blob_is_finite(r[1])]
+        if not bad:
+            continue
+        if fix:
+            # Chunked against SQLITE_MAX_VARIABLE_NUMBER: a corpus embedded by a
+            # backend that went bad can put every row in this list, and the repair
+            # for a widespread fault must not be the thing that raises.
+            for start in range(0, len(bad), _NONFINITE_REPAIR_CHUNK):
+                chunk = bad[start : start + _NONFINITE_REPAIR_CHUNK]
+                await db.execute(
+                    f"UPDATE {table} SET embedding = NULL "
+                    f"WHERE id IN ({','.join('?' * len(chunk))})",
+                    chunk,
+                )
+        findings.append(
+            {
+                "type": "nonfinite_embedding",
+                "table": table,
+                "count": len(bad),
+                # Every one of them can be nulled; none is locked against it (the
+                # bug-098 invariant is about authored content, and this rewrites
+                # no content).
+                "repairable": len(bad),
+            }
+        )
+    return findings
+
+
 async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
     if not vector._embedding_client:
         return []
@@ -2224,6 +2286,11 @@ HEALTH_CHECKS: list[Check] = [
     Check("oversized_content", "warn", True, check_oversized_content),
     Check("duplicate_content", "warn", True, check_duplicate_content),
     Check("embedding_dimension", "critical", True, check_embedding_dimension),
+    # Runs after embedding_dimension and BEFORE null_embedding, because all three
+    # share one repair: a vector that cannot be trusted becomes NULL, and the
+    # re-embed pass fills it. Ordered later than the width check so a blob that is
+    # both the wrong width and unreadable is claimed by one of them, not both.
+    Check("nonfinite_embedding", "warn", True, check_nonfinite_embedding),
     # info by default: "no backend configured" is a supported configuration, not a
     # defect. The runner stamps warn for the one state that is (bug-274).
     Check("embedding_backend", "info", False, check_embedding_backend),

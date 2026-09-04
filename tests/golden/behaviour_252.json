@@ -3889,6 +3889,7 @@
         "oversized_content",
         "duplicate_content",
         "embedding_dimension",
+        "nonfinite_embedding",
         "embedding_backend",
         "null_embedding",
         "null_episode_embedding",
@@ -4512,6 +4513,7 @@
         "oversized_content",
         "duplicate_content",
         "embedding_dimension",
+        "nonfinite_embedding",
         "embedding_backend",
         "null_embedding",
         "null_episode_embedding",
@@ -4538,11 +4540,19 @@
         "operating_context_size"
       ],
       "fixed": false,
-      "issues": [],
+      "issues": [
+        {
+          "check": "nonfinite_embedding",
+          "count": 4,
+          "severity": "warn",
+          "table": "memories",
+          "type": "nonfinite_embedding"
+        }
+      ],
       "severity_summary": {
         "critical": 0,
         "info": 0,
-        "warn": 0
+        "warn": 1
       },
       "stats": {
         "agent_episodes": 0,
@@ -4561,7 +4571,7 @@
         "pending_tasks": 0,
         "profiles": 1
       },
-      "status": "healthy",
+      "status": "degraded",
       "total_memories": 6
     },
     "seam": "store-recall-health",

@@ -78,6 +78,38 @@ def pack_for_storage(embedding: object) -> bytes | None:
         return None
 
 
+def stored_blob_is_finite(blob: object) -> bool:
+    """Whether a BLOB already in the database holds only finite float32 values.
+
+    The companion to ``pack_for_storage``, and deliberately its neighbour: the two
+    are the same question asked in the two directions data travels, and a second
+    idea of "finite" living somewhere else is how the write side and the read side
+    come to disagree.
+
+    They cannot share an implementation, because they do not share an input.
+    ``pack_for_storage`` is handed Python numbers and can reject a bool or a string
+    before any packing happens; this is handed bytes that were packed long ago, by
+    a version that had no such seam. What they share is the verdict.
+
+    A blob that is not a whole number of float32s is NOT reported here. That is
+    ``embedding_dimension``'s finding, it has its own repair, and answering for it
+    too would make two checks fix the same row -- so an unreadable width is left
+    alone rather than called non-finite, which it may well not be.
+    """
+    import numpy as np  # local, as everywhere else in this module
+
+    if not isinstance(blob, (bytes, bytearray, memoryview)):
+        return False
+    raw = bytes(blob)
+    if not raw or len(raw) % 4:
+        return True
+    # Vectorised rather than a per-value loop: this runs over every embedded row
+    # in the scope on a health check, and a 768-wide corpus of any size would
+    # otherwise spend its time in the interpreter.
+    return bool(np.isfinite(np.frombuffer(raw, dtype=np.float32)).all())
+
+
+
 async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
     """Push memory items to an agent's remote vector index in bounded chunks.
 

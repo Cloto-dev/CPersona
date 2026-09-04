@@ -101,6 +101,18 @@ async def _s_embedding_dimension(conn, fake_client=None):
     yield conn
 
 
+@seeder("nonfinite_embedding")
+async def _s_nonfinite_embedding(conn):
+    # Packed the way the store packs, not hand-written bytes: the check reads a
+    # blob a real backend once produced, and a NaN that survives float32 packing
+    # is the thing being detected.
+    from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+
+    await _mem(conn, "a vector with a NaN in it",
+               embedding=EmbeddingClient.pack_embedding([0.1, float("nan"), 0.3]))
+    yield conn
+
+
 @seeder("null_embedding")
 async def _s_null_embedding(conn):
     await _mem(conn, "no blob yet")
@@ -274,6 +286,7 @@ EXPECTED_REPAIRABLE = {
     "invalid_source_type": 0,
     # no locked concept, or a repair that reaches every row it found
     "embedding_dimension": 1,  # NULLs a wrong-length blob, not authored content
+    "nonfinite_embedding": 1,  # ditto: nulls the vector, rewrites no content
     "null_embedding": 1,
     "null_episode_embedding": 1,
     "missing_episode_start_time": 1,  # `episodes` has no locked column
