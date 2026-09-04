@@ -6,6 +6,8 @@ Holds the module-level `_embedding_client` singleton, set by `server.main()` at 
 import heapq
 import json
 import logging
+import math
+import struct
 
 import aiosqlite
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
@@ -28,6 +30,52 @@ logger = logging.getLogger(__name__)
 
 
 _embedding_client: EmbeddingClient | None = None
+
+
+def pack_for_storage(embedding: object) -> bytes | None:
+    """The one place a vector becomes a BLOB this process will store.
+
+    Returns the packed bytes, or ``None`` when the vector must not be stored — so
+    a caller's "no embedding this time" branch is the one it already has, and a
+    refusal leaves the column NULL for check_health's repair pass to retry later.
+
+    Callers used to decide this for themselves with ``if embeddings and
+    embeddings[0]``, which is a truthiness test: it accepts a vector of NaNs, a
+    vector of strings, and a vector one element wide from a backend that changed
+    model. A NaN that gets through is not recoverable by reading the row back —
+    it scores against every query, and because the similarity floor is a ``<``
+    comparison a NaN does not fall below it, so the bad row stays and pushes good
+    rows out. This is the last point where that can still be stopped, which is why
+    the check lives here rather than at each call site.
+
+    The embedding client validates the backend's response at the wire; this
+    validates what is about to be written. They are different questions: a new
+    caller, an import, or a cached vector reaches storage without passing the wire
+    again.
+    """
+    if not isinstance(embedding, (list, tuple)) or len(embedding) == 0:
+        return None
+
+    values: list[float] = []
+    for value in embedding:
+        # bool is a subclass of int, so a bare numeric check would pack True as 1.0.
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            logger.warning("Refusing to store an embedding containing a non-number")
+            return None
+        number = float(value)
+        if not math.isfinite(number):
+            logger.warning("Refusing to store an embedding containing a non-finite value")
+            return None
+        values.append(number)
+
+    try:
+        # Finite in float64 is not enough: the store is float32, where 1e300 is inf.
+        # struct.pack is what raises, and OverflowError is not a ValueError, so it
+        # would otherwise escape the callers' except clauses.
+        return EmbeddingClient.pack_embedding(values)
+    except (OverflowError, struct.error):
+        logger.warning("Refusing to store an embedding that does not fit in float32")
+        return None
 
 
 async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:

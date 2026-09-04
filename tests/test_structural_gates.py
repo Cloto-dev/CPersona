@@ -2080,3 +2080,137 @@ def test_embedding_double_gate_has_teeth(tmp_path):
     assert _embedding_client_methods_production_calls() - methods, (
         "the gate must report the missing surface for a double that offers only embed()"
     )
+
+
+# ---------------------------------------------------------------------------
+# Gate 19: one place decides what becomes a stored vector.
+#
+# Callers used to each write `if embeddings and embeddings[0]:
+# EmbeddingClient.pack_embedding(embeddings[0])`. That is a truthiness test, and
+# it accepts a vector of NaNs. A NaN that reaches a BLOB is not recoverable by
+# reading the row back: it scores against every query, and because the similarity
+# floor is a `<` comparison a NaN does not fall below it, so the bad row stays and
+# pushes good rows out. Five call sites each deciding this for themselves is five
+# chances to get it wrong and one more with every caller added, which is the shape
+# the 2.4.38 audit named — an invariant with no single place that enforces it.
+# ---------------------------------------------------------------------------
+
+_PACKER = "pack_" + "embedding"
+_STORAGE_SEAM = "vector.py"
+
+
+def _packer_call_sites(tree):
+    """Every call to the float32 packer, by either spelling."""
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == _PACKER:
+            owner = func.value.id if isinstance(func.value, ast.Name) else "?"
+            hits.append((node.lineno, f"{owner}.{_PACKER}"))
+        elif isinstance(func, ast.Name) and func.id == _PACKER:
+            hits.append((node.lineno, _PACKER))
+    return hits
+
+
+def _storage_seam_files(root=None):
+    """Every shipped module the gate applies to.
+
+    Exemptions are decided on the path relative to the package root, for the same
+    reason the pause gate does it: a ``vector.py`` added inside a sub-package later
+    would be a second implementation, which is what this gate exists to catch.
+    """
+    root = PKG if root is None else root
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if _VENDORED_PKG in rel.parts or rel.as_posix() == _STORAGE_SEAM:
+            continue
+        yield path
+
+
+def test_no_caller_packs_its_own_vector():
+    hits = []
+    for path in _storage_seam_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        hits.extend(f"{path.name}:{lineno} ({name})" for lineno, name in _packer_call_sites(tree))
+
+    assert not hits, (
+        f"these call sites pack a vector themselves instead of going through the "
+        f"storage seam in cpersona/{_STORAGE_SEAM}: {hits}. Packing directly skips "
+        "the check that the vector is non-empty, numeric, finite and float32-"
+        "representable, and a vector that fails any of those is not recoverable "
+        "once it is a BLOB. Use vector.pack_for_storage(v), which returns None when "
+        "the vector must not be stored."
+    )
+
+    # The gate is only worth having while the seam it points at exists.
+    from cpersona import vector as vector_module
+
+    assert hasattr(vector_module, "pack_for_storage"), (
+        f"cpersona/{_STORAGE_SEAM} no longer provides pack_for_storage; re-read the "
+        "seam instead of deleting this gate"
+    )
+
+
+def test_packer_gate_has_teeth():
+    """Both spellings are caught, and unrelated calls are not."""
+    attribute_form = (
+        f"from cpersona.{_VENDORED_PKG}.embedding_client import EmbeddingClient\n"
+        "def store(v):\n"
+        f"    return EmbeddingClient.{_PACKER}(v)\n"
+    )
+    assert _packer_call_sites(ast.parse(attribute_form)) == [(3, f"EmbeddingClient.{_PACKER}")]
+
+    direct_form = (
+        f"from cpersona.{_VENDORED_PKG}.embedding_client import {_PACKER}\n"
+        "def store(v):\n"
+        f"    return {_PACKER}(v)\n"
+    )
+    assert _packer_call_sites(ast.parse(direct_form)) == [(3, _PACKER)]
+
+    # The one the finding is actually about: a new caller reintroducing the
+    # truthiness test alongside its own pack.
+    reintroduced = (
+        "async def store(client, content):\n"
+        "    e = await client.embed([content])\n"
+        f"    return client.{_PACKER}(e[0]) if e and e[0] else None\n"
+    )
+    assert _packer_call_sites(ast.parse(reintroduced)) == [(3, f"client.{_PACKER}")]
+
+    # Unpacking is a read; it is not this gate's business.
+    unrelated = "def load(blob):\n    return EmbeddingClient.unpack_embedding(blob)\n"
+    assert not _packer_call_sites(ast.parse(unrelated))
+
+    # Going through the seam is what the gate is asking for.
+    permitted = "def store(v):\n    return vector.pack_for_storage(v)\n"
+    assert not _packer_call_sites(ast.parse(permitted))
+
+
+def test_packer_gate_reaches_the_whole_package():
+    """The scan is package-wide and exempts exactly the seam and the vendored tree."""
+    scanned = {p.relative_to(PKG).as_posix() for p in _storage_seam_files()}
+    assert "memory_handlers.py" in scanned and "checks.py" in scanned
+    assert _STORAGE_SEAM not in scanned, "the seam itself must be exempt, or the gate flags its owner"
+    assert not any(part.startswith("_vendored") for name in scanned for part in name.split("/")), (
+        "the vendored tree is re-synced from another repository and is not this gate's to police"
+    )
+    assert len(scanned) >= len({p.name for p in PKG.glob("*.py")}) - 1
+
+
+def test_the_storage_seam_exemption_is_one_path_not_a_file_name(tmp_path):
+    """Only cpersona/vector.py is exempt — not every file so named.
+
+    Asserted on a synthetic tree because the real package has no sub-package
+    ``vector.py``, which is the point: a name-based exemption is invisible in-tree
+    and stays invisible until the day someone adds one.
+    """
+    (tmp_path / "sub").mkdir()
+    (tmp_path / _STORAGE_SEAM).write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "sub" / _STORAGE_SEAM).write_text("y = 2\n", encoding="utf-8")
+
+    scanned = {p.relative_to(tmp_path).as_posix() for p in _storage_seam_files(tmp_path)}
+    assert scanned == {f"sub/{_STORAGE_SEAM}"}, (
+        "a second module named like the seam must stay in scope; it is a candidate "
+        "second implementation, which is what the gate is for"
+    )
