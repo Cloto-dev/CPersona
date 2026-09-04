@@ -2376,3 +2376,46 @@ def test_fileperms_gate_reaches_the_whole_package():
         "the vendored tree is re-synced from another repository and is not this gate's to police"
     )
     assert len(scanned) >= len({p.name for p in PKG.glob("*.py")}) - 1
+
+
+# --------------------------------------------------------------------------------------
+# Gate 10c: the CLAUDE.md policy block stays inside the budget its own standard sets.
+#
+# docs/CLAUDE_MD_POLICY_STANDARD.md rule 4 caps the block at 40 lines between the markers,
+# and rule 5 requires a version on the BEGIN marker. Neither was measured anywhere: skills/
+# is outside the documentation site, so no docs gate reads this file, and the block had
+# reached 51 lines under a standard that says 40 — the drift a budget with no instrument
+# always gets. The number is the point of the rule, not decoration: this block is pasted
+# into a user's CLAUDE.md and paid for in every session they run.
+#
+# The version is checked here too, because an edited block that keeps its old vN is
+# invisible to the skill's own upgrade path — it replaces a block only when it recognises
+# the marker as older than what it ships.
+# --------------------------------------------------------------------------------------
+
+
+POLICY_BLOCK_MAX_LINES = 40
+
+
+def _policy_block():
+    import re
+
+    skill = (PKG.parent / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
+    begin = re.search(r"<!-- BEGIN cpersona-policy (v\d+)[^>]*-->", skill)
+    assert begin, "the shipped skill no longer contains a cpersona-policy BEGIN marker"
+    end = skill.index("<!-- END cpersona-policy -->", begin.end())
+    return begin.group(1), skill[begin.end():end].strip("\n").split("\n")
+
+
+def test_policy_block_fits_the_budget_its_standard_sets():
+    version, lines = _policy_block()
+    assert version.startswith("v") and version[1:].isdigit(), (
+        f"the BEGIN marker must carry a version the skill can compare: {version!r}"
+    )
+    assert len(lines) <= POLICY_BLOCK_MAX_LINES, (
+        f"the CLAUDE.md policy block is {len(lines)} lines between its markers, over the "
+        f"{POLICY_BLOCK_MAX_LINES} that docs/CLAUDE_MD_POLICY_STANDARD.md rule 4 allows. "
+        "Every line is paid for in every session of every user who pastes it: move the "
+        "explanation into the skill and leave a pointer, rather than raising this number."
+    )
+    assert lines, "gate collapsed — the policy block is empty"

@@ -58,6 +58,10 @@ DOC_FILES = [
     # environment variables and endpoints for someone whose install is already
     # broken — the reader least able to absorb a stale instruction.
     ROOT / "skills" / "cpersona-memory" / "references" / "embedding-backend-repair.md",
+    # The other on-demand reference: it names the store call and the tool a
+    # reader pairs with a client memory file, and it is read while someone is
+    # about to move a corpus, so a stale argument name there costs data.
+    ROOT / "skills" / "cpersona-memory" / "references" / "always-loaded-index.md",
     ROOT / "docs" / "index.md",
     ROOT / "docs" / "getting-started.md",
     ROOT / "docs" / "architecture.md",
