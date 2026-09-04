@@ -1717,6 +1717,111 @@ async def _(ctx):
             os.remove(path)
 
 
+# The two scenarios above run with CONFIDENCE_ENABLED patched ON, and that is
+# not the configuration CPersona ships: `CPERSONA_CONFIDENCE_ENABLED` defaults to
+# false, so the confidence branch of the quality gate is absent in an ordinary
+# install and rrf decides instead. Recording only the on-face left the shipping
+# default measured by nothing -- the same hole T4 exists to close on the ranking
+# axis, and a read-side change to how non-finite vectors are treated would have
+# moved it with no gate watching.
+#
+# The three below close it. The control is not decoration: without it, "the
+# healthy rows came back" cannot be told apart from "nothing was filtered at
+# all", and those are exactly the two outcomes a NaN guard has to distinguish.
+
+
+# How big the corpus is is part of the fixture, not a detail of it. With
+# confidence off the gate signal is rrf, compared against
+# `_adaptive_min_score(pool) * RRF_MAX_SCALE` -- 0.0220 at two rows, 0.0135 at a
+# hundred and six -- and the unscored rows the cascade contributes survive only
+# at a pool of 100. The six-row corpus the confidence-on scenarios use answers
+# with NOTHING at the shipping default, healthy rows and NaN rows alike, so a
+# golden recorded from it would stay green through any read-side change. The
+# filler exists to put the gate somewhere a difference can show, and it is
+# padding in the literal sense: it does not match the query.
+_NONFINITE_FILLER = 100
+
+
+async def _seed_filler(db, n: int) -> None:
+    for i in range(n):
+        content = f"unrelated filler about bicycles number {i}"
+        await _mem_raw(
+            db, agent=_NONFINITE_AGENT, content=content,
+            timestamp=f"2026-01-03T00:00:{i % 60:02d}Z",
+            created_at=f"2026-01-03 00:00:{i % 60:02d}", blob=pack(content),
+        )
+
+
+async def _seed_finite_control(ctx: Ctx) -> None:
+    """The non-finite corpus with the non-finite rows left out.
+
+    Same agent, same filler, same content and stamps for the rows that appear in
+    both, so a diff against its polluted sibling is attributable to the four bad
+    vectors and to nothing else.
+    """
+    db = ctx.db
+    await _seed_filler(db, _NONFINITE_FILLER)
+    for content, seq in (("apples, a finite vector", 1), ("apples, another finite vector", 6)):
+        await _mem_raw(
+            db, agent=_NONFINITE_AGENT, content=content,
+            timestamp=f"2026-01-01T00:00:{seq:02d}Z",
+            created_at=f"2026-01-01 00:00:{seq:02d}", blob=pack(content),
+        )
+    await _profile_for(db, _NONFINITE_AGENT)
+    await db.commit()
+
+
+async def _seed_nonfinite_padded(ctx: Ctx) -> None:
+    """`_seed_nonfinite`'s six rows, with the same filler as the control."""
+    await _seed_filler(ctx.db, _NONFINITE_FILLER)
+    await _seed_nonfinite(ctx)
+
+
+@scenario("corpus-finite-control-recall-scan-shipping-default", "store-recall-health",
+          "control for the non-finite pair: the same corpus WITHOUT the NaN/inf rows, at the shipping default (CONFIDENCE off) — what recall answers when nothing is wrong",
+          seed=_seed_finite_control)
+async def _(ctx):
+    install_local(ctx)
+    result = await memory_handlers.do_recall(_NONFINITE_AGENT, "apples", 6)
+    # A control that answers with nothing cannot tell "the guard removed the bad
+    # rows" from "the gate removed everything", which is the only question its
+    # siblings ask. Fail here rather than record a fixture that cannot fail --
+    # the same guard `_rwc_mixed_orders_disagree` puts on its fixture.
+    assert result.get("messages"), (
+        "the control corpus returned nothing at the shipping default: the gate is "
+        "above every score, so this trio cannot discriminate. Re-size the corpus "
+        "(see _NONFINITE_FILLER) rather than recording it."
+    )
+    return result
+
+
+@scenario("corpus-nonfinite-recall-scan-shipping-default", "store-recall-health",
+          "recall over the NaN / +inf / -inf corpus at the shipping default (CONFIDENCE off, so rrf is the gate signal): which rows rank and which vanish, via the live SQL scan",
+          seed=_seed_nonfinite_padded)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall(_NONFINITE_AGENT, "apples", 6)
+
+
+@scenario("corpus-nonfinite-recall-index-shipping-default", "store-recall-health",
+          "the same corpus and default through the contiguous index — the sibling seam: a guard added to the scan alone leaves this path answering as it did",
+          seed=_seed_nonfinite_padded)
+async def _(ctx):
+    from cpersona import vector_index
+
+    install_local(ctx)
+    path = vector_index.index_path("memories")
+    try:
+        built = await vector_index.build_index(ctx.db, "memories")
+        recalled = await memory_handlers.do_recall(_NONFINITE_AGENT, "apples", 6)
+        built = {**built, "path": "<index>"} if "path" in built else built
+        return {"built": built, "recalled": recalled}
+    finally:
+        vector_index._cache.pop(path, None)
+        if os.path.exists(path):
+            os.remove(path)
+
+
 @scenario("corpus-nonfinite-health", "store-recall-health", "check_health over the non-finite corpus: which checks (if any) notice a NaN or inf blob", seed=_seed_nonfinite)
 async def _(ctx):
     return _mask_health_stats(await maintenance_handlers.do_check_health(agent_id=_NONFINITE_AGENT))
