@@ -1530,14 +1530,16 @@ async def _(ctx):
 # --- do_recall_with_context -------------------------------------------------
 #
 # Absent from the matrix until 2026-09-04, which left the merge-and-sort tail of
-# recall_with_context (memory_handlers._ts_sort_key onwards) unprotected. The
-# four scenarios below record what it does TODAY, including the property the
-# temporal-ordering work is about to change on purpose: `messages` is sorted by
-# the raw timestamp STRING, so entries whose UTC offsets differ come back in
-# byte order rather than in instant order. The fixture is built so the two
-# orders disagree -- a fixture where they agree cannot tell the two apart, and
-# a golden recorded from it would stay green through the fix. When that fix
-# lands, the diff in `rwc-mixed-offset` (and only there) is the review surface.
+# recall_with_context (memory_handlers._ts_sort_key onwards) unprotected. The four
+# scenarios below were first recorded against the raw-string sort, so that the
+# temporal-ordering fix would have to move a recorded value rather than land on
+# unmeasured ground. It has since landed (bug-287): `messages` is now ordered by
+# the instant each stamp names, and the two scenarios whose fixtures were built to
+# tell the two orders apart -- `rwc-mixed-offset` and `rwc-invalid-timestamp-mixed`
+# -- are the two that moved. The other 79 did not, which is what said the change
+# reached only the seam it was aimed at. The fixture assertion below stays: a
+# fixture whose byte order and instant order agree cannot fail either way, and it
+# would keep this pair green through a regression back to the string sort.
 
 
 def _ctx_user(content, ts, *, name="alice", user_id="u-1"):
@@ -1586,7 +1588,7 @@ def _rwc_mixed_orders_disagree() -> None:
     assert by_bytes != by_instant, "rwc-mixed-offset fixture: byte order equals instant order -- cannot discriminate"
 
 
-@scenario("rwc-mixed-offset", "store-recall-health", "recall_with_context: external_context stamps in Z / +00:00 / +09:00 / -05:00 / fractional — TODAY sorted by raw string (byte order), which the temporal-ordering fix will change", seed=seed_corpus)
+@scenario("rwc-mixed-offset", "store-recall-health", "recall_with_context: external_context stamps in Z / +00:00 / +09:00 / -05:00 / fractional — merged at the instant each names, not at its spelling (bug-287)", seed=seed_corpus)
 async def _(ctx):
     _rwc_mixed_orders_disagree()
     install_local(ctx)
@@ -1595,7 +1597,7 @@ async def _(ctx):
     )
 
 
-@scenario("rwc-invalid-timestamp-mixed", "store-recall-health", "recall_with_context: entries with an empty, an unparseable and a missing timestamp among valid ones — TODAY '' sorts first, garbage sorts by its bytes", seed=seed_corpus)
+@scenario("rwc-invalid-timestamp-mixed", "store-recall-health", "recall_with_context: entries with an empty, an unparseable and a missing timestamp among valid ones — all of them ahead of every dated row, in merge order (bug-287)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_recall_with_context(

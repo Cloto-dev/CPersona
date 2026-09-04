@@ -1557,6 +1557,57 @@ def _ctx_role(entry: object) -> str:
     return val if isinstance(val, str) else str(val)
 
 
+# The instant an undated message is placed at. Never compared against a real
+# timestamp — the leading flag in the key separates the two groups first — so its
+# value only has to be constant, which is what keeps the undated rows in the order
+# the caller supplied them.
+_UNDATED_ORDER_ANCHOR = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _ts_sort_key(m: dict) -> tuple[bool, datetime]:
+    """Order one merged message by the instant it names, not by how it is spelled.
+
+    bug-287: this sort used to be ``m.get("timestamp", "")`` — the raw string. An
+    ISO-8601 stamp's byte order equals its chronological order only while every
+    stamp being compared carries the same UTC offset, and ``recall_with_context``
+    is precisely where that stops holding: it merges rows the database wrote
+    against entries a caller supplied, and the two need not agree on a spelling.
+    ``2026-01-01T09:00:03+09:00`` and ``2026-01-01T00:00:03Z`` are the same
+    instant, and the first sorted after every ``…T00:00:0NZ`` row because '9' > '0'
+    in column 11. The caller reads this list as a conversation, so a stamp in
+    another offset did not look wrong — it looked like a turn that happened later.
+
+    Parsing lifts the comparison off the spelling. ``_parse_timestamp_utc`` also
+    settles the naive case by the bug-114 invariant (a stamp SQLite wrote with
+    ``datetime('now')`` is UTC), so a database row and a caller's entry become
+    comparable rather than sorting into separate byte neighbourhoods.
+
+    A stamp that does not parse names no instant, so it cannot be placed in the
+    chronology; it can only be placed somewhere fixed. The flag puts every such
+    message ahead of every dated one:
+
+      * It keeps the ordinary case where it already was. An entry with no
+        ``timestamp`` key reaches here as ``""`` and sorted first before this
+        change, which is the case that actually occurs.
+      * The end of the list is the one place an undated message must not land. The
+        caller renders this as a conversation, so last reads as most recent — the
+        position of maximum salience, handed to the rows whose time nobody knows.
+        bug-207 refused the same bargain on the scoring axis for the same reason.
+      * Under the old key the position depended on the first byte: ``"zzz"`` sorted
+        last and ``"1999-ish"`` sorted into the middle, where an unreadable stamp
+        would pose as a dated turn at a specific point in the conversation. One
+        fixed bucket costs the (arbitrary) byte ordering among garbage and buys
+        that no garbage can imitate a position.
+
+    ``list.sort`` is stable, so messages sharing a key — the undated group, and any
+    two rows naming the same instant in different spellings — stay in the order
+    they were merged in: recall's ranked rows first, then the caller's entries as
+    given.
+    """
+    parsed = _parse_timestamp_utc(m.get("timestamp", "") or "")
+    return (parsed is not None, parsed if parsed is not None else _UNDATED_ORDER_ANCHOR)
+
+
 async def do_recall_with_context(
     agent_id: str,
     query: str,
@@ -1614,9 +1665,6 @@ async def do_recall_with_context(
                 "context_type": "conversation",
             }
         )
-
-    def _ts_sort_key(m: dict) -> str:
-        return m.get("timestamp", "") or ""
 
     messages.sort(key=_ts_sort_key)
 

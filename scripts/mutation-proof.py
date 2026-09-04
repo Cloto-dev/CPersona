@@ -288,6 +288,16 @@ MUTATIONS: list[Mutation] = [
         breaks="attributions for rows deleted outside the queue leak until the cap evicts a live one (bug-270)",
         expect="test_attribution_does_not_outlive_the_row (the out-of-band delete case)",
     ),
+    Mutation(
+        id="M14",
+        target="recall_with_context temporal merge order",
+        file="cpersona/memory_handlers.py",
+        find="""    parsed = _parse_timestamp_utc(m.get("timestamp", "") or "")
+    return (parsed is not None, parsed if parsed is not None else _UNDATED_ORDER_ANCHOR)""",
+        replace="""    return m.get("timestamp", "") or \"\"""",
+        breaks="the merged conversation is ordered by how a stamp is spelled, so a row in another UTC offset reads as a turn that happened later (bug-287)",
+        expect="test_a_stamp_in_another_offset_is_merged_at_its_instant_not_at_its_spelling, and the rwc-mixed-offset / rwc-invalid-timestamp-mixed golden scenarios",
+    ),
 ]
 
 

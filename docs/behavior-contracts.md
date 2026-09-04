@@ -30,7 +30,13 @@ Consequences:
   the **tail**. Measuring from the head inverts the result.
 - **`recall_with_context` has a different contract**: it merges recalled
   memories with the conversation history you pass in and returns a
-  **chronological** merge, not a score ordering.
+  **chronological** merge, not a score ordering. Chronological means the
+  **instant** each timestamp names, not the text it is written in: a stamp in
+  any UTC offset — and a naive one, which is read as UTC — lands where it
+  belongs against every other stamp, whichever side of the merge wrote it. A
+  message whose timestamp is missing or unparseable names no instant, so it is
+  placed **ahead of every dated message**, in the order it was merged in; the
+  end of the list is reserved for what is genuinely most recent.
 
 ## 2. Confidence scoring overrides the fusion mode
 
