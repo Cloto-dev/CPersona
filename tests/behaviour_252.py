@@ -218,6 +218,13 @@ def canonical(obj: Any) -> Any:
     timestamps collapse to a marker.
     """
     if isinstance(obj, float):
+        # NaN is not equal to itself, so a recorded NaN could never replay
+        # equal; and json would write it as a bare `NaN` token. Spell the three
+        # non-finite values out so a golden can pin them like any other value.
+        if obj != obj:
+            return "<nan>"
+        if obj in (float("inf"), float("-inf")):
+            return "<inf>" if obj > 0 else "<-inf>"
         # -0.0 and 0.0 compare equal but serialise differently; normalise.
         r = round(obj, FLOAT_PLACES)
         return 0.0 if r == 0.0 else r
@@ -1366,6 +1373,304 @@ async def _(ctx):
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_recall("a1", "xyzzyxyzzy", 5)
+
+
+# --- do_recall_with_context -------------------------------------------------
+#
+# Absent from the matrix until 2026-09-04, which left the merge-and-sort tail of
+# recall_with_context (memory_handlers._ts_sort_key onwards) unprotected. The
+# four scenarios below record what it does TODAY, including the property the
+# temporal-ordering work is about to change on purpose: `messages` is sorted by
+# the raw timestamp STRING, so entries whose UTC offsets differ come back in
+# byte order rather than in instant order. The fixture is built so the two
+# orders disagree -- a fixture where they agree cannot tell the two apart, and
+# a golden recorded from it would stay green through the fix. When that fix
+# lands, the diff in `rwc-mixed-offset` (and only there) is the review surface.
+
+
+def _ctx_user(content, ts, *, name="alice", user_id="u-1"):
+    return {"role": "user", "name": name, "user_id": user_id, "content": content, "timestamp": ts}
+
+
+def _ctx_assistant(content, ts):
+    return {"role": "assistant", "content": content, "timestamp": ts}
+
+
+@scenario("rwc-basic", "store-recall-health", "recall_with_context: user (name+user_id) and assistant entries, UTC Z stamps — merged with the seed hits and sorted; source shapes discord:<user_id> / Agent self", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5,
+        external_context=[
+            _ctx_user("what about the apples in the orchard?", "2026-01-01T00:00:02Z"),
+            _ctx_assistant("the orchard has apples and pears", "2026-01-01T00:00:06Z"),
+        ],
+    )
+
+
+# Every stamp below names an instant inside the seed corpus's second-by-second
+# window (00:00:01Z .. 00:00:09Z), but each is spelled so that its BYTE order
+# differs from its instant order:
+#   +09:00 spelling of 00:00:03Z sorts after every "…T00:00:0NZ" row ('9' > '0' at col 11)
+#   -05:00 spelling of 00:00:07Z sorts before all of them (the date part is 2025)
+#   +00:00 spelling of 00:00:05Z sorts before the seed row's "…05Z" ('+' < 'Z')
+#   fractional 00:00:01.5Z sorts before "…01Z" ('.' < 'Z') though it is later
+# The asserted disagreement is what makes this fixture able to fail.
+_RWC_MIXED = [
+    _ctx_user("apples at three, spelled in JST", "2026-01-01T09:00:03+09:00"),
+    _ctx_assistant("apples at seven, spelled in EST", "2025-12-31T19:00:07-05:00"),
+    _ctx_user("apples at five, spelled with +00:00", "2026-01-01T00:00:05+00:00", name="bob", user_id="u-2"),
+    _ctx_assistant("apples at one and a half, fractional", "2026-01-01T00:00:01.500000Z"),
+]
+
+
+def _rwc_mixed_orders_disagree() -> None:
+    """Fail loudly if someone edits _RWC_MIXED into a fixture that cannot fail."""
+    from cpersona.utils import _parse_timestamp_utc
+
+    stamps = [e["timestamp"] for e in _RWC_MIXED]
+    by_bytes = sorted(stamps)
+    by_instant = sorted(stamps, key=_parse_timestamp_utc)
+    assert by_bytes != by_instant, "rwc-mixed-offset fixture: byte order equals instant order -- cannot discriminate"
+
+
+@scenario("rwc-mixed-offset", "store-recall-health", "recall_with_context: external_context stamps in Z / +00:00 / +09:00 / -05:00 / fractional — TODAY sorted by raw string (byte order), which the temporal-ordering fix will change", seed=seed_corpus)
+async def _(ctx):
+    _rwc_mixed_orders_disagree()
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5, external_context=list(_RWC_MIXED),
+    )
+
+
+@scenario("rwc-invalid-timestamp-mixed", "store-recall-health", "recall_with_context: entries with an empty, an unparseable and a missing timestamp among valid ones — TODAY '' sorts first, garbage sorts by its bytes", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5,
+        external_context=[
+            _ctx_user("apples with an empty stamp", ""),
+            _ctx_assistant("apples with a garbage stamp", "not-a-timestamp"),
+            {"role": "user", "content": "apples with no stamp at all"},
+            _ctx_user("apples with a good stamp", "2026-01-01T00:00:04Z"),
+        ],
+    )
+
+
+@scenario("rwc-filter-only-roles", "store-recall-health", "recall_with_context: a system entry repeating a seed row's body suppresses that memory and is disclosed in context_filter_only (audit C13), never merged into messages", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5,
+        external_context=[
+            {"role": "system", "content": "apples and pears in the orchard", "timestamp": "2026-01-01T00:00:00Z"},
+            {"role": "tool", "content": "raspberry pi cluster wiring"},
+        ],
+    )
+
+
+# --- corpus shapes the write path cannot refuse yet ---------------------------
+#
+# Two things a production corpus can hold that no scenario above seeds: an
+# embedding whose floats are not finite, and timestamps spelled in several
+# ISO-8601 conventions at once. Neither is refused at the write seam today. The
+# scenarios below record what every READ surface does with them -- ranking,
+# the contiguous index, check_health, export -- so that the boundary work can
+# show, per surface, what it changed and what it left alone. Rows are inserted
+# the way the write path writes them (float32 blob, ISO text), not through a
+# test-only shortcut.
+
+_NONFINITE_AGENT = "nf1"
+_SPELLINGS_AGENT = "ts1"
+
+
+async def _mem_raw(db, *, agent, content, timestamp, created_at, blob):
+    await db.execute(
+        f"INSERT INTO memories ({_MEM_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (agent, "", "", "", content, _HEALTH_SOURCE, timestamp, "{}", blob, 0, created_at),
+    )
+
+
+async def _profile_for(db, agent: str) -> None:
+    await db.execute(
+        "INSERT INTO profiles (agent_id, content, updated_at) VALUES (?, 'profile body', '2026-01-01T00:00:00Z')",
+        (agent,),
+    )
+
+
+def _vec_with(value: float, *, at: int | None = None) -> bytes:
+    """A unit vector for 'apples', with `value` written over every element (at=None)
+    or over one element (at=i). float32 round-trips NaN and +/-inf exactly."""
+    base = fake_embed_one("apples in the orchard")
+    if at is None:
+        vec = [value] * FAKE_DIM
+    else:
+        vec = list(base)
+        vec[at] = value
+    return EmbeddingClient.pack_embedding(vec)
+
+
+async def _seed_nonfinite(ctx: Ctx) -> None:
+    db = ctx.db
+    nan, inf = float("nan"), float("inf")
+    rows = [
+        ("apples, a finite vector", 1, pack("apples, a finite vector")),
+        ("apples, every element NaN", 2, _vec_with(nan)),
+        ("apples, every element +inf", 3, _vec_with(inf)),
+        ("apples, one element NaN", 4, _vec_with(nan, at=7)),
+        ("apples, one element -inf", 5, _vec_with(-inf, at=7)),
+        ("apples, another finite vector", 6, pack("apples, another finite vector")),
+    ]
+    for content, seq, blob in rows:
+        # created_at in the fixed-width form the contiguous index requires
+        # (vector_index._is_canonical) -- with any other spelling the builder
+        # declines and the index scenario would only re-record the scan.
+        await _mem_raw(
+            db, agent=_NONFINITE_AGENT, content=content,
+            timestamp=f"2026-01-01T00:00:{seq:02d}Z",
+            created_at=f"2026-01-01 00:00:{seq:02d}", blob=blob,
+        )
+    await _profile_for(db, _NONFINITE_AGENT)
+    await db.commit()
+
+
+@scenario("corpus-nonfinite-recall-scan", "store-recall-health", "recall over a corpus holding NaN / +inf / -inf embeddings (live SQL scan, CONFIDENCE=on): which rows rank, which vanish, and what their scores read", seed=_seed_nonfinite)
+async def _(ctx):
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    return await memory_handlers.do_recall(_NONFINITE_AGENT, "apples", 6)
+
+
+@scenario("corpus-nonfinite-recall-index", "store-recall-health", "the same corpus through the contiguous index: build_index accepts non-finite rows, and the index-path recall answers as the scan does (or does not)", seed=_seed_nonfinite)
+async def _(ctx):
+    from cpersona import vector_index
+
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    path = vector_index.index_path("memories")
+    try:
+        built = await vector_index.build_index(ctx.db, "memories")
+        recalled = await memory_handlers.do_recall(_NONFINITE_AGENT, "apples", 6)
+        # The file sits beside the scratch database, whose directory differs
+        # between the capture process and pytest's conftest; the path is not
+        # the observation.
+        built = {**built, "path": "<index>"} if "path" in built else built
+        return {"built": built, "recalled": recalled}
+    finally:
+        # The index file sits beside the scratch database, outside `_reset`'s
+        # reach; leaving it behind would feed every later scenario (and every
+        # later test under pytest) an index built from this corpus.
+        vector_index._cache.pop(path, None)
+        if os.path.exists(path):
+            os.remove(path)
+
+
+@scenario("corpus-nonfinite-health", "store-recall-health", "check_health over the non-finite corpus: which checks (if any) notice a NaN or inf blob", seed=_seed_nonfinite)
+async def _(ctx):
+    return _mask_health_stats(await maintenance_handlers.do_check_health(agent_id=_NONFINITE_AGENT))
+
+
+@scenario("corpus-nonfinite-export", "store-recall-health", "export with embeddings of the non-finite corpus: whether NaN/inf leave the process, and in what spelling", seed=_seed_nonfinite)
+async def _(ctx):
+    path = ctx.path("nonfinite.jsonl")
+    exported = await admin_handlers.do_export_memories(_NONFINITE_AGENT, path, include_embeddings=True)
+    import base64
+    import math
+
+    per_row = []
+    with open(path, encoding="utf-8") as f:
+        for ln in f:
+            rec = json.loads(ln) if ln.strip() else None
+            if not rec or rec.get("_type") != "memory":
+                continue
+            b64 = rec.get("embedding_b64")
+            vec = EmbeddingClient.unpack_embedding(base64.b64decode(b64)) if b64 else []
+            per_row.append(
+                {
+                    "content": rec.get("content"),
+                    "dim": len(vec),
+                    "nan": sum(1 for v in vec if v != v),
+                    "inf": sum(1 for v in vec if math.isinf(v) and v > 0),
+                    "neg_inf": sum(1 for v in vec if math.isinf(v) and v < 0),
+                }
+            )
+    return {"exported": exported, "rows": per_row}
+
+
+# Six spellings spread over the three weeks before the frozen clock, arranged
+# so that the ends of the BYTE order and the ends of the INSTANT order fall on
+# different rows, hours apart:
+#   text MIN    = the -05:00 row (its date part reads 12-09) — instant 12-10 01:00Z
+#   instant MIN = the early Z row                            — instant 12-10 00:00Z
+#   text MAX    = the +09:00 row (reads 2027-01-01T02)        — instant 12-31 17:00Z
+#   instant MAX = the late Z row                             — instant 01-01 00:00Z
+# A span taken over the column as TEXT is therefore 8 h shorter than the span
+# by instant. Three weeks, because the range only reaches the decay rate above
+# REFERENCE_HOURS (one week) -- a narrower corpus scores identically under
+# either span, which is how the first two versions of this fixture let a span
+# mutation survive. created_at follows the instant, so the scan window sees
+# instant order. The naive row is the form SQLite's datetime('now') writes and
+# the drift check reports as unfixable.
+_SPELLINGS = [
+    ("apples spelled Z, early", "2026-12-10T00:00:00Z"),
+    ("apples spelled -05:00", "2026-12-09T20:00:00-05:00"),
+    ("apples spelled +00:00", "2026-12-15T00:00:00+00:00"),
+    ("apples spelled naive", "2026-12-20 12:00:00"),
+    ("apples spelled fractional Z", "2026-12-25T00:00:00.500000Z"),
+    ("apples spelled +09:00", "2027-01-01T02:00:00+09:00"),
+    ("apples spelled Z, late", "2027-01-01T00:00:00Z"),
+]
+
+
+def _spellings_orders_disagree() -> None:
+    from cpersona.utils import _parse_timestamp_utc
+
+    stamps = [ts for _, ts in _SPELLINGS]
+    by_text = sorted(stamps)
+    by_instant = sorted(stamps, key=_parse_timestamp_utc)
+    assert by_text != by_instant, "spellings fixture cannot discriminate"
+    # The ENDS must differ, by hours: the span is consumed in hours, and a
+    # disagreement that rounds away is no disagreement.
+    for a, b in ((by_text[0], by_instant[0]), (by_text[-1], by_instant[-1])):
+        gap = abs((_parse_timestamp_utc(a) - _parse_timestamp_utc(b)).total_seconds())
+        assert gap >= 3600, f"span ends {a!r} / {b!r} are {gap}s apart; need hours"
+
+
+async def _seed_spellings(ctx: Ctx) -> None:
+    _spellings_orders_disagree()
+    db = ctx.db
+    from cpersona.utils import _parse_timestamp_utc
+
+    for content, ts in sorted(_SPELLINGS, key=lambda e: _parse_timestamp_utc(e[1])):
+        instant = _parse_timestamp_utc(ts)
+        await _mem_raw(
+            db, agent=_SPELLINGS_AGENT, content=content, timestamp=ts,
+            created_at=instant.strftime("%Y-%m-%dT%H:%M:%SZ"), blob=pack(content),
+        )
+    await _profile_for(db, _SPELLINGS_AGENT)
+    await db.commit()
+
+
+@scenario("corpus-mixed-spellings-recall-confidence", "store-recall-health", "recall (CONFIDENCE=on) over six timestamp spellings: the temporal span and every age_hours as computed today, with MIN/MAX taken over the column as TEXT", seed=_seed_spellings)
+async def _(ctx):
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    return await memory_handlers.do_recall(_SPELLINGS_AGENT, "apples", 6)
+
+
+@scenario("corpus-mixed-spellings-health", "store-recall-health", "check_health over six timestamp spellings: what timestamp_format_drift counts as utc / aware / naive", seed=_seed_spellings)
+async def _(ctx):
+    return _mask_health_stats(await maintenance_handlers.do_check_health(agent_id=_SPELLINGS_AGENT))
+
+
+@scenario("corpus-mixed-spellings-export", "store-recall-health", "export preserves each timestamp spelling verbatim and in id order", seed=_seed_spellings)
+async def _(ctx):
+    path = ctx.path("spellings.jsonl")
+    exported = await admin_handlers.do_export_memories(_SPELLINGS_AGENT, path, include_embeddings=False)
+    with open(path, encoding="utf-8") as f:
+        rows = [json.loads(ln) for ln in f if ln.strip()]
+    stamps = [r.get("timestamp") for r in rows if r.get("_type") == "memory"]
+    return {"exported": exported, "timestamps_in_file_order": stamps}
 
 
 # --- bug-155 cosine backfill ------------------------------------------------

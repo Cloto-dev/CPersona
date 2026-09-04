@@ -1889,6 +1889,1355 @@
     "seam": "admin-handlers",
     "thresholds": {}
   },
+  "corpus-mixed-spellings-export": {
+    "covers": "export preserves each timestamp spelling verbatim and in id order",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled Z, early",
+          "created_at": "2026-12-10T00:00:00Z",
+          "embedding": "<blob 256B sha256:31a96469fae4f29b>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-10T00:00:00Z"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled -05:00",
+          "created_at": "2026-12-10T01:00:00Z",
+          "embedding": "<blob 256B sha256:e0548a832f56c8a1>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-09T20:00:00-05:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled +00:00",
+          "created_at": "2026-12-15T00:00:00Z",
+          "embedding": "<blob 256B sha256:e4370fea65c87940>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-15T00:00:00+00:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled naive",
+          "created_at": "2026-12-20T12:00:00Z",
+          "embedding": "<blob 256B sha256:be32c7a513e418c1>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "<generated>"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled fractional Z",
+          "created_at": "2026-12-25T00:00:00Z",
+          "embedding": "<blob 256B sha256:f36df7346c2a7eab>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-25T00:00:00.500000Z"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled +09:00",
+          "created_at": "2026-12-31T17:00:00Z",
+          "embedding": "<blob 256B sha256:e97ce38c19fd4f8e>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2027-01-01T02:00:00+09:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled Z, late",
+          "created_at": "2027-01-01T00:00:00Z",
+          "embedding": "<blob 256B sha256:355ddf2a79a3144a>",
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "ts1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "exported": {
+        "episodes": 0,
+        "memories": 7,
+        "ok": true,
+        "path": "<tmp>/spellings.jsonl",
+        "profiles": 1
+      },
+      "timestamps_in_file_order": [
+        "2026-12-10T00:00:00Z",
+        "2026-12-09T20:00:00-05:00",
+        "2026-12-15T00:00:00+00:00",
+        "<generated>",
+        "2026-12-25T00:00:00.500000Z",
+        "2027-01-01T02:00:00+09:00",
+        "2027-01-01T00:00:00Z"
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-mixed-spellings-health": {
+    "covers": "check_health over six timestamp spellings: what timestamp_format_drift counts as utc / aware / naive",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled Z, early",
+          "created_at": "2026-12-10T00:00:00Z",
+          "embedding": "<blob 256B sha256:31a96469fae4f29b>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-10T00:00:00Z"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled -05:00",
+          "created_at": "2026-12-10T01:00:00Z",
+          "embedding": "<blob 256B sha256:e0548a832f56c8a1>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-09T20:00:00-05:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled +00:00",
+          "created_at": "2026-12-15T00:00:00Z",
+          "embedding": "<blob 256B sha256:e4370fea65c87940>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-15T00:00:00+00:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled naive",
+          "created_at": "2026-12-20T12:00:00Z",
+          "embedding": "<blob 256B sha256:be32c7a513e418c1>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "<generated>"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled fractional Z",
+          "created_at": "2026-12-25T00:00:00Z",
+          "embedding": "<blob 256B sha256:f36df7346c2a7eab>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-25T00:00:00.500000Z"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled +09:00",
+          "created_at": "2026-12-31T17:00:00Z",
+          "embedding": "<blob 256B sha256:e97ce38c19fd4f8e>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2027-01-01T02:00:00+09:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled Z, late",
+          "created_at": "2027-01-01T00:00:00Z",
+          "embedding": "<blob 256B sha256:355ddf2a79a3144a>",
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "ts1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "checks_run": [
+        "memory_annotation",
+        "discord_mention",
+        "oversized_content",
+        "duplicate_content",
+        "embedding_dimension",
+        "embedding_backend",
+        "null_embedding",
+        "null_episode_embedding",
+        "fts_integrity",
+        "schema_version",
+        "dedup_msg_id_index",
+        "schema_objects",
+        "sqlite_integrity",
+        "axis_hygiene",
+        "invalid_json",
+        "invalid_timestamp",
+        "missing_episode_start_time",
+        "timestamp_format_drift",
+        "episode_timestamp_format_drift",
+        "stale_pending_tasks",
+        "missing_profile",
+        "empty_content",
+        "invalid_source_type",
+        "oversized_profile",
+        "anonymous_source",
+        "vector_fallback_config",
+        "vector_index",
+        "operating_context_parse",
+        "operating_context_size"
+      ],
+      "fixed": false,
+      "issues": [
+        {
+          "aware": 2,
+          "check": "timestamp_format_drift",
+          "naive": 1,
+          "repairable": 2,
+          "severity": "warn",
+          "type": "timestamp_format_drift",
+          "unfixable_naive": 1,
+          "utc": 4
+        }
+      ],
+      "severity_summary": {
+        "critical": 0,
+        "info": 0,
+        "warn": 1
+      },
+      "stats": {
+        "agent_episodes": 0,
+        "agent_memories": 7,
+        "axes": {
+          "channel": {
+            "(global)": 7
+          },
+          "project_id": {
+            "(global)": 7
+          }
+        },
+        "db_size_bytes": "<file-scoped, masked>",
+        "episodes": 0,
+        "memories": 7,
+        "pending_tasks": 0,
+        "profiles": 1
+      },
+      "status": "degraded",
+      "total_memories": 7
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-mixed-spellings-recall-confidence": {
+    "covers": "recall (CONFIDENCE=on) over six timestamp spellings: the temporal span and every age_hours as computed today, with MIN/MAX taken over the column as TEXT",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled Z, early",
+          "created_at": "2026-12-10T00:00:00Z",
+          "embedding": "<blob 256B sha256:31a96469fae4f29b>",
+          "id": 1,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-10T00:00:00Z"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled -05:00",
+          "created_at": "2026-12-10T01:00:00Z",
+          "embedding": "<blob 256B sha256:e0548a832f56c8a1>",
+          "id": 2,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-09T20:00:00-05:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled +00:00",
+          "created_at": "2026-12-15T00:00:00Z",
+          "embedding": "<blob 256B sha256:e4370fea65c87940>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-15T00:00:00+00:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled naive",
+          "created_at": "2026-12-20T12:00:00Z",
+          "embedding": "<blob 256B sha256:be32c7a513e418c1>",
+          "id": 4,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "<generated>"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled fractional Z",
+          "created_at": "2026-12-25T00:00:00Z",
+          "embedding": "<blob 256B sha256:f36df7346c2a7eab>",
+          "id": 5,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-25T00:00:00.500000Z"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled +09:00",
+          "created_at": "2026-12-31T17:00:00Z",
+          "embedding": "<blob 256B sha256:e97ce38c19fd4f8e>",
+          "id": 6,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2027-01-01T02:00:00+09:00"
+        },
+        {
+          "agent_id": "ts1",
+          "channel": "",
+          "content": "apples spelled Z, late",
+          "created_at": "2027-01-01T00:00:00Z",
+          "embedding": "<blob 256B sha256:355ddf2a79a3144a>",
+          "id": 7,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "ts1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "confidence": {
+            "age_hours": 528.0,
+            "cosine": 0.5368,
+            "score": 0.5748
+          },
+          "content": "apples spelled Z, early",
+          "match_reason": {
+            "cosine": 0.5367515683,
+            "rrf": 0.0307765152,
+            "score": 0.5748,
+            "signal": "confidence"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-10T00:00:00Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 168.0,
+            "cosine": 0.4589,
+            "score": 0.6085
+          },
+          "content": "apples spelled fractional Z",
+          "match_reason": {
+            "cosine": 0.4588958621,
+            "rrf": 0.0151515152,
+            "score": 0.6085,
+            "signal": "confidence"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-25T00:00:00.500000Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 527.0,
+            "cosine": 0.5871,
+            "score": 0.6166
+          },
+          "content": "apples spelled -05:00",
+          "match_reason": {
+            "cosine": 0.5870860815,
+            "rrf": 0.0325224749,
+            "score": 0.6166,
+            "signal": "confidence"
+          },
+          "ref": "mem:2",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-09T20:00:00-05:00"
+        },
+        {
+          "confidence": {
+            "age_hours": 276.0,
+            "cosine": 0.5822,
+            "score": 0.6933
+          },
+          "content": "apples spelled naive",
+          "match_reason": {
+            "cosine": 0.5821912289,
+            "rrf": 0.0325224749,
+            "score": 0.6933,
+            "signal": "confidence"
+          },
+          "ref": "mem:4",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "<generated>"
+        },
+        {
+          "confidence": {
+            "age_hours": 0.0,
+            "cosine": 0.5086,
+            "score": 0.7491
+          },
+          "content": "apples spelled Z, late",
+          "match_reason": {
+            "cosine": 0.508646071,
+            "rrf": 0.0307692308,
+            "score": 0.7491,
+            "signal": "confidence"
+          },
+          "ref": "mem:7",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2027-01-01T00:00:00Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 7.0,
+            "cosine": 0.5469,
+            "score": 0.7897
+          },
+          "content": "apples spelled +09:00",
+          "match_reason": {
+            "cosine": 0.5468702316,
+            "rrf": 0.0314980159,
+            "score": 0.7897,
+            "signal": "confidence"
+          },
+          "ref": "mem:6",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2027-01-01T02:00:00+09:00"
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-nonfinite-export": {
+    "covers": "export with embeddings of the non-finite corpus: whether NaN/inf leave the process, and in what spelling",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, a finite vector",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:a938d0d23d9f251c>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, every element NaN",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:bd0189b8e6e6ab3e>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, every element +inf",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:8a638cf521f27255>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, one element NaN",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:89a841bb29d94be2>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, one element -inf",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:f8c6dc022675de2e>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, another finite vector",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:b510f876f0640a12>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:06Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "nf1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "exported": {
+        "episodes": 0,
+        "memories": 6,
+        "ok": true,
+        "path": "<tmp>/nonfinite.jsonl",
+        "profiles": 1
+      },
+      "rows": [
+        {
+          "content": "apples, a finite vector",
+          "dim": 64,
+          "inf": 0,
+          "nan": 0,
+          "neg_inf": 0
+        },
+        {
+          "content": "apples, every element NaN",
+          "dim": 64,
+          "inf": 0,
+          "nan": 64,
+          "neg_inf": 0
+        },
+        {
+          "content": "apples, every element +inf",
+          "dim": 64,
+          "inf": 64,
+          "nan": 0,
+          "neg_inf": 0
+        },
+        {
+          "content": "apples, one element NaN",
+          "dim": 64,
+          "inf": 0,
+          "nan": 1,
+          "neg_inf": 0
+        },
+        {
+          "content": "apples, one element -inf",
+          "dim": 64,
+          "inf": 0,
+          "nan": 0,
+          "neg_inf": 1
+        },
+        {
+          "content": "apples, another finite vector",
+          "dim": 64,
+          "inf": 0,
+          "nan": 0,
+          "neg_inf": 0
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-nonfinite-health": {
+    "covers": "check_health over the non-finite corpus: which checks (if any) notice a NaN or inf blob",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, a finite vector",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:a938d0d23d9f251c>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, every element NaN",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:bd0189b8e6e6ab3e>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, every element +inf",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:8a638cf521f27255>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, one element NaN",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:89a841bb29d94be2>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, one element -inf",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:f8c6dc022675de2e>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, another finite vector",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:b510f876f0640a12>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:06Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "nf1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "checks_run": [
+        "memory_annotation",
+        "discord_mention",
+        "oversized_content",
+        "duplicate_content",
+        "embedding_dimension",
+        "embedding_backend",
+        "null_embedding",
+        "null_episode_embedding",
+        "fts_integrity",
+        "schema_version",
+        "dedup_msg_id_index",
+        "schema_objects",
+        "sqlite_integrity",
+        "axis_hygiene",
+        "invalid_json",
+        "invalid_timestamp",
+        "missing_episode_start_time",
+        "timestamp_format_drift",
+        "episode_timestamp_format_drift",
+        "stale_pending_tasks",
+        "missing_profile",
+        "empty_content",
+        "invalid_source_type",
+        "oversized_profile",
+        "anonymous_source",
+        "vector_fallback_config",
+        "vector_index",
+        "operating_context_parse",
+        "operating_context_size"
+      ],
+      "fixed": false,
+      "issues": [],
+      "severity_summary": {
+        "critical": 0,
+        "info": 0,
+        "warn": 0
+      },
+      "stats": {
+        "agent_episodes": 0,
+        "agent_memories": 6,
+        "axes": {
+          "channel": {
+            "(global)": 6
+          },
+          "project_id": {
+            "(global)": 6
+          }
+        },
+        "db_size_bytes": "<file-scoped, masked>",
+        "episodes": 0,
+        "memories": 6,
+        "pending_tasks": 0,
+        "profiles": 1
+      },
+      "status": "healthy",
+      "total_memories": 6
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-nonfinite-recall-index": {
+    "covers": "the same corpus through the contiguous index: build_index accepts non-finite rows, and the index-path recall answers as the scan does (or does not)",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, a finite vector",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:a938d0d23d9f251c>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, every element NaN",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:bd0189b8e6e6ab3e>",
+          "id": 2,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, every element +inf",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:8a638cf521f27255>",
+          "id": 3,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, one element NaN",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:89a841bb29d94be2>",
+          "id": 4,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, one element -inf",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:f8c6dc022675de2e>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, another finite vector",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:b510f876f0640a12>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:06Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "nf1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "built": {
+        "built": true,
+        "bytes": 2114,
+        "count": 6,
+        "dim": 64,
+        "excluded": 0,
+        "path": "<index>",
+        "watermark": 6
+      },
+      "recalled": {
+        "messages": [
+          {
+            "confidence": {
+              "age_hours": 8760.0,
+              "cosine": "<nan>",
+              "score": 0.5477
+            },
+            "content": "apples, every element +inf",
+            "match_reason": {
+              "cosine": "<nan>",
+              "rrf": 0.0153846154,
+              "score": 0.5477,
+              "signal": "confidence"
+            },
+            "ref": "mem:3",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-01T00:00:03Z"
+          },
+          {
+            "confidence": {
+              "age_hours": 8760.0,
+              "cosine": "<nan>",
+              "score": 0.5477
+            },
+            "content": "apples, every element NaN",
+            "match_reason": {
+              "cosine": "<nan>",
+              "rrf": 0.015625,
+              "score": 0.5477,
+              "signal": "confidence"
+            },
+            "ref": "mem:2",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-01T00:00:02Z"
+          },
+          {
+            "confidence": {
+              "age_hours": 8760.0,
+              "cosine": "<nan>",
+              "score": 0.5477
+            },
+            "content": "apples, one element NaN",
+            "match_reason": {
+              "cosine": "<nan>",
+              "rrf": 0.0161290323,
+              "score": 0.5477,
+              "signal": "confidence"
+            },
+            "ref": "mem:4",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-01T00:00:04Z"
+          }
+        ]
+      }
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-nonfinite-recall-scan": {
+    "covers": "recall over a corpus holding NaN / +inf / -inf embeddings (live SQL scan, CONFIDENCE=on): which rows rank, which vanish, and what their scores read",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, a finite vector",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:a938d0d23d9f251c>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, every element NaN",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:bd0189b8e6e6ab3e>",
+          "id": 2,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, every element +inf",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:8a638cf521f27255>",
+          "id": 3,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, one element NaN",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:89a841bb29d94be2>",
+          "id": 4,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, one element -inf",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:f8c6dc022675de2e>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "nf1",
+          "channel": "",
+          "content": "apples, another finite vector",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:b510f876f0640a12>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:06Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "nf1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": "<nan>",
+            "score": 0.5477
+          },
+          "content": "apples, every element NaN",
+          "match_reason": {
+            "cosine": "<nan>",
+            "rrf": 0.0314980159,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:2",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": "<nan>",
+            "score": 0.5477
+          },
+          "content": "apples, every element +inf",
+          "match_reason": {
+            "cosine": "<nan>",
+            "rrf": 0.0315136476,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:3",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": "<nan>",
+            "score": 0.5477
+          },
+          "content": "apples, one element NaN",
+          "match_reason": {
+            "cosine": "<nan>",
+            "rrf": 0.0325224749,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:4",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:04Z"
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
   "deep-check-anonymous-source-fix": {
     "covers": "deep_check: fix=True with a recoverable anonymous-User row + [username] prefix — name recovered, source rewritten in db",
     "db": {
@@ -5183,6 +6532,997 @@
     "raised": null,
     "result": {
       "messages": []
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "rwc-basic": {
+    "covers": "recall_with_context: user (name+user_id) and assistant entries, UTC Z stamps — merged with the seed hits and sorted; source shapes discord:<user_id> / Agent self",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "content": "what about the apples in the orchard?",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:u-1",
+            "name": "alice",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "content": "apples in another project",
+          "match_reason": {
+            "cosine": 0.4411262731,
+            "rrf": 0.0314976659,
+            "score": 0.4411262731,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.5544837998,
+            "rrf": 0.0322577957,
+            "score": 0.5544837998,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "content": "apples from a tagged user",
+          "match_reason": {
+            "cosine": 0.3978533696,
+            "rrf": 0.0310094431,
+            "score": 0.3978533696,
+            "signal": "cosine"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "content": "[Episode] orchard apples episode",
+          "match_reason": {
+            "cosine": 0.5416657925,
+            "rrf": 0.0320020481,
+            "score": 0.5416657925,
+            "signal": "cosine"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "content": "the orchard has apples and pears",
+          "context_type": "conversation",
+          "source": {
+            "id": "self",
+            "type": "Agent"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "content": "[Episode] chat apples episode",
+          "match_reason": {
+            "cosine": 0.5832774043,
+            "rrf": 0.0327868852,
+            "score": 0.5832774043,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "rwc-filter-only-roles": {
+    "covers": "recall_with_context: a system entry repeating a seed row's body suppresses that memory and is disclosed in context_filter_only (audit C13), never merged into messages",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "context_filter_only": {
+        "note": "entries with these roles filtered recall but are not shown in messages",
+        "roles": [
+          "system",
+          "tool"
+        ]
+      },
+      "messages": [
+        {
+          "content": "apples in another project",
+          "match_reason": {
+            "cosine": 0.4411262731,
+            "rrf": 0.0314976659,
+            "score": 0.4411262731,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.5544837998,
+            "rrf": 0.0322577957,
+            "score": 0.5544837998,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "content": "apples from a tagged user",
+          "match_reason": {
+            "cosine": 0.3978533696,
+            "rrf": 0.0310094431,
+            "score": 0.3978533696,
+            "signal": "cosine"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "content": "[Episode] orchard apples episode",
+          "match_reason": {
+            "cosine": 0.5416657925,
+            "rrf": 0.0320020481,
+            "score": 0.5416657925,
+            "signal": "cosine"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "content": "[Episode] chat apples episode",
+          "match_reason": {
+            "cosine": 0.5832774043,
+            "rrf": 0.0327868852,
+            "score": 0.5832774043,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "rwc-invalid-timestamp-mixed": {
+    "covers": "recall_with_context: entries with an empty, an unparseable and a missing timestamp among valid ones — TODAY '' sorts first, garbage sorts by its bytes",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "content": "apples with an empty stamp",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:u-1",
+            "name": "alice",
+            "type": "User"
+          },
+          "timestamp": ""
+        },
+        {
+          "content": "apples with no stamp at all",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:User",
+            "name": "User",
+            "type": "User"
+          },
+          "timestamp": ""
+        },
+        {
+          "content": "apples in another project",
+          "match_reason": {
+            "cosine": 0.4411262731,
+            "rrf": 0.0314976659,
+            "score": 0.4411262731,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.5544837998,
+            "rrf": 0.0322577957,
+            "score": 0.5544837998,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "content": "apples with a good stamp",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:u-1",
+            "name": "alice",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "content": "apples from a tagged user",
+          "match_reason": {
+            "cosine": 0.3978533696,
+            "rrf": 0.0310094431,
+            "score": 0.3978533696,
+            "signal": "cosine"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "content": "[Episode] orchard apples episode",
+          "match_reason": {
+            "cosine": 0.5416657925,
+            "rrf": 0.0320020481,
+            "score": 0.5416657925,
+            "signal": "cosine"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "content": "[Episode] chat apples episode",
+          "match_reason": {
+            "cosine": 0.5832774043,
+            "rrf": 0.0327868852,
+            "score": 0.5832774043,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
+        },
+        {
+          "content": "apples with a garbage stamp",
+          "context_type": "conversation",
+          "source": {
+            "id": "self",
+            "type": "Agent"
+          },
+          "timestamp": "not-a-timestamp"
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "rwc-mixed-offset": {
+    "covers": "recall_with_context: external_context stamps in Z / +00:00 / +09:00 / -05:00 / fractional — TODAY sorted by raw string (byte order), which the temporal-ordering fix will change",
+    "db": {
+      "episodes": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "created_at": "2026-01-01T00:00:06Z",
+          "embedding": "<blob 256B sha256:53580537ea6b5610>",
+          "end_time": null,
+          "id": 1,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 0,
+          "start_time": "2026-01-01T00:00:06Z",
+          "summary": "orchard apples episode"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "created_at": "2026-01-01T00:00:07Z",
+          "embedding": "<blob 256B sha256:c703bbff98a79376>",
+          "end_time": null,
+          "id": 2,
+          "keywords": "k",
+          "project_id": "",
+          "resolved": 1,
+          "start_time": "2026-01-01T00:00:07Z",
+          "summary": "chat apples episode"
+        }
+      ],
+      "memories": [
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples and pears in the orchard",
+          "created_at": "2026-01-01T00:00:01Z",
+          "embedding": "<blob 256B sha256:e9cbb969b457c96e>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "raspberry pi cluster wiring",
+          "created_at": "2026-01-01T00:00:02Z",
+          "embedding": "<blob 256B sha256:e83b4f2ba6cf7699>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples in another project",
+          "created_at": "2026-01-01T00:00:03Z",
+          "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "proj-b",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "chat",
+          "content": "apples discussed in chat",
+          "created_at": "2026-01-01T00:00:04Z",
+          "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples from a tagged user",
+          "created_at": "2026-01-01T00:00:05Z",
+          "embedding": "<blob 256B sha256:1eb29214c7399141>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"id\": \"discord:42\"}",
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with a ragged vector",
+          "created_at": "2026-01-01T00:00:08Z",
+          "embedding": "<blob 32B sha256:06236c5cf7141494>",
+          "id": 6,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "agent_id": "a1",
+          "channel": "",
+          "content": "apples with no vector",
+          "created_at": "2026-01-01T00:00:09Z",
+          "embedding": null,
+          "id": 7,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2026-01-01T00:00:09Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "content": "apples at seven, spelled in EST",
+          "context_type": "conversation",
+          "source": {
+            "id": "self",
+            "type": "Agent"
+          },
+          "timestamp": "2025-12-31T19:00:07-05:00"
+        },
+        {
+          "content": "apples at one and a half, fractional",
+          "context_type": "conversation",
+          "source": {
+            "id": "self",
+            "type": "Agent"
+          },
+          "timestamp": "2026-01-01T00:00:01.500000Z"
+        },
+        {
+          "content": "apples in another project",
+          "match_reason": {
+            "cosine": 0.4411262731,
+            "rrf": 0.0314976659,
+            "score": 0.4411262731,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.5544837998,
+            "rrf": 0.0322577957,
+            "score": 0.5544837998,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "content": "apples at five, spelled with +00:00",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:u-2",
+            "name": "bob",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:05+00:00"
+        },
+        {
+          "content": "apples from a tagged user",
+          "match_reason": {
+            "cosine": 0.3978533696,
+            "rrf": 0.0310094431,
+            "score": 0.3978533696,
+            "signal": "cosine"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "content": "[Episode] orchard apples episode",
+          "match_reason": {
+            "cosine": 0.5416657925,
+            "rrf": 0.0320020481,
+            "score": 0.5416657925,
+            "signal": "cosine"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "content": "[Episode] chat apples episode",
+          "match_reason": {
+            "cosine": 0.5832774043,
+            "rrf": 0.0327868852,
+            "score": 0.5832774043,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
+        },
+        {
+          "content": "apples at three, spelled in JST",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:u-1",
+            "name": "alice",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T09:00:03+09:00"
+        }
+      ]
     },
     "seam": "store-recall-health",
     "thresholds": {}
