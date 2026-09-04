@@ -247,3 +247,152 @@ def test_the_local_embedding_stays_in_step_with_conftest():
             f"the two fake embeddings disagree on {text!r} -- reconcile them and "
             "re-capture the golden"
         )
+
+
+# ---------------------------------------------------------------------------
+# The harness's own integrity: an observation must be a fact about the scenario,
+# not about the run order
+# ---------------------------------------------------------------------------
+#
+# `observe` empties the tables between scenarios, but the package also keeps
+# module-level state that a scenario writes and the next one reads. Two such
+# leaks were live when these tests were written (see `behaviour_252._reset`), and
+# neither announced itself: they do not raise, they change what the golden
+# records. A golden captured under a leak is a recording of one particular
+# ordering, so every equivalence claim above rests on these two tests.
+#
+# They are shaped to fail for one reason each. The first needs a scenario whose
+# answer depends on the pool SIZE, so it only bites when a count leaks; the
+# second needs a scenario that fires the degraded advisory, so it only bites when
+# the advisory's suppression memory leaks. Deleting either line from `_reset`
+# turns exactly one of them red.
+
+
+async def _seed_probe(ctx, n_filler: int, agent: str) -> None:
+    """`n_filler` embedded rows that do not match the query, plus six that match
+    it lexically and carry NO embedding.
+
+    The six come back unscored, and an unscored row survives the quality gate
+    only when the pool holds at least 100 rows (`_apply_quality_gate`'s volume
+    rule). So this corpus answers with six rows or with none, decided purely by
+    the pool count the gate is handed -- which is what makes a leaked count
+    visible as a behavioural difference rather than an internal one.
+    """
+    from behaviour_252 import _mem_raw, pack
+
+    db = ctx.db
+    for i in range(n_filler):
+        await _mem_raw(
+            db, agent=agent, content=f"filler text number {i}",
+            timestamp=f"2026-01-02T00:00:{i % 60:02d}Z",
+            created_at=f"2026-01-02 00:00:{i % 60:02d}",
+            blob=pack(f"filler text number {i}"),
+        )
+    for i in range(6):
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp, created_at) VALUES (?,?,?,?)",
+            (agent, f"apples row {i}", f"2026-01-01T00:00:{i:02d}Z", f"2026-01-01 00:00:{i:02d}"),
+        )
+    await db.commit()
+
+
+def _rescope(observation: dict, agent: str) -> dict:
+    """Replace one arm's agent id with a placeholder so two arms in different
+    isolation scopes compare as the same observation."""
+    return json.loads(to_json(observation).replace(agent, "<agent>"))
+
+
+def _pool_size_probe(sid: str, n_filler: int, agent: str = "probe"):
+    from behaviour_252 import Scenario, install_local
+
+    async def run(ctx):
+        from cpersona import memory_handlers
+
+        install_local(ctx)
+        return await memory_handlers.do_recall(agent, "apples", 6)
+
+    return Scenario(
+        id=sid,
+        seam="harness-integrity",
+        covers="the recall pool count the quality gate is handed",
+        run=run,
+        seed=lambda ctx: _seed_probe(ctx, n_filler, agent),
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_observation_does_not_depend_on_the_scenario_that_ran_before_it():
+    """A 106-row corpus must answer the same whichever corpus preceded it.
+
+    `scope_stats` caches the pool counts per isolation scope, and BOTH of its
+    invalidation paths are blind inside this harness: the write-generation
+    counter is bumped in `database.py`'s write seam and these fixtures INSERT on
+    the connection directly, and the TTL cannot elapse between two scenarios
+    microseconds apart. So without an explicit clear the second scenario is gated
+    on the first one's pool size.
+
+    Each arm runs a 106-row corpus after a 6-row one; they differ only in whether
+    that predecessor shared the isolation scope. The cache is keyed on
+    (agent_id, project_id, channel), so the control's predecessor -- under its own
+    agent -- cannot leave an entry the control's own run would read, and that run
+    therefore counts for real.
+
+    The two arms must not share a scope either, and that is load-bearing rather
+    than tidy. A stale entry is sticky: the run that reads it returns before the
+    recompute, so it neither corrects the entry nor refreshes its stamp. Whichever
+    arm touches a key first therefore fixes the answer every later run under that
+    key receives, and the arms agree no matter what the code does. Two earlier
+    drafts of this test shared a key -- once poisoned toward the wrong answer and
+    once toward the right one -- and both stayed green against the live bug.
+    """
+    control = _pool_size_probe("probe-large", 100, agent="scope-control")
+    leaked = _pool_size_probe("probe-large", 100, agent="scope-leaked")
+
+    await observe(_pool_size_probe("probe-small", 0, agent="scope-control-pred"))
+    control_obs = _rescope(await observe(control), "scope-control")
+
+    await observe(_pool_size_probe("probe-small", 0, agent="scope-leaked"))
+    leaked_obs = _rescope(await observe(leaked), "scope-leaked")
+
+    assert _structures_equal(leaked_obs, control_obs), (
+        "the same corpus answered differently depending on what ran before it -- "
+        "module state survived `_reset`, so the golden records a run order rather "
+        "than a behaviour:\n"
+        + "".join(
+            difflib.unified_diff(
+                to_json(_round_for_diff(control_obs)).splitlines(keepends=True),
+                to_json(_round_for_diff(leaked_obs)).splitlines(keepends=True),
+                fromfile="106 rows, after a 6-row scenario in ANOTHER scope",
+                tofile="106 rows, after a 6-row scenario in the SAME scope",
+            )
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_repeating_a_scenario_reproduces_it():
+    """The degraded advisory fires the full runbook once per episode and a short
+    reminder afterwards, and that "once" is module state in `cpersona.health`.
+
+    This harness pins `EMBEDDING_MODE=none`, so every recall scenario enters the
+    `hint` state and one of them records the advisory in the golden. Without a
+    reset the payload it records -- 1098 characters or 151 -- is decided by
+    whether any earlier scenario in the run already fired one.
+    """
+    scenario = next(s for s in SCENARIOS if s.id == "recall-empty-query-pure-recency")
+
+    first = await observe(scenario)
+    second = await observe(scenario)
+
+    assert _structures_equal(first, second), (
+        "a scenario observed differently the second time in one process -- module "
+        "state survived `_reset`:\n"
+        + "".join(
+            difflib.unified_diff(
+                to_json(_round_for_diff(first)).splitlines(keepends=True),
+                to_json(_round_for_diff(second)).splitlines(keepends=True),
+                fromfile="first run",
+                tofile="second run",
+            )
+        )
+    )
