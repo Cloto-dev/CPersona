@@ -326,9 +326,15 @@ jobs:
         # serving every tool -- delete_agent_data included -- to whoever reaches
         # the port.
         run: |
+          # `run:` is `bash -e`, and this is the one step whose command is
+          # SUPPOSED to fail. Setting -u/-o here does not clear the -e the shell
+          # was invoked with, so a bare `docker run` on its own line ends the step
+          # before `$?` is ever read -- and the step then fails with no message,
+          # which reads as the refusal being broken rather than working. Capture
+          # the status on the same line as the command that produces it.
           set -uo pipefail
-          docker run --rm -e CPERSONA_UPDATE_CHECK=false "$IMAGE" > /tmp/refusal.txt 2>&1
-          started=$?
+          started=0
+          docker run --rm -e CPERSONA_UPDATE_CHECK=false "$IMAGE" > /tmp/refusal.txt 2>&1 || started=$?
           if [ "$started" -eq 0 ]; then
             echo "::error::the container served HTTP with no CPERSONA_AUTH_TOKEN"
             cat /tmp/refusal.txt
