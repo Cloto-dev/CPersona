@@ -74,6 +74,28 @@ instead — one server, several clients, reachable over a network.
 | `CPERSONA_OAUTH_SCOPES` | *(unset)* | Scope advertised on the 401 and in `scopes_supported`. The client sends back exactly what is asked for, and the authorization server refuses a scope it does not define with `invalid_scope` — advertise only scopes your issuer defines |
 | `CPERSONA_OAUTH_JWKS_URI` | *(unset)* | Where the issuer's signing keys are, for a provider whose metadata this server cannot read. Normally discovered from the issuer's own metadata; ignored unless exactly one authorization server is configured |
 | `CPERSONA_ALIAS_LEDGER_FILE` | `alias_ledger.json` beside the DB | Where the per-subject alias ledger lives — the server-written `(issuer, subject) → alias` map behind `"per_subject": true` rows (see [OAuth design §12](OAUTH_DESIGN.md)). Defaults beside the database because the server writes it, unlike the operator-owned ACL file |
+| `CPERSONA_HTTP_MAX_BODY_BYTES` | `4194304` | Budget for one request body, in bytes, counted as it arrives rather than read from `Content-Length` |
+| `CPERSONA_HTTP_BODY_LIMIT_MODE` | `warn` | What crossing that budget costs: `warn` reports it and serves the request anyway, `reject` answers 413 and stops reading, `off` disables the accounting |
+
+**The body budget measures, it does not yet refuse.** Every other cap in this
+server — `CPERSONA_MAX_CONTENT_LENGTH` and the rest — is applied by a tool
+handler, which runs after the whole body has been received and parsed, so those
+caps bound what is stored and say nothing about what it costs to arrive.
+`CPERSONA_HTTP_MAX_BODY_BYTES` is counted where the bytes appear, summed across
+the chunks the server actually receives: a body sent in chunks with no
+`Content-Length`, and a body whose `Content-Length` understates it, are both
+measured by what arrived. The default of 4 MiB is roughly 29x the largest single
+`store` this server can accept and 10x a `recall_with_context` carrying 200
+conversation turns, so ordinary traffic is nowhere near it.
+
+The default mode is `warn` on purpose: the request is served in full and the
+crossing is logged (at the 1st, 10th and 100th occurrence, so the line neither
+floods nor disappears). Nothing in this project knows what your payloads
+actually look like, and a limit that refuses before anyone has measured is a
+limit set by guessing — so run with the default, read the log, and set
+`CPERSONA_HTTP_BODY_LIMIT_MODE=reject` once you know the number fits your
+traffic. Both paths are tested; enabling enforcement changes a setting, not a
+code path.
 
 **Discovery is off until you turn it on.** A client that supports OAuth looks for RFC 9728
 metadata; finding none, it falls through to asking a human to type in a client id — correct

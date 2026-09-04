@@ -226,6 +226,31 @@ async def test_an_oversized_body_stops_being_read_in_reject_mode():
 
 
 @pytest.mark.asyncio
+async def test_the_chunk_that_crossed_the_budget_is_not_handed_on():
+    """The chunk that broke the budget must not reach the application either.
+
+    Written after a mutation survived: with 1 KiB chunks, deleting the abort
+    after the 413 changes nothing observable, because the guard at the top of
+    the next ``receive()`` already stops the read. The difference only appears
+    when ONE chunk is itself oversized — then the deleted line is the difference
+    between the application never seeing it and the application receiving the
+    whole thing and parsing it, which is where the measured 3.25x amplification
+    is paid. So the fixture, not the assertion, was what could not see the bug.
+
+    uvicorn's h11 reader happens to hand up ~64 KiB at a time, so this shape is
+    not what that server produces today. The ASGI contract puts no bound on a
+    chunk, and the property is about this middleware, not about one server's
+    buffering.
+    """
+    app, seen, _ = _make_app(mode="reject")
+    status, _ = await _post(app, [b"x" * (BUDGET * 16)])
+    assert status == 413
+    assert seen["bytes"] == 0, (
+        f"the oversized chunk was handed to the application anyway: {seen['bytes']} bytes"
+    )
+
+
+@pytest.mark.asyncio
 async def test_warn_mode_delivers_the_whole_body_and_still_counts_it():
     """The shipped default changes nothing a caller can observe.
 

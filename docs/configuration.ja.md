@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:1838f58d7db2215df9d96698c49e762fe1651cad -->
+<!-- i18n-source: docs/configuration.md@blob:88cd40a8a8a25f1221ed61deba1ee20b8dbf51fe -->
 
 # 設定リファレンス
 
@@ -78,6 +78,26 @@
 | `CPERSONA_OAUTH_SCOPES` | *(未設定)* | 401 と `scopes_supported` で広告する scope。クライアントは要求されたとおりの scope を返してきて、authorization server は自分が定義しない scope を `invalid_scope` で拒否する — issuer が定義する scope だけを広告すること |
 | `CPERSONA_OAUTH_JWKS_URI` | *(未設定)* | このサーバーが metadata を読めない provider のための、issuer の署名鍵の所在。通常は issuer 自身の metadata から解決される。authorization server がちょうど 1 つのときだけ有効 |
 | `CPERSONA_ALIAS_LEDGER_FILE` | DB と同じ場所の `alias_ledger.json` | subject 別 alias 台帳の置き場所 — `"per_subject": true` の行の背後にある、サーバーが書く `(issuer, subject) → alias` の対応表 ([OAuth 設計 §12](OAUTH_DESIGN.md))。運用者が所有する ACL ファイルと違い、これはサーバーが書くため既定でデータベースの隣に置かれます |
+| `CPERSONA_HTTP_MAX_BODY_BYTES` | `4194304` | リクエストボディ 1 本あたりの予算 (バイト)。`Content-Length` を読むのではなく、到着したバイトを数えます |
+| `CPERSONA_HTTP_BODY_LIMIT_MODE` | `warn` | 予算を超えたときの扱い: `warn` は記録した上でそのまま応答し、`reject` は 413 を返して読み取りを止め、`off` は計測自体を無効にします |
+
+**ボディ予算は「測る」ものであって、まだ「拒否する」ものではありません。** このサーバーの
+他の上限 — `CPERSONA_MAX_CONTENT_LENGTH` など — はすべてツールハンドラが適用するもので、
+ハンドラはボディを全部受信して parse し終えた後に動きます。つまりそれらは「何が保存されるか」
+を縛るだけで、「到着させるのにいくらかかるか」は縛っていません。
+`CPERSONA_HTTP_MAX_BODY_BYTES` はバイトが現れる場所、すなわちサーバーが実際に受け取った
+チャンクの合計で数えます。`Content-Length` を持たない分割送信も、`Content-Length` が実際より
+小さいボディも、どちらも到着した実量で測られます。既定の 4 MiB は、このサーバーが受理しうる
+最大の `store` のおよそ 29 倍、200 ターンの会話を載せた `recall_with_context` のおよそ 10 倍
+なので、通常のトラフィックが近づくことはありません。
+
+既定のモードが `warn` なのは意図的です。リクエストはそのまま完全に処理され、超過だけが
+ログに出ます (1 回目・10 回目・100 回目に出るので、埋もれることも消えることもありません)。
+あなたのペイロードが実際にどんな分布なのかを、このプロジェクト側は知りません。誰も測って
+いないうちに拒否する上限は、当て推量で決めた上限です。まず既定のまま動かしてログを読み、
+その数値が自分のトラフィックに合うと確認できてから `CPERSONA_HTTP_BODY_LIMIT_MODE=reject`
+を設定してください。どちらの経路もテスト済みで、強制の有効化は設定の変更であって
+コード経路の追加ではありません。
 
 **discovery は明示的に有効化するまで無効です。** OAuth に対応したクライアントは
 RFC 9728 の metadata を探し、見つからなければ人間に client id を手で入力させる段まで
