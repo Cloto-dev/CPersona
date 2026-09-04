@@ -1,0 +1,71 @@
+# CPersona with the embedding service it recommends, as two containers.
+#
+# Recall has three layers and only one of them needs another process: vector
+# search. Run CPersona alone and it still answers -- on FTS5 and keyword search,
+# and it says so on every recall. This file is the shortest path to the third
+# layer.
+#
+#   export CPERSONA_AUTH_TOKEN=$(openssl rand -hex 32)
+#   docker compose run --rm embedding cembedding-download-model --model jina-v5-nano
+#   docker compose up -d
+#
+# The middle line is not optional bookkeeping. Left to itself the embedding
+# server fetches its weights on the first request -- roughly 800 MB for this
+# model -- with the port already accepting connections it cannot answer yet.
+# Downloading once into the volume turns that into a step you watch instead of a
+# timeout you diagnose.
+#
+# Nothing here publishes the embedding port. CPersona reaches it over the
+# network this file creates, and that is the whole of its audience: the HTTP
+# embedding client sends no Authorization header today, so a token on that
+# surface would refuse the one caller it has. Publishing the port would leave an
+# endpoint with no way to authenticate anything reachable from the host.
+#
+# Both images are built here; neither is published. The revision of the
+# embedding server is pinned below, so `docker compose build` produces the same
+# thing tomorrow.
+
+name: cpersona
+
+services:
+  embedding:
+    # Pinned to a commit rather than a branch or a release: the bind address of
+    # the REST surface only became configurable at this revision, and before it
+    # a second container could not reach the endpoint at all. A tag would be
+    # nicer to read and does not exist yet.
+    build:
+      context: https://github.com/Cloto-dev/CEmbedding.git#2c724393acac8a51c59bc1543c829f7d1337513b
+    environment:
+      # jina-v5-nano is the model CPersona is tuned for. Changing it here means
+      # changing what the download line above fetches, and re-embedding whatever
+      # is already stored -- vectors of different widths do not compare.
+      EMBEDDING_PROVIDER: onnx_jina_v5_nano
+      EMBEDDING_INDEX_ENABLED: "false"
+    volumes:
+      - embedding-model:/data
+    restart: unless-stopped
+
+  cpersona:
+    build: .
+    depends_on:
+      embedding:
+        # Waits for the endpoint to answer HTTP, which is not the same as the
+        # model being loaded: the first embedding call is what proves that, and
+        # `check_health` is where it is visible. Memories stored before the
+        # backend answers are kept without vectors until a re-embed pass.
+        condition: service_healthy
+    environment:
+      CPERSONA_AUTH_TOKEN: ${CPERSONA_AUTH_TOKEN:?set CPERSONA_AUTH_TOKEN — the HTTP transport refuses to start without one}
+      CPERSONA_EMBEDDING_MODE: http
+      CPERSONA_EMBEDDING_URL: http://embedding:8401/embed
+    ports:
+      - "${CPERSONA_PORT:-8402}:8402"
+    volumes:
+      - cpersona-data:/data
+    restart: unless-stopped
+
+volumes:
+  # The memory. Losing this is losing what the server is for.
+  cpersona-data:
+  # The weights. Losing this costs a download, not data.
+  embedding-model:

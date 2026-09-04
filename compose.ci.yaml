@@ -1,0 +1,28 @@
+# The overlay the gate runs with:
+#
+#   docker compose -f compose.yaml -f compose.ci.yaml up -d
+#
+# Two differences from the file it overlays, and both are about what a gate can
+# honestly ask.
+#
+# The model is the smallest real one rather than the one CPersona is tuned for.
+# What is on trial here is whether CPersona can reach the embedding service and
+# get vectors back through it -- reachability and wiring. How good those vectors
+# are is a question about the model, answered by the embedding server's own
+# tests, and 90 MB answers the wiring question exactly as well as 800 MB while
+# keeping the download off the critical path of every run. A stub would answer
+# it worse than either: a double drifts behind the contract it imitates, and the
+# contract is the thing being tested.
+#
+# The update check is off. The server asks pypi.org for a newer release at
+# startup, and a gate that reaches a third party is a gate that goes red for
+# reasons that are not about the commit.
+
+services:
+  embedding:
+    environment:
+      EMBEDDING_PROVIDER: onnx_miniml
+
+  cpersona:
+    environment:
+      CPERSONA_UPDATE_CHECK: "false"
