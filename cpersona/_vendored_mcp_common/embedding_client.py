@@ -13,6 +13,7 @@ the relevant server's startup code.
 
 import hashlib
 import logging
+import math
 import struct
 import time
 from collections import OrderedDict
@@ -26,6 +27,30 @@ logger = logging.getLogger(__name__)
 DEFAULT_CACHE_SIZE = 256
 DEFAULT_CACHE_TTL = 300  # seconds
 DEFAULT_TIMEOUT_SECS = 30
+
+# Limits on what an embedding backend is allowed to hand back. The backend sits
+# outside this process's authentication boundary, so its response is parsed as
+# untrusted input: a malformed one must fail the call, never travel far enough to
+# be packed into a caller's storage.
+#
+# The values are chosen to sit far above real traffic so that no legitimate
+# response is refused. The largest batch any known caller issues is 32 texts and
+# the widest model in use is 1024-dimensional, which is ~2.6 MB of JSON; the
+# budgets below leave more than an order of magnitude of headroom above that.
+DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024  # 64 MiB
+DEFAULT_MAX_DIMENSION = 16384
+DEFAULT_MAX_BATCH_SIZE = 512
+
+
+class EmbeddingResponseError(ValueError):
+    """An embedding backend returned something that must not be used.
+
+    Deliberately a :class:`ValueError`. Every caller of :meth:`EmbeddingClient.embed`
+    already treats ``ValueError`` as "this call produced nothing", so a rejection
+    here reaches them through the failure path they already have — as ``None`` plus
+    an :class:`EmbedOutcome` carrying the reason — rather than as a new exception
+    type they would have to learn to catch.
+    """
 
 
 @dataclass(frozen=True)
@@ -72,6 +97,11 @@ def _safe_endpoint(url: str) -> str:
     return urlunsplit((parts.scheme, host, parts.path, "", "")) or "<unset>"
 
 
+def _describe(value: object) -> str:
+    """Name a rejected value by type without quoting it back into the message."""
+    return type(value).__name__
+
+
 class EmbeddingClient:
     """Client for computing vector embeddings via HTTP or OpenAI-compatible API.
 
@@ -88,6 +118,10 @@ class EmbeddingClient:
         cache_size: int = DEFAULT_CACHE_SIZE,
         cache_ttl: int = DEFAULT_CACHE_TTL,
         timeout: int = DEFAULT_TIMEOUT_SECS,
+        expected_dimension: int = 0,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        max_dimension: int = DEFAULT_MAX_DIMENSION,
+        max_batch_size: int = DEFAULT_MAX_BATCH_SIZE,
     ):
         self.mode = mode
         self._http_url = http_url
@@ -102,6 +136,15 @@ class EmbeddingClient:
         self._timeout = timeout
         self.cache_hits = 0
         self.cache_misses = 0
+        self._max_response_bytes = max_response_bytes
+        self._max_dimension = max_dimension
+        self._max_batch_size = max_batch_size
+        # The width this client will accept. A caller that knows the model states it
+        # here; otherwise the first valid response fixes it for the life of the
+        # instance, so a backend that silently changes model mid-process is caught
+        # rather than writing two incompatible vector widths into one store. A
+        # restart re-learns it, which is the intended way to change models.
+        self._expected_dimension = expected_dimension
 
     async def initialize(self):
         """Create persistent HTTP client."""
@@ -221,6 +264,151 @@ class EmbeddingClient:
 
         return result, EmbedOutcome(attempted=True, ok=True)
 
+    # ------------------------------------------------------------------
+    # Response boundary
+    #
+    # The backend is outside this process's authentication boundary, so its
+    # response is validated in a fixed order before any of it reaches a caller:
+    # byte budget, then parse, then shape, then batch cardinality, then
+    # dimension, then finite numbers, then dimension consistency. The order
+    # matters — each step is what makes the next one safe to attempt.
+    # ------------------------------------------------------------------
+
+    def _parse_within_budget(self, response) -> object:
+        """Steps 1-2: refuse an oversized body, then parse it.
+
+        The declared length is checked first, so a backend that announces a huge
+        body is refused on its own word. The received length is checked too, since
+        a declaration can be absent or false.
+
+        Known limit: httpx has already buffered the body by the time this runs, so
+        this bounds what gets *parsed* (where a JSON document becomes a much larger
+        Python object graph), not what gets *received*. Bounding the receive side
+        means streaming the response, which changes the request path; it is not
+        done here.
+        """
+        limit = self._max_response_bytes
+        if limit <= 0:
+            return response.json()
+
+        declared = None
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            try:
+                raw_declared = headers.get("Content-Length")
+            except AttributeError:
+                raw_declared = None
+            if raw_declared is not None:
+                try:
+                    declared = int(raw_declared)
+                except (TypeError, ValueError):
+                    declared = None
+        if declared is not None and declared > limit:
+            raise EmbeddingResponseError(
+                f"embedding response declares {declared} bytes, over the {limit}-byte budget"
+            )
+
+        body = getattr(response, "content", None)
+        if isinstance(body, (bytes, bytearray)) and len(body) > limit:
+            raise EmbeddingResponseError(
+                f"embedding response is {len(body)} bytes, over the {limit}-byte budget"
+            )
+
+        return response.json()
+
+    def _validate_batch(self, raw: object, expected_count: int) -> list[list[float]]:
+        """Steps 3-7: shape, cardinality, dimension, finite numbers, consistency.
+
+        Returns the vectors as plain lists of floats. Raises
+        :class:`EmbeddingResponseError` — a ``ValueError`` — for anything a caller
+        must not store.
+
+        An empty batch is not a rejection: it is the "a 2xx carried no embeddings"
+        case that ``embed_with_outcome`` already reports as a failure with its own
+        wording, and re-reporting it here would change which message a user reads.
+        """
+        if raw is None or raw == []:
+            return raw  # type: ignore[return-value]
+
+        if not isinstance(raw, list):
+            raise EmbeddingResponseError(
+                f"embedding response is {_describe(raw)}, expected a list of vectors"
+            )
+
+        if len(raw) > self._max_batch_size > 0:
+            raise EmbeddingResponseError(
+                f"embedding response carries {len(raw)} vectors, over the "
+                f"{self._max_batch_size}-vector cap"
+            )
+
+        # One vector per input text. A short list is the dangerous case: zip() pairs
+        # it silently against the inputs, so the wrong text keeps the wrong vector.
+        if expected_count and len(raw) != expected_count:
+            raise EmbeddingResponseError(
+                f"embedding response carries {len(raw)} vectors for {expected_count} texts"
+            )
+
+        validated: list[list[float]] = []
+        for position, vector in enumerate(raw):
+            validated.append(self._validate_vector(vector, position))
+
+        return validated
+
+    def _validate_vector(self, vector: object, position: int) -> list[float]:
+        """One vector: shape, width, and every element finite and numeric."""
+        if not isinstance(vector, list):
+            raise EmbeddingResponseError(
+                f"embedding {position} is {_describe(vector)}, expected a list of numbers"
+            )
+
+        width = len(vector)
+        if width == 0:
+            raise EmbeddingResponseError(f"embedding {position} is empty")
+        if width > self._max_dimension > 0:
+            raise EmbeddingResponseError(
+                f"embedding {position} has {width} dimensions, over the "
+                f"{self._max_dimension}-dimension cap"
+            )
+
+        expected = self._expected_dimension
+        if expected and width != expected:
+            raise EmbeddingResponseError(
+                f"embedding {position} has {width} dimensions, expected {expected}"
+            )
+
+        out: list[float] = []
+        for index, value in enumerate(vector):
+            # bool is a subclass of int, so JSON `true` would pass a bare numeric
+            # check and pack as 1.0. Refuse it as the non-number it is.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise EmbeddingResponseError(
+                    f"embedding {position}[{index}] is {_describe(value)}, expected a number"
+                )
+            number = float(value)
+            if not math.isfinite(number):
+                raise EmbeddingResponseError(
+                    f"embedding {position}[{index}] is not finite"
+                )
+            # Finite in float64 is not enough: these are stored as float32, where
+            # 1e300 becomes inf. `pack_embedding` is the packer that will run, so
+            # ask it rather than a constant — and it raises OverflowError, which is
+            # not a ValueError and would otherwise escape every caller's except.
+            try:
+                struct.pack("<f", number)
+            except OverflowError:
+                raise EmbeddingResponseError(
+                    f"embedding {position}[{index}] does not fit in float32"
+                ) from None
+            out.append(number)
+
+        # Learn the width from the first response this client accepts, so a backend
+        # that changes model mid-process is refused rather than mixing two widths
+        # into one store.
+        if not self._expected_dimension:
+            self._expected_dimension = width
+
+        return out
+
     def _endpoint(self) -> str:
         """The URL this client posts to under its current mode."""
         return self._api_url if self.mode == "api" else self._http_url
@@ -248,8 +436,12 @@ class EmbeddingClient:
             json={"texts": texts},
         )
         response.raise_for_status()
-        data = response.json()
-        return data.get("embeddings")
+        data = self._parse_within_budget(response)
+        if not isinstance(data, dict):
+            raise EmbeddingResponseError(
+                f"embedding response is {_describe(data)}, expected an object"
+            )
+        return self._validate_batch(data.get("embeddings"), len(texts))
 
     async def _embed_via_api(self, texts: list[str]) -> list[list[float]] | None:
         """Call OpenAI-compatible embedding API directly."""
@@ -264,10 +456,28 @@ class EmbeddingClient:
             json={"model": self._model, "input": texts},
         )
         response.raise_for_status()
-        data = response.json()
-        embeddings = [item["embedding"] for item in data["data"]]
+        data = self._parse_within_budget(response)
+        if not isinstance(data, dict):
+            raise EmbeddingResponseError(
+                f"embedding response is {_describe(data)}, expected an object"
+            )
+        items = data["data"]
+        if not isinstance(items, list):
+            raise EmbeddingResponseError(
+                f"embedding response `data` is {_describe(items)}, expected a list"
+            )
+        raw = []
+        for position, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise EmbeddingResponseError(
+                    f"embedding {position} is {_describe(item)}, expected an object"
+                )
+            raw.append(item["embedding"])
+        embeddings = self._validate_batch(raw, len(texts))
 
-        # L2-normalize for consistent cosine similarity via dot product
+        # L2-normalize for consistent cosine similarity via dot product. Every
+        # element is already known to be a finite number, so the norm cannot come
+        # back as NaN and quietly turn a whole vector into NaN by division.
         result = []
         for emb in embeddings:
             vec = np.array(emb, dtype=np.float32)
