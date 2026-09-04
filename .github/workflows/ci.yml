@@ -268,3 +268,151 @@ jobs:
           name: mutation-diff-report
           path: mutation-diff-report.json
           if-no-files-found: warn
+
+  container:
+    # The container path was a file nobody executed. It shipped for five months
+    # with `CMD ["python", "server.py"]` under a transport that defaults to
+    # stdio, so the image bound nothing while EXPOSE named a port the server does
+    # not use; there was no volume, so the database of a *persistent memory*
+    # server died with the container; and `COPY . .` with no .dockerignore put
+    # the git history and a local virtualenv inside the image. None of that is
+    # hard to get right. What made it wrong for five months is that no gate ever
+    # ran it, and a corrected Dockerfile with no gate is the same file with a
+    # later date on it.
+    #
+    # So this job does not lint the Dockerfile. It builds the image, starts it,
+    # and asks the questions a user would: does it refuse to serve without a
+    # token, does it answer through a published port, does what I store survive
+    # the container being destroyed.
+    #
+    # CPERSONA_UPDATE_CHECK is off in every run below. The server asks pypi.org
+    # for a newer release at startup, and a gate that reaches a third party is a
+    # gate that goes red for reasons that are not about this commit.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      IMAGE: cpersona:ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t "$IMAGE" .
+
+      - name: The build context carries only the wheel's inputs
+        # .dockerignore is an allowlist, and an allowlist that stops matching
+        # fails by admitting more rather than by erroring. These three are what
+        # the previous `COPY . .` put in the image and what nothing at runtime
+        # needs, so their absence is the readable form of "the context is still
+        # scoped".
+        run: |
+          set -euo pipefail
+          # Not named `path`: in zsh that identifier is tied to PATH, and
+          # assigning to it empties the command search path. This block runs
+          # under bash, where it is an ordinary name -- but the same loop was
+          # written by hand in a zsh shell first, where it made `docker` itself
+          # not-found and every check "pass".
+          for entry in /.git /app /src; do
+            if docker run --rm --entrypoint sh "$IMAGE" -c "test -e $entry"; then
+              echo "::error::$entry exists in the image — the build context admitted more than the wheel's inputs"
+              exit 1
+            fi
+          done
+          echo "no repository tree in the image"
+
+      - name: It refuses to serve HTTP without a token
+        # The server's own guard: a published container port forwards to whatever
+        # the process bound, so binding inside the container is not evidence that
+        # only the container can reach it. An image that starts here is an image
+        # serving every tool -- delete_agent_data included -- to whoever reaches
+        # the port.
+        run: |
+          # `run:` is `bash -e`, and this is the one step whose command is
+          # SUPPOSED to fail. Setting -u/-o here does not clear the -e the shell
+          # was invoked with, so a bare `docker run` on its own line ends the step
+          # before `$?` is ever read -- and the step then fails with no message,
+          # which reads as the refusal being broken rather than working. Capture
+          # the status on the same line as the command that produces it.
+          set -uo pipefail
+          started=0
+          docker run --rm -e CPERSONA_UPDATE_CHECK=false "$IMAGE" > /tmp/refusal.txt 2>&1 || started=$?
+          if [ "$started" -eq 0 ]; then
+            echo "::error::the container served HTTP with no CPERSONA_AUTH_TOKEN"
+            cat /tmp/refusal.txt
+            exit 1
+          fi
+          if ! grep -q "CPERSONA_AUTH_TOKEN" /tmp/refusal.txt; then
+            echo "::error::it exited $started, but not with the token refusal — the failure is a different one"
+            cat /tmp/refusal.txt
+            exit 1
+          fi
+          echo "refused, and said why"
+
+      - name: It serves, and only to a caller carrying the token
+        run: |
+          set -euo pipefail
+          docker volume create cpersona-ci > /dev/null
+          docker run -d --name cp-ci -p 18402:8402 \
+            -e CPERSONA_AUTH_TOKEN=ci-token -e CPERSONA_UPDATE_CHECK=false \
+            -v cpersona-ci:/data "$IMAGE" > /dev/null
+          ./.github/scripts/wait-for-healthy.sh cp-ci
+          uid=$(docker exec cp-ci id -u)
+          if [ "$uid" != "10001" ]; then
+            echo "::error::the server runs as uid $uid, expected the unprivileged 10001"
+            exit 1
+          fi
+          anon=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18402/mcp \
+                 -H 'Content-Type: application/json' -d '{}' --max-time 10)
+          if [ "$anon" != "401" ]; then
+            echo "::error::an anonymous request got $anon, expected 401"
+            exit 1
+          fi
+          echo "healthy, uid 10001, anonymous request refused"
+
+      - name: What it stores outlives the container that wrote it
+        # The claim the old image could not make. A row written through the API,
+        # the container destroyed, and the row read back by a different container
+        # from the same volume -- because "persistent memory" that lasts as long
+        # as one container process is the product's opposite.
+        #
+        # Read back with list_memories rather than recall: recall ranks, and this
+        # image has no embedding backend, so a ranked read would be asking two
+        # questions and reporting one answer.
+        run: |
+          set -euo pipefail
+          ./.github/scripts/mcp-call.sh store \
+            '{"agent_id":"ci","message":{"content":"the volume claim is what this row tests","source":{"type":"User","id":"ci"}}}' \
+            > /tmp/stored.txt
+          if ! grep -Fq '\"result\": \"stored\"' /tmp/stored.txt; then
+            echo "::error::the store did not report a written row"
+            cat /tmp/stored.txt
+            exit 1
+          fi
+          docker rm -f cp-ci > /dev/null
+          docker run -d --name cp-ci-again -p 18402:8402 \
+            -e CPERSONA_AUTH_TOKEN=ci-token -e CPERSONA_UPDATE_CHECK=false \
+            -v cpersona-ci:/data "$IMAGE" > /dev/null
+          ./.github/scripts/wait-for-healthy.sh cp-ci-again
+          ./.github/scripts/mcp-call.sh list_memories '{"agent_id":"ci","limit":5}' > /tmp/listed.txt
+          if ! grep -Fq "the volume claim is what this row tests" /tmp/listed.txt; then
+            echo "::error::the row did not survive — the volume is not holding the database"
+            cat /tmp/listed.txt
+            exit 1
+          fi
+          echo "the row outlived the container that wrote it"
+
+      - name: The stdio transport answers too
+        # The shape an MCP client spawns as a subprocess, and the documented
+        # alternative to this image's HTTP default. Gated rather than described,
+        # for the reason the whole job exists.
+        run: |
+          set -euo pipefail
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            | docker run -i --name cp-ci-stdio \
+                -e CPERSONA_TRANSPORT=stdio -e CPERSONA_DB_PATH=/tmp/stdio.db \
+                -e CPERSONA_UPDATE_CHECK=false "$IMAGE" > /tmp/stdio.txt 2>/dev/null
+          if ! grep -q '"protocolVersion"' /tmp/stdio.txt; then
+            echo "::error::the stdio transport did not answer initialize"
+            cat /tmp/stdio.txt
+            exit 1
+          fi
+          echo "stdio answered initialize"

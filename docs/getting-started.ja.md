@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:0ea0323ff403a6e887aea698b92c706bbee6b439 -->
+<!-- i18n-source: docs/getting-started.md@blob:75db6129f98b2f4ab3ef1db3bbdd96d4e5d913fc -->
 
 # はじめに
 
@@ -59,6 +59,42 @@ pip install .
 ```
 
 実行は `python -m cpersona` (または `python server.py`)。
+</details>
+
+<details>
+<summary>コンテナで動かす</summary>
+
+```bash
+git clone https://github.com/Cloto-dev/cpersona.git
+cd cpersona
+docker build -t cpersona .
+
+docker volume create cpersona-data
+docker run -d --name cpersona -p 8402:8402 \
+  -e CPERSONA_AUTH_TOKEN="$(openssl rand -hex 32)" \
+  -v cpersona-data:/data cpersona
+```
+
+イメージは公開していないので、ビルドはあなたの手元で行います (配布物はリポジトリ
+そのものです)。動かす前に知っておく価値があるのは 3 点です:
+
+- **このイメージが提供するのは Streamable HTTP トランスポート** (8402) です。
+  MCP クライアントがサブプロセスとして起動する stdio の形にするには、`-i` を付けて
+  明示します: `docker run -i --rm -e CPERSONA_TRANSPORT=stdio -v
+  cpersona-data:/data cpersona`。
+- **`CPERSONA_AUTH_TOKEN` が無いと起動しません。** これはイメージが厳しいのでは
+  ありません — 公開したコンテナポートはプロセスがバインドした先へそのまま転送する
+  ので、コンテナ内でバインドしていることは「コンテナ外から届かない」ことの根拠に
+  なりません。
+- **記憶はコンテナではなくボリュームに載ります。** データベースの置き場所は `/data`
+  で、そこにボリュームを持たないコンテナは「置き換えると忘れる記憶サーバー」です。
+  名前付きボリューム (上記) はそのまま動きます。ホストのディレクトリを bind mount
+  する場合は所有権が引き継がれないので、uid `10001` が書ける状態にするか、
+  `--user "$(id -u)"` を渡してください。
+
+embedding backend を与えるまで recall は keyword/FTS のみです — 次の節を参照し、
+用意できたら `-e CPERSONA_EMBEDDING_MODE=http -e
+CPERSONA_EMBEDDING_URL=http://<host>:8401/embed` を渡してください。
 </details>
 
 サーバーは起動時に pypi.org へ新しいリリースの有無を問い合わせ、結果を `recall`
