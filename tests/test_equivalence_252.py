@@ -19,7 +19,14 @@ from typing import Any
 
 import pytest
 
-from behaviour_252 import SCENARIOS, fake_embed_one, observe, to_json
+from behaviour_252 import (
+    SCENARIOS,
+    _drop_keys_added_since_golden,
+    _without_changed_values,
+    fake_embed_one,
+    observe,
+    to_json,
+)
 
 GOLDEN = Path(__file__).parent / "golden" / "behaviour_252.json"
 
@@ -46,107 +53,6 @@ GOLDEN = Path(__file__).parent / "golden" / "behaviour_252.json"
 # always the pairwise walk above.
 _COMPARE_ABS_TOL = 1e-5
 _DIFF_FLOAT_PLACES = 6
-
-# Keys that did not exist when the golden was recorded.
-#
-# The golden's claim is "the 2.5.2 split changed nothing". A field added
-# deliberately by a LATER version is not that refactor changing behaviour, but it
-# still lands in this diff. The two ways out are not equivalent:
-#
-#   - Re-record the golden. One command, and it makes the file agree with the
-#     code by construction -- which is what the file exists NOT to do. It would
-#     also discard the evidence behind every earlier equivalence claim, not just
-#     this scenario's.
-#   - Name the new key here. The golden keeps every value it recorded under full
-#     comparison, and admitting a key stays a visible, reviewed edit.
-#
-# So: additions are listed, never absorbed. Anything that changes a value the
-# golden already holds still fails, which is the whole point.
-#
-# repairable (2.5.5): every fix_capable check now declares how many
-# rows its fix would write. Additive -- severity, status and counts are
-# unchanged, as this diff itself showed. Guarded by
-# tests/test_255_repairable_contract.py, which is where its behaviour is pinned.
-#
-# The 2.5.5 import/merge integrity batch (bug-218..bug-246) is NOT listed here.
-# It changes recorded VALUES, not just keys -- a move stops deleting rows it never
-# copied, an import stops duplicating episodes, a merged episode keeps its
-# created_at -- so the eleven affected scenarios were re-recorded and the diff on
-# them is the review surface, exactly as the header above prescribes for an
-# intended change. The invariants themselves are pinned in tests/test_review_b.py.
-#
-# checks_run (bug-230): check_health echoes the registry names it executed, the
-# way deep_check always has. Additive -- it reports what the run did instead of
-# changing it -- and it exists because an unrecognised name selected nothing and
-# the all-zero result read as a clean bill of health. Pinned in
-# tests/test_review_c_fixes.py.
-#
-# advisory_scope (bug-251): the degraded advisory now names what its
-# once-per-episode suppression is keyed on, because that state is per PROCESS and
-# a shared transport makes a process several sessions. Additive -- severity,
-# reason, evidence and the runbook this scenario recorded are unchanged, and the
-# recorded run is stdio, where the answer is "session" and nothing downgraded
-# differently. Pinned in tests/test_bug251_advisory_scope.py.
-_KEYS_ADDED_SINCE_GOLDEN = {"repairable", "checks_run", "advisory_scope"}
-
-
-# Values the golden DOES hold that a later version deliberately changed.
-#
-# Different from the additions above, and deliberately harder to use: a recorded
-# value is evidence, so an entry names one scenario, one key path and the change
-# that owns it, and nothing else in that scenario is relaxed.
-#
-# ("health-fix-repairs-warn", ("result", "issues")) — bug-225: a fix run used to
-# answer with the RESIDUAL issue list (empty once the repair converged), which
-# discarded every field a runner emits only under fix=True (`fixed`,
-# `fix_error`, `mapped`, `remaining`) before any caller could read it.
-# `issues` is now what the FIX run found; `severity_summary` and `status` are
-# still the residual verdict and are still compared here, so the bug-059
-# property this scenario was recorded for stays pinned. Behaviour pinned in
-# tests/test_review_c_fixes.py.
-_VALUES_CHANGED_SINCE_GOLDEN = {
-    ("health-fix-repairs-warn", ("result", "issues")),
-}
-
-
-def _drop_keys_added_since_golden(obj: Any, recorded: Any = None) -> Any:
-    """Recursively remove post-golden keys the golden does not hold here.
-
-    Position-aware, not name-only: `checks_run` is new on check_health (bug-230)
-    but deep_check has always emitted it and the golden records it, so a rule
-    keyed on the name alone would delete the RECORDED one from the comparison —
-    quietly retiring the evidence this file exists to keep.
-    """
-    if isinstance(obj, dict):
-        rec = recorded if isinstance(recorded, dict) else {}
-        return {
-            k: _drop_keys_added_since_golden(v, rec.get(k))
-            for k, v in obj.items()
-            if k in rec or k not in _KEYS_ADDED_SINCE_GOLDEN
-        }
-    if isinstance(obj, list):
-        rec = recorded if isinstance(recorded, list) else []
-        return [
-            _drop_keys_added_since_golden(v, rec[i] if i < len(rec) else None)
-            for i, v in enumerate(obj)
-        ]
-    return obj
-
-
-def _without_changed_values(obj: Any, scenario_id: str) -> Any:
-    """Drop the key paths listed in _VALUES_CHANGED_SINCE_GOLDEN for this scenario."""
-    paths = [p for sid, p in _VALUES_CHANGED_SINCE_GOLDEN if sid == scenario_id]
-    if not paths:
-        return obj
-    out = json.loads(json.dumps(obj))
-    for path in paths:
-        node = out
-        for key in path[:-1]:
-            node = node.get(key) if isinstance(node, dict) else None
-        if isinstance(node, dict):
-            node.pop(path[-1], None)
-    return out
-
 
 def _structures_equal(a: Any, b: Any, *, abs_tol: float = _COMPARE_ABS_TOL) -> bool:
     """Deep-compare two JSON-shaped structures with float tolerance.
