@@ -50,6 +50,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 import unicodedata
 from dataclasses import dataclass, field
@@ -2484,6 +2485,122 @@ async def _(ctx):
     return _mask_health_stats(
         await maintenance_handlers.do_check_health(agent_id=_HEALTH_AGENT, fix=True)
     )
+
+
+# ---------------------------------------------------------------------------
+# What does a corpus whose own files are readable by every local account look
+# like from check_health? (the residual of the pre-creation fix)
+#
+# Creating the database owner-only settles a file this version CREATED. An
+# install that upgraded keeps the 0644 files it already had, and that is
+# deliberate -- an existing file's mode belongs to the operator who set it, and
+# a version bump must not revert it. The boot warning added alongside says so
+# for the database, and looks at nothing else: the -wal beside it holds the most
+# recent memories, the calibration sidecar decides recall breadth, the alias
+# ledger decides whose memory space a caller reaches. None of them is read by
+# anything that reports.
+#
+# TODAY these two scenarios differ only in the modes the fixture writes:
+# check_health reads rows, has no opinion about modes, and answers the same for
+# a corpus every account can read as for one only its owner can. That equality
+# is what is being recorded here -- the change these pin is the one that makes
+# the two answers differ.
+#
+# `corpus_modes` is recorded ALONGSIDE the answer on purpose. It is the guard
+# that the fixture can still show a difference at all: a later edit that stops
+# widening the files would otherwise leave a scenario that agrees with its own
+# control for the wrong reason, and agrees with it just as loudly.
+# ---------------------------------------------------------------------------
+
+_PERMS_AGENT = "perm1"
+
+# Widened in the treatment scenario. The index is NOT among them: a file at that
+# path that is not a valid index is a different finding (check_vector_index
+# reports it), and mixing the two would make this scenario answer two questions.
+_PERMS_WIDENED = ("db", "wal", "calibration", "update-cache", "alias-ledger")
+
+
+def _perms_paths() -> dict:
+    """Every path the package creates beside the database, asked of the module
+    that owns each one rather than spelled out here. A fixture that copies the
+    names cannot notice one of them moving."""
+    from cpersona import config, update_check, vector_index
+
+    return {
+        "db": config.DB_PATH,
+        "wal": config.DB_PATH + "-wal",
+        "shm": config.DB_PATH + "-shm",
+        "calibration": admin_handlers._calibration_sidecar_path(),
+        "index-memories": vector_index.index_path("memories"),
+        "update-cache": update_check.cache_path(),
+        "alias-ledger": config.alias_ledger_path(),
+    }
+
+
+def _build_perms_corpus(ctx, widened: tuple) -> tuple:
+    """Lay out a scratch corpus with known modes and point config.DB_PATH at it.
+
+    The modes are chmod-ed explicitly rather than left to the creating open(),
+    because `open()` lands at 0o666 & ~umask and the umask is a property of
+    whichever shell started the run -- exactly the thing this corpus exists to
+    be unambiguous about. `ctx.patch` puts DB_PATH back afterwards, so no later
+    scenario inherits the scratch path.
+    """
+    from cpersona import config
+
+    root = os.path.join(ctx.tmp, "corpus")
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    os.chmod(root, 0o700)
+    ctx.patch(config, "DB_PATH", os.path.join(root, "corpus.db"))
+
+    paths = _perms_paths()
+    for name, path in paths.items():
+        if name == "index-memories":
+            continue
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        os.chmod(path, 0o644 if name in widened else 0o600)
+    modes = {
+        name: oct(stat.S_IMODE(os.stat(path).st_mode)) if os.path.exists(path) else "absent"
+        for name, path in sorted(paths.items())
+    }
+    modes["DIRECTORY"] = oct(stat.S_IMODE(os.stat(root).st_mode))
+    return root, modes
+
+
+def _mask_corpus_paths(value, root: str):
+    """Replace the scratch corpus prefix, keeping the basename.
+
+    Which FILE was named is the observation; where the tmpdir happened to be is
+    not, and it differs between the capture process and pytest's conftest.
+    """
+    if isinstance(value, str):
+        return value.replace(root, "<corpus>")
+    if isinstance(value, dict):
+        return {k: _mask_corpus_paths(v, root) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_corpus_paths(v, root) for v in value]
+    return value
+
+
+@scenario("perms-corpus-private", "store-recall-health",
+          "check_health: every file the package created beside the database is 0600 — the control the widened corpus is read against (TODAY: indistinguishable from it)")
+async def _(ctx):
+    root, modes = _build_perms_corpus(ctx, ())
+    health_result = _mask_health_stats(
+        await maintenance_handlers.do_check_health(agent_id=_PERMS_AGENT)
+    )
+    return {"corpus_modes": modes, "health": _mask_corpus_paths(health_result, root)}
+
+
+@scenario("perms-corpus-group-world-readable", "store-recall-health",
+          "check_health: database, -wal, calibration sidecar, update cache and alias ledger are all 0644 — TODAY nothing reads modes, so the answer equals the private control's")
+async def _(ctx):
+    root, modes = _build_perms_corpus(ctx, _PERMS_WIDENED)
+    health_result = _mask_health_stats(
+        await maintenance_handlers.do_check_health(agent_id=_PERMS_AGENT)
+    )
+    return {"corpus_modes": modes, "health": _mask_corpus_paths(health_result, root)}
 
 
 # The deep_check envelope (`agent_id`, `checks_run`, `results`, `fixed`)
