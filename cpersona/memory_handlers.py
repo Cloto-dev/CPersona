@@ -1010,14 +1010,30 @@ async def _backfill_cosines(
     ep_ids = [rid for (_, rid, is_ep) in needy if is_ep]
 
     async def _fetch_blobs(table: str, ids: list[int]) -> dict[int, bytes | None]:
-        if not ids:
-            return {}
-        placeholders = ",".join("?" * len(ids))
-        rows = await db.execute_fetchall(
-            f"SELECT id, embedding FROM {table} WHERE id IN ({placeholders})",
-            ids,
-        )
-        return {row[0]: row[1] for row in rows}
+        """bug-301: chunked at the same width its sibling uses.
+
+        ``vector._fetch_rows_by_id`` splits its ``IN (...)`` at
+        ``_ID_FETCH_CHUNK``; this one built a single placeholder list of
+        whatever length the caller's result set happened to be. Both read the
+        same two tables by id, on the same recall, so the bound belongs to the
+        pair rather than to one of them -- and the one without it is bounded
+        only by how many rows a caller asked for, which the library layer lets
+        reach ``RECALL_LIBRARY_MAX_LIMIT``. That is under the variable ceiling
+        every SQLite this ships against reports today, which is why this is an
+        asymmetry to close rather than a crash to chase: the sibling's limit is
+        the one that was reasoned about, so the constant is imported rather than
+        chosen again here.
+        """
+        blobs: dict[int, bytes | None] = {}
+        for start in range(0, len(ids), vector._ID_FETCH_CHUNK):
+            chunk = ids[start : start + vector._ID_FETCH_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            rows = await db.execute_fetchall(
+                f"SELECT id, embedding FROM {table} WHERE id IN ({placeholders})",
+                chunk,
+            )
+            blobs.update({row[0]: row[1] for row in rows})
+        return blobs
 
     mem_blobs = await _fetch_blobs("memories", mem_ids)
     ep_blobs = await _fetch_blobs("episodes", ep_ids)
@@ -1030,6 +1046,20 @@ async def _backfill_cosines(
     for row, rid, is_ep in needy:
         blob = (ep_blobs if is_ep else mem_blobs).get(rid)
         if not blob or len(blob) != query_dim * 4:
+            continue
+        # bug-300: width is not enough. A blob of the RIGHT width holding a NaN
+        # multiplies through _cosine_batch to a NaN `_cosine`, which reaches
+        # match_reason and confidence as a bare NaN -- a value RFC 8259 does not
+        # admit, emitted from the one branch that exists to give these rows a
+        # real signal. The write seam refuses to store a non-finite embedding
+        # (pack_for_storage) and check_health reports the ones already stored,
+        # but neither reaches the read side, which is where a blob written by an
+        # older version or by import_memories' embedding_b64 arrives. Ask the
+        # same question the health check asks, of the same helper, so the two
+        # directions cannot come to disagree; a row that fails it is left at
+        # _cosine=None with the others this backfill cannot serve, which is the
+        # branch it already sat on before b2.
+        if not vector.stored_blob_is_finite(blob):
             continue
         batch_rows.append(row)
         batch_blobs.append(blob)
@@ -2241,7 +2271,19 @@ async def _prepare_episode_row(
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)
 
-    timestamps = [msg.get("timestamp", "") for msg in history if msg.get("timestamp")]
+    # bug-299: the sibling of bug-291, on the write side rather than the read one.
+    # A history entry carries the same declared string fields an external_context
+    # entry does, and a non-string `timestamp` reached min()/max() unnormalised --
+    # so a list mixing an epoch int (or a dict) with an ISO string raised TypeError
+    # out of the whole call, BEFORE the embed and the INSERT. The episode was lost,
+    # not merely stamped poorly. `_ctx_string` reads such a value as absent, which
+    # is the ruling bug-291 already made for the read side: a stamp that is not a
+    # string names no instant, and coercing one invents a position in the
+    # chronology. Homogeneous epochs used to sort among themselves and be stored,
+    # but what they stored was an int in a column every other row fills with an ISO
+    # string -- a span that cannot be compared with its neighbours (the shape
+    # bug-286 is about). Absent is the honest answer for both.
+    timestamps = [stamp for msg in history if (stamp := _ctx_string(msg, "timestamp"))]
     start_time = min(timestamps) if timestamps else None
     end_time = max(timestamps) if timestamps else None
 

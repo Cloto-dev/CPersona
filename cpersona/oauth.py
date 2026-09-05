@@ -470,11 +470,34 @@ async def _http_get(url: str):
     publishes that location in its metadata, which is followed; an operator whose
     provider needs something else points at the final URL with
     ``CPERSONA_OAUTH_JWKS_URI``.
+
+    bug-297: the body is read as a bounded stream rather than buffered whole.
+    ``MAX_DOCUMENT_BYTES`` is checked by the caller on ``len(body)``, which decides
+    what gets PARSED and trusted -- but with a buffered read the allocation that
+    check exists to bound has already happened, at a size chosen by whoever answers
+    at the configured issuer or JWKS URI. That is precisely the party OAuth
+    verification exists to survive. Reading incrementally and stopping moves the
+    bound from "what we agree to parse" to "what we agree to receive".
+
+    Deliberately stops one byte PAST the cap rather than at it: the caller refuses
+    on ``len(body) > MAX_DOCUMENT_BYTES``, so a read that stopped exactly at the cap
+    would hand back a silently truncated document for that check to pass and
+    ``json.loads`` to reject with a parse error -- the wrong diagnosis for an
+    oversized answer. The extra byte is what keeps the existing refusal both
+    reachable and correctly worded. Declared Content-Length is not consulted: it may
+    be absent or untrue, and the bytes are what has to be bounded either way.
     """
     import httpx
 
     async with httpx.AsyncClient(
         timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False
     ) as client:
-        response = await client.get(url, headers={"Accept": "application/json"})
-        return response.status_code, response.content
+        async with client.stream(
+            "GET", url, headers={"Accept": "application/json"}
+        ) as response:
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > MAX_DOCUMENT_BYTES:
+                    break
+            return response.status_code, bytes(body)

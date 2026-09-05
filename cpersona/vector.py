@@ -125,15 +125,50 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
         return
 
     base_url = _embedding_client._http_url.rsplit("/", 1)[0]
+    # bug-304: non-fatal is not the same as unreported. Every chunk's exception
+    # went to logger.debug -- off in any normal deployment -- and the response
+    # status was never read at all, so a service that answered 500 to half the
+    # chunks counted as a full push. The caller returns ok:true either way (it
+    # is a bulk import, and a failed index is not a failed import), which is why
+    # the log is the only place partial synchronisation can be seen: a corpus
+    # that is in the database and NOT in the index answers recalls with silence,
+    # and silence is the one symptom that does not look like a fault. Still
+    # non-fatal, still every chunk attempted -- what changes is that the
+    # shortfall is counted and said once, at a level that is on.
+    failed_chunks = 0
+    failed_items = 0
+    total_chunks = 0
     for start in range(0, len(items), 128):
         chunk = items[start : start + 128]
+        total_chunks += 1
         try:
-            await _embedding_client._client.post(
+            response = await _embedding_client._client.post(
                 f"{base_url}/index",
                 json={"namespace": f"cpersona:{agent_id}", "items": chunk},
             )
+            # A non-2xx answer is a refusal the service chose to give; it is not
+            # an exception, so nothing above noticed it.
+            if response.status_code >= 400:
+                failed_chunks += 1
+                failed_items += len(chunk)
+                logger.debug(
+                    "Remote index chunk rejected (non-fatal): HTTP %s", response.status_code
+                )
         except Exception as e:
-            logger.debug("Remote index failed (non-fatal): %s", e)
+            failed_chunks += 1
+            failed_items += len(chunk)
+            logger.debug("Remote index chunk failed (non-fatal): %s", e)
+    if failed_chunks:
+        logger.warning(
+            "Remote index partially synchronised for %s: %d of %d chunks did not land "
+            "(%d of %d items). The rows are in the database and NOT in the index, so "
+            "they will not be found by vector search until reindexed.",
+            f"cpersona:{agent_id}",
+            failed_chunks,
+            total_chunks,
+            failed_items,
+            len(items),
+        )
 
 # Per-agent vector-similarity threshold overrides (v2.4.15).
 # Populated by do_calibrate_threshold / startup auto-calibration; agents with

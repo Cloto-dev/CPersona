@@ -2,12 +2,24 @@
 """Advisory mutation-diff lane (L1).
 
 NON-BLOCKING. This scopes a cosmic-ray mutation run to the production lines a PR
-actually changed, classifies the outcomes, writes a JSON artifact plus a
-human-readable summary, and ALWAYS exits 0. The lane exists to MEASURE, not to
-gate: its numbers (survivor counts, noise rate, added CI time) are the input to
-the later, deliberate blocking-flip decision (#299 / L6). Turning it into a hard
-gate before those measurements exist would be exactly the "institutionalise a
-number nobody validated" failure this goal was created to avoid.
+actually changed, classifies the outcomes, and writes a JSON artifact plus a
+human-readable summary. The lane exists to MEASURE, not to gate: its numbers
+(survivor counts, noise rate, added CI time) are the input to the later,
+deliberate blocking-flip decision (#299 / L6). Turning it into a hard gate
+before those measurements exist would be exactly the "institutionalise a number
+nobody validated" failure this goal was created to avoid.
+
+bug-303: this used to claim it ALWAYS exits 0, and it does not. Every MEASURED
+outcome exits 0 -- survivors are a finding to report, never a failure -- but a
+config this script cannot honour aborts non-zero on purpose (see the two
+SystemExit sites below: a git-filter branch it cannot rewrite, and a config with
+no test-command). Failing loud there is correct; diffing against the wrong ref
+would publish a number that looks measured and is not. What keeps the lane
+non-blocking is the job's `continue-on-error`, NOT this exit code, and the two
+must not be conflated: an invariant that is merely asserted in a docstring is
+the kind a reader trusts and a maintainer then quietly breaks. The non-zero
+abort writes no report, which the workflow's "did the measurement happen" step
+reads as `did-not-complete` rather than as clean.
 
 Three mutation surfaces coexist in this repo; keep them distinct:
   * scripts/mutation-proof.py   — hand-authored sentinel mutants pinning the

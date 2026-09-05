@@ -2526,3 +2526,99 @@ def test_allowance_gate_has_teeth():
     # And prose naming the setting is not a read.
     prose = f'"""The allowance is {_ALLOWANCE}, in seconds."""\n'
     assert _allowance_reads(ast.parse(prose)) == []
+
+
+# --------------------------------------------------------------------------------------
+# Gate 8b (bug-306): pause_persistence's description says the right thing, not just
+# enough things.
+#
+# Gate 8 above is a COMPLETENESS check and says so in its own comment: "The gate cannot
+# verify the prose is TRUE, but it can verify it is COMPLETE." That was measured to be
+# exactly as weak as it sounds -- inverting the blast-radius sentence, so the text claims
+# a keyless pause reaches nobody else when in fact every keyless caller shares one
+# bucket, left the whole suite green. The tool names were untouched, so Gate 8 had
+# nothing to say.
+#
+# Truth in general is not mechanically checkable, but THIS claim is: the description
+# names the two scope values a caller branches on, and `session._scope` decides them.
+# So the two can be read against each other. The pairing is what carries the meaning --
+# which word goes with a declared key and which with an omitted one -- and pairing is
+# what an inversion breaks while leaving both words present.
+# --------------------------------------------------------------------------------------
+
+
+def _pause_description() -> str:
+    from cpersona import server
+
+    return next(t.description for t in server.registry._tools if t.name == "pause_persistence")
+
+
+def test_pause_description_pairs_each_scope_with_the_key_that_produces_it():
+    from cpersona import session
+
+    keyed_scope = session.pause_status_for("some-declared-key", True)["scope"]
+    keyless_scope = session.pause_status_for("", False)["scope"]
+    assert keyed_scope != keyless_scope, (
+        "the implementation no longer distinguishes the two cases, so the description "
+        "cannot be checked against it — this gate has lost its subject"
+    )
+
+    description = _pause_description()
+    for scope in (keyed_scope, keyless_scope):
+        assert f'`scope: "{scope}"`' in description, (
+            f"pause_persistence's description never names the scope value {scope!r} that "
+            "pause_status_for returns, so a caller cannot learn which value to branch on"
+        )
+
+    # The sentence that tells an operator what happens when they DO NOT declare a key
+    # must name the keyless scope, and must not name the keyed one: that inversion is
+    # the whole defect, and both halves are needed to catch it in either direction.
+    omit_sentence = description[description.index("Omit") :]
+    omit_sentence = omit_sentence[: omit_sentence.index("Under stdio")]
+    assert f'`scope: "{keyless_scope}"`' in omit_sentence, (
+        "the description's 'Omit it and ...' sentence does not name the scope an omitted "
+        f"key actually produces ({keyless_scope!r}); it tells an operator the opposite of "
+        "what pause_status_for will report"
+    )
+    assert f'`scope: "{keyed_scope}"`' not in omit_sentence, (
+        f"the 'Omit it and ...' sentence claims the {keyed_scope!r} scope, which is what a "
+        "DECLARED key produces — the two cases are swapped"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 8c (bug-307): store's `content` description states the refusal contract, and the
+# handler is what decides whether that statement is true.
+#
+# The wording was corrected once (bug-162: empty content is refused, not stored) and then
+# left unpinned. Rewriting it to say the opposite -- "Empty content is accepted and stored
+# as an empty row" -- was measured against the full suite and passed. A tool description is
+# the only contract an MCP caller reads, so a false one is not a documentation problem: it
+# is the published behaviour disagreeing with the real one, discovered by the caller.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_store_content_description_matches_what_empty_content_actually_does():
+    from cpersona import memory_handlers, server, session
+
+    session.reset_pauses_for_tests()
+    refusal = await memory_handlers.do_store("agent.gate8c", {"content": "   "})
+    assert refusal["ok"] is False and refusal["result"] == "rejected", (
+        "the handler no longer refuses whitespace-only content, so the description this "
+        f"gate checks is describing something else: {refusal}"
+    )
+
+    store_tool = next(t for t in server.registry._tools if t.name == "store")
+    content_desc = store_tool.inputSchema["properties"]["message"]["properties"]["content"][
+        "description"
+    ]
+    assert "refused" in content_desc, (
+        "store's content description no longer says the input is REFUSED, but do_store "
+        "still refuses it — a caller reading the schema expects a row that never appears"
+    )
+    for token in ("ok:false", "result:'rejected'"):
+        assert token in content_desc, (
+            f"store's content description does not name {token!r}, which is the field a "
+            "caller has to branch on to notice the refusal"
+        )

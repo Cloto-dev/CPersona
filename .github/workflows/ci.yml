@@ -208,9 +208,12 @@ jobs:
   mutation-diff:
     # Lane L1: ADVISORY, non-blocking mutation testing scoped
     # to the PR's production diff (cosmic-ray + cr-filter-git). It NEVER fails the
-    # build — the script always exits 0 and continue-on-error is a second belt —
-    # because this lane exists to MEASURE (survivor counts, noise rate, added CI
-    # time), not to gate. The blocking flip is a later, deliberate decision (#299
+    # build — that is what continue-on-error below buys, and bug-303 is the
+    # reminder that it is the ONLY thing buying it: the script exits 0 for every
+    # measured outcome, but aborts non-zero on a config it cannot honour, so
+    # "the script always exits 0" was never true and must not be leaned on. The
+    # lane exists to MEASURE (survivor counts, noise rate, added CI time), not to
+    # gate. The blocking flip is a later, deliberate decision (#299
     # / L6) fed by these numbers. Distinct from the mutation-proof job above,
     # which runs hand-authored sentinel mutants and IS blocking.
     #

@@ -153,3 +153,52 @@ def test_shipped_example_is_pending_and_matches_live_code():
     )
     assert live_fp == w["fingerprint"], "waiver-001 fingerprint drifted from cpersona/isolation.py"
     assert live_cch == w["code_context_hash"]
+
+
+# --- bug-302: a waiver is checked against itself -----------------------------
+
+
+def test_verify_rejects_a_fingerprint_that_does_not_match_its_own_declaration(tmp_path):
+    """The fingerprint is what the runner matches a LIVE survivor against, and it
+    was never recomputed anywhere — so a value copied from another survivor, or
+    edited, or left behind when the location was retargeted, was accepted and
+    went on to suppress a survivor other than the one the entry documents and a
+    human approved. Every input it is built from is declared on the waiver
+    itself, so the check needs nothing the registry does not already carry.
+    """
+    line = "    return x > 0"
+    (tmp_path / "m.py").write_text("# header\n" + line + "\n")
+    good_fp, ctx = mw.survivor_fingerprint(tmp_path, "m.py", "f", "core/X", 2)
+
+    honest = _waiver(
+        fingerprint=good_fp,
+        code_context_hash=ctx,
+        operator="core/X",
+        location={"file": "m.py", "definition": "f", "line_hint": 2},
+    )
+    assert mw.verify(tmp_path, {"waivers": [honest]}, date(2026, 1, 1)) == []
+
+    # Same waiver, same live code, only the declared fingerprint replaced by one
+    # that belongs to a different line. Nothing else about the entry is wrong.
+    foreign_fp = mw.fingerprint("m.py", "f", "core/X", "    return x < 0")
+    assert foreign_fp != good_fp
+    problems = mw.verify(
+        tmp_path, {"waivers": [_waiver(**{**honest, "fingerprint": foreign_fp})]}, date(2026, 1, 1)
+    )
+    kinds = {(p["kind"], p["severity"]) for p in problems}
+    assert ("fingerprint_mismatch", "hard") in kinds, problems
+
+
+def test_a_stale_waiver_is_not_also_reported_as_a_mismatch(tmp_path):
+    """When the code moved on there is no line to recompute from, so the entry
+    gets the one finding that is true (`code_changed`) and not a second,
+    misleading one about a fingerprint nothing could check."""
+    (tmp_path / "m.py").write_text("# header\n    something else entirely\n")
+    problems = mw.verify(
+        tmp_path,
+        {"waivers": [_waiver(location={"file": "m.py", "definition": "f", "line_hint": 2})]},
+        date(2026, 1, 1),
+    )
+    kinds = {p["kind"] for p in problems}
+    assert "code_changed" in kinds
+    assert "fingerprint_mismatch" not in kinds
