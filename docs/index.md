@@ -115,6 +115,12 @@ this one.
   session (`CLAUDE.md`, `AGENTS.md`, …), and why a skill alone cannot carry
   that guarantee.
 
+**Where it is going.** The [roadmap](roadmap.md) records what each release
+line is for, what it may break, and which measured problem each planned
+feature answers — across three axes (release lines, runtime and scale,
+support tiers). It is descriptive, not a delivery commitment; progress lives
+in the release notes and SUPPORT.md.
+
 **Design notes** record how one behaviour was decided, the routes that were
 rejected included. They are point-in-time records: where a note and the guides
 above disagree, the guides win.

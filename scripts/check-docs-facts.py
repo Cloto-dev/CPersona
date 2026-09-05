@@ -70,6 +70,7 @@ DOC_FILES = [
     ROOT / "docs" / "index.md",
     ROOT / "docs" / "getting-started.md",
     ROOT / "docs" / "architecture.md",
+    ROOT / "docs" / "roadmap.md",
     ROOT / "docs" / "tools.md",
     ROOT / "docs" / "behavior-contracts.md",
     ROOT / "docs" / "operations.md",
@@ -87,6 +88,7 @@ DOC_FILES = [
     ROOT / "docs" / "configuration.ja.md",
     ROOT / "docs" / "getting-started.ja.md",
     ROOT / "docs" / "architecture.ja.md",
+    ROOT / "docs" / "roadmap.ja.md",
     ROOT / "docs" / "tools.ja.md",
     ROOT / "docs" / "quality-assurance.ja.md",
 ]

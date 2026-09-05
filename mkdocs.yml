@@ -74,6 +74,7 @@ plugins:
             Home: ホーム
             Getting Started: はじめに
             Architecture: アーキテクチャ
+            Roadmap: ロードマップ
             Behavior Contracts: 挙動契約
             Tools: ツール一覧
             Operations Runbook: 運用 Runbook
@@ -161,6 +162,7 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Architecture: architecture.md
+  - Roadmap: roadmap.md
   - Using CPersona:
       - Tools: tools.md
       - Configuration: configuration.md
