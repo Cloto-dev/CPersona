@@ -28,6 +28,7 @@ One SQLite file you own. No LLM in the loop. Honest when recall degrades.
 > a change that cannot be rolled back waits for 2.6. Which version to run, and
 > how long each line keeps receiving fixes:
 > [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
+> Where the lines are heading: the [roadmap](https://cloto-dev.github.io/CPersona/roadmap/).
 
 > **Upgrading from 2.5.2 or earlier?** Two things need a decision from you.
 > **v2.5.3 will not start the HTTP transport without `CPERSONA_AUTH_TOKEN`**,
@@ -130,6 +131,7 @@ Track B lands at or above Track A on both models: the fusion layers add signal r
 | [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/) | What you may rely on: recall ordering, dedup, scan window, response shapes |
 | [Tools](https://cloto-dev.github.io/CPersona/tools/) | Every tool, grouped by what you reach for it for |
 | [Architecture](https://cloto-dev.github.io/CPersona/architecture/) | Storage, the retrieval pipeline, isolation axes |
+| [Roadmap](https://cloto-dev.github.io/CPersona/roadmap/) | What each release line is for and may break; planned retrieval features and the scale ladder |
 | [Operations Runbook](https://cloto-dev.github.io/CPersona/operations/) | Backup, degradation detection, tuning, CJK guidance, corpus sync |
 | [Configuration](https://cloto-dev.github.io/CPersona/configuration/) | Every environment variable and its default |
 | [Quality Assurance](https://cloto-dev.github.io/CPersona/quality-assurance/) | How a release is gated: audits, the bug ledger, structural and mutation gates |
