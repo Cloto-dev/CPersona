@@ -9251,6 +9251,245 @@
     "seam": "store-recall-health",
     "thresholds": {}
   },
+  "corpus-unnormalized-deep-check": {
+    "covers": "deep_check over a corpus holding one decomposed row beside its precomposed twin: TODAY no subcheck names a row that is not in a normal form",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "nf-id",
+          "channel": "",
+          "content": "だんごの記録",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:88ca7295b0af6ec7>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "nf-id",
+          "channel": "",
+          "content": "だんごの記録",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:75c053ee602c5a26>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "nf-id",
+          "channel": "",
+          "content": "an ordinary ascii row",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:3204f05d217a4044>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "nf-id",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "agent_id": "nf-id",
+      "checks_run": [
+        "anonymous_source",
+        "short_content",
+        "stale_profile",
+        "orphaned_episodes",
+        "calibration_staleness",
+        "near_duplicate"
+      ],
+      "fixed": false,
+      "results": {
+        "anonymous_source": {
+          "recoverable": 0,
+          "unrecoverable": 0
+        },
+        "calibration_staleness": {
+          "reason": "no embedding client configured",
+          "status": "not_applicable"
+        },
+        "near_duplicate": {
+          "pairs": 0,
+          "rows_scanned": 3,
+          "threshold": 0.97
+        },
+        "orphaned_episodes": {
+          "count": 0
+        },
+        "short_content": {
+          "count": 0
+        },
+        "stale_profile": {
+          "count": 1,
+          "last_updated": "2026-01-01T00:00:00Z",
+          "threshold_days": 30
+        }
+      }
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-unnormalized-health": {
+    "covers": "check_health over the same corpus: TODAY duplicate_content does not see the pair as duplicates, because identity is byte equality",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "nf-id",
+          "channel": "",
+          "content": "だんごの記録",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:88ca7295b0af6ec7>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "agent_id": "nf-id",
+          "channel": "",
+          "content": "だんごの記録",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:75c053ee602c5a26>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "agent_id": "nf-id",
+          "channel": "",
+          "content": "an ordinary ascii row",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:3204f05d217a4044>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-01-01T00:00:03Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "nf-id",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "checks_run": [
+        "memory_annotation",
+        "discord_mention",
+        "oversized_content",
+        "duplicate_content",
+        "embedding_dimension",
+        "nonfinite_embedding",
+        "embedding_backend",
+        "null_embedding",
+        "null_episode_embedding",
+        "fts_integrity",
+        "schema_version",
+        "dedup_msg_id_index",
+        "schema_objects",
+        "sqlite_integrity",
+        "axis_hygiene",
+        "invalid_json",
+        "invalid_timestamp",
+        "future_timestamp",
+        "missing_episode_start_time",
+        "timestamp_format_drift",
+        "episode_timestamp_format_drift",
+        "stale_pending_tasks",
+        "missing_profile",
+        "empty_content",
+        "invalid_source_type",
+        "oversized_profile",
+        "anonymous_source",
+        "vector_fallback_config",
+        "vector_index",
+        "operating_context_parse",
+        "operating_context_size"
+      ],
+      "fixed": false,
+      "issues": [],
+      "severity_summary": {
+        "critical": 0,
+        "info": 0,
+        "warn": 0
+      },
+      "stats": {
+        "agent_episodes": 0,
+        "agent_memories": 3,
+        "axes": {
+          "channel": {
+            "(global)": 3
+          },
+          "project_id": {
+            "(global)": 3
+          }
+        },
+        "db_size_bytes": "<file-scoped, masked>",
+        "episodes": 0,
+        "memories": 3,
+        "pending_tasks": 0,
+        "profiles": 1
+      },
+      "status": "healthy",
+      "total_memories": 3
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
   "deep-check-anonymous-source-fix": {
     "covers": "deep_check: fix=True with a recoverable anonymous-User row + [username] prefix — name recovered, source rewritten in db",
     "db": {
@@ -14068,6 +14307,85 @@
           "timestamp": "2026-01-01T00:00:07Z"
         }
       ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "store-canonically-equivalent-pair": {
+    "covers": "store: the same Japanese string written precomposed and then with combining dakuten -- TODAY the second is not a duplicate of the first, so both are stored and the corpus holds one meaning under two identities",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "nf-id",
+          "channel": "",
+          "content": "だんごの記録",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:88ca7295b0af6ec7>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2027-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "nf-id",
+          "channel": "",
+          "content": "だんごの記録",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:75c053ee602c5a26>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2027-01-01T00:00:00+00:00"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "codepoints": {
+        "decomposed": [
+          "U+305F",
+          "U+3099",
+          "U+3093",
+          "U+3053",
+          "U+3099",
+          "U+306E",
+          "U+8A18",
+          "U+9332"
+        ],
+        "precomposed": [
+          "U+3060",
+          "U+3093",
+          "U+3054",
+          "U+306E",
+          "U+8A18",
+          "U+9332"
+        ]
+      },
+      "decomposed": {
+        "embedded": true,
+        "id": 2,
+        "ok": true,
+        "result": "stored"
+      },
+      "precomposed": {
+        "embedded": true,
+        "id": 1,
+        "ok": true,
+        "result": "stored"
+      }
     },
     "seam": "store-recall-health",
     "thresholds": {}

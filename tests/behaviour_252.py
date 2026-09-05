@@ -51,6 +51,7 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -2114,6 +2115,86 @@ async def _(ctx):
     return await memory_handlers.do_store(
         "s1", {"content": "stamped for 2099", "timestamp": "2099-01-01T00:00:00Z"}
     )
+
+
+# --- N-04: two spellings of one string --------------------------------------
+#
+# Nothing in this package normalises Unicode -- `unicodedata` is imported
+# nowhere. Identity is byte equality after `strip().lower()`, so a string
+# written precomposed and the same string written with combining marks are two
+# different memories: two rows, two FTS entries, and an `exclude_contents` entry
+# in one spelling does not exclude the other.
+#
+# Measured on this project's deployment before recording this: all 3,234
+# memories and all 657 episodes are ALREADY NFC, and no dedup key would collide
+# under any normal form. So this is a latent defect, not a live one, and these
+# scenarios say so -- they record the identity rule as it stands rather than a
+# corruption anyone has. What makes it worth pinning is that the corpus here is
+# not the population: this is a published package, and macOS clients with
+# Japanese input are exactly where decomposed text comes from.
+#
+# The pair is Japanese with a dakuten, which is the case the finding names:
+# precomposed U+3060 vs U+305F + U+3099. Computed rather than typed, so the
+# source stays readable and the intent cannot be lost to an editor normalising
+# the file.
+_NFC_AGENT = "nf-id"
+_PRECOMPOSED = "だんごの記録"
+_DECOMPOSED = unicodedata.normalize("NFD", _PRECOMPOSED)
+
+
+def _pair_is_equivalent_but_not_equal() -> None:
+    """The fixture can discriminate: same string canonically, different bytes.
+
+    A pair that is already byte-equal would make every scenario below pass no
+    matter what the identity rule is -- including after it changes.
+    """
+    assert _PRECOMPOSED != _DECOMPOSED, "the two spellings are byte-identical"
+    assert unicodedata.normalize("NFC", _DECOMPOSED) == _PRECOMPOSED
+    assert len(_DECOMPOSED) > len(_PRECOMPOSED), "no combining mark was introduced"
+
+
+@scenario("store-canonically-equivalent-pair", "store-recall-health",
+          "store: the same Japanese string written precomposed and then with combining dakuten -- TODAY the second is not a duplicate of the first, so both are stored and the corpus holds one meaning under two identities")
+async def _(ctx):
+    _pair_is_equivalent_but_not_equal()
+    install_local(ctx)
+    first = await memory_handlers.do_store(_NFC_AGENT, {"content": _PRECOMPOSED})
+    second = await memory_handlers.do_store(_NFC_AGENT, {"content": _DECOMPOSED})
+    return {
+        "precomposed": first,
+        "decomposed": second,
+        "codepoints": {
+            "precomposed": [f"U+{ord(c):04X}" for c in _PRECOMPOSED],
+            "decomposed": [f"U+{ord(c):04X}" for c in _DECOMPOSED],
+        },
+    }
+
+
+async def _seed_unnormalized(ctx: Ctx) -> None:
+    _pair_is_equivalent_but_not_equal()
+    db = ctx.db
+    for seq, content in ((1, _PRECOMPOSED), (2, _DECOMPOSED), (3, "an ordinary ascii row")):
+        await _mem_raw(
+            db, agent=_NFC_AGENT, content=content,
+            timestamp=f"2026-01-01T00:00:0{seq}Z",
+            created_at=f"2026-01-01 00:00:0{seq}", blob=pack(content),
+        )
+    await _profile_for(db, _NFC_AGENT)
+    await db.commit()
+
+
+@scenario("corpus-unnormalized-deep-check", "store-recall-health",
+          "deep_check over a corpus holding one decomposed row beside its precomposed twin: TODAY no subcheck names a row that is not in a normal form",
+          seed=_seed_unnormalized)
+async def _(ctx):
+    return await maintenance_handlers.do_deep_check(_NFC_AGENT)
+
+
+@scenario("corpus-unnormalized-health", "store-recall-health",
+          "check_health over the same corpus: TODAY duplicate_content does not see the pair as duplicates, because identity is byte equality",
+          seed=_seed_unnormalized)
+async def _(ctx):
+    return _mask_health_stats(await maintenance_handlers.do_check_health(agent_id=_NFC_AGENT))
 
 
 # --- bug-155 cosine backfill ------------------------------------------------
