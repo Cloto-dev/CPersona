@@ -77,6 +77,8 @@ instead — one server, several clients, reachable over a network.
 | `CPERSONA_HTTP_MAX_BODY_BYTES` | `4194304` | Budget for one request body, in bytes, counted as it arrives rather than read from `Content-Length` |
 | `CPERSONA_HTTP_BODY_LIMIT_MODE` | `warn` | What crossing that budget costs: `warn` reports it and serves the request anyway, `reject` answers 413 and stops reading, `off` disables the accounting |
 | `CPERSONA_EXTERNAL_CONTEXT_MODE` | `warn` | What a `recall_with_context` entry whose declared field is not a string costs: `warn` reads that field as absent and names the entry in `context_field_issues`, `reject` refuses the call, `off` keeps the safe read and drops the report |
+| `CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS` | `300` | How far ahead of this server's clock a caller-supplied `timestamp` may be before the write seam calls it wrong |
+| `CPERSONA_FUTURE_TIMESTAMP_MODE` | `warn` | What a stamp past that allowance costs: `warn` stores the row and reports it in the log and in the write's own answer, `reject` refuses the write, `off` stores it silently |
 
 **The body budget measures, it does not yet refuse.** Every other cap in this
 server — `CPERSONA_MAX_CONTENT_LENGTH` and the rest — is applied by a tool
@@ -114,6 +116,36 @@ call instead — the default stays `warn` because no payload that works today
 should stop working in the release that first states the rule. Fields the schema
 does **not** declare are still accepted and ignored: a caller carrying its own
 bookkeeping alongside these keeps working.
+
+**A timestamp ahead of the clock is a claim, not a small error.** `store` takes
+the `timestamp` a caller supplies, and the confidence curve reads
+`max(0, now - timestamp)` — so a row stamped in the future is scored as one
+written this instant, and it never decays, because tomorrow it is still ahead.
+The larger half is what it does to its neighbours: the corpus span scales the
+decay *rate*, so a single row stamped 2099 can widen a three-week corpus to
+seventy years and flatten the time axis for every other row in the scope.
+
+The allowance exists because a caller's clock is not this one. A stamp is
+generated on another host and arrives after a network hop, so a correct client
+can legitimately name a moment a little ahead of the moment the server reads it;
+`CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS` is what separates that from a stamp
+that is simply wrong. Exactly `now + allowance` is accepted — only what is past
+it is reported.
+
+The default mode is `warn` for the reason the body budget's is: the row is
+stored as it always has been, the write's answer carries
+`timestamp_ahead_of_clock`, and the log names the setting to change. Set
+`CPERSONA_FUTURE_TIMESTAMP_MODE=reject` to refuse such a write instead. Both
+paths are tested; enabling enforcement changes a setting, not a code path.
+
+Two things are deliberately outside this setting. A restore
+(`import_memories`) reports such rows and imports them anyway, in every mode —
+an export must be able to come back exactly as it left, and refusing here would
+make the round trip lossy for precisely the rows worth inspecting. And an
+unreadable stamp is not this finding's business: `invalid_timestamp` owns that
+row. For rows already stored, `check_health` reports `future_timestamp` and
+`fix=true` restores each one from its own `created_at` — the insertion time the
+row still carries honestly — leaving locked rows untouched.
 
 **Discovery is off until you turn it on.** A client that supports OAuth looks for RFC 9728
 metadata; finding none, it falls through to asking a human to type in a client id — correct

@@ -2419,3 +2419,110 @@ def test_policy_block_fits_the_budget_its_standard_sets():
         "explanation into the skill and leave a pointer, rather than raising this number."
     )
     assert lines, "gate collapsed — the policy block is empty"
+
+
+# ---------------------------------------------------------------------------
+# Gate 20: one place decides how far ahead of the clock is too far (N-03).
+#
+# A caller-supplied `timestamp` is judged at two write seams and again by a
+# health check, and each of them could spell out its own comparison against the
+# clock. They must not, for the reason Gate 19 exists: an invariant that every
+# call site restates is an invariant with no single place that enforces it, and
+# the restatements drift one at a time. Here the drift is silent in a specific
+# way — a seam using a slightly different allowance does not fail, it just
+# accepts rows the check then reports, or reports rows the seam accepted.
+#
+# The claim is narrow enough to be exact: the ALLOWANCE is readable in one
+# module. `utils.future_timestamp_issue` and `utils.future_timestamp_boundary`
+# are the two answers built from it — one for callers comparing in Python, one
+# for callers comparing in SQL — and everything else asks them.
+#
+# Names are matched as AST identifiers rather than as text, so the prose that
+# explains this invariant (which necessarily names the setting) cannot trip it.
+# The first draft of this gate scanned string literals and matched its own
+# docstrings.
+# ---------------------------------------------------------------------------
+
+_ALLOWANCE = "FUTURE_TIMESTAMP_" + "SKEW_SECONDS"
+_ALLOWANCE_OWNERS = ("config.py", "utils.py")
+
+
+def _allowance_reads(tree):
+    """Every identifier reference to the allowance, by either spelling."""
+    hits = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == _ALLOWANCE:
+            hits.append((node.lineno, _ALLOWANCE))
+        elif isinstance(node, ast.Attribute) and node.attr == _ALLOWANCE:
+            owner = node.value.id if isinstance(node.value, ast.Name) else "?"
+            hits.append((node.lineno, f"{owner}.{_ALLOWANCE}"))
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == _ALLOWANCE:
+                    hits.append((node.lineno, f"from {node.module} import {_ALLOWANCE}"))
+    return hits
+
+
+def test_only_one_module_reads_the_future_timestamp_allowance():
+    offenders = []
+    for path in sorted(PKG.rglob("*.py")):
+        rel = path.relative_to(PKG)
+        if _VENDORED_PKG in rel.parts or rel.as_posix() in _ALLOWANCE_OWNERS:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        offenders.extend(
+            f"{rel.as_posix()}:{lineno} ({name})" for lineno, name in _allowance_reads(tree)
+        )
+
+    assert not offenders, (
+        f"these sites read {_ALLOWANCE} themselves instead of asking the seam that "
+        f"owns it: {offenders}. A seam with its own copy of the allowance drifts "
+        "silently — it accepts rows the health check then reports, or reports rows "
+        "it accepted. Call utils.future_timestamp_issue(ts) when comparing in "
+        "Python, or utils.future_timestamp_boundary() when comparing in SQL."
+    )
+
+    # The gate is only worth having while the seam it points at exists.
+    from cpersona import utils as utils_module
+
+    for name in ("future_timestamp_issue", "future_timestamp_boundary"):
+        assert hasattr(utils_module, name), (
+            f"cpersona/utils.py no longer provides {name}; re-read the seam instead "
+            "of deleting this gate"
+        )
+
+
+def test_allowance_gate_has_teeth():
+    """Known positives for each spelling, and a known negative.
+
+    Without this, a gate that silently stopped matching would look exactly like a
+    codebase with no offenders — the state it is supposed to certify.
+    """
+    imported = (
+        f"from cpersona.config import {_ALLOWANCE}\n"
+        "def judge(ahead):\n"
+        f"    return ahead > {_ALLOWANCE}\n"
+    )
+    assert _allowance_reads(ast.parse(imported)) == [
+        (1, f"from cpersona.config import {_ALLOWANCE}"),
+        (3, _ALLOWANCE),
+    ]
+
+    qualified = (
+        "from cpersona import config\n"
+        "def judge(ahead):\n"
+        f"    return ahead > config.{_ALLOWANCE}\n"
+    )
+    assert _allowance_reads(ast.parse(qualified)) == [(3, f"config.{_ALLOWANCE}")]
+
+    # The shape that must NOT be reported: asking the seam.
+    asking = (
+        "from cpersona.utils import future_timestamp_issue\n"
+        "def judge(ts):\n"
+        "    return future_timestamp_issue(ts) is not None\n"
+    )
+    assert _allowance_reads(ast.parse(asking)) == []
+
+    # And prose naming the setting is not a read.
+    prose = f'"""The allowance is {_ALLOWANCE}, in seconds."""\n'
+    assert _allowance_reads(ast.parse(prose)) == []

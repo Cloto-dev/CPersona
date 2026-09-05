@@ -55,6 +55,7 @@ from cpersona.utils import (
     _content_excluded,
     _parse_timestamp_utc,
     episode_timestamp,
+    future_timestamp_issue,
     _sanitize_content,
     sanitize_content_with_flag,
     _try_parse_json,
@@ -162,6 +163,45 @@ async def do_store(
 
     if not content:
         return _store_rejected("empty after sanitization")
+
+    # N-03: what a stamp ahead of this clock costs, and why it is answered here.
+    #
+    # A caller generates its stamp on another host and it reaches us after a
+    # network hop, so a correct client can name a moment slightly ahead of the
+    # one we read. Past the allowance it is not skew. It is also not harmless:
+    # the confidence curve reads `max(0.0, now - timestamp)`, so such a row is
+    # scored as one written this instant and cannot decay — tomorrow it is still
+    # ahead — and its stamp widens the corpus span that scales the decay rate,
+    # flattening the time axis for every OTHER row too. Measured on a four-row
+    # corpus, adding one row stamped 2099 took the rows admitted by the quality
+    # gate from one to five (`corpus-future-*` in the behaviour golden).
+    #
+    # The verdict is taken on the value about to be written rather than on
+    # `message["timestamp"]`, so an omitted stamp — which is this server's own
+    # clock — can never report itself as early.
+    #
+    # Placed before the dedup probes so `reject` is decisive: a refused write is
+    # refused whether or not an identical row happens to exist. `warn` rides back
+    # on the stored result below; the log fires either way, which is what an
+    # operator watching a misconfigured client actually reads.
+    future_timestamp = future_timestamp_issue(timestamp)
+    future_mode = config.FUTURE_TIMESTAMP_MODE
+    if future_timestamp and future_mode != "off":
+        logger.warning(
+            "store: timestamp %r is %.0fs ahead of this clock, past the %ss "
+            "CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS allowance. Raise the allowance if "
+            "this client is legitimate, or set CPERSONA_FUTURE_TIMESTAMP_MODE=reject to "
+            "refuse it.",
+            future_timestamp["timestamp"],
+            future_timestamp["ahead_by_seconds"],
+            future_timestamp["allowance_seconds"],
+        )
+        if future_mode == "reject":
+            return _store_rejected(
+                f"timestamp {timestamp!r} is "
+                f"{future_timestamp['ahead_by_seconds']:.0f}s ahead of this clock "
+                f"(allowance {future_timestamp['allowance_seconds']}s)"
+            )
 
     # bug-106: the dedup probes check the γ-VISIBLE scope, matching read semantics.
     # A bucket write ('X') collides with an identical row in the global pool —
@@ -278,6 +318,8 @@ async def do_store(
     }
     if truncated:
         result["truncated"] = True
+    if future_timestamp and future_mode == "warn":
+        result["timestamp_ahead_of_clock"] = future_timestamp
     return result
 
 

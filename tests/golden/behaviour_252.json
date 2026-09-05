@@ -3828,6 +3828,7 @@
         "axis_hygiene",
         "invalid_json",
         "invalid_timestamp",
+        "future_timestamp",
         "missing_episode_start_time",
         "timestamp_format_drift",
         "episode_timestamp_format_drift",
@@ -3843,11 +3844,18 @@
         "operating_context_size"
       ],
       "fixed": false,
-      "issues": [],
+      "issues": [
+        {
+          "check": "future_timestamp",
+          "count": 1,
+          "severity": "warn",
+          "type": "future_timestamp"
+        }
+      ],
       "severity_summary": {
         "critical": 0,
         "info": 0,
-        "warn": 0
+        "warn": 1
       },
       "stats": {
         "agent_episodes": 0,
@@ -3866,7 +3874,7 @@
         "pending_tasks": 0,
         "profiles": 1
       },
-      "status": "healthy",
+      "status": "degraded",
       "total_memories": 5
     },
     "seam": "store-recall-health",
@@ -4571,6 +4579,7 @@
         "axis_hygiene",
         "invalid_json",
         "invalid_timestamp",
+        "future_timestamp",
         "missing_episode_start_time",
         "timestamp_format_drift",
         "episode_timestamp_format_drift",
@@ -5195,6 +5204,7 @@
         "axis_hygiene",
         "invalid_json",
         "invalid_timestamp",
+        "future_timestamp",
         "missing_episode_start_time",
         "timestamp_format_drift",
         "episode_timestamp_format_drift",
@@ -14179,7 +14189,12 @@
       "embedded": true,
       "id": 1,
       "ok": true,
-      "result": "stored"
+      "result": "stored",
+      "timestamp_ahead_of_clock": {
+        "ahead_by_seconds": 2272147200.0,
+        "allowance_seconds": 300,
+        "timestamp": "2099-01-01T00:00:00Z"
+      }
     },
     "seam": "store-recall-health",
     "thresholds": {}

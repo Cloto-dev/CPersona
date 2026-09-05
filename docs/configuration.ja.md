@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:42d8b7ca0de017cea04dfa33f007cfa2bbfebc73 -->
+<!-- i18n-source: docs/configuration.md@blob:a5a9000b19f01ca23cb799224fe958e653bb1bbd -->
 
 # 設定リファレンス
 
@@ -81,6 +81,8 @@
 | `CPERSONA_HTTP_MAX_BODY_BYTES` | `4194304` | リクエストボディ 1 本あたりの予算 (バイト)。`Content-Length` を読むのではなく、到着したバイトを数えます |
 | `CPERSONA_HTTP_BODY_LIMIT_MODE` | `warn` | 予算を超えたときの扱い: `warn` は記録した上でそのまま応答し、`reject` は 413 を返して読み取りを止め、`off` は計測自体を無効にします |
 | `CPERSONA_EXTERNAL_CONTEXT_MODE` | `warn` | `recall_with_context` のエントリで、宣言されたフィールドが文字列でなかったときの扱い: `warn` はそのフィールドを「無かったもの」として読み、該当エントリを `context_field_issues` に載せます。`reject` は呼び出し自体を拒否し、`off` は安全な読みは保ったまま報告だけを外します |
+| `CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS` | `300` | 呼び出し側が指定した `timestamp` が、このサーバーの時計よりどれだけ先を指してよいか。これを超えたものを書き込み seam が「誤り」と判定します |
+| `CPERSONA_FUTURE_TIMESTAMP_MODE` | `warn` | 許容量を超えた stamp の扱い: `warn` は行をそのまま格納したうえで、ログと書き込み自身の応答に報告します。`reject` は書き込みを拒否し、`off` は黙って格納します |
 
 **ボディ予算は「測る」ものであって、まだ「拒否する」ものではありません。** このサーバーの
 他の上限 — `CPERSONA_MAX_CONTENT_LENGTH` など — はすべてツールハンドラが適用するもので、
@@ -116,6 +118,32 @@ schema を見て実装した呼び出し側には `timestamp` が参照されて
 あるのは、規則を初めて明文化したリリースで、今日動いているペイロードが動かなくなるべきでは
 ないからです。schema が **宣言していない** フィールドは、これまでどおり受理して無視します —
 独自の管理情報を一緒に載せている呼び出し側は、そのまま動き続けます。
+
+**時計より先の timestamp は、小さな誤差ではなく 1 つの主張です。** `store` は呼び出し側が
+指定した `timestamp` をそのまま受け取り、confidence の曲線は `max(0, now - timestamp)` を
+読みます — つまり未来の stamp を持つ行は「たった今書かれた行」として採点され、しかも
+翌日もまだ未来なので **減衰しません**。より大きいのは周囲への影響のほうです: コーパスの
+span が減衰 *率* を scale するため、2099 と刻まれた 1 行だけで 3 週間分のコーパスが
+70 年幅に広がり、その scope の他のすべての行について時間軸が平坦化します。
+
+許容量があるのは、呼び出し側の時計がこのサーバーの時計ではないからです。stamp は別の
+ホストで生成され、ネットワークを 1 往復してから届くので、正しいクライアントでも
+サーバーが読む瞬間より少し先の時刻を名乗り得ます。`CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS`
+は、それと「単に間違っている stamp」とを分ける線です。ちょうど `now + 許容量` は受理され、
+それを超えたものだけが報告されます。
+
+既定が `warn` なのはボディ予算と同じ理由です: 行はこれまでどおり格納され、書き込みの応答が
+`timestamp_ahead_of_clock` を伴い、ログが変更すべき設定名を示します。書き込み自体を拒否させたい
+場合は `CPERSONA_FUTURE_TIMESTAMP_MODE=reject` を設定してください。両方の経路がテスト済みで、
+強制の有効化はコード経路の追加ではなく設定の変更です。
+
+この設定の外に置いてあるものが 2 つあります。復元 (`import_memories`) は、どのモードでも
+該当行を **報告したうえで取り込みます** — export したものはそのまま戻せなければならず、
+ここで拒否すると、まさに点検したい行についてラウンドトリップが不可逆になるからです。
+そして読めない stamp はこの finding の担当ではありません — その行は `invalid_timestamp` が
+持ちます。すでに格納済みの行については `check_health` が `future_timestamp` を報告し、
+`fix=true` が各行を自身の `created_at` — その行が正直に保持している挿入時刻 — から復元します
+(locked な行には触れません)。
 
 **discovery は明示的に有効化するまで無効です。** OAuth に対応したクライアントは
 RFC 9728 の metadata を探し、見つからなければ人間に client id を手で入力させる段まで

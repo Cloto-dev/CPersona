@@ -363,6 +363,41 @@ EXTERNAL_CONTEXT_MODE = _parse_choice(
     "CPERSONA_EXTERNAL_CONTEXT_MODE", "warn", ("warn", "reject", "off")
 )
 
+# How far ahead of this server's clock a caller-supplied `timestamp` may be
+# before the write seam calls it wrong.
+#
+# It has to be a range and not an instant, because a caller's clock is not this
+# one: the stamp is generated on the caller's host and arrives after a network
+# hop, so a correct client can legitimately name a moment a little ahead of the
+# moment we read it. The allowance is what separates that from a stamp that is
+# wrong -- an import with the wrong century, a timezone applied twice, a client
+# whose clock was never set.
+#
+# 300 seconds, from what is measured rather than what sounds safe. On this
+# project's deployment no row of 3,228 is ahead of the clock at all -- not by a
+# day, not by five minutes, not by a second -- and the observed skew between a
+# writing host and the server is 0.12s including the round trip. Five minutes is
+# three orders of magnitude above the skew anyone here produces and still far
+# below the smallest mistake worth catching, which is a whole hour (an offset
+# applied in the wrong direction).
+FUTURE_TIMESTAMP_SKEW_SECONDS = _parse_int("CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS", 300)
+
+# What a stamp past that allowance costs.
+#
+# `warn` (the default) stores the row as it always has and says so -- in the log
+# and in the write's own answer. Nothing a caller sends today stops working, and
+# on the corpus above nothing fires at all, so the report is a report and not a
+# migration. `reject` refuses the write, naming the excess. It is written,
+# mounted and tested here rather than in the release that turns it on, so that
+# release changes a default instead of adding a code path. `off` silences the
+# report; the stamp is stored either way.
+#
+# An unparseable stamp is NOT this setting's business. `invalid_timestamp` owns
+# that row, and a stamp nobody can read is not a stamp anyone can call early.
+FUTURE_TIMESTAMP_MODE = _parse_choice(
+    "CPERSONA_FUTURE_TIMESTAMP_MODE", "warn", ("warn", "reject", "off")
+)
+
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the

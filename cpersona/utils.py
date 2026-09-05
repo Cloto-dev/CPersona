@@ -8,7 +8,7 @@ import hashlib
 import json
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from cpersona.config import (
     BOOST_DECAY_RATE,
@@ -17,6 +17,7 @@ from cpersona.config import (
     DECAY_CEIL,
     DECAY_FLOOR,
     DECAY_RATE,
+    FUTURE_TIMESTAMP_SKEW_SECONDS,
     MAX_CONTENT_LENGTH,
     MAX_PROFILE_LENGTH,
     MIN_TIME_RANGE_HOURS,
@@ -168,6 +169,58 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
         return dt.astimezone(timezone.utc)
     except (ValueError, OSError):
         return None
+
+
+def future_timestamp_issue(ts_raw: str, *, now: datetime | None = None) -> dict | None:
+    """The verdict every write seam shares on a caller-supplied ``timestamp``.
+
+    Returns ``None`` when there is nothing to report, and a description of the
+    excess when the stamp names a moment further ahead of this clock than
+    ``FUTURE_TIMESTAMP_SKEW_SECONDS`` allows. The boundary itself is accepted:
+    exactly ``now + allowance`` is inside the range a correct client can produce
+    across a network hop, and only what is past it is a claim about the future.
+
+    An unreadable stamp answers ``None`` — the same as a fine one, deliberately.
+    ``invalid_timestamp`` owns that row and repairs it; a stamp nobody can parse
+    is not a stamp anyone can call early, and having two findings claim it would
+    make the repairs race.
+
+    One function decides this for every seam that writes a timestamp. The seams
+    then differ in what they DO with it — ``store`` may refuse, a restore never
+    does — but not in where "ahead of the clock" begins, which is the part that
+    would rot if each of them spelled it out (see the gate in
+    ``tests/test_structural_gates.py``).
+    """
+    parsed = _parse_timestamp_utc(ts_raw)
+    if parsed is None:
+        return None
+    reference = now if now is not None else datetime.now(timezone.utc)
+    ahead = (parsed - reference).total_seconds()
+    if ahead <= FUTURE_TIMESTAMP_SKEW_SECONDS:
+        return None
+    return {
+        "timestamp": ts_raw,
+        "ahead_by_seconds": round(ahead, 3),
+        "allowance_seconds": FUTURE_TIMESTAMP_SKEW_SECONDS,
+    }
+
+
+def future_timestamp_boundary(*, now: datetime | None = None) -> str:
+    """The latest instant a caller-supplied stamp may name, spelled canonically.
+
+    The same allowance, the same clock and the same module as
+    ``future_timestamp_issue`` -- so a caller that has to compare in SQL still
+    compares against the definition used everywhere else.
+
+    A SQL caller passes this instead of reaching for ``datetime('now')``,
+    because SQL's clock is a SECOND clock and one this project's test harness
+    does not freeze. A predicate written against it answers differently in
+    December than in January for the same rows and the same code, which is a
+    finding that reports the calendar rather than the corpus.
+    """
+    reference = now if now is not None else datetime.now(timezone.utc)
+    boundary = reference + timedelta(seconds=FUTURE_TIMESTAMP_SKEW_SECONDS)
+    return boundary.strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
 def episode_timestamp(start_time: str | None, created_at: str | None) -> str:

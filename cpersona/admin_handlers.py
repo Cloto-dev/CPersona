@@ -47,6 +47,7 @@ from cpersona.utils import (
     _clamp_limit,
     _try_parse_json,
     error_response,
+    future_timestamp_issue,
     sanitize_content_with_flag,
     sanitize_profile_with_flag,
 )
@@ -2232,6 +2233,10 @@ class _ImportTally:
     # a failure.
     skipped_episodes: int = 0
     profile_updated: bool = False
+    # N-03: rows restored carrying a timestamp ahead of this clock. Counted and
+    # reported, never refused — see _import_memory_record for why a restore is
+    # not the seam that gets to say no.
+    future_timestamps: int = 0
     errors: list[str] = field(default_factory=list)
     # bug-091: track the header and the per-type record counts actually present in
     # the file, so a truncated backup (mid-export crash, partial copy) is rejected
@@ -2415,6 +2420,22 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         if msg_id:
             tally.seen_msgid.add((aid, pid, msg_id))
         tally.seen_content.add((aid, pid, chan, content))
+    # N-03: a restore reports a stamp ahead of the clock and imports it anyway.
+    #
+    # This seam is deliberately not the one that refuses. `store` is an external
+    # boundary — a caller handing us a moment it believes in — so a value past
+    # the allowance is a claim to check. A restore is the same corpus coming
+    # back, and the only faithful answer to "this row was already like this" is
+    # to put it back like this. Refusing here would make export -> import
+    # lossy for exactly the rows an operator most needs to see, and the round
+    # trip is an invariant this project keeps (the same reasoning that keeps
+    # import's dedup probes exact-bucket while store's are gamma-visible).
+    #
+    # So the finding is surfaced twice instead, in both directions: here as a
+    # count on the run that carried them in, and afterwards by the
+    # `future_timestamp` health check, which can name and repair the rows.
+    if future_timestamp_issue(record.get("timestamp", "")):
+        tally.future_timestamps += 1
     tally.imported_memories += 1
 
 
@@ -2721,6 +2742,8 @@ async def do_import_memories(
         "skipped_episodes": tally.skipped_episodes,
         "profile_updated": tally.profile_updated,
     }
+    if tally.future_timestamps:
+        result["future_timestamps"] = tally.future_timestamps
     if tally.errors:
         result["errors"] = tally.errors
     return result

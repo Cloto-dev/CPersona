@@ -4252,6 +4252,33 @@
       "category": "api-contract",
       "note": "Reported by an external audit of the boundary surfaces. `additionalProperties: false` is deliberately NOT part of the fix: closing the object would refuse payloads that work today, which is a break the declaration gap does not justify. Callers do send their own bookkeeping alongside these fields, and the scenario `rwc-untyped-identity-fields` records an undeclared key being accepted so that stays an assertion rather than an assumption.",
       "fix_note": "The three fields are declared with their types and their meaning, including what an entry without a timestamp does. Enforcement of the declared shape ships in the same release but off: CPERSONA_EXTERNAL_CONTEXT_MODE is `warn` by default (report and read the field as absent) with `reject` written, mounted and tested beside it, so turning it on is a change of default rather than a code path written under release pressure."
+    },
+    {
+      "id": "bug-293",
+      "summary": "(MEDIUM) A caller-supplied `timestamp` was stored verbatim with no policy on how far ahead of the server's clock it could be, and the confidence curve reads `max(0.0, now - timestamp)` — so a stamp in the future was scored as the age of a row written this instant, and it could not decay, because tomorrow it was still ahead. The larger half is what one such row does to its neighbours: the corpus span is MIN/MAX over the column and it scales the decay RATE, so a single row stamped 2099 widens the span and flattens the time axis for the whole scope. Measured on a four-row corpus of honestly dated rows, the quality gate admitted one; adding one row stamped 2099 admitted all five, including the three-week-old row that had not previously made the gate. Reachable from client clock skew, an import with a wrong century, a timezone applied twice, or any caller that names its own time.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-05T00:00:00Z",
+      "version": "2.5.12a2",
+      "file": "cpersona/utils.py",
+      "pattern": "def future_timestamp_issue",
+      "expected": "present",
+      "status": "fixed",
+      "category": "temporal-integrity",
+      "note": "Reported by an external audit of the boundary surfaces. The shipping default is the face that matters and it is not the same face: CPERSONA_CONFIDENCE_ENABLED is false by default and scope_stats issues the MIN/MAX span only when it is true, so on a default install a future stamp reaches no scoring arithmetic at all. Both faces were recorded in the behaviour golden BEFORE the change (corpus-future-*), because a face nobody looks at passes by not being looked at. The allowance is a range rather than an instant because a caller's clock is not this one: the stamp is generated on another host and arrives after a network hop. 300 seconds was chosen from measurement, not from what sounds safe — on this project's deployment no row of 3,228 is ahead of the clock at all, and the observed skew between a writing host and the server is 0.12s including the round trip.",
+      "fix_note": "Detection is one function, `utils.future_timestamp_issue`, with `utils.future_timestamp_boundary` for callers that must compare in SQL; a structural gate keeps the allowance readable in one module so no seam grows its own copy. Enforcement ships in the same release but off: CPERSONA_FUTURE_TIMESTAMP_MODE is `warn` by default (store the row, report it in the log and in the write's own answer) with `reject` written, mounted and tested beside it, so turning it on changes a default rather than adding a code path. `import_memories` reports and imports in every mode — an export must come back exactly as it left, and refusing there would make the round trip lossy for the rows most worth inspecting. For rows already stored, the `future_timestamp` health check reports them and `fix=true` restores each from its own `created_at`, the insertion time the row still carries honestly, leaving locked rows and rows whose created_at is itself ahead untouched. The boundary is computed in Python and passed into the SQL rather than taken from `datetime('now')`, because SQL's clock is a second clock that no caller can inject: a predicate written against it answers differently in December than in January for the same rows and the same code."
+    },
+    {
+      "id": "bug-294",
+      "summary": "(LOW) `_compute_confidence` still clamps a future timestamp's age to zero — `age_hours = max(0.0, (now - parsed).total_seconds() / 3600)` — so a row already stored with a stamp ahead of the clock is scored as one written this instant for as long as it stays there. bug-293 stops new ones at the write seam and gives `check_health` a way to find and repair the ones already stored, but the scoring path itself still has no answer for a stamp it is handed. `episodes.start_time` reaches the same arithmetic through `utils.episode_timestamp`, and `_derive_episode_row` takes it as `min()` over the caller's history stamps, so an episode whose whole history is ahead of the clock lands there too.",
+      "severity": "LOW",
+      "discovered": "2026-09-05T00:00:00Z",
+      "version": "2.5.12a2",
+      "file": "cpersona/utils.py",
+      "pattern": "age_hours = max",
+      "expected": "present",
+      "status": "open",
+      "category": "temporal-integrity",
+      "note": "Deferred deliberately, and not because it is hard. Changing what age a future stamp is scored at is a change to the scoring semantics, which is the axis the pre-release ladder is meant to keep readable: a soak cannot tell 'the behaviour changed' from 'the behaviour broke' while two scoring changes are in flight. The same reasoning already holds bug-247 for the 2.6 scoring line, and this belongs beside it. It is also the smaller half now: on a default install the clamp is unreachable (confidence off means the span is never computed), the write seam refuses new rows once the mode is flipped, and the health check names and repairs the rows already stored. What remains uncovered is a row an operator chooses not to repair, and an episode start_time — for which there is no check yet."
     }
   ]
 }
