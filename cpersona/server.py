@@ -938,6 +938,10 @@ registry.auto_tool(
     # overstated it. It reports what CAN filter invisibly, not what did.
     "context_filter_only={roles:[...]} — those entries filtered the recall without "
     "appearing in the output, whether or not they dropped a memory this time. "
+    # bug-291/bug-292: the entry shape is declared now, so a mismatch is reportable.
+    "context_field_issues={entries:[{index, fields}]} (absent otherwise) names entries "
+    "whose declared field was not a string: it was read as absent and the entry merged "
+    "without it. CPERSONA_EXTERNAL_CONTEXT_MODE=reject refuses such a call instead. "
     "gate_fallback=true (absent otherwise) is forwarded from the underlying recall: every "
     "candidate fell below the quality gate and the below-gate lexical matches were returned "
     "instead of an empty result — treat them as low-confidence.",
@@ -952,14 +956,33 @@ registry.auto_tool(
                 # caller had no schema-level statement that role / content are
                 # strings. The server coerces either way (_ctx_role/_ctx_content);
                 # this states the intent the handler assumes.
+                # bug-292: the three fields below were read by the handler and named
+                # only in the free-text description, which nothing validates
+                # against. A caller reading the schema had no statement that a
+                # timestamp was even consulted -- so their conversation merged
+                # undated -- and no statement of what any of them must be.
+                # additionalProperties stays open by design: a caller sending its
+                # own bookkeeping alongside these keeps working.
                 "items": {
                     "type": "object",
                     "properties": {
                         "role": {"type": "string"},
                         "content": {"type": "string"},
+                        "name": {
+                            "type": "string",
+                            "description": "Display label for a role=user entry; becomes source.name, and source.id when user_id is absent. Default 'User'.",
+                        },
+                        "user_id": {
+                            "type": "string",
+                            "description": "Stable id for a role=user entry; becomes source.id as 'discord:<user_id>'.",
+                        },
+                        "timestamp": {
+                            "type": "string",
+                            "description": "ISO-8601 stamp deciding where this entry lands in the merged chronology. An entry without one — or with one that names no instant — sorts ahead of every dated message.",
+                        },
                     },
                 },
-                "description": "Conversation history entries [{role, name?, user_id?, content, timestamp?}, ...]",
+                "description": "Conversation history entries [{role, content, name?, user_id?, timestamp?}, ...]. Every declared field is a string; one that is not is read as absent and reported in context_field_issues (CPERSONA_EXTERNAL_CONTEXT_MODE).",
             },
             "limit": {
                 "type": "integer",

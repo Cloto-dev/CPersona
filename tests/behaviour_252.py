@@ -1611,35 +1611,38 @@ async def _(ctx):
     )
 
 
-# The schema for `external_context` declares `role` and `content` and stops there,
-# but the handler also reads `name`, `user_id` and `timestamp` off each entry. A
-# caller reading the schema has no statement that those three mean anything, and
-# no statement of what they must be — so the two scenarios below record what an
-# entry that gets them wrong does TODAY, before that gap is closed (N-09).
+# The schema for `external_context` declared `role` and `content` and stopped
+# there, while the handler also read `name`, `user_id` and `timestamp` off each
+# entry (bug-292) — and read two of the three unsafely (bug-291). The two
+# scenarios below were recorded against the old behaviour first, so the fix was
+# reviewed as a diff against a measured baseline rather than against nothing.
 #
-# Both are expected to change. They are recorded first so the change is reviewed
-# as a diff against a measured baseline rather than against nothing.
+# What they pin now is the shipping default: a declared field that is not a
+# string is read as absent, the entry merges without it, and an undeclared field
+# is still accepted. Enforcement (CPERSONA_EXTERNAL_CONTEXT_MODE=reject) is off
+# by default and covered by tests/test_external_context_shape.py; when that
+# default moves, these two are the review surface.
 
 
-@scenario("rwc-untyped-timestamp-aborts", "store-recall-health", "recall_with_context: TODAY a non-string `timestamp` on ONE entry raises AttributeError out of the whole call, taking the valid entries and the recall hits with it — the schema declares no timestamp at all (N-09)", seed=seed_corpus)
+@scenario("rwc-untyped-timestamp-aborts", "store-recall-health", "recall_with_context: a non-string `timestamp` on ONE entry is read as absent, so that entry merges into the undated group and the valid entry and the recall hits survive beside it — it used to raise AttributeError out of the whole call (bug-291)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_recall_with_context(
         "a1", "apples", limit=5,
         external_context=[
-            # The control: an ordinary entry that merges cleanly on its own. If
-            # this scenario ever records a result instead of a raise, this row
-            # is what proves the call still carries the good entries through.
+            # The control. It is what proves the call still carries the good
+            # entries through rather than the malformed one merely vanishing.
             _ctx_user("apples in the orchard, well formed", "2026-01-01T00:00:02Z"),
             # An epoch integer is the shape a caller reaches for when nothing
             # tells them the field is a string. `_parse_timestamp_utc` calls
-            # `.replace` on it and catches only ValueError/OSError.
+            # `.replace` on it and catches only ValueError/OSError, so this used
+            # to raise out of the whole call.
             {"role": "user", "content": "apples timed with an epoch int", "timestamp": 1767225600},
         ],
     )
 
 
-@scenario("rwc-untyped-identity-fields", "store-recall-health", "recall_with_context: TODAY a non-string `name` / `user_id` reaches the response verbatim (source.name is a dict, source.id interpolates it), a null `timestamp` is emitted as null, and an undeclared field is accepted and ignored (N-09)", seed=seed_corpus)
+@scenario("rwc-untyped-identity-fields", "store-recall-health", "recall_with_context: a non-string `name` / `user_id` falls back to the declared default rather than becoming source.name / source.id verbatim, a null `timestamp` is emitted as the empty string, and an undeclared field is still accepted and ignored (bug-291/bug-292)", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_recall_with_context(
@@ -1648,13 +1651,14 @@ async def _(ctx):
             # Control: the declared shape, so a change that empties the merge is
             # distinguishable from a change that only touches the malformed rows.
             _ctx_user("apples, declared shape", "2026-01-01T00:00:02Z"),
-            # `name` is documented as a human-readable label and `user_id` as an
-            # id; neither is type-checked, and both flow into `source`.
+            # `name` is a human-readable label and `user_id` an id; both flow
+            # into `source`, so a coerced value would be an identity the caller
+            # never sent. Both fall back to their declared defaults instead.
             {"role": "user", "content": "apples from a dict-named caller",
              "name": {"display": "kirari"}, "user_id": 12345,
              "timestamp": "2026-01-01T00:00:04Z"},
-            # An explicit JSON null is the case bug-035 settled for `content` and
-            # bug-163 for `role`; `timestamp` never got the same treatment.
+            # An explicit JSON null is the case bug-035 settled for `content`
+            # and bug-163 for `role`; bug-291 gave `timestamp` the same answer.
             {"role": "user", "content": "apples with a null stamp", "timestamp": None},
             # additionalProperties stays open by ruling, so this must keep being
             # accepted. Recorded so that stops being an assumption.

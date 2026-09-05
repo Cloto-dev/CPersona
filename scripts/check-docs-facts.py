@@ -191,9 +191,12 @@ def measured_embed_batch() -> int:
 def parsed_env_defaults() -> dict[str, str]:
     """Static parse of config.py → {VAR_NAME: normalized default}.
 
-    Handles the three assignment shapes config.py uses. Vars read through any
+    Handles the four assignment shapes config.py uses. Vars read through any
     other shape are simply absent here and fall back to an existence-only
-    check against the package source.
+    check against the package source -- which is a silent hole, not a feature:
+    the documented default of such a var is never compared to the code. When a
+    new shape appears in config.py, it belongs here in the same change, or the
+    table row it produces is prose that no gate reads.
     """
     text = (ROOT / "cpersona" / "config.py").read_text()
     defaults: dict[str, str] = {}
@@ -204,6 +207,12 @@ def parsed_env_defaults() -> dict[str, str]:
     for m in re.finditer(
         r'os\.environ\.get\("(CPERSONA_\w+)"\s*,\s*"([^"]*)"\)(\.lower\(\)\s*==\s*"true")?',
         text,
+    ):
+        defaults[m.group(1)] = m.group(2)
+    # A word-valued setting: the default is the second argument, and the tuple
+    # after it is the closed set of accepted values.
+    for m in re.finditer(
+        r'_parse_choice\(\s*"(CPERSONA_\w+)",\s*"([^"]*)"', text
     ):
         defaults[m.group(1)] = m.group(2)
     return defaults

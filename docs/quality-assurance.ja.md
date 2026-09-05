@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/quality-assurance.md@blob:2db38cd35525b3991f047d7bc8a5f8b2d902e691 -->
+<!-- i18n-source: docs/quality-assurance.md@blob:0d3803cc05b2fcbd19eebcd41e1e14ce8f508106 -->
 
 # 品質保証 { #quality-assurance }
 
@@ -55,8 +55,8 @@
 
 ## 数字で見る { #by-the-numbers }
 
-- **~21,300 LOC** の Python (機能ごとに分割されたモジュール群)、加えて 3,650 行の vendored MCP common スナップショット
-- **~1,505 test functions** / ~125 test modules — 挙動マトリクスをパラメータ化すると ~1,910 cases (~44,400 LOC、サーバーコードよりテストコードの方が多い)。上記の構造強制ゲートを含む
+- **~21,450 LOC** の Python (機能ごとに分割されたモジュール群)、加えて 3,650 行の vendored MCP common スナップショット
+- **~1,525 test functions** / ~126 test modules — 挙動マトリクスをパラメータ化すると ~1,930 cases (~44,780 LOC、サーバーコードよりテストコードの方が多い)。上記の構造強制ゲートを含む
 - **Schema v13** (自動マイグレーション)
 - **MIT License**
 
