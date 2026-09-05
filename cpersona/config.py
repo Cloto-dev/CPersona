@@ -19,6 +19,28 @@ def _parse_int(env_key: str, default: int) -> int:
         return default
 
 
+# bug-133's contract for a setting whose values are words rather than numbers:
+# an unreadable value falls back to the documented default and says so, instead
+# of silently taking whichever branch an unknown string happens to miss. The
+# fallback is the mode that changes nothing about what is served -- never `off`,
+# which would answer a typo by removing the reporting the typo was reaching for.
+def _parse_choice(env_key: str, default: str, allowed: tuple[str, ...]) -> str:
+    raw = os.environ.get(env_key)
+    if raw is None or raw == "":
+        return default
+    val = raw.strip().lower()
+    if val in allowed:
+        return val
+    logger.warning(
+        "invalid value for %s=%r; expected one of %s, using default %r",
+        env_key,
+        raw,
+        "/".join(allowed),
+        default,
+    )
+    return default
+
+
 def _parse_float(env_key: str, default: float) -> float:
     raw = os.environ.get(env_key)
     if raw is None or raw == "":
@@ -320,6 +342,26 @@ HTTP_MAX_BODY_BYTES = _parse_int("CPERSONA_HTTP_MAX_BODY_BYTES", 4194304)
 # rather than in the release that turns it on, so that release changes a default
 # instead of adding a code path. `off` disables the accounting entirely.
 HTTP_BODY_LIMIT_MODE = os.environ.get("CPERSONA_HTTP_BODY_LIMIT_MODE", "warn").strip().lower()
+
+# What an `external_context` entry that does not match its declared shape costs.
+#
+# bug-292: the entry schema declared `role` and `content` while the handler read
+# `name`, `user_id` and `timestamp` as well. Declaring the three closes the gap,
+# but it also creates a shape a caller can now be wrong about, and the honest
+# first answer to being wrong is to say so rather than to refuse.
+#
+# `warn` (the default) reads a present-but-non-string field as absent — the value
+# names nothing the field can mean — and reports the entry index and field names
+# in `context_field_issues`. Nothing a caller sends today stops working.
+#
+# `reject` refuses the call, naming the same entries, and is where this ends up
+# once callers have had a release to see the warning. It is written and tested
+# here rather than in the release that turns it on, so that release changes a
+# default instead of adding a code path. `off` silences the report; the fallback
+# reads stay, because a crash is not a diagnostic.
+EXTERNAL_CONTEXT_MODE = _parse_choice(
+    "CPERSONA_EXTERNAL_CONTEXT_MODE", "warn", ("warn", "reject", "off")
+)
 
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 

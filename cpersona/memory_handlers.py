@@ -1557,6 +1557,60 @@ def _ctx_role(entry: object) -> str:
     return val if isinstance(val, str) else str(val)
 
 
+#: The fields an ``external_context`` entry declares, each a string. ``role`` and
+#: ``content`` were the only two the schema stated until 2.5.12; ``name``,
+#: ``user_id`` and ``timestamp`` were read by the handler all along and named
+#: nowhere a client could validate against (bug-292).
+_CTX_DECLARED_STRINGS = ("role", "content", "name", "user_id", "timestamp")
+
+
+def _ctx_string(entry: object, key: str, default: str = "") -> str:
+    """Read one declared string field off an external_context entry.
+
+    bug-291: a value that is present but not a string names nothing the field can
+    mean, so it is read as absent and the field's own default applies. That is
+    the answer ``_ctx_content`` already gives for a non-string ``content``, and
+    the defaults here (``"User"`` for a name, ``""`` for a user_id or a stamp)
+    are the same values an absent key produces — so the malformed case lands
+    where the missing case already sat rather than somewhere new.
+
+    Deliberately not ``str()`` coercion, which is what ``_ctx_role`` does. That
+    coercion exists so the C13 disclosure can *name* the bad role; these three
+    are consumed rather than reported — ``name`` and ``user_id`` become
+    ``source.name`` and ``source.id``, so coercing invents an identity the caller
+    never sent (``discord:{'a': 1}`` from a dict), and ``timestamp`` decides
+    where a turn appears in a rendered conversation. The report in
+    ``context_field_issues`` names the field instead; the value is not guessed.
+
+    ``timestamp`` is the one that used to be fatal: ``_parse_timestamp_utc``
+    calls ``.replace`` on what it is given and catches only ValueError/OSError,
+    so an epoch int -- the shape a caller reaches for when nothing says the field
+    is a string -- raised AttributeError out of the whole call, losing the recall
+    hits and every well-formed entry beside it. Read as absent, it lands in the
+    undated group, which is exactly where an entry with no ``timestamp`` key
+    already sits (see ``_ts_sort_key``).
+    """
+    if not isinstance(entry, dict):
+        return default
+    val = entry.get(key, default)
+    return val if isinstance(val, str) else default
+
+
+def _ctx_bad_fields(entry: object) -> list[str]:
+    """Declared fields present on this entry whose value is not a string.
+
+    An entry that is not a dict at all is reported as a whole: every field is
+    missing, and saying so once is more use than listing five names.
+    """
+    if not isinstance(entry, dict):
+        return ["<entry>"]
+    return sorted(
+        key
+        for key in _CTX_DECLARED_STRINGS
+        if key in entry and not isinstance(entry[key], str)
+    )
+
+
 # The instant an undated message is placed at. Never compared against a real
 # timestamp — the leading flag in the key separates the two groups first — so its
 # value only has to be constant, which is what keeps the undated rows in the order
@@ -1618,6 +1672,7 @@ async def do_recall_with_context(
     project_id: str | None = None,
     source_id: str = "",
     session_key: str = "",
+    context_mode: str | None = None,
 ) -> dict:
     """Recall memories and merge with external conversation context.
 
@@ -1625,6 +1680,27 @@ async def do_recall_with_context(
     source_id (v2.4.20): per-user source prefix filter — passed through to do_recall.
     """
     ctx = external_context or []
+
+    # bug-291: which entries do not match the shape the schema now declares. Counted
+    # before the recall, so `reject` refuses without paying for a search whose
+    # result it would discard.
+    mode = config.EXTERNAL_CONTEXT_MODE if context_mode is None else context_mode
+    field_issues = [
+        {"index": i, "fields": bad} for i, e in enumerate(ctx) if (bad := _ctx_bad_fields(e))
+    ]
+    if field_issues and mode == "reject":
+        # bug-232's shape: the caller's `messages` access must not become the
+        # error path's second failure.
+        return {
+            "ok": False,
+            "error": (
+                "external_context entries have fields that are not strings: "
+                + "; ".join(f"[{i['index']}] {', '.join(i['fields'])}" for i in field_issues)
+                + ". Every declared field (role, content, name, user_id, timestamp) is a "
+                "string; set CPERSONA_EXTERNAL_CONTEXT_MODE=warn to accept them again."
+            ),
+            "messages": [],
+        }
 
     exclude_list = [c.lower() for e in ctx if (c := _ctx_content(e))]
 
@@ -1645,13 +1721,16 @@ async def do_recall_with_context(
         content = _ctx_content(entry)  # bug-035: null/type-safe, skips malformed entries
         if not content:
             continue
-        role = entry.get("role", "")
+        role = _ctx_role(entry)
 
         if role == "assistant":
             source = {"type": "Agent", "id": "self"}
         elif role == "user":
-            name = entry.get("name", "User")
-            user_id = entry.get("user_id", "")
+            # bug-291: these three were `entry.get(...)` raw. A non-string reached
+            # `source` verbatim, and a non-string stamp reached the sort, where
+            # it raised.
+            name = _ctx_string(entry, "name", "User")
+            user_id = _ctx_string(entry, "user_id", "")
             uid = f"discord:{user_id}" if user_id else f"discord:{name}"
             source = {"type": "User", "id": uid, "name": name}
         else:
@@ -1661,7 +1740,7 @@ async def do_recall_with_context(
             {
                 "content": content,
                 "source": source,
-                "timestamp": entry.get("timestamp", ""),
+                "timestamp": _ctx_string(entry, "timestamp", ""),
                 "context_type": "conversation",
             }
         )
@@ -1688,6 +1767,27 @@ async def do_recall_with_context(
             "roles": filter_only_roles,
             "note": "entries with these roles filtered recall but are not shown in messages",
         }
+    # bug-291: the declared shape is now stated in the schema, so an entry that does
+    # not match it can be reported rather than absorbed. Same contract as the C13
+    # disclosure above -- present only when it fired, so the common case pays no
+    # payload -- and it names the entry index, because the caller built the list
+    # and the index is what lets them find the row.
+    if field_issues and mode == "warn":
+        result["context_field_issues"] = {
+            "entries": field_issues,
+            "note": (
+                "these fields were not strings and were read as absent; "
+                "the entries were merged without them"
+            ),
+        }
+        logger.warning(
+            "recall_with_context: %d external_context entr%s carried a non-string "
+            "declared field (%s). They were read as absent; set "
+            "CPERSONA_EXTERNAL_CONTEXT_MODE=reject to refuse them instead.",
+            len(field_issues),
+            "y" if len(field_issues) == 1 else "ies",
+            "; ".join(f"[{i['index']}] {', '.join(i['fields'])}" for i in field_issues),
+        )
     # bug-183: this entry point delegates the retrieval to do_recall but builds its own
     # response dict, so the rescue flag has to be forwarded like `advisory` below —
     # otherwise the merged-context caller is the one caller that cannot tell a

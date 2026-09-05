@@ -4224,6 +4224,34 @@
       "category": "resource-budget",
       "note": "Found by an external audit of the boundary surfaces, which was right about the cause and specific about what must not count as a fix: a handler-side truncation, a Content-Length check, a len() after parsing, or a reverse proxy. The reason all four are wrong is the same one — each of them reads a number somebody else supplied, or reads it after the cost has already been paid. The baseline above was measured rather than assumed, including the two misdeclaration cases, because 'no limit' and 'a limit nobody reached' are the same picture from outside.",
       "fix_note": "RequestBodyBudgetMiddleware sums bytes over ASGI receive() events, so a chunked body and a lying Content-Length are both measured by what arrived. It is mounted inside CORS (a 413 has to carry the headers that let a browser read it) and outside authentication (so it covers everything below it); the position deliberately does not shield an unauthenticated flood, which is refused by the credential check before any body is pulled, and a test pins that a 401 is not turned into a 413. The shipped mode is `warn`: the body is delivered whole and the crossing is logged at the 1st, 10th and 100th occurrence. That is the 2.5.x half of this on purpose — a cap that refuses before anyone has measured an operator's real payload distribution is a cap set by guessing, and warning first makes a wrong number cost a log line instead of an outage. `reject` (413, stops reading) is written, mounted and tested now so the release that turns it on changes a default rather than adding a code path. The 4 MiB default is measured, not chosen: the largest possible single store is 144 KB and a recall_with_context of 200 turns x 2000 chars is 407 KB. Tests drive the assembled app rather than the class (a middleware never mounted is indistinguishable from one never written) and 8 mutations are caught, each by its own test; the eighth was added after a survivor showed the fixture, not the assertion, was blind — with 1 KiB chunks, deleting the abort after the 413 changes nothing, and only a single oversized chunk separates 'the application never sees it' from 'the application receives and parses it'. Not fixed here and left to the line that may break the tool contract: maxItems / maxLength on exclude_contents and external_context, which would refuse payloads accepted today."
+    },
+    {
+      "id": "bug-291",
+      "summary": "(MEDIUM) A non-string value on a declared external_context field was fatal for `timestamp` and silently wrong for `name` and `user_id`. `do_recall_with_context` read all three with a bare `entry.get(...)`, so whatever the caller sent went straight on: a `timestamp` that was not a string reached `_parse_timestamp_utc`, which calls `.replace` on its argument and catches only ValueError and OSError, so an epoch integer raised AttributeError out of the entire call — the recall hits and every well-formed entry beside it were lost to one malformed neighbour. `name` and `user_id` reached the response verbatim, so `source.name` could be a dict and `source.id` could be the f-string interpolation of one (`discord:{'a': 1}`), an identity the caller never sent. An explicit JSON null on `timestamp` was emitted as `null` where every other message carries a string. This is the third instance of the class bug-035 settled for `content` and bug-163 for `role`; these three fields were never revisited because the schema did not admit they were read (bug-292).",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-05T00:00:00Z",
+      "version": "2.5.12a2",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "def _ctx_string",
+      "expected": "present",
+      "status": "fixed",
+      "category": "input-validation",
+      "note": "Found by measuring the fields an external audit reported as undeclared, rather than by reading the declaration against the handler. The declaration mismatch was the reported finding; the crash was underneath it and is the more expensive half. Recorded before the fix as the behaviour scenarios `rwc-untyped-timestamp-aborts` (raised: AttributeError, result: null) and `rwc-untyped-identity-fields`, so the change is reviewed as a diff against a measured baseline.",
+      "fix_note": "`_ctx_string` reads a declared field and falls back to that field's own default when the value is present but not a string — the same answer `_ctx_content` gives for a non-string `content`, and the same value an absent key already produced, so the malformed case lands where the missing case sat. Deliberately not `str()` coercion, which is what `_ctx_role` does: that coercion exists so the C13 disclosure can name the bad role, whereas these three are consumed — coercing invents an identity for `source.id` and a position in the chronology for `timestamp`. The report in `context_field_issues` names the field instead of guessing the value."
+    },
+    {
+      "id": "bug-292",
+      "summary": "(LOW) The `external_context` item schema declared `role` and `content` while the handler read `name`, `user_id` and `timestamp` as well. The three were named only in the array's free-text description, which no client validates against and no generated type carries, so a caller working from the schema had no statement that a timestamp was consulted at all — and an entry sent without one merges into the undated group ahead of every dated message, which reads as a turn that happened first. bug-163 had already closed the same gap for `role` and `content` after the item shape was advertised in prose only; the other three were left behind.",
+      "severity": "LOW",
+      "discovered": "2026-09-05T00:00:00Z",
+      "version": "2.5.12a2",
+      "file": "cpersona/server.py",
+      "pattern": "Every declared field is a string",
+      "expected": "present",
+      "status": "fixed",
+      "category": "api-contract",
+      "note": "Reported by an external audit of the boundary surfaces. `additionalProperties: false` is deliberately NOT part of the fix: closing the object would refuse payloads that work today, which is a break the declaration gap does not justify. Callers do send their own bookkeeping alongside these fields, and the scenario `rwc-untyped-identity-fields` records an undeclared key being accepted so that stays an assertion rather than an assumption.",
+      "fix_note": "The three fields are declared with their types and their meaning, including what an entry without a timestamp does. Enforcement of the declared shape ships in the same release but off: CPERSONA_EXTERNAL_CONTEXT_MODE is `warn` by default (report and read the field as absent) with `reject` written, mounted and tested beside it, so turning it on is a change of default rather than a code path written under release pressure."
     }
   ]
 }

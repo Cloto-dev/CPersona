@@ -12861,7 +12861,7 @@
     "thresholds": {}
   },
   "rwc-untyped-identity-fields": {
-    "covers": "recall_with_context: TODAY a non-string `name` / `user_id` reaches the response verbatim (source.name is a dict, source.id interpolates it), a null `timestamp` is emitted as null, and an undeclared field is accepted and ignored (N-09)",
+    "covers": "recall_with_context: a non-string `name` / `user_id` falls back to the declared default rather than becoming source.name / source.id verbatim, a null `timestamp` is emitted as the empty string, and an undeclared field is still accepted and ignored (bug-291/bug-292)",
     "db": {
       "episodes": [
         {
@@ -13010,6 +13010,24 @@
     "outbound": [],
     "raised": null,
     "result": {
+      "context_field_issues": {
+        "entries": [
+          {
+            "fields": [
+              "name",
+              "user_id"
+            ],
+            "index": 1
+          },
+          {
+            "fields": [
+              "timestamp"
+            ],
+            "index": 2
+          }
+        ],
+        "note": "these fields were not strings and were read as absent; the entries were merged without them"
+      },
       "messages": [
         {
           "content": "apples with a null stamp",
@@ -13019,7 +13037,7 @@
             "name": "User",
             "type": "User"
           },
-          "timestamp": null
+          "timestamp": ""
         },
         {
           "content": "apples, declared shape",
@@ -13059,10 +13077,8 @@
           "content": "apples from a dict-named caller",
           "context_type": "conversation",
           "source": {
-            "id": "discord:12345",
-            "name": {
-              "display": "kirari"
-            },
+            "id": "discord:User",
+            "name": "User",
             "type": "User"
           },
           "timestamp": "2026-01-01T00:00:04Z"
@@ -13124,7 +13140,7 @@
     "thresholds": {}
   },
   "rwc-untyped-timestamp-aborts": {
-    "covers": "recall_with_context: TODAY a non-string `timestamp` on ONE entry raises AttributeError out of the whole call, taking the valid entries and the recall hits with it — the schema declares no timestamp at all (N-09)",
+    "covers": "recall_with_context: a non-string `timestamp` on ONE entry is read as absent, so that entry merges into the undated group and the valid entry and the recall hits survive beside it — it used to raise AttributeError out of the whole call (bug-291)",
     "db": {
       "episodes": [
         {
@@ -13271,11 +13287,108 @@
       "profiles": []
     },
     "outbound": [],
-    "raised": {
-      "message": "'int' object has no attribute 'replace'",
-      "type": "AttributeError"
+    "raised": null,
+    "result": {
+      "context_field_issues": {
+        "entries": [
+          {
+            "fields": [
+              "timestamp"
+            ],
+            "index": 1
+          }
+        ],
+        "note": "these fields were not strings and were read as absent; the entries were merged without them"
+      },
+      "messages": [
+        {
+          "content": "apples timed with an epoch int",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:User",
+            "name": "User",
+            "type": "User"
+          },
+          "timestamp": ""
+        },
+        {
+          "content": "apples in the orchard, well formed",
+          "context_type": "conversation",
+          "source": {
+            "id": "discord:u-1",
+            "name": "alice",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "content": "apples in another project",
+          "match_reason": {
+            "cosine": 0.4411262731,
+            "rrf": 0.0314976659,
+            "score": 0.4411262731,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.5544837998,
+            "rrf": 0.0322577957,
+            "score": 0.5544837998,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "content": "apples from a tagged user",
+          "match_reason": {
+            "cosine": 0.3978533696,
+            "rrf": 0.0310094431,
+            "score": 0.3978533696,
+            "signal": "cosine"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "content": "[Episode] orchard apples episode",
+          "match_reason": {
+            "cosine": 0.5416657925,
+            "rrf": 0.0320020481,
+            "score": 0.5416657925,
+            "signal": "cosine"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "content": "[Episode] chat apples episode",
+          "match_reason": {
+            "cosine": 0.5832774043,
+            "rrf": 0.0327868852,
+            "score": 0.5832774043,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
+        }
+      ]
     },
-    "result": null,
     "seam": "store-recall-health",
     "thresholds": {}
   },

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:88cd40a8a8a25f1221ed61deba1ee20b8dbf51fe -->
+<!-- i18n-source: docs/configuration.md@blob:42d8b7ca0de017cea04dfa33f007cfa2bbfebc73 -->
 
 # 設定リファレンス
 
@@ -80,6 +80,7 @@
 | `CPERSONA_ALIAS_LEDGER_FILE` | DB と同じ場所の `alias_ledger.json` | subject 別 alias 台帳の置き場所 — `"per_subject": true` の行の背後にある、サーバーが書く `(issuer, subject) → alias` の対応表 ([OAuth 設計 §12](OAUTH_DESIGN.md))。運用者が所有する ACL ファイルと違い、これはサーバーが書くため既定でデータベースの隣に置かれます |
 | `CPERSONA_HTTP_MAX_BODY_BYTES` | `4194304` | リクエストボディ 1 本あたりの予算 (バイト)。`Content-Length` を読むのではなく、到着したバイトを数えます |
 | `CPERSONA_HTTP_BODY_LIMIT_MODE` | `warn` | 予算を超えたときの扱い: `warn` は記録した上でそのまま応答し、`reject` は 413 を返して読み取りを止め、`off` は計測自体を無効にします |
+| `CPERSONA_EXTERNAL_CONTEXT_MODE` | `warn` | `recall_with_context` のエントリで、宣言されたフィールドが文字列でなかったときの扱い: `warn` はそのフィールドを「無かったもの」として読み、該当エントリを `context_field_issues` に載せます。`reject` は呼び出し自体を拒否し、`off` は安全な読みは保ったまま報告だけを外します |
 
 **ボディ予算は「測る」ものであって、まだ「拒否する」ものではありません。** このサーバーの
 他の上限 — `CPERSONA_MAX_CONTENT_LENGTH` など — はすべてツールハンドラが適用するもので、
@@ -98,6 +99,23 @@
 その数値が自分のトラフィックに合うと確認できてから `CPERSONA_HTTP_BODY_LIMIT_MODE=reject`
 を設定してください。どちらの経路もテスト済みで、強制の有効化は設定の変更であって
 コード経路の追加ではありません。
+
+**コンテキストのエントリは、自分の形を宣言するようになりました。**
+`recall_with_context` の `external_context` の各エントリは、文字列のフィールドを 5 つ
+— `role` / `content` / `name` / `user_id` / `timestamp` — 宣言します。2.5.12 まで
+schema が名前を挙げていたのは最初の 2 つだけでした。残る 3 つはずっと読まれていたので、
+schema を見て実装した呼び出し側には `timestamp` が参照されていること自体を知る手立てが無く、
+`timestamp` を付けずに送られたエントリは、日付を持つすべてのメッセージより前に並ぶ
+「日付なしグループ」に入っていました。
+
+値はあるが文字列でないフィールドは、そのフィールドが意味しうる何かを指していないので、
+「無かったもの」として読み、エントリはそのフィールド抜きで併合されます。応答には
+`context_field_issues` が付き、該当エントリの index とフィールド名を挙げるので、黙って
+吸収されることはありません。そういう呼び出しを拒否したい場合は
+`CPERSONA_EXTERNAL_CONTEXT_MODE=reject` を設定してください。既定を `warn` のままにして
+あるのは、規則を初めて明文化したリリースで、今日動いているペイロードが動かなくなるべきでは
+ないからです。schema が **宣言していない** フィールドは、これまでどおり受理して無視します —
+独自の管理情報を一緒に載せている呼び出し側は、そのまま動き続けます。
 
 **discovery は明示的に有効化するまで無効です。** OAuth に対応したクライアントは
 RFC 9728 の metadata を探し、見つからなければ人間に client id を手で入力させる段まで

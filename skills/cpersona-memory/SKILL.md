@@ -439,7 +439,7 @@ and the backfill for rows written while the backend was down.
 
 ## Key facts
 
-- 31 tools · Schema v13 (auto-migrating) · ~20,700 LOC Python across focused modules · MIT.
+- 31 tools · Schema v13 (auto-migrating) · ~21,450 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 /absolute/path/cpersona.db ".backup 'backup.db'"`, substituting the

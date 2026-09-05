@@ -76,6 +76,7 @@ instead — one server, several clients, reachable over a network.
 | `CPERSONA_ALIAS_LEDGER_FILE` | `alias_ledger.json` beside the DB | Where the per-subject alias ledger lives — the server-written `(issuer, subject) → alias` map behind `"per_subject": true` rows (see [OAuth design §12](OAUTH_DESIGN.md)). Defaults beside the database because the server writes it, unlike the operator-owned ACL file |
 | `CPERSONA_HTTP_MAX_BODY_BYTES` | `4194304` | Budget for one request body, in bytes, counted as it arrives rather than read from `Content-Length` |
 | `CPERSONA_HTTP_BODY_LIMIT_MODE` | `warn` | What crossing that budget costs: `warn` reports it and serves the request anyway, `reject` answers 413 and stops reading, `off` disables the accounting |
+| `CPERSONA_EXTERNAL_CONTEXT_MODE` | `warn` | What a `recall_with_context` entry whose declared field is not a string costs: `warn` reads that field as absent and names the entry in `context_field_issues`, `reject` refuses the call, `off` keeps the safe read and drops the report |
 
 **The body budget measures, it does not yet refuse.** Every other cap in this
 server — `CPERSONA_MAX_CONTENT_LENGTH` and the rest — is applied by a tool
@@ -96,6 +97,23 @@ limit set by guessing — so run with the default, read the log, and set
 `CPERSONA_HTTP_BODY_LIMIT_MODE=reject` once you know the number fits your
 traffic. Both paths are tested; enabling enforcement changes a setting, not a
 code path.
+
+**A context entry states its shape now.** Each entry in
+`recall_with_context`'s `external_context` declares five string fields — `role`,
+`content`, `name`, `user_id` and `timestamp` — and until 2.5.12 the schema named
+only the first two. The other three were read all along, so a caller working from
+the schema had no way to know that a `timestamp` was consulted at all, and an
+entry sent without one merges into the undated group that sorts ahead of every
+dated message.
+
+A field that is present but not a string names nothing the field can mean, so it
+is read as absent and the entry merges without it; the response then carries
+`context_field_issues` naming the entry's index and the fields, so nothing is
+absorbed silently. Set `CPERSONA_EXTERNAL_CONTEXT_MODE=reject` to refuse such a
+call instead — the default stays `warn` because no payload that works today
+should stop working in the release that first states the rule. Fields the schema
+does **not** declare are still accepted and ignored: a caller carrying its own
+bookkeeping alongside these keeps working.
 
 **Discovery is off until you turn it on.** A client that supports OAuth looks for RFC 9728
 metadata; finding none, it falls through to asking a human to type in a client id — correct
