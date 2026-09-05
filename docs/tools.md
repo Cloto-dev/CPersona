@@ -2,7 +2,7 @@
 
 > **Applies to: CPersona 2.5.x.** The authoritative description of every
 > argument is the tool's own MCP description — your client reads it, and it
-> ships with the version you are running. This page groups the **31 tools** by
+> ships with the version you are running. This page groups **every tool** by
 > what you reach for them for, and links to the contract when a tool behaves in
 > a way its name does not suggest.
 
@@ -128,7 +128,7 @@ without a `persisted` key at all.
 ## Isolation arguments
 
 The three isolation axes are not offered uniformly. `agent_id` is accepted by
-most tools (22 of 31); `project_id` by six; and `channel` by exactly four —
+most tools (22); `project_id` by six; and `channel` by exactly four —
 `store`, `recall`, `recall_with_context` and `archive_episode`. They are
 independent axes rather than one nested hierarchy, and reads treat an empty
 value differently from an omitted one — see

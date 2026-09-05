@@ -43,7 +43,7 @@ different operating points.
 
     ---
 
-    All 31 tools grouped by purpose, each linked to the contract it can
+    Every tool grouped by purpose, each linked to the contract it can
     surprise you with.
 
     [:octicons-arrow-right-24: Tools](tools.md)

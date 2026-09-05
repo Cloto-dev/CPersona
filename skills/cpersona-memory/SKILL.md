@@ -24,7 +24,7 @@ your token budget; the calling agent (you) does all summarization. (Embedding
 is separate: `EMBEDDING_MODE=api` bills per store and per recall against
 `CPERSONA_EMBEDDING_API_URL`. The local `http` mode and `none` cost nothing.)
 
-- **31 tools**, single SQLite file, MIT licensed.
+- Single SQLite file, MIT licensed.
 - Works with Claude Desktop, Claude Code, and any MCP host.
 - Repo: <https://github.com/Cloto-dev/cpersona>
 
@@ -439,7 +439,7 @@ and the backfill for rows written while the backend was down.
 
 ## Key facts
 
-- 31 tools · Schema v13 (auto-migrating) · ~22,180 LOC Python across focused modules · MIT.
+- Schema v13 (auto-migrating) · ~22,180 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 /absolute/path/cpersona.db ".backup 'backup.db'"`, substituting the

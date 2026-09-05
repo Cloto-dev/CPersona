@@ -4,12 +4,14 @@ name = "cpersona"
 # wheel's metadata and the version the running server reports come from one
 # string instead of two that have to be kept equal.
 dynamic = ["version"]
-# The tool count here is gated by scripts/check-docs-facts.py. The GitHub
-# repository description carries the same sentence and CANNOT be gated — it is
-# not a file in this tree — so changing this line means also running:
+# No tool count in this sentence, or anywhere else a reader sees one. The number
+# was right on every page scripts/check-docs-facts.py could reach and wrong on the
+# surfaces it could not — the GitHub repository description, the registry's
+# frozen per-version copy, a code comment — twice (2026-08-31, 2026-09-05). The
+# gate now fails on a count appearing at all. The GitHub description carries this
+# sentence and is not a file in this tree, so changing this line means also running:
 #   gh repo edit Cloto-dev/cpersona --description "<this string>"
-# Both said 29 for two releases while every gated page said 30 (2026-08-31).
-description = "CPersona — Persistent AI memory server with 3-layer hybrid search, confidence scoring, and 31 tools. MIT licensed."
+description = "CPersona — persistent memory for AI agents over MCP. One SQLite file you own, hybrid vector + full-text + keyword search, no LLM in the loop, and honest reporting when recall degrades. MIT licensed."
 requires-python = ">=3.11"
 license = {text = "MIT"}
 readme = "README.md"
