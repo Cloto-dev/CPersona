@@ -9326,7 +9326,8 @@
         "stale_profile",
         "orphaned_episodes",
         "calibration_staleness",
-        "near_duplicate"
+        "near_duplicate",
+        "unnormalized_content"
       ],
       "fixed": false,
       "results": {
@@ -9353,6 +9354,30 @@
           "count": 1,
           "last_updated": "2026-01-01T00:00:00Z",
           "threshold_days": 30
+        },
+        "unnormalized_content": {
+          "by_table": {
+            "episodes": 0,
+            "memories": 1
+          },
+          "complete": true,
+          "count": 1,
+          "rows_scanned": {
+            "episodes": 0,
+            "memories": 3
+          },
+          "samples": [
+            {
+              "decomposed_codepoints": [
+                "U+3053",
+                "U+305F",
+                "U+3099"
+              ],
+              "excerpt": "だんごの記録",
+              "id": 2,
+              "table": "memories"
+            }
+          ]
         }
       }
     },
@@ -9524,7 +9549,8 @@
         "stale_profile",
         "orphaned_episodes",
         "calibration_staleness",
-        "near_duplicate"
+        "near_duplicate",
+        "unnormalized_content"
       ],
       "fixed": true,
       "results": {
@@ -9557,6 +9583,18 @@
         "stale_profile": {
           "count": 0,
           "threshold_days": 30
+        },
+        "unnormalized_content": {
+          "by_table": {
+            "episodes": 0,
+            "memories": 0
+          },
+          "complete": true,
+          "count": 0,
+          "rows_scanned": {
+            "episodes": 0,
+            "memories": 1
+          }
         }
       }
     },
@@ -9580,7 +9618,8 @@
         "stale_profile",
         "orphaned_episodes",
         "calibration_staleness",
-        "near_duplicate"
+        "near_duplicate",
+        "unnormalized_content"
       ],
       "fixed": false,
       "results": {
@@ -9605,6 +9644,18 @@
         "stale_profile": {
           "count": 0,
           "threshold_days": 30
+        },
+        "unnormalized_content": {
+          "by_table": {
+            "episodes": 0,
+            "memories": 0
+          },
+          "complete": true,
+          "count": 0,
+          "rows_scanned": {
+            "episodes": 0,
+            "memories": 0
+          }
         }
       }
     },

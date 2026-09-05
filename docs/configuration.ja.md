@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:a5a9000b19f01ca23cb799224fe958e653bb1bbd -->
+<!-- i18n-source: docs/configuration.md@blob:fa3804aebbe68ac44cde2d6d7b8f17da3e8cfc0c -->
 
 # 設定リファレンス
 
@@ -57,6 +57,7 @@
 | `CPERSONA_REEMBED_ROW_CAP` | `5000` | 1 回の `check_health(fix=true)` が再埋め込みする「埋め込みなし」行数。報告される `repairable` の上限でもあります。埋め込みは書き込みロックを取る前に行われるため、この値が縛るのは prefetch の実時間とロック中の `UPDATE` 件数です。大きなバックログを少ない回数で捌きたい場合は引き上げてください: 旧既定値 500 では 50,000 行のバックログに 100 回の実行が必要で、しかもバックログが `CPERSONA_VECTOR_INDEX_MAX_EXCLUDED_IDS` を超えている間はインデックスもビルドできません |
 | `CPERSONA_NEAR_DUPLICATE_ROW_CAP` | `5000` | `deep_near_duplicate` が比較する埋め込み済み行数。この比較はメモリが O(n²) です: 1024 次元ベクトルでの実測で、5,000 行はピーク 266 MB / 約 100 ms、10,000 行は 982 MB — 既定値が大きなコーパスを覆わず標本に留めているのはこのためです |
 | `CPERSONA_INVALID_SOURCE_CLASSIFY_CAP` | `10000` | 1 回の `check_invalid_source_type` が分類する不正な `source` 行数。コストは行ごとの JSON パース (マイクロ秒オーダー) なので、上の 2 つより大きく取れます。上限を超えると標本が不完全になり、チェックは自身の severity を下げることを見送ります — 失われるのは判定であって正しさではありません |
+| `CPERSONA_NORMALIZATION_SCAN_CAP` | `10000` | `deep_unnormalized_content` が 1 回の実行で読む行数。Unicode 正規化は SQL の述語にできない (SQLite に NFC 関数が無い) ので、これは本文を読まないと答えられない唯一の check であり、この上限が「本文を読む」を「コーパス全体を読む」にしないための線です。上限を超えた実行は `complete: false` を返し、下限値を総数と読ませません |
 | `CPERSONA_CALIBRATE_MAX_SAMPLE` | `5000` | 呼び出し側が何を要求しても効く `calibrate_threshold` の `sample_size` の上限。near-duplicate と同じ O(n²) の行列を扱い、無制限な値が接続を共有する全エージェントごとメモリを食い潰すのを防ぐために存在します。引き上げはマシンが抱えられる範囲まで (上記の実測値を参照) |
 
 ## リモート (HTTP) トランスポート { #remote-http-transport }

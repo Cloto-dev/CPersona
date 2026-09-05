@@ -4279,6 +4279,20 @@
       "status": "open",
       "category": "temporal-integrity",
       "note": "Deferred deliberately, and not because it is hard. Changing what age a future stamp is scored at is a change to the scoring semantics, which is the axis the pre-release ladder is meant to keep readable: a soak cannot tell 'the behaviour changed' from 'the behaviour broke' while two scoring changes are in flight. The same reasoning already holds bug-247 for the 2.6 scoring line, and this belongs beside it. It is also the smaller half now: on a default install the clamp is unreachable (confidence off means the span is never computed), the write seam refuses new rows once the mode is flipped, and the health check names and repairs the rows already stored. What remains uncovered is a row an operator chooses not to repair, and an episode start_time — for which there is no check yet."
+    },
+    {
+      "id": "bug-295",
+      "summary": "(LOW) Nothing in the package normalises Unicode, so identity is byte equality after `strip().lower()`: a Japanese string written precomposed and the same string written with a combining dakuten are two different memories. They are two rows (the dedup UNIQUE index sees different bytes), two FTS entries — measured, not assumed: FTS5's `unicode61` tokenizer performs no canonical composition, so a composed query returns zero hits against a decomposed row — and an `exclude_contents` entry in one spelling excludes neither the other. The reachable sources are the ones a published package has no control over: a macOS client, an IME, a paste, an import.",
+      "severity": "LOW",
+      "discovered": "2026-09-05T00:00:00Z",
+      "version": "2.5.12a2",
+      "file": "cpersona/checks.py",
+      "pattern": "async def deep_unnormalized_content",
+      "expected": "present",
+      "status": "open",
+      "category": "canonical-identity",
+      "note": "Reported by an external audit of the boundary surfaces, and the ruling was to measure the production corpus before designing anything — which changed the answer. Measured 2026-09-05: all 3,234 memories, all 3,234 msg_ids, all 657 episode summaries and all 657 keyword rows are ALREADY NFC, and no dedup key would newly collide under NFC, NFD, NFKC or NFKD. The defect is latent, not live. For contrast on the same corpus, NFKC would move 478 rows (14.8%) — fullwidth parentheses, circled digits, the ellipsis, the micro sign — which is why NFKC is not the canonical-identity question: it folds characters an author chose. A separate axis, casefold() vs lower(), differs on 12 rows and all of them for U+00B5 alone, changing no dedup key.",
+      "fix_note": "PARTIAL, deliberately. 2.5.x ships the detector only: `deep_unnormalized_content` is a report-only deep check that counts rows not in NFC across memories and episodes, names the codepoints composition would remove, and reports `complete: false` past its scan cap. It repairs nothing, because a repair would rewrite stored text and the canonical form has to live BESIDE the original — that is a column, and this line preserves the schema. The canonical_identity column, and with it dedup and exclude comparing on it, belongs to the release that can take a migration. The identity rule as it stands is recorded in the behaviour golden first (store-canonically-equivalent-pair, corpus-unnormalized-*), so the release that changes it has a baseline that was not written after the fact."
     }
   ]
 }
