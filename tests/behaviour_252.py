@@ -1989,6 +1989,133 @@ async def _(ctx):
     return {"exported": exported, "timestamps_in_file_order": stamps}
 
 
+# --- N-03: a timestamp that is in the future ---------------------------------
+#
+# `store` takes the caller's `timestamp` verbatim, and the age the confidence
+# curve reads is `max(0.0, now - timestamp)`. A stamp ahead of the clock is
+# therefore clamped to the age of a row written this instant, which is the
+# strongest recency any row can have -- and it cannot decay, because tomorrow it
+# is still ahead of the clock.
+#
+# Recording this BEFORE changing anything, because the face that matters is the
+# SHIPPING one and it is not the same face: `CONFIDENCE_ENABLED` is false by
+# default, and scope_stats issues the MIN/MAX span only when it is true, so on a
+# default install a future stamp reaches no scoring arithmetic at all. Without
+# these two scenarios side by side, a change here would be reviewed against the
+# confidence-on face alone and the default face would pass by not being looked at.
+#
+# The fixture holds the second, larger half of the defect as well. The span is
+# the corpus's own width, and it scales the decay RATE -- so one row stamped 2099
+# widens the width from three weeks to seventy years and flattens the time axis
+# for every OTHER row too. One bad row does not merely rank first; it stops the
+# rest of the corpus from being ordered by time at all. `_future_control` is the
+# same corpus without that row, so the flattening is visible as a difference
+# rather than as an absolute nobody can read.
+_FUTURE_AGENT = "fu1"
+
+# Four honest rows over the three weeks before the frozen clock (2027-01-01Z),
+# far enough apart that the decay rate has something to act on, plus the one row
+# whose stamp is ahead of it. created_at stays honest on every row INCLUDING the
+# future one -- that asymmetry is the defect (the row knows when it was written;
+# only the caller-supplied column lies) and it is what any repair would read.
+_FUTURE_DATED = [
+    ("pears picked three weeks ago", "2026-12-11T00:00:00Z", "2026-12-11 00:00:00"),
+    ("pears picked two weeks ago", "2026-12-18T00:00:00Z", "2026-12-18 00:00:00"),
+    ("pears picked one week ago", "2026-12-25T00:00:00Z", "2026-12-25 00:00:00"),
+    ("pears picked yesterday", "2026-12-31T00:00:00Z", "2026-12-31 00:00:00"),
+]
+_FUTURE_ROW = ("pears stamped for 2099", "2099-01-01T00:00:00Z", "2026-12-31 12:00:00")
+
+
+def _future_row_moves_the_axis() -> None:
+    """The fixture can discriminate: the future row must widen the span by orders
+    of magnitude, not by a rounding error. A corpus whose span barely moves scores
+    the same either way, and its golden would stay green through the fix."""
+    from cpersona.utils import _parse_timestamp_utc
+
+    dated = [_parse_timestamp_utc(ts) for _, ts, _ in _FUTURE_DATED]
+    ahead = _parse_timestamp_utc(_FUTURE_ROW[1])
+    assert ahead > FROZEN_INSTANT, "the future row is not ahead of the frozen clock"
+    control_width = (max(dated) - min(dated)).total_seconds() / 3600
+    poisoned_width = (ahead - min(dated)).total_seconds() / 3600
+    assert control_width > 0, "the control corpus has no width to flatten"
+    assert poisoned_width > control_width * 100, (
+        f"span {control_width:.0f}h -> {poisoned_width:.0f}h is not a difference "
+        "the decay rate can show"
+    )
+
+
+async def _seed_future_dated(db) -> None:
+    for content, ts, created in _FUTURE_DATED:
+        await _mem_raw(
+            db, agent=_FUTURE_AGENT, content=content,
+            timestamp=ts, created_at=created, blob=pack(content),
+        )
+
+
+async def _seed_future(ctx: Ctx) -> None:
+    _future_row_moves_the_axis()
+    db = ctx.db
+    await _seed_future_dated(db)
+    content, ts, created = _FUTURE_ROW
+    await _mem_raw(
+        db, agent=_FUTURE_AGENT, content=content,
+        timestamp=ts, created_at=created, blob=pack(content),
+    )
+    await _profile_for(db, _FUTURE_AGENT)
+    await db.commit()
+
+
+async def _seed_future_control(ctx: Ctx) -> None:
+    _future_row_moves_the_axis()
+    db = ctx.db
+    await _seed_future_dated(db)
+    await _profile_for(db, _FUTURE_AGENT)
+    await db.commit()
+
+
+@scenario("corpus-future-control-recall-confidence", "store-recall-health",
+          "recall (CONFIDENCE=on) over four honestly dated rows: the span, every age_hours and the order the time axis produces when no stamp is ahead of the clock -- the control the future corpus is read against",
+          seed=_seed_future_control)
+async def _(ctx):
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    return await memory_handlers.do_recall(_FUTURE_AGENT, "pears", 6)
+
+
+@scenario("corpus-future-timestamp-recall-confidence", "store-recall-health",
+          "recall (CONFIDENCE=on) over the same rows plus one stamped 2099: TODAY the future row's age_hours clamps to 0.0 (the recency of a row written this instant, and it never decays) and its stamp widens the span, which flattens the decay rate for every other row too",
+          seed=_seed_future)
+async def _(ctx):
+    install_local(ctx)
+    _install_confidence_on(ctx)
+    return await memory_handlers.do_recall(_FUTURE_AGENT, "pears", 6)
+
+
+@scenario("corpus-future-timestamp-recall-shipping-default", "store-recall-health",
+          "recall over the 2099 corpus on a DEFAULT install (CONFIDENCE=off): TODAY no age and no span are computed at all, so the future stamp reaches no scoring arithmetic -- this is the face the acceptance axis protects",
+          seed=_seed_future)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall(_FUTURE_AGENT, "pears", 6)
+
+
+@scenario("corpus-future-timestamp-health", "store-recall-health",
+          "check_health over the 2099 corpus: TODAY no check names a timestamp that is ahead of the clock -- invalid_timestamp reads it as parseable and timestamp_format_drift reads it as aware UTC",
+          seed=_seed_future)
+async def _(ctx):
+    return _mask_health_stats(await maintenance_handlers.do_check_health(agent_id=_FUTURE_AGENT))
+
+
+@scenario("store-future-timestamp", "store-recall-health",
+          "store: a caller-supplied timestamp 72 years ahead of the clock -- TODAY it is accepted verbatim, the row carries it, and the result says nothing about it")
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_store(
+        "s1", {"content": "stamped for 2099", "timestamp": "2099-01-01T00:00:00Z"}
+    )
+
+
 # --- bug-155 cosine backfill ------------------------------------------------
 #
 # Pins the FTS-only-hit backfill path directly. A lexically-matching row is

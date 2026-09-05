@@ -3599,6 +3599,676 @@
     "seam": "store-recall-health",
     "thresholds": {}
   },
+  "corpus-future-control-recall-confidence": {
+    "covers": "recall (CONFIDENCE=on) over four honestly dated rows: the span, every age_hours and the order the time axis produces when no stamp is ahead of the clock -- the control the future corpus is read against",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked three weeks ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:44b9f6445c566baf>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-11T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked two weeks ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:19660f63b55f6010>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-18T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked one week ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:40fdc0f653c2bdbe>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-25T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked yesterday",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:5d209bc7b9578291>",
+          "id": 4,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-31T00:00:00Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "fu1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "confidence": {
+            "age_hours": 24.0,
+            "cosine": 0.6001,
+            "score": 0.8355
+          },
+          "content": "pears picked yesterday",
+          "match_reason": {
+            "cosine": 0.6000586748,
+            "rrf": 0.0327868852,
+            "score": 0.8355,
+            "signal": "confidence"
+          },
+          "ref": "mem:4",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-31T00:00:00Z"
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-future-timestamp-health": {
+    "covers": "check_health over the 2099 corpus: TODAY no check names a timestamp that is ahead of the clock -- invalid_timestamp reads it as parseable and timestamp_format_drift reads it as aware UTC",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked three weeks ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:44b9f6445c566baf>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-11T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked two weeks ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:19660f63b55f6010>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-18T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked one week ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:40fdc0f653c2bdbe>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-25T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked yesterday",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:5d209bc7b9578291>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-31T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears stamped for 2099",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:f5e17a8617ef738f>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2099-01-01T00:00:00Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "fu1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "checks_run": [
+        "memory_annotation",
+        "discord_mention",
+        "oversized_content",
+        "duplicate_content",
+        "embedding_dimension",
+        "nonfinite_embedding",
+        "embedding_backend",
+        "null_embedding",
+        "null_episode_embedding",
+        "fts_integrity",
+        "schema_version",
+        "dedup_msg_id_index",
+        "schema_objects",
+        "sqlite_integrity",
+        "axis_hygiene",
+        "invalid_json",
+        "invalid_timestamp",
+        "missing_episode_start_time",
+        "timestamp_format_drift",
+        "episode_timestamp_format_drift",
+        "stale_pending_tasks",
+        "missing_profile",
+        "empty_content",
+        "invalid_source_type",
+        "oversized_profile",
+        "anonymous_source",
+        "vector_fallback_config",
+        "vector_index",
+        "operating_context_parse",
+        "operating_context_size"
+      ],
+      "fixed": false,
+      "issues": [],
+      "severity_summary": {
+        "critical": 0,
+        "info": 0,
+        "warn": 0
+      },
+      "stats": {
+        "agent_episodes": 0,
+        "agent_memories": 5,
+        "axes": {
+          "channel": {
+            "(global)": 5
+          },
+          "project_id": {
+            "(global)": 5
+          }
+        },
+        "db_size_bytes": "<file-scoped, masked>",
+        "episodes": 0,
+        "memories": 5,
+        "pending_tasks": 0,
+        "profiles": 1
+      },
+      "status": "healthy",
+      "total_memories": 5
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-future-timestamp-recall-confidence": {
+    "covers": "recall (CONFIDENCE=on) over the same rows plus one stamped 2099: TODAY the future row's age_hours clamps to 0.0 (the recency of a row written this instant, and it never decays) and its stamp widens the span, which flattens the decay rate for every other row too",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked three weeks ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:44b9f6445c566baf>",
+          "id": 1,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-11T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked two weeks ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:19660f63b55f6010>",
+          "id": 2,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-18T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked one week ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:40fdc0f653c2bdbe>",
+          "id": 3,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-25T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked yesterday",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:5d209bc7b9578291>",
+          "id": 4,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-31T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears stamped for 2099",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:f5e17a8617ef738f>",
+          "id": 5,
+          "last_recalled_at": "<generated>",
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 1,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2099-01-01T00:00:00Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "fu1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "confidence": {
+            "age_hours": 168.0,
+            "cosine": 0.457,
+            "score": 0.6835
+          },
+          "content": "pears picked one week ago",
+          "match_reason": {
+            "cosine": 0.4570260644,
+            "rrf": 0.0312576313,
+            "score": 0.6835,
+            "signal": "confidence"
+          },
+          "ref": "mem:3",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-25T00:00:00Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 336.0,
+            "cosine": 0.5049,
+            "score": 0.7444
+          },
+          "content": "pears picked two weeks ago",
+          "match_reason": {
+            "cosine": 0.5048677325,
+            "rrf": 0.03125,
+            "score": 0.7444,
+            "signal": "confidence"
+          },
+          "ref": "mem:2",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-18T00:00:00Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 504.0,
+            "cosine": 0.5289,
+            "score": 0.773
+          },
+          "content": "pears picked three weeks ago",
+          "match_reason": {
+            "cosine": 0.5288785696,
+            "rrf": 0.0312576313,
+            "score": 0.773,
+            "signal": "confidence"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-11T00:00:00Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 0.0,
+            "cosine": 0.5536,
+            "score": 0.8018
+          },
+          "content": "pears stamped for 2099",
+          "match_reason": {
+            "cosine": 0.5536241531,
+            "rrf": 0.0322580645,
+            "score": 0.8018,
+            "signal": "confidence"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2099-01-01T00:00:00Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 24.0,
+            "cosine": 0.6001,
+            "score": 0.8529
+          },
+          "content": "pears picked yesterday",
+          "match_reason": {
+            "cosine": 0.6000586748,
+            "rrf": 0.0327868852,
+            "score": 0.8529,
+            "signal": "confidence"
+          },
+          "ref": "mem:4",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-31T00:00:00Z"
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "corpus-future-timestamp-recall-shipping-default": {
+    "covers": "recall over the 2099 corpus on a DEFAULT install (CONFIDENCE=off): TODAY no age and no span are computed at all, so the future stamp reaches no scoring arithmetic -- this is the face the acceptance axis protects",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked three weeks ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:44b9f6445c566baf>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-11T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked two weeks ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:19660f63b55f6010>",
+          "id": 2,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-18T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked one week ago",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:40fdc0f653c2bdbe>",
+          "id": 3,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-25T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears picked yesterday",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:5d209bc7b9578291>",
+          "id": 4,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2026-12-31T00:00:00Z"
+        },
+        {
+          "agent_id": "fu1",
+          "channel": "",
+          "content": "pears stamped for 2099",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:f5e17a8617ef738f>",
+          "id": 5,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
+          "timestamp": "2099-01-01T00:00:00Z"
+        }
+      ],
+      "profiles": [
+        {
+          "agent_id": "fu1",
+          "content": "profile body",
+          "id": 1,
+          "project_id": "",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "user_id": ""
+        }
+      ]
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "messages": [
+        {
+          "content": "pears picked two weeks ago",
+          "match_reason": {
+            "cosine": 0.5048677325,
+            "rrf": 0.03125,
+            "score": 0.5048677325,
+            "signal": "cosine"
+          },
+          "ref": "mem:2",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-18T00:00:00Z"
+        },
+        {
+          "content": "pears picked one week ago",
+          "match_reason": {
+            "cosine": 0.4570260644,
+            "rrf": 0.0312576313,
+            "score": 0.4570260644,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-25T00:00:00Z"
+        },
+        {
+          "content": "pears picked three weeks ago",
+          "match_reason": {
+            "cosine": 0.5288785696,
+            "rrf": 0.0312576313,
+            "score": 0.5288785696,
+            "signal": "cosine"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-11T00:00:00Z"
+        },
+        {
+          "content": "pears stamped for 2099",
+          "match_reason": {
+            "cosine": 0.5536241531,
+            "rrf": 0.0322580645,
+            "score": 0.5536241531,
+            "signal": "cosine"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2099-01-01T00:00:00Z"
+        },
+        {
+          "content": "pears picked yesterday",
+          "match_reason": {
+            "cosine": 0.6000586748,
+            "rrf": 0.0327868852,
+            "score": 0.6000586748,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-31T00:00:00Z"
+        }
+      ]
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
   "corpus-mixed-spellings-export": {
     "covers": "export preserves each timestamp spelling verbatim and in id order",
     "db": {
@@ -13475,6 +14145,41 @@
       "ok": false,
       "reason": "empty content",
       "result": "rejected"
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "store-future-timestamp": {
+    "covers": "store: a caller-supplied timestamp 72 years ahead of the clock -- TODAY it is accepted verbatim, the row carries it, and the result says nothing about it",
+    "db": {
+      "episodes": [],
+      "memories": [
+        {
+          "agent_id": "s1",
+          "channel": "",
+          "content": "stamped for 2099",
+          "created_at": "<generated>",
+          "embedding": "<blob 256B sha256:51a291a1fbeab084>",
+          "id": 1,
+          "last_recalled_at": null,
+          "locked": 0,
+          "metadata": "{}",
+          "msg_id": "",
+          "project_id": "",
+          "recall_count": 0,
+          "source": "{}",
+          "timestamp": "2099-01-01T00:00:00Z"
+        }
+      ],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "embedded": true,
+      "id": 1,
+      "ok": true,
+      "result": "stored"
     },
     "seam": "store-recall-health",
     "thresholds": {}
