@@ -347,3 +347,26 @@ async def test_a_private_corpus_says_nothing(tmp_path, caplog):
     messages = await _boot_against(private, caplog)
 
     assert not any("group/world-accessible" in m for m in messages), messages
+
+
+@pytest.mark.asyncio
+async def test_no_warning_where_the_bits_are_not_the_access_control(tmp_path, caplog, monkeypatch):
+    """The same rule the seam already follows for writes, applied to this read.
+
+    This package ships ``Operating System :: OS Independent`` and the helpers
+    above degrade rather than fail where a mode cannot be honoured. The warning
+    was the one place that still had an opinion: on such a platform the mode is
+    not the access control, so it would fire on every boot of every install and
+    advise a chmod that changes nothing -- the line everyone learns to skip, for
+    a whole platform, permanently. CI runs on Linux only, so nothing here would
+    have said so.
+    """
+    widened = tmp_path / "widened.db"
+    widened.touch()
+    os.chmod(widened, 0o644)
+
+    monkeypatch.setattr(fileperms, "mode_bits_are_enforced", lambda: False)
+    messages = await _boot_against(widened, caplog)
+
+    assert not any("group/world-accessible" in m for m in messages), messages
+    assert mode_of(widened) == 0o644, "and it still does not touch the file"

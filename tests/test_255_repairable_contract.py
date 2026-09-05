@@ -17,7 +17,9 @@ demoted would be satisfied by demoting everything.
 """
 
 import json
+import os
 import sqlite3
+import stat
 from contextlib import asynccontextmanager
 
 import pytest
@@ -308,7 +310,28 @@ EXPECTED_REPAIRABLE = {
     "fts_integrity": 1,
     "dedup_msg_id_index": 1,
     "schema_objects": 1,
+    # one file: the chmod this run would issue. The directory finding declares 0
+    # (never narrowed) and is covered in tests/test_file_permissions_check.py, which is
+    # why the seeder above widens a file and leaves the directory alone.
+    "file_permissions": 1,
 }
+
+
+@seeder("file_permissions")
+async def _s_file_permissions(conn):
+    # Not a row. The subject is the mode of a file this package placed, and the
+    # database is the one every install has, so it is the one widened here.
+    # Restored afterwards: the fix run in the middle of this suite narrows it,
+    # and neither state should reach the next test by accident.
+    from cpersona import config
+
+    path = config.DB_PATH
+    before = stat.S_IMODE(os.stat(path).st_mode)
+    os.chmod(path, 0o644)
+    try:
+        yield conn
+    finally:
+        os.chmod(path, before)
 
 
 def _fix_capable_names() -> set:

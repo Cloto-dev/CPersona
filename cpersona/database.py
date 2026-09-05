@@ -537,7 +537,11 @@ def _warn_if_corpus_is_readable(path: str) -> None:
     must not have that decision reverted by a version bump, and must certainly
     not lose the service over it.
     """
-    if path == ":memory:":
+    if path == ":memory:" or not fileperms.mode_bits_are_enforced():
+        # Where the bits are not the access control, they are not a finding
+        # either: the mode os.stat reports on such a platform is synthesised
+        # from the file attributes, so this would warn on every boot and advise
+        # a chmod that changes nothing. See fileperms.mode_bits_are_enforced.
         return
     with contextlib.suppress(OSError):
         mode = os.stat(path).st_mode

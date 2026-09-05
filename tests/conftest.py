@@ -132,6 +132,31 @@ def _clear_scope_stats_cache():
 
 
 @pytest.fixture(autouse=True)
+def _restore_db_path():
+    """Put ``config.DB_PATH`` back after every test.
+
+    It is process-global and several tests legitimately move it: the checkup CLI
+    sets it from ``--db``, which is right for a CLI that then exits and wrong for
+    one called in-process. Nothing used to notice, because the only other reader
+    is the vector index -- and an index missing at the leaked path is the same
+    silence as an index missing at the real one.
+
+    ``check_file_permissions`` reads the path to find the files beside it, so a
+    leak became visible as a health finding about ANOTHER test's database,
+    inside whichever scenario happened to run next. Order-dependent, and it
+    named the victim rather than the test that moved the path.
+
+    Restored rather than reported, unlike the filter leak below: moving the path
+    is what the CLI is supposed to do, so there is no culprit to name.
+    """
+    from cpersona import config
+
+    before = config.DB_PATH
+    yield
+    config.DB_PATH = before
+
+
+@pytest.fixture(autouse=True)
 def _no_leaked_mgp_log_filter():
     """Fail the test that leaves an MGP validation filter on a live log handler.
 

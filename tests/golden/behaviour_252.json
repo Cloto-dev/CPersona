@@ -3841,7 +3841,8 @@
         "vector_fallback_config",
         "vector_index",
         "operating_context_parse",
-        "operating_context_size"
+        "operating_context_size",
+        "file_permissions"
       ],
       "fixed": false,
       "issues": [
@@ -4592,7 +4593,8 @@
         "vector_fallback_config",
         "vector_index",
         "operating_context_parse",
-        "operating_context_size"
+        "operating_context_size",
+        "file_permissions"
       ],
       "fixed": false,
       "issues": [
@@ -5217,7 +5219,8 @@
         "vector_fallback_config",
         "vector_index",
         "operating_context_parse",
-        "operating_context_size"
+        "operating_context_size",
+        "file_permissions"
       ],
       "fixed": false,
       "issues": [
@@ -9483,7 +9486,8 @@
         "vector_fallback_config",
         "vector_index",
         "operating_context_parse",
-        "operating_context_size"
+        "operating_context_size",
+        "file_permissions"
       ],
       "fixed": false,
       "issues": [],
@@ -11917,14 +11921,66 @@
           "vector_fallback_config",
           "vector_index",
           "operating_context_parse",
-          "operating_context_size"
+          "operating_context_size",
+          "file_permissions"
         ],
         "fixed": false,
-        "issues": [],
+        "issues": [
+          {
+            "check": "file_permissions",
+            "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
+            "holds": "every stored memory",
+            "mode": "0644",
+            "path": "<corpus>/corpus.db",
+            "severity": "warn",
+            "type": "file_reachable_by_other_accounts",
+            "writable_by_others": false
+          },
+          {
+            "check": "file_permissions",
+            "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
+            "holds": "the memories not yet checkpointed into the database",
+            "mode": "0644",
+            "path": "<corpus>/corpus.db-wal",
+            "severity": "warn",
+            "type": "file_reachable_by_other_accounts",
+            "writable_by_others": false
+          },
+          {
+            "check": "file_permissions",
+            "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
+            "holds": "the calibrated thresholds that decide recall breadth",
+            "mode": "0644",
+            "path": "<corpus>/corpus.db.calibration.json",
+            "severity": "warn",
+            "type": "file_reachable_by_other_accounts",
+            "writable_by_others": false
+          },
+          {
+            "check": "file_permissions",
+            "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
+            "holds": "the cached release verdict",
+            "mode": "0644",
+            "path": "<corpus>/update-check.json",
+            "severity": "warn",
+            "type": "file_reachable_by_other_accounts",
+            "writable_by_others": false
+          },
+          {
+            "check": "file_permissions",
+            "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
+            "holds": "which memory space each caller reaches",
+            "mode": "0644",
+            "path": "<corpus>/alias_ledger.json",
+            "severity": "warn",
+            "type": "file_reachable_by_other_accounts",
+            "writable_by_others": false
+          }
+        ],
         "severity_summary": {
           "critical": 0,
           "info": 0,
-          "warn": 0
+          "warn": 5
         },
         "stats": {
           "agent_episodes": 0,
@@ -11939,7 +11995,7 @@
           "pending_tasks": 0,
           "profiles": 0
         },
-        "status": "healthy",
+        "status": "degraded",
         "total_memories": 0
       }
     },
@@ -11998,7 +12054,8 @@
           "vector_fallback_config",
           "vector_index",
           "operating_context_parse",
-          "operating_context_size"
+          "operating_context_size",
+          "file_permissions"
         ],
         "fixed": false,
         "issues": [],
