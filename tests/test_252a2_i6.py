@@ -22,6 +22,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "verify-issues.sh"
 REGISTRY = REPO_ROOT / "qa" / "issue-registry.json"
@@ -175,3 +177,80 @@ def test_emitter_rejects_separator_char_in_field(tmp_path: Path) -> None:
     assert "FATAL" in combined, (
         f"expected a FATAL diagnostic for the corrupt field, got:\n{combined}"
     )
+
+
+# ---------------------------------------------------------------------------
+# bug-309 — a registry the gate cannot read must not read as a clean one.
+#
+# Malformed JSON already aborted (json.load raises inside a command substitution
+# under `set -e`). What did not was a file that PARSES and carries the wrong
+# shape: `data.get('issues', [])` answered the same empty list for a missing key,
+# a mistyped key and a wrong type, and the run printed a no-issues summary and
+# exited 0. A registry of 298 entries silently becoming 0 is the exact shape of
+# a truncated or half-written file, and it is the one input on which a
+# verification gate must never report success.
+#
+# Each case is asserted on the exit code rather than on the message: the message
+# is for a human, the exit code is what CI reads.
+# ---------------------------------------------------------------------------
+
+
+def _root_with_raw_registry(tmp_path: Path, raw: str) -> Path:
+    (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "qa").mkdir(parents=True, exist_ok=True)
+    shutil.copy(SCRIPT, tmp_path / "scripts" / "verify-issues.sh")
+    (tmp_path / "qa" / "issue-registry.json").write_text(raw, encoding="utf-8")
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "raw,why",
+    [
+        ("{}", "no issues key at all"),
+        ('{"isues": [{"id": "bug-001"}]}', "the key is mistyped, so the entries are invisible"),
+        ('{"issues": {}}', "issues is an object, and iterating it yields no records"),
+        ("[]", "the root is a list, so .get would not even exist"),
+        ('{"issues": []}', "the registry parses and declares nothing"),
+        ('{"issues": [ truncated', "the file was cut mid-write"),
+    ],
+)
+def test_unreadable_registry_never_exits_zero(tmp_path: Path, raw: str, why: str) -> None:
+    root = _root_with_raw_registry(tmp_path, raw)
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    assert result.returncode != 0, (
+        f"the gate exited 0 on a registry that {why}; combined output:\n"
+        + _strip_ansi(result.stdout + result.stderr)
+    )
+    assert "All issues verified successfully" not in _strip_ansi(result.stdout)
+
+
+def test_a_filter_matching_nothing_is_still_a_pass(tmp_path: Path) -> None:
+    """The counterpart, so the guard above cannot be satisfied by refusing every
+    empty answer: `--filter` selecting none of a registry that WAS read is a real
+    passing result, and must stay one. Without this, the fix for bug-309 would
+    make `--filter open` fail the day the last open issue is closed.
+    """
+    root = _make_root(
+        tmp_path,
+        [
+            {
+                "id": "bug-001",
+                "severity": "LOW",
+                "file": "src/a.py",
+                "pattern": "needle",
+                "expected": "present",
+                "status": "fixed",
+                "summary": "already fixed",
+            }
+        ],
+        {"src/a.py": "needle\n"},
+    )
+    result = subprocess.run(
+        ["bash", str(root / "scripts" / "verify-issues.sh"), "--filter", "open"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, _strip_ansi(result.stdout + result.stderr)
+    assert "No issues matched" in _strip_ansi(result.stdout)

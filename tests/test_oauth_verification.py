@@ -739,3 +739,65 @@ async def test_an_unprovisioned_oauth_client_authenticates_and_is_then_denied(tm
     assert result["ok"] is False
     assert result["client_id"] == NAMESPACED
     assert "detail" in result
+
+
+# ---------------------------------------------------------------------------
+# bug-297 — the cap bounds what is RECEIVED, not only what is parsed.
+#
+# ``_get_json`` refuses a document over ``MAX_DOCUMENT_BYTES``, which decides
+# what is parsed and trusted. The seam under it used to return
+# ``response.content``, so httpx had already buffered the whole body by the time
+# that comparison ran: the allocation the cap exists to bound had happened, at a
+# size chosen by whoever answers at the configured issuer or JWKS URI — the one
+# party OAuth verification exists to survive.
+#
+# This drives the real ``_http_get`` (the fetch seam every other test in this
+# file replaces) against a transport that streams an unbounded body, and asserts
+# on the number of bytes it agreed to pull. Asserting the returned length alone
+# would not do it: a buffered read that trims afterwards returns the same length
+# while having received all of it. The generator counts what it was ASKED for.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_http_get_stops_receiving_past_the_document_cap(monkeypatch):
+    import httpx
+
+    from cpersona import oauth as oauth_module
+
+    served = {"bytes": 0}
+    chunk = b"x" * 8192
+    # Far more than the cap, and never exhausted by a bounded reader.
+    total_available = oauth_module.MAX_DOCUMENT_BYTES * 8
+
+    async def endless():
+        # Async: the async client asserts its transport hands back an
+        # AsyncByteStream, and a sync generator is not one.
+        while served["bytes"] < total_available:
+            served["bytes"] += len(chunk)
+            yield chunk
+
+    def handler(request):
+        return httpx.Response(200, content=endless())
+
+    real_client = httpx.AsyncClient
+
+    def patched(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", patched)
+
+    status, body = await oauth_module._http_get("https://issuer.example/.well-known/openid-configuration")
+
+    assert status == 200
+    # Received: bounded by the cap plus at most the chunk that crossed it.
+    assert served["bytes"] <= oauth_module.MAX_DOCUMENT_BYTES + len(chunk), (
+        f"the fetch pulled {served['bytes']} bytes for a document capped at "
+        f"{oauth_module.MAX_DOCUMENT_BYTES}; the cap is not bounding the receive side"
+    )
+    assert served["bytes"] < total_available, "the whole body was received"
+    # Returned: strictly past the cap, so `_get_json`'s `len(body) >` refusal fires
+    # and reports an oversized document rather than a JSON parse error on a
+    # silently truncated one.
+    assert len(body) > oauth_module.MAX_DOCUMENT_BYTES

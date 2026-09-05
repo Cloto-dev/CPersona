@@ -5336,12 +5336,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:f8c6dc022675de2e>",
           "id": 5,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:05Z"
         },
@@ -5390,12 +5390,10 @@
           {
             "confidence": {
               "age_hours": 8760.0,
-              "cosine": "<nan>",
               "score": 0.5477
             },
             "content": "apples, every element +inf",
             "match_reason": {
-              "cosine": "<nan>",
               "rrf": 0.0153846154,
               "score": 0.5477,
               "signal": "confidence"
@@ -5411,12 +5409,10 @@
           {
             "confidence": {
               "age_hours": 8760.0,
-              "cosine": "<nan>",
               "score": 0.5477
             },
             "content": "apples, every element NaN",
             "match_reason": {
-              "cosine": "<nan>",
               "rrf": 0.015625,
               "score": 0.5477,
               "signal": "confidence"
@@ -5432,12 +5428,29 @@
           {
             "confidence": {
               "age_hours": 8760.0,
-              "cosine": "<nan>",
+              "score": 0.5477
+            },
+            "content": "apples, one element -inf",
+            "match_reason": {
+              "rrf": 0.0158730159,
+              "score": 0.5477,
+              "signal": "confidence"
+            },
+            "ref": "mem:5",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-01T00:00:05Z"
+          },
+          {
+            "confidence": {
+              "age_hours": 8760.0,
               "score": 0.5477
             },
             "content": "apples, one element NaN",
             "match_reason": {
-              "cosine": "<nan>",
               "rrf": 0.0161290323,
               "score": 0.5477,
               "signal": "confidence"
@@ -7356,12 +7369,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:f8c6dc022675de2e>",
           "id": 5,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:05Z"
         },
@@ -7397,6 +7410,25 @@
     "raised": null,
     "result": {
       "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples, one element -inf",
+          "match_reason": {
+            "rrf": 0.0158730159,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
         {
           "confidence": {
             "age_hours": 8760.0,

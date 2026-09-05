@@ -395,3 +395,51 @@ async def test_recall_with_context_boundary_previews_by_default_and_full_content
     )
     assert full["messages"][0]["content"] == long
     assert "content_truncated" not in full["messages"][0]
+
+
+# ---------------------------------------------------------------------------
+# bug-308 — the SHAPE of the gate's refusal, not just the fact of it.
+#
+# bug-169 fixed this line: every other archive_episode failure carries
+# `episode_id` (the handler's own refusal, the or_queue wrapper's, the paused
+# no-op), and utils.error_response names it as the archetypal field a failure
+# still owes its caller, but the gate refusal dropped it — so a caller reading
+# resp["episode_id"] hit a KeyError on exactly one path. The fix was never
+# pinned: deleting the `"episode_id": None` half of the returned dict was
+# measured against the full suite and passed, which puts the KeyError back with
+# nothing red.
+#
+# The other boundaries' refusals carry their own such field (`result` for store,
+# `memories`/`count` for the list tools), so this is asserted here as the shape
+# of a rejection rather than as one dict's contents: the key must be present AND
+# the value must be None, because a caller that branches on truthiness and one
+# that branches on membership both have to survive the refusal.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_archive_episode_boundary_refusal_still_carries_episode_id(monkeypatch):
+    ran = {"n": 0}
+
+    async def must_not_run(*args, **kwargs):
+        ran["n"] += 1
+        return {"ok": True, "queued": False, "episode_id": 7}
+
+    monkeypatch.setattr(server, "do_archive_episode_or_queue", must_not_run)
+    monkeypatch.setattr(
+        server.operating_context,
+        "check_project_id",
+        lambda *args, **kwargs: (None, None, "project_id is not permitted for this agent"),
+    )
+
+    result = await server.do_archive_episode_boundary(
+        "a-1", [{"role": "user", "content": "hi"}], summary="s", project_id="denied"
+    )
+
+    assert ran["n"] == 0, "the gate let the call through instead of refusing it"
+    assert result["ok"] is False
+    assert "episode_id" in result, (
+        "the gate refusal dropped `episode_id`, so a caller reading resp['episode_id'] "
+        "raises KeyError on this path and on no other archive_episode failure (bug-169)"
+    )
+    assert result["episode_id"] is None

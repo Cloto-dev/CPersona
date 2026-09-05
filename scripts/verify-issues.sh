@@ -98,8 +98,33 @@ FIELDS = ('id', 'severity', 'file', 'pattern', 'expected', 'status', 'summary')
 DEFAULTS = {'severity': '?', 'expected': 'present', 'status': 'unknown'}
 with open('$_REGISTRY_PY', encoding='utf-8') as f:
     data = json.load(f)
+# bug-309: a registry this script cannot read must not read as a registry with
+# nothing in it. Malformed JSON already aborts (json.load raises, and the
+# assignment runs under set -e), but a file that PARSES and does not carry the
+# expected shape did not: data.get(issues, []) answered the same empty list for a
+# missing key, a mistyped key and a wrong type, and the run went on to print
+# no-issues-found and exit 0. That is a verification gate reporting success at
+# the moment it lost its subject.
+if not isinstance(data, dict):
+    sys.stderr.write(
+        'FATAL: registry root is %s, not an object carrying an issues list.\n'
+        % type(data).__name__
+    )
+    sys.exit(4)
+if 'issues' not in data:
+    sys.stderr.write(
+        'FATAL: registry has no issues key (top-level keys: %s). An absent key is '
+        'not an empty registry; refusing to report zero issues as success.\n'
+        % (sorted(data) or 'none at all',)
+    )
+    sys.exit(4)
+if not isinstance(data['issues'], list):
+    sys.stderr.write(
+        'FATAL: registry issues is %s, not a list.\n' % type(data['issues']).__name__
+    )
+    sys.exit(4)
 lines = []
-for issue in data.get('issues', []):
+for issue in data['issues']:
     values = [str(issue.get(name, DEFAULTS.get(name, ''))) for name in FIELDS]
     for name, value in zip(FIELDS, values):
         if SEP in value or '\n' in value or '\r' in value:
@@ -121,9 +146,23 @@ registry_count="$(
 import json
 with open('$_REGISTRY_PY', encoding='utf-8') as f:
     data = json.load(f)
-print(len(data.get('issues', [])))
+print(len(data['issues']))
 "
 )"
+
+# bug-309: an empty registry is not a pass. The emitter above has already refused
+# every shape that merely LOOKS empty, so reaching here with zero records means the
+# file itself declares no issues -- which in this repo is a truncated or overwritten
+# registry, not a clean bill of health. Distinct from the "$total -eq 0" case at the
+# end, which IS legitimate: --filter open against a registry with nothing open is a
+# real, passing answer about a registry that was read.
+if [[ "$registry_count" -eq 0 ]]; then
+    echo ""
+    echo -e "${RED}[ERROR]${NC} Registry declares zero issues."
+    echo -e "         A registry with no entries verifies nothing, so this is reported"
+    echo -e "         as a failure rather than as nothing-to-check."
+    exit 1
+fi
 
 rows_read=0
 if [[ -n "$issues_tsv" ]]; then
@@ -208,7 +247,9 @@ echo -e "Errors:        ${RED}$errors${NC}"
 
 if [[ $total -eq 0 ]]; then
     echo ""
-    echo -e "${YELLOW}No issues found in registry.${NC}"
+    # bug-309: name which question got the empty answer. The registry WAS read and
+    # holds $registry_count entries; none of them survived the filter / obsolete skip.
+    echo -e "${YELLOW}No issues matched this run (registry holds $registry_count).${NC}"
     exit 0
 fi
 

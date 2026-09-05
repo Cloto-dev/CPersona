@@ -103,14 +103,30 @@ def load_registry(path: Path = DEFAULT_REGISTRY) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _waived_line(repo: Path, waiver: dict) -> str | None:
+    """The line this waiver's ``code_context_hash`` still matches, or None.
+
+    bug-302: this used to answer only yes/no, which is why nothing could check
+    the waiver against itself. The TEXT is what the fingerprint is computed
+    from, so returning it lets ``verify`` recompute the fingerprint a waiver
+    with these declared fields would have had. Any of the matching lines will
+    do: ``code_context_hash`` and ``fingerprint`` both hash the NORMALIZED line,
+    so two lines that match the hash produce the same fingerprint.
+    """
+    p = repo / waiver.get("location", {}).get("file", "")
+    if not p.exists():
+        return None
+    want = waiver.get("code_context_hash")
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if code_context_hash(line) == want:
+            return line
+    return None
+
+
 def _code_present(repo: Path, waiver: dict) -> bool:
     """True if the mutated line's content still exists in its file (verified by
     code_context_hash, no AST needed). False => the code changed => stale."""
-    p = repo / waiver.get("location", {}).get("file", "")
-    if not p.exists():
-        return False
-    want = waiver.get("code_context_hash")
-    return any(code_context_hash(line) == want for line in p.read_text(encoding="utf-8").splitlines())
+    return _waived_line(repo, waiver) is not None
 
 
 def verify(repo: Path, registry: dict, today: date) -> list[dict]:
@@ -162,8 +178,31 @@ def verify(repo: Path, registry: dict, today: date) -> list[dict]:
                 add("expired", f"reverify_by {w['reverify_by']} has passed", severity="soft")
         except (ValueError, TypeError):
             add("bad_date", f"reverify_by not an ISO date: {w['reverify_by']!r}")
-        if not _code_present(repo, w):
+        line = _waived_line(repo, w)
+        if line is None:
             add("code_changed", "the mutated line's content is gone from the file", severity="soft")
+        elif isinstance(loc, dict):
+            # bug-302: check the waiver against ITSELF. Every field the
+            # fingerprint is built from is declared right here -- file,
+            # definition, operator -- and the fourth, the line text, is the one
+            # just matched by code_context_hash. So the fingerprint a waiver
+            # with these fields would have had is computable, and a declared
+            # value that differs from it is not a fingerprint for this waiver:
+            # it was copied from another survivor, or edited, or left behind
+            # when the location was retargeted. Nothing else notices, because
+            # the fingerprint is never recomputed anywhere else -- it is what
+            # the runner matches a LIVE survivor against, so a wrong one
+            # silently suppresses a survivor other than the one this entry
+            # documents and approves. Hard: that is a malformed registry, not
+            # drift, and it does not heal by waiting.
+            want_fp = fingerprint(loc.get("file", ""), loc.get("definition"), op, line)
+            if w["fingerprint"] != want_fp:
+                add(
+                    "fingerprint_mismatch",
+                    f"declared fingerprint {w['fingerprint']} does not match the one this "
+                    f"waiver's own file / definition / operator / line produce ({want_fp}); "
+                    "it suppresses a different survivor than it documents",
+                )
 
     return problems
 

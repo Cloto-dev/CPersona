@@ -378,3 +378,85 @@ async def test_fallback_check_is_registered_as_an_observation(monkeypatch):
     # cannot park the deployment at 'degraded'. (The seeded fixture rows raise
     # unrelated warns, so assert the mapping rather than the whole-corpus verdict.)
     assert checks.health_status({"info": 1, "warn": 0, "critical": 0}) == "healthy"
+
+
+# ============================================================
+# bug-305 — the UPDATE path's copy of the write gate.
+#
+# ``do_store``'s gate is pinned above (bug-192). ``do_update_memory`` has its
+# own, independently written, and nothing drove it: the audit that found this
+# measured that pinning ``STORE_BLOB`` to a literal in that one call --
+# ``local_blobs_stored(VECTOR_SEARCH_MODE, True)``, which is the exact shape of
+# the historical defect -- left the whole suite green. That mutation is the
+# reason these two tests exist, and it is what they are checked against: with
+# them present it fails, so the gate is now measured rather than merely called.
+#
+# The two halves are one test each way round on purpose. The NULL column alone
+# proves nothing (a broken embedder produces the same NULL), so the positive
+# case establishes that this same fixture writes a BLOB when the policy allows
+# one -- which is what makes the negative case evidence about the gate.
+# ============================================================
+
+
+async def _update_and_read_blob(memory_id: int, content: str) -> tuple[dict, bytes | None]:
+    """Drive the real do_update_memory and return its response plus the BLOB."""
+    from cpersona import admin_handlers
+
+    session.reset_pauses_for_tests()
+    res = await admin_handlers.do_update_memory(memory_id, content, agent_id=AGENT)
+    assert res.get("ok") is True, res
+    db = await get_db()
+    row = await db.execute_fetchall("SELECT embedding FROM memories WHERE id = ?", (memory_id,))
+    return res, row[0][0]
+
+
+def _updater_policy(monkeypatch, mode: str, store_blob: bool):
+    """Set the policy the UPDATER reads.
+
+    ``admin_handlers`` binds its own module-level copies at import time, exactly
+    as ``memory_handlers`` does, so ``_writer_policy`` above does not reach here.
+    That separation is the bug: two modules, two bindings, one rule.
+    """
+    from cpersona import admin_handlers
+
+    monkeypatch.setattr(admin_handlers, "VECTOR_SEARCH_MODE", mode)
+    monkeypatch.setattr(admin_handlers, "STORE_BLOB", store_blob)
+
+
+@pytest.mark.asyncio
+async def test_remote_store_blob_false_leaves_no_blob_on_update(monkeypatch, fake_embedding_client):
+    """bug-305: an update must not re-introduce the BLOB the policy disabled.
+
+    The row is seeded WITH a blob so the assertion cannot pass by inheritance:
+    a gate that let the embed through would overwrite it with a fresh one, and a
+    gate that holds NULLs it (bug-011's rule -- never leave a stale vector).
+    Either way the column moves, and only one of those two is the policy.
+    """
+    db = await get_db()
+    memory_id = await _seed_memory(db, "before the update")
+    # Install a BLOB directly, so NULL afterwards cannot be inherited from a row
+    # that never had one.
+    await db.execute(
+        "UPDATE memories SET embedding = ? WHERE id = ?", (b"\x00\x00\x80\x3f" * 4, memory_id)
+    )
+    await db.commit()
+
+    _updater_policy(monkeypatch, "remote", False)
+    _, blob = await _update_and_read_blob(memory_id, "after the update")
+
+    assert blob is None, "do_update_memory wrote a local BLOB the configuration disabled"
+
+
+@pytest.mark.asyncio
+async def test_remote_store_blob_true_still_writes_the_blob_on_update(
+    monkeypatch, fake_embedding_client
+):
+    """The counterpart: same fixture, policy allowing a BLOB, so the NULL above
+    is evidence about the gate and not about the embedder."""
+    db = await get_db()
+    memory_id = await _seed_memory(db, "before the permitted update")
+
+    _updater_policy(monkeypatch, "remote", True)
+    _, blob = await _update_and_read_blob(memory_id, "after the permitted update")
+
+    assert blob is not None, "the fixture cannot write a BLOB at all — the negative test is vacuous"
