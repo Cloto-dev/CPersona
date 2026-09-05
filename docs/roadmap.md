@@ -88,7 +88,10 @@ a ranking change during a soak cannot be told apart from a regression.
 
 **Purpose.** Improve *what comes back*, on the foundation 2.5 built. Every
 item below changes ranking or reach, which is why none of them shipped in
-2.5.
+2.5. The canonical account of the line — the recall process, its input
+contract, the exit, and how each is measured — is
+[Reliable Recall — the 2.6 line](RELIABLE_RECALL_2_6.md); this section is
+the index of it.
 
 **What it may break.** Internal architecture and the tool contract, through
 the ladder. Schema: additive tables and columns are expected (graph and
@@ -96,6 +99,13 @@ chain nodes need them); restructuring is not planned.
 
 **Features, each answering a measured problem:**
 
+- **Deliberative Recall** — the recall process. Recall becomes a bounded,
+  deterministic loop inside one call — an envelope, a fetch, an evaluation,
+  a revision that follows cues from what it found — the way a model reasons
+  before it answers, and without spending the agent's tokens on the turns.
+  Its input is **Cued Recall**: the agent declares what it half-remembers
+  (a temporal cue with a three-valued confidence) as a prior, never a filter.
+  Off by default and byte-identical without cues.
 - **Adaptive fusion** — the flagship. Benchmarks showed the lexical layers
   help a weak embedding model a lot and a strong one barely, and that the
   fixed-weight fusion cannot tell which case it is in. The goal is a fusion
@@ -121,27 +131,62 @@ chain nodes need them); restructuring is not planned.
   memory, so a long record's tail is invisible to vector search. Records past
   the window split into chained nodes that each carry their own embedding;
   the response points at the hit node and lets the agent fetch the rest.
-- **Reconstructive recall** — a read-side pass that clusters and summarises
-  what the retrievers returned without altering any stored memory. The
-  overflow chains are its substructure; a chain is a natural cluster key.
+- **Reconstructive Recall** — a separate tool that assembles the retrievers'
+  candidates into recall items — selected, ordered, with each supporting row
+  given a role — without altering any stored memory and without composing a
+  sentence it did not store. Its `count` is the **Reconstruction Window**: a
+  ceiling on what reaches the agent, decoupled from how deep the server
+  looked. The overflow chains are its substructure; a chain is a natural
+  cluster key.
 - **A delegation route for semantic judgement** — the server enumerates
   candidates deterministically and hands the agent a brief; the agent (or a
   sub-agent it chooses) judges; a separate tool applies the verdict as an
   explicit, validated operation. Keeps the no-model rule while letting
   maintenance use one.
 
-Also at the start of this line, because they break more than one consumer:
-the MCP SDK 2.0 migration of the shared vendored layer, and the native
-`{attempted, ok, error}` result shape for embedding calls.
+Also at the start of this line, because it breaks more than one consumer:
+the MCP SDK 2.0 migration of the shared vendored layer. (The native
+`{attempted, ok, error}` outcome for embedding calls, once listed here, shipped
+in 2.5 as an additive second method that left the existing return type
+untouched.)
 
-### 2.7 — named, not planned
+**What "done" means** — and what is deliberately not a condition, such as the
+Go index service — is written down in the
+[line's page](RELIABLE_RECALL_2_6.md#10-what-done-means).
 
-The working theme is **memory operations at scale**: how a corpus that has
-grown through 2.6's chains and graph is maintained, consolidated and kept
-searchable over time. Nothing here is designed or measured. Expect this entry
-to be rewritten; do not build on it.
+### 2.7 — memory intelligence
 
-### 3.0 — what remains of the graph plan
+**Purpose.** Make the server able to say how much a memory should be
+trusted, and how it changed. 2.6 builds the recall process; 2.7 gives it the
+signals it lacks: confidence with evidence weighting, correction and
+contradiction handling, temporal state and history, forgetting and retention
+policy, feedback on what a recall was used for, and control of quality
+degradation as the corpus grows. Each of these becomes a cue the recall
+process can follow. Bounded, opt-in remediation — a conformer that applies a
+reviewed repair and re-audits, separated from the auditor that only observes —
+is also placed here.
+
+Nothing in this entry is designed or measured yet; it names the subject so
+that 2.6 does not absorb it. The details will move to a page like 2.6's when
+the line opens.
+
+### 2.8 — a candidate, not a line
+
+**Cognitive homeostasis**: an agent that can observe its own memory
+environment and keep it healthy — auditor profiles maturing into an
+ecosystem, health, warnings, update awareness and configuration diagnosis,
+re-audit before and after a change, policy and permission boundaries around
+repair, rollback. The number is provisional; the capability boundary is what
+matters, and it may be re-cut.
+
+### 3.0 — persistent identity, and what remains of the graph plan
+
+**Purpose.** Continuity of experience, understanding and self-knowledge
+across models, services and devices: autobiographical, temporal and
+relational memory, an operational self-model, and continuity across several
+clients and several models at once. On the runtime axis this is where the
+server body is expected to be largely Go (below), which is why the two share a
+major version.
 
 An earlier plan made 3.0 "the graph release": entity and relation tables, a
 bi-temporal model on edges, and model-driven memory evolution, in three
@@ -154,8 +199,10 @@ sub-phases. Sorted against what has since moved:
 | Full memory evolution (retroactive edge updates, pruning, strengthening) | Open. The model-driven form is out. What remains is whichever deterministic consolidation the 2.6 delegation route and maintenance tools do not already cover. |
 | Sub-phasing (alpha → beta → final by feature) | Superseded by the line structure on this page. |
 
-On the runtime axis, 3.x is where the server itself is expected to be
-largely Go (below); the two are the same major version for that reason.
+Beyond 3.0 the direction is infrastructure — organisational memory with
+separated permissions, the boundary between personal, shared and public
+knowledge, and paths that bypass MCP for embedded use — and it is stated as
+direction, not as a plan.
 
 ## The runtime and scale ladder
 
