@@ -78,10 +78,12 @@ the counting stays in the runner and only the verdict moves:
 import datetime
 import json
 import logging
+import os
 import re
 import sqlite3
+import stat
 
-from cpersona import config, health, operating_context, vector
+from cpersona import config, fileperms, health, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
@@ -2338,6 +2340,101 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
     return issues
 
 
+# Group and other. The owner's own bits are not a finding: a file this package
+# placed is meant to be readable by the account running the server.
+_OTHERS_MASK = stat.S_IRWXG | stat.S_IRWXO
+_OTHERS_WRITE = stat.S_IWGRP | stat.S_IWOTH
+
+
+async def check_file_permissions(db, agent_id: str = "", fix: bool = False) -> list[dict]:
+    """Files this package placed that every local account can reach.
+
+    Creating a file owner-only settles the ones this version made. An install
+    that upgraded keeps the 0644 files it already had, and that is deliberate:
+    an existing file's mode belongs to the operator who set it, so a version bump
+    does not reach in and change it. What was missing is the other half --
+    something that SAYS so. The warning that ships with pre-creation looks at the
+    database, once, into a log, and at nothing else; the ``-wal`` beside it holds
+    the memories not yet checkpointed, the calibration sidecar decides recall
+    breadth, and the alias ledger decides whose memory space a caller reaches.
+
+    ``fix`` narrows a file to ``0600`` and never widens one. That does not
+    contradict the ruling above: leaving the mode alone is what a version bump
+    does on its own, and this runs because an operator asked for repairs. It is
+    worth knowing before asking, so the hint says so on every finding.
+
+    Directories are reported and never chmod-ed. A ``0600`` file inside a
+    ``0755`` directory is still unreadable by anyone else, so the file mode is
+    the control that matters -- and the directory can hold files this package did
+    not place, which narrowing it would reach past.
+
+    The whole check declines where permission bits are not the access control
+    (``fileperms.mode_bits_are_enforced``). Scoring bits nothing enforces would
+    report every install on such a platform as reachable by everyone and offer a
+    repair that changes nothing -- a finding that is a property of the platform,
+    not of the corpus.
+    """
+    if not fileperms.mode_bits_are_enforced():
+        return []
+
+    issues: list[dict] = []
+    for owned in fileperms.owned_paths():
+        try:
+            mode = stat.S_IMODE(os.stat(owned.path).st_mode)
+        except OSError:
+            # Absent is the ordinary state for most of these, and a path this
+            # process cannot stat is one it cannot have an opinion about either.
+            continue
+        if not mode & _OTHERS_MASK:
+            continue
+
+        issue = {
+            # Spelled, not derived from `kind`: an issue type is what an
+            # operator greps for, and deriving it from an internal enum lets a
+            # rename there change it without anything saying so.
+            "type": (
+                "directory_reachable_by_other_accounts"
+                if owned.kind == "dir"
+                else "file_reachable_by_other_accounts"
+            ),
+            "path": owned.path,
+            "mode": f"{mode:04o}",
+            "holds": owned.holds,
+            "writable_by_others": bool(mode & _OTHERS_WRITE),
+        }
+        if owned.kind == "dir":
+            # Nothing this check's fix writes, and a determined zero -- so the
+            # repairable policy demotes it to info and marks it for review,
+            # which is the honest verdict for a decision only an operator can
+            # take. Its own hint replaces the generic "out of reach" text.
+            issue["repairable"] = 0
+            issue["hint"] = (
+                "reported, not narrowed: this directory can hold files this "
+                "package did not place, so chmod 700 it yourself once no other "
+                "account needs to traverse it"
+            )
+            issues.append(issue)
+            continue
+
+        issue["repairable"] = 1
+        issue["hint"] = (
+            "check_health(fix=True) narrows this to 0600; if the mode was "
+            "widened deliberately -- a backup reader in the same group, say -- "
+            "do not run the fix"
+        )
+        if fix:
+            try:
+                os.chmod(owned.path, fileperms.PRIVATE_FILE_MODE)
+                issue["fixed"] = True
+            except OSError as exc:
+                # Reported rather than raised: one unwritable path must not cost
+                # the operator the rest of the repair pass.
+                issue["fixed"] = False
+                issue["fix_error"] = str(exc)
+        issues.append(issue)
+    return issues
+
+
 class Check:
     """A registered health check: metadata + runner (see module docstring)."""
 
@@ -2407,6 +2504,7 @@ HEALTH_CHECKS: list[Check] = [
     Check("vector_index", "info", False, check_vector_index),
     Check("operating_context_parse", "warn", False, check_operating_context_parse),
     Check("operating_context_size", "info", False, check_operating_context_size),
+    Check("file_permissions", "warn", True, check_file_permissions),
 ]
 
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]

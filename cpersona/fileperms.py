@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -142,3 +143,86 @@ def makedirs_private(path: str) -> None:
     An existing directory is left exactly as it is.
     """
     os.makedirs(path, mode=PRIVATE_DIR_MODE, exist_ok=True)
+
+
+# --- Reading the modes back -------------------------------------------------
+#
+# The three primitives above decide what a NEW path starts as. What follows is
+# their counterpart: naming the paths so something can look at what the ones
+# already on disk actually are. Pre-creation cannot reach those -- an install
+# that upgraded keeps the files it already had, deliberately -- so the only way
+# an operator learns about them is if something enumerates them and says so.
+
+
+class OwnedPath(NamedTuple):
+    """A path this package places, and what reaching it would give someone."""
+
+    path: str
+    kind: str  # "file" | "dir"
+    holds: str
+
+
+def mode_bits_are_enforced(platform_name: str | None = None) -> bool:
+    """Whether this platform's permission bits are the access control.
+
+    On Windows they are not: the ACL decides, ``os.chmod`` honours only the
+    read-only flag by its own documented limit, and the rest of the mode is not
+    a statement anything enforces. A reader that scored those bits there would
+    report every install as reachable by everyone and offer a repair that
+    changes nothing -- so it declines to have an opinion instead. This is the
+    same rule the creators above already follow for writes, stated for reads.
+
+    ``platform_name`` defaults to ``os.name`` and exists so both answers can be
+    measured. Rebinding ``os.name`` to do that is not an option: it is global,
+    and it makes ``pathlib`` mint a ``WindowsPath`` -- which pytest constructs
+    while formatting a failure, so a test written that way passes cleanly and
+    then crashes the run the first time it has something to report.
+    """
+    return (os.name if platform_name is None else platform_name) == "posix"
+
+
+def owned_paths() -> list[OwnedPath]:
+    """Every path this package places, asked of the module that places it.
+
+    Derived rather than listed: each entry calls the function that decides where
+    the file goes, so moving one moves this with it. Paths that do not exist are
+    included -- the caller decides what absence means, and a list that quietly
+    dropped them could not tell "not created yet" from "not known about".
+
+    One surface is deliberately absent. An export goes to a path its CALLER
+    chooses; this package places it nowhere, and a reader cannot enumerate
+    directories it was never told about. New exports are created owner-only like
+    everything else here, so what is out of reach is the ones written before
+    that -- named here rather than left as a silent hole in the list.
+    """
+    import glob as _glob
+
+    from cpersona import config, update_check, vector_index
+
+    db = config.DB_PATH
+    if db == ":memory:":
+        return []
+
+    sidecar = f"{db}.calibration.json"
+    out = [
+        OwnedPath(db, "file", "every stored memory"),
+        OwnedPath(f"{db}-wal", "file", "the memories not yet checkpointed into the database"),
+        OwnedPath(f"{db}-shm", "file", "the shared-memory index for the write-ahead log"),
+        OwnedPath(sidecar, "file", "the calibrated thresholds that decide recall breadth"),
+        OwnedPath(update_check.cache_path(), "file", "the cached release verdict"),
+        OwnedPath(config.alias_ledger_path(), "file", "which memory space each caller reaches"),
+    ]
+    out += [
+        OwnedPath(vector_index.index_path(table), "file", f"an embedding of every {table} row")
+        for table in ("memories", "episodes")
+    ]
+    # Written by _back_up_calibration_sidecar under a name it mints, so the
+    # pattern is the only way to name them; it is the one the pruner uses.
+    out += [
+        OwnedPath(p, "file", "a previous generation of the calibrated thresholds")
+        for p in sorted(_glob.glob(f"{_glob.escape(sidecar)}.before-*"))
+    ]
+    directory = os.path.dirname(db)
+    if directory:
+        out.append(OwnedPath(directory, "dir", "the files above"))
+    return out
