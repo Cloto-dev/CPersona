@@ -17,7 +17,7 @@ One SQLite file you own. No LLM in the loop. Honest when recall degrades.
 
 ---
 
-> **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, and any MCP client.
+> **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, Codex CLI, Cursor, VS Code, and any other MCP client ([registration table](https://cloto-dev.github.io/CPersona/getting-started/#3-register-cpersona-with-your-mcp-client)).
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
 > **Project status** — **2.4.x is Stable**; **2.5.x is Current**, an internal

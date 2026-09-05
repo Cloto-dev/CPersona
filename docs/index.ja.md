@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:314a9eb377707f400cc56abe5f18d82290891261 -->
+<!-- i18n-source: docs/index.md@blob:dd19d3fd5044738a3f333d398ff7b3710a6c46f0 -->
 
 # CPersona ドキュメント
 
@@ -106,9 +106,10 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 - [SuperAuditor 標準](SUPERAUDITOR_STANDARD.md) — findings を報告するための pull
   契約。深刻度の語彙、上限の意味論、そして「何を検出するか」については意図的に
   何も定めないこと。
-- [CLAUDE.md ポリシー標準](CLAUDE_MD_POLICY_STANDARD.md) — プロジェクトの skill が
-  常時ロードされるエージェント記憶へマーカー付きポリシーブロックをどう書き込むか、
-  そして skill だけではその保証を担えない理由。
+- [ポリシーブロック標準](CLAUDE_MD_POLICY_STANDARD.md) — プロジェクトの skill が、
+  エージェントが毎セッション読み込むファイル (`CLAUDE.md`、`AGENTS.md`、…) へ
+  マーカー付きポリシーブロックをどう書き込むか、そして skill だけではその保証を
+  担えない理由。
 
 **設計ノート** は、ある挙動がどう決まったかを、却下された経路も含めて記録した
 ものです。ある時点の記録なので、上のガイドと食い違う場合はガイドが優先します。

@@ -103,7 +103,7 @@ plugins:
             Contiguous embedding index: 埋め込み索引の連続配置
             Reach and recency in the scan window: 走査窓の到達範囲と新しさの優遇
             Reach, recency and the far vote: 到達範囲・新しさ・far の票
-            CLAUDE.md policy standard: CLAUDE.md ポリシー標準
+            Policy block standard: ポリシーブロック標準
             SuperAuditor standard: SuperAuditor 標準
 
 # Sidebar sub-category labels only. Kept as a stylesheet rather than an
@@ -175,7 +175,7 @@ nav:
   - Project standards:
       - Release lifecycle standard: RELEASE_LIFECYCLE_STANDARD.md
       - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
-      - CLAUDE.md policy standard: CLAUDE_MD_POLICY_STANDARD.md
+      - Policy block standard: CLAUDE_MD_POLICY_STANDARD.md
   # Point-in-time design records, subdivided by subject because the group grows
   # by roughly a page a month and a flat list of ten stops being an index.
   - Design notes:

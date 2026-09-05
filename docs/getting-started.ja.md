@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:fe18415c0cf818b85b802a610d3c1f9e0fe47989 -->
+<!-- i18n-source: docs/getting-started.md@blob:7bd98c3279e961705d560e670360bc25faa10337 -->
 
 # はじめに
 
@@ -16,7 +16,8 @@ MCP クライアントを向ければ、クライアントのエージェント�
 
 - **Python 3.11 以上**
 - ワンコマンド経路を使うなら **[uv](https://docs.astral.sh/uv/)** (任意 — `pip` でも可)
-- MCP クライアント: Claude Desktop、Claude Code、その他の MCP ホスト
+- MCP クライアント: Claude Desktop、Claude Code、Codex CLI、Cursor、VS Code、
+  またはその他の MCP ホスト — 手順 3 に各クライアントのエントリがあります
 
 ## エージェントに任せる (Claude Code) { #let-the-agent-do-it-claude-code }
 
@@ -37,7 +38,8 @@ mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claud
 
 あとは Claude Code にこう言うだけです: *「CPersona をセットアップして。永続記憶が
 ほしい」*。以下の手動手順は、それ以外のクライアント向け、および手で設定したい人
-向けです。
+向けです — 手順 5 は本来 skill が代行する部分で、トリガーを頼まれずに発火させる
+ところです。
 
 ## 1. CPersona をインストールする { #1-install-cpersona }
 
@@ -237,6 +239,27 @@ stdin を開いたままにしてください。サービスマネージャの�
 
 ## 3. MCP クライアントに登録する { #3-register-cpersona-with-your-mcp-client }
 
+どのクライアントも起動するプロセスは同じです — コマンド `uvx`、引数 `cpersona`、
+そして下に示す環境変数 — 違うのは、どのファイルを読み、キーを何と呼ぶかだけです。
+先に絶対パスの `CPERSONA_DB_PATH` を決めてください。例が
+`/home/you/.claude/cpersona.db` を使っているのは Claude 利用者ならそのディレクトリが
+既にあるからで、絶対パスなら何でも構いません。
+
+| クライアント | エントリの置き場所 | 形 | ここで確認 |
+| --- | --- | --- | --- |
+| Claude Code | `claude mcp add-json … -s user` (ユーザー設定に書く) | JSON、`type: stdio` | 済 |
+| Claude Desktop | `claude_desktop_config.json` | JSON、`mcpServers` | 済 |
+| Codex CLI | `codex mcp add … -- uvx cpersona` (`~/.codex/config.toml` に書く) | TOML、`[mcp_servers.cpersona]` | 済 (codex-cli 0.147.0) |
+| Cursor | `~/.cursor/mcp.json` (グローバル) または `.cursor/mcp.json` (プロジェクト) | JSON、`mcpServers` | ベンダー docs |
+| VS Code (Copilot) | `.vscode/mcp.json` (ワークスペース) またはユーザーの `mcp.json` | JSON、`servers` | ベンダー docs |
+| その他の MCP ホスト | その stdio サーバー設定 | 同じ command / args / env の 3 つ組 | ベンダー docs |
+
+「済」は、このページを書いた時点でメンテナのマシン上、そのクライアント自身の
+ツールでエントリを書き、読み戻して確認したことを意味します。「ベンダー docs」は
+クライアントのドキュメントから形を転記したもので、ここでは実行していません —
+あなたのクライアントが受け付けるものと食い違ったら正しいのはクライアントの方で、
+報告を歓迎します。
+
 **Claude Desktop** — `claude_desktop_config.json` に追加:
 
 ```json
@@ -259,6 +282,67 @@ stdin を開いたままにしてください。サービスマネージャの�
 
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
+```
+
+**Codex CLI** — 1 コマンド。その後に示す TOML を `~/.codex/config.toml` に書き込みます:
+
+```bash
+codex mcp add cpersona --env CPERSONA_DB_PATH=/home/you/.claude/cpersona.db --env EMBEDDING_MODE=http --env EMBEDDING_HTTP_URL=http://127.0.0.1:8401/embed -- uvx cpersona
+```
+
+```toml
+[mcp_servers.cpersona]
+command = "uvx"
+args = ["cpersona"]
+
+[mcp_servers.cpersona.env]
+CPERSONA_DB_PATH = "/home/you/.claude/cpersona.db"
+EMBEDDING_HTTP_URL = "http://127.0.0.1:8401/embed"
+EMBEDDING_MODE = "http"
+```
+
+Codex はサーバーごとにツールを拒否リストにできます (同じテーブルの
+`disabled_tools = ["delete_memory", …]`)。エージェントに読み取り中心のアクセスを
+渡すクライアント側の方法です。全クライアントに一度に効くサーバー側の同等物は
+[クライアント別ケイパビリティ層](ACL_DESIGN.md) です。
+
+**Cursor** — `~/.cursor/mcp.json`、またはプロジェクト内の `.cursor/mcp.json`。
+形は Claude Desktop と同じです:
+
+```json
+{
+  "mcpServers": {
+    "cpersona": {
+      "command": "uvx",
+      "args": ["cpersona"],
+      "env": {
+        "CPERSONA_DB_PATH": "/home/you/.claude/cpersona.db",
+        "EMBEDDING_MODE": "http",
+        "EMBEDDING_HTTP_URL": "http://127.0.0.1:8401/embed"
+      }
+    }
+  }
+}
+```
+
+**VS Code (Copilot)** — ワークスペースの `.vscode/mcp.json`、またはユーザーレベルの
+`mcp.json` (*MCP: Open User Configuration*)。トップレベルのキーは `mcpServers`
+ではなく `servers` です:
+
+```json
+{
+  "servers": {
+    "cpersona": {
+      "command": "uvx",
+      "args": ["cpersona"],
+      "env": {
+        "CPERSONA_DB_PATH": "/home/you/.claude/cpersona.db",
+        "EMBEDDING_MODE": "http",
+        "EMBEDDING_HTTP_URL": "http://127.0.0.1:8401/embed"
+      }
+    }
+  }
+}
 ```
 
 問い合わせ 1 往復を節約できる注意点:
@@ -298,6 +382,74 @@ claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"
   ことを意味します —
   [埋め込みサーバーの死活検知](operations.md#detecting-a-dead-embedding-server)
   を参照してください。
+
+## 5. 記憶のトリガーを毎セッション発火させる { #5-make-the-memory-triggers-fire-in-every-session }
+
+登録はエージェントにツールを与えますが、頼まれなくても*使う*ようにはしません。
+セッション開始時の recall、決定時の store、セッション終了時の archive — これらは、
+会話がたまたま一致したときだけ発火する skill ではなく、クライアントが**毎**
+セッション読み込むものの中に置く必要があります。どのクライアントにもそのファイルが
+あります:
+
+| クライアント | 常時ロードされるファイル (ユーザーレベルの既定) | プロジェクトレベルの代替 |
+| --- | --- | --- |
+| Claude Code / Claude Desktop | `~/.claude/CLAUDE.md` | `./CLAUDE.md` |
+| Codex CLI | `~/.codex/AGENTS.md` | リポジトリルートの `./AGENTS.md` |
+| Cursor | User Rules (*Customize → Rules* — ファイルではなく設定) | `alwaysApply: true` の `.cursor/rules/cpersona.mdc`、または `./AGENTS.md` |
+| VS Code (Copilot) | クライアントの custom-instructions ドキュメントを参照 | `.github/copilot-instructions.md`、または `chat.useAgentsMdFile` を有効にした `./AGENTS.md` |
+
+下のブロックをそのファイルに貼り付け、`<AGENT_ID>` をエージェントが毎回の呼び出しで
+使う安定した識別子 1 つ (`"claude-code"`、`"codex"`、…) に置き換えてください。
+マーカーは残します: 後の版のブロックが 2 つ目のコピーを積み重ねる代わりに、
+このブロックを見つけて置き換えるための手がかりだからです。Claude Code では
+`cpersona-memory` skill があなたの承認を得てこれを代行します。それ以外では
+貼り付けです。ブロックが従う規則 — 同意、配置、冪等性、40 行の予算、クライアント
+中立 — は[ポリシーブロック標準](CLAUDE_MD_POLICY_STANDARD.md) にあります。
+ブロックの正本は skill 側で、このコピーは CI でそれと照合されます。
+
+```markdown
+<!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->
+## CPersona memory policy
+
+Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
+
+**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
+the first substantive action. Prefer `recall_with_context` when conversation history is already
+at hand; add `deep=true` when the first pass comes back thin. Skip only for trivial one-shot
+questions.
+
+**Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
+"let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
+Protect must-never-lose rules with `lock_memory`. After a successful `git commit`, `store` a
+one-line record: hash, what changed, why.
+
+**Changing an existing rule** → `update_memory`, never delete + store. If the memory is locked:
+`unlock_memory` → `update_memory` → `lock_memory`.
+
+**Session end** — fire on closing phrases ("that's all for today", "wrap it up", "good night") →
+first `store` + lock any unsaved decisions, then `archive_episode(agent_id, history=<the REAL
+turns>, summary=…, keywords=…, resolved=…)`, computing `summary` and `keywords` yourself.
+
+**"Don't save this" / benchmark sessions** → `pause_persistence(ttl_seconds=1800)`;
+`resume_persistence()` (or TTL expiry) restores. Reads still answer, minus the writes inside them.
+
+**Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
+and follow its runbook. Never quietly serve keyword-only recall.
+
+**Quality** — if recall feels off, `set_recall_precision` (strict/balanced/lenient) is the one
+policy knob; run `calibrate_threshold(agent_id)` after the corpus changes substantially.
+Monthly: `check_health(agent_id, fix=true)`.
+
+**If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
+as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that
+changes behaviour>` — with the body stored here under `message.id="memory-index:<slug>"` and content
+starting `[<slug>]`, so a line tells you what to `recall`. Recall is ranked and may not surface a
+memory; the index always arrives. Its size cap fails **silently** when exceeded, so consolidate at
+80%, not at the limit. Never migrate existing memories into this store without asking first.
+
+Details, setup, and troubleshooting: the `cpersona-memory` skill.
+<!-- END cpersona-policy -->
+```
 
 ## 次に読むもの { #where-to-go-next }
 

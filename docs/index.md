@@ -110,9 +110,10 @@ this one.
 - [SuperAuditor standard](SUPERAUDITOR_STANDARD.md) — the pull contract for
   reporting findings: severity vocabulary, cap semantics, and a deliberate
   silence on what a server chooses to detect.
-- [CLAUDE.md policy standard](CLAUDE_MD_POLICY_STANDARD.md) — how a project's
-  skill writes a marker-wrapped policy block into always-loaded agent memory,
-  and why a skill alone cannot carry that guarantee.
+- [Policy block standard](CLAUDE_MD_POLICY_STANDARD.md) — how a project's
+  skill writes a marker-wrapped policy block into the file an agent loads every
+  session (`CLAUDE.md`, `AGENTS.md`, …), and why a skill alone cannot carry
+  that guarantee.
 
 **Design notes** record how one behaviour was decided, the routes that were
 rejected included. They are point-in-time records: where a note and the guides
