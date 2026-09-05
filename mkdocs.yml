@@ -75,6 +75,7 @@ plugins:
             Getting Started: はじめに
             Architecture: アーキテクチャ
             Roadmap: ロードマップ
+            Reliable Recall (2.6): Reliable Recall (2.6 系)
             Behavior Contracts: 挙動契約
             Tools: ツール一覧
             Operations Runbook: 運用 Runbook
@@ -163,6 +164,7 @@ nav:
   - Getting Started: getting-started.md
   - Architecture: architecture.md
   - Roadmap: roadmap.md
+  - Reliable Recall (2.6): RELIABLE_RECALL_2_6.md
   - Using CPersona:
       - Tools: tools.md
       - Configuration: configuration.md
