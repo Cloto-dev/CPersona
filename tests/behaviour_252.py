@@ -1611,6 +1611,59 @@ async def _(ctx):
     )
 
 
+# The schema for `external_context` declares `role` and `content` and stops there,
+# but the handler also reads `name`, `user_id` and `timestamp` off each entry. A
+# caller reading the schema has no statement that those three mean anything, and
+# no statement of what they must be — so the two scenarios below record what an
+# entry that gets them wrong does TODAY, before that gap is closed (N-09).
+#
+# Both are expected to change. They are recorded first so the change is reviewed
+# as a diff against a measured baseline rather than against nothing.
+
+
+@scenario("rwc-untyped-timestamp-aborts", "store-recall-health", "recall_with_context: TODAY a non-string `timestamp` on ONE entry raises AttributeError out of the whole call, taking the valid entries and the recall hits with it — the schema declares no timestamp at all (N-09)", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5,
+        external_context=[
+            # The control: an ordinary entry that merges cleanly on its own. If
+            # this scenario ever records a result instead of a raise, this row
+            # is what proves the call still carries the good entries through.
+            _ctx_user("apples in the orchard, well formed", "2026-01-01T00:00:02Z"),
+            # An epoch integer is the shape a caller reaches for when nothing
+            # tells them the field is a string. `_parse_timestamp_utc` calls
+            # `.replace` on it and catches only ValueError/OSError.
+            {"role": "user", "content": "apples timed with an epoch int", "timestamp": 1767225600},
+        ],
+    )
+
+
+@scenario("rwc-untyped-identity-fields", "store-recall-health", "recall_with_context: TODAY a non-string `name` / `user_id` reaches the response verbatim (source.name is a dict, source.id interpolates it), a null `timestamp` is emitted as null, and an undeclared field is accepted and ignored (N-09)", seed=seed_corpus)
+async def _(ctx):
+    install_local(ctx)
+    return await memory_handlers.do_recall_with_context(
+        "a1", "apples", limit=5,
+        external_context=[
+            # Control: the declared shape, so a change that empties the merge is
+            # distinguishable from a change that only touches the malformed rows.
+            _ctx_user("apples, declared shape", "2026-01-01T00:00:02Z"),
+            # `name` is documented as a human-readable label and `user_id` as an
+            # id; neither is type-checked, and both flow into `source`.
+            {"role": "user", "content": "apples from a dict-named caller",
+             "name": {"display": "kirari"}, "user_id": 12345,
+             "timestamp": "2026-01-01T00:00:04Z"},
+            # An explicit JSON null is the case bug-035 settled for `content` and
+            # bug-163 for `role`; `timestamp` never got the same treatment.
+            {"role": "user", "content": "apples with a null stamp", "timestamp": None},
+            # additionalProperties stays open by ruling, so this must keep being
+            # accepted. Recorded so that stops being an assumption.
+            {"role": "assistant", "content": "apples, plus a field nobody reads",
+             "timestamp": "2026-01-01T00:00:06Z", "reply_to": "msg-17"},
+        ],
+    )
+
+
 @scenario("rwc-filter-only-roles", "store-recall-health", "recall_with_context: a system entry repeating a seed row's body suppresses that memory and is disclosed in context_filter_only (audit C13), never merged into messages", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
