@@ -207,6 +207,16 @@ async def _s_invalid_timestamp(conn):
     yield conn
 
 
+@seeder("future_timestamp")
+async def _s_future_timestamp(conn):
+    # Locked, so `repairable` pins the fixer's `locked = 0` guard like its
+    # siblings. The stamp is readable and well-formed -- what is wrong is that it
+    # names a moment ahead of the clock, which is what separates this finding
+    # from `invalid_timestamp` above.
+    await _mem(conn, "stamped ahead of the clock", timestamp="2099-01-01T00:00:00+00:00", locked=1)
+    yield conn
+
+
 @seeder("timestamp_format_drift")
 async def _s_timestamp_format_drift(conn):
     await _mem(conn, "utc row", timestamp=UTC_TS)
@@ -281,6 +291,7 @@ EXPECTED_REPAIRABLE = {
     "duplicate_content": 0,
     "invalid_json": 0,
     "invalid_timestamp": 0,
+    "future_timestamp": 0,
     "timestamp_format_drift": 0,
     "empty_content": 0,
     "invalid_source_type": 0,

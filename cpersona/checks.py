@@ -97,6 +97,7 @@ from cpersona.utils import (
     _MEMORY_ANNOTATION_PATTERN,
     _MENTION_PATTERN,
     canonical_source_types_sql,
+    future_timestamp_boundary,
     normalize_source,
 )
 
@@ -1419,6 +1420,79 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
 
 
+async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
+    """Memories whose ``timestamp`` names a moment ahead of this clock (N-03).
+
+    The row is readable and well-formed; what is wrong is what it claims. The
+    confidence curve reads ``max(0.0, now - timestamp)``, so such a row scores as
+    one written this instant and cannot decay -- tomorrow it is still ahead --
+    and its stamp widens the corpus span that scales the decay rate, flattening
+    the time axis for every other row in the scope. Both halves are recorded in
+    the behaviour golden (``corpus-future-*``).
+
+    ``FUTURE_TIMESTAMP_MODE`` stops NEW ones at the write seam. This finds the
+    ones already stored: rows written before that seam existed, rows restored by
+    an import (which reports them and imports them anyway, because a restore must
+    be faithful), and rows from a client whose clock was wrong while the mode was
+    ``warn``.
+
+    **The boundary comes from ``future_timestamp_boundary`` and is passed in.** SQL's
+    ``datetime('now')`` is a second clock, and one this project's test harness
+    does not freeze -- a predicate written against it would answer differently in
+    December than in January for the same rows and the same code, which is a
+    finding that reports the calendar rather than the corpus. Passing the instant
+    also guarantees this check and ``future_timestamp_issue`` agree on where
+    "ahead" begins, instead of each spelling it out.
+
+    The repair is ``invalid_timestamp``'s, for the same reason and with the same
+    justification: ``created_at`` is this row's own insertion time, UTC by the
+    bug-114 invariant, and it is the one honest time the row still carries --
+    the caller-supplied column is the only one that lied. It is written in the
+    canonical aware form (bug-229) so the repair cannot mint a ``naive``
+    ``timestamp_format_drift`` finding the next check refuses to repair.
+
+    ``created_at`` is checked against the same boundary before it is copied. A
+    row can be ahead on both columns (a host whose clock was wrong when it
+    wrote), and copying one future stamp over another would report a repair that
+    repaired nothing.
+    """
+    boundary = future_timestamp_boundary()
+    iso = isolation_where(agent_id=agent_id or None)
+    ahead = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+                WHERE datetime(timestamp) > datetime(?){iso.and_clause}""",
+            (boundary, *iso.params),
+        )
+    )[0][0]
+    if ahead == 0:
+        return []
+    # Before the repair (it rewrites the very rows this counts), and carrying the
+    # fixer's own guards so the two agree on what "repairable" meant.
+    repairable = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+                WHERE datetime(timestamp) > datetime(?)
+                AND datetime(created_at) IS NOT NULL
+                AND datetime(created_at) <= datetime(?)
+                AND locked = 0{iso.and_clause}""",
+            (boundary, boundary, *iso.params),
+        )
+    )[0][0]
+    if fix:
+        # bug-098: locked = 0 -- check_health(fix=true) never alters a locked row.
+        await db.execute(
+            f"""UPDATE memories
+                SET timestamp = strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at)
+                WHERE datetime(timestamp) > datetime(?)
+                AND datetime(created_at) IS NOT NULL
+                AND datetime(created_at) <= datetime(?)
+                AND locked = 0{iso.and_clause}""",
+            (boundary, boundary, *iso.params),
+        )
+    return [{"type": "future_timestamp", "count": ahead, "repairable": repairable}]
+
+
 async def check_missing_episode_start_time(db, agent_id: str, fix: bool) -> list[dict]:
     """Episodes with no ``start_time`` (bug-208), repaired from ``created_at``.
 
@@ -2309,6 +2383,12 @@ HEALTH_CHECKS: list[Check] = [
     Check("axis_hygiene", "warn", False, check_axis_hygiene),
     Check("invalid_json", "warn", True, check_invalid_json),
     Check("invalid_timestamp", "warn", True, check_invalid_timestamp),
+    # Runs after invalid_timestamp because the two share a repair (copy the row's
+    # own created_at) and their predicates are disjoint by construction: a stamp
+    # SQLite cannot read is the first one's, a stamp it reads as ahead of the
+    # clock is this one's. Ordered so a row that somehow satisfied both would be
+    # repaired into a readable past stamp rather than the other way round.
+    Check("future_timestamp", "warn", True, check_future_timestamp),
     # bug-208: info, not warn — since bug-213 the read paths score these rows by
     # created_at anyway; the fix materialises that fallback for direct readers.
     Check("missing_episode_start_time", "info", True, check_missing_episode_start_time),

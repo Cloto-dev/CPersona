@@ -298,6 +298,50 @@ MUTATIONS: list[Mutation] = [
         breaks="the merged conversation is ordered by how a stamp is spelled, so a row in another UTC offset reads as a turn that happened later (bug-287)",
         expect="test_a_stamp_in_another_offset_is_merged_at_its_instant_not_at_its_spelling, and the rwc-mixed-offset / rwc-invalid-timestamp-mixed golden scenarios",
     ),
+    Mutation(
+        id="M-N03a",
+        target="the write seam's verdict on a timestamp ahead of the clock (bug-293)",
+        file="cpersona/utils.py",
+        # The detector goes blind: every stamp reads as inside the allowance. This
+        # is the state the finding describes, restored in one line — store accepts
+        # a 2099 stamp, says nothing about it, and `reject` has nothing to refuse.
+        find="    if ahead <= FUTURE_TIMESTAMP_SKEW_SECONDS:\n        return None",
+        replace="    if True:\n        return None",
+        breaks="a stamp ahead of the clock is stored with no report and cannot be refused; it then scores as a row written this instant and flattens the scope's decay rate",
+        expect=(
+            "test_future_timestamp.py::test_past_the_allowance_is_reported, "
+            "::test_warn_stores_the_row_and_reports_the_stamp, "
+            "::test_reject_refuses_and_writes_nothing, "
+            "test_equivalence_252.py[store-future-timestamp]"
+        ),
+    ),
+    Mutation(
+        id="M-N03b",
+        target="the health check's boundary — the rows already stored (bug-293)",
+        file="cpersona/checks.py",
+        # A boundary nothing can reach. The check still runs, still reports zero,
+        # and stops reading the allowance it is configured with — which is also
+        # what a check written against SQL's own clock would look like on any day
+        # the calendar happens to agree.
+        find="    boundary = future_timestamp_boundary()",
+        replace='    boundary = "2999-01-01T00:00:00+00:00"',
+        breaks="check_health never names a stored row whose timestamp is ahead of the clock, so fix=true has nothing to repair",
+        expect=(
+            "test_future_timestamp.py::test_the_check_finds_only_what_is_past_the_allowance, "
+            "::test_the_check_reads_the_allowance_it_is_configured_with, "
+            "::test_the_check_reads_the_clock_it_is_given_not_sqlites, "
+            "test_255_repairable_contract.py, test_equivalence_252.py[corpus-future-timestamp-health]"
+        ),
+    ),
+    Mutation(
+        id="M-N03c",
+        target="the restore seam's report — faithful, but not silent (bug-293)",
+        file="cpersona/admin_handlers.py",
+        find='    if future_timestamp_issue(record.get("timestamp", "")):\n        tally.future_timestamps += 1',
+        replace='    if False:\n        tally.future_timestamps += 1',
+        breaks="a restore carries rows stamped ahead of the clock back in and reports nothing, which is the one seam that deliberately does not refuse them",
+        expect="test_future_timestamp.py::test_a_restore_reports_a_future_stamp_and_imports_it_anyway",
+    ),
 ]
 
 
