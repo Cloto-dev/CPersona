@@ -1278,13 +1278,24 @@ async def _sample_embeddings(db, agent_id: str, sample_n: int):
 
 
 def _null_distribution(vecs):
-    """All-pairs cosine similarities, and their upper triangle.
+    """All-pairs dot products, and their upper triangle.
 
     Treating every pair of distinct memories as a NON-match is what makes this a
     null distribution: the threshold is then placed where a genuine match would
     have to stand out from unrelated noise. The full matrix comes back too — the
     separation method's nearest-neighbour fallback reuses it rather than
     recomputing an O(n^2) product.
+
+    bug-250: this said "cosine similarities" and computes ``vecs @ vecs.T``,
+    which is a cosine only while every stored vector is unit-norm — a property
+    nothing in this package establishes or checks for the ``http`` embedding
+    path. The name mattered because the OTHER population this calibration
+    compares against, ``_adjacency_sims_core``, divides by the norms first: on a
+    non-unit corpus the operating point is placed between two populations
+    measured on different scales, and a docstring asserting they are the same
+    quantity is how that stays invisible. Corrected to say what it computes.
+    ``deep_embedding_norm`` reports whether the invariant actually holds;
+    making the four call sites agree is a scoring change and is not this one.
     """
     import numpy as np
 

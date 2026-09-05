@@ -9362,7 +9362,8 @@
         "orphaned_episodes",
         "calibration_staleness",
         "near_duplicate",
-        "unnormalized_content"
+        "unnormalized_content",
+        "embedding_norm"
       ],
       "fixed": false,
       "results": {
@@ -9373,6 +9374,19 @@
         "calibration_staleness": {
           "reason": "no embedding client configured",
           "status": "not_applicable"
+        },
+        "embedding_norm": {
+          "by_table": {
+            "episodes": 0,
+            "memories": 0
+          },
+          "complete": true,
+          "count": 0,
+          "rows_scanned": {
+            "episodes": 0,
+            "memories": 3
+          },
+          "tolerance": 0.001
         },
         "near_duplicate": {
           "pairs": 0,
@@ -9586,7 +9600,8 @@
         "orphaned_episodes",
         "calibration_staleness",
         "near_duplicate",
-        "unnormalized_content"
+        "unnormalized_content",
+        "embedding_norm"
       ],
       "fixed": true,
       "results": {
@@ -9604,6 +9619,19 @@
         "calibration_staleness": {
           "reason": "no embedding client configured",
           "status": "not_applicable"
+        },
+        "embedding_norm": {
+          "by_table": {
+            "episodes": 0,
+            "memories": 0
+          },
+          "complete": true,
+          "count": 0,
+          "rows_scanned": {
+            "episodes": 0,
+            "memories": 1
+          },
+          "tolerance": 0.001
         },
         "near_duplicate": {
           "pairs": 0,
@@ -9655,7 +9683,8 @@
         "orphaned_episodes",
         "calibration_staleness",
         "near_duplicate",
-        "unnormalized_content"
+        "unnormalized_content",
+        "embedding_norm"
       ],
       "fixed": false,
       "results": {
@@ -9666,6 +9695,19 @@
         "calibration_staleness": {
           "reason": "no embedding client configured",
           "status": "not_applicable"
+        },
+        "embedding_norm": {
+          "by_table": {
+            "episodes": 0,
+            "memories": 0
+          },
+          "complete": true,
+          "count": 0,
+          "rows_scanned": {
+            "episodes": 0,
+            "memories": 0
+          },
+          "tolerance": 0.001
         },
         "near_duplicate": {
           "pairs": 0,
