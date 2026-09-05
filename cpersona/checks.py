@@ -85,6 +85,7 @@ from cpersona import config, health, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
+    NORMALIZATION_SCAN_CAP,
     MAX_CONTENT_LENGTH,
     MAX_PROFILE_LENGTH,
     STORE_BLOB,
@@ -2811,6 +2812,86 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
     return result
 
 
+async def deep_unnormalized_content(db, agent_id: str, fix: bool) -> dict:
+    """Rows whose text is not in Unicode normal form C — one meaning, two identities.
+
+    Nothing in this package normalises Unicode. Identity is byte equality after
+    ``strip().lower()``, so a Japanese string written precomposed and the same
+    string written with a combining dakuten are two different memories: two
+    rows, two FTS entries, and an ``exclude_contents`` entry in one spelling
+    excludes neither the other. Measured, not assumed: FTS5's ``unicode61``
+    tokenizer does not normalise either, so an NFC query returns zero hits
+    against a decomposed row.
+
+    Report-only, and that is the finding rather than a shortcut. A repair would
+    have to rewrite stored text, and this project does not do that to a memory
+    it was handed — the canonical form belongs beside the original, not on top
+    of it, which is a column and therefore a schema change. What this check can
+    do without one is say whether the condition exists at all, which today
+    nothing can: the first symptom of a decomposed row is a duplicate that is
+    never detected, and a search that quietly misses it.
+
+    NFC and not NFKC. NFKC is a compatibility fold, not a canonical one — it
+    would equate a fullwidth parenthesis with an ASCII one and a circled digit
+    with a plain one, which are different characters an author chose. Measured
+    on this project's deployment: NFC would move 0 of 3,234 memories while NFKC
+    would move 478, and that gap IS the difference between the two questions.
+
+    Capped at ``NORMALIZATION_SCAN_CAP`` rows, newest first. Past the cap the
+    answer is a sample, and ``complete`` says so rather than letting a floor be
+    read as a total.
+    """
+    import unicodedata
+
+    counts = {}
+    samples = []
+    scanned = {}
+    for table, column in (("memories", "content"), ("episodes", "summary")):
+        rows = await db.execute_fetchall(
+            f"SELECT id, {column} FROM {table} WHERE agent_id = ? "
+            f"ORDER BY id DESC LIMIT ?",
+            (agent_id, NORMALIZATION_SCAN_CAP),
+        )
+        scanned[table] = len(rows)
+        offenders = 0
+        for row_id, text in rows:
+            if not isinstance(text, str) or unicodedata.normalize("NFC", text) == text:
+                continue
+            offenders += 1
+            if len(samples) < 10:
+                # The codepoints composition REMOVES, not the whole row: an
+                # operator needs to know which characters are decomposed, and the
+                # surrounding text says nothing about that.
+                #
+                # Set difference against the normalised form, NOT a per-character
+                # test. Normalisation composes a SEQUENCE — U+305F followed by
+                # U+3099 becomes U+3060 — while each of those characters
+                # normalises to itself alone. The per-character version of this
+                # line returned an empty list for every row it reported, which is
+                # a sample that names nothing on a finding that is entirely about
+                # which characters are involved.
+                moved = sorted(set(text) - set(unicodedata.normalize("NFC", text)))
+                samples.append(
+                    {
+                        "table": table,
+                        "id": row_id,
+                        "excerpt": text[:80],
+                        "decomposed_codepoints": [f"U+{ord(ch):04X}" for ch in moved][:12],
+                    }
+                )
+        counts[table] = offenders
+
+    result = {
+        "count": sum(counts.values()),
+        "by_table": counts,
+        "rows_scanned": scanned,
+        "complete": all(n < NORMALIZATION_SCAN_CAP for n in scanned.values()),
+    }
+    if samples:
+        result["samples"] = samples
+    return result
+
+
 DEEP_CHECKS: dict = {
     "anonymous_source": deep_anonymous_source,
     "short_content": deep_short_content,
@@ -2818,6 +2899,7 @@ DEEP_CHECKS: dict = {
     "orphaned_episodes": deep_orphaned_episodes,
     "calibration_staleness": deep_calibration_staleness,
     "near_duplicate": deep_near_duplicate,
+    "unnormalized_content": deep_unnormalized_content,
 }
 
 DEEP_CHECK_NAMES = list(DEEP_CHECKS)

@@ -245,6 +245,14 @@ NEAR_DUPLICATE_ROW_CAP = max(2, _parse_int("CPERSONA_NEAR_DUPLICATE_ROW_CAP", 50
 # incomplete and the check declines to downgrade its own severity, so the cap
 # costs a verdict, not correctness.
 INVALID_SOURCE_CLASSIFY_CAP = max(1, _parse_int("CPERSONA_INVALID_SOURCE_CLASSIFY_CAP", 10000))
+# Rows `deep_unnormalized_content` reads per run. Unicode normalisation cannot be
+# expressed as a SQL predicate — SQLite has no NFC function — so this check is
+# the one that must read the text to answer at all, and the cap is what keeps
+# "read the text" from meaning "read the corpus". The work per row is a
+# normalize() and a comparison, the same order as the JSON parse above, so it
+# takes the same 10,000. Past the cap the answer is a sample and the check says
+# so, rather than reporting a floor as a total.
+NORMALIZATION_SCAN_CAP = max(1, _parse_int("CPERSONA_NORMALIZATION_SCAN_CAP", 10000))
 # 16000, raised from 2000, because the old cap was destroying the part
 # of a memory that is worth the most. Long records put the conclusion first and
 # the hard-won detail last, so cutting the tail on every write removed exactly

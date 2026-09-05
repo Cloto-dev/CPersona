@@ -342,6 +342,24 @@ MUTATIONS: list[Mutation] = [
         breaks="a restore carries rows stamped ahead of the clock back in and reports nothing, which is the one seam that deliberately does not refuse them",
         expect="test_future_timestamp.py::test_a_restore_reports_a_future_stamp_and_imports_it_anyway",
     ),
+    Mutation(
+        id="M-N04",
+        target="the Unicode identity detector (bug-295)",
+        file="cpersona/checks.py",
+        # Compare the row against itself instead of against its normal form: the
+        # check still runs, still reports a shape, and reports zero forever. This
+        # is the state the finding describes — nothing looking at all — restored
+        # in one line.
+        find='            if not isinstance(text, str) or unicodedata.normalize("NFC", text) == text:',
+        replace="            if not isinstance(text, str) or text == text:",
+        breaks="deep_check never reports a row that is not in a normal form, so a corpus splitting one meaning across two identities looks clean",
+        expect=(
+            "test_unicode_identity.py::test_the_detector_finds_the_decomposed_row_only, "
+            "::test_the_sample_names_the_characters_that_compose, "
+            "::test_the_half_voiced_mark_is_found_too, "
+            "test_equivalence_252.py[corpus-unnormalized-deep-check]"
+        ),
+    ),
 ]
 
 
