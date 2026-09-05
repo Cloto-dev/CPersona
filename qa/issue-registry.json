@@ -4307,6 +4307,34 @@
       "category": "silent-degradation",
       "note": "The residual of bug-289, registered separately because the ruling that creates it is deliberate: not touching an existing mode is correct, and the gap is that nothing SAYS what those modes are. Found while closing that gap, not by a new report. Two things the work measured rather than assumed: every path the package places lands at 0600/0700 under umask 000, 022, 077 and 002, so a check reading them cannot record the runner's umask; and an export goes to a path its CALLER chooses, so it stays out of reach of any list the package can build -- named in owned_paths' docstring rather than left as a silent hole.",
       "fix_note": "fileperms.owned_paths() names every path the package places, asked of the module that places each one so moving a file moves the list with it, and checks.check_file_permissions reports the ones a local account can reach. warn, fix_capable: fix narrows a file to 0600 and never widens one, which is consistent with the bug-289 ruling because that ruling is about what a version bump does unasked, and this runs because an operator asked for repairs -- said on every finding's hint. Directories are reported and never chmod-ed: a 0600 file inside a 0755 directory is still unreadable, and the directory can hold files the package did not place. A directory-only finding declares repairable 0, so the registry's de-escalation rule stops it gating. The whole check, and the boot warning, decline where fileperms.mode_bits_are_enforced() is false. Golden recorded the blind answer first (perms-corpus-private / perms-corpus-group-world-readable were identical before the check existed); five mutations were run against the detector and all five were caught, one of which first exposed that the platform test crashed pytest's reporting instead of failing."
+    },
+    {
+      "id": "bug-297",
+      "summary": "(MEDIUM) The OAuth metadata and key-set fetches cap the document they accept, not the bytes they receive. _http_get returns response.content, so httpx has already buffered the whole body by the time the MAX_DOCUMENT_BYTES check runs on len(body) -- the cap decides what is parsed and trusted, and the allocation it was meant to bound has already happened. The size is chosen by whoever answers at the configured issuer or JWKS URI, which is precisely the party OAuth verification exists to survive. Bounded in practice by three things worth naming so the severity is judgeable: the origin is operator-configured rather than caller-supplied, a refetch is floored at JWKS_MIN_REFETCH_SECONDS (60s), and the request carries a timeout.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-05T08:30:00Z",
+      "version": "2.5.12a3",
+      "file": "cpersona/oauth.py",
+      "pattern": "return response\\.status_code, response\\.content",
+      "expected": "present",
+      "status": "open",
+      "category": "unbounded-receive",
+      "fix_sketch": "Stream the response (client.stream) and accumulate with an early abort once the running total passes MAX_DOCUMENT_BYTES, so the refusal happens before the allocation rather than after it. The declared Content-Length can be refused first on the server's own word, but it cannot be relied on alone -- it may be absent or false, which is the same reasoning the HTTP request-body budget already uses on the inbound side.",
+      "note": "The inbound mirror of this is already solved: RequestBodyBudgetMiddleware counts bytes at the ASGI receive() events rather than trusting a header. This entry is the outbound direction, which that work did not cover. Related: the embedding client has the same shape on its own receive path (bug-298)."
+    },
+    {
+      "id": "bug-298",
+      "summary": "(LOW) The embedding client's response budget bounds parsing, not receiving. _parse_within_budget refuses an oversized body before json() turns it into a much larger Python object graph, and it checks the received length as well as the declared one -- but httpx has already buffered the body by the time it runs, so max_response_bytes cannot bound the receive-side allocation. The limit is documented in the function's own docstring rather than tracked, which is why it is recorded here: an accepted limit that lives only in a docstring is indistinguishable from one nobody noticed.",
+      "severity": "LOW",
+      "discovered": "2026-09-05T08:30:00Z",
+      "version": "2.5.12a3",
+      "file": "cpersona/_vendored_mcp_common/embedding_client.py",
+      "pattern": "httpx has already buffered the body",
+      "expected": "present",
+      "status": "open",
+      "category": "unbounded-receive",
+      "fix_sketch": "Streaming the response bounds the receive side, but it changes the request path, which the docstring already states as the reason it was not done. Decide rather than patch: the backend is an operator-configured service and the default budget is 64 MiB, so the question is whether that origin is in the threat model at all.",
+      "note": "This file is vendored. A change here is not local: it needs the canonical package bumped, re-vendoring here, and the other consumers carried along, so the cost is a different class from a fix inside this package. Same shape as bug-297, which is local by comparison."
     }
   ]
 }
