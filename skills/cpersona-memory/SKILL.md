@@ -10,7 +10,8 @@ description: >-
   install, MCP-client configuration, the embedding server, the day-to-day
   store / recall / archive workflow, diagnosing and repairing a degraded
   embedding backend, and persisting the memory policy into the user's
-  CLAUDE.md so the triggers survive without this skill loaded.
+  always-loaded instructions file (CLAUDE.md, AGENTS.md, …) so the triggers
+  survive without this skill loaded.
 ---
 
 # CPersona — persistent memory for Claude
@@ -25,7 +26,8 @@ is separate: `EMBEDDING_MODE=api` bills per store and per recall against
 `CPERSONA_EMBEDDING_API_URL`. The local `http` mode and `none` cost nothing.)
 
 - Single SQLite file, MIT licensed.
-- Works with Claude Desktop, Claude Code, and any MCP host.
+- Works with Claude Code, Claude Desktop, Codex CLI, Cursor, VS Code, and any
+  other MCP host.
 - Repo: <https://github.com/Cloto-dev/cpersona>
 
 This skill has two jobs: **(1) help the user install and configure CPersona**,
@@ -119,23 +121,12 @@ Pick an absolute `CPERSONA_DB_PATH` (e.g. `~/.claude/cpersona.db`).
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/absolute/path/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "cpersona": {
-      "command": "uvx",
-      "args": ["cpersona"],
-      "env": {
-        "CPERSONA_DB_PATH": "/absolute/path/cpersona.db",
-        "EMBEDDING_MODE": "http",
-        "EMBEDDING_HTTP_URL": "http://127.0.0.1:8401/embed"
-      }
-    }
-  }
-}
-```
+**Every other client** (Claude Desktop, Codex CLI, Cursor, VS Code, any MCP
+host) — the per-client entries live in one place,
+[Getting Started §3](https://cloto-dev.github.io/CPersona/getting-started/#3-register-cpersona-with-your-mcp-client),
+and this skill does not repeat them. The shape is always the same triple:
+command `uvx`, args `["cpersona"]`, and the `env` above; only the file and the
+key names differ.
 
 > **No embedding server yet?** Drop the `EMBEDDING_*` lines (or set
 > `EMBEDDING_MODE=none`) — recall runs on FTS5 + keyword and reports when degraded.
@@ -146,22 +137,26 @@ claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"
 After restarting the client, confirm the `cpersona` server is connected, then
 ask Claude to `store` a fact and `recall` it.
 
-### 4. Persist the policy into CLAUDE.md (recommended)
+### 4. Persist the policy into the always-loaded file (recommended)
 
 This skill only loads when a conversation happens to activate it — but the
-memory triggers below must fire in **every** session. `CLAUDE.md` is loaded
-deterministically each session, so the final setup step is to persist a small
-policy block there. Offer this to the user at the end of setup (and whenever
+memory triggers below must fire in **every** session. The client's always-loaded
+instructions file — `CLAUDE.md` here; `AGENTS.md` on Codex and Cursor; the
+per-client table is
+[Getting Started §5](https://cloto-dev.github.io/CPersona/getting-started/#5-make-the-memory-triggers-fire-in-every-session)
+— is loaded deterministically each session, so the final setup step is to
+persist a small policy block there. Offer this to the user at the end of setup (and whenever
 you notice the triggers are not firing because no policy block exists).
 
 Rules for writing the block (per the
-[CLAUDE.md Policy Generation Standard](https://github.com/Cloto-dev/cpersona/blob/master/docs/CLAUDE_MD_POLICY_STANDARD.md)):
+[policy block standard](https://github.com/Cloto-dev/cpersona/blob/master/docs/CLAUDE_MD_POLICY_STANDARD.md)):
 
 - **Ask first.** Show the exact block and get approval before touching the
-  user's `CLAUDE.md`. Never write it silently.
-- **Default target: `~/.claude/CLAUDE.md`** (memory is cross-project
-  infrastructure). Offer a project-level `CLAUDE.md` if the user wants memory
-  rules scoped to one project.
+  user's file. Never write it silently.
+- **Default target: the user-level file of the client you are running in**
+  (`~/.claude/CLAUDE.md` on Claude Code; memory is cross-project
+  infrastructure). Offer the project-level file if the user wants memory rules
+  scoped to one project.
 - **Replace, don't duplicate.** If a `BEGIN cpersona-policy` marker already
   exists in the file, replace everything between the markers (this is also
   how an older `vN` block gets upgraded — with consent). Never touch content
@@ -174,7 +169,7 @@ Rules for writing the block (per the
   [always-loaded-index.md](references/always-loaded-index.md).
 
 The block (keep it verbatim apart from the substitution — it is budgeted at
-40 lines because `CLAUDE.md` costs context in every session, and every line
+40 lines because that file costs context in every session, and every line
 is chosen to change behavior the agent would *not* show by default):
 
 ```markdown
@@ -336,7 +331,7 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
   `set_recall_precision` is the knob that actually moves the gate.
 - **Profile rows carry no score**: with confidence scoring off (the default)
   they sort last and get cut by `limit` on a full corpus. Facts that must
-  *always* be in context belong in deterministic injection (CLAUDE.md), not
+  *always* be in context belong in deterministic injection (the always-loaded file), not
   the profile. `lock_memory` protects from loss; it never boosts ranking.
 - **Confidence on = it takes over**: with `CPERSONA_CONFIDENCE_ENABLED=true`
   the result order and the quality gate key on confidence, not the fusion

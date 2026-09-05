@@ -14,7 +14,8 @@ tools that survive across sessions. Nothing else in your stack changes.
 - **Python 3.11+**
 - **[uv](https://docs.astral.sh/uv/)** for the one-command path (optional —
   `pip` works too)
-- An MCP client: Claude Desktop, Claude Code, or any other MCP host
+- An MCP client: Claude Desktop, Claude Code, Codex CLI, Cursor, VS Code, or
+  any other MCP host — step 3 has the entry for each
 
 ## Let the agent do it (Claude Code)
 
@@ -35,7 +36,8 @@ mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claud
 
 Then tell Claude Code: *"Set up CPersona — I want persistent memory."* The
 manual steps below are for every other client, and for anyone who prefers to
-configure things by hand.
+configure things by hand — step 5 is the part the skill would otherwise do,
+the one that makes the triggers fire without being asked.
 
 ## 1. Install CPersona
 
@@ -236,6 +238,27 @@ posts to `/embed`.
 
 ## 3. Register CPersona with your MCP client
 
+Every client launches the same process — command `uvx`, argument `cpersona`,
+and the environment shown below — and differs only in which file it reads and
+what it calls the keys. Pick an absolute `CPERSONA_DB_PATH` first; the examples
+use `/home/you/.claude/cpersona.db` because that directory already exists for
+Claude users, but any absolute path works.
+
+| Client | Where the entry goes | Shape | Checked here |
+| --- | --- | --- | --- |
+| Claude Code | `claude mcp add-json … -s user` (writes the user config) | JSON, `type: stdio` | yes |
+| Claude Desktop | `claude_desktop_config.json` | JSON, `mcpServers` | yes |
+| Codex CLI | `codex mcp add … -- uvx cpersona` (writes `~/.codex/config.toml`) | TOML, `[mcp_servers.cpersona]` | yes (codex-cli 0.147.0) |
+| Cursor | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) | JSON, `mcpServers` | vendor docs |
+| VS Code (Copilot) | `.vscode/mcp.json` (workspace) or the user `mcp.json` | JSON, `servers` | vendor docs |
+| Any other MCP host | its stdio server configuration | the same command / args / env triple | vendor docs |
+
+"Checked here" means the entry was written by that client's own tooling and
+read back on a maintainer machine while this page was written. "Vendor docs"
+means the shape is transcribed from the client's documentation and has not been
+executed here — if it disagrees with what your client accepts, the client is
+right, and a report is welcome.
+
 **Claude Desktop** — add to `claude_desktop_config.json`:
 
 ```json
@@ -258,6 +281,68 @@ posts to `/embed`.
 
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
+```
+
+**Codex CLI** — one command; it writes the TOML shown after it into
+`~/.codex/config.toml`:
+
+```bash
+codex mcp add cpersona --env CPERSONA_DB_PATH=/home/you/.claude/cpersona.db --env EMBEDDING_MODE=http --env EMBEDDING_HTTP_URL=http://127.0.0.1:8401/embed -- uvx cpersona
+```
+
+```toml
+[mcp_servers.cpersona]
+command = "uvx"
+args = ["cpersona"]
+
+[mcp_servers.cpersona.env]
+CPERSONA_DB_PATH = "/home/you/.claude/cpersona.db"
+EMBEDDING_HTTP_URL = "http://127.0.0.1:8401/embed"
+EMBEDDING_MODE = "http"
+```
+
+Codex can also deny-list tools per server (`disabled_tools = ["delete_memory", …]`
+under the same table), which is a client-side way to hand an agent read-mostly
+access. The server-side equivalent, enforced for every client at once, is the
+[per-client capability layer](ACL_DESIGN.md).
+
+**Cursor** — `~/.cursor/mcp.json`, or `.cursor/mcp.json` inside a project. Same
+shape as Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "cpersona": {
+      "command": "uvx",
+      "args": ["cpersona"],
+      "env": {
+        "CPERSONA_DB_PATH": "/home/you/.claude/cpersona.db",
+        "EMBEDDING_MODE": "http",
+        "EMBEDDING_HTTP_URL": "http://127.0.0.1:8401/embed"
+      }
+    }
+  }
+}
+```
+
+**VS Code (Copilot)** — `.vscode/mcp.json` in the workspace, or the user-level
+`mcp.json` (*MCP: Open User Configuration*). The top-level key is `servers`,
+not `mcpServers`:
+
+```json
+{
+  "servers": {
+    "cpersona": {
+      "command": "uvx",
+      "args": ["cpersona"],
+      "env": {
+        "CPERSONA_DB_PATH": "/home/you/.claude/cpersona.db",
+        "EMBEDDING_MODE": "http",
+        "EMBEDDING_HTTP_URL": "http://127.0.0.1:8401/embed"
+      }
+    }
+  }
+}
 ```
 
 Notes that save a support round-trip:
@@ -297,6 +382,75 @@ Two checks worth running once the corpus is real:
   a `hint` means embeddings are simply unconfigured (`mode=none`), while a
   fault means a configured endpoint stopped answering — see
   [detecting a dead embedding server](operations.md#detecting-a-dead-embedding-server).
+
+## 5. Make the memory triggers fire in every session
+
+Registration gives the agent the tools; it does not make the agent *use* them
+unprompted. Recall at session start, store on a decision, archive at session
+end — those have to live in something the client loads on **every** session,
+not in a skill that activates only when the conversation happens to match.
+Every client has such a file:
+
+| Client | Always-loaded file (user-level default) | Project-level alternative |
+| --- | --- | --- |
+| Claude Code / Claude Desktop | `~/.claude/CLAUDE.md` | `./CLAUDE.md` |
+| Codex CLI | `~/.codex/AGENTS.md` | `./AGENTS.md` at the repository root |
+| Cursor | User Rules (*Customize → Rules* — a setting, not a file) | `.cursor/rules/cpersona.mdc` with `alwaysApply: true`, or `./AGENTS.md` |
+| VS Code (Copilot) | see the client's custom-instructions documentation | `.github/copilot-instructions.md`, or `./AGENTS.md` with `chat.useAgentsMdFile` enabled |
+
+Paste the block below into that file, replacing `<AGENT_ID>` with one stable
+identifier the agent will use on every call (`"claude-code"`, `"codex"`, …).
+Keep the markers: they are how a later version of the block finds and replaces
+this one instead of stacking a second copy. On Claude Code the
+`cpersona-memory` skill does this for you, with your approval; everywhere else
+it is a paste. The rules the block follows — consent, placement, idempotency,
+the 40-line budget, client neutrality — are the
+[policy block standard](CLAUDE_MD_POLICY_STANDARD.md). The block is
+maintained in the skill; this copy is checked against it in CI.
+
+```markdown
+<!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->
+## CPersona memory policy
+
+Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
+
+**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
+the first substantive action. Prefer `recall_with_context` when conversation history is already
+at hand; add `deep=true` when the first pass comes back thin. Skip only for trivial one-shot
+questions.
+
+**Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
+"let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
+Protect must-never-lose rules with `lock_memory`. After a successful `git commit`, `store` a
+one-line record: hash, what changed, why.
+
+**Changing an existing rule** → `update_memory`, never delete + store. If the memory is locked:
+`unlock_memory` → `update_memory` → `lock_memory`.
+
+**Session end** — fire on closing phrases ("that's all for today", "wrap it up", "good night") →
+first `store` + lock any unsaved decisions, then `archive_episode(agent_id, history=<the REAL
+turns>, summary=…, keywords=…, resolved=…)`, computing `summary` and `keywords` yourself.
+
+**"Don't save this" / benchmark sessions** → `pause_persistence(ttl_seconds=1800)`;
+`resume_persistence()` (or TTL expiry) restores. Reads still answer, minus the writes inside them.
+
+**Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
+and follow its runbook. Never quietly serve keyword-only recall.
+
+**Quality** — if recall feels off, `set_recall_precision` (strict/balanced/lenient) is the one
+policy knob; run `calibrate_threshold(agent_id)` after the corpus changes substantially.
+Monthly: `check_health(agent_id, fix=true)`.
+
+**If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
+as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that
+changes behaviour>` — with the body stored here under `message.id="memory-index:<slug>"` and content
+starting `[<slug>]`, so a line tells you what to `recall`. Recall is ranked and may not surface a
+memory; the index always arrives. Its size cap fails **silently** when exceeded, so consolidate at
+80%, not at the limit. Never migrate existing memories into this store without asking first.
+
+Details, setup, and troubleshooting: the `cpersona-memory` skill.
+<!-- END cpersona-policy -->
+```
 
 ## Where to go next
 
