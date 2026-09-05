@@ -11865,6 +11865,168 @@
     "seam": "admin-handlers",
     "thresholds": {}
   },
+  "perms-corpus-group-world-readable": {
+    "covers": "check_health: database, -wal, calibration sidecar, update cache and alias ledger are all 0644 — TODAY nothing reads modes, so the answer equals the private control's",
+    "db": {
+      "episodes": [],
+      "memories": [],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "corpus_modes": {
+        "DIRECTORY": "0o700",
+        "alias-ledger": "0o644",
+        "calibration": "0o644",
+        "db": "0o644",
+        "index-memories": "absent",
+        "shm": "0o600",
+        "update-cache": "0o644",
+        "wal": "0o644"
+      },
+      "health": {
+        "checks_run": [
+          "memory_annotation",
+          "discord_mention",
+          "oversized_content",
+          "duplicate_content",
+          "embedding_dimension",
+          "nonfinite_embedding",
+          "embedding_backend",
+          "null_embedding",
+          "null_episode_embedding",
+          "fts_integrity",
+          "schema_version",
+          "dedup_msg_id_index",
+          "schema_objects",
+          "sqlite_integrity",
+          "axis_hygiene",
+          "invalid_json",
+          "invalid_timestamp",
+          "future_timestamp",
+          "missing_episode_start_time",
+          "timestamp_format_drift",
+          "episode_timestamp_format_drift",
+          "stale_pending_tasks",
+          "missing_profile",
+          "empty_content",
+          "invalid_source_type",
+          "oversized_profile",
+          "anonymous_source",
+          "vector_fallback_config",
+          "vector_index",
+          "operating_context_parse",
+          "operating_context_size"
+        ],
+        "fixed": false,
+        "issues": [],
+        "severity_summary": {
+          "critical": 0,
+          "info": 0,
+          "warn": 0
+        },
+        "stats": {
+          "agent_episodes": 0,
+          "agent_memories": 0,
+          "axes": {
+            "channel": {},
+            "project_id": {}
+          },
+          "db_size_bytes": "<file-scoped, masked>",
+          "episodes": 0,
+          "memories": 0,
+          "pending_tasks": 0,
+          "profiles": 0
+        },
+        "status": "healthy",
+        "total_memories": 0
+      }
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
+  "perms-corpus-private": {
+    "covers": "check_health: every file the package created beside the database is 0600 — the control the widened corpus is read against (TODAY: indistinguishable from it)",
+    "db": {
+      "episodes": [],
+      "memories": [],
+      "profiles": []
+    },
+    "outbound": [],
+    "raised": null,
+    "result": {
+      "corpus_modes": {
+        "DIRECTORY": "0o700",
+        "alias-ledger": "0o600",
+        "calibration": "0o600",
+        "db": "0o600",
+        "index-memories": "absent",
+        "shm": "0o600",
+        "update-cache": "0o600",
+        "wal": "0o600"
+      },
+      "health": {
+        "checks_run": [
+          "memory_annotation",
+          "discord_mention",
+          "oversized_content",
+          "duplicate_content",
+          "embedding_dimension",
+          "nonfinite_embedding",
+          "embedding_backend",
+          "null_embedding",
+          "null_episode_embedding",
+          "fts_integrity",
+          "schema_version",
+          "dedup_msg_id_index",
+          "schema_objects",
+          "sqlite_integrity",
+          "axis_hygiene",
+          "invalid_json",
+          "invalid_timestamp",
+          "future_timestamp",
+          "missing_episode_start_time",
+          "timestamp_format_drift",
+          "episode_timestamp_format_drift",
+          "stale_pending_tasks",
+          "missing_profile",
+          "empty_content",
+          "invalid_source_type",
+          "oversized_profile",
+          "anonymous_source",
+          "vector_fallback_config",
+          "vector_index",
+          "operating_context_parse",
+          "operating_context_size"
+        ],
+        "fixed": false,
+        "issues": [],
+        "severity_summary": {
+          "critical": 0,
+          "info": 0,
+          "warn": 0
+        },
+        "stats": {
+          "agent_episodes": 0,
+          "agent_memories": 0,
+          "axes": {
+            "channel": {},
+            "project_id": {}
+          },
+          "db_size_bytes": "<file-scoped, masked>",
+          "episodes": 0,
+          "memories": 0,
+          "pending_tasks": 0,
+          "profiles": 0
+        },
+        "status": "healthy",
+        "total_memories": 0
+      }
+    },
+    "seam": "store-recall-health",
+    "thresholds": {}
+  },
   "recall-basic-hits": {
     "covers": "recall: seed_corpus hit set — messages, confidence, match_reason, refs; recall_count/last_recalled_at bumped (CONFIDENCE=on)",
     "db": {
