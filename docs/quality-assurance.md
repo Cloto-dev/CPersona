@@ -49,10 +49,12 @@ separates it from a test that happens to cover today's call sites.
 
 ## Documented facts are gated too
 
-Hand-written numbers rot. Tool counts, the schema version and
-environment-variable defaults stated in the docs are checked against the source
-that defines them, so a doc that disagrees with the code fails CI rather than
-misleading a reader. Version claims are checked against the release tags. The
+Hand-written numbers rot. The schema version and environment-variable
+defaults stated in the docs are checked against the source that defines them,
+so a doc that disagrees with the code fails CI rather than misleading a reader.
+A total tool count is not allowed to appear at all: it was correct on every page
+the check could reach and stale on the surfaces it could not, so the check now
+fails on the claim itself. Version claims are checked against the release tags. The
 Japanese pages are checked against the English content they were translated
 from, so a translation cannot silently fall behind its source — and every page
 and nav label must either carry a translation or declare that it stays English,

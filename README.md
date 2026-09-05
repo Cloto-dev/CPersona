@@ -6,8 +6,8 @@
 
 ### MCP Memory Server
 
-Give Claude persistent memory across sessions.
-Single SQLite file. 31 tools. Zero LLM dependency.
+Persistent memory for AI agents, over MCP.
+One SQLite file you own. No LLM in the loop. Honest when recall degrades.
 
 [![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE) [![Sponsor](https://img.shields.io/badge/sponsor-Cloto--dev-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Cloto-dev)
 
@@ -128,7 +128,7 @@ Track B lands at or above Track A on both models: the fusion layers add signal r
 |---|---|
 | [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) | Install, embedding server, client registration, verification |
 | [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/) | What you may rely on: recall ordering, dedup, scan window, response shapes |
-| [Tools](https://cloto-dev.github.io/CPersona/tools/) | All 31 tools, grouped by what you reach for them for |
+| [Tools](https://cloto-dev.github.io/CPersona/tools/) | Every tool, grouped by what you reach for it for |
 | [Architecture](https://cloto-dev.github.io/CPersona/architecture/) | Storage, the retrieval pipeline, isolation axes |
 | [Operations Runbook](https://cloto-dev.github.io/CPersona/operations/) | Backup, degradation detection, tuning, CJK guidance, corpus sync |
 | [Configuration](https://cloto-dev.github.io/CPersona/configuration/) | Every environment variable and its default |

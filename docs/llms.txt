@@ -18,7 +18,7 @@ CPERSONA_MAX_MEMORIES is the vector scan window, not a storage cap.
 
 - [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/): install, the embedding-server contract and its reference implementation, MCP client registration, verification
 - [Architecture](https://cloto-dev.github.io/CPersona/architecture/): component layout, SQLite/FTS5 storage, the three retrieval channels and the fusion → gate → reverse pipeline, isolation axes, zero-LLM rationale
-- [Tools](https://cloto-dev.github.io/CPersona/tools/): all 31 tools grouped by purpose, each linked to the contract it can surprise you with
+- [Tools](https://cloto-dev.github.io/CPersona/tools/): every tool grouped by purpose, each linked to the contract it can surprise you with
 - [Configuration](https://cloto-dev.github.io/CPersona/configuration/): every environment variable with defaults; HTTP transport and its authentication requirements
 - [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/): the behaviors callers may rely on — recall ordering, confidence×fusion interaction, episode boundary penalty, scan window, dedup, autocut, profile scoring, gate_fallback, lock semantics
 - [FAQ](https://cloto-dev.github.io/CPersona/faq/): question-shaped index into the pages above

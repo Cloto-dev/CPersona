@@ -442,7 +442,7 @@ _AUTO_PROJECT_ID_CLAUSE = (
     "bug-186: resolution requires a configured operating context. With none — the default, and equally the outcome of a sidecar that fails to parse — the sentinel is NOT resolved: it is stored and filtered as the literal project_id '@auto', resolved_project_id echoes '@auto', and no warning is raised. Read resolved_project_id before relying on the resolution."
 )
 
-# MCP Tool Registry — 29 tools
+# MCP Tool Registry
 # =============================================================================
 
 # 2.5.1 Soft layer (§4): the sidecar's instructions.summary rides the MCP

@@ -8,9 +8,14 @@ the drift visible in CI instead of waiting for a reader to trip over it.
 
 Checked facts and their sources of truth:
 
-  tool count      runtime registry (import cpersona.server, count registered
-                  tools) — NOT grep: a grep of `auto_tool(` has already
-                  miscounted once (matched a non-registration line)
+  tool count      must not be stated at all. It was checked against the
+                  runtime registry for a while, and was right on every page
+                  this gate could reach while wrong on the surfaces it could
+                  not (the GitHub repository description, the registry's
+                  frozen per-version copy, a code comment) — twice. A number
+                  that leaks past the gate's path list cannot be kept true,
+                  so the claim itself is now the failure. Per-axis counts on
+                  the tools page are still measured (see _AXIS_COUNT_CLAIMS)
   schema version  SCHEMA_VERSION literal in cpersona/database.py
   env defaults    static parse of cpersona/config.py, compared against every
                   markdown table row in docs/ that names a `CPERSONA_*` var
@@ -92,7 +97,10 @@ DOC_FILES = [
 # and server.json is the registry entry. Both drifted to a stale tool count
 # while every scanned page stayed correct (2026-08-31) — the count was right
 # everywhere the gate could see and wrong everywhere else, which is what an
-# exemption that follows paths rather than claims produces.
+# exemption that follows paths rather than claims produces. Adding them here
+# was not enough: the GitHub description and the registry's published copy sat
+# outside any path list and drifted again (2026-09-05), which is why the count
+# is now forbidden rather than checked.
 MANIFEST_FILES = [
     ROOT / "pyproject.toml",
     ROOT / "server.json",
@@ -260,17 +268,32 @@ def measured_volatile_stats() -> dict[str, float]:
 # --- claims found in the docs ----------------------------------------------
 
 
+# A total tool count, in either language. `\d+ tools` also catches "31 MCP tools";
+# the Japanese form is the counter phrase the translations used. Both spellings,
+# because a detector that only knows the English phrase passes the translation
+# vacuously — which is indistinguishable from passing it correctly.
+TOOL_COUNT_CLAIMS = (
+    re.compile(r"\b\d+\s+(?:MCP\s+)?tools\b"),
+    re.compile(r"\d+\s*個の(?:MCP\s*)?ツール"),
+)
+
+
 def check_tool_and_schema_claims(tool_count: int, schema_version: int) -> None:
+    # `tool_count` is measured and printed for the log, but no page may state it:
+    # the number was kept true everywhere this gate could read and went stale on
+    # the surfaces it could not (repository description, registry copy, a code
+    # comment), so the only version of the claim that stays correct is none.
+    del tool_count
     for doc in DOC_FILES + MANIFEST_FILES:
         text = doc.read_text()
         rel = doc.relative_to(ROOT)
-        # Both spellings, because the translations restate the same count and a
-        # detector that only knows the English phrase passes them vacuously —
-        # which is indistinguishable from passing them correctly.
-        for pattern in (r"\b(\d+) tools\b", r"(\d+) 個のツール"):
-            for m in re.finditer(pattern, text):
-                if int(m.group(1)) != tool_count:
-                    fail(f"{rel}: claims '{m.group(0)}' but the registry serves {tool_count}")
+        for pattern in TOOL_COUNT_CLAIMS:
+            for m in pattern.finditer(text):
+                fail(
+                    f"{rel}: states a total tool count ('{m.group(0)}'). The count is not "
+                    "documented anywhere — it goes stale on surfaces this gate cannot "
+                    "reach. Say 'every tool' and let the tools page list them."
+                )
         for m in re.finditer(r"\b[Ss]chema v(\d+)\b", text):
             if int(m.group(1)) != schema_version:
                 fail(f"{rel}: claims '{m.group(0)}' but SCHEMA_VERSION is {schema_version}")
@@ -438,7 +461,7 @@ _AXIS_COUNT_CLAIMS = (
     # (axis, English pattern, Japanese pattern). Both spellings for the reason the
     # tool-count check carries both: a detector that only knows the English phrase
     # passes the translation vacuously, and vacuous is indistinguishable from correct.
-    ("agent_id", r"`agent_id` is accepted by\s+most tools \((\d+) of \d+\)", r"個のツールのうち\s*(\d+) 個が受け取り"),
+    ("agent_id", r"`agent_id` is accepted by\s+most tools \((\d+)\)", r"`agent_id` はほとんどのツール\s*\((\d+) 個\) が受け取り"),
     ("project_id", r"`project_id` by (\w+)", r"`project_id` は (\d+) 個"),
     ("channel", r"`channel` by exactly (\w+)", r"`channel` はちょうど (\d+) 個"),
 )

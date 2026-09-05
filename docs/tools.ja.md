@@ -1,10 +1,10 @@
-<!-- i18n-source: docs/tools.md@blob:3431c3aa1addf03f085059a094d347d1468f62c5 -->
+<!-- i18n-source: docs/tools.md@blob:b19849abdf55cf7e95b2c9375dc211be7b5ca3be -->
 
 # ツール一覧
 
 > **対象: CPersona 2.5.x。** 各引数の権威ある説明は、そのツール自身の MCP
 > description です — あなたのクライアントがそれを読み、あなたが動かしている版と
-> 一緒に配布されます。このページは **31 個のツール**を「何のために手を伸ばすか」で
+> 一緒に配布されます。このページは **すべてのツール**を「何のために手を伸ばすか」で
 > グループ分けし、名前から想像できない挙動を持つものは契約へリンクします。
 >
 > **翻訳について**: 正本は英語版です。日本語版が古い場合は英語版を参照してください。
@@ -127,8 +127,8 @@ dry-run を強制されて `repairs_skipped` を返し、`persisted` キー自�
 
 ## 分離のための引数 { #isolation-arguments }
 
-3 つの分離軸は一様には提供されていません。`agent_id` は 31 個のツールのうち
-22 個が受け取り、`project_id` は 6 個、`channel` はちょうど 4 個 — `store` /
+3 つの分離軸は一様には提供されていません。`agent_id` はほとんどのツール
+(22 個) が受け取り、`project_id` は 6 個、`channel` はちょうど 4 個 — `store` /
 `recall` / `recall_with_context` / `archive_episode` — だけです。これらは入れ子の
 階層ではなく独立した 3 軸であり、読み取り時に「空の値」と「省略」は異なる意味を
 持ちます — [分離軸](architecture.md#isolation-axes) を参照してください。
