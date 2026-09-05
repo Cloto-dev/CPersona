@@ -2990,6 +2990,96 @@ async def deep_unnormalized_content(db, agent_id: str, fix: bool) -> dict:
     return result
 
 
+#: Rows sampled per table by ``deep_embedding_norm``. A module constant rather
+#: than a setting: the check answers a yes/no about the backend that produced the
+#: corpus, and that answer does not get better by scanning more of it. Newest
+#: first, so a backend swap shows up in the rows written since.
+_NORM_SAMPLE_ROWS = 2000
+
+#: How far from 1.0 a stored vector's L2 norm may sit before it is reported.
+#: Measured rather than guessed: on the reference deployment (3,271 memories and
+#: 665 episodes embedded through the HTTP path) the largest deviation is 1.19e-07,
+#: which is float32 round-trip noise on a vector the backend already normalised.
+#: 1e-3 sits four orders above that noise and far below any deviation that would
+#: move a similarity, so the check neither fires on rounding nor stays quiet on a
+#: backend that does not normalise at all.
+_NORM_TOLERANCE = 1e-3
+
+
+async def deep_embedding_norm(db, agent_id: str, fix: bool) -> dict:
+    """Stored vectors whose L2 norm is not 1, which makes a dot product not a cosine.
+
+    Recall multiplies a query vector by a stored one and treats the product as a
+    similarity. That is only true while both are unit vectors -- otherwise the
+    product carries the vectors' lengths, and the number it yields is not on the
+    scale anything downstream believes it is on. Nothing in this package
+    establishes that invariant for a stored vector: the ``api`` embedding path
+    L2-normalises what it receives, the ``http`` path stores whatever the server
+    returned, and no check has ever looked. So the invariant holds or does not
+    hold as a property of somebody else's service, silently either way.
+
+    What it costs when it does not hold is not a wrong row but a wrong threshold.
+    ``calibrate_threshold`` builds its two populations differently -- the related
+    pairs are divided by their norms, the random pairs are not -- so on a
+    non-unit corpus the operating point is placed between two populations
+    measured on different scales, and then applied at recall time to a third
+    quantity that is neither. The scale error is invisible at every size because
+    every number involved still looks like a similarity.
+
+    Report-only, and deliberately so. Normalising what is already stored rewrites
+    vectors this project was handed, and normalising at the write seam changes
+    what a similarity MEANS for every row that follows while the rows before it
+    keep the old scale -- one corpus, two scales, which is the failure this check
+    exists to name rather than a repair. Making the four call sites agree is a
+    scoring change and belongs where scoring semantics are decided.
+
+    Newest ``_NORM_SAMPLE_ROWS`` per table. ``complete`` says whether that was
+    the whole corpus, so a floor is not read as a total.
+    """
+    import numpy as np
+
+    counts: dict[str, int] = {}
+    scanned: dict[str, int] = {}
+    samples: list[dict] = []
+    for table in ("memories", "episodes"):
+        rows = await db.execute_fetchall(
+            f"SELECT id, embedding FROM {table} "
+            f"WHERE agent_id = ? AND embedding IS NOT NULL "
+            f"ORDER BY id DESC LIMIT ?",
+            (agent_id, _NORM_SAMPLE_ROWS),
+        )
+        scanned[table] = len(rows)
+        offenders = 0
+        for row_id, blob in rows:
+            if not blob or len(blob) % 4:
+                # An unreadable width is ``embedding_dimension``'s finding and has
+                # its own repair; answering for it here would make two checks
+                # report one row.
+                continue
+            vec = np.frombuffer(bytes(blob), dtype=np.float32)
+            norm = float(np.linalg.norm(vec))
+            if not np.isfinite(norm):
+                # ``nonfinite_embedding`` owns this row, for the same reason.
+                continue
+            if abs(norm - 1.0) <= _NORM_TOLERANCE:
+                continue
+            offenders += 1
+            if len(samples) < 10:
+                samples.append({"table": table, "id": int(row_id), "norm": round(norm, 6)})
+        counts[table] = offenders
+
+    result = {
+        "count": sum(counts.values()),
+        "by_table": counts,
+        "rows_scanned": scanned,
+        "tolerance": _NORM_TOLERANCE,
+        "complete": all(n < _NORM_SAMPLE_ROWS for n in scanned.values()),
+    }
+    if samples:
+        result["samples"] = samples
+    return result
+
+
 DEEP_CHECKS: dict = {
     "anonymous_source": deep_anonymous_source,
     "short_content": deep_short_content,
@@ -2998,6 +3088,7 @@ DEEP_CHECKS: dict = {
     "calibration_staleness": deep_calibration_staleness,
     "near_duplicate": deep_near_duplicate,
     "unnormalized_content": deep_unnormalized_content,
+    "embedding_norm": deep_embedding_norm,
 }
 
 DEEP_CHECK_NAMES = list(DEEP_CHECKS)

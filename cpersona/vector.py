@@ -479,8 +479,18 @@ def far_list_enabled() -> bool:
 
 
 def _cosine_batch(query_vec, query_dim: int, blobs: list[bytes]):
-    """Batched cosine similarity of `query_vec` against pre-filtered float32
+    """Batched dot product of `query_vec` against pre-filtered float32
     blobs (each MUST be exactly ``query_dim * 4`` bytes).
+
+    bug-250: a dot product, and a cosine only while both vectors are unit-norm.
+    That holds for the ``api`` embedding path, which L2-normalises explicitly,
+    and is merely true-so-far for the ``http`` path, which stores what the
+    server returned — measured on the reference deployment, every stored vector
+    is unit to within float32 rounding, but nothing makes it so. The name is
+    kept because every caller and every stored calibration reads it, and
+    renaming it is a contract change for no gain; the docstring is where the
+    condition belongs. ``checks.deep_embedding_norm`` reports a corpus where it
+    does not hold.
 
     Extracted so the local memory / episode scanners and the ``_apply_recall_scoring``
     bug-155 cosine backfill share ONE unpack + matmul implementation; the two

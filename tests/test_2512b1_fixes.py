@@ -24,6 +24,7 @@ import tempfile
 os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "test_2512b1.db"))
 os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 
+import itertools  # noqa: E402
 import logging  # noqa: E402
 import struct  # noqa: E402
 
@@ -255,3 +256,120 @@ async def test_a_fully_successful_push_says_nothing(monkeypatch, caplog):
         await vector.remote_index_upsert(AGENT, [{"id": i} for i in range(300)])
 
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+# ===========================================================================
+# bug-250 (partial) — the norm invariant is now observable.
+#
+# Recall multiplies a query vector by a stored one and reads the product as a
+# similarity, which it is only while both are unit vectors. The `api` embedding
+# path L2-normalises; the `http` path stores what the server returned, and
+# nothing checked. Measured on the reference deployment before this was written:
+# every stored vector IS unit, to within 1.19e-07 — float32 round-trip noise on
+# a vector the backend already normalised. So the invariant holds there and is
+# nobody's guarantee, which is exactly the condition a detector is for.
+#
+# That measurement is also why the positive case here is synthetic and why the
+# control is not optional: a fixture drawn from real data would report zero and
+# keep reporting zero with the check deleted.
+# ===========================================================================
+
+
+def _blob(values):
+    return struct.pack(f"<{len(values)}f", *values)
+
+
+_seed_counter = itertools.count()
+
+
+async def _seed_embedded(db, agent: str, table: str, blob: bytes) -> int:
+    # The text is varied only to clear the content dedup UNIQUE index. It is not
+    # the axis under test -- the check reads the embedding column and never the
+    # text -- so varying it cannot move the signal.
+    tag = f"row {next(_seed_counter)}"
+    if table == "memories":
+        cur = await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp, created_at, embedding) "
+            "VALUES (?, ?, '{}', '2026-07-01T00:00:00+00:00', '2026-07-01T00:00:00+00:00', ?)",
+            (agent, tag, blob),
+        )
+    else:
+        cur = await db.execute(
+            "INSERT INTO episodes (agent_id, summary, keywords, created_at, embedding) "
+            "VALUES (?, ?, '', '2026-07-01T00:00:00+00:00', ?)",
+            (agent, tag, blob),
+        )
+    await db.commit()
+    return cur.lastrowid
+
+
+@pytest.mark.asyncio
+async def test_embedding_norm_reports_a_non_unit_vector_and_stays_quiet_on_a_unit_one():
+    from cpersona import checks
+
+    db = await get_db()
+    unit_agent = "agent.norm.unit"
+    off_agent = "agent.norm.off"
+
+    # 1/2 in each of four axes: norm exactly 1.0, and not the trivial [1,0,0,0].
+    unit = _blob([0.5, 0.5, 0.5, 0.5])
+    # The same direction at twice the length: a dot product against it is 2x the
+    # cosine, which is the whole defect and is invisible from the value alone.
+    doubled = _blob([1.0, 1.0, 1.0, 1.0])
+
+    await _seed_embedded(db, unit_agent, "memories", unit)
+    await _seed_embedded(db, unit_agent, "episodes", unit)
+    await _seed_embedded(db, off_agent, "memories", doubled)
+
+    clean = await checks.deep_embedding_norm(db, unit_agent, False)
+    assert clean["count"] == 0, clean
+    assert clean["rows_scanned"] == {"memories": 1, "episodes": 1}, (
+        "the control scanned nothing, so its zero says nothing"
+    )
+
+    dirty = await checks.deep_embedding_norm(db, off_agent, False)
+    assert dirty["count"] == 1, dirty
+    assert dirty["by_table"] == {"memories": 1, "episodes": 0}
+    assert dirty["samples"][0]["norm"] == 2.0
+    assert dirty["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_embedding_norm_leaves_the_rows_other_checks_own():
+    """A blob of the wrong width belongs to `embedding_dimension` and a
+    non-finite one to `nonfinite_embedding`, each with its own repair. Reporting
+    them here would make two checks answer for one row, and the operator would
+    fix it twice or neither."""
+    from cpersona import checks
+
+    db = await get_db()
+    agent = "agent.norm.owned"
+    await _seed_embedded(db, agent, "memories", b"\x00\x00\x80\x3f\x00\x00")  # 6 bytes
+    await _seed_embedded(db, agent, "memories", _blob([float("nan"), 1.0, 1.0, 1.0]))
+
+    result = await checks.deep_embedding_norm(db, agent, False)
+    assert result["count"] == 0, result
+    assert result["rows_scanned"]["memories"] == 2, "the rows were not even read"
+
+
+@pytest.mark.asyncio
+async def test_embedding_norm_is_registered_and_report_only():
+    """The deep_check tool description is rendered from DEEP_REPORT_ONLY, so a
+    check that is registered without being in that tuple would be advertised as
+    repairing something it does not touch."""
+    from cpersona import checks
+
+    assert "embedding_norm" in checks.DEEP_CHECKS
+    assert "embedding_norm" in checks.DEEP_REPORT_ONLY
+    assert "embedding_norm" not in checks.DEEP_FIX_CAPABLE
+
+    db = await get_db()
+    agent = "agent.norm.fixflag"
+    await _seed_embedded(db, agent, "memories", _blob([1.0, 1.0, 1.0, 1.0]))
+    before = await checks.deep_embedding_norm(db, agent, False)
+    after = await checks.deep_embedding_norm(db, agent, True)
+    assert before["count"] == after["count"] == 1, "fix=True silently repaired a row"
+    row = await db.execute_fetchall(
+        "SELECT embedding FROM memories WHERE agent_id = ?", (agent,)
+    )
+    assert row[0][0] == _blob([1.0, 1.0, 1.0, 1.0]), "fix=True rewrote the stored vector"

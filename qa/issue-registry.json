@@ -3643,13 +3643,13 @@
       "severity": "LOW",
       "discovered": "2026-08-18T00:00:00Z",
       "version": "2.5.4",
-      "file": "cpersona/vector.py",
-      "pattern": "def _cosine_batch",
+      "file": "cpersona/checks.py",
+      "pattern": "async def deep_embedding_norm",
       "expected": "present",
       "status": "open",
       "category": "scoring-invariant",
-      "fix_sketch": "Either normalise once at the storage boundary (L2-normalise in `pack_embedding`/the http path, the same treatment the api path already gets) or normalise in `_cosine_batch` and `_null_distribution`; additionally add a health check that samples a few stored blobs and reports a norm that is not ~1.",
-      "note": "Deferred: normalising at the storage boundary vs in _cosine_batch is a data-compatibility decision (already-stored non-unit vectors), and no current backend is known to emit non-unit norms. Found by the 2026-08-18 pre-2.5.5a1 review."
+      "fix_sketch": "PARTIAL, deliberately, on the same split bug-295 uses. This line ships the DETECTOR and the corrected claims; the repair is a scoring change and is not this line's to make. Shipped here: (1) deep_embedding_norm, report-only, samples the newest rows of both tables and reports a stored vector whose L2 norm is not 1 within 1e-3. The tolerance was measured, not chosen: on the reference deployment 3,271 memories and 665 episodes embedded through the HTTP path are all unit to within 1.19e-07, which is float32 round-trip noise on a vector the backend already normalised -- so the invariant holds there today and is nobody's guarantee, which is the condition a detector is for. It reports nothing on that corpus, and the tests carry a synthetic non-unit row precisely because a fixture drawn from real data would report zero with the check deleted too. It declines the rows other checks own -- a foreign width belongs to embedding_dimension and a non-finite vector to nonfinite_embedding, each with its own repair -- so no row is reported by two checks. (2) Two docstrings that asserted an invariant nothing establishes: _null_distribution said it computed cosine similarities and computes vecs @ vecs.T, and _cosine_batch said cosine similarity and computes a dot product. The first mattered most, because the population it is compared against (_adjacency_sims_core) DOES divide by the norms, and a docstring calling both the same quantity is how a scale mismatch between them stays invisible. The name _cosine_batch is kept -- every caller and every stored calibration reads it, and renaming is a contract change for no gain. Deferred: normalise once at the storage boundary, or in _cosine_batch and _null_distribution. The first rewrites what a similarity MEANS for every row written after it while the rows before keep the old scale -- one corpus, two scales, which is worse than the condition it fixes unless the stored rows are migrated with it. The second moves ranking and the calibrated operating point. Both are scoring decisions and belong with the release that reworks scoring.",
+      "note": "Filed from an audit as a scoring invariant and left open while the line preserved its scoring. Split rather than deferred whole once it was clear the two halves have different costs: saying whether the invariant holds costs nothing and no release could take the repair without also deciding what a similarity means. The measurement that the reference corpus is already unit is what makes the detector cheap to ship -- it is silent where it should be silent."
     },
     {
       "id": "bug-251",
