@@ -24,18 +24,28 @@ async def clean_db():
     return db
 
 
+class _FakeResponse:
+    """The one attribute the caller reads. bug-323 made the status meaningful:
+    a double that answers None models a client no httpx version returns, and the
+    check that reads the status would pass against it for the wrong reason."""
+
+    def __init__(self, status_code: int = 200):
+        self.status_code = status_code
+
+
 class _RecordingHttpClient:
     """Records every POST (url, json) and optionally raises to model a remote fault."""
 
-    def __init__(self, raise_on_post: bool = False):
+    def __init__(self, raise_on_post: bool = False, status_code: int = 200):
         self.calls: list[tuple[str, dict]] = []
         self._raise = raise_on_post
+        self._status_code = status_code
 
     async def post(self, url, **kwargs):
         self.calls.append((url, kwargs.get("json")))
         if self._raise:
             raise RuntimeError("simulated remote failure")
-        return None
+        return _FakeResponse(self._status_code)
 
 
 class _RecordingRemoteClient:
@@ -126,7 +136,7 @@ async def test_bug149_failed_rollback_preserves_concurrent_writer(monkeypatch):
     # A fresh, isolated overrides dict with agent's persisted override beta=1.0.
     monkeypatch.setattr(vector, "_agent_betas", {agent: 1.0})
 
-    async def fake_calibrate(agent_id: str):
+    async def fake_calibrate(agent_id: str, **kwargs):
         # Simulate the concurrent writer R2 applying + persisting beta=0.5 while R1
         # is suspended inside calibration, then R1's own calibration failing transiently.
         vector._agent_betas[agent_id] = 0.5
@@ -150,7 +160,7 @@ async def test_bug149_solo_failure_still_rolls_back_own_write(monkeypatch):
     agent = "solo-agent"
     monkeypatch.setattr(vector, "_agent_betas", {agent: 1.0})
 
-    async def fake_calibrate(agent_id: str):
+    async def fake_calibrate(agent_id: str, **kwargs):
         return {"ok": False, "error": "too few embeddings"}
 
     monkeypatch.setattr(admin_handlers, "do_calibrate_threshold", fake_calibrate)
@@ -167,7 +177,7 @@ async def test_bug149_solo_clear_failure_restores_absence(monkeypatch):
     agent = "unset-agent"
     monkeypatch.setattr(vector, "_agent_betas", {})
 
-    async def fake_calibrate(agent_id: str):
+    async def fake_calibrate(agent_id: str, **kwargs):
         return {"ok": False, "error": "too few embeddings"}
 
     monkeypatch.setattr(admin_handlers, "do_calibrate_threshold", fake_calibrate)

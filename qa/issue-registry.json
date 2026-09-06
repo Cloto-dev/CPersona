@@ -4697,13 +4697,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "Remote remove failed \\(non-fatal\\)",
+      "pattern": "async def _post_remote_side_effect\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-degradation",
       "fix_sketch": "Give these the treatment the bulk push already has: read status_code, count a non-2xx as a failure alongside the exception, and say it once at WARNING naming the namespace and the row -- the local change stays committed either way, which is why the log is the only place the divergence can appear.",
-      "note": "The bulk push counterpart is bug-304 (fixed), whose scope was deliberately the bulk path in the vector module; these are the four single-row posts it did not cover."
+      "note": "The bulk push counterpart is bug-304 (fixed), whose scope was deliberately the bulk path in the vector module; these are the four single-row posts it did not cover.",
+      "fix_note": "All four side-effect posts (memory delete, memory update, agent purge, episode delete) now go through one helper that binds the response and says, once and at warning, when the index did not take the change. Still non-fatal by contract -- the local change is already committed and a failed index is not a failed delete -- but the state it leaves is the one that does not look like a fault, so it is no longer only visible at a log level that is off. The status is read defensively (getattr), because a client that answers something without a status must not turn a completed delete into an exception; the recording double in tests/test_252a2_i4.py was answering None and so had to start modelling a response for the check to be exercised at all."
     },
     {
       "id": "bug-324",
@@ -4938,12 +4940,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "return datetime\\.fromisoformat\\(ts\\.replace\\(\"Z\", \"\\+00:00\"\\)\\)\\.timestamp\\(\\)",
+      "pattern": "_parse_timestamp_utc\\(ts\\) if isinstance\\(ts, str\\) else None",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
-      "fix_sketch": "Delete this parser and call the shared UTC-aware one, which already treats a naive stamp as UTC for the documented reason that every naive value in the database comes from SQLite's own clock."
+      "fix_sketch": "Delete this parser and call the shared UTC-aware one, which already treats a naive stamp as UTC for the documented reason that every naive value in the database comes from SQLite's own clock.",
+      "fix_note": "Routed through the shared _parse_timestamp_utc helper, so the naive-is-UTC rule the behaviour contract publishes has one implementation rather than two. Matters because naive stamps are routine on the episode side (SQLite's own datetime('now') writes them) and .timestamp() on a naive datetime assumes system-local time, which silently moved every pair 32,400 s on a nine-hour-offset host -- past a 30-minute adjacency window, so the calibration sat on a population it had mislabelled."
     },
     {
       "id": "bug-342",
@@ -4951,13 +4955,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "cal = await do_calibrate_threshold\\(agent_id=agent_id\\)",
+      "pattern": "cal\\.get\\(\"persisted\"\\) is False",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "no-persist-contract",
       "fix_sketch": "Thread the caller's session key into the inner calibration, and treat a skipped calibration as a reason to roll the weight back rather than as success -- a skeleton that reports no threshold has not applied the setting, whatever its ok flag says.",
-      "note": "The existing coverage exercises this handler only with a declared pause on another key, or with the caller itself keyless, so the keyed-caller-against-keyless-pause combination is unpinned."
+      "note": "The existing coverage exercises this handler only with a declared pause on another key, or with the caller itself keyless, so the keyed-caller-against-keyless-pause combination is unpinned.",
+      "fix_note": "Two halves. The inner calibration is now asked with the caller's own session_key, so the pause decision is made on the bucket this handler already gated itself on rather than the shared keyless one. And a skipped calibration is treated as a failure to apply: the no-persist shape is ok:true by design, so the ok flag alone could not tell 'measured and applied' from 'declined to measure', and the rollback that exists to stop an un-persisted weight living on in process memory never fired."
     },
     {
       "id": "bug-343",
@@ -4979,12 +4985,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "return len\\(rows\\[0\\]\\[0\\]\\) // 4",
+      "pattern": "_modal_width\\(counts\\) // 4",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration-staleness",
-      "fix_sketch": "Measure the same quantity on both sides: take the modal width over a sample rather than the first row's width, so the comparison that decides dim_changed asks the question calibration answered."
+      "fix_sketch": "Measure the same quantity on both sides: take the modal width over a sample rather than the first row's width, so the comparison that decides dim_changed asks the question calibration answered.",
+      "fix_note": "The startup probe now asks for the corpus's modal embedding width instead of one arbitrary row's, which is the quantity calibration persists -- so on a mixed-dimension corpus the two no longer disagree permanently and the boot stops discarding every per-agent threshold on every start. _modal_width is shared by the probe and both samplers and breaks ties deterministically (count, then the wider value); Counter.most_common broke them by row order, which is a property of the scan rather than of the corpus."
     },
     {
       "id": "bug-345",
@@ -5653,12 +5661,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "target_dim = Counter\\(v\\.shape\\[0\\] for v in vecs\\)\\.most_common\\(1\\)\\[0\\]\\[0\\]",
+      "pattern": "target_dim=int\\(vecs\\.shape\\[1\\]\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration",
-      "note": "Deferred out of the frozen 2.5 line: any fix decides what a threshold means on a mixed-dimension corpus -- agreeing the two samples on one width, or refusing to calibrate while two are live -- and both change the number recall gates on, so it joins the scoring rework on the next feature line rather than moving while this one soaks. The per-sample modal reduction is not itself the defect: each was added so a ragged array cannot abort calibration, and deleting either restores that crash. What is missing is a constraint between them plus a record of which width the positives came from, and the latter is also a change to the calibration response and its sidecar."
+      "note": "Deferred out of the frozen 2.5 line: any fix decides what a threshold means on a mixed-dimension corpus -- agreeing the two samples on one width, or refusing to calibrate while two are live -- and both change the number recall gates on, so it joins the scoring rework on the next feature line rather than moving while this one soaks. The per-sample modal reduction is not itself the defect: each was added so a ragged array cannot abort calibration, and deleting either restores that crash. What is missing is a constraint between them plus a record of which width the positives came from, and the latter is also a change to the calibration response and its sidecar.",
+      "fix_note": "The positive proxy is now drawn at the width the null sample settled on, instead of voting on one of its own: one threshold sweep is handed both populations, so they have to describe the same model. _modal_width also breaks ties deterministically now (bug-344), so the vote itself is a property of the corpus rather than of the scan. Distinct from the open bug-250, which is about unit-norm versus raw dot at a single width."
     },
     {
       "id": "bug-396",
@@ -5666,12 +5676,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "ORDER BY timestamp DESC LIMIT \\?",
+      "pattern": "ORDER BY datetime\\(timestamp\\) DESC LIMIT \\?",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
-      "note": "Deferred out of the frozen 2.5 line: the sample decides the threshold, so re-selecting it moves the gate every recall is filtered by -- a ranking change that joins the scoring rework on the next feature line rather than landing while this one soaks. Ordering by the parsed instant also gives up the index seek, the same trade-off the open bug-286 records at the span statement: same TEXT-versus-instant root cause, a different site, and a different consequence -- which rows are sampled rather than which span is reported. bug-287 is the third site of the family and was repaired on its own because there the ordering runs in Python over rows already in memory and costs only a parse."
+      "note": "Deferred out of the frozen 2.5 line: the sample decides the threshold, so re-selecting it moves the gate every recall is filtered by -- a ranking change that joins the scoring rework on the next feature line rather than landing while this one soaks. Ordering by the parsed instant also gives up the index seek, the same trade-off the open bug-286 records at the span statement: same TEXT-versus-instant root cause, a different site, and a different consequence -- which rows are sampled rather than which span is reported. bug-287 is the third site of the family and was repaired on its own because there the ordering runs in Python over rows already in memory and costs only a parse.",
+      "fix_note": "The window is ordered by the parsed instant rather than the raw TEXT. `timestamp` is caller-supplied, so a client stamping an offset and one stamping UTC fill the same column and a byte-order cut kept an older row while dropping a newer one. SQLite's datetime() normalises every spelling this package writes (offset, Z, space separator, fractional seconds), measured against all of them, and answers NULL for what it cannot read -- which sorts last under DESC, and those rows were dropped by the parser downstream anyway."
     },
     {
       "id": "bug-397",
