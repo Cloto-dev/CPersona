@@ -471,6 +471,31 @@ async def _get_read_db() -> aiosqlite.Connection:
     return _read_db
 
 
+async def _ensure_dedup_indexes(db) -> None:
+    """Create the two dedup UNIQUE indexes, best effort (bug-010, retried per bug-349).
+
+    Each is attempted on its own: they guard different axes, and a locked pair colliding
+    on content must not stop the message-id index from being created. A failure is
+    non-fatal -- ``do_store``, import and merge all probe with a SELECT before they
+    insert, so the index is the second line of defence rather than the only one -- and it
+    is retried on the next boot, so clearing the collision is enough to get the index.
+    """
+    for index_sql in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_content "
+        "ON memories(agent_id, project_id, channel, content)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_msg_id "
+        "ON memories(agent_id, project_id, msg_id) WHERE msg_id != ''",
+    ):
+        try:
+            await db.execute(index_sql)
+        except Exception as e:
+            logger.warning(
+                "dedup unique index creation failed (non-fatal, the SELECT probes on the "
+                "store/import/merge paths still deduplicate; retried on the next boot): %s",
+                e,
+            )
+
+
 async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, coldef: str) -> None:
     """Idempotently add a column via an existence check (not a swallowed error).
 
@@ -783,19 +808,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
                          GROUP BY agent_id, project_id, msg_id
                      )"""
             )
-            for index_sql in (
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_content "
-                "ON memories(agent_id, project_id, channel, content)",
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_msg_id "
-                "ON memories(agent_id, project_id, msg_id) WHERE msg_id != ''",
-            ):
-                try:
-                    await db.execute(index_sql)
-                except Exception as e:
-                    logger.warning(
-                        "dedup unique index creation failed (non-fatal, SELECT dedup remains): %s",
-                        e,
-                    )
+            await _ensure_dedup_indexes(db)
 
         # bug-012: the v11 AFTER UPDATE triggers fired on every column update,
         # so the recall hot path's recall_count/last_recalled_at bump rewrote
@@ -848,6 +861,18 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
             # (bug-067), so it stays 1 for the next-boot retry even if this write is lost.
             await _set_fts_backfill_pending(db, True)
             logger.warning("FTS first-boot backfill failed (non-fatal, will retry next boot): %s", e)
+
+    # bug-349: retry the v12 dedup indexes on every boot, not only on the upgrade that
+    # introduced them. A locked pair colliding on the dedup key blocks the CREATE, the
+    # failure is non-fatal by design, and the ladder still stamps the newer version -- so
+    # the step never ran again and the index stayed missing for the life of the database,
+    # even after an operator cleared the collision that blocked it. Placed with the other
+    # best-effort indexes because that is what it is: CREATE ... IF NOT EXISTS is a no-op
+    # once the index is there, so the cost of the retry is a statement that finds its work
+    # already done. The blocker itself is not resolved here -- the collapse and the msg_id
+    # blanking are upgrade steps that ran once, deliberately -- this only stops the
+    # absence from being permanent.
+    await _ensure_dedup_indexes(db)
 
     # The isolation index depends on the v2.4.17 project_id column. Run it
     # after the migration so v8 boots get the index once the columns exist;

@@ -4971,13 +4971,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "if not decoded or len\\(decoded\\) % 4 != 0",
+      "pattern": "if not vector\\.stored_blob_is_finite\\(decoded\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "write-seam-consistency",
       "fix_sketch": "Ask the same finiteness helper the storage seam uses before accepting the decoded blob, and report the skipped rows in the import result rather than dropping them silently; widening the structural gate to any write of the embedding column, not just calls to the packer, is what would have caught this.",
-      "note": "The consumer of these rows is bug-312, where a single non-finite blob makes the calibrated threshold NaN. Distinct seams: this is the write, that is the read."
+      "note": "The consumer of these rows is bug-312, where a single non-finite blob makes the calibrated threshold NaN. Distinct seams: this is the write, that is the read.",
+      "fix_note": "The import decoder now asks the storage seam's own finiteness question before it accepts a blob, so the two write paths give the same verdict on the same values, and every rejection is reported as an error line naming the record rather than returning None in silence."
     },
     {
       "id": "bug-344",
@@ -5000,12 +5002,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "\"SELECT id, project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,\"",
+      "pattern": "FROM memories WHERE agent_id = \\? AND id > \\? ORDER BY id LIMIT \\?",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
-      "fix_sketch": "Page the copy passes the way the export path already does, so the resident set is bounded by the chunk rather than by the corpus, and the lock is held only for the writes."
+      "fix_sketch": "Page the copy passes the way the export path already does, so the resident set is bounded by the chunk rather than by the corpus, and the lock is held only for the writes.",
+      "fix_note": "Both copy passes read the source in keyset pages of 500 -- the bound the export path in the same file uses -- so the resident set of one read is bounded by the page rather than by the corpus. Keyset rather than one open cursor because the copy inserts into the table it is reading on the same connection."
     },
     {
       "id": "bug-346",
@@ -5013,12 +5017,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "DELETE FROM memories WHERE agent_id = \\? AND id IN \\(\\{ph\\}\\)",
+      "pattern": "async def _remove_moved_source_vectors",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "remote-vector-orphan",
-      "fix_sketch": "Post a removal for exactly the ids the move deleted, in the source namespace, alongside the delete -- the ids are already carried for the delete itself, and the whole-namespace purge stays as the separate teardown for a source that ended up empty."
+      "fix_sketch": "Post a removal for exactly the ids the move deleted, in the source namespace, alongside the delete -- the ids are already carried for the delete itself, and the whole-namespace purge stays as the separate teardown for a source that ended up empty.",
+      "fix_note": "A move now posts a removal for exactly the ids it deleted, in the source namespace, whenever rows are left behind and the whole-namespace purge therefore does not run -- the per-row cleanup the other two deleting paths already did."
     },
     {
       "id": "bug-347",
@@ -5026,12 +5032,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "except \\(OSError, ValueError\\):",
+      "pattern": "def _read_calibration_sidecar",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "data-loss",
-      "fix_sketch": "Separate the two answers: absent is a fresh install, unreadable is a fault -- log it at WARNING, move the unreadable file aside under a backup name before writing anything, and report it in the startup status so the operator learns of it on the boot that lost the state."
+      "fix_sketch": "Separate the two answers: absent is a fresh install, unreadable is a fault -- log it at WARNING, move the unreadable file aside under a backup name before writing anything, and report it in the startup status so the operator learns of it on the boot that lost the state.",
+      "fix_note": "Absent and unreadable are separate answers now. An unreadable sidecar is logged at WARNING, copied aside under a backup name before anything replaces it, and reported as its own startup action instead of the word reserved for a first-ever boot."
     },
     {
       "id": "bug-348",
@@ -5053,13 +5061,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "SELECT 1 FROM memories WHERE agent_id = \\? AND project_id = \\? AND channel = \\? AND content = \\? LIMIT 1",
+      "pattern": "bug-349: the content axis, asked on BOTH arms",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "dedup-integrity",
       "fix_sketch": "Run the same content probe on the real arms that the preview arms run, so deduplication does not depend on an index whose creation is allowed to fail; the constraint then becomes a second line of defence rather than the only one.",
-      "note": "The repair path for the missing index re-issues the same statement and fails the same way while a locked collider exists; that mitigation was not exercised here."
+      "note": "The repair path for the missing index re-issues the same statement and fails the same way while a locked collider exists; that mitigation was not exercised here.",
+      "fix_note": "The content probe runs on the real arms of import and merge, not only on the previews, so deduplication no longer depends on an index whose creation is allowed to fail. The index is also retried on every boot, so a collision that blocked it no longer makes its absence permanent."
     },
     {
       "id": "bug-350",
@@ -5067,12 +5077,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "tmp_path = f\"\\{output_path\\}\\.tmp\\.\\{os\\.getpid\\(\\)\\}\"",
+      "pattern": "tempfile\\.mkstemp\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
-      "fix_sketch": "Mint the temp name with mkstemp in the destination directory, as the ledger write already does, so the name is unique per call rather than per process; the rename stays the publication step."
+      "fix_sketch": "Mint the temp name with mkstemp in the destination directory, as the ledger write already does, so the name is unique per call rather than per process; the rename stays the publication step.",
+      "fix_note": "The export temp file is minted per call with mkstemp in the destination directory, the way the ledger write already does, so two concurrent exports to one path can no longer share an inode. The rename stays the publication step."
     },
     {
       "id": "bug-351",
@@ -5267,12 +5279,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "if session\\.is_paused_for\\(key\\) and not dry_run:",
+      "pattern": "bug-365: the gate follows the argument validation above",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "no-persist-contract",
-      "fix_sketch": "Move both pause checks after the pure validation they currently precede, so a request that is wrong stays wrong whether or not writes are paused -- a rehearsal that reads green because it was skipped is the failure this ordering causes."
+      "fix_sketch": "Move both pause checks after the pure validation they currently precede, so a request that is wrong stays wrong whether or not writes are paused -- a rehearsal that reads green because it was skipped is the failure this ordering causes.",
+      "fix_note": "Both pause gates sit after the pure validation they used to precede, so a request that is wrong stays wrong whether or not writes are paused -- a rehearsal no longer reads green because it was skipped."
     },
     {
       "id": "bug-366",
@@ -5293,12 +5307,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "not owned by agent \\{agent_id\\}",
+      "pattern": "def _by_id_refusal",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "cross-agent-disclosure",
-      "fix_sketch": "Collapse the three refusals into one message on these paths, as the delete result and the episode handlers already do, and put the lock check behind the ownership test so a foreign row is never inspected for it."
+      "fix_sketch": "Collapse the three refusals into one message on these paths, as the delete result and the episode handlers already do, and put the lock check behind the ownership test so a foreign row is never inspected for it.",
+      "fix_note": "The by-id write handlers answer a scoped caller with one ambiguous refusal, and the ownership test runs before the lock check so a foreign row is never inspected for it. An unscoped call keeps the specific message, having no ownership predicate to hide behind."
     },
     {
       "id": "bug-368",
@@ -6004,13 +6020,15 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/admin_handlers.py",
-      "pattern": "return error_response\\(f\"Memory \\{memory_id\\} not owned by agent \\{agent_id\\}\"\\)",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_2512b2_handlers.py",
+      "pattern": "test_foreign_ids_and_lock_states_are_indistinguishable_367",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
       "fix_sketch": "Add two cases against a memory owned by one agent: `update_memory` with a different `agent_id` returns an error and leaves the content unchanged, and `unlock_memory` with a different `agent_id` is refused and leaves the row locked.",
-      "note": "The pattern matches three ownership refusals in the file (update, lock, unlock); only the lock one at :476 is exercised today, so the entry stays anchored on the shared refusal string rather than on one line."
+      "note": "The pattern matches three ownership refusals in the file (update, lock, unlock); only the lock one at :476 is exercised today, so the entry stays anchored on the shared refusal string rather than on one line.",
+      "fix_note": "The wrong-agent cases for update_memory and unlock_memory are driven by the bug-367 regression test, which walks all four by-id write handlers against a foreign unlocked row, a foreign locked row and a missing id, and asserts both rows are unchanged afterwards. Measured by mutation: removing either ownership guard turns it red."
     },
     {
       "id": "bug-422",
