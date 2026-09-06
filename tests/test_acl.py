@@ -575,8 +575,19 @@ async def test_sweep_call_is_denied_for_a_client_with_an_exception(tmp_path):
     guarded = acl._wrap("check_health", _stub_handler)
     token = acl.set_principal(acl.Principal("sweeper"))
     try:
-        named = await guarded({"agent_id": "staging", "fix": True})
-        assert named["ok"] is True  # exact/wildcard path unaffected
+        # exact/wildcard path unaffected — for a repair that stays inside the
+        # agent it names. `checks` is what narrows this since bug-310: the
+        # unqualified run below also performs a repair that writes every
+        # agent's rows, which this client is refused on `prod`.
+        named = await guarded(
+            {"agent_id": "staging", "fix": True, "checks": ["duplicate_content"]}
+        )
+        assert named["ok"] is True
+        # bug-310: the same call over the whole registry demands "*" because
+        # dedup_msg_id_index's repair reaches prod, and this client's exception
+        # denies it there. It is refused on the demand, not on agent_id.
+        whole_registry = await guarded({"agent_id": "staging", "fix": True})
+        assert whole_registry["ok"] is False and whole_registry["agent_id"] == "*"
         swept = await guarded({"agent_id": "", "fix": True})
         assert swept["ok"] is False and swept["agent_id"] == "*"
     finally:

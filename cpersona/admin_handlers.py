@@ -654,8 +654,26 @@ def _separation_threshold(null_sims, pos_sims, floor: float, beta: float = 1.0) 
     if hi <= lo:
         return float(max(lo, floor)), 0.0
     candidates = np.linspace(lo, hi, 256)
-    tpr = (pos[None, :] >= candidates[:, None]).mean(axis=1)
-    fpr = (null[None, :] >= candidates[:, None]).mean(axis=1)
+    # bug-313: the same numbers, without the allocation that outgrew the sample
+    # ceiling meant to bound it. The broadcast this replaces materialised a
+    # 256 x len(null) boolean array -- measured at 290 bytes per pair against the
+    # 21-26 the ceiling was sized with, i.e. 3.6 GB at the clamped ceiling of
+    # 5,000 samples, which is the OOM the clamp exists to prevent. Counting
+    # `x >= c` on a sorted array is exactly that count: everything from the first
+    # index not less than c to the end. One sort, no per-candidate temporary.
+    def _tail_fraction(values):
+        ordered = np.sort(values)
+        # np.sort places NaN last, and `nan >= c` is False, so the tail the
+        # comparison would have counted ends where the NaNs begin. Excluding
+        # them from the search while keeping them in the denominator is what
+        # makes this identical to the comparison for every input, not only for
+        # the finite ones.
+        finite_end = len(ordered) - int(np.isnan(ordered).sum())
+        counted = finite_end - np.searchsorted(ordered[:finite_end], candidates, side="left")
+        return counted / len(ordered)
+
+    tpr = _tail_fraction(pos)
+    fpr = _tail_fraction(null)
     objective = tpr + beta * (1.0 - fpr)
     best = int(np.argmax(objective))
     return float(max(candidates[best], floor)), float(tpr[best] - fpr[best])
@@ -701,15 +719,29 @@ def _safe_frombuffer(blob):
     embedding_b64 import can plant such a blob, and the unguarded decode in calibration was
     reachable from ensure_calibrated_on_startup, crashing the whole server before it served
     a single request. Returning None lets the caller skip the poison row instead. A valid
-    float32 embedding is always a multiple of 4 bytes, so this never rejects a good row."""
+    float32 embedding is always a multiple of 4 bytes, so this never rejects a good row.
+
+    bug-310-era width gate, bug-312 value gate: a blob of the right width whose values
+    are not finite is poison of the same kind, and worse because it is silent. One NaN
+    element propagates through the whole similarity matrix, and `round(max(raw, floor), 4)`
+    returns NaN because `floor > nan` is False — so calibration answered ok:true with a NaN
+    threshold, persisted it to the sidecar (json.dump writes NaN by default) and survived
+    restart. Downstream that threshold is not merely strict but inconsistent: the arms that
+    filter with `>=` admit nothing while the arm that filters with `<` admits everything.
+    A finite float32 embedding is what every write seam produces, so this never rejects a
+    good row either; the reachable sources are data written by an older version or arriving
+    through import."""
     import numpy as np
 
     if not blob or len(blob) % 4 != 0:
         return None
     try:
-        return np.frombuffer(blob, dtype=np.float32)
+        vec = np.frombuffer(blob, dtype=np.float32)
     except (ValueError, TypeError):
         return None
+    if not np.isfinite(vec).all():
+        return None
+    return vec
 
 
 async def _temporal_adjacency_sims(db, agent_id: str, limit: int, window_min: float):
