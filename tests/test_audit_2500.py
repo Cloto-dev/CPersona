@@ -51,11 +51,15 @@ def test_safe_frombuffer_rejects_corrupt_blob():
 def test_decode_embedding_rejects_non_multiple_of_four():
     import base64
 
+    # bug-343: the decoder now accounts for what it drops, so it takes the run's tally
+    # and the line it is on. The rejection itself is what this test pins.
+    tally = admin_handlers._ImportTally(dry_run=False)
     # A validly-base64'd 3-byte payload decodes fine but is a poison float32 blob.
     poison = {"embedding_b64": base64.b64encode(b"\x01\x02\x03").decode()}
-    assert admin_handlers._decode_embedding(poison) is None
+    assert admin_handlers._decode_embedding(poison, tally, 1, "memory") is None
     good = {"embedding_b64": base64.b64encode(_blob()).decode()}
-    assert admin_handlers._decode_embedding(good) is not None
+    assert admin_handlers._decode_embedding(good, tally, 2, "memory") is not None
+    assert len(tally.errors) == 1 and "Line 1" in tally.errors[0], tally.errors
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import stat
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -359,6 +360,27 @@ async def _post_remote_side_effect(path: str, payload: dict, *, action: str, nam
         )
 
 
+def _by_id_refusal(memory_id: int, agent_id: str, unscoped: str) -> dict:
+    """Refuse a by-id write without saying which of the three reasons applied.
+
+    bug-367: the by-id write handlers distinguished, in their error strings, a row
+    that belongs to another agent, a row that is locked, and a row that does not
+    exist. A client is authorised against the agent_id it sends and never learns
+    which agent owns a row, so for a scoped caller those strings were the only
+    boundary -- existence and lock state crossed it. The episode handlers and the
+    delete path's own post-DML refusal already use one ambiguous message; this
+    makes the pre-checks agree with them.
+
+    Ambiguity is only owed to a caller that named an agent. An unscoped call
+    (agent_id "") is the operator-side path with no ownership predicate to hide
+    behind, so it keeps the specific message it has always had -- collapsing that
+    one would remove diagnosis without closing any boundary.
+    """
+    if agent_id:
+        return error_response(f"Memory {memory_id} not found, not owned by agent, or locked")
+    return error_response(unscoped)
+
+
 async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str = "") -> dict:
     """Delete a single memory by ID.
 
@@ -375,10 +397,16 @@ async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str 
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
-        return error_response(f"Memory {memory_id} not found")
-    if rows[0][0]:
-        return error_response(f"Memory {memory_id} is locked and cannot be deleted")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     owner_agent_id = rows[0][1]
+    # bug-367: the ownership test comes first, so a foreign row is never inspected
+    # for its lock state on behalf of a caller that may not see it at all.
+    if agent_id and owner_agent_id != agent_id:
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
+    if rows[0][0]:
+        return _by_id_refusal(
+            memory_id, agent_id, f"Memory {memory_id} is locked and cannot be deleted"
+        )
 
     # bug-024: fold `AND locked = 0` into the DML so a lock_memory that commits
     # locked=1 between the SELECT above and this DELETE (a concurrent call over the
@@ -428,12 +456,15 @@ async def do_update_memory(
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
-        return error_response(f"Memory {memory_id} not found")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     row = rows[0]
-    if row[0]:
-        return error_response(f"Memory {memory_id} is locked and cannot be edited")
+    # bug-367: ownership first, then the lock -- and one message for a scoped caller.
     if agent_id and row[1] != agent_id:
-        return error_response(f"Memory {memory_id} not owned by agent {agent_id}")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
+    if row[0]:
+        return _by_id_refusal(
+            memory_id, agent_id, f"Memory {memory_id} is locked and cannot be edited"
+        )
 
     # 2.5.2a2 audit (C12): the edit path enforces the SAME content policy as the write
     # path, via the same helper. Before, this was a bare `.strip()`, so an update could
@@ -513,16 +544,16 @@ async def do_lock_memory(memory_id: int, agent_id: str = "", session_key: str = 
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
-        return error_response(f"Memory {memory_id} not found")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     if agent_id and rows[0][0] != agent_id:
-        return error_response(f"Memory {memory_id} not owned by agent {agent_id}")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
 
     async with transaction() as db:  # bug-042/043: serialise write+commit
         cur = await db.execute("UPDATE memories SET locked = 1 WHERE id = ?", (memory_id,))
     if cur.rowcount == 0:
         # bug-099: the ownership pre-check and this UPDATE straddle an await — a
         # concurrent delete in between must not be acknowledged as a lock.
-        return error_response(f"Memory {memory_id} not found")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     return {"ok": True, "locked_id": memory_id}
 
 
@@ -537,15 +568,15 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "", session_key: str 
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
-        return error_response(f"Memory {memory_id} not found")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     if agent_id and rows[0][0] != agent_id:
-        return error_response(f"Memory {memory_id} not owned by agent {agent_id}")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
 
     async with transaction() as db:  # bug-042/043: serialise write+commit
         cur = await db.execute("UPDATE memories SET locked = 0 WHERE id = ?", (memory_id,))
     if cur.rowcount == 0:
         # bug-099: see do_lock_memory.
-        return error_response(f"Memory {memory_id} not found")
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     return {"ok": True, "unlocked_id": memory_id}
 
 
@@ -611,6 +642,45 @@ def _purge_agent_calibration(agent_id: str) -> bool:
                 scoring_version=state.get("scoring_version"),
             )
     return removed_cal
+
+
+async def _remove_moved_source_vectors(source_agent_id: str, tally: "_MergeTally") -> None:
+    """Drop the moved rows' vectors from the SOURCE namespace (network I/O, post-commit).
+
+    bug-346: a move-mode merge deletes the copied rows from the database, and that is
+    the third deleting path in this file. The other two -- the by-id memory delete and
+    the by-id episode delete -- each post a ``/remove`` for the row they deleted. This
+    one posted nothing, and the only source-side cleanup in the merge is the
+    whole-namespace purge, which runs only when the move left the source with nothing
+    at all. A single leftover row -- most commonly a profile the copy pass skipped
+    because the target already had one -- skips the purge, and then every moved row's
+    vector stays indexed against an agent that no longer holds it: the ghost keeps
+    taking a top-K slot and rehydrates to nothing.
+
+    The ids are the ones the move actually copied, which is the same list the delete is
+    keyed on, so this removes exactly what left. Chunked at the bulk push's width and
+    non-fatal for the same reason: the rows are already gone from the database, and a
+    failed de-index is not a failed move -- it is said once, at a level that is on.
+    """
+    if not (
+        VECTOR_SEARCH_MODE == "remote"
+        and vector._embedding_client
+        and vector._embedding_client._http_url
+    ):
+        return
+    refs = [f"mem:{row_id}" for row_id in tally.copied_memory_ids]
+    refs += [f"ep:{row_id}" for row_id in tally.copied_episode_ids]
+    if not refs:
+        return
+    namespace = f"cpersona:{source_agent_id}"
+    base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+    for start in range(0, len(refs), 128):
+        await _post_remote_side_effect(
+            f"{base_url}/remove",
+            {"namespace": namespace, "ids": refs[start : start + 128]},
+            action="removal",
+            namespace=namespace,
+        )
 
 
 async def _purge_agent_remote_namespace(agent_id: str) -> None:
@@ -1090,13 +1160,45 @@ def _save_calibration_state(
         return False
 
 
+def _read_calibration_sidecar() -> tuple[dict | None, bool]:
+    """Read the sidecar. Returns (state, unreadable).
+
+    bug-347: an unreadable sidecar used to be indistinguishable from an absent one --
+    both answered None and neither said anything, at any level. Every
+    evidence-preserving guard on the startup path tests that same value, so a corrupt
+    file took none of them: the boot reported ``initial``, the word reserved for a new
+    install, wrote no backup, and the next save replaced the only copy an operator
+    could have repaired by hand. Measured with a sidecar truncated by one byte, an
+    operator-set precision override was gone from disk with no copy anywhere.
+
+    So the two answers are separated here. Absent is a fresh install and stays quiet.
+    Unreadable is a fault: it is reported at WARNING (the file it names is the one an
+    operator has to look at) and flagged to the caller, which backs the bytes aside
+    before it writes over them.
+    """
+    path = _calibration_sidecar_path()
+    try:
+        with open(path) as fh:
+            return json.load(fh), False
+    except FileNotFoundError:
+        return None, False
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "The calibration sidecar at %s exists but could not be read (%s: %s). "
+            "Treating it as a fault rather than a first-ever boot: the recall gates "
+            "it held are not applied, and the file is copied aside before anything "
+            "replaces it.",
+            path,
+            type(exc).__name__,
+            exc,
+        )
+        return None, True
+
+
 def _load_calibration_state() -> dict | None:
     """Load the calibration sidecar, or None when absent/unreadable."""
-    try:
-        with open(_calibration_sidecar_path()) as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
-        return None
+    state, _unreadable = _read_calibration_sidecar()
+    return state
 
 
 _CALIBRATION_BACKUP_KEEP = 5
@@ -1946,7 +2048,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
     cosine backfill invalidated. Both triggers are reported in the status dict; the
     action names whichever fired (dimension first — it also implies new vectors).
     """
-    state = _load_calibration_state()
+    state, sidecar_unreadable = _read_calibration_sidecar()
     live_dim = await _corpus_embedding_dim()
     dim_changed = (
         state is not None and live_dim is not None and state.get("embedding_dim") != live_dim
@@ -2021,7 +2123,18 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
     # skipped, that "from" is config, not anything that ever gated a query.
     sidecar_backup = None
     replaced = None
-    if state is not None and (dim_changed or scoring_stale):
+    if sidecar_unreadable:
+        # bug-347: the same evidence rule, for the file that could not be parsed. There
+        # is no `replaced` report to build -- nothing was read out of it -- but the bytes
+        # are the only thing an operator can repair by hand, and the calibration below
+        # is about to write over them.
+        sidecar_backup = _backup_calibration_sidecar("unreadable")
+        logger.warning(
+            "The unreadable calibration sidecar was copied aside (backup: %s) before "
+            "this boot recalibrated over it.",
+            sidecar_backup or "FAILED",
+        )
+    elif state is not None and (dim_changed or scoring_stale):
         sidecar_backup = _backup_calibration_sidecar(state.get("scoring_version"))
         replaced = {
             "stored_global_threshold": state.get("global_threshold"),
@@ -2108,6 +2221,11 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             "gate_calibrated" if restored
             else "recalibrated" if dim_changed
             else "recalibrated_scoring" if scoring_stale
+            # bug-347: an existing file that did not parse is not a first-ever boot, and
+            # the word for it must not be the one reserved for one. This is a new value
+            # of the existing field rather than a new field: what the operator needs to
+            # learn is which of the two happened, not one more key to branch on.
+            else "recalibrated_unreadable" if sidecar_unreadable
             else "auto" if auto_calibrate
             else "initial"
         ),
@@ -2168,25 +2286,52 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
     return {"ok": True, "deleted_id": episode_id}
 
 
-def _decode_embedding(record: dict) -> bytes | None:
+def _decode_embedding(record: dict, tally: "_ImportTally", line_num: int, kind: str) -> bytes | None:
     """Decode a base64 embedding blob from an export record.
 
     Tolerates a missing or malformed value (returns None) so one bad embedding
     cannot raise mid-restore and abort the whole import (bug-016); check_health's
     null-embedding repair then re-embeds the row.
+
+    bug-343: it also asks the storage seam's question. The width check below is not the
+    same question as "are these numbers" -- a whole number of float32s can be a vector
+    of NaNs, and ``vector.pack_for_storage`` refuses exactly that on the store path. So
+    the same file was accepted here and refused there: a restore wrote a non-finite
+    vector durably, where it scores against every query (the similarity floor is a ``<``
+    comparison, which a NaN does not fall below) and poisons the agent's threshold
+    calibration until an operator runs a repairing health check. The two write paths now
+    give the same verdict on the same values.
+
+    And a rejection says so. All three refusals used to return None silently, so a
+    restore that dropped every embedding it carried was indistinguishable from one that
+    carried none -- reported as ok:true with a full tally either way. The row is still
+    imported without its vector, because a bad embedding is not a bad memory; what
+    changes is that the caller learns which line lost one.
     """
     b64 = record.get("embedding_b64")
     if not b64:
         return None
+
+    def _reject(why: str) -> None:
+        tally.errors.append(
+            f"Line {line_num}: {kind} embedding not restored ({why}); the row is stored "
+            "without one and check_health's null-embedding repair can re-embed it"
+        )
+
     try:
         decoded = base64.b64decode(b64)
     except (ValueError, TypeError):
+        _reject("not valid base64")
         return None
     # bug-061: reject a blob whose length is not a whole number of float32s at ingestion,
     # so a truncated/crafted embedding cannot be stored and later crash np.frombuffer in
     # calibration (and, via ensure_calibrated_on_startup, the server boot). check_health's
     # null-embedding repair re-embeds the row from content.
     if not decoded or len(decoded) % 4 != 0:
+        _reject("not a whole number of float32s")
+        return None
+    if not vector.stored_blob_is_finite(decoded):
+        _reject("non-finite values")
         return None
     return decoded
 
@@ -2249,9 +2394,20 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     # destination directly with "w" destroyed the previous backup the moment the
     # export started, and a mid-export fault (disk full, process kill) left a
     # truncated JSONL that a later restore accepted as complete.
-    # PID-suffixed so two processes exporting the same path cannot interleave
-    # writes into one temp file (bug-091 hardening).
-    tmp_path = f"{output_path}.tmp.{os.getpid()}"
+    # bug-350: the name was derived from the output path and the process id, which
+    # separates two PROCESSES and not two calls inside one. Two coroutines exporting
+    # different agents to the same path got the identical name, both opened it
+    # truncating, and the write spans the paged-read suspension points below -- so
+    # they interleaved into one inode and whichever reached the rename first
+    # published a mixed, torn backup under ok:true while the other raised out of the
+    # rename. mkstemp mints the name per call, the way the ledger write already does;
+    # the rename stays the publication step. The descriptor is closed immediately and
+    # the path reopened through fileperms, so the 0600 the mode is created with is the
+    # mode the published file carries.
+    _tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=out_dir or ".", prefix=os.path.basename(output_path) + ".tmp."
+    )
+    os.close(_tmp_fd)
     try:
         async with read_snapshot() as db:
             # bug-073/091: one private read transaction gives the COUNT header
@@ -2438,27 +2594,6 @@ def _validate_import_preconditions(
     input_path: str, dry_run: bool, session_key: str = ""
 ) -> tuple[str | None, dict | None]:
     """Vet the request before any file or database work. Returns (path, error)."""
-    # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
-    # bug-079: only gate the WRITE path on no-persist (the bug-048 fix, applied to the
-    # import twin). A dry_run=True preview is write-free — every INSERT/UPSERT is
-    # guarded by `if not dry_run` and the dry_run path runs on the read seam — so
-    # short-circuiting it into a fabricated all-zero response masks what a real import
-    # would do and contradicts the "read tools unaffected" no-persist contract.
-    key, _declared = resolve_session_key(session_key)
-    if session.is_paused_for(key) and not dry_run:
-        return None, session.make_skipped_response(
-            {
-                "ok": True,
-                "dry_run": dry_run,
-                "imported_memories": 0,
-                "skipped_memories": 0,
-                "imported_episodes": 0,
-                "skipped_episodes": 0,
-                "profile_updated": False,
-            },
-            "import_memories",
-            key,
-        )
     confined = _confine_io_path(input_path)
     if confined is None:
         return None, error_response(
@@ -2478,6 +2613,33 @@ def _validate_import_preconditions(
     if st.st_size > config.MAX_IMPORT_BYTES:
         return None, error_response(
             f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {confined}"
+        )
+    # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
+    # bug-079: only gate the WRITE path on no-persist (the bug-048 fix, applied to the
+    # import twin). A dry_run=True preview is write-free — every INSERT/UPSERT is
+    # guarded by `if not dry_run` and the dry_run path runs on the read seam — so
+    # short-circuiting it into a fabricated all-zero response masks what a real import
+    # would do and contradicts the "read tools unaffected" no-persist contract.
+    # bug-365: and it sits AFTER the vetting above, which is the doctrine the
+    # calibration gates already state and credit to this path. A missing file, a path
+    # outside the export directory, a directory and an oversized file were all
+    # answered ok:true with an all-zero tally while writes were paused, so a rehearsal
+    # of a restore that could never run read as a clean skip. Nothing above this line
+    # writes anything, so returning the real error costs the pause nothing.
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key) and not dry_run:
+        return None, session.make_skipped_response(
+            {
+                "ok": True,
+                "dry_run": dry_run,
+                "imported_memories": 0,
+                "skipped_memories": 0,
+                "imported_episodes": 0,
+                "skipped_episodes": 0,
+                "profile_updated": False,
+            },
+            "import_memories",
+            key,
         )
     return confined, None
 
@@ -2534,6 +2696,24 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
             tally.skipped_memories += 1
             return
 
+    # bug-349: the content axis, asked on BOTH arms rather than only on the preview.
+    # The real run used to lean entirely on INSERT OR IGNORE resolving against the v12
+    # UNIQUE index -- and that index is created by a best-effort upgrade step whose
+    # failure is swallowed with a warning saying SELECT deduplication remains. That was
+    # true of the message-id axis, which has the probe above, and false of this one: on
+    # a database where the index could not be created (two locked rows colliding on the
+    # dedup key is enough, and the ladder then stamps the newer version so the step
+    # never runs again) the same export imported twice reported one memory imported each
+    # time and left two identical rows -- with a preview in between calling it a skip.
+    # The index stays as the second line of defence; it is no longer the only one.
+    dup = await db.execute_fetchall(
+        "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+        (aid, pid, chan, content),
+    )
+    if dup or (tally.dry_run and (aid, pid, chan, content) in tally.seen_content):
+        tally.skipped_memories += 1
+        return
+
     if not tally.dry_run:
         source = json.dumps(record.get("source", {}))
         timestamp = record.get("timestamp", "")
@@ -2559,7 +2739,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
                 source,
                 timestamp,
                 metadata,
-                _decode_embedding(record),
+                _decode_embedding(record, tally, line_num, "memory"),
                 1 if record.get("locked") else 0,
                 int(record.get("recall_count") or 0),
                 record.get("last_recalled_at"),
@@ -2571,21 +2751,11 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
             return
         tally.queue_remote(aid, f"mem:{cur.lastrowid}", content)
     else:
-        # bug-056: in dry_run the INSERT OR IGNORE rowcount==0 skip
-        # never runs, so a content-UNIQUE-index collision (empty msg_id,
-        # same agent/project/channel/content, or a repeat within the
-        # file) would be over-counted as an import. Replicate the
-        # content-uniqueness probe so the previewed imported/skipped
-        # counts match a real run.
-        dup = await db.execute_fetchall(
-            "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-            (aid, pid, chan, content),
-        )
-        if dup or (aid, pid, chan, content) in tally.seen_content:
-            tally.skipped_memories += 1
-            return
-        # bug-070: record this record's identities so a later duplicate in
-        # the same file is previewed as skipped, matching the real run.
+        # bug-056/bug-070: the probe itself now runs on both arms (above). What stays
+        # here is the half a preview has and a real run does not need: a real INSERT is
+        # visible to the next record's probe on the same connection, so within-file
+        # repeats deduplicate themselves; a preview writes nothing and has to remember
+        # what it previewed.
         if msg_id:
             tally.seen_msgid.add((aid, pid, msg_id))
         tally.seen_content.add((aid, pid, chan, content))
@@ -2676,7 +2846,7 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
                 record.get("start_time"),
                 record.get("end_time"),
                 1 if record.get("resolved") else 0,
-                _decode_embedding(record),
+                _decode_embedding(record, tally, line_num, "episode"),
                 record.get("created_at"),
             ),
         )
@@ -2962,15 +3132,32 @@ class _MergeTally:
 
 async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
     """Copy the source agent's memory rows into the target, skipping collisions."""
-    rows = await db.execute_fetchall(
-        "SELECT id, project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
-        " created_at, recall_count, last_recalled_at"
-        " FROM memories WHERE agent_id = ?",
-        (source_agent_id,),
-    )
     # bug-131: preserve the ranking metadata used by confidence and decay.
     # bug-222: the source id rides along so mode='move' can delete the copied rows
     # only — a skipped row (locked, or colliding on msg_id/content) is not ours to drop.
+    # bug-345: read in pages. This statement used to return thirteen columns -- content
+    # and the embedding among them -- for the entire source agent with no LIMIT, and it
+    # ran inside the transaction, so the resident set of one read equalled the corpus
+    # while the process-wide write lock was held. Measured over 1200 rows carrying
+    # 1024-dimension vectors: 5.23 MB in a single list, lock held. The peer bulk path in
+    # this same file already pages, with a comment saying the corpus must not be
+    # materialised.
+    last_src_id = 0
+    while True:
+        rows = await db.execute_fetchall(
+            "SELECT id, project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
+            " created_at, recall_count, last_recalled_at"
+            " FROM memories WHERE agent_id = ? AND id > ? ORDER BY id LIMIT ?",
+            (source_agent_id, last_src_id, _MERGE_READ_CHUNK),
+        )
+        if not rows:
+            return
+        last_src_id = rows[-1][0]
+        await _merge_memory_page(db, rows, target_agent_id, tally)
+
+
+async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally) -> None:
+    """Copy one page of source memory rows (bug-345 split out of the paging loop)."""
     for (
         src_id,
         project_id,
@@ -3000,6 +3187,17 @@ async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tal
             if existing:
                 tally.skipped_memories += 1
                 continue
+        # bug-349: the import twin, for the same reason -- strategy='skip' must not
+        # depend on an index whose creation is allowed to fail. Measured on a database
+        # without it: the preview reported one skip and the real merge copied the
+        # duplicate in.
+        dup = await db.execute_fetchall(
+            "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+            (target_agent_id, project_id, channel, content),
+        )
+        if dup:
+            tally.skipped_memories += 1
+            continue
         if not tally.dry_run:
             cur = await db.execute(
                 "INSERT OR IGNORE INTO memories"
@@ -3027,19 +3225,6 @@ async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tal
                 continue
             tally.copied_memory_ids.append(src_id)
             tally.queue_remote(f"mem:{cur.lastrowid}", content)
-        else:
-            # bug-057: in dry_run the INSERT OR IGNORE rowcount==0 skip never
-            # runs, so a content-UNIQUE-index collision (source content already
-            # in the target under a different/empty msg_id) would be over-counted
-            # as a merge. Replicate the content-uniqueness probe so the preview
-            # counts equal a real merge.
-            dup = await db.execute_fetchall(
-                "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
-                (target_agent_id, project_id, channel, content),
-            )
-            if dup:
-                tally.skipped_memories += 1
-                continue
         tally.merged_memories += 1
 
 
@@ -3051,12 +3236,23 @@ async def _merge_episode_rows(db, source_agent_id: str, target_agent_id: str, ta
     # from MAX(created_at) — every memory the target already held then scores as
     # prior-session — and becomes the episode's own recall timestamp whenever
     # start_time is NULL (bug-213).
-    rows = await db.execute_fetchall(
-        "SELECT id, summary, keywords, start_time, end_time, resolved, project_id, channel, embedding,"
-        " created_at"
-        " FROM episodes WHERE agent_id = ?",
-        (source_agent_id,),
-    )
+    # bug-345: paged for the same reason as the memory pass, and with the same keyset.
+    last_src_id = 0
+    while True:
+        rows = await db.execute_fetchall(
+            "SELECT id, summary, keywords, start_time, end_time, resolved, project_id, channel, embedding,"
+            " created_at"
+            " FROM episodes WHERE agent_id = ? AND id > ? ORDER BY id LIMIT ?",
+            (source_agent_id, last_src_id, _MERGE_READ_CHUNK),
+        )
+        if not rows:
+            return
+        last_src_id = rows[-1][0]
+        await _merge_episode_page(db, rows, target_agent_id, tally)
+
+
+async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally) -> None:
+    """Copy one page of source episodes (bug-345 split out of the paging loop)."""
     for (
         src_id,
         summary,
@@ -3153,6 +3349,14 @@ async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, ta
         tally.profile_copied = True
 
 
+# bug-345: the copy passes read the source in pages of this size instead of handing the
+# whole table back in one list. The bound is the export path's, so the two bulk paths in
+# this file agree. Keyset paging (``id > last`` + ORDER BY + LIMIT) rather than one open
+# cursor with fetchmany: the copy INSERTs into the same table it is reading, on the same
+# connection, and SQLite leaves the result of a cursor whose table is written under it
+# undefined. Each page is its own statement, so nothing is read through a mutation.
+_MERGE_READ_CHUNK = 500
+
 # One statement stays well under SQLite's bound-variable ceiling (999 on older
 # builds) with the agent_id parameter riding along. The ids are BOUND into the
 # ``{ph}`` placeholders and never interpolated (the vector._fetch_rows_by_id
@@ -3248,11 +3452,19 @@ async def do_merge_memories(
     session_key: str = "",
 ) -> dict:
     """Merge memories, episodes, and profiles from one agent into another."""
+    invalid = _validate_merge_arguments(source_agent_id, target_agent_id, strategy, mode)
+    if invalid is not None:
+        return invalid
+
     # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
     # bug-048: only gate the WRITE path on no-persist. A dry_run=True preview is
     # write-free (every mutation below is guarded by `if not dry_run`), so short-
     # circuiting it into a fabricated all-zero no-op masks what a real merge would
     # do and contradicts the "read tools unaffected" no-persist contract.
+    # bug-365: the gate follows the argument validation above rather than preceding
+    # it. Identical source and target, an unknown strategy and an unknown mode were
+    # answered ok:true with an all-zero tally under a pause, so a request that can
+    # never merge anything looked the same as one that merely waited.
     key, _declared = resolve_session_key(session_key)
     if session.is_paused_for(key) and not dry_run:
         return session.make_skipped_response(
@@ -3274,9 +3486,6 @@ async def do_merge_memories(
             "merge_memories",
             key,
         )
-    invalid = _validate_merge_arguments(source_agent_id, target_agent_id, strategy, mode)
-    if invalid is not None:
-        return invalid
 
     tally = _MergeTally(dry_run=dry_run)
 
@@ -3330,6 +3539,12 @@ async def do_merge_memories(
         if not any(left_at_source.values()):
             _purge_agent_calibration(source_agent_id)
             await _purge_agent_remote_namespace(source_agent_id)
+        else:
+            # bug-346: the source is still live, so the namespace must stay -- but the
+            # rows this move took out of it must not. The purge above is the teardown
+            # for an emptied agent; this is the per-row cleanup the other two deleting
+            # paths already do.
+            await _remove_moved_source_vectors(source_agent_id, tally)
         move_result = {"ok": True, "agent_id": source_agent_id, **move_counts}
 
     result: dict = {
