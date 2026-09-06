@@ -483,7 +483,7 @@ async def test_set_recall_precision_rolls_back_beta_on_raise(clean_db, monkeypat
 
     vector._agent_betas.pop("beta-agent", None)
 
-    async def raising_calibrate(agent_id=""):
+    async def raising_calibrate(agent_id="", **kwargs):
         raise RuntimeError("calibrate blew up")
 
     monkeypatch.setattr(admin_handlers, "do_calibrate_threshold", raising_calibrate)

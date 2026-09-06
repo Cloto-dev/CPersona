@@ -45,6 +45,7 @@ from cpersona.database import connection, read_snapshot, transaction
 from cpersona.utils import (
     SCORING_VERSION,
     _clamp_limit,
+    _parse_timestamp_utc,
     _try_parse_json,
     error_response,
     future_timestamp_issue,
@@ -315,6 +316,49 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
     return result
 
 
+async def _post_remote_side_effect(path: str, payload: dict, *, action: str, namespace: str) -> None:
+    """Post one index side effect, and say so when it does not land.
+
+    bug-323: these four posts (delete, update, purge, episode delete) kept the
+    shape the bulk push shed in bug-304 -- the response was never bound, so a
+    service answering 500 or 401 counted as a success, and the only trace was a
+    debug line that is off in any normal deployment. Measured across all four
+    handlers against HTTP 500, HTTP 401 and a connection error: twelve of twelve
+    committed locally, answered ok:true and warned about nothing.
+
+    Still non-fatal, and deliberately so -- the local change is already
+    committed and a failed index is not a failed delete. What changes is that
+    the shortfall is said once, at a level that is on, because the state it
+    leaves is the one that does not look like a fault: an orphaned remote vector
+    keeps taking a top-K slot until the by-id rehydrate finds nothing, and a
+    stale index entry keeps serving pre-edit text against a post-edit row.
+    """
+    try:
+        response = await vector._embedding_client._client.post(path, json=payload)
+    except Exception as e:  # noqa: BLE001 - non-fatal by contract, reported by design
+        logger.warning(
+            "Remote index %s failed for %s (non-fatal, local change already committed; "
+            "the index is now out of step with the database): %s",
+            action,
+            namespace,
+            e,
+        )
+        return
+    # A non-2xx answer is a refusal the service chose to give; it raises nothing,
+    # so without this it was indistinguishable from success. Read defensively: the
+    # local change is already committed, and a client that hands back something
+    # without a status must not turn a completed delete into an exception.
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int) and status >= 400:
+        logger.warning(
+            "Remote index %s refused for %s with HTTP %s (non-fatal, local change "
+            "already committed; the index is now out of step with the database)",
+            action,
+            namespace,
+            status,
+        )
+
+
 async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str = "") -> dict:
     """Delete a single memory by ID.
 
@@ -357,14 +401,13 @@ async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str 
         # Deleting by id without passing agent_id used to compute "cpersona:" and
         # leave the remote vector entry orphaned. Use the owner we just read.
         ns = f"cpersona:{owner_agent_id}"
-        try:
-            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
-            await vector._embedding_client._client.post(
-                f"{base_url}/remove",
-                json={"namespace": ns, "ids": [f"mem:{memory_id}"]},
-            )
-        except Exception as e:
-            logger.debug("Remote remove failed (non-fatal): %s", e)
+        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+        await _post_remote_side_effect(
+            f"{base_url}/remove",
+            {"namespace": ns, "ids": [f"mem:{memory_id}"]},
+            action="removal",
+            namespace=ns,
+        )
 
     return {"ok": True, "deleted_id": memory_id}
 
@@ -439,17 +482,16 @@ async def do_update_memory(
     # Keep the remote vector entry in step with the new text (same
     # namespace/id scheme as do_store; non-fatal).
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
-        try:
-            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
-            await vector._embedding_client._client.post(
-                f"{base_url}/index",
-                json={
-                    "namespace": f"cpersona:{row[1]}",
-                    "items": [{"id": f"mem:{memory_id}", "text": content}],
-                },
-            )
-        except Exception as e:
-            logger.debug("Remote index update failed (non-fatal): %s", e)
+        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+        await _post_remote_side_effect(
+            f"{base_url}/index",
+            {
+                "namespace": f"cpersona:{row[1]}",
+                "items": [{"id": f"mem:{memory_id}", "text": content}],
+            },
+            action="update",
+            namespace=f"cpersona:{row[1]}",
+        )
 
     # `truncated` is additive and mirrors do_store's success shape (absent unless the
     # cap actually bit), so a caller that edits a too-long body learns the row it now
@@ -574,14 +616,13 @@ def _purge_agent_calibration(agent_id: str) -> bool:
 async def _purge_agent_remote_namespace(agent_id: str) -> None:
     """Purge the agent's remote vector namespace (network I/O — post-commit only)."""
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
-        try:
-            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
-            await vector._embedding_client._client.post(
-                f"{base_url}/purge",
-                json={"namespace": f"cpersona:{agent_id}"},
-            )
-        except Exception as e:
-            logger.debug("Remote purge failed (non-fatal): %s", e)
+        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+        await _post_remote_side_effect(
+            f"{base_url}/purge",
+            {"namespace": f"cpersona:{agent_id}"},
+            action="purge",
+            namespace=f"cpersona:{agent_id}",
+        )
 
 
 async def do_delete_agent_data(agent_id: str, session_key: str = "") -> dict:
@@ -680,11 +721,22 @@ def _separation_threshold(null_sims, pos_sims, floor: float, beta: float = 1.0) 
 
 
 def _parse_ts_seconds(ts):
-    """Parse an ISO-8601 timestamp to epoch seconds, or None when unparseable."""
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-    except (ValueError, AttributeError):
-        return None
+    """Parse an ISO-8601 timestamp to epoch seconds, or None when unparseable.
+
+    bug-341: this was the one reader in the package that did not apply the
+    naive-is-UTC rule the behaviour contract publishes. ``.timestamp()`` on a
+    naive datetime assumes system-local time, so on a host at a nine-hour offset
+    the same instant spelled naively and with an offset parsed 32,400 s apart --
+    and naive stamps are routine here, because the episode ``created_at`` column
+    defaults to SQLite's own naive ``datetime('now')``. Driving the consumer,
+    two memories written 60 s apart in the two spellings yielded no same-session
+    pair at all, since the adjacency window is 30 minutes and the shift is nine
+    hours: the calibration then sits on a population it mislabelled. Routed
+    through the shared helper whose docstring names this exact hazard, so there
+    is one implementation of the rule rather than two.
+    """
+    parsed = _parse_timestamp_utc(ts) if isinstance(ts, str) else None
+    return parsed.timestamp() if parsed is not None else None
 
 
 def _adjacency_sims_core(times_seconds, vecs, window_sec: float):
@@ -710,6 +762,18 @@ def _adjacency_sims_core(times_seconds, vecs, window_sec: float):
     if not mask.any():
         return np.array([])
     return np.sum(vn[:-1][mask] * vn[1:][mask], axis=1)
+
+
+def _modal_width(counts) -> int:
+    """The width a mixed-dimension corpus is treated as being, deterministically.
+
+    bug-344: three places decide this and they must not disagree. ``Counter.most_common``
+    breaks a tie by insertion order, which here is row order -- so the same corpus can
+    answer differently between one call and the next, and between the samplers and the
+    startup probe that compares against what they persisted. Ordering by count and then
+    by the wider value makes the answer a property of the corpus rather than of the scan.
+    """
+    return max(counts.items(), key=lambda item: (item[1], item[0]))[0]
 
 
 def _safe_frombuffer(blob):
@@ -744,16 +808,38 @@ def _safe_frombuffer(blob):
     return vec
 
 
-async def _temporal_adjacency_sims(db, agent_id: str, limit: int, window_min: float):
-    """Fetch (timestamp, embedding) ordered by time and build same-session pair sims."""
+async def _temporal_adjacency_sims(
+    db, agent_id: str, limit: int, window_min: float, target_dim: int | None = None
+):
+    """Fetch (timestamp, embedding) ordered by time and build same-session pair sims.
+
+    ``target_dim`` is the width the caller's other population settled on. bug-395:
+    without it this arm reduced to its OWN modal width while the null arm reduced to
+    its own, and one threshold sweep was handed both -- on a mixed-dimension corpus
+    that places the operating point between two different models. Measured on one
+    agent holding 300 older 16-wide rows and 150 newest 8-wide rows: the null sample
+    resolved to 16 and this window to 8, giving a null mean of -0.0015 against a
+    positive mean of 0.0226 and a threshold describing neither, while the response
+    and the sidecar recorded only the null's width. A model swap is exactly when the
+    newest rows are one model and the corpus majority another, and it is also when
+    startup calibration fires.
+    """
     import numpy as np
 
     # Per-agent when agent_id provided, deliberate all-agents fallback when empty —
     # the empty case is the typed no-filter form of the helper.
     iso = isolation_where(agent_id=agent_id or None)
+    # bug-396: ORDER BY the parsed instant, not the raw TEXT. `timestamp` is
+    # caller-supplied (memory_handlers), so one client stamping '+09:00' and another
+    # stamping 'Z' fill the same column and a byte-order sort keeps an older row while
+    # dropping a newer one -- measured with three rows where DESC LIMIT 2 returned the
+    # oldest and dropped the chronologically middle one. `datetime()` normalises every
+    # spelling this package actually writes (offset, Z, space separator, fractional
+    # seconds) and answers NULL for what it cannot read, which sorts last under DESC --
+    # those rows are dropped by the parser below anyway.
     rows = await db.execute_fetchall(
         f"SELECT timestamp, embedding FROM memories WHERE embedding IS NOT NULL "
-        f"AND timestamp IS NOT NULL{iso.and_clause} ORDER BY timestamp DESC LIMIT ?",
+        f"AND timestamp IS NOT NULL{iso.and_clause} ORDER BY datetime(timestamp) DESC LIMIT ?",
         (*iso.params, limit),
     )
     times, vecs = [], []
@@ -769,10 +855,13 @@ async def _temporal_adjacency_sims(db, agent_id: str, limit: int, window_min: fl
     if len(times) < 2:
         return np.array([])
     # bug-025: drop off-modal-dimension rows (times/vecs in lockstep) so np.array
-    # is not ragged on a mixed-dimension corpus during a model swap.
+    # is not ragged on a mixed-dimension corpus during a model swap. bug-395: when the
+    # caller names the width its other population settled on, use that instead of a
+    # second independent vote -- the two have to describe the same model to be compared.
     from collections import Counter
 
-    target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
+    if target_dim is None:
+        target_dim = _modal_width(Counter(v.shape[0] for v in vecs))
     paired = [(t, v) for t, v in zip(times, vecs) if v.shape[0] == target_dim]
     if len(paired) < 2:
         return np.array([])
@@ -1084,17 +1173,36 @@ def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
 
 
 async def _corpus_embedding_dim() -> int | None:
-    """Return the float32 dimension of one stored embedding, or None when empty."""
+    """Return the float32 dimension the corpus is treated as having, or None when empty.
+
+    bug-344: this read one arbitrary row -- a LIMIT 1 with no ordering -- on the premise
+    that the width is corpus-invariant. It is not while a model swap is in flight, and
+    that is the only time this comparison matters. Calibration drops ragged rows and
+    persists the modal width, so on a mixed corpus the two quantities disagreed
+    permanently: measured with three legacy wide rows beside twenty current ones, the
+    probe answered 16 while calibration persisted 8, and four consecutive startup checks
+    over an unchanged corpus each reported the dimension as changed -- backing up the
+    sidecar, discarding every per-agent threshold and gate it held, and re-running a full
+    calibration per agent, without ever settling. It could not even oscillate into
+    agreement, because the legacy rows are the oldest and a plain scan reaches them
+    first, so the same wrong answer came back every boot.
+
+    Asking for the modal width makes this the same question calibration answers.
+    """
     async with connection() as db:
-        # Embedding dimension is corpus-invariant (any agent's row answers it) — the
-        # typed no-filter helper call replaces the old waiver comment.
+        # Deliberately global: the width is a property of the corpus the embedding model
+        # produced, not of one agent's data (the bug-062 rule is about sizes and
+        # contents). The typed no-filter helper call replaces the old waiver comment.
         iso = isolation_where(agent_id=None)
         rows = await db.execute_fetchall(
-            f"SELECT embedding FROM memories WHERE embedding IS NOT NULL{iso.and_clause} LIMIT 1"
+            f"SELECT length(embedding), COUNT(*) FROM memories "
+            f"WHERE embedding IS NOT NULL{iso.and_clause} GROUP BY length(embedding)",
+            iso.params,
         )
-    if not rows or rows[0][0] is None:
+    counts = {int(width): int(n) for width, n in rows if width}
+    if not counts:
         return None
-    return len(rows[0][0]) // 4  # 4 bytes per float32
+    return _modal_width(counts) // 4  # 4 bytes per float32
 
 
 async def _calibrate_fused_gate(
@@ -1302,7 +1410,7 @@ async def _sample_embeddings(db, agent_id: str, sample_n: int):
     if vecs:
         from collections import Counter
 
-        target_dim = Counter(v.shape[0] for v in vecs).most_common(1)[0][0]
+        target_dim = _modal_width(Counter(v.shape[0] for v in vecs))
         vecs = [v for v in vecs if v.shape[0] == target_dim]
     if len(vecs) < 10:
         return None, {"ok": False, "error": f"Need at least 10 same-dimension embeddings, found {len(vecs)}"}
@@ -1443,8 +1551,15 @@ async def do_calibrate_threshold(
         pos_sims = None
         proxy_source = None
         if cal_method == "separation":
+            # bug-395: the null sample above has already settled a width, and the
+            # sweep below compares the two populations directly, so the positive proxy
+            # is drawn at that same width rather than voting on one of its own.
             pos_sims = await _temporal_adjacency_sims(
-                db, agent_id, sample_n, CALIBRATE_TEMPORAL_WINDOW_MIN
+                db,
+                agent_id,
+                sample_n,
+                CALIBRATE_TEMPORAL_WINDOW_MIN,
+                target_dim=int(vecs.shape[1]),
             )
             proxy_source = "temporal"
             if pos_sims is None or len(pos_sims) < 10:
@@ -1685,10 +1800,22 @@ async def do_set_recall_precision(
     # beta into process memory, and the next routine calibration then persisted a
     # gate at a beta the caller was told failed to apply.
     try:
-        cal = await do_calibrate_threshold(agent_id=agent_id)
+        # bug-342: the caller's own session bucket, not the shared keyless one.
+        # This handler gates itself on `key` and then asked calibration to decide
+        # again with nothing declared, so a pause armed by some other caller
+        # suppressed a calibration this caller was entitled to: measured with a
+        # keyless pause armed and this caller declaring an unpaused key, the call
+        # answered ok:true with the beta applied and new_threshold None -- nothing
+        # measured, no sidecar written, and no field to branch on.
+        cal = await do_calibrate_threshold(agent_id=agent_id, session_key=session_key)
     except Exception as exc:
         cal = {"ok": False, "error": f"calibration raised: {exc}"}
-    if not cal.get("ok"):
+    # A skipped calibration is ok:true by design (that is the no-persist shape), so
+    # `ok` alone cannot tell "measured and applied" from "declined to measure". The
+    # rollback below exists to stop an un-persisted weight from living on in process
+    # memory, and that is exactly the state a skip leaves, so it counts as a failure
+    # to apply here even though it is not an error.
+    if not cal.get("ok") or cal.get("persisted") is False:
         # bug-149 (bug-096 residual): compare-and-restore. do_calibrate_threshold awaits, so a
         # concurrent set_recall_precision for the SAME agent can apply + persist its own
         # value while this call is suspended. Roll back only if this call's own write is
@@ -2030,14 +2157,13 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
         # remote-mode recall, wasting top-K slots until the by-id rehydrate missed.
         # Mirror do_delete_memory's /remove; a removal failure must not fail the delete.
         ns = f"cpersona:{owner_agent_id}"
-        try:
-            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
-            await vector._embedding_client._client.post(
-                f"{base_url}/remove",
-                json={"namespace": ns, "ids": [f"ep:{episode_id}"]},
-            )
-        except Exception as e:
-            logger.debug("Remote remove failed (non-fatal): %s", e)
+        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+        await _post_remote_side_effect(
+            f"{base_url}/remove",
+            {"namespace": ns, "ids": [f"ep:{episode_id}"]},
+            action="removal",
+            namespace=ns,
+        )
 
     return {"ok": True, "deleted_id": episode_id}
 
