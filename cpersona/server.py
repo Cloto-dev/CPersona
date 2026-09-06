@@ -1580,6 +1580,12 @@ registry.auto_tool(
     "format drift, stale tasks, missing profiles, empty content, "
     "invalid/anonymous sources. Returns storage stats incl. project_id/channel "
     "distributions. Set fix=true to auto-repair (agent-scoped, locked-safe); "
+    # bug-310: one repair is not agent-scoped, and saying so is the difference
+    # between a caller that knows what it authorised and one that does not.
+    "the one exception is dedup_msg_id_index, whose repair blanks colliding "
+    "msg_id values under every agent because the UNIQUE index it restores is a "
+    "global schema object — with an ACL configured that repair demands "
+    "read-write on '*', so exclude it via `checks` to stay agent-scoped. "
     "critical file-integrity findings are report-only. Two repairs are lossy and "
     "irreversible, each against its own cap: oversized memories are cut to "
     "CPERSONA_MAX_CONTENT_LENGTH (default 16000 since 2.5.4a2) and the agent's "

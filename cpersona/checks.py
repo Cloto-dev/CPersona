@@ -94,7 +94,7 @@ from cpersona.config import (
     VECTOR_SEARCH_MODE,
     local_blobs_stored,
 )
-from cpersona.database import SCHEMA_VERSION
+from cpersona.database import SCHEMA_VERSION, release_read_probe_transaction
 from cpersona.utils import (
     SCORING_VERSION,
     _MEMORY_ANNOTATION_PATTERN,
@@ -873,6 +873,24 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     """
     if not FTS_ENABLED:
         return []
+
+    async def _release_probe_transaction():
+        """End the transaction the integrity-check statement implicitly opened.
+
+        bug-314: the command is spelled as an INSERT, so sqlite3 classifies it as
+        DML and BEGINs before it — on the read seam that takes the database's
+        write lock. ``connection()`` only ends that transaction when its scope
+        exits, i.e. at the end of the whole health run, so a report-only run made
+        concurrent writers wait out busy_timeout and fail with "database is
+        locked" while itself reporting healthy. The probe writes nothing, so what
+        is rolled back here is empty. Only when ``fix`` is False: under ``fix``
+        this runs inside ``transaction()``, which owns the boundary and is
+        holding the repairs made before this check.
+        """
+        if fix:
+            return
+        await release_read_probe_transaction(db)
+
     issues: list[dict] = []
     for table, fts in (("memories", "memories_fts"), ("episodes", "episodes_fts")):
         rebuild = f"INSERT INTO {fts}({fts}) VALUES('rebuild')"
@@ -884,11 +902,13 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
             try:
                 await db.execute(f"INSERT INTO {fts}({fts}) VALUES('integrity-check')")
             except sqlite3.OperationalError:
+                await _release_probe_transaction()
                 continue  # FTS table absent or command unsupported entirely
             except sqlite3.DatabaseError:
                 corrupt = True
         except sqlite3.DatabaseError:
             corrupt = True
+        await _release_probe_transaction()
         if not corrupt:
             continue
         # Object-scoped, not row-scoped: the repair is one whole-index rebuild,
@@ -2316,6 +2336,38 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                 }
             ]
 
+        # bug-315: the tail below is the staleness that GREW; this is the
+        # staleness that SHRANK, and nothing measured it. The tail counts rows
+        # written since the build, so a row the index holds and the database no
+        # longer does is invisible to it -- and invisible to the lost-embedding
+        # probe too, which asked `embedding IS NULL` and so could only see a row
+        # that was still there. Measured on a 12-row corpus: deleting one indexed
+        # row left this check with no findings at all. Global for the same reason
+        # the widths above are: the index is one object per table, and a count of
+        # rows is a size rather than corpus content (the bug-062 rule).
+        live_indexed = (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM {table} WHERE id <= ? AND embedding IS NOT NULL"
+                f"{all_axes.and_clause}",
+                (index.watermark, *all_axes.params),
+            )
+        )[0][0]
+        if index.count and live_indexed < index.count:
+            return [
+                {
+                    "type": "vector_index_rows_missing",
+                    "severity": "warn",
+                    "table": table,
+                    "indexed_rows": index.count,
+                    "rows_still_present": live_indexed,
+                    "hint": (
+                        "rows the index holds are gone from the database; the index "
+                        "hands each query back to the scan until it is rebuilt: "
+                        f"python -m cpersona.vector_index --db <path> --table {table} build"
+                    ),
+                }
+            ]
+
         tail = (
             await db.execute_fetchall(
                 f"SELECT COUNT(*) FROM {table} WHERE id > ? AND embedding IS NOT NULL{iso.and_clause}",
@@ -2438,14 +2490,21 @@ async def check_file_permissions(db, agent_id: str = "", fix: bool = False) -> l
 class Check:
     """A registered health check: metadata + runner (see module docstring)."""
 
-    __slots__ = ("name", "base_severity", "fix_capable", "runner")
+    __slots__ = ("name", "base_severity", "fix_capable", "runner", "cross_agent_fix")
 
-    def __init__(self, name: str, base_severity: str, fix_capable: bool, runner):
+    def __init__(self, name: str, base_severity: str, fix_capable: bool, runner, cross_agent_fix: bool = False):
         assert base_severity in SEVERITIES
         self.name = name
         self.base_severity = base_severity
         self.fix_capable = fix_capable
         self.runner = runner
+        # Whether this check's repair writes rows outside the agent the call
+        # names. Almost none do; the guard that authorises `fix=true` needs to
+        # know which, because it can only demand a permission that matches the
+        # reach of the write (bug-310). Declared here, beside the runner, so a
+        # repair that widens its reach and a guard that authorises it cannot
+        # drift apart the way they did.
+        self.cross_agent_fix = cross_agent_fix
 
 
 HEALTH_CHECKS: list[Check] = [
@@ -2475,7 +2534,10 @@ HEALTH_CHECKS: list[Check] = [
     # (re)creates the index a single fix pass leaves schema_objects nothing to
     # report (schema_objects' own fix only re-issues the identical, still-failing
     # CREATE). Same ordering doctrine as oversized_content before duplicate_content.
-    Check("dedup_msg_id_index", "critical", True, check_dedup_msg_id_index),
+    # cross_agent_fix: its repair blanks colliding msg_id values under every
+    # agent on purpose (see the runner) — the only registered repair that
+    # writes rows the call's own agent_id does not name.
+    Check("dedup_msg_id_index", "critical", True, check_dedup_msg_id_index, cross_agent_fix=True),
     Check("schema_objects", "critical", True, check_schema_objects),
     Check("sqlite_integrity", "critical", False, check_sqlite_integrity),
     Check("axis_hygiene", "warn", False, check_axis_hygiene),
@@ -2508,6 +2570,10 @@ HEALTH_CHECKS: list[Check] = [
 ]
 
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]
+
+# Derived, never hand-listed: the guard reads this to size the permission it
+# demands for `fix=true`, and a hand-kept second list is the drift bug-310 was.
+CROSS_AGENT_FIX_CHECKS = frozenset(c.name for c in HEALTH_CHECKS if c.cross_agent_fix)
 
 _CHECKS_BY_NAME = {c.name: c for c in HEALTH_CHECKS}
 

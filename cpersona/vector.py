@@ -1196,6 +1196,9 @@ async def _scan_memories_local(
     channel: str,
     source_id: str,
     scan_offset: int = 0,
+    # bug-315 re-entry: skip the index supplier for one call, so a query the
+    # index could not honour is answered by the scan instead of short.
+    _index_disabled: bool = False,
 ) -> list[tuple[float, dict]]:
     """Cosine-rank `scan_limit` memory rows against the query vector.
 
@@ -1246,7 +1249,7 @@ async def _scan_memories_local(
     # Phase 1 has two suppliers and one contract: `(ids, similarities)` in the
     # scan's order. The contiguous index answers when it can promise the same
     # rows; otherwise this is the read it has always been.
-    supplied = await _index_phase1(
+    supplied = None if _index_disabled else await _index_phase1(
         db,
         agent_id=agent_id,
         project_id=project_id,
@@ -1256,6 +1259,7 @@ async def _scan_memories_local(
         query_dim=query_dim,
         scan_offset=scan_offset,
     )
+    from_index = supplied is not None
     if supplied is not None:
         valid_ids, mat = supplied
         if not valid_ids:
@@ -1334,6 +1338,33 @@ async def _scan_memories_local(
         (*iso.params, *src_params),
     )
 
+    # bug-315: when phase 1 came from the contiguous index, a survivor with no
+    # row is not the two-statement race the skip below handles -- it is the index
+    # holding an id the database no longer does. The lost-embedding probe cannot
+    # see that: it asks `embedding IS NULL`, and a deleted row has no column to
+    # be null. Skipping it silently returns fewer rows than the scan would, on
+    # every query, until someone rebuilds. So take the branch this design already
+    # has for an index that cannot promise the same rows, and hand the query back
+    # to the scan. Costs one length comparison when nothing is missing.
+    if from_index and len(payload) < len(survivors):
+        return await _scan_memories_local(
+            db,
+            iso,
+            src_clause,
+            src_params,
+            scan_limit,
+            limit,
+            query_vec,
+            query_dim,
+            effective_min_sim,
+            agent_id=agent_id,
+            project_id=project_id,
+            channel=channel,
+            source_id=source_id,
+            scan_offset=scan_offset,
+            _index_disabled=True,
+        )
+
     candidates: list[tuple[float, dict]] = []
     for mem_id, sim in survivors:
         row = payload.get(mem_id)
@@ -1373,6 +1404,9 @@ async def _scan_episodes_local(
     agent_id: str = "",
     project_id: str | None = None,
     scan_offset: int = 0,
+    # bug-315 re-entry: skip the index supplier for one call, so a query the
+    # index could not honour is answered by the scan instead of short.
+    _index_disabled: bool = False,
 ) -> list[tuple[float, dict]]:
     """Cosine-rank episode summaries, structurally mirroring the memory scan.
 
@@ -1414,7 +1448,7 @@ async def _scan_episodes_local(
     if src_like and not channel:
         return []
 
-    supplied = await _index_phase1(
+    supplied = None if _index_disabled else await _index_phase1(
         db,
         agent_id=agent_id,
         project_id=project_id,
@@ -1425,6 +1459,7 @@ async def _scan_episodes_local(
         table="episodes",
         scan_offset=scan_offset,
     )
+    from_index = supplied is not None
     if supplied is not None:
         valid_ids, mat = supplied
         if not valid_ids:
@@ -1476,6 +1511,31 @@ async def _scan_episodes_local(
         [ep_id for ep_id, _ in survivors],
         tuple(iso.params),
     )
+
+    # bug-315: when phase 1 came from the contiguous index, a survivor with no
+    # row is not the two-statement race the skip below handles -- it is the index
+    # holding an id the database no longer does. The lost-embedding probe cannot
+    # see that: it asks `embedding IS NULL`, and a deleted row has no column to
+    # be null. Skipping it silently returns fewer rows than the scan would, on
+    # every query, until someone rebuilds. So take the branch this design already
+    # has for an index that cannot promise the same rows, and hand the query back
+    # to the scan. Costs one length comparison when nothing is missing.
+    if from_index and len(payload) < len(survivors):
+        return await _scan_episodes_local(
+            db,
+            iso,
+            scan_limit,
+            query_vec,
+            query_dim,
+            effective_min_sim,
+            src_like,
+            channel,
+            limit=limit,
+            agent_id=agent_id,
+            project_id=project_id,
+            scan_offset=scan_offset,
+            _index_disabled=True,
+        )
 
     candidates: list[tuple[float, dict]] = []
     for ep_id, sim in survivors:

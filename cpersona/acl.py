@@ -421,8 +421,62 @@ def _file_io_demands(key: str) -> Demands:
     return demands
 
 
+def _selected_cross_agent_fixes(args: dict) -> list[str]:
+    """Which of the health checks this call will run repair rows outside its agent.
+
+    ``checks`` absent or empty means the whole registry, which is how the
+    unqualified ``check_health(fix=True)`` reaches the cross-agent repair.
+    Imported lazily: ``checks`` pulls in the database and embedding modules,
+    and the guard is on the import path of everything.
+    """
+    from cpersona.checks import CROSS_AGENT_FIX_CHECKS
+
+    selected = args.get("checks") or []
+    if not isinstance(selected, (list, tuple)) or not selected:
+        return sorted(CROSS_AGENT_FIX_CHECKS)
+    return sorted(CROSS_AGENT_FIX_CHECKS.intersection(str(name) for name in selected))
+
+
 def _health_demands(args: dict) -> list[tuple[str, int]]:
-    # check_health / deep_check: read; fix=true repairs, which is a write.
+    """check_health: read; ``fix=true`` repairs, which is a write.
+
+    One registered repair blanks colliding ``msg_id`` values under every agent
+    on purpose — the index it restores is a global schema object, so a
+    collision under any agent blocks it. A demand naming only the call's own
+    agent therefore authorised less than the call performs: a client holding
+    read-write on one agent rewrote another agent's rows (bug-310). The demand
+    is sized to the reach of the write instead, the same escalation
+    ``_file_io_demands`` makes when its blast radius stops being one agent.
+
+    Only when such a check is actually selected: ``checks=[...]`` that excludes
+    it keeps the narrow demand, so a client repairing its own agent is not made
+    to hold every agent to do it.
+    """
+    if not args.get("fix"):
+        return [(_agent_arg(args), PERM_READ)]
+    if _selected_cross_agent_fixes(args):
+        return [(_agent_arg(args), PERM_WRITE), (WILDCARD, PERM_WRITE)]
+    return [(_agent_arg(args), PERM_WRITE)]
+
+
+_health_demands._sweep_cause = lambda args: (  # type: ignore[attr-defined]
+    "this call runs a repair that writes rows under every agent ("
+    + ", ".join(_selected_cross_agent_fixes(args))
+    + "), so no agent_id narrows it — naming the checks you want in `checks` does"
+    if _selected_cross_agent_fixes(args)
+    else ""
+)
+
+
+def _deep_demands(args: dict) -> list[tuple[str, int]]:
+    """deep_check: read; ``fix=true`` repairs, which is a write.
+
+    Deliberately NOT the escalation ``_health_demands`` makes. The two tools
+    read different registries (``DEEP_CHECKS`` vs ``HEALTH_CHECKS``), and both
+    fix-capable deep checks scope their UPDATE with ``WHERE agent_id = ?``, so
+    the call reaches exactly the agent it names. Sharing the health demand
+    would refuse callers for a repair this tool cannot run.
+    """
     required = PERM_WRITE if args.get("fix") else PERM_READ
     return [(_agent_arg(args), required)]
 
@@ -516,7 +570,7 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     "merge_memories": _merge_demands,
     # Empty agent_id sweeps every agent on these; _scoped maps "" to "*".
     "check_health": _health_demands,
-    "deep_check": _health_demands,
+    "deep_check": _deep_demands,
     # The findings channel is whole-database by contract (SUPERAUDITOR_STANDARD
     # §7): no argument scopes it, so the all-agents READ demand is intrinsic.
     "get_session_findings": _process_wide(

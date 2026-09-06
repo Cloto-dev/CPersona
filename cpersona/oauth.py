@@ -82,6 +82,35 @@ def namespaced_client_id(issuer: str, client_id: str) -> str:
     return f"oauth:{issuer}:{client_id}"
 
 
+def _normalized_scopes(scope_claim) -> list[str]:
+    """Read the ``scope`` claim in either shape an issuer actually emits.
+
+    RFC 9068 §2.2.3 carries the OAuth 2.0 space-delimited string, and issuers do
+    also mint ``scope`` as a JSON array. Both name the same thing, so folding the
+    array is the answer that keeps a legal token usable; anything else (a number,
+    an object) names no scope we can honour and yields none, which denies rather
+    than over-grants because every scope check downstream is a membership test.
+    """
+    if isinstance(scope_claim, str):
+        return scope_claim.split()
+    if isinstance(scope_claim, (list, tuple)):
+        return [str(entry) for entry in scope_claim if isinstance(entry, (str, int, float))]
+    return []
+
+
+def _numeric_date_seconds(claim):
+    """Coerce an RFC 7519 NumericDate to the whole seconds the SDK models.
+
+    NumericDate "MAY contain a non-integer value" (RFC 7519 §2) while
+    ``AccessToken.expires_at`` is ``int | None``, so a fractional ``exp`` from a
+    conforming issuer would be refused by the model. Truncating moves the expiry
+    earlier, never later, so the coercion cannot extend a token's life.
+    """
+    if isinstance(claim, bool) or not isinstance(claim, (int, float)):
+        return claim
+    return int(claim)
+
+
 def _metadata_urls(issuer: str) -> list[str]:
     """Where an authorization server's metadata may be found, in order tried.
 
@@ -263,15 +292,26 @@ class IdpTokenVerifier:
 
         from mcp.server.auth.provider import AccessToken
 
-        return AccessToken(
-            token=token,
-            client_id=namespaced_client_id(issuer, str(client_claim)),
-            scopes=(claims.get("scope") or "").split(),
-            expires_at=claims["exp"],
-            resource=self._audience,
-            subject=str(claims["sub"]),
-            claims=claims,
-        )
+        try:
+            return AccessToken(
+                token=token,
+                client_id=namespaced_client_id(issuer, str(client_claim)),
+                scopes=_normalized_scopes(claims.get("scope")),
+                expires_at=_numeric_date_seconds(claims["exp"]),
+                resource=self._audience,
+                subject=str(claims["sub"]),
+                claims=claims,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # The construction reads claim *types* the signature does not
+            # constrain, so an issuer we trust can still hand us a shape the
+            # SDK's model refuses. Raising here would break the contract this
+            # method states above — an unauthenticated caller would get a 500
+            # it can provoke at will — so any such token is a refusal like any
+            # other. Debug, not warning, for the same reason jwt.decode's
+            # failure is: a public endpoint must not let a caller fill the log.
+            logger.debug("OAuth token rejected while building the identity: %s", exc)
+            return None
 
     # -- internals ---------------------------------------------------------
 

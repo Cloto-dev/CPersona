@@ -4509,13 +4509,15 @@
       "severity": "HIGH",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/acl.py",
-      "pattern": "required = PERM_WRITE if args\\.get\\(\"fix\"\\) else PERM_READ",
+      "pattern": "if _selected_cross_agent_fixes\\(args\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check-scope-leak",
       "fix_sketch": "Either demand the whole table when the requested checks include a cross-agent repair (a wildcard write demand, refused unless the principal holds it everywhere), or scope that repair to the requested agent and leave the remaining collisions to an operator-run pass that is authorised globally. The tool description must then match whichever is chosen.",
-      "note": "The same call shape from a per_subject tenant using agent_id='@me' was read in source (the boundary at cpersona/acl.py:815-846 admits it because the pattern equals the caller's own alias) and not exercised, so that half is unmeasured."
+      "note": "The same call shape from a per_subject tenant using agent_id='@me' was read in source (the boundary at cpersona/acl.py:815-846 admits it because the pattern equals the caller's own alias) and not exercised, so that half is unmeasured.",
+      "fix_note": "The guard now sizes the fix=true demand to the reach of the write: a selected check whose repair writes rows under every agent (dedup_msg_id_index, declared by Check.cross_agent_fix and derived into CROSS_AGENT_FIX_CHECKS) adds a read-write demand on '*'. checks=[...] that excludes it keeps the narrow agent demand, so an agent-scoped repair still needs only that agent. deep_check was split onto its own _deep_demands and is deliberately NOT escalated -- it reads a different registry whose two fix-capable checks both scope their UPDATE with WHERE agent_id = ?. The tool description now names the exception instead of calling every repair agent-scoped."
     },
     {
       "id": "bug-311",
@@ -4523,12 +4525,14 @@
       "severity": "HIGH",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/oauth.py",
-      "pattern": "scopes=\\(claims\\.get\\(\"scope\"\\) or \"\"\\)\\.split\\(\\)",
+      "pattern": "_normalized_scopes\\(claims\\.get\\(\"scope\"\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "auth-robustness",
-      "fix_sketch": "Normalise before constructing: accept a list of strings for `scope` as well as the space-delimited string, coerce a numeric `exp` through int(), and put the construction inside the same guard as the decode so any remaining surprise becomes None (a 401) rather than a traceback."
+      "fix_sketch": "Normalise before constructing: accept a list of strings for `scope` as well as the space-delimited string, coerce a numeric `exp` through int(), and put the construction inside the same guard as the decode so any remaining surprise becomes None (a 401) rather than a traceback.",
+      "fix_note": "AccessToken construction is inside the try that already governed jwt.decode, so any claim shape the SDK model refuses is a refusal (None) rather than an exception escaping onto the unauthenticated path. The two shapes RFC permits are folded rather than refused: _normalized_scopes reads scope as either the space-delimited string or a JSON array, and _numeric_date_seconds truncates a fractional NumericDate to whole seconds (never later, so it cannot extend a token's life)."
     },
     {
       "id": "bug-312",
@@ -4536,13 +4540,15 @@
       "severity": "HIGH",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "if not blob or len\\(blob\\) % 4 != 0",
+      "pattern": "if not np\\.isfinite\\(vec\\)\\.all\\(\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration",
       "fix_sketch": "Ask the same finiteness helper the write seam and the health check already use before a blob enters the sample, and refuse to persist or apply a threshold that is not finite -- an ok:false naming the offending rows is more useful than a silently poisoned floor.",
-      "note": "Neighbouring but distinct from the read-side backfill guard (bug-300, fixed): this is the calibration sample, which decides the floor for every later recall rather than one row's reported cosine. bug-384 is the same missing guard in the deep near-duplicate check."
+      "note": "Neighbouring but distinct from the read-side backfill guard (bug-300, fixed): this is the calibration sample, which decides the floor for every later recall rather than one row's reported cosine. bug-384 is the same missing guard in the deep near-duplicate check.",
+      "fix_note": "_safe_frombuffer now gates on values as well as width: a right-width blob whose elements are not finite is skipped like a corrupt one, which is what its own contract ('skip the poison row') already said. Both callers are calibration paths (_temporal_adjacency_sims, _sample_embeddings), so the NaN can no longer reach vecs @ vecs.T, the threshold, the in-process map or the sidecar. Verified by mutation: reverting admin_handlers.py alone turns both probe assertions red."
     },
     {
       "id": "bug-313",
@@ -4550,13 +4556,15 @@
       "severity": "HIGH",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "fpr = \\(null\\[None, :\\] >= candidates\\[:, None\\]\\)\\.mean\\(axis=1\\)",
+      "pattern": "counted = finite_end - np\\.searchsorted\\(ordered\\[:finite_end\\], candidates, side=\"left\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Compute the two rates by sorting the populations once and searching the candidate grid (np.searchsorted), which is O(n log n) time and O(n) memory instead of a 256 x pairs boolean array; then re-derive the sample ceiling from a measurement of the method that actually runs by default.",
-      "note": "The existing gates on this path only assert the constant stays under 10,000, which cannot see the allocation the constant is supposed to bound."
+      "note": "The existing gates on this path only assert the constant stays under 10,000, which cannot see the allocation the constant is supposed to bound.",
+      "fix_note": "The candidate sweep computes the identical numbers from one sort instead of a (256, len(pop)) boolean broadcast: the count of x >= c on a sorted array is its tail, and NaN is excluded from the search but kept in the denominator so the result matches the comparison for every input (400 randomised trials over duplicates, NaN and +/-inf, 0 mismatches). Measured whole-call peak fell from 290 to 29.0 bytes per null pair, flat from n=700 to n=10,000, so the n=5,000 ceiling now bounds 363 MB rather than 3.6 GB. config.py's ceiling justification was restamped with those measured figures -- the earlier 52/266/982 MB covered the product only, not the triangle and sweep the ceiling also has to bound."
     },
     {
       "id": "bug-314",
@@ -4564,12 +4572,14 @@
       "severity": "HIGH",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/maintenance_handlers.py",
-      "pattern": "async with \\(transaction\\(\\) if fix else connection\\(\\)\\) as db:",
+      "fixed_in": "2.5.12b2",
+      "file": "cpersona/checks.py",
+      "pattern": "await _release_probe_transaction\\(\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
-      "fix_sketch": "Commit or roll back immediately after the FTS integrity probe so the implicit write transaction does not outlive the one check that needed it, rather than widening the scope's lifetime rules; the same probe on the fix=True path is already inside a transaction that ends promptly."
+      "fix_sketch": "Commit or roll back immediately after the FTS integrity probe so the implicit write transaction does not outlive the one check that needed it, rather than widening the scope's lifetime rules; the same probe on the fix=True path is already inside a transaction that ends promptly.",
+      "fix_note": "The FTS integrity probe writes nothing, so on the report-only path it now hands the implicit transaction back as soon as it has its answer instead of pinning the write lock until the whole run ends. The rollback itself lives in database.py (release_read_probe_transaction) because that module owns the commit/rollback boundary on the shared connection -- routing it through the owner rather than taking a seam waiver, which tests/test_structural_gates.py::test_db_boundary_owned_by_seam caught on the first attempt. Guarded on fix=False: under fix this runs inside transaction(), which is holding real repairs."
     },
     {
       "id": "bug-315",
@@ -4577,13 +4587,15 @@
       "severity": "HIGH",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "SELECT COUNT\\(\\*\\) FROM \\{table\\} WHERE id > \\? AND embedding IS NOT NULL",
+      "pattern": "vector_index_rows_missing",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "index-divergence",
       "fix_sketch": "Count indexed ids that no longer resolve to a live row, alongside the tail, and let the delete path mark the index stale the way the embedding-clearing path does; hydration already knows which candidates vanished, so it can also over-fetch to refill the window.",
-      "note": "The deletion counterpart of bug-278 and bug-279, which cover a row gaining and losing its embedding after the build. Distinct seam: those rows still exist and can be probed by predicate, this one cannot."
+      "note": "The deletion counterpart of bug-278 and bug-279, which cover a row gaining and losing its embedding after the build. Distinct seam: those rows still exist and can be probed by predicate, this one cannot.",
+      "fix_note": "Two halves. Detection: check_vector_index now also counts how many rows the index holds that the database still has, and reports vector_index_rows_missing when that shrank -- the tail count only ever saw staleness that GREW. Correctness: rather than make the recall hot path ask a more expensive question (an early attempt rewrote the lost-embedding probe as a COUNT and broke the partial-index plan tests/test_bug285_probe_bound.py pins), the index path falls back to the scan when hydration returns fewer rows than the index promised -- the branch this design already has for an index that cannot promise the same rows, at the cost of one length comparison on the healthy path. Applied to the episode path too, which had the same shape."
     },
     {
       "id": "bug-316",

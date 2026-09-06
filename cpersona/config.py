@@ -539,11 +539,17 @@ CALIBRATE_SAMPLE_SIZE = _parse_int("CPERSONA_CALIBRATE_SAMPLE_SIZE", 200)
 # Mirrors the _clamp_limit discipline already applied to the recall/list handlers.
 #
 # 5,000, raised from 2,000: the same matrix NEAR_DUPLICATE_ROW_CAP bounds, so the
-# same measurement decides it (1024-d float32) — n=2,000 is 18 ms / 52 MB peak,
-# n=5,000 is 103 ms / 266 MB, n=10,000 is 392 ms / 982 MB. A threshold calibrated
-# on 2,000 rows of a 150,000-row corpus samples 1.3% of it; 5,000 samples 3.3%
-# for a transient the machine calibration already runs on can hold. The ceiling
-# is what stops the OOM, so it moves only as far as a measured allocation.
+# same measurement decides it (1024-d float32). Re-measured for bug-312/bug-313
+# across the WHOLE computation the ceiling has to bound — the product, its upper
+# triangle AND the threshold sweep that reads it, which the earlier figures left
+# out: n=2,000 is 65 ms / 58 MB peak, n=5,000 is 460 ms / 363 MB, n=10,000 is
+# 2.1 s / 1.45 GB. The cost is linear in pairs at 29.0 bytes/pair from n=700 up,
+# so the ceiling's allocation is a measurement rather than an extrapolation.
+# A threshold calibrated on 2,000 rows of a 150,000-row corpus samples 1.3% of
+# it; 5,000 samples 3.3% for a transient the machine calibration already runs on
+# can hold. The ceiling is what stops the OOM, so it moves only as far as a
+# measured allocation — and the sweep it bounds must stay linear in pairs: the
+# broadcast bug-313 removed made it 256 bytes/pair, i.e. 3.6 GB here.
 CALIBRATE_MAX_SAMPLE = max(1, _parse_int("CPERSONA_CALIBRATE_MAX_SAMPLE", 5000))
 CALIBRATE_Z_FACTOR = _parse_float("CPERSONA_CALIBRATE_Z_FACTOR", 1.0)
 CALIBRATE_FLOOR = _parse_float("CPERSONA_CALIBRATE_FLOOR", 0.05)

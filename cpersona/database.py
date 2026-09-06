@@ -106,6 +106,35 @@ async def connection():
                 await db.rollback()
 
 
+async def release_read_probe_transaction(db) -> bool:
+    """End a transaction a read-seam probe implicitly opened. Owner-side helper.
+
+    FTS5's integrity-check is spelled ``INSERT INTO fts(fts, rank) VALUES(...)``,
+    so sqlite3 BEGINs before it and SQLite takes the write lock — on the read
+    connection, where the caller wrote nothing. ``connection()`` above ends that
+    transaction, but only when its scope exits, which for a health run is the end
+    of the whole run: concurrent writers waited out busy_timeout and failed with
+    "database is locked" while the run reported healthy (bug-314).
+
+    Lives here because the commit/rollback boundary on the shared connection is
+    this module's to own (bug-042/043/068), and a probe that needs its lock back
+    early should ask the owner rather than reach past it. Returns whether there
+    was a transaction to end, so a caller can tell "released" from "nothing to
+    release" without inspecting the connection itself.
+
+    MUST NOT be called from inside ``transaction()``: that scope owns a boundary
+    holding real writes, and ending it here would discard them.
+    """
+    try:
+        if db._conn is None or not db._conn.in_transaction:
+            return False
+        await db.rollback()
+        return True
+    except Exception as exc:  # noqa: BLE001 - reclaiming a lock must not fail the caller
+        logger.debug("read probe transaction could not be released: %s", exc)
+        return False
+
+
 @contextlib.asynccontextmanager
 async def read_snapshot():
     """Dedicated private read connection pinned to ONE consistent WAL snapshot
