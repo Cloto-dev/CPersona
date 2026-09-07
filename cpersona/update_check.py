@@ -48,6 +48,7 @@ asking the metadata answers for the wrong one.
 from __future__ import annotations
 
 import asyncio
+import collections
 import importlib.util
 import json
 import logging
@@ -78,6 +79,16 @@ PROJECT_NAME = "cpersona"
 # process. Small, because there is nothing to salvage by waiting: a slow index
 # is the same answer as an unreachable one.
 TIMEOUT_SECONDS = 3.0
+
+#: Ceiling on the index document, because the deadline above bounds elapsed time
+#: and nothing else: a body arrives as fast as the link allows, so time is not a
+#: proxy for bytes. Sized from the measurement rather than a guess -- the URL is
+#: pinned to one package, and that package's own index measured 60,089 bytes,
+#: while the indexes of packages a decade into their release history measure a
+#: few megabytes. A mebibyte is therefore ~17x today's document with room for an
+#: order of magnitude more releases, and reaching it costs a notice, not a
+#: failure: an unusable index already answers "unknown".
+MAX_INDEX_BYTES = 1024 * 1024
 
 # A yank reason is untrusted text written by whoever published the release. It
 # is truncated and it is NEVER interpolated into a command — the command is
@@ -287,13 +298,27 @@ def _decide(payload: dict, running: str) -> dict:
         # every comparison below would be against a version nobody can order.
         return _verdict_dict(STATE_UNKNOWN, running, None, None, None)
 
+    versions = payload.get("versions") or []
+    raw_files = payload.get("files") or []
+    if not isinstance(versions, list) or not isinstance(raw_files, list):
+        # Everything below this line already drops a value it cannot read --
+        # `_parse_version` and `_version_of_filename` both refuse a non-string --
+        # so these two are the only shapes the decision takes on trust. A rule
+        # this module states for the fetch holds here too: a document whose
+        # schema changed gets the same answer as an outage, not an exception out
+        # of a background task. Note that the failure is not only the raised
+        # one: a bare string for `versions` iterates as characters, and the
+        # verdict that falls out of that is "unlisted", which reads as a
+        # development checkout rather than as an index nobody can read.
+        return _verdict_dict(STATE_UNKNOWN, running, None, None, None)
+
     candidates: dict[tuple, ParsedVersion] = {}
-    for raw in payload.get("versions") or []:
+    for raw in versions:
         parsed = _parse_version(raw)
         if parsed is not None:
             candidates.setdefault(parsed.key, parsed)
 
-    files = [f for f in (payload.get("files") or []) if isinstance(f, dict)]
+    files = [f for f in raw_files if isinstance(f, dict)]
     running_files = []
     for entry in files:
         version = _version_of_filename(entry.get("filename", ""))
@@ -437,17 +462,78 @@ async def _fetch_index() -> dict | None:
             async with httpx.AsyncClient(
                 timeout=TIMEOUT_SECONDS, transport=_transport, follow_redirects=True
             ) as client:
-                response = await client.get(INDEX_URL, headers={"Accept": INDEX_ACCEPT})
-                response.raise_for_status()
-                payload = response.json()
+                async with client.stream(
+                    "GET", INDEX_URL, headers={"Accept": INDEX_ACCEPT}
+                ) as response:
+                    response.raise_for_status()
+                    # The declared length is read to refuse EARLIER, never to
+                    # admit: a body that announces itself over the cap is turned
+                    # away before a byte of it is read, and one that announces
+                    # nothing, or lies low, still meets the running total below.
+                    # The key-set fetch skips this step because there the header
+                    # is written by the party that fetch exists to survive; here
+                    # it costs one comparison and saves the whole read.
+                    declared = response.headers.get("content-length")
+                    if declared is not None and declared.isdigit() and int(declared) > MAX_INDEX_BYTES:
+                        logger.debug(
+                            "update check: index declares %s bytes, over the %d cap",
+                            declared,
+                            MAX_INDEX_BYTES,
+                        )
+                        return None
+                    # bug-357, the shape already fixed on the key-set fetch: read
+                    # the body incrementally and stop, so the bound is on what we
+                    # agree to RECEIVE rather than on what we agree to parse. A
+                    # buffered read has already made the allocation by the time
+                    # any size check could run, at a size chosen by whoever
+                    # answers at the index URL. Declared Content-Length is not
+                    # consulted -- it may be absent or untrue, and the bytes are
+                    # what has to be bounded either way.
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > MAX_INDEX_BYTES:
+                            logger.debug(
+                                "update check: index over %d bytes, not read further",
+                                MAX_INDEX_BYTES,
+                            )
+                            return None
+                payload = json.loads(bytes(body))
         return payload if isinstance(payload, dict) else None
     except Exception as exc:  # noqa: BLE001 — silence is the contract (rule 2)
         logger.debug("update check: index unavailable (%s)", exc)
         return None
 
 
+def _superseded_by(fetched_at: str | None) -> bool:
+    """Did a fresher answer land while this one was being obtained?
+
+    The comparison is against when the fetch was ISSUED, not when it returned.
+    Stamping on return would make the slow answer look like the newer one, which
+    is exactly backwards: the verdict describes the index as of the moment it
+    was asked about, and a response that has been in flight for three seconds
+    describes an older index than one issued and answered since.
+
+    Unparseable stamps answer False. A stamp this module did not write can only
+    come from a cache file, and refusing to store on one nobody can order would
+    freeze the verdict rather than correct it.
+    """
+    if fetched_at is None or _checked_at is None:
+        return False
+    try:
+        return datetime.fromisoformat(_checked_at) > datetime.fromisoformat(fetched_at)
+    except ValueError:
+        return False
+
+
 def _store(verdict: dict, fetched_at: str | None) -> dict:
     global _verdict, _checked_at, _notice_emitted
+    if _superseded_by(fetched_at):
+        # bug-375: the startup fetch and an explicit refresh can be in flight at
+        # once, and the slower of them used to win by finishing last. Returning
+        # the standing verdict rather than the one just computed keeps the two
+        # callers agreeing about what the server reports.
+        return _verdict if _verdict is not None else verdict
     changed = _verdict is None or _verdict.get("kind") != verdict.get("kind") or _verdict.get(
         "available"
     ) != verdict.get("available")
@@ -470,12 +556,17 @@ async def refresh() -> dict:
     """
     if not config.UPDATE_CHECK_ENABLED:
         return _verdict_dict(STATE_DISABLED, __version__, None, None, None)
+    # Stamped before the await: see _superseded_by for why the issue time and
+    # not the arrival time is what orders two answers.
+    fetched_at = _now().isoformat()
     payload = await _fetch_index()
     if payload is None:
         return _store(_verdict_dict(STATE_UNKNOWN, __version__, None, None, None), _checked_at)
-    fetched_at = _now().isoformat()
     verdict = _decide(payload, __version__)
-    _write_cache(verdict, fetched_at)
+    if not _superseded_by(fetched_at):
+        # The cache file is checked separately because it is written first, and
+        # a stale write there would outlive the process that declined it.
+        _write_cache(verdict, fetched_at)
     return _store(verdict, fetched_at)
 
 
@@ -794,6 +885,11 @@ def detect_install(available: str | None = None) -> dict:
 
 APPLY_OUTPUT_TAIL_LINES = 40
 
+#: How much of a step's output is read at a time, and the ceiling on how much of
+#: one unterminated line is kept. Not a tuning knob: it exists so the reader
+#: above holds a bounded amount whatever the child writes.
+_STREAM_CHUNK_BYTES = 65536
+
 
 async def apply() -> dict:
     """Run the detected update command. Never called except by an explicit
@@ -916,8 +1012,34 @@ async def _run_step(argv: list[str]) -> tuple[int, str]:
         )
     except Exception as exc:  # noqa: BLE001
         return 127, f"could not run {argv[0]!r}: {exc}"
-    stdout, _ = await process.communicate()
-    return process.returncode or 0, stdout.decode("utf-8", "replace")
+    # bug-383: only the tail is ever returned, so only the tail is held. Reading
+    # the whole stream and slicing afterwards made APPLY_OUTPUT_TAIL_LINES a cap
+    # on the answer and not on the cost of producing it -- a step writing tens of
+    # megabytes was buffered whole to hand back forty lines. The ring is filled
+    # from fixed-size reads rather than readline() because a stream reader raises
+    # on a line longer than its own limit, and a step that writes without
+    # newlines is exactly the case this bound is for.
+    tail: collections.deque = collections.deque(maxlen=APPLY_OUTPUT_TAIL_LINES)
+    pending = b""
+    while True:
+        chunk = await process.stdout.read(_STREAM_CHUNK_BYTES)
+        if not chunk:
+            break
+        pending += chunk
+        if b"\n" in pending:
+            *lines, pending = pending.split(b"\n")
+            tail.extend(lines)
+        elif len(pending) > _STREAM_CHUNK_BYTES:
+            # A single line longer than anything that can be shown. Keeping its
+            # end rather than its start is what the tail means everywhere else
+            # here, and it is what keeps this loop bounded at all.
+            pending = pending[-_STREAM_CHUNK_BYTES:]
+    if pending:
+        tail.append(pending)
+    await process.wait()
+    # Splitting on a newline never lands inside a multi-byte character, so
+    # decoding after the join is the same text as decoding before the split.
+    return process.returncode or 0, b"\n".join(tail).decode("utf-8", "replace")
 
 
 def _public_install(install: dict) -> dict:

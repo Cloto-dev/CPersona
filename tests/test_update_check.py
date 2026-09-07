@@ -30,6 +30,7 @@ import os
 import stat
 import sys
 import time
+import tracemalloc
 
 import httpx
 import pytest
@@ -489,11 +490,28 @@ async def test_a_keyless_caller_is_told_once_per_process(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_told_set_is_bounded(monkeypatch):
     """A client that rotates keys must not grow this without limit; eviction
-    only forgets that a session was told, so the worst case is one repeat."""
+    only forgets that a session was told, so the worst case is one repeat.
+
+    The size bound is half the property. Which key leaves is the other half, and
+    it is the half that decides who gets the repeat: forgetting the oldest costs
+    a second notice to a session that has been quiet, while forgetting the newest
+    costs it to the session that just arrived, over and over as it keeps calling.
+    Asserted here because the size check alone cannot tell the two apart --
+    measured, with eviction reversed, by this test passing anyway (bug-422).
+    """
     await _seed_newer(monkeypatch)
-    for i in range(update_check.NOTICE_SESSION_CAP + 10):
+    overflow = 10
+    for i in range(update_check.NOTICE_SESSION_CAP + overflow):
         update_check.notice(f"s{i}", True)
     assert len(update_check._told_sessions) <= update_check.NOTICE_SESSION_CAP
+    for i in range(overflow):
+        assert f"s{i}" not in update_check._told_sessions, "an evicted key was not the oldest"
+    newest = f"s{update_check.NOTICE_SESSION_CAP + overflow - 1}"
+    assert newest in update_check._told_sessions, "the newest key was the one evicted"
+    # And the consequence, rather than only the container: the newest caller
+    # stays suppressed, the forgotten one is told a second time.
+    assert update_check.notice(newest, True) is None
+    assert update_check.notice("s0", True) is not None
 
 
 @pytest.mark.asyncio
@@ -648,13 +666,29 @@ def test_an_unlocatable_install_is_unknown(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+class _FakeStdout:
+    """The one method `_run_step` uses, with the semantics it relies on.
+
+    `read(n)` returns at most n bytes and an empty bytes object at end of file;
+    the reader is written against that and against nothing else, so the double
+    stays honest by offering only it.
+    """
+
+    def __init__(self, data: bytes):
+        self._data = data
+
+    async def read(self, size: int) -> bytes:
+        chunk, self._data = self._data[:size], self._data[size:]
+        return chunk
+
+
 class _FakeProcess:
     def __init__(self, code, output):
         self.returncode = code
-        self._output = output
+        self.stdout = _FakeStdout(output)
 
-    async def communicate(self):
-        return self._output, b""
+    async def wait(self):
+        return self.returncode
 
 
 def _spy_exec(
@@ -1106,3 +1140,178 @@ def test_the_cache_write_still_lands_at_an_unplanted_path(tmp_path, monkeypatch)
     written = dbdir / update_check.CACHE_FILENAME
     assert json.loads(written.read_text())["fetched_at"] == "2026-01-01T00:00:00+00:00"
     assert stat.S_IMODE(os.stat(written).st_mode) == 0o600
+
+
+# ---------------------------------------------------------------------------
+# What an unusable index costs, and what a slow one may not overwrite
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"meta": {"api-version": "1.1"}, "name": "cpersona", "versions": 3, "files": []},
+        {"meta": {"api-version": "1.1"}, "name": "cpersona", "versions": [RUNNING], "files": 3},
+        # Not a raise, but the same rule: a bare string iterates as characters
+        # and the verdict that falls out reads as a development checkout.
+        {"meta": {"api-version": "1.1"}, "name": "cpersona", "versions": RUNNING, "files": []},
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_index_with_the_wrong_field_types_is_unknown_not_an_exception(monkeypatch, payload):
+    """The module's rule for the fetch holds for the decision too (bug-353).
+
+    A document whose schema changed is an unusable document whatever made it so,
+    and both entry points are reached from places that cannot take an exception:
+    a tool call, and a startup task nothing awaits.
+    """
+    monkeypatch.setattr(update_check, "_transport", _serve(payload))
+    assert (await update_check.refresh())["state"] == update_check.STATE_UNKNOWN
+    update_check._reset()
+    monkeypatch.setattr(update_check, "_transport", _serve(payload))
+    assert (await update_check.run_startup_check())["state"] == update_check.STATE_UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_index_is_refused_without_being_held(monkeypatch):
+    """The deadline bounds time, which is not a bound on bytes (bug-357).
+
+    The body here is valid: nothing but its size is wrong, so every other guard
+    in the module lets it through. Measured rather than asserted structurally,
+    because the property is what the call allocates and not which call it makes.
+    """
+    body = json.dumps(_index([RUNNING] + ["9.9.%d" % i for i in range(400_000)])).encode()
+    assert len(body) > 4 * update_check.MAX_INDEX_BYTES, len(body)
+    monkeypatch.setattr(update_check, "_transport", _serve(None, body=body))
+
+    tracemalloc.start()
+    tracemalloc.reset_peak()
+    base = tracemalloc.get_traced_memory()[0]
+    payload = await update_check._fetch_index()
+    peak = tracemalloc.get_traced_memory()[1] - base
+    tracemalloc.stop()
+
+    assert payload is None
+    assert peak < len(body) // 2, f"held {peak} bytes of a {len(body)}-byte body"
+    assert (await update_check.refresh())["state"] == update_check.STATE_UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_an_index_inside_the_cap_is_still_read(monkeypatch):
+    """The control for the bound above: it refuses size and nothing else."""
+    monkeypatch.setattr(update_check, "_transport", _serve(_index([RUNNING, "2.5.11"])))
+    assert (await update_check.refresh())["available"] == "2.5.11"
+
+
+@pytest.mark.asyncio
+async def test_a_slow_older_answer_does_not_overwrite_a_fresher_one(monkeypatch):
+    """Two fetches in flight at once: the startup task and an explicit refresh.
+
+    The slower of them used to win by finishing last, in memory and in the cache
+    file, so the server went on reporting the older answer for up to a day
+    (bug-375). Ordering is by when each fetch was issued, which is the only order
+    in which "older" means anything.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = {"n": 0}
+
+    async def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:  # the startup fetch: issued first, answered last
+            started.set()
+            await release.wait()
+            return httpx.Response(200, json=_index([RUNNING, "2.5.11"]))
+        return httpx.Response(200, json=_index([RUNNING, "2.6.0"]))
+
+    monkeypatch.setattr(update_check, "_transport", httpx.MockTransport(handler))
+    startup = asyncio.create_task(update_check.run_startup_check())
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    assert (await update_check.refresh())["available"] == "2.6.0"
+    release.set()
+    await asyncio.wait_for(startup, timeout=2)
+
+    assert update_check.current()["available"] == "2.6.0"
+    cached = json.loads(open(update_check.cache_path(), encoding="utf-8").read())
+    assert cached["verdict"]["available"] == "2.6.0", cached["verdict"]
+
+
+@pytest.mark.asyncio
+async def test_apply_holds_only_the_tail_it_returns(monkeypatch):
+    """APPLY_OUTPUT_TAIL_LINES capped the answer and not the cost of it (bug-383).
+
+    A real child process, because the property is in how its stream is read: the
+    step writes tens of megabytes and apply must come back with forty lines
+    without ever having held the rest.
+    """
+    lines, line = 300_000, "x" * 100
+    script = (
+        "import sys\n"
+        f"line = {line!r} + chr(10)\n"
+        f"sys.stdout.write(line * {lines})\n"
+    )
+    step = [sys.executable, "-c", script]
+    emitted = (len(line) + 1) * lines
+
+    monkeypatch.setattr(
+        update_check,
+        "current",
+        lambda: {"state": update_check.STATE_NEWER, "running": RUNNING, "available": "2.5.11"},
+    )
+    monkeypatch.setattr(
+        update_check,
+        "detect_install",
+        lambda available=None: {
+            "method": update_check.METHOD_PIP,
+            "command": "pip install --upgrade cpersona",
+            "argv_steps": [step],
+            "note": "",
+            "restart_required": True,
+        },
+    )
+
+    tracemalloc.start()
+    tracemalloc.reset_peak()
+    base = tracemalloc.get_traced_memory()[0]
+    result = await update_check.apply()
+    peak = tracemalloc.get_traced_memory()[1] - base
+    tracemalloc.stop()
+
+    assert result["applied"] is True, result
+    assert len(result["output_tail"]) <= update_check.APPLY_OUTPUT_TAIL_LINES
+    assert peak < emitted // 10, f"held {peak} bytes of a {emitted}-byte stream"
+
+
+@pytest.mark.asyncio
+async def test_a_step_that_never_writes_a_newline_is_still_bounded(monkeypatch):
+    """The other half of the ring: output with no line to split on.
+
+    Reading by lines would either raise on a line past the reader's own limit or
+    grow without one, so the unterminated case is the one the bound is for.
+    """
+    size = 4_000_000
+    script = f"import sys\nsys.stdout.write('y' * {size})\n"
+    step = [sys.executable, "-c", script]
+
+    monkeypatch.setattr(
+        update_check,
+        "current",
+        lambda: {"state": update_check.STATE_NEWER, "running": RUNNING, "available": "2.5.11"},
+    )
+    monkeypatch.setattr(
+        update_check,
+        "detect_install",
+        lambda available=None: {
+            "method": update_check.METHOD_PIP,
+            "command": "pip install --upgrade cpersona",
+            "argv_steps": [step],
+            "note": "",
+            "restart_required": True,
+        },
+    )
+
+    result = await update_check.apply()
+    assert result["applied"] is True, result
+    held = sum(len(line) for line in result["output_tail"])
+    assert held < size // 2, f"held {held} bytes of a {size}-byte unterminated line"

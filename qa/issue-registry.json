@@ -5152,12 +5152,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/update_check.py",
-      "pattern": "for raw in payload\\.get\\(\"versions\"\\) or \\[\\]:",
+      "pattern": "if not isinstance\\(versions, list\\) or not isinstance\\(raw_files, list\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "error-handling",
-      "fix_sketch": "Type-check the two fields on entry and answer unknown when they are not lists, or widen the exception boundary to cover the decision as well as the fetch -- the module already rules that an unusable document is an unusable document whatever made it so."
+      "fix_sketch": "Type-check the two fields on entry and answer unknown when they are not lists, or widen the exception boundary to cover the decision as well as the fetch -- the module already rules that an unusable document is an unusable document whatever made it so.",
+      "fix_note": "The decision now checks the two fields it iterates and answers unknown when either is not a list, which is the rule the module already states for the fetch: a document whose schema changed gets the same answer as an outage. Those two are the only shapes the function took on trust -- both parse helpers already refuse a non-string. The check also fixes a case that never raised: a bare string for versions iterates as characters and produced an unlisted verdict, which reads as a development checkout rather than as an index nobody can read. Pinned in tests/test_update_check.py over both entry points and all three shapes."
     },
     {
       "id": "bug-354",
@@ -5209,13 +5211,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/update_check.py",
-      "pattern": "payload = response\\.json\\(\\)",
+      "pattern": "MAX_INDEX_BYTES = 1024 \\* 1024",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "unbounded-receive",
       "fix_sketch": "Stream the body and abort past a cap, the way the metadata fetch on the authentication path now does, and answer unknown on refusal -- silence is already the contract for an unusable index.",
-      "note": "Same shape as bug-297 (fixed) and bug-298 on their own fetch paths; this is the third receive path in the package and the fix pattern is already written."
+      "note": "Same shape as bug-297 (fixed) and bug-298 on their own fetch paths; this is the third receive path in the package and the fix pattern is already written.",
+      "fix_note": "The fetch reads the body as a bounded stream and stops past MAX_INDEX_BYTES, the shape already used on the key-set fetch, and a declared Content-Length over the cap is refused before any read. The declared length is consulted only to refuse earlier, never to admit: a body that announces nothing, or lies low, still meets the running total. The cap comes from measurement rather than taste -- the URL is pinned to one package whose own index measured 60,089 bytes, while a decade-old project index measures a few megabytes -- so a mebibyte is about seventeen times todays document, and reaching it costs a notice rather than a failure because an unusable index already answers unknown."
     },
     {
       "id": "bug-358",
@@ -5470,12 +5474,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/update_check.py",
-      "pattern": "    return _store\\(verdict, fetched_at\\)",
+      "pattern": "if _superseded_by\\(fetched_at\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
-      "fix_sketch": "Compare the fetch time against the stored one and keep the newer verdict, so a slow response cannot overwrite a fresher answer that arrived while it was in flight."
+      "fix_sketch": "Compare the fetch time against the stored one and keep the newer verdict, so a slow response cannot overwrite a fresher answer that arrived while it was in flight.",
+      "fix_note": "A verdict is stored only when no fresher answer landed while this fetch was in flight, and the same check guards the cache file, which is written first and would otherwise outlive the process that declined it. The ordering key moved from when a response arrived to when its fetch was issued: stamping on arrival makes the slower answer look like the newer one, which is exactly backwards. An unparseable stamp orders as not superseded, because a stamp this module did not write can only come from a cache file and refusing on it would freeze the verdict rather than correct it."
     },
     {
       "id": "bug-376",
@@ -5585,12 +5591,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/update_check.py",
-      "pattern": "stdout, _ = await process\\.communicate\\(\\)",
+      "pattern": "tail: collections\\.deque = collections\\.deque\\(maxlen=APPLY_OUTPUT_TAIL_LINES\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
-      "fix_sketch": "Read the stream line by line into a bounded ring of the tail length, so the cap describes what is held rather than what is returned."
+      "fix_sketch": "Read the stream line by line into a bounded ring of the tail length, so the cap describes what is held rather than what is returned.",
+      "fix_note": "The step output is read in fixed-size chunks into a ring of the tail length instead of being buffered whole and sliced afterwards, so the cap describes what is held and not only what is returned. Fixed-size reads rather than readline because a stream reader raises on a line longer than its own limit and a step that writes without newlines is exactly the case the bound is for; an unterminated run keeps its end and not its start, which is what tail means everywhere else here. The process double in the tests grew the stdout reader the real one has, since it had only ever offered communicate."
     },
     {
       "id": "bug-384",
@@ -6135,12 +6143,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/update_check.py",
-      "pattern": "_told_sessions\\.pop\\(next\\(iter\\(_told_sessions\\)\\)\\)",
+      "fixed_in": "2.5.12b3",
+      "file": "tests/test_update_check.py",
+      "pattern": "assert newest in update_check\\._told_sessions",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-teeth",
-      "fix_sketch": "Extend the bound test to assert which keys survive: after overflowing the cap, the first-inserted key is gone and the most recent one is still suppressed."
+      "fix_sketch": "Extend the bound test to assert which keys survive: after overflowing the cap, the first-inserted key is gone and the most recent one is still suppressed.",
+      "fix_note": "The bound test now asserts which keys survive rather than only how many: after overflowing the cap the first-inserted keys are gone, the most recent one is still suppressed, and the forgotten one receives its second notice. Size alone could not tell oldest-first eviction from newest-first, and the two differ in who pays the repeat -- a quiet session once, or the session that just arrived, on every call it makes."
     },
     {
       "id": "bug-423",
