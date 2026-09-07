@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -78,6 +79,17 @@ def load_config(path: pathlib.Path) -> dict:
     for version in versions:
         if not version.get("branch"):
             raise BuildError(f"{path}: version {version['id']} declares no branch")
+        # The selector receives the version list as one delimited string, so a
+        # delimiter inside a field would not corrupt the string visibly -- it
+        # would silently split one entry into two, or drop the rest of a row.
+        # Refused here, where the message can name the field.
+        for field in ("id", "title"):
+            value = str(version.get(field, ""))
+            if ";" in value or "|" in value:
+                raise BuildError(
+                    f"{path}: version {version['id']} has {field}={value!r}, which contains a "
+                    "delimiter the version list is joined with (';' or '|')"
+                )
 
     current = data.get("current")
     if current not in ids:
@@ -150,7 +162,37 @@ def resolve_ref(branch: str) -> str:
     )
 
 
-def build_tree(source: pathlib.Path, out: pathlib.Path, site_url: str) -> None:
+def version_list(config: dict, here: str) -> str:
+    """The version list as the selector reads it: "id|title|flag;id|title|flag".
+
+    A string rather than JSON because it crosses into the build through the
+    environment, and the template that reads it has no JSON parser -- mkdocs
+    ships tojson, not fromjson. load_config refuses a delimiter inside either
+    field, which is the only thing that could corrupt this quietly.
+
+    Which version the build is travels in the third field rather than in a
+    variable of its own, because mkdocs parses an environment value as YAML: a
+    bare "2.5" would arrive as the float 2.5 and never equal the string "2.5".
+    That failure is invisible -- the selector renders, the links work, and only
+    the marker saying where the reader is goes missing. The delimiters keep this
+    whole string un-numeric, so it arrives as text.
+    """
+    return ";".join(
+        "{}|{}|{}".format(
+            version["id"],
+            version.get("title", version["id"]),
+            "here" if version["id"] == here else "",
+        )
+        for version in config["versions"]
+    )
+
+
+def build_tree(
+    source: pathlib.Path,
+    out: pathlib.Path,
+    site_url: str,
+    version_env: dict[str, str] | None = None,
+) -> None:
     script = source / BUILD_SCRIPT
     if not script.is_file():
         raise BuildError(
@@ -160,7 +202,9 @@ def build_tree(source: pathlib.Path, out: pathlib.Path, site_url: str) -> None:
             f"branch or drop the line from {CONFIG_PATH.name}."
         )
     out.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["bash", str(script), str(out), site_url], cwd=source, check=True)
+    env = dict(os.environ)
+    env.update(version_env or {})
+    subprocess.run(["bash", str(script), str(out), site_url], cwd=source, check=True, env=env)
 
 
 def write_manifest(out: pathlib.Path, config: dict) -> None:
@@ -212,13 +256,27 @@ def assemble(config: dict, out: pathlib.Path, as_branch: str | None = None) -> l
             # The root is built first. mkdocs empties its target directory, and
             # the root's target is the parent of every version subtree, so any
             # other order deletes what it just built.
+            def version_env(identifier: str) -> dict[str, str]:
+                # The root build is told it is the current line, because that is
+                # the line it serves: a reader at the root should be shown which
+                # version they are reading, not an empty marker.
+                return {
+                    "CPERSONA_DOC_VERSIONS": version_list(config, identifier),
+                    "CPERSONA_DOC_SITE_ROOT": base,
+                }
+
             root_source = sources[current]
-            build_tree(root_source, out, base)
+            build_tree(root_source, out, base, version_env(current))
             built.append(f"(root) <- {current}")
 
             for version in config["versions"]:
                 identifier = version["id"]
-                build_tree(sources[identifier], out / identifier, f"{base}{identifier}/")
+                build_tree(
+                    sources[identifier],
+                    out / identifier,
+                    f"{base}{identifier}/",
+                    version_env(identifier),
+                )
                 built.append(f"{identifier}/ <- {version['branch']}")
 
             write_manifest(out, config)

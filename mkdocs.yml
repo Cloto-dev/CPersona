@@ -116,6 +116,36 @@ plugins:
 # Sidebar sub-category labels only. Kept as a stylesheet rather than an
 # override so that the theme keeps owning the markup — this file changes one
 # colour, and records why the level above it is left to the theme.
+# Version context for the selector rendered in overrides/main.html.
+#
+# Read from the environment because the assembler builds each line from its own
+# branch, and only it knows the whole set -- a branch cannot see the lines beside
+# it, and the file that lists them lives on whichever branch drives the assembly.
+#
+# Material's own version selector is deliberately not enabled (setting
+# extra.version would turn it on): it derives its base from the last path segment
+# of the URL, so under /2.5/ja/ it reads "ja" as a version name and fetches a
+# versions.json that is not there.
+#
+# All three default to empty, which renders no selector at all -- what a plain
+# `mkdocs build` and `mkdocs serve` get, since neither can produce working
+# cross-version links anyway.
+extra:
+  # id|title|flag, separated by ";" -- e.g. "2.5|2.5.x|here;2.6|2.6.x|"
+  #
+  # Which version this build is travels inside this string rather than in an
+  # environment variable of its own, because !ENV parses what it reads as YAML:
+  # a bare "2.5" arrives as the float 2.5, and comparing it to the string "2.5"
+  # is false forever. The selector still rendered and its links still worked --
+  # only the marker saying which version you were reading went missing, which no
+  # gate would have caught. Delimiters keep the whole string un-numeric, so it
+  # arrives as text.
+  doc_versions: !ENV [CPERSONA_DOC_VERSIONS, ""]
+  # Absolute root of the published site. Passed rather than derived from
+  # site_url: this tree is built both at the root and under its version path, so
+  # deriving would need a second, private theory of the URL layout.
+  doc_site_root: !ENV [CPERSONA_DOC_SITE_ROOT, ""]
+
 extra_css:
   - stylesheets/extra.css
 
