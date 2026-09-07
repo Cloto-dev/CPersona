@@ -402,3 +402,107 @@ async def test_episode_index_never_hides_a_row_the_authority_admits(indexed_epis
     assert not misses, "the episode index hid rows the authority admits:\n  " + "\n  ".join(misses)
     assert covered > 500, f"the axis matrix admitted only {covered} rows in total"
     assert narrowed > 0, "no combination excluded anything; the property is vacuous"
+
+
+# ---------------------------------------------------------------------------
+# bug-402 — the index path's top-`limit` cut and its tie-break were never run.
+#
+# Every case above searches with a limit wider than the fixture's surviving
+# episode set, so `limit < len(survivors)` is false on every call and the cut is
+# disabled by construction. A line-level trace over the whole suite recorded the
+# four lines as never executed, while the identical memory-scan twin is both run
+# and pinned by an independent oracle. Inverting the tie-break, or dropping the
+# re-sort into scan order, changes which row the index keeps at the cut boundary
+# and the suite stays green.
+#
+# The oracle is the same one the cases above use: the same query with the
+# episode index removed. What makes this case bite is only the limit.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("limit", [2, 3, 5])
+@pytest.mark.asyncio
+async def test_the_episode_index_cut_keeps_what_the_scan_keeps(corpus, taken, limit):
+    """A limit narrower than the surviving EPISODE set, over episodes tied on cosine.
+
+    The first draft of this reused the shared corpus and simply narrowed the limit;
+    both mutants survived it. Memories are scanned first and win every tie, so a
+    narrow limit fills with memories and the episode assertions go vacuous -- which
+    is the same reason every case above searches wide. This agent owns episodes and
+    no memories, so the cut boundary falls between two equal episode scores and the
+    tie-break is the only thing that decides which one survives it.
+    """
+    agent = "epindex.cut.agent"
+    for n in range(8):
+        await _episode(
+            corpus, f"{TOPIC} tied episode {n}",
+            created_at=f"2026-02-20 00:00:{n:02d}",
+            agent_id=agent, embedding=_SHARED,
+            start_time=None if n % 2 else "2026-02-20T12:00:00+00:00",
+            resolved=n % 2,
+        )
+    await corpus.commit()
+
+    async def _search_narrow():
+        return await vector._search_vector(corpus, agent, TOPIC, limit, min_similarity=-1.0)
+
+    expected = await _search_narrow()
+    assert len(expected) == limit, expected
+    assert all(r.get("_rid", ("", 0))[0] == "ep" for r in expected), expected
+    assert taken["episodes"] == 0, "the baseline must come from the live scan"
+
+    assert (await vector_index.build_index(corpus, "episodes"))["built"]
+    actual = await _search_narrow()
+    assert taken["episodes"] == 1, "the episode index path was not taken"
+    assert actual == expected, (
+        f"[limit={limit}] the episode index resolved the cut differently from the scan: "
+        f"index kept {[r['id'] for r in actual]}, the scan kept {[r['id'] for r in expected]}"
+    )
+
+
+@pytest.mark.parametrize("limit", [2, 3, 5])
+@pytest.mark.asyncio
+async def test_the_episode_index_hands_its_survivors_back_in_scan_order(corpus, limit):
+    """The second half of the cut: the kept indices are re-sorted into scan order.
+
+    Dropping that re-sort is invisible at the `_search_vector` level, because the
+    fusion re-ranks by score and a tie-break keyed on `-i` already hands ties back
+    ascending. It is observable exactly where the memory-scan twin's oracle looks
+    (tests/test_bug249_two_phase_scan.py) -- at the candidate list this function
+    returns -- and only when the kept set is NOT already in index order, which
+    needs scores that differ. So the episodes here are deliberately not all tied.
+
+    Only the widest limit here actually splits the kept set out of index order --
+    the narrower two keep a prefix that is already in it, and are kept because a
+    cut that is a no-op is still a cut this path has to get right.
+    """
+    agent = "epindex.order.agent"
+    # Scan order is created_at DESC, so episode 7 is scanned first. The HIGH
+    # scorers are the oldest, which puts `nlargest` output in descending index
+    # order -- the one shape where re-sorting into scan order changes the list.
+    for n in range(8):
+        await _episode(
+            corpus, f"{TOPIC} ordered episode {n}",
+            created_at=f"2026-02-22 00:00:{n:02d}",
+            agent_id=agent,
+            embedding=_SHARED if n < 4 else fake_embed_one(f"unrelated {n}"),
+        )
+    await corpus.commit()
+    assert (await vector_index.build_index(corpus, "episodes"))["built"]
+
+    iso = isolation_where(agent_id=agent, project_id=None, channel="")
+    query_vec = np.array(_SHARED, dtype=np.float32)
+    candidates = await vector._scan_episodes_local(
+        corpus, iso, 100, query_vec, len(query_vec), -1.0, "", "",
+        limit=limit, agent_id=agent,
+    )
+    assert len(candidates) == limit, candidates
+
+    stamps = await corpus.execute_fetchall(
+        "SELECT id, created_at FROM episodes WHERE agent_id = ? ORDER BY created_at DESC, id ASC",
+        (agent,),
+    )
+    scan_order = [row[0] for row in stamps]
+    kept = [item["id"] for _score, item in candidates]
+    assert kept == sorted(kept, key=scan_order.index), (
+        "the index path returned its survivors in score order; the scan returns them "
+        f"in scan order, and the two lists are then compared row for row: {kept}"
+    )

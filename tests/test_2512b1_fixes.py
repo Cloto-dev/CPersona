@@ -196,7 +196,7 @@ class _StubHTTP:
         self._failure = failure
         self.calls = 0
 
-    async def post(self, url, json=None):
+    async def post(self, url, json=None, timeout=None):
         self.calls += 1
         if self.calls == 1:
             return _StubResponse(200)
@@ -245,7 +245,7 @@ async def test_a_fully_successful_push_says_nothing(monkeypatch, caplog):
     class _AllGood:
         calls = 0
 
-        async def post(self, url, json=None):
+        async def post(self, url, json=None, timeout=None):
             _AllGood.calls += 1
             return _StubResponse(200)
 
