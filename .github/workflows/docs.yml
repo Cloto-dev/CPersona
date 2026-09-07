@@ -53,13 +53,36 @@ on:
       - "docs-versions.json"
       - "scripts/build-all-versions.py"
       - "scripts/build-docs.sh"
+  # A line's documentation is whatever its branch holds, so a branch other than
+  # this one can change what this site should publish without producing any
+  # event here. Nothing in a push to master can observe that, which is why
+  # publishing also runs on a clock and on demand.
+  #
+  # Scheduled runs only ever run on the default branch, so the ref is always
+  # master -- the one branch the Pages environment accepts a deployment from.
+  # That is not a coincidence to lean on silently: it is the reason publishing
+  # is driven from here rather than from whichever branch changed.
+  #
+  # Timed well before the published-site check at 06:17 so that check verifies
+  # this run's output instead of racing it.
+  schedule:
+    - cron: "41 3 * * *"
+  # For when waiting for the clock is not acceptable, which is usually a
+  # correction to a released line. Run it against master: run against any other
+  # branch it builds the same trees and then cannot deploy them.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: docs-${{ github.ref }}
-  cancel-in-progress: true
+  # A superseded review build is worth cancelling; a superseded publish is not.
+  # Every publishing event resolves to the same ref and so shares one group, and
+  # cancelling there reproduces precisely the failure the published-site check
+  # was written for: a deploy cancelled by a run that does not replace it, after
+  # which nothing retries and nothing reports. Publishes queue instead.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -175,7 +198,11 @@ jobs:
           --out public
           --as-branch "${{ github.base_ref || github.ref_name }}"
       - name: Upload Pages artifact
-        if: github.event_name == 'push'
+        # Everything that is not a review publishes: a push, the daily run, and a
+        # manual dispatch. This condition and the deploy job's have to be widened
+        # together -- widen one only and the run is green while nothing reaches
+        # the site.
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: public/
@@ -279,7 +306,8 @@ jobs:
           git push
 
   deploy:
-    if: github.event_name == 'push'
+    # Kept in step with the artifact upload above; see the note there.
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:
