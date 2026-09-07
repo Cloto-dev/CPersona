@@ -25,6 +25,18 @@ import pytest
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_ROOT / "docs-versions.json"
 MKDOCS_PATH = REPO_ROOT / "mkdocs.yml"
+WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "docs.yml"
+
+
+def _workflow_text() -> str:
+    """The workflow as text.
+
+    Read textually rather than parsed, for the same reason the documentation
+    index check reads mkdocs.yml that way: a YAML loader is not a dependency of
+    this suite, and adding one to assert three strings would make the assertion
+    the reason for the dependency.
+    """
+    return WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
 def _assembler():
@@ -117,3 +129,63 @@ def test_a_version_id_cannot_escape_its_directory(tmp_path):
     )
     with pytest.raises(assembler.BuildError, match="path segment"):
         assembler.load_config(bad)
+
+
+def test_the_two_publishing_conditions_stay_identical():
+    """The artifact upload and the deploy job must gate on the same events.
+
+    They are the pair that can disagree silently. Widen one and not the other and
+    every job is green while nothing reaches the site -- the deploy runs with no
+    artifact, or the artifact is built for a run that never deploys. Neither
+    shows up as a failure, which is why the agreement is pinned here instead of
+    being left to whoever edits one of them next.
+    """
+    conditions = re.findall(
+        r"^\s*if: (github\.event_name [!=]= 'pull_request')\s*$", _workflow_text(), re.M
+    )
+    assert len(conditions) == 2, f"expected two publishing conditions, found {conditions}"
+    assert conditions[0] == conditions[1], conditions
+
+
+def test_what_the_assembler_writes_is_what_gets_published():
+    """The directory the assembly step writes is the one the upload step reads.
+
+    Two independent strings in the same file naming the same directory. If they
+    drift, the upload publishes an empty or stale path and the run stays green,
+    so the site keeps serving whatever it served before with nothing saying why.
+    """
+    text = _workflow_text()
+    written = re.search(r"build-all-versions\.py\s*\n?\s*--out (?P<dir>\S+)", text)
+    uploaded = re.search(r"upload-pages-artifact@v3.*?\n\s*with:\s*\n\s*path: (?P<dir>\S+)", text, re.S)
+    assert written, "the assembly step no longer passes --out"
+    assert uploaded, "the upload step no longer declares a path"
+    assert written.group("dir") == uploaded.group("dir").rstrip("/")
+
+
+def test_publishing_is_not_only_driven_by_pushes_to_this_branch():
+    """A change on another line's branch produces no event here.
+
+    Without a clock and a manual trigger, a correction to a released line would
+    sit unpublished until something unrelated happened to touch a path on this
+    branch. Both triggers are load-bearing rather than conveniences, so removing
+    either is a behaviour change and should have to be deliberate.
+    """
+    text = _workflow_text()
+    assert re.search(r"^  schedule:\s*$", text, re.M), "the daily publish is gone"
+    assert re.search(r"^  workflow_dispatch:\s*$", text, re.M), "the manual publish is gone"
+
+
+def test_a_superseded_publish_is_not_cancelled():
+    """Only review builds cancel their predecessors.
+
+    Publishing events all resolve to the same ref and share one concurrency
+    group. Cancelling there is the failure the published-site check exists to
+    catch: a deploy cancelled by a run that does not replace it, after which
+    nothing retries and nothing reports.
+    """
+    text = _workflow_text()
+    match = re.search(r"^\s*cancel-in-progress: (?P<value>.+)$", text, re.M)
+    assert match, "the concurrency block no longer says what it cancels"
+    assert "pull_request" in match.group("value"), (
+        f"cancel-in-progress is {match.group('value')!r}: publishes cancel each other again"
+    )
