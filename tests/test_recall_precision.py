@@ -20,6 +20,7 @@ from cpersona import admin_handlers # noqa: E402
 from cpersona import config # noqa: E402
 from cpersona import session # noqa: E402
 from cpersona import vector # noqa: E402
+from cpersona.database import get_db # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -264,3 +265,85 @@ async def test_get_precision_is_read_only_under_no_persist(monkeypatch):
     res = await admin_handlers.do_get_recall_precision("nobody")
     assert res["ok"] is True
     assert vector._agent_betas == {}  # pure read, no override created
+
+
+# ---- the read side: a tuned agent's gate reaching a recall ----------------------
+#
+# bug-404: everything above exercises the write side and the sidecar round-trip in
+# full, and `_clear()` empties the table before every one of them -- so the only
+# production reader of a per-agent gate (memory_handlers, on the recall path) was
+# never fed a per-agent value. A line-level trace over the whole suite recorded
+# `return _agent_fused_gates[agent_id]` as never executed, and replacing the body
+# with `return _global_fused_gate` -- which deletes per-agent precision from the
+# read path -- left the suite green.
+
+
+@pytest.mark.asyncio
+async def test_a_tuned_agent_reaches_the_gate_with_its_own_value(monkeypatch, fake_embedding_client):
+    """Two agents, one corpus each, one query, and the value each recall carries into
+    the quality gate. The assertion is the difference between the two, so a reader
+    that ignores the per-agent table cannot satisfy it by returning a constant.
+
+    Observed at the seam the gate is handed to rather than at the rows that survive
+    it: under this suite's pinned mode=none the candidates come back from the lexical
+    cascade unscored, and an unscored row is not something a post-fusion gate filters.
+    The defect is a per-agent value never reaching the read path, and this is where
+    it would arrive.
+    """
+    from cpersona import memory_handlers
+
+    tuned, untuned = "precision.tuned", "precision.untuned"
+    db = await get_db()
+    for agent in (tuned, untuned):
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+    await db.commit()
+    for agent in (tuned, untuned):
+        await memory_handlers.do_store(
+            agent, {"content": "the deployment plan was approved on Friday"}
+        )
+
+    monkeypatch.setattr(config, "FUSED_GATE_ENABLED", True)
+    monkeypatch.setattr(vector, "_fused_gate_signal", "rrf")
+    monkeypatch.setattr(vector, "_global_fused_gate", 0.11)
+    monkeypatch.setattr(vector, "_agent_fused_gates", {tuned: 0.77})
+
+    seen = []
+    real_gate = memory_handlers._apply_quality_gate
+
+    def spy(results, *args, **kwargs):
+        seen.append(kwargs.get("gate"))
+        return real_gate(results, *args, **kwargs)
+
+    monkeypatch.setattr(memory_handlers, "_apply_quality_gate", spy)
+
+    await memory_handlers.do_recall(tuned, "deployment plan", limit=5)
+    await memory_handlers.do_recall(untuned, "deployment plan", limit=5)
+
+    assert seen == [0.77, 0.11], (
+        "the recall path did not carry the tuned agent's own gate: the per-agent table "
+        f"holds 0.77 for it and the global is 0.11, and the gate saw {seen}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_deep_relaxes_the_per_agent_gate_the_way_it_relaxes_the_global_one(
+    monkeypatch, fake_embedding_client
+):
+    """The one arithmetic on the value between the table and the gate."""
+    from cpersona import memory_handlers
+
+    agent = "precision.deep"
+    monkeypatch.setattr(config, "FUSED_GATE_ENABLED", True)
+    monkeypatch.setattr(vector, "_fused_gate_signal", "rrf")
+    monkeypatch.setattr(vector, "_agent_fused_gates", {agent: 0.8})
+
+    seen = []
+    real_gate = memory_handlers._apply_quality_gate
+
+    def spy(results, *args, **kwargs):
+        seen.append(kwargs.get("gate"))
+        return real_gate(results, *args, **kwargs)
+
+    monkeypatch.setattr(memory_handlers, "_apply_quality_gate", spy)
+    await memory_handlers.do_recall(agent, "anything at all", limit=5, deep=True)
+    assert seen == [0.4], seen

@@ -4603,12 +4603,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/vector.py",
-      "pattern": "t_created = tail\\[j\\]\\[1\\]\\.encode\\(\"ascii\"\\)",
+      "pattern": "t_created = tail\\[j\\]\\[1\\]\\.encode\\(\"utf-8\", \"replace\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "fail-closed-on-read-path",
-      "fix_sketch": "Encode with a total codec (errors are not exceptional here, the value is a sort key) and extend the guard that already wraps the lost-embedding probe over the tail read and the merge, so any surprise on this path degrades to the live scan instead of failing the call."
+      "fix_sketch": "Encode with a total codec (errors are not exceptional here, the value is a sort key) and extend the guard that already wraps the lost-embedding probe over the tail read and the merge, so any surprise on this path degrades to the live scan instead of failing the call.",
+      "fix_note": "The sort key is encoded with a total codec, and the tail read and merge now sit inside the same fallback guard as the rest of the phase. utf-8 agrees with ASCII on every byte of a canonical stamp so no row already served moves, and a surprise on the one path that reads the rows the index deliberately excluded degrades to the live scan the module promises instead of escaping into recall."
     },
     {
       "id": "bug-317",
@@ -4792,7 +4794,8 @@
       "expected": "present",
       "status": "open",
       "category": "resource-budget",
-      "fix_sketch": "Score the window in chunks on this path too, the way the SQL scan already does, so the accelerated path inherits the bound rather than re-introducing the peak the chunked scan exists to remove; the gather temporary disappears with it."
+      "fix_sketch": "Score the window in chunks on this path too, the way the SQL scan already does, so the accelerated path inherits the bound rather than re-introducing the peak the chunked scan exists to remove; the gather temporary disappears with it.",
+      "note": "Half fixed in 2.5.12b2, and left open deliberately. The gather temporary is gone: the block gather writes the same bytes into the same slots, measured bit-identical, and drops the traced peak from 2.00x the window to 1.10x. The other half -- scoring the window in chunks -- is NOT a fix-release change. _cosine_matrix states the invariant the equivalence gate's meaning rests on: every path reaches that one call with the same bytes in the same shape. Chunking changes the shape, so it re-decides the exactness the index path is built on, and belongs with whoever owns the scoring path. Until then the matrix itself is still window-sized, so the design note's claim that memory here does not grow with the reach still overstates this path."
     },
     {
       "id": "bug-330",
@@ -4800,13 +4803,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/vector.py",
-      "pattern": "json=\\{\"namespace\": f\"cpersona:\\{agent_id\\}\", \"items\": chunk\\}",
+      "pattern": "timeout=REMOTE_INDEX_TIMEOUT_SECS,",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "unbounded-remote-call",
       "fix_sketch": "Pass the same index timeout the single-item push uses, and consider a whole-loop budget as well, since a chunk count taken from the caller's row count multiplies whatever per-chunk deadline is chosen.",
-      "note": "The test double for this path accepts no timeout keyword, so it would raise if production started passing one -- worth updating in the same change, or the fix cannot be tested through it."
+      "note": "The test double for this path accepts no timeout keyword, so it would raise if production started passing one -- worth updating in the same change, or the fix cannot be tested through it.",
+      "fix_note": "The bulk push states the same deadline the single-item push to the same endpoint already names, instead of inheriting the embedding client 30s default across every chunk of a serial loop. Two test doubles that refused the keyword were widened in the same change, and two recording assertions now pin the value rather than its presence."
     },
     {
       "id": "bug-331",
@@ -4845,12 +4850,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/vector.py",
-      "pattern": "for hit in data\\.get\\(\"results\", \\[\\]\\)",
+      "pattern": "if not isinstance\\(data, dict\\) or \"results\" not in data:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "fallback-contract",
-      "fix_sketch": "Require the key: a body without it is unusable, so return None and let the caller fall back and log, keeping the authoritative empty answer for a body that actually says results are empty."
+      "fix_sketch": "Require the key: a body without it is unusable, so return None and let the caller fall back and log, keeping the authoritative empty answer for a body that actually says results are empty.",
+      "fix_note": "A body that never mentions results is unusable, so the branch returns None and the caller falls back and logs. The authoritative empty answer is kept for a body that actually says results are empty, which is the distinction this function contract rests on."
     },
     {
       "id": "bug-334",
@@ -4858,12 +4865,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/vector.py",
-      "pattern": "far_out\\.extend\\(await _search_vector_far\\(",
+      "pattern": "near_rids = \\{row\\[\"_rid\"\\] for _score, row in top_k if \"_rid\" in row\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
-      "fix_sketch": "Read both windows inside one read scope so they see a single snapshot, or take the far window by explicit id exclusion rather than by offset, so a shifted position cannot put the same row on both lists."
+      "fix_sketch": "Read both windows inside one read scope so they see a single snapshot, or take the far window by explicit id exclusion rather than by offset, so a shifted position cannot put the same row on both lists.",
+      "fix_note": "Disjointness by position is the reason the far list needs no de-duplicating pass, and it is exactly the premise a commit between the two reads breaks. The far list now drops any row the near list is already returning, keyed on the same row identity the fusion itself uses, and says so at warning level so the shifted-window case is visible rather than inferred from a strange ranking."
     },
     {
       "id": "bug-335",
@@ -5832,12 +5841,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/vector.py",
-      "pattern": "if limit is not None and limit < len\\(survivors\\):",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_vector_index_episodes.py",
+      "pattern": "async def test_the_episode_index_cut_keeps_what_the_scan_keeps",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "fix_sketch": "Add an episode-index equivalence case whose surviving set is larger than the requested limit, with two episodes tied on cosine at the boundary, asserting the index result equals the scan result row for row."
+      "fix_sketch": "Add an episode-index equivalence case whose surviving set is larger than the requested limit, with two episodes tied on cosine at the boundary, asserting the index result equals the scan result row for row.",
+      "fix_note": "Two cases, over an agent that owns episodes and no memories so the cut boundary falls between two equal episode scores. The first draft reused the shared corpus and simply narrowed the limit, and both mutants survived it because memories win every tie and the episode assertions went vacuous. Measured on the rewrite: inverting the tie-break turns the first case red, and dropping the re-sort into scan order turns the second red."
     },
     {
       "id": "bug-403",
@@ -5860,12 +5871,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/vector.py",
-      "pattern": "return _agent_fused_gates\\[agent_id\\]",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_recall_precision.py",
+      "pattern": "async def test_a_tuned_agent_reaches_the_gate_with_its_own_value",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "fix_sketch": "Add a case that sets a per-agent precision, then drives `do_recall` for that agent and for a second untuned agent on the same corpus, asserting the two get different gates applied."
+      "fix_sketch": "Add a case that sets a per-agent precision, then drives `do_recall` for that agent and for a second untuned agent on the same corpus, asserting the two get different gates applied.",
+      "fix_note": "Two agents, one query, and the value each recall carries into the quality gate, plus the deep relaxation applied to it. Observed at the seam the gate is handed to rather than at the surviving rows: under the pinned mode of this suite the candidates come back unscored from the lexical cascade, which a post-fusion gate does not filter. Measured: replacing the per-agent read with the global one turns both cases red."
     },
     {
       "id": "bug-405",
@@ -6042,12 +6055,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/vector.py",
-      "pattern": "WHERE id IN \\(\\{ph\\}\\) AND \\+agent_id = \\?",
+      "pattern": "bug-417: a test pins that plan for the RANGE form only",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-teeth",
-      "fix_sketch": "Give the chunked form a plan assertion that fails without the plus (a corpus and statistics where the isolation index looks selective), or narrow the comment to the range form so it stops claiming coverage that does not exist."
+      "fix_sketch": "Give the chunked form a plan assertion that fails without the plus (a corpus and statistics where the isolation index looks selective), or narrow the comment to the range form so it stops claiming coverage that does not exist.",
+      "fix_note": "The comment is narrowed to the form a test actually pins, and records what was measured when trying to pin the other: on 400 rows and again on 20,000 with a skewed agent distribution and ANALYZE run, the chunked form plans identically with and without the unary plus. Adjusting a corpus until the assertion passes would pin the corpus rather than the plan, so the absence of coverage is stated where the next reader will see it."
     },
     {
       "id": "bug-418",

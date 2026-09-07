@@ -362,7 +362,13 @@ async def test_import_syncs_inserted_memories_to_remote_index(clean_db, monkeypa
                 "json": {
                     "namespace": "cpersona:remote-import-target",
                     "items": [{"id": f"mem:{row[0][0]}", "text": "remote import body"}],
-                }
+                },
+                # bug-330: the bulk push named no deadline and inherited the
+                # embedding client's 30s default while every sibling remote call
+                # states its own. The value is pinned here, not just its
+                # presence, because the defect was a wrong deadline rather than
+                # a missing keyword.
+                "timeout": config.REMOTE_INDEX_TIMEOUT_SECS,
             },
         )
     ]
@@ -400,7 +406,8 @@ async def test_merge_remote_sync_respects_vector_mode(clean_db, monkeypatch):
                 "json": {
                     "namespace": "cpersona:remote-merge-target",
                     "items": [{"id": f"mem:{row[0][0]}", "text": "remote merge body"}],
-                }
+                },
+                "timeout": config.REMOTE_INDEX_TIMEOUT_SECS,  # bug-330
             },
         )
     ]

@@ -18,6 +18,7 @@ from cpersona import health
 from cpersona import vector_index
 from cpersona.config import (
     MAX_MEMORIES,
+    REMOTE_INDEX_TIMEOUT_SECS,
     REMOTE_SEARCH_TIMEOUT_SECS,
     VECTOR_FAR_LIMIT,
     VECTOR_REACH,
@@ -145,6 +146,15 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
             response = await _embedding_client._client.post(
                 f"{base_url}/index",
                 json={"namespace": f"cpersona:{agent_id}", "items": chunk},
+                # bug-330: the only remote call in the package that named no
+                # deadline, so each chunk inherited the embedding client's 30s
+                # default while its siblings state 5s (search) and 10s (the
+                # single-item push to this same endpoint). The loop is serial
+                # and continues past failures by design, so the wait multiplies
+                # by the chunk count: an import of tens of thousands of rows
+                # against a service that accepts connections and stops
+                # answering spent 30s per chunk.
+                timeout=REMOTE_INDEX_TIMEOUT_SECS,
             )
             # A non-2xx answer is a refusal the service chose to give; it is not
             # an exception, so nothing above noticed it.
@@ -386,8 +396,22 @@ async def _search_vector_remote(
         # thread, so the old per-hit SELECT made a limit=100 recall pay 100 sequential
         # round trips on the hot path. Parsing stays in this pass (a malformed id still
         # raises inside the try and falls back to the local scan, as before).
+        # bug-333: `.get("results", [])` read a body that never mentioned
+        # results as an authoritative empty answer, which is the one thing this
+        # function's contract says an empty list means — the service answered,
+        # and that answer is the result. So a 200 carrying only an error message
+        # returned nothing, took the authoritative branch, skipped the local
+        # scan and logged at no level at all. Every other malformed body already
+        # falls back with a warning; this was the single shape that landed
+        # silently on the wrong side of that line. An explicit empty list still
+        # means what it always meant.
+        if not isinstance(data, dict) or "results" not in data:
+            logger.warning(
+                "Remote search answered without a results key; falling back to the local scan"
+            )
+            return None
         ordered: list[tuple[str, int, float]] = []
-        for hit in data.get("results", []):
+        for hit in data["results"]:
             raw_id = hit["id"]
             score = hit["score"]
             if raw_id.startswith("mem:"):
@@ -629,22 +653,34 @@ async def _index_phase1(
         )
         return None
 
-    tail = await _index_tail_rows(
-        db,
-        index,
-        agent_id=agent_id,
-        project_id=project_id,
-        channel=channel,
-        source_id=source_id,
-        scan_limit=scan_offset + scan_limit,
-        table=table,
-    )
-    if tail is None:
-        return None
+    try:
+        tail = await _index_tail_rows(
+            db,
+            index,
+            agent_id=agent_id,
+            project_id=project_id,
+            channel=channel,
+            source_id=source_id,
+            scan_limit=scan_offset + scan_limit,
+            table=table,
+        )
+        if tail is None:
+            return None
 
-    return _merge_index_and_tail(
-        index, positions, tail, scan_limit, query_dim, scan_offset=scan_offset
-    )
+        return _merge_index_and_tail(
+            index, positions, tail, scan_limit, query_dim, scan_offset=scan_offset
+        )
+    except Exception:  # noqa: BLE001 — fail open, deliberately
+        # bug-316: the last two statements of the phase were the only ones
+        # outside a guard, and they are the ones that read caller-supplied text
+        # off the rows the index deliberately excluded. The claim this phase
+        # rests on is "recall survives a broken index"; it cannot end one
+        # statement short of the end.
+        logger.warning(
+            "Vector index tail read or merge raised, falling back to the live scan",
+            exc_info=True,
+        )
+        return None
 
 
 # Rows per `IN (...)` when the selection is scattered. Well under 999, the
@@ -656,6 +692,18 @@ _LOST_EMBEDDING_PROBE_CHUNK = 500
 # index with this term, so the id term stays the access path. Measured without
 # it at 100,000 rows: the planner walked every row of the agent per statement,
 # 43 ms for the range form instead of 25 and 3.0 s for the chunked form.
+#
+# bug-417: a test pins that plan for the RANGE form only, and this comment used
+# to read as though it covered both. It does not, and not for want of trying:
+# removing the plus from the range form flips its plan from the partial index to
+# the isolation index and the plan test fails, while the chunked form plans the
+# same way with and without it -- measured on a 400-row corpus, and again on
+# 20,000 rows with a skewed agent distribution and ANALYZE run, where both
+# spellings planned as `SEARCH memories USING INDEX idx_memories_lost_embedding
+# (id=?)`. So the chunked form's plus is unpinned: a reader who removes it, or a
+# planner whose costing shifts once different statistics exist, reintroduces the
+# 3.0 s walk with no test able to report it. Said here rather than left as a
+# claim of coverage that does not exist.
 def _lost_embedding_range_sql(table: str = "memories") -> str:
     return (
         f"SELECT 1 FROM {table} WHERE id BETWEEN ? AND ? AND +agent_id = ?"
@@ -848,6 +896,14 @@ async def _index_tail_rows(
     return rows
 
 
+# bug-329: rows per gather block. Large enough that the per-block overhead is
+# noise against the memcpy (a block is 2 MB at 512 dims), small enough that the
+# temporary no longer scales with the caller's reach. Not an environment
+# setting: it changes no result, only the peak, and a knob that cannot change an
+# answer is a knob nobody can be asked to tune.
+_GATHER_BLOCK_ROWS = 1024
+
+
 def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: int,
                           *, scan_offset: int = 0):
     """Interleave two already-sorted runs on (created_at DESC, id ASC).
@@ -920,7 +976,18 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
     if len(from_index):
         # One vectorised gather: a memcpy out of the mapped file, never a Python
         # object per row, which is the 72.9% this whole change is about.
-        mat[index_slots] = index.embeddings[from_index]
+        #
+        # bug-329: `index.embeddings[from_index]` materialises a SECOND array the
+        # size of the whole window before the assignment copies it out again, so
+        # this path peaked at roughly 2.2x the window bytes and grew with both
+        # the memory cap and the reach. Gathering in blocks bounds that temporary
+        # by the block instead of the window. It is a copy, not an arithmetic:
+        # `mat` receives the same bytes in the same slots, so `_cosine_matrix`
+        # still sees one array of one shape and the scores are identical by
+        # construction rather than by measurement.
+        for lo in range(0, len(from_index), _GATHER_BLOCK_ROWS):
+            hi = lo + _GATHER_BLOCK_ROWS
+            mat[index_slots[lo:hi]] = index.embeddings[from_index[lo:hi]]
     for slot, blob in from_tail:
         mat[slot] = np.frombuffer(blob, dtype=np.float32)
     return merged_ids, mat
@@ -957,7 +1024,14 @@ def _interleave_index_and_tail(index, positions, tail, scan_limit: int, *, scan_
         take_index = j >= len(tail)
         if not take_index and i < len(positions):
             pos = positions[i]
-            t_created = tail[j][1].encode("ascii")
+            # bug-316: encoded strict-ASCII, and the rows the tail exists to
+            # serve are exactly the ones the index could not spell — so a
+            # non-canonical created_at is guaranteed to arrive here. utf-8 is
+            # total and agrees with ASCII on every byte of a canonical stamp, so
+            # no row already served moves; `replace` covers the shapes even utf-8
+            # refuses. This value is a sort key, and a sort key is not a place to
+            # raise out of a recall.
+            t_created = tail[j][1].encode("utf-8", "replace")
             # created_at DESC, then id ASC: the exact key the SQL ORDER BY spells.
             take_index = (created[pos], -int(ids_arr[pos])) > (t_created, -int(tail[j][0]))
         if take_index:
@@ -1801,7 +1875,20 @@ async def _search_vector(
     # statement, a matrix and a merge on every recall the server answers, and
     # this setting has to be a guard rather than an empty scan.
     if far_out is not None and far_list_enabled():
-        far_out.extend(await _search_vector_far(
+        # bug-334: the two windows are two statements on a shared autocommit
+        # connection, and scan position is defined over the live table — so an
+        # insert committed between them shifts every position by one and the row
+        # at the near window's last position reappears at the far window's first.
+        # Measured: that row then took two reciprocal-rank votes from a single
+        # retriever and sorted ahead of rows that outrank it, and the legacy
+        # quality gate rescales its threshold by a per-row maximum of three votes
+        # that a duplicate can exceed. Disjointness by position is the reason the
+        # far list needs no de-duplicating pass; when the premise does not hold,
+        # the invariant the fusion is owed still has to. `_rid` is the identity
+        # the fusion itself keys on, so this drops exactly what it would have
+        # double-counted and nothing else.
+        near_rids = {row["_rid"] for _score, row in top_k if "_rid" in row}
+        far_rows = await _search_vector_far(
             db,
             iso=iso,
             src_clause=src_clause,
@@ -1815,6 +1902,15 @@ async def _search_vector(
             project_id=project_id,
             channel=channel,
             source_id=source_id,
-        ))
+        )
+        overlap = [row for row in far_rows if row.get("_rid") in near_rids]
+        if overlap:
+            logger.warning(
+                "Far scan window overlapped the near one by %d row(s) — the table "
+                "changed between the two reads; dropping the duplicates so no row "
+                "is counted twice by the fusion",
+                len(overlap),
+            )
+        far_out.extend(row for row in far_rows if row.get("_rid") not in near_rids)
 
     return [c[1] for c in top_k]
