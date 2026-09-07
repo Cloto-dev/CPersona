@@ -42,6 +42,8 @@ from cpersona import session
 from cpersona import tasks
 from cpersona import vector
 from cpersona.admin_handlers import (
+    LIST_EPISODES_MAX_ROWS,
+    LIST_MEMORIES_MAX_ROWS,
     do_calibrate_threshold,
     do_delete_agent_data,
     do_delete_episode,
@@ -1190,8 +1192,12 @@ registry.auto_tool(
     "list_memories",
     (
         "List recent memories for an agent (for dashboard display). "
-        "bug-255: the response holds a 1,000,000-character content budget. Rows are "
-        "returned newest-first and none is dropped; once the budget is spent, later "
+        f"bug-385: `limit` is clamped to {LIST_MEMORIES_MAX_ROWS} rows and the response "
+        "carries no marker when the clamp bit, so a listing of exactly that many rows "
+        "may be a truncated one rather than the end of the data — reach the rest through "
+        "export_memories or a narrower filter, not a larger limit. "
+        "bug-255: within that cap the response holds a 1,000,000-character content budget. "
+        "Rows are returned newest-first and none is dropped by the budget; once it is spent, later "
         "rows LONGER than the preview cap (CPERSONA_RECALL_PREVIEW_CHARS, default 500) "
         "degrade to a pure prefix with content_truncated/content_len and a `ref` that "
         "get_contents expands under the row's own agent_id (in an all-agents listing, "
@@ -1221,7 +1227,11 @@ registry.auto_tool(
     "list_episodes",
     (
         "List archived episodes for an agent (for dashboard display). "
-        "bug-255: the response holds an 800,000-character budget across `summary` and "
+        f"bug-385: `limit` is clamped to {LIST_EPISODES_MAX_ROWS} rows and the response "
+        "carries no marker when the clamp bit, so a listing of exactly that many rows "
+        "may be a truncated one rather than the end of the data — reach the rest through "
+        "export_memories or a narrower filter, not a larger limit. "
+        "bug-255: within that cap the response holds an 800,000-character budget across `summary` and "
         "`keywords` together, with the same degradation and ceiling semantics as "
         "list_memories — rows past the budget that exceed the preview cap carry pure "
         "prefixes plus summary_truncated/summary_len and keywords_truncated/"

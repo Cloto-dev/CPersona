@@ -70,9 +70,20 @@ async def test_whitespace_profile_does_not_destroy_the_stored_one(db, blank):
 
 @pytest.mark.asyncio
 async def test_empty_profile_says_why_it_did_nothing(db):
+    """bug-392 moved the verdict, not the reason.
+
+    The exact-dict form pinned ``ok: True`` as a side effect of pinning the
+    reason -- this test's subject is that the refusal SAYS WHY, and the verdict
+    it carried was the defect bug-392 closed (docs/behavior-contracts.md
+    section 10: a caller branches on ``ok is false``). The two fields this test
+    exists for are asserted directly so a later addition to the response cannot
+    fail it for an unrelated reason.
+    """
     result = await admin_handlers.do_update_profile(AGENT, "")
 
-    assert result == {"ok": True, "profiles_updated": 0, "reason": "empty profile"}
+    assert result["reason"] == "empty profile"
+    assert result["profiles_updated"] == 0
+    assert result["ok"] is False
     assert await _profile_of(db, AGENT) is None
 
 

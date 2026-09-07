@@ -60,6 +60,7 @@ from cpersona import (  # noqa: E402
     memory_handlers,
     server,
     session,
+    tasks,
     utils,
     vector,
     vector_index,
@@ -3169,3 +3170,175 @@ async def test_a_delete_that_matched_nothing_keeps_the_operators_index(clean_337
 
     assert os.path.exists(path), "a delete that removed no rows dropped the index anyway"
     assert open(path, "rb").read() == before
+
+
+# ==========================================================================
+# bug-392 — a refused profile write answered on the success axis.
+# ==========================================================================
+#
+# docs/behavior-contracts.md section 10 gives every caller one rule: branch on
+# `ok is false`. Both refusal branches returned true, so a caller following it
+# recorded a stale profile as saved -- and that profile is the id=-1 sentinel row
+# injected into every recall response, so the staleness is not confined to the
+# caller's bookkeeping. `store` -- the sanitiser seam this path explicitly shares,
+# and whose boundary states its own outcome -- calls these same two inputs a
+# rejection. The probe originally asserted the whole dict; it is written as the
+# one axis the contract names, so a later addition to the response cannot break it.
+
+
+@pytest.mark.asyncio
+async def test_an_empty_profile_is_refused_on_the_axis_callers_are_told_to_read(db):
+    result = await admin_handlers.do_update_profile("bug392-agent", "")
+    assert result["ok"] is False, result
+    assert result["profiles_updated"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank", ["   ", "\n\n", "\t ", "[Memory from alice] "])
+async def test_a_profile_that_sanitises_away_is_refused_the_same_way(db, blank):
+    """The destructive half of bug-188 stays fixed; what moved is only the verdict."""
+    await admin_handlers.do_update_profile("bug392-agent", "a genuinely useful profile")
+
+    result = await admin_handlers.do_update_profile("bug392-agent", blank)
+
+    assert result["ok"] is False, result
+    assert result["profiles_updated"] == 0
+    assert await admin_handlers.do_get_profile("bug392-agent") == {
+        "profile": "a genuinely useful profile"
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_real_profile_write_is_still_a_success(db):
+    result = await admin_handlers.do_update_profile("bug392-agent", "a genuinely useful profile")
+    assert result["ok"] is True
+    assert result["profiles_updated"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_paused_profile_write_is_a_skip_and_not_a_refusal(db):
+    """The one branch that must NOT move: no-persist is nothing going wrong.
+
+    It is also the branch that decides whether the change is safe for the queue
+    drain, which routes any ok:false back into the retry path (bug-090).
+    """
+    key = "bug392-pause-key"
+    session.pause_for(key, declared=True, ttl_seconds=60)
+    try:
+        result = await admin_handlers.do_update_profile("bug392-agent", "text", session_key=key)
+        assert result["ok"] is True, result
+    finally:
+        session.reset_pauses_for_tests()
+
+
+# ==========================================================================
+# bug-393 — the inert queue branch dropped the retry state it advertises.
+# ==========================================================================
+#
+# Three published surfaces promise it unconditionally: the tool description
+# ("pending tasks, retry config"), docs/tools.md ("Depth and retry state") and
+# docs/architecture.md ("reports depth and retries"). The disabled branch was a
+# two-key literal, so an operator running with the queue off could not read the
+# retry configuration from the tool that advertises it -- and a dashboard reading
+# those keys broke on that deployment only. The constants are module-level and
+# exist whether or not a queue runs.
+
+
+@pytest.mark.asyncio
+async def test_the_disabled_queue_still_reports_the_retry_state(monkeypatch):
+    monkeypatch.setattr(tasks, "_task_queue", None)
+
+    result = await admin_handlers.do_get_queue_status()
+
+    assert result["enabled"] is False
+    assert result["max_retries"] == config.TASK_MAX_RETRIES
+    assert result["retry_delay"] == config.TASK_RETRY_DELAY
+
+
+@pytest.mark.asyncio
+async def test_both_queue_branches_answer_on_the_same_keys(monkeypatch):
+    """What the finding is about is the difference between the two shapes."""
+    monkeypatch.setattr(tasks, "_task_queue", None)
+    inert = await admin_handlers.do_get_queue_status()
+
+    class _LiveQueue:
+        async def get_status(self):
+            return {
+                "enabled": True,
+                "pending": 0,
+                "max_retries": config.TASK_MAX_RETRIES,
+                "retry_delay": config.TASK_RETRY_DELAY,
+            }
+
+    monkeypatch.setattr(tasks, "_task_queue", _LiveQueue())
+    monkeypatch.setattr(admin_handlers, "TASK_QUEUE_ENABLED", True)
+    live = await admin_handlers.do_get_queue_status()
+
+    assert set(inert) == set(live), f"inert={sorted(inert)} live={sorted(live)}"
+
+
+# ==========================================================================
+# bug-420 — get_profile was read by no test at all.
+# ==========================================================================
+#
+# The tool is documented as returning the accumulated profile, and the row it
+# reads is the one injected into every recall response. Replacing its return with
+# an empty profile left the whole suite green, so the common read path after a
+# successful update_profile was unobserved.
+
+
+@pytest.mark.asyncio
+async def test_get_profile_returns_what_update_profile_stored(db):
+    await admin_handlers.do_update_profile("bug420-agent", "the accumulated profile")
+
+    assert await admin_handlers.do_get_profile("bug420-agent") == {
+        "profile": "the accumulated profile"
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_profile_answers_empty_for_an_agent_that_has_none(db):
+    """The other half: an empty answer must mean absence, not the read failing open."""
+    await admin_handlers.do_update_profile("bug420-agent", "the accumulated profile")
+
+    assert await admin_handlers.do_get_profile("bug420-other-agent") == {"profile": ""}
+
+
+# ==========================================================================
+# bug-385 (documentation half) — the row cap is published where a caller reads.
+# ==========================================================================
+#
+# `limit` is clamped to a row ceiling that appeared on no surface: not in the
+# schema, not in the description, and not in the response, which carries
+# budget_chars only when the bug-255 CHARACTER budget bites. A caller applying the
+# ordinary "count < limit means end of data" rule stopped at the cap and could not
+# tell a capped answer from a complete one.
+#
+# What is closed here is the half that adds nothing to the contract: the ceiling
+# is one named constant, the clamp and the description render the same value, and
+# the sentence that said no row is dropped now says which bound it is speaking of.
+# Declaring `maximum` in the schema (which would refuse calls that succeed today)
+# and attaching a truncation marker to the response (a new field in a documented
+# shape) both change what the published surface promises, so they stay open.
+#
+# The assertion is on "<N> rows" rather than the bare number: the preview cap's
+# own default is 500, so `"500" in description` passed before the fix.
+
+
+@pytest.mark.parametrize(
+    "tool_name,cap",
+    [
+        ("list_memories", admin_handlers.LIST_MEMORIES_MAX_ROWS),
+        ("list_episodes", admin_handlers.LIST_EPISODES_MAX_ROWS),
+    ],
+)
+def test_the_row_cap_is_published_in_the_description_that_clamps_by_it(tool_name, cap):
+    assert f"{cap} rows" in _tool(tool_name).description, _tool(tool_name).description
+
+
+def test_the_published_cap_is_the_one_the_handler_clamps_by():
+    """Renders from the constant, so the two cannot drift apart silently."""
+    source = inspect.getsource(admin_handlers.do_list_memories)
+    assert "_clamp_limit(limit, LIST_MEMORIES_MAX_ROWS)" in source, source
+    source = inspect.getsource(admin_handlers.do_list_episodes)
+    assert "_clamp_limit(limit, LIST_EPISODES_MAX_ROWS)" in source, source

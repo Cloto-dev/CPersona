@@ -40,7 +40,9 @@ from cpersona.config import (
     CALIBRATE_Z_FACTOR,
     STORE_BLOB,
     local_blobs_stored,
+    TASK_MAX_RETRIES,
     TASK_QUEUE_ENABLED,
+    TASK_RETRY_DELAY,
     VECTOR_SEARCH_MODE,
 )
 from cpersona.database import connection, read_snapshot, transaction
@@ -107,12 +109,19 @@ async def do_update_profile(agent_id: str, profile: str = "", session_key: str =
             {"ok": True, "profiles_updated": 0}, "update_profile", key
         )
 
+    # bug-392: both branches answered ok:true. docs/behavior-contracts.md section 10
+    # tells every caller to branch on `ok is false`, and `store` — the seam this
+    # path explicitly shares, and whose boundary states it — calls these same two
+    # inputs (empty, and text that sanitises away) a REJECTION rather than a skip.
+    # Answering true here meant a caller following the published rule recorded a
+    # stale profile as saved, and kept injecting it into every recall. The pause
+    # branch above stays true: that one is a skip, and nothing is wrong with it.
     if not profile:
-        return {"ok": True, "profiles_updated": 0, "reason": "empty profile"}
+        return {"ok": False, "profiles_updated": 0, "reason": "empty profile"}
 
     profile, truncated = sanitize_profile_with_flag(profile)
     if not profile:
-        return {"ok": True, "profiles_updated": 0, "reason": "empty after sanitization"}
+        return {"ok": False, "profiles_updated": 0, "reason": "empty after sanitization"}
 
     # bug-042/043: transaction() serialises the write+commit behind the shared lock
     # so this commit cannot flush a concurrent import/merge's partial transaction.
@@ -141,8 +150,17 @@ async def do_update_profile(agent_id: str, profile: str = "", session_key: str =
 # and pinned at what the worst case USED to be, deliberately NOT derived from
 # MAX_CONTENT_LENGTH, so the next relaxation of the write bound cannot enlarge
 # this read again.
-LIST_MEMORIES_MAX_CHARS = 1_000_000  # 500 rows x the old 2000-character cap
-LIST_EPISODES_MAX_CHARS = 800_000  # 200 rows x 2 text columns x the same cap
+# bug-385: the row ceiling each listing clamps the caller's `limit` to. It was two
+# bare literals at the two call sites, published on no surface a caller can read,
+# so a listing that stopped at the cap was indistinguishable from one that had
+# reached the end of the data. Named here because it is also the basis of the
+# character budgets below and, since bug-385, the number the two tool descriptions
+# render — a cap written in three places is a cap that drifts in two of them.
+LIST_MEMORIES_MAX_ROWS = 500
+LIST_EPISODES_MAX_ROWS = 200
+
+LIST_MEMORIES_MAX_CHARS = 1_000_000  # LIST_MEMORIES_MAX_ROWS x the old 2000-character cap
+LIST_EPISODES_MAX_CHARS = 800_000  # LIST_EPISODES_MAX_ROWS x 2 text columns x the same cap
 
 
 def _apply_list_budget(items: list[dict], fields: tuple[str, ...], budget: int, kind: str) -> bool:
@@ -240,7 +258,7 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
         rows = await db.execute_fetchall(
             f"SELECT id, agent_id, project_id, msg_id, content, source, timestamp, created_at, locked, channel "
             f"FROM memories{iso.where} ORDER BY created_at DESC LIMIT ?",
-            (*iso.params, _clamp_limit(limit, 500)),
+            (*iso.params, _clamp_limit(limit, LIST_MEMORIES_MAX_ROWS)),
         )
     memories = []
     for row in rows:
@@ -293,7 +311,7 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
         rows = await db.execute_fetchall(
             f"SELECT id, agent_id, project_id, summary, keywords, start_time, end_time, created_at "
             f"FROM episodes{iso.where} ORDER BY created_at DESC LIMIT ?",
-            (*iso.params, _clamp_limit(limit, 200)),
+            (*iso.params, _clamp_limit(limit, LIST_EPISODES_MAX_ROWS)),
         )
     episodes = []
     for row in rows:
@@ -3639,4 +3657,14 @@ async def do_get_queue_status() -> dict:
     """Get the status of the background task queue."""
     if tasks._task_queue and TASK_QUEUE_ENABLED:
         return await tasks._task_queue.get_status()
-    return {"enabled": False, "pending": 0}
+    # bug-393: the inert branch used to be a two-key literal, so the retry state
+    # this tool advertises ("pending tasks, retry config"; docs/tools.md calls it
+    # the depth AND retry state) was readable on one deployment and absent on the
+    # other. The two values are module-level constants that exist whether or not a
+    # queue runs, so nothing was preventing the answer.
+    return {
+        "enabled": False,
+        "pending": 0,
+        "max_retries": TASK_MAX_RETRIES,
+        "retry_delay": TASK_RETRY_DELAY,
+    }
