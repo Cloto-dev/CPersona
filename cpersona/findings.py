@@ -15,9 +15,15 @@ hints), because those are what a consumer acts on.
 
 Kind vocabulary
 ---------------
-A finding's ``kind`` is the registry name of the check that produced it,
-which is also the name a caller passes to ``check_health(checks=[...])`` to
-re-run exactly that probe. The standard requires severity to be a property
+A finding's ``kind`` names the finding. For most it is the registry name of
+the check that produced it; for a runner that grades its own severity it is an
+escalation tier this seam mints, which is *not* a registry name — bug-391: this
+paragraph used to say it always was, and ``check_health`` refuses every name
+outside the registry, so the documented re-run answered with an error on the
+tiers (``null_embedding_pipeline_down`` among them) an operator most wants to
+re-check after a repair. The name that re-runs is the ``check`` key, which the
+seam passes through verbatim on every finding:
+``check_health(checks=[finding["check"]])``. The standard requires severity to be a property
 of the kind, assigned from a static map — no per-finding scoring — and
 ``check_health`` does not work that way: a few runners escalate their own
 severity by a deterministic numeric rule (``null_embedding`` is info when

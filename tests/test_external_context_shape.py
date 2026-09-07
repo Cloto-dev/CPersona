@@ -243,7 +243,16 @@ def test_every_field_the_handler_reads_is_declared_in_the_schema():
         sorted(set(M._CTX_DECLARED_STRINGS) ^ set(declared))
     )
     for name, spec in declared.items():
-        assert spec["type"] == "string", (name, spec)
+        # bug-387: the declaration is a statement to the caller, not a gate on
+        # the call. Hard-typing these refused every non-string at the SDK's
+        # pre-dispatch validation, which made the documented fail-soft reading
+        # — and with it the `warn` default and the `off` setting of
+        # CPERSONA_EXTERNAL_CONTEXT_MODE — unreachable over MCP. So the pin is
+        # now both halves of what the fix owes: the expectation is still stated
+        # per field, and the boundary no longer decides the call.
+        assert "type" not in spec, (name, spec)
+        assert "string" in spec["description"], (name, spec)
+        assert "context_field_issues" in spec["description"], (name, spec)
 
 
 def test_the_reads_in_the_handler_are_the_fields_declared():

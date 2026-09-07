@@ -39,6 +39,8 @@ import math  # noqa: E402
 import re  # noqa: E402
 import sqlite3  # noqa: E402
 import struct  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
 import time  # noqa: E402
 import tracemalloc  # noqa: E402
 
@@ -62,6 +64,7 @@ from cpersona import (  # noqa: E402
     vector,
 )
 from cpersona import admin_handlers as admin  # noqa: E402
+from cpersona import findings as findings_module  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 from cpersona.database import connection, get_db, transaction  # noqa: E402
 from cpersona.utils import _parse_timestamp_utc as _parse_ts  # noqa: E402
@@ -2696,3 +2699,328 @@ async def test_a_uniformly_spelled_corpus_gets_the_same_boundary(clean_checks_db
     finally:
         await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent,))
         await db.commit()
+
+
+# ==========================================================================
+# The server.py pass (2026-09-07). Ten findings on the one module that is both
+# the tool surface and the startup wiring, so the sections below split into the
+# descriptions a caller reads and the lines nothing observed.
+#
+# Four arrived with probes that assumed a shape the fix could not take and were
+# rewritten as invariants first; each says so where it sits.
+# ==========================================================================
+
+
+# --------------------------------------------------------------------------
+# bug-362 / bug-364 — two numbers typed into a tool description beside the
+# registry that already renders others: a per-run bound an order of magnitude
+# off the enforced cap, and an option list naming six of eight registered
+# checks. Both are pinned against their source rather than against a literal,
+# so the next check to be registered cannot ship undiscoverable.
+# --------------------------------------------------------------------------
+def _tool(name):
+    return next(t for t in server.registry._tools if t.name == name)
+
+
+def test_the_advertised_repair_bound_is_the_enforced_one():
+    described = _tool("check_health").description
+    assert f"classifies at most {checks.INVALID_SOURCE_CLASSIFY_CAP} rows" in described, described
+    assert "classifies at most 1000 rows" not in described
+
+
+def test_the_deep_check_option_list_is_the_registry():
+    spec = _tool("deep_check").inputSchema["properties"]["checks"]["description"]
+    for name in checks.DEEP_CHECK_NAMES:
+        assert name in spec, (name, spec)
+    # And the sentence names no check that is not registered — the direction a
+    # hand-typed list fails in second, once a check is renamed rather than added.
+    advertised = {n.strip() for n in spec.split("Options:", 1)[1].split(",")}
+    assert advertised == set(checks.DEEP_CHECK_NAMES), advertised ^ set(checks.DEEP_CHECK_NAMES)
+
+
+# --------------------------------------------------------------------------
+# bug-363 — check_health's description promises that every response echoes the
+# checks it ran, and the rejection built for an unknown name was the one path
+# without the field. A caller following the contract either raised on the
+# missing key or recorded an empty run, which is what a legitimately empty
+# subset also looks like.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_rejected_check_name_still_says_what_ran(clean_checks_db):
+    rejected = await maintenance_handlers.do_check_health(checks=["empty_contnet"])
+    assert rejected["ok"] is False
+    assert rejected["unknown_checks"] == ["empty_contnet"]
+    assert rejected["checks_run"] == [], rejected
+    accepted = await maintenance_handlers.do_check_health(checks=["empty_content"])
+    assert accepted["checks_run"] == ["empty_content"], accepted
+
+
+# --------------------------------------------------------------------------
+# bug-371 — the boot notice and the maintenance finding for "no local vectors"
+# both stated the risk as a remote /search outage, without asking whether the
+# remote arm was armed at all. With no endpoint configured — the shape an
+# api-mode embedding configuration leaves — there is no arm to lose: no row
+# holds a vector anywhere, permanently rather than during a fault.
+#
+# The probe asserted that the finding escalate above `info`. That would move a
+# static per-kind severity and with it the checkup gate's exit code on a
+# deployment that boots today, so it was rewritten as the invariant the surface
+# actually owes: say which arm is missing. The second half is the setting that
+# produced the state — read unvalidated, it had a third spelling neither
+# consumer recognises (the class of bug-321, on the setting beside it).
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_the_no_fallback_finding_names_the_arm_that_is_missing(
+    clean_checks_db, fake_embedding_client, monkeypatch
+):
+    assert fake_embedding_client._http_url in (None, ""), fake_embedding_client._http_url
+    for module in (memory_handlers, checks):
+        monkeypatch.setattr(module, "VECTOR_SEARCH_MODE", "remote")
+        monkeypatch.setattr(module, "STORE_BLOB", False)
+    await memory_handlers.do_store("b371.agent", {"content": "the migration plan was approved"})
+
+    issues = await checks.check_vector_fallback_config(clean_checks_db)
+    assert len(issues) == 1, issues
+    hint = issues[0]["hint"]
+    assert "no remote /search endpoint is configured" in hint, hint
+    assert "not during an outage" in hint, hint
+
+
+@pytest.mark.asyncio
+async def test_an_armed_remote_still_reads_as_an_outage_risk(
+    clean_checks_db, fake_embedding_client, monkeypatch
+):
+    """The control: with the endpoint present the original sentence is the true one."""
+    monkeypatch.setattr(fake_embedding_client, "_http_url", "http://embed.test/embed", raising=False)
+    for module in (memory_handlers, checks):
+        monkeypatch.setattr(module, "VECTOR_SEARCH_MODE", "remote")
+        monkeypatch.setattr(module, "STORE_BLOB", False)
+    await memory_handlers.do_store("b371.armed", {"content": "a row with a remote index"})
+
+    issues = await checks.check_vector_fallback_config(clean_checks_db)
+    assert len(issues) == 1, issues
+    assert "a remote /search outage" in issues[0]["hint"], issues[0]["hint"]
+
+
+def test_the_vector_search_mode_is_one_of_the_two_its_consumers_test_for():
+    """The remote push tests `== "remote"` exactly and the local write gate tests
+    `== "local"` exactly, so any third spelling stores no local BLOB and takes no
+    remote push either. Read in a subprocess: the setting resolves at import."""
+    read = "import cpersona.config as c; print(c.VECTOR_SEARCH_MODE)"
+    for spelling, expected in (
+        ("Remote", "remote"),
+        (" remote ", "remote"),
+        ("LOCAL", "local"),
+        ("remoote", "local"),  # unreadable falls back to the documented default
+        ("", "local"),
+    ):
+        env = dict(os.environ, CPERSONA_VECTOR_SEARCH_MODE=spelling)
+        out = subprocess.run(
+            [sys.executable, "-c", read], env=env, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        assert out == expected, (spelling, out)
+
+
+# --------------------------------------------------------------------------
+# bug-387 / bug-398 — two published input schemas refused the shapes their own
+# descriptions promise the seam folds. The SDK validates arguments against
+# inputSchema before dispatch, so in both cases the documented behaviour was
+# unreachable over MCP while the handler behind it worked: recall_with_context's
+# fail-soft reading of a non-string field (and with it the `warn` default and
+# the `off` setting of CPERSONA_EXTERNAL_CONTEXT_MODE), and store's folding of a
+# bare role word or a null source. bug-398 is the defect bug-233 removed from
+# the child field, still standing on the parent.
+#
+# Both admit shapes that are refused today and refuse nothing that works, so the
+# widening restores documented behaviour without moving any caller already served.
+# --------------------------------------------------------------------------
+def test_the_recall_boundary_admits_what_the_handler_reads_as_absent():
+    jsonschema = pytest.importorskip("jsonschema")
+    assert config.EXTERNAL_CONTEXT_MODE == "warn", config.EXTERNAL_CONTEXT_MODE
+    call = {
+        "agent_id": "b387.agent",
+        "query": "the migration plan",
+        "external_context": [
+            {"role": "user", "content": "when was it approved", "timestamp": 1735689600}
+        ],
+    }
+    jsonschema.validate(instance=call, schema=_tool("recall_with_context").inputSchema)
+
+
+@pytest.mark.asyncio
+async def test_the_reported_entry_is_still_merged(clean_checks_db):
+    out = await memory_handlers.do_recall_with_context(
+        "b387.agent",
+        "the migration plan",
+        external_context=[
+            {"role": "user", "content": "when was it approved", "timestamp": 1735689600}
+        ],
+    )
+    assert "messages" in out, out  # bug-232: a failing recall still carries messages
+    issues = out.get("context_field_issues")
+    assert issues and issues["entries"] == [{"index": 0, "fields": ["timestamp"]}], out
+
+
+def test_the_store_boundary_admits_the_source_shapes_the_seam_folds():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = _tool("store").inputSchema
+    for source in ("user", "assistant", None, {"type": "user", "id": "u1"}, {}):
+        jsonschema.validate(
+            instance={"agent_id": "a", "message": {"content": "hi", "source": source}},
+            schema=schema,
+        )
+    # A shape outside the documented set still fails the declaration it belongs to.
+    with pytest.raises(jsonschema.exceptions.ValidationError):
+        jsonschema.validate(
+            instance={"agent_id": "a", "message": {"content": "hi", "source": 7}},
+            schema=schema,
+        )
+
+
+# --------------------------------------------------------------------------
+# bug-391 — get_session_findings told a caller that a finding's `kind` is the
+# registry name check_health(checks=[kind]) re-runs, and offered an escalation
+# tier as the example. The tiers this seam mints are not registry names and
+# check_health refuses every name outside the registry, so the one documented
+# follow-up errored on exactly the findings an operator most wants to re-check.
+#
+# The probe asserted that every kind re-run. Making the tiers re-runnable would
+# widen what the `checks` argument admits; carrying a second name would add a
+# key to a documented response. The name that re-runs already ships on every
+# finding as `check`, so the description is what was wrong.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_every_delivered_finding_carries_a_name_check_health_accepts(clean_checks_db):
+    await memory_handlers.do_store("b391.agent", {"content": "a memory with no embedding client"})
+    pulled = await maintenance_handlers.do_get_session_findings()
+    assert pulled["findings"], pulled
+
+    refused = {}
+    for finding in pulled["findings"]:
+        assert "check" in finding, finding
+        result = await maintenance_handlers.do_check_health(checks=[finding["check"]])
+        if not result.get("ok", True) or result.get("unknown_checks"):
+            refused[finding["kind"]] = (finding["check"], result.get("error"))
+    assert refused == {}, refused
+
+    kinds = {f["kind"] for f in pulled["findings"]}
+    tiers = sorted(kinds - set(checks.HEALTH_CHECK_NAMES))
+    assert tiers, f"vacuous — no escalation tier was delivered: {sorted(kinds)}"
+    described = _tool("get_session_findings").description
+    assert "check_health(checks=[kind])" not in described, tiers
+    assert "check_health(checks=[kind])" not in (findings_module.__doc__ or "")
+
+
+# --------------------------------------------------------------------------
+# bug-407 / bug-408 / bug-409 — three production wiring lines that no assertion
+# could observe. Each is the only place its feature is turned on, and each stays
+# green when deleted: the pairwise fail-closed switch (only the class consuming
+# it was tested), the alias ledger activation (the per-subject tests activate it
+# themselves), and the operating context's Soft layer (the suite pins the sidecar
+# off before any import, so the registry is always built with instructions=None).
+#
+# bug-408's entry also asks for a startup invariant refusing to serve when
+# per-subject clients are configured with no ledger active. That adds a refusal
+# to a configuration that boots today, which a fix release does not get to do;
+# what closes the measured gap — deleting the block leaves the suite green — is
+# the observation below.
+# --------------------------------------------------------------------------
+def _oauth_on(monkeypatch):
+    monkeypatch.setattr(config, "OAUTH_RESOURCE", "https://memory.example.test/mcp")
+    monkeypatch.setattr(config, "OAUTH_AUTHORIZATION_SERVERS", "https://issuer.example.test")
+    monkeypatch.setattr(config, "OAUTH_SCOPES", "")
+    monkeypatch.setattr(config, "OAUTH_JWKS_URI", "")
+
+
+def _acl_config_file(tmp_path, clients):
+    path = tmp_path / "acl.json"
+    path.write_text(json.dumps({"clients": clients}), encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
+@pytest.mark.parametrize(
+    "clients, expected",
+    [
+        ([{"client_id": "idp", "token": None, "grants": {"*": "read"}, "per_subject": True}], True),
+        ([{"client_id": "a", "token": "t", "grants": {"*": "read"}}], False),
+    ],
+    ids=["per-subject", "static-token"],
+)
+def test_the_pairwise_switch_is_derived_from_the_acl(monkeypatch, tmp_path, clients, expected):
+    _oauth_on(monkeypatch)
+    acl_config = acl.load_config(str(_acl_config_file(tmp_path, clients)))
+    verifier = server._oauth_verifier(server._oauth_discovery(), acl_config)
+    assert verifier is not None
+    assert verifier._require_public_subject is expected, (clients, expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "clients, ledger_expected",
+    [
+        ([{"client_id": "idp", "token": None, "grants": {"*": "read-write"}, "per_subject": True}], True),
+        ([{"client_id": "a", "token": "t", "grants": {"*": "read"}}], False),
+    ],
+    ids=["per-subject", "static-token"],
+)
+async def test_startup_activates_the_alias_ledger_for_a_per_subject_acl(
+    monkeypatch, tmp_path, clients, ledger_expected
+):
+    """Drive main() through startup and stop before it serves: an unknown transport
+    raises after the wiring block, which is the window this needs."""
+    previous_config, previous_ledger = acl.active_config(), acl.active_ledger()
+    acl.activate(None)
+    acl.activate_ledger(None)
+    try:
+        monkeypatch.setenv("CPERSONA_ACL_FILE", str(_acl_config_file(tmp_path, clients)))
+        monkeypatch.setenv("CPERSONA_ALIAS_LEDGER_PATH", str(tmp_path / "alias_ledger.json"))
+        monkeypatch.setenv("CPERSONA_TRANSPORT", "definitely-not-a-transport")
+        monkeypatch.setattr(server, "install_mgp_validation_filter", lambda: None)
+
+        async def _noop():
+            pass
+
+        monkeypatch.setattr(server, "init_db", _noop)
+        monkeypatch.setattr(server, "close_db", _noop)
+        with pytest.raises(ValueError, match="Unknown transport"):
+            await server.main()
+
+        assert (acl.active_ledger() is not None) is ledger_expected, acl.active_ledger()
+    finally:
+        acl.activate(previous_config)
+        acl.activate_ledger(previous_ledger)
+
+
+@pytest.mark.parametrize(
+    "enabled, expect_text",
+    [("on", True), ("off", False)],
+    ids=["sidecar-on", "kill-switch"],
+)
+def test_a_populated_sidecar_reaches_the_initialize_response(tmp_path, enabled, expect_text):
+    """tests/conftest.py pins the sidecar off before any import, so server.registry is
+    built with instructions=None in every run of this suite and nothing in it can see
+    the keyword. Read the registry in a subprocess, where the sidecar is on."""
+    sidecar = tmp_path / "operating-context.toml"
+    sidecar.write_text(
+        '\nversion = 1\ncontext_revision = "2026-07-18.1"\n\n'
+        '[instructions]\nsummary = """\nCPersona operating context (rev 2026-07-18.1).\n"""\n\n'
+        '[registry]\nproject_ids = ["", "acme-app"]\nenforce = "warn"\n',
+        encoding="utf-8",
+    )
+    read = (
+        "import cpersona.server as s; "
+        "print((s.registry.server.create_initialization_options().instructions or '').strip() "
+        "or 'NONE')"
+    )
+    env = dict(
+        os.environ,
+        CPERSONA_OPERATING_CONTEXT=enabled,
+        CPERSONA_OPERATING_CONTEXT_PATH=str(sidecar),
+        CPERSONA_DB_PATH=str(tmp_path / "b409.db"),
+        CPERSONA_EMBEDDING_MODE="none",
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", read], env=env, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert ("rev 2026-07-18.1" in out) is expect_text, out

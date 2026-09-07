@@ -45,6 +45,13 @@ async def do_check_health(
             f"{', '.join(checks_registry.HEALTH_CHECK_NAMES)}",
             unknown_checks=unknown,
             valid_checks=list(checks_registry.HEALTH_CHECK_NAMES),
+            # bug-363: the one path the sentence was written for was the one
+            # path without the field — a caller following the documented
+            # contract either raised on the missing key or recorded an empty
+            # run, indistinguishable from a subset that legitimately executed
+            # nothing. Nothing ran here, and saying so is both true and what
+            # the description promises.
+            checks_run=[],
         )
     checks_run = list(checks) if checks else list(checks_registry.HEALTH_CHECK_NAMES)
 

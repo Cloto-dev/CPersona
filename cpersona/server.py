@@ -732,7 +732,16 @@ registry.auto_tool(
                         "description": "The text to store. Content that is empty — or that sanitizes to empty — is refused with ok:false, result:'rejected'.",
                     },
                     "source": {
-                        "type": "object",
+                        # bug-398: declared object-only while this schema's own
+                        # description promised that a bare 'user' / 'assistant'
+                        # string and a null source are folded at the write seam.
+                        # The SDK validates against inputSchema before dispatch,
+                        # so both promised shapes died at the boundary and
+                        # normalize_source was never reached — the defect
+                        # bug-233 removed from the child field, still standing
+                        # on the parent. Admitting them changes no call that
+                        # works today.
+                        "type": ["object", "string", "null"],
                         "description": (
                             "Attribution of who produced the content. Canonical shape is "
                             "{type, id, name}. Type is the discriminator; id / name identify "
@@ -963,22 +972,35 @@ registry.auto_tool(
                 # undated -- and no statement of what any of them must be.
                 # additionalProperties stays open by design: a caller sending its
                 # own bookkeeping alongside these keeps working.
+                # bug-387: the five fields below declared `type: string` as a
+                # statement of intent, but the SDK validates arguments against
+                # inputSchema before dispatch — so the boundary refused every
+                # non-string and the fail-soft reading this tool documents (the
+                # field is read as absent, the entry is merged, the call answers
+                # with context_field_issues) was unreachable over MCP, along
+                # with the `warn` default and the `off` setting of
+                # CPERSONA_EXTERNAL_CONTEXT_MODE. Worse, the SDK's error result
+                # carries no `messages` key at all, against the bug-232 rule
+                # that a failing recall still answers with `messages: []`. The
+                # expectation each field states is kept in its description,
+                # where it informs a caller without deciding the call.
                 "items": {
                     "type": "object",
                     "properties": {
-                        "role": {"type": "string"},
-                        "content": {"type": "string"},
+                        "role": {
+                            "description": "'user' or 'assistant'; other roles filter the recall without being merged. A string — a value that is not one is read as absent and reported in context_field_issues.",
+                        },
+                        "content": {
+                            "description": "The entry's text. A string — a value that is not one is read as absent and reported in context_field_issues.",
+                        },
                         "name": {
-                            "type": "string",
-                            "description": "Display label for a role=user entry; becomes source.name, and source.id when user_id is absent. Default 'User'.",
+                            "description": "Display label for a role=user entry; becomes source.name, and source.id when user_id is absent. Default 'User'. A string — a value that is not one is read as absent and reported in context_field_issues.",
                         },
                         "user_id": {
-                            "type": "string",
-                            "description": "Stable id for a role=user entry; becomes source.id as 'discord:<user_id>'.",
+                            "description": "Stable id for a role=user entry; becomes source.id as 'discord:<user_id>'. A string — a value that is not one is read as absent and reported in context_field_issues.",
                         },
                         "timestamp": {
-                            "type": "string",
-                            "description": "ISO-8601 stamp deciding where this entry lands in the merged chronology. An entry without one — or with one that names no instant — sorts ahead of every dated message.",
+                            "description": "ISO-8601 stamp deciding where this entry lands in the merged chronology. An entry without one — or with one that names no instant — sorts ahead of every dated message. A string — a value that is not one is read as absent and reported in context_field_issues.",
                         },
                     },
                 },
@@ -1592,7 +1614,10 @@ registry.auto_tool(
     "profile row to CPERSONA_MAX_PROFILE_LENGTH (default 2000), keeping the "
     "start. Lower either cap and a fix run shortens rows that were within the "
     "old one. Some repairs are bounded per run (source canonicalisation "
-    "classifies at most 1000 rows); a fix response carrying `remaining` > 0 "
+    # bug-364/362: the bound was typed here while the enforced cap lives in the
+    # configuration, so the two drifted by an order of magnitude. Render it.
+    f"classifies at most {checks_module.INVALID_SOURCE_CLASSIFY_CAP} rows); "
+    "a fix response carrying `remaining` > 0 "
     "with a re-run hint has NOT converged — run fix again until `remaining` "
     "stops decreasing. "
     "Use checks parameter to "
@@ -1636,9 +1661,17 @@ registry.auto_tool(
     "Pull the storage-integrity findings on demand (SuperAuditor v1 pull contract, "
     "docs/SUPERAUDITOR_STANDARD.md) instead of reading them off check_health. Same "
     "detector as check_health(fix=false) over the WHOLE database, delivered as "
-    "findings: each carries `kind` (the check registry name, so "
-    "check_health(checks=[kind]) re-runs exactly that probe; escalation tiers are "
-    "their own kinds, e.g. null_embedding_pipeline_down) and a static per-kind "
+    # bug-391: `kind` was described as the registry name a caller re-runs, with
+    # an escalation tier offered as the example — but the tiers this seam mints
+    # are not in the check registry and check_health refuses every name outside
+    # it, so the one documented diagnostic follow-up answered with an error on
+    # exactly the findings an operator most wants to re-check. The name that
+    # re-runs is `check`, which every finding already carries.
+    "findings: each carries `kind` (the finding's name: a check registry name, or "
+    "an escalation tier this seam mints for a runner that grades its own severity, "
+    "e.g. null_embedding_pipeline_down — a tier is NOT a registry name), `check` "
+    "(the registry name that produced it, so check_health(checks=[finding['check']]) "
+    "re-runs exactly that probe) and a static per-kind "
     "`severity` (critical = the read contract is broken now / warn = two stored facts "
     "contradict / info = an observation). check_health's own instance verdict rides "
     "along as `health_severity`; a probe that raised is reported as kind "
@@ -1724,7 +1757,12 @@ registry.auto_tool(
             "checks": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Checks to run (empty = all). Options: anonymous_source, short_content, stale_profile, orphaned_episodes, calibration_staleness, near_duplicate",
+                # bug-364: the hand-typed list named six of the eight
+                # registered checks, so two probes were undiscoverable from the
+                # schema and an explicit subset chosen from it ran short while
+                # answering in the shape of a full run. Render the registry.
+                "description": "Checks to run (empty = all). Options: "
+                + ", ".join(checks_module.DEEP_CHECK_NAMES),
             },
             "session_key": _SESSION_KEY_PROPERTY_SHORT,
         },
@@ -2961,11 +2999,28 @@ async def main():
             # so the first symptom would otherwise be recall quietly returning
             # FTS/keyword hits alone. check_vector_fallback_config reports the same
             # thing on the maintenance surface.
-            logger.info(
-                "Vector search mode=%s with CPERSONA_STORE_BLOB=false: memories keep no "
-                "local embedding, so a remote /search outage leaves recall with FTS/keyword only",
-                VECTOR_SEARCH_MODE,
-            )
+            # bug-371: the notice named the risk before asking whether the
+            # remote arm was armed. With no HTTP endpoint — the shape an
+            # api-mode embedding configuration leaves — there is no arm to lose
+            # to an outage: recall holds no vector for any row from the first
+            # write onward. That is worth more than an info line.
+            if VECTOR_SEARCH_MODE == "remote" and not (
+                vector._embedding_client and vector._embedding_client._http_url
+            ):
+                logger.warning(
+                    "Vector search mode=%s with CPERSONA_STORE_BLOB=false and no remote "
+                    "embedding endpoint configured: memories keep no local embedding and "
+                    "none is pushed remotely, so recall runs on FTS/keyword only for every "
+                    "row written in this configuration — set CPERSONA_STORE_BLOB=true, or "
+                    "configure the endpoint this mode pushes to",
+                    VECTOR_SEARCH_MODE,
+                )
+            else:
+                logger.info(
+                    "Vector search mode=%s with CPERSONA_STORE_BLOB=false: memories keep no "
+                    "local embedding, so a remote /search outage leaves recall with FTS/keyword only",
+                    VECTOR_SEARCH_MODE,
+                )
     else:
         logger.info("Embedding disabled (mode=none), using FTS5 + keyword only")
 

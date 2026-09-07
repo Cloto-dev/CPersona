@@ -521,6 +521,21 @@ def _blobs_are_stored() -> bool:
     return local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB)
 
 
+def _remote_vector_arm_armed() -> bool:
+    """bug-371: is the remote half of the vector arm actually reachable?
+
+    The same predicate the write and read paths gate their remote calls on
+    (``memory_handlers`` /index, ``vector._search_vector`` /search): remote mode
+    is not enough, the client also needs an HTTP endpoint. Read at call time so
+    a test patching this module's copy steers it.
+    """
+    return bool(
+        VECTOR_SEARCH_MODE == "remote"
+        and vector._embedding_client
+        and vector._embedding_client._http_url
+    )
+
+
 def _null_embedding_severity(null_count: int, total: int, *, blobs_expected: bool = True) -> str:
     if not vector._embedding_client:
         return "info"  # mode=none: NULL is the expected steady state
@@ -2269,9 +2284,25 @@ async def check_vector_fallback_config(db, agent_id: str = "", fix: bool = False
             "store_blob": STORE_BLOB,
             "memories": total,
             "memories_with_local_embedding": with_blob,
+            # bug-371: the hint stated the risk as an outage, which is true
+            # only when the remote arm is armed at all. With no /search
+            # endpoint configured — the shape an api-mode embedding
+            # configuration leaves, since http_url is unset there — neither arm
+            # holds a vector for any row, permanently rather than during an
+            # outage, and the operator reading this line was told to wait out a
+            # fault that is not what is happening.
             "hint": (
-                "a remote /search outage leaves recall with FTS/keyword only; "
-                "set CPERSONA_STORE_BLOB=true to arm the local scan"
+                (
+                    "a remote /search outage leaves recall with FTS/keyword only; "
+                    "set CPERSONA_STORE_BLOB=true to arm the local scan"
+                )
+                if _remote_vector_arm_armed()
+                else (
+                    "no local embedding is stored AND no remote /search endpoint is "
+                    "configured, so recall has no vector arm at all — not during an "
+                    "outage, but in this configuration: set CPERSONA_STORE_BLOB=true, "
+                    "or configure the remote embedding endpoint this mode pushes to"
+                )
             ),
         }
     ]

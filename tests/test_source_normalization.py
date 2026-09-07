@@ -447,6 +447,23 @@ def test_store_schema_accepts_the_legacy_shapes_the_seam_folds():
     folded, mapped = normalize_source(legacy["message"]["source"])
     assert mapped and folded["type"] == "User"
 
+    # bug-398: the same gap one level up. This test validated only the
+    # lowercase-type dict, so the parent field kept the object-only declaration
+    # while the description promised two more shapes — a bare role word and a
+    # null — that the seam folds and the boundary refused before dispatch.
+    for bare in ("user", "assistant"):
+        call = {"agent_id": "a", "message": {"content": "hi", "source": bare}}
+        jsonschema.validate(instance=call, schema=store_schema)
+        folded, mapped = normalize_source(bare)
+        assert mapped and folded["type"] == ("User" if bare == "user" else "Agent"), (bare, folded)
+
+    call = {"agent_id": "a", "message": {"content": "hi", "source": None}}
+    jsonschema.validate(instance=call, schema=store_schema)
+    # normalize_source leaves a null alone (case 5); the write seam is what
+    # persists it as the anonymous {} (memory_handlers.py), which is the shape
+    # the description promises and the schema now admits.
+    assert normalize_source(None) == (None, False)
+
 
 def test_alias_summary_tracks_the_mapping_table():
     """Adding an alias changes the generated sentence — the C26 doc-drift
