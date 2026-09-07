@@ -10,6 +10,10 @@ They are tested separately because they are the parts a CI run cannot exercise
 in the failure cases that matter — a two-match anchor, an unreachable blob, a
 marker that vanished mid-edit — and a mechanism nobody has seen fail is a
 mechanism nobody has seen work.
+
+The checker that decides which pages the updater is pointed at, check-i18n-drift.py,
+is here for the same reason (bug-401): it is the other half of one mechanism, and
+its failure case is a page that passes the stamp check without being stamped.
 """
 
 import importlib.util
@@ -377,3 +381,73 @@ def test_a_working_checker_still_parses(monkeypatch, tmp_path):
     """The guards must not swallow the ordinary answer — including 'nothing stale'."""
     _checker_is(monkeypatch, tmp_path, 'import json,sys; json.dump({"stale": []}, sys.stdout)\n')
     assert translate.stale_pages() == []
+
+
+# ---------------------------------------------------------------------------
+# bug-401 — the marker was looked for anywhere, not on the first line.
+# ---------------------------------------------------------------------------
+#
+# The checker's own contract calls the marker first-line metadata; the search ran
+# over the whole document and never asked where the match landed. A translated
+# page that lost its first line but quotes the marker later -- in a fenced
+# example, or in prose copied from another page -- had that later occurrence's
+# hash validated and was reported current. The gate exists to prove a page is
+# stamped, and it passed an unstamped one.
+
+drift = _load("check_i18n_drift", "check-i18n-drift.py")
+
+
+def _drift_root(tmp_path, ja_text: str, en_text: str = "# Title\n\nEnglish body.\n"):
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "x.md").write_text(en_text, encoding="utf-8")
+    (docs / "x.ja.md").write_text(ja_text, encoding="utf-8")
+    return tmp_path
+
+
+def _run_drift(monkeypatch, root, argv=("check-i18n-drift.py", "--strict")):
+    monkeypatch.setattr(drift, "ROOT", root)
+    monkeypatch.setattr(drift.sys, "argv", list(argv))
+    return drift.main()
+
+
+def _sha(root) -> str:
+    return drift.blob_sha(root / "docs" / "x.md")
+
+
+def test_a_current_first_line_marker_passes(tmp_path, monkeypatch):
+    root = _drift_root(tmp_path, "PLACEHOLDER\n\n# \u30bf\u30a4\u30c8\u30eb\n")
+    ja = root / "docs" / "x.ja.md"
+    ja.write_text(
+        f"<!-- i18n-source: docs/x.md@blob:{_sha(root)} -->\n\n# \u30bf\u30a4\u30c8\u30eb\n",
+        encoding="utf-8",
+    )
+
+    assert _run_drift(monkeypatch, root) == 0
+
+
+def test_a_marker_only_inside_the_body_is_reported_as_missing(tmp_path, monkeypatch):
+    """The defect in one page: a fenced example, and no first line."""
+    root = _drift_root(tmp_path, "PLACEHOLDER")
+    ja = root / "docs" / "x.ja.md"
+    ja.write_text(
+        "# \u30bf\u30a4\u30c8\u30eb\n\n"
+        "\u30de\u30fc\u30ab\u30fc\u306e\u4f8b:\n\n```\n"
+        f"<!-- i18n-source: docs/x.md@blob:{_sha(root)} -->\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    assert _run_drift(monkeypatch, root) != 0
+
+
+def test_a_stale_first_line_marker_is_still_caught(tmp_path, monkeypatch):
+    """The control: the check the gate is actually for must keep working."""
+    root = _drift_root(tmp_path, "PLACEHOLDER")
+    ja = root / "docs" / "x.ja.md"
+    ja.write_text(
+        "<!-- i18n-source: docs/x.md@blob:" + "0" * 40 + " -->\n\n# \u30bf\u30a4\u30c8\u30eb\n",
+        encoding="utf-8",
+    )
+
+    assert _run_drift(monkeypatch, root) != 0
