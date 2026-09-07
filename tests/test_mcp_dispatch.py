@@ -73,9 +73,18 @@ async def test_the_advertised_schema_matches_what_the_handler_reads(registry_ser
 
     ctx = tools["recall_with_context"].inputSchema["properties"]["external_context"]
     assert ctx["type"] == "array", ctx
-    # bug-163: role/content are advertised as strings, not prose-only.
-    assert ctx["items"]["properties"]["role"]["type"] == "string", ctx
-    assert ctx["items"]["properties"]["content"]["type"] == "string", ctx
+    # bug-163: role/content are advertised, not prose-only — a client reading the
+    # schema can see them and see what they should be.
+    # bug-387: advertised, but not enforced at the boundary. The SDK validates
+    # arguments against inputSchema before dispatch, so a hard `type` here refused
+    # every non-string and made this tool's own documented answer to one — read as
+    # absent, entry merged, reported in context_field_issues — unreachable over MCP,
+    # along with the `warn` default and the `off` setting of the mode that governs it.
+    for field in ("role", "content"):
+        spec = ctx["items"]["properties"][field]
+        assert "type" not in spec, (field, ctx)
+        assert "string" in spec["description"], (field, spec)
+        assert "context_field_issues" in spec["description"], (field, spec)
 
 
 @pytest.mark.asyncio

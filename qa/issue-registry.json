@@ -5263,12 +5263,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/server.py",
-      "pattern": "classifies at most 1000 rows",
+      "pattern": "classifies at most \\{checks_module\\.INVALID_SOURCE_CLASSIFY_CAP\\} rows",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "tool-description-drift",
-      "fix_sketch": "Render the number from the configuration constant rather than typing it, the way the same description already renders other derived lists, so it cannot drift from the value that is enforced."
+      "fix_sketch": "Render the number from the configuration constant rather than typing it, the way the same description already renders other derived lists, so it cannot drift from the value that is enforced.",
+      "fix_note": "The per-run bound is rendered from the enforced constant instead of typed beside it, the way the same description already renders its other derived lists, so the two cannot drift again."
     },
     {
       "id": "bug-363",
@@ -5276,13 +5278,15 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/server.py",
-      "pattern": "every response echoes",
+      "fixed_in": "2.5.12b2",
+      "file": "cpersona/maintenance_handlers.py",
+      "pattern": "checks_run=\\[\\],",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-contract",
       "fix_sketch": "Include an empty checks-run list in the rejection, since that is both true and what the description promises; the alternative, narrowing the sentence, gives callers a contract with an exception in it.",
-      "note": "The fix note of the entry that introduced the rejection repeats the same claim, so that text needs correcting with the code."
+      "note": "The fix note of the entry that introduced the rejection repeats the same claim, so that text needs correcting with the code.",
+      "fix_note": "The rejection now carries the empty checks_run the description promises every response echoes. Nothing ran, saying so is true, and a caller can no longer confuse a refused call with a subset that legitimately executed nothing."
     },
     {
       "id": "bug-364",
@@ -5290,12 +5294,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/server.py",
-      "pattern": "Checks to run \\(empty = all\\)\\. Options: anonymous_source, short_content",
+      "pattern": "\\+ \", \"\\.join\\(checks_module\\.DEEP_CHECK_NAMES\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "tool-description-drift",
-      "fix_sketch": "Render the option list from the registry the way the report-only clause beside it already does, and add a gate pinning the rendered list against the registered names so a new check cannot ship undiscoverable."
+      "fix_sketch": "Render the option list from the registry the way the report-only clause beside it already does, and add a gate pinning the rendered list against the registered names so a new check cannot ship undiscoverable.",
+      "fix_note": "The option list is rendered from the check registry, as the report-only clause beside it already was, and a regression test pins the advertised set against the registered names so a new check cannot ship undiscoverable."
     },
     {
       "id": "bug-365",
@@ -5390,13 +5396,15 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/server.py",
-      "pattern": "if not local_blobs_stored\\(VECTOR_SEARCH_MODE, STORE_BLOB\\):",
+      "fixed_in": "2.5.12b2",
+      "file": "cpersona/config.py",
+      "pattern": "VECTOR_SEARCH_MODE = _parse_choice\\(\"CPERSONA_VECTOR_SEARCH_MODE\", \"local\", \\(\"local\", \"remote\"\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-degradation",
       "fix_sketch": "Ask whether the remote path is actually armed before promising it: with no local blobs and no remote endpoint the vector arm is gone, which deserves a loud refusal at boot rather than an observation, on the same reasoning the embedding-mode assertion beside it already applies.",
-      "note": "The unvalidated mode string is the same class as bug-321, on a different setting in the same module."
+      "note": "The unvalidated mode string is the same class as bug-321, on a different setting in the same module.",
+      "fix_note": "Three changes for one state. The setting is read through the choice parser its siblings use, so no third spelling survives to miss both consumers. The boot notice and the maintenance hint now ask whether the remote arm is armed before naming an outage, and say plainly when neither arm holds a vector. The severity is unchanged on purpose: escalating a static per-kind tier moves the checkup gate exit code on a deployment that boots today."
     },
     {
       "id": "bug-372",
@@ -5613,12 +5621,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/server.py",
-      "pattern": "\"role\": \\{\"type\": \"string\"\\}",
+      "pattern": "'user' or 'assistant'; other roles filter the recall",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "api-contract",
-      "note": "Deferred out of the frozen 2.5 line: reconciling the two means moving one published surface -- widening the item types so the warn mode can run at the boundary, or withdrawing the promise from the description -- and either is a change to the tool contract rather than a fix release's work. It joins the next feature line, where the three settings of the mode can be given one shape at the boundary and in the handler. Neighbouring but distinct from bug-292, which declared the three previously undeclared fields and what they mean: that work is what put the types in the schema, and this is the separate question of what the boundary should do with a value that is not one."
+      "note": "Deferred out of the frozen 2.5 line: reconciling the two means moving one published surface -- widening the item types so the warn mode can run at the boundary, or withdrawing the promise from the description -- and either is a change to the tool contract rather than a fix release's work. It joins the next feature line, where the three settings of the mode can be given one shape at the boundary and in the handler. Neighbouring but distinct from bug-292, which declared the three previously undeclared fields and what they mean: that work is what put the types in the schema, and this is the separate question of what the boundary should do with a value that is not one.",
+      "fix_note": "The five item fields state their expectation in their descriptions instead of enforcing it at the boundary, so the documented fail-soft reading, the warn default and the off setting are reachable over MCP again, and a reported entry answers with messages rather than an SDK error carrying none. Widening the schema restores documented behaviour and refuses nothing that works today."
     },
     {
       "id": "bug-388",
@@ -5669,12 +5679,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/server.py",
-      "pattern": "check_health\\(checks=\\[kind\\]\\) re-runs exactly that probe",
+      "pattern": "check_health\\(checks=\\[finding\\['check'\\]\\]\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
-      "note": "Deferred out of the frozen 2.5 line: both candidate fixes move a published surface -- accepting the tier names widens what check_health's `checks` argument admits, and carrying a separate re-run name on each finding adds a key to a documented response -- and a fix release on this line does neither. It belongs with the next feature line, where the tier names and the registry names can be given one stated relationship instead of two vocabularies that only look like one. Withdrawing the promise from the description and the module docstring is the cheaper alternative and is the same contract change seen from the other side."
+      "note": "Deferred out of the frozen 2.5 line: both candidate fixes move a published surface -- accepting the tier names widens what check_health's `checks` argument admits, and carrying a separate re-run name on each finding adds a key to a documented response -- and a fix release on this line does neither. It belongs with the next feature line, where the tier names and the registry names can be given one stated relationship instead of two vocabularies that only look like one. Withdrawing the promise from the description and the module docstring is the cheaper alternative and is the same contract change seen from the other side.",
+      "fix_note": "The description and the module docstring now say that a kind may be an escalation tier rather than a registry name, and point the re-run at the check key every finding already carries. Making the tiers re-runnable would widen what the checks argument admits, and a second re-run name would add a key to a documented response."
     },
     {
       "id": "bug-392",
@@ -5766,12 +5778,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/server.py",
-      "pattern": "\"source\": \\{",
+      "pattern": "\"type\": \\[\"object\", \"string\", \"null\"\\],",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
-      "note": "Deferred out of the frozen 2.5 line: the fix widens the published input schema so `message.source` admits a string and a null beside an object, and a schema change is what the current line preserves rather than makes. Withdrawing the two promises from the description instead is the alternative and carries the same weight in the other direction -- which of the two is right is a decision about how long the legacy producer shapes are supported, and that belongs with the next feature line. Whichever is taken, the test that pins the schema against the shapes the seam folds needs the bare-string and null cases: the gap in that test is what let the parent field keep the shape bug-233 removed from the child."
+      "note": "Deferred out of the frozen 2.5 line: the fix widens the published input schema so `message.source` admits a string and a null beside an object, and a schema change is what the current line preserves rather than makes. Withdrawing the two promises from the description instead is the alternative and carries the same weight in the other direction -- which of the two is right is a decision about how long the legacy producer shapes are supported, and that belongs with the next feature line. Whichever is taken, the test that pins the schema against the shapes the seam folds needs the bare-string and null cases: the gap in that test is what let the parent field keep the shape bug-233 removed from the child.",
+      "fix_note": "The parent field admits the two shapes its own description promises the write seam folds, which is the defect bug-233 removed from the child field. The schema test now covers the bare role word and the null, the gap that let the parent keep the shape."
     },
     {
       "id": "bug-399",
@@ -5887,12 +5901,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/server.py",
-      "pattern": "require_public_subject = bool\\(acl_config\\.per_subject_clients\\)",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_2512b2_handlers.py",
+      "pattern": "def test_the_pairwise_switch_is_derived_from_the_acl",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "wiring-untested",
-      "fix_sketch": "Extend the wiring test to build the verifier from an ACL config that has a per-subject client and assert the constructed verifier requires public subjects."
+      "fix_sketch": "Extend the wiring test to build the verifier from an ACL config that has a per-subject client and assert the constructed verifier requires public subjects.",
+      "fix_note": "The wiring test builds the verifier from a per-subject ACL and from a static-token one, and asserts the derived flag in both directions. Measured: pinning the production line to False turns the per-subject case red."
     },
     {
       "id": "bug-408",
@@ -5900,12 +5916,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/server.py",
-      "pattern": "acl\\.activate_ledger\\(AliasLedger\\(ledger_path\\)\\)",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_2512b2_handlers.py",
+      "pattern": "async def test_startup_activates_the_alias_ledger_for_a_per_subject_acl",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "wiring-untested",
-      "fix_sketch": "Add a startup invariant refusing to serve when per-subject clients are configured and no ledger is active, and a test that drives `main()` with a per-subject ACL and asserts the ledger became active."
+      "fix_sketch": "Add a startup invariant refusing to serve when per-subject clients are configured and no ledger is active, and a test that drives `main()` with a per-subject ACL and asserts the ledger became active.",
+      "fix_note": "A test drives main() through startup with a per-subject ACL and asserts the ledger became active, in both directions. Measured: deleting the activation line turns it red. The startup invariant the entry also asks for adds a refusal to a configuration that boots today, so it is not taken here."
     },
     {
       "id": "bug-409",
@@ -5913,12 +5931,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/server.py",
-      "pattern": "instructions=operating_context\\.instructions_text\\(\\)",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_2512b2_handlers.py",
+      "pattern": "def test_a_populated_sidecar_reaches_the_initialize_response",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "wiring-untested",
-      "fix_sketch": "Add a case that sets the sidecar environment, reloads the module, and asserts the reloaded registry's initialization options carry the sidecar text -- or a source gate pinning the keyword on that constructor call."
+      "fix_sketch": "Add a case that sets the sidecar environment, reloads the module, and asserts the reloaded registry's initialization options carry the sidecar text -- or a source gate pinning the keyword on that constructor call.",
+      "fix_note": "The suite pins the sidecar off before any import, so the assertion reads the registry in a subprocess where it is on, and checks the kill switch invents nothing. Measured: dropping the keyword from the constructor turns it red."
     },
     {
       "id": "bug-410",

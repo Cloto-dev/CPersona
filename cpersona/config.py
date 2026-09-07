@@ -496,7 +496,13 @@ RECENT_RECALL_WINDOW_MIN = _parse_float("CPERSONA_RECENT_RECALL_WINDOW_MIN", 5.0
 TASK_MAX_RETRIES = _parse_int("CPERSONA_TASK_MAX_RETRIES", 3)
 TASK_RETRY_DELAY = _parse_int("CPERSONA_TASK_RETRY_DELAY", 30)
 
-VECTOR_SEARCH_MODE = os.environ.get("CPERSONA_VECTOR_SEARCH_MODE", "local")
+# bug-371: read unvalidated and unnormalised, this setting had a third state
+# its two consumers both miss — the remote push tests `== "remote"` exactly and
+# the local write gate tests `== "local"` exactly, so a mis-cased or misspelt
+# value stored no local BLOB and took no remote push either, leaving the row
+# with no vector at all and nothing saying so. Same class as bug-321, on the
+# setting next to it: the module already owns the parser for this shape.
+VECTOR_SEARCH_MODE = _parse_choice("CPERSONA_VECTOR_SEARCH_MODE", "local", ("local", "remote"))
 # bug-033: dedicated per-call timeout for the remote /search POST on the recall
 # hot path. Without it the POST inherits the embed client's 30s DEFAULT_TIMEOUT_SECS,
 # so a hung/flapping endpoint blocks every recall ~30s before falling back to local.
