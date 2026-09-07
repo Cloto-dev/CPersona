@@ -46,6 +46,13 @@ async def db():
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await conn.execute(f"DELETE FROM {table}")
     await conn.commit()
+    # This module drifts schema objects on purpose — that is what
+    # check_schema_objects is being tested against — and the database is shared
+    # by the whole process, so the drift outlives the test unless it is undone
+    # here. It has to run AFTER the DELETEs above: the duplicate rows that make
+    # the canonical UNIQUE index unbuildable are exactly what those tests seed.
+    await checks.check_schema_objects(conn, "", fix=True)
+    await conn.commit()
 
 
 async def _mem(

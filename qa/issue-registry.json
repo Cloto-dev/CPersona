@@ -6263,6 +6263,19 @@
       "fix_sketch": "Log the sanitised `_failure_evidence(e)` string (or the exception's class name plus the safe endpoint) instead of the exception itself.",
       "note": "The copy of this client that ships inside this package has diverged from the shared library it was vendored from; the defect line exists only in this package's copy, so the fix lands here.",
       "fix_note": "The safe evidence is built first and logged, so the sanitiser the returned error already went through now covers the log line too. httpx carries the request URL inside its own message, which is how an endpoint configured with credentials in the userinfo or the query string reached a WARNING record verbatim while the value handed to the caller was clean. Regression in tests/test_2512b2_handlers.py asserts both halves plus a control that the failure is still reported at all, so a log line that simply disappeared would not pass."
+    },
+    {
+      "id": "bug-426",
+      "summary": "(MEDIUM) The suite shares one database for the whole process (tests/conftest.py pins a single CPERSONA_DB_PATH before any cpersona import), and several tests drift its schema objects as setup -- dropping the dedup UNIQUE indexes, or replacing one with a non-UNIQUE definition of the same name, to exercise check_schema_objects, the migration's non-fatal index creation and the ACL-scoped repair. Their fixtures restore the rows and not the schema, so the drift outlives the test. Measured 2026-09-07: two tests leaked. tests/test_store_recall_surface.py::test_concurrent_unique_index_loser_reports_skipped asserted only that an index of the expected NAME existed, accepted the drifted non-UNIQUE one, and then failed on INSERT OR IGNORE reporting 'stored' -- red under a -k selection, green alone and green in the full suite, naming the victim rather than the test that dropped the UNIQUE. The second leak also left duplicate rows that make the canonical index unbuildable, so nothing downstream could repair it.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-07T08:30:00Z",
+      "version": "2.5.12b3",
+      "file": "tests/conftest.py",
+      "pattern": "_no_leaked_schema_drift",
+      "expected": "present",
+      "status": "fixed",
+      "category": "test-isolation",
+      "fix_note": "An autouse teardown runs the production comparison and repair (checks.check_schema_objects with fix=True) against the shared connection after every test and fails the test that left drift. A private copy of the canonical DDL in the test tree was rejected: it would drift away from the schema it is meant to pin, silently and in the direction that reports nothing. Reporting rather than only restoring follows the MGP-filter fixture beside it -- schema drift has a culprit to name, unlike the DB_PATH move, which is what the CLI under test is supposed to do. An object the repair cannot rebuild is reported once and then muted, so one leak fails one test instead of every test after it. The two leaking tests were also fixed at their source, with the schema restored after their rows are deleted rather than before, since the duplicates they seed are what blocks the UNIQUE create; the fixture is what keeps the class closed. The victim's precondition now asserts UNIQUE rather than the index name, so the same drift reaching it again reads as a diagnosis instead of an unexplained do_store result."
     }
   ]
 }
