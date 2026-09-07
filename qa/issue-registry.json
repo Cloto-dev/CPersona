@@ -4691,13 +4691,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/aliases.py",
-      "pattern": "os\\.fchmod\\(fd, fileperms\\.PRIVATE_FILE_MODE\\)",
+      "pattern": "fileperms\\.tighten\\(fd, tmp_path\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "portability",
       "fix_sketch": "Call the permissions helper, which already returns quietly where the attribute is absent, and close the descriptor in a finally so neither failure mode leaks one.",
-      "note": "Native Windows was not exercised; the absence of the attribute was simulated. The non-OSError escape is shared with bug-348, which is the same handler seen from the caller's side."
+      "note": "Native Windows was not exercised; the absence of the attribute was simulated. The non-OSError escape is shared with bug-348, which is the same handler seen from the caller's side.",
+      "fix_note": "The mode now goes through the package permissions helper, which returns quietly where os.fchmod does not exist (Windows) and logs a filesystem that cannot honour it; the helper lost its underscore because it has a second caller now. The descriptor is closed in a finally unless os.fdopen took ownership, and the temp-file cleanup catches BaseException rather than OSError, so neither failure mode leaks a descriptor or a file. Measured with the attribute removed: the issuance now succeeds and the ledger is readable by a fresh instance; with the helper made to raise, the refusal leaves no temp file behind."
     },
     {
       "id": "bug-323",
@@ -5088,13 +5090,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/aliases.py",
-      "pattern": "del self\\._aliases\\[issuer\\]\\[subject\\]",
+      "pattern": "except BaseException as e:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "error-handling",
       "fix_sketch": "Roll back on any exception, not only OSError, and re-raise as the module's own error type so callers see the documented failure; closing the descriptor in a finally removes the leak on both paths.",
-      "note": "bug-322 is the other half of the same line -- why the unguarded call raises at all -- and is fixed differently (route it through the permissions helper). Both are worth keeping: one removes the trigger, this one removes the class of trigger."
+      "note": "bug-322 is the other half of the same line -- why the unguarded call raises at all -- and is fixed differently (route it through the permissions helper). Both are worth keeping: one removes the trigger, this one removes the class of trigger.",
+      "fix_note": "The issuance rolls back on any exception rather than on OSError alone, so an unpersisted alias can no longer stay live in memory for the retry to hand out from cache. What the persist can raise is not a list worth keeping current -- the rollback is correct for every way it can fail. An exception that is not an ordinary error (cancellation, interrupt) is rolled back and re-raised as itself rather than reclassified, since telling the caller the ledger failed when it did not is its own defect. bug-322 removes this trigger; this removes the class."
     },
     {
       "id": "bug-349",
@@ -5387,12 +5391,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/vector_index.py",
-      "pattern": "value\\[i\\]\\.isdigit\\(\\) for i in \\(0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18\\)",
+      "pattern": "_ASCII_DIGITS = frozenset",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "index-build-predicate-drift",
-      "fix_sketch": "Restrict the Python test to ASCII digits so it means what the SQL class means; naming the mismatch in the count-check message as a second possible cause would also stop the misdiagnosis, but the predicates should agree first."
+      "fix_sketch": "Restrict the Python test to ASCII digits so it means what the SQL class means; naming the mismatch in the count-check message as a second possible cause would also stop the misdiagnosis, but the predicates should agree first.",
+      "fix_note": "The Python predicate now tests ASCII digits, which is what the SQL character class means. Pinned as the invariant rather than as the fix: a parametrised test asks both SQLite and Python about the same stamps -- canonical, fullwidth, superscript, wrong separator, sub-second, empty -- and requires the same answer, so a later change to either side that reopens the gap fails. The non-ASCII stamps are written as escapes so the test file stays ASCII."
     },
     {
       "id": "bug-369",
@@ -5686,7 +5692,7 @@
       "expected": "present",
       "status": "open",
       "category": "index-observability",
-      "note": "Deferred out of the frozen 2.5 line: the fix adds counters to the `status` and build results, which is a change to a documented response shape, and a fix release on this line does not add keys a consumer may then depend on. It belongs with the next feature line beside the same omission in the health check (`vector_index_tail_grown`, checks.py:2318-2332), which counts the same partial row set under a hint about the tail being read on every query -- so both get one definition of \"behind\" rather than two. The row groups and the query answers are correct; what is wrong is only what is reported about them."
+      "note": "Deferred out of the frozen 2.5 line: the fix adds counters to the `status` and build results, which is a change to a documented response shape, and a fix release on this line does not add keys a consumer may then depend on. It belongs with the next feature line beside the same omission in the health check (`vector_index_tail_grown`, checks.py:2318-2332), which counts the same partial row set under a hint about the tail being read on every query -- so both get one definition of \"behind\" rather than two. The row groups and the query answers are correct; what is wrong is only what is reported about them. Re-judged against the freeze conditions in 2.5.12b3 and the deferral holds, for a reason worth recording so it is not re-opened: the tempting cheap fix is to leave the keys alone and make `rows_since_build` count all three groups, but docs/operations.md makes two claims about `status` -- that it reports how many rows have been WRITTEN SINCE the build, and that it shows how far behind the index is -- and the excluded and unembedded rows were written BEFORE it. Widening that number satisfies the second sentence by making the first false, which is a redefinition rather than a restoration. So the fix really is new counters, and it belongs with the health check's identical omission so that 'behind' gets one definition."
     },
     {
       "id": "bug-389",

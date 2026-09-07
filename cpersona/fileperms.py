@@ -64,7 +64,7 @@ _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _WRITE_MODES = ("w", "wb", "a", "ab")
 
 
-def _tighten(fd: int, path: str) -> None:
+def tighten(fd: int, path: str) -> None:
     """Best-effort ``fchmod`` on an already-open descriptor.
 
     ``os.open`` applies its mode argument only when it CREATES the file, so a
@@ -109,7 +109,7 @@ def open_private(path, mode: str = "w", *, encoding: str | None = None):
     flags |= os.O_APPEND if "a" in mode else os.O_TRUNC
     fd = os.open(path, flags, PRIVATE_FILE_MODE)
     try:
-        _tighten(fd, path)
+        tighten(fd, path)
         return os.fdopen(fd, mode, encoding=encoding)
     except BaseException:
         os.close(fd)

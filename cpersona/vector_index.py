@@ -327,13 +327,23 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
         "bytes": os.path.getsize(out),
     }
 
+#: bug-368: str.isdigit() is true for digits SQLite's `[0-9]` class is not --
+#: fullwidth forms, other scripts' digits, superscripts. The two predicates are
+#: documented as the same test, and a row that answered true here and false in
+#: SQL made the builder raise its snapshot-isolation mismatch (the embedding pass
+#: returned one row, the metadata pass counted two) and delete its temp file, so
+#: the corpus could not be indexed at all until the row was found by hand -- with
+#: the message pointing at a concurrent writer that did not exist.
+_ASCII_DIGITS = frozenset("0123456789")
+
+
 def _is_canonical(value: str) -> bool:
     return (
         len(value) == CREATED_AT_WIDTH
         and value[4] == value[7] == "-"
         and value[10] == " "
         and value[13] == value[16] == ":"
-        and all(value[i].isdigit() for i in (0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18))
+        and all(value[i] in _ASCII_DIGITS for i in (0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18))
     )
 
 

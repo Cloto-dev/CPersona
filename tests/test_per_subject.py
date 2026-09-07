@@ -10,10 +10,11 @@ handler would see the literal sentinel instead of the alias.
 """
 
 import json
+import os
 
 import pytest
 
-from cpersona import acl, aliases
+from cpersona import acl, aliases, fileperms
 
 ISSUER = "https://auth.example.com"
 OAUTH_CLIENT = f"oauth:{ISSUER}:https://claude.ai/mcp-client"
@@ -533,3 +534,95 @@ async def test_boot_guard_exempts_aliases_the_ledger_issued(tmp_path):
                 "DELETE FROM memories WHERE agent_id IN (?, ?)", (alias, squatter)
             )
             await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# bug-322 / bug-348 — a persist that failed the wrong way left the alias live.
+# ---------------------------------------------------------------------------
+#
+# Two halves of one line. The ledger wrote its file with a bare ``os.fchmod``,
+# an attribute that does not exist on Windows while this package ships as
+# OS-independent (bug-322); and the issuance rolled back on ``OSError`` only, so
+# anything else the persist raised skipped the rollback (bug-348). Together: the
+# first sign-in raised the wrong error type, the alias stayed live in memory, the
+# temp file and its descriptor leaked, and the immediately following call was
+# authorised under an alias that had never been written to disk. On restart that
+# subject is re-minted and whatever the first session stored is stranded, which
+# is the exact loss the module docstring says it prevents.
+#
+# The trigger is simulated by removing the attribute rather than run on Windows.
+# Both are worth keeping: one removes this trigger, the other removes the class.
+
+
+def _ledger(tmp_path):
+    return aliases.AliasLedger(str(tmp_path / "alias_ledger.json"))
+
+
+def test_a_ledger_written_where_fchmod_is_absent_still_persists(tmp_path, monkeypatch):
+    """The Windows shape: no fchmod, and the issuance must still succeed."""
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    ledger = _ledger(tmp_path)
+
+    alias, issued = ledger.resolve_or_issue(ISSUER, "subject-1")
+
+    assert issued and alias.startswith(aliases.ALIAS_PREFIX)
+    assert aliases.AliasLedger(str(tmp_path / "alias_ledger.json")).peek(
+        ISSUER, "subject-1"
+    ) == alias
+
+
+def test_a_persist_that_fails_any_way_refuses_the_issuance(tmp_path, monkeypatch):
+    ledger = _ledger(tmp_path)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("not an OSError")
+
+    monkeypatch.setattr(ledger, "_persist", _boom)
+
+    with pytest.raises(aliases.AliasLedgerError):
+        ledger.resolve_or_issue(ISSUER, "subject-1")
+
+    # The rollback is what makes the refusal mean something: without it the
+    # retry takes the cached fast path and hands out the unwritten alias.
+    assert ledger.peek(ISSUER, "subject-1") is None
+    with pytest.raises(aliases.AliasLedgerError):
+        ledger.resolve_or_issue(ISSUER, "subject-1")
+
+
+def test_an_oserror_persist_still_refuses_and_rolls_back(tmp_path, monkeypatch):
+    """The control: the class that always worked must keep working."""
+    ledger = _ledger(tmp_path)
+    monkeypatch.setattr(
+        ledger, "_persist", lambda *a, **k: (_ for _ in ()).throw(PermissionError("nope"))
+    )
+
+    with pytest.raises(aliases.AliasLedgerError):
+        ledger.resolve_or_issue(ISSUER, "subject-1")
+
+    assert ledger.peek(ISSUER, "subject-1") is None
+
+
+def test_a_refused_issuance_leaves_no_temp_file_behind(tmp_path, monkeypatch):
+    """The descriptor and the temp file both leaked on the non-OSError path."""
+    monkeypatch.setattr(
+        fileperms, "tighten", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    ledger = _ledger(tmp_path)
+
+    with pytest.raises(aliases.AliasLedgerError):
+        ledger.resolve_or_issue(ISSUER, "subject-1")
+
+    leftovers = [n for n in os.listdir(tmp_path) if n.startswith(".alias_ledger.")]
+    assert leftovers == [], leftovers
+    assert ledger.peek(ISSUER, "subject-1") is None
+
+
+def test_the_ledger_goes_through_the_packages_permissions_helper(tmp_path, monkeypatch):
+    """Not a style point: the helper is what knows the attribute can be absent."""
+    calls = []
+    real = fileperms.tighten
+    monkeypatch.setattr(fileperms, "tighten", lambda fd, path: (calls.append(path), real(fd, path))[1])
+
+    _ledger(tmp_path).resolve_or_issue(ISSUER, "subject-1")
+
+    assert calls, "the ledger wrote its file without going through fileperms.tighten"
