@@ -6,18 +6,26 @@ for the named pattern, so an entry that no longer describes the tree fails the b
 That is the point — the registry is a machine-checked claim about the code, and this
 file describes the shape of one claim.
 
-The script mirrors the ClotoCore infrastructure of the same name. Keep both in sync.
+This document is named by the registry's own `$schema` field, and the verifier refuses
+a registry whose `$schema` is absent, is a URL or an absolute path, or does not resolve
+to a file in this repository. A pointer nothing follows is free to be wrong in the one
+way that matters, and in a sibling registry it already was.
 
 ## File shape
 
 ```json
 {
   "$schema": "qa/issue-registry.schema.md",
-  "version": "1.0",
   "description": "...",
   "issues": [ { ... }, { ... } ]
 }
 ```
+
+There is no schema version number at the root. The registry has one producer and one
+consumer, both in this repository and versioned together by git, so there is no version
+skew for such a field to describe — and a number nothing compares is not a version. The
+per-entry `version` field below is unrelated: it says which release a defect was found
+in, which is a real fact about the defect.
 
 ## Entry fields
 
@@ -38,6 +46,7 @@ The script mirrors the ClotoCore infrastructure of the same name. Keep both in s
 | `fix_note` | no | What the fix does **and why that fix rather than another**. The rejected alternative is worth more than the diff, which git already has. |
 | `fix_sketch` | no | For an open entry: the intended fix, when it is already understood. |
 | `note` | no | Anything else — constraints, cross-references to related ids. |
+| `routing` | no | Where an open entry is expected to be handled, when that is not this line of work (`"2.6, cross-consumer"`). Advisory only; the verifier does not read it. |
 
 No field may contain a newline or an ASCII unit separator (`\x1f`); the verifier
 serialises records with `\x1f` and aborts loudly rather than silently dropping a row.
@@ -76,6 +85,34 @@ The pattern is the whole mechanism, and two failure modes are easy to walk into:
 
 Escape regex metacharacters (`.` `(` `)` `*` `[`) — the pattern goes to `grep -P`, not
 to a literal string comparison.
+
+## What the verifier refuses
+
+Every one of these was once a way for an entry to leave the run with a verdict nothing
+produced, while the gate exited 0. CI reads only the exit code, so a green run is the
+whole report and a row that was never checked is indistinguishable from a row that
+passed. Each is now a named failure:
+
+- a registry that does not parse, or whose root is not an object carrying an `issues` list
+- a registry that declares zero entries — an empty ledger verifies nothing
+- a `$schema` that is absent, is a URL or absolute path, or resolves to no file here
+- a field containing the record separator, a newline or a carriage return
+- an empty `pattern`, which `grep -c` matches against every line
+- an `expected` that is neither `present` nor `absent`
+- a mismatch between records emitted and records read, or between rows counted and the
+  four verdict buckets
+
+`--filter` selecting none of a registry that *was* read stays a passing result: that is
+a real answer, not an empty one.
+
+## Sibling registries
+
+Other repositories in this project carry registries built on the same idea, with
+verifiers grown from a common ancestor. They are **not identical and are not kept in
+sync**: each has hardened against defects the others had not hit, and each carries
+fields the others do not. Do not copy an entry between them expecting it to validate,
+and do not assume a guard present here exists there. Each registry names its own schema
+document, and `bug-NNN` ids are local to the repository that assigned them.
 
 ## Running it
 

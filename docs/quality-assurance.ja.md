@@ -56,7 +56,7 @@
 ## 数字で見る { #by-the-numbers }
 
 - **~23,738 LOC** の Python (機能ごとに分割されたモジュール群)、加えて 3,660 行の vendored MCP common スナップショット
-- **~1,670 test functions** / ~134 test modules — 挙動マトリクスをパラメータ化すると ~2,283 cases (~53,436 LOC、サーバーコードよりテストコードの方が多い)。上記の構造強制ゲートを含む
+- **~1,670 test functions** / ~134 test modules — 挙動マトリクスをパラメータ化すると ~2,356 cases (~53,436 LOC、サーバーコードよりテストコードの方が多い)。上記の構造強制ゲートを含む
 - **Schema v13** (自動マイグレーション)
 - **MIT License**
 

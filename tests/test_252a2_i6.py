@@ -45,15 +45,31 @@ def _run(script: Path, cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _make_root(tmp_path: Path, issues: list[dict], files: dict[str, str]) -> Path:
+def _make_root(
+    tmp_path: Path,
+    issues: list[dict],
+    files: dict[str, str],
+    schema: str | None = "qa/issue-registry.schema.md",
+) -> Path:
     """Build a throwaway project root: a copy of the real script plus a crafted
     registry and any pattern-target files. The script derives its project root
-    from its own location, so a copy under tmp/scripts sees tmp/qa/registry."""
+    from its own location, so a copy under tmp/scripts sees tmp/qa/registry.
+
+    The registry it writes is VALID by default, schema pointer included, so that
+    every case below breaks exactly the one thing it names. Pass schema=None to
+    omit the pointer, or a string to point it somewhere of your choosing."""
     (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
     (tmp_path / "qa").mkdir(parents=True, exist_ok=True)
     shutil.copy(SCRIPT, tmp_path / "scripts" / "verify-issues.sh")
+    (tmp_path / "qa" / "issue-registry.schema.md").write_text(
+        "# schema stand-in\n", encoding="utf-8"
+    )
+    registry: dict = {}
+    if schema is not None:
+        registry["$schema"] = schema
+    registry["issues"] = issues
     (tmp_path / "qa" / "issue-registry.json").write_text(
-        json.dumps({"issues": issues}), encoding="utf-8"
+        json.dumps(registry), encoding="utf-8"
     )
     for rel, content in files.items():
         target = tmp_path / rel
@@ -479,3 +495,45 @@ def test_the_reconciliation_stays_quiet_on_a_healthy_run(tmp_path) -> None:
     )
     counts = _parse_summary(result.stdout)
     assert counts["total"] == 4 and counts["errors"] == 2
+
+
+# ---------------------------------------------------------------------------
+# bug-433 — the pointer to the schema, followed by nobody.
+# ---------------------------------------------------------------------------
+#
+# `$schema` is the only link from the data to the document saying what its shape
+# is, and nothing read it. In a sibling registry the field held a URL that had
+# rotted into a 404 while that gate stayed green, which is what a pointer no one
+# follows always eventually becomes. It is checked as a repo-relative path
+# because that is the only form a gate that must work offline can follow.
+
+
+@pytest.mark.parametrize(
+    "schema,why",
+    [
+        (None, "the registry names no schema at all"),
+        ("qa/not-a-file.md", "the path names nothing in the repository"),
+        ("https://example.invalid/schema.md", "a URL cannot be followed from here"),
+        ("/etc/passwd", "an absolute path is not repo-relative"),
+        ("../../../etc/passwd", "the path escapes the repository"),
+    ],
+)
+def test_a_schema_pointer_that_leads_nowhere_fails(tmp_path, schema, why) -> None:
+    root = _make_root(tmp_path, [_row()], {"src/thing.py": "needle\n"}, schema=schema)
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+
+    assert result.returncode != 0, (
+        f"the gate exited 0 although {why}:\n"
+        + _strip_ansi(result.stdout + result.stderr)
+    )
+    assert "All issues verified successfully" not in _strip_ansi(result.stdout)
+
+
+def test_a_schema_pointer_that_resolves_is_accepted(tmp_path) -> None:
+    """The control: the check must not reject the shape the registry actually has."""
+    root = _make_root(tmp_path, [_row()], {"src/thing.py": "needle\n"})
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+
+    assert result.returncode == 0, _strip_ansi(result.stdout + result.stderr)
