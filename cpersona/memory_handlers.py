@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import re
+import sqlite3
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -2127,16 +2128,26 @@ async def _search_memories_keyword(
     if FTS_ENABLED:
         fts_query = _build_fts_query(query)
         if fts_query:
-            rows = await db.execute_fetchall(
-                f"""SELECT m.id, m.msg_id, m.content, m.source, m.timestamp, bm25(memories_fts)
-                   FROM memories_fts f
-                   JOIN memories m ON f.rowid = m.id
-                   WHERE memories_fts MATCH ?
-                   AND {iso_m.clause}{src_clause_m}
-                   ORDER BY rank
-                   LIMIT ?""",
-                (fts_query, *iso_m.params, *src_params_m, limit),
-            )
+            try:
+                rows = await db.execute_fetchall(
+                    f"""SELECT m.id, m.msg_id, m.content, m.source, m.timestamp, bm25(memories_fts)
+                       FROM memories_fts f
+                       JOIN memories m ON f.rowid = m.id
+                       WHERE memories_fts MATCH ?
+                       AND {iso_m.clause}{src_clause_m}
+                       ORDER BY rank
+                       LIMIT ?""",
+                    (fts_query, *iso_m.params, *src_params_m, limit),
+                )
+            except sqlite3.OperationalError as e:
+                # bug-326: FTS_ENABLED says the build supports FTS5, not that this
+                # database still holds the index table — dropping it leaves the
+                # triggers behind, so the flag stays true and the join raises. The
+                # LIKE path below is the documented fallback for exactly "the
+                # keyword channel cannot use FTS here"; raising instead took the
+                # whole recall down with it. Repair is check_fts_integrity's job.
+                logger.warning("Keyword FTS search unavailable, falling back to LIKE: %s", e)
+                rows = []
             if rows:
                 return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": r[5]} for r in rows]
 

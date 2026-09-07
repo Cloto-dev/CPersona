@@ -30,13 +30,17 @@ os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 
 import asyncio  # noqa: E402
 import base64  # noqa: E402
+import datetime  # noqa: E402
 import glob  # noqa: E402
 import inspect  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
+import math  # noqa: E402
 import re  # noqa: E402
+import sqlite3  # noqa: E402
 import struct  # noqa: E402
 import time  # noqa: E402
+import tracemalloc  # noqa: E402
 
 import aiosqlite  # noqa: E402
 import httpx  # noqa: E402
@@ -47,8 +51,11 @@ import pytest_asyncio  # noqa: E402
 from cpersona import (  # noqa: E402
     acl,
     admin_handlers,
+    checks,
+    maintenance_handlers,
     config,
     database,
+    memory_handlers,
     server,
     session,
     utils,
@@ -57,6 +64,7 @@ from cpersona import (  # noqa: E402
 from cpersona import admin_handlers as admin  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 from cpersona.database import connection, get_db, transaction  # noqa: E402
+from cpersona.isolation import isolation_where  # noqa: E402
 
 # ==========================================================================
 # bug-323 — four remote side-effect posts never read their response.
@@ -1386,4 +1394,783 @@ async def test_an_unscoped_caller_still_gets_the_specific_message_367():
         assert "not found" in (await admin.do_delete_memory(999999))["error"]
     finally:
         await db.execute("DELETE FROM memories WHERE agent_id = 'b367.solo'")
+        await db.commit()
+
+
+# ==========================================================================
+# The third pass (2026-09-07): the checks.py findings. Four of them share one
+# shape -- a guard that turned a failure into an empty finding list, so a check
+# that could not run answered exactly what a check that ran and found nothing
+# answers. The runner already synthesises a crashed-check finding for whatever
+# escapes; these tests pin that the failures reach it.
+# ==========================================================================
+class _RaisingOn:
+    """Delegating connection proxy that fails one specific query."""
+
+    def __init__(self, real, needle: str):
+        self._real = real
+        self._needle = needle
+        self.raised = 0
+
+    async def execute_fetchall(self, sql, params=()):
+        if self._needle in sql:
+            self.raised += 1
+            raise sqlite3.OperationalError("database disk image is malformed")
+        return await self._real.execute_fetchall(sql, params)
+
+    async def execute(self, sql, params=()):
+        if self._needle in sql:
+            self.raised += 1
+            raise sqlite3.OperationalError("database disk image is malformed")
+        return await self._real.execute(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+@pytest_asyncio.fixture
+async def clean_checks_db():
+    session.reset_pauses_for_tests()
+    conn = await get_db()
+    for table in ("memories", "episodes", "profiles"):
+        await conn.execute(f"DELETE FROM {table}")
+    await conn.commit()
+    return conn
+
+
+# --------------------------------------------------------------------------
+# bug-354 — a critical check that could not verify reported itself verified.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_failed_embedding_dimension_check_is_reported(clean_checks_db, fake_embedding_client):
+    proxy = _RaisingOn(clean_checks_db, "length(embedding) !=")
+
+    issues, summary = await checks.run_health_checks(
+        proxy, "", False, checks=["embedding_dimension"]
+    )
+
+    assert proxy.raised, "the test did not reach the query it meant to break"
+    assert issues, (
+        "the dimension count query raised and check_embedding_dimension answered []; "
+        f"run_health_checks produced issues={issues!r} summary={summary!r}. The check is "
+        "registered critical, so a run that could not verify it must not report what a "
+        "verified-healthy run reports"
+    )
+    assert summary["critical"] or summary["warn"], (
+        f"severity summary {summary!r} counts nothing, so checks.health_status returns "
+        f"{checks.health_status(summary)!r} for a critical check that never ran"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_backend_still_skips_the_dimension_check(clean_checks_db, monkeypatch):
+    """The other half of the fix: only the probe keeps its silent skip.
+
+    An unreachable embedding backend is check_embedding_backend's finding. If the
+    guard had been removed outright, every health run taken while the backend was
+    down would have gained a crashed-check warning for this check as well -- a
+    behaviour change dressed as a bug fix.
+    """
+    class _DeadClient:
+        async def embed(self, texts):
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(vector, "_embedding_client", _DeadClient())
+    issues, summary = await checks.run_health_checks(
+        clean_checks_db, "", False, checks=["embedding_dimension"]
+    )
+    assert issues == [], issues
+    assert summary == {"critical": 0, "warn": 0, "info": 0}, summary
+
+
+# --------------------------------------------------------------------------
+# bug-355 — an unreadable schema version read as a current schema.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_an_unreadable_schema_version_is_reported(tmp_path):
+    """The report-only maintenance path skips boot migrations, so it can meet a
+    database that has no schema_version table at all."""
+    path = tmp_path / "no-schema-version.db"
+    conn = await aiosqlite.connect(str(path))
+    try:
+        await conn.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT)")
+        await conn.commit()
+        with pytest.raises(sqlite3.OperationalError):
+            await conn.execute_fetchall("SELECT MAX(version) FROM schema_version")
+
+        issues, summary = await checks.run_health_checks(conn, "", False, checks=["schema_version"])
+    finally:
+        await conn.close()
+
+    assert issues, (
+        "the schema_version query raised 'no such table' and check_schema_version "
+        f"returned []; issues={issues!r} summary={summary!r}. A critical check that could "
+        "not read its own bookkeeping table is indistinguishable from one that read a "
+        "current schema"
+    )
+    assert checks.health_status(summary) != "healthy", (
+        f"health_status({summary!r}) = {checks.health_status(summary)!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# bug-380 — one guard over two counts threw away the count that succeeded.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_failed_metadata_query_does_not_erase_the_source_finding(clean_checks_db):
+    db = clean_checks_db
+    agent = "b380.agent"
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, metadata, timestamp) "
+        "VALUES (?, 'a row', 'not json', '{}', '2026-01-01T00:00:00+00:00')",
+        (agent,),
+    )
+    await db.commit()
+    try:
+        # Control: the corruption IS detected when both queries succeed.
+        found = await checks.check_invalid_json(db, agent, False)
+        assert found and found[0]["bad_source"] == 1, found
+
+        proxy = _RaisingOn(db, "json_valid(metadata) = 0")
+        issues, summary = await checks.run_health_checks(proxy, agent, False, checks=["invalid_json"])
+
+        assert proxy.raised, "the test did not reach the query it meant to break"
+        assert issues, (
+            "with one invalid-source row present and the metadata count raising, "
+            f"check_invalid_json discarded the count it already had; issues={issues!r} "
+            f"summary={summary!r} -- neither the stored corruption nor the query failure "
+            "is reported"
+        )
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-326 — an absent full-text table read as a build without the command.
+#
+# The probe's fourth assertion named check_schema_objects as the check that had
+# to see the missing table. That check walks sqlite_master for indexes and
+# triggers; giving it a virtual table means giving it a table kind whose repair
+# is DROP + CREATE + rebuild, which is machinery rather than a fix. It was
+# rewritten as the invariant it was protecting: the health run must name the
+# absent index, whichever check sees it.
+# --------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def fts_db():
+    db = await get_db()
+    await db.execute("DELETE FROM memories")
+    await db.commit()
+    saved = vector._embedding_client
+    vector._embedding_client = None
+    yield db
+    vector._embedding_client = saved
+    # Restore the virtual table whatever the test did: the connection is shared.
+    await db.executescript(database.FTS_SQL)
+    await db.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
+    await db.commit()
+
+
+async def _seed_and_drop_fts(db):
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES ('b326.agent', 'photosynthesis chloroplast', '{}', '2026-01-01T00:00:00+00:00')"
+    )
+    await db.commit()
+    # SQLite does not remove triggers whose bodies merely reference the table, so
+    # dropping the index alone is the state the check has to recognise.
+    await db.execute("DROP TABLE memories_fts")
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_missing_fts_table_is_reported_as_an_issue(fts_db):
+    await _seed_and_drop_fts(fts_db)
+    assert checks.FTS_ENABLED is True
+
+    issues = await checks.check_fts_integrity(fts_db, "", fix=False)
+    assert issues, "check_fts_integrity reported no issue for an ABSENT memories_fts table"
+
+
+@pytest.mark.asyncio
+async def test_fix_rebuilds_the_missing_fts_table(fts_db):
+    await _seed_and_drop_fts(fts_db)
+
+    await checks.check_fts_integrity(fts_db, "", fix=True)
+    await fts_db.commit()
+    present = await fts_db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE name = 'memories_fts'"
+    )
+    assert present, "after check_fts_integrity(fix=True) the memories_fts table is still absent"
+
+
+@pytest.mark.asyncio
+async def test_the_health_run_names_the_absent_fts_table(fts_db):
+    await _seed_and_drop_fts(fts_db)
+
+    issues, summary = await checks.run_health_checks(
+        fts_db, "", False, checks=["fts_integrity", "schema_objects"]
+    )
+    assert any(
+        i.get("table") == "memories" or i.get("object") == "memories_fts" for i in issues
+    ), f"no health check named the absent memories_fts; issues={issues}"
+    assert checks.health_status(summary) != "healthy", (
+        f"health_status({summary!r}) = {checks.health_status(summary)!r} for a database "
+        "whose memories full-text index no longer exists"
+    )
+
+
+@pytest.mark.asyncio
+async def test_keyword_recall_does_not_raise_when_fts_table_is_absent(fts_db):
+    """The read-path consequence: the keyword channel must degrade to its LIKE
+    fallback rather than take the whole recall down with it."""
+    await _seed_and_drop_fts(fts_db)
+
+    try:
+        rows = await memory_handlers._search_memories_keyword(
+            fts_db, "b326.agent", "photosynthesis", 10
+        )
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"keyword recall raised {type(exc).__name__}: {exc}")
+    assert [r["content"] for r in rows] == ["photosynthesis chloroplast"]
+
+
+# --------------------------------------------------------------------------
+# bug-328 — the short-content repair bound one host parameter per matching row.
+#
+# The probe carried a second arm that lowered SQLITE_LIMIT_VARIABLE_NUMBER on the
+# live connection to 32 and required the repair to fit inside it, i.e. to read the
+# limit at run time. No chunked path in this codebase does that -- vector's
+# scattered `IN (...)` widths are compile-time constants sized under the 999 floor
+# -- so that arm asserted a shape the fix does not take. It is restated below as
+# the property that makes the ceiling unreachable: no single statement binds more
+# than one chunk's worth.
+# --------------------------------------------------------------------------
+class _RecordingExecute:
+    """Delegating proxy that records the host-parameter count of each statement."""
+
+    def __init__(self, real):
+        self._real = real
+        self.binds: list[tuple[str, int]] = []
+
+    async def execute(self, sql, params=()):
+        self.binds.append((sql.split()[0].upper(), len(params)))
+        return await self._real.execute(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+@pytest.mark.asyncio
+async def test_short_content_repair_survives_a_corpus_past_the_variable_ceiling():
+    """The measured failure: 32,767 rows against the native ceiling of 32,766."""
+    session.reset_pauses_for_tests()
+    db = await get_db()
+    agent = "b328.ceiling"
+    ceiling = await db._execute(db._conn.getlimit, sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+    count = ceiling + 1
+    await db.executemany(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES (?, ?, '{}', '2026-01-01T00:00:00+00:00')",
+        [(agent, str(i)) for i in range(count)],
+    )
+    await db.commit()
+    try:
+        result = await checks.deep_short_content(db, agent, fix=True)
+        await db.commit()
+        remaining = (
+            await db.execute_fetchall(
+                "SELECT COUNT(*) FROM memories WHERE agent_id = ?", (agent,)
+            )
+        )[0][0]
+        assert result["count"] == count, result
+        assert result["fixed"] == count, {"result": result, "remaining": remaining}
+        assert remaining == 0, {"result": result, "remaining": remaining}
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_short_content_repair_never_binds_more_than_a_chunk_per_statement():
+    session.reset_pauses_for_tests()
+    db = await get_db()
+    agent = "b328.chunks"
+    # Read through getattr so the assertions below fail on the defect rather than
+    # on the constant's absence -- a red that only says "the fix is not applied"
+    # measures nothing about the behaviour.
+    chunk = getattr(checks, "_SHORT_CONTENT_DELETE_CHUNK", 500)
+    count = chunk * 2 + 200
+    await db.executemany(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES (?, ?, '{}', '2026-01-01T00:00:00+00:00')",
+        [(agent, str(i)) for i in range(count)],
+    )
+    await db.commit()
+    spy = _RecordingExecute(db)
+    try:
+        result = await checks.deep_short_content(spy, agent, fix=True)
+        await db.commit()
+        deletes = [n for verb, n in spy.binds if verb == "DELETE"]
+        assert deletes, spy.binds
+        # The defect itself: one host parameter per matching row, in one statement.
+        assert max(deletes) < count, deletes
+        assert max(deletes) <= chunk, deletes
+        assert sum(deletes) == count, deletes
+        assert result["fixed"] == count, result
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-358 — the non-finite scan materialised every stored vector.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rows", [1_000, 4_000])
+async def test_nonfinite_scan_must_not_materialize_the_whole_corpus(rows):
+    session.reset_pauses_for_tests()
+    db = await get_db()
+    agent = f"b358.agent{rows}"
+    dim = 768  # the shipped width (jina-v5-nano)
+    blob = EmbeddingClient.pack_embedding([0.001 * (i % 100) for i in range(dim)])
+    corpus_bytes = len(blob) * rows
+    await db.executemany(
+        "INSERT INTO memories (agent_id, content, timestamp, embedding) VALUES (?,?,?,?)",
+        [(agent, f"row {i}", "2026-08-01T00:00:00+00:00", blob) for i in range(rows)],
+    )
+    await db.commit()
+    try:
+        tracemalloc.start()
+        tracemalloc.reset_peak()
+        base = tracemalloc.get_traced_memory()[0]
+        issues, _ = await checks.run_health_checks(
+            db, agent_id=agent, fix=False, checks=["nonfinite_embedding"]
+        )
+        peak = tracemalloc.get_traced_memory()[1] - base
+        tracemalloc.stop()
+
+        assert issues == [] or issues[0]["count"] == 0, issues
+        budget = corpus_bytes // 4
+        assert peak < budget, (
+            f"{rows} rows x {len(blob)} bytes = {corpus_bytes} stored; peak allocation "
+            f"during the check was {peak} ({peak / corpus_bytes:.2f}x the corpus, budget "
+            f"{budget}). A paged read stays flat as the corpus grows."
+        )
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-377 — calibration staleness decided on a floored day count.
+# --------------------------------------------------------------------------
+def _write_calibration_sidecar(calibrated_at: str) -> None:
+    with open(admin._calibration_sidecar_path(), "w") as fh:
+        json.dump(
+            {
+                "embedding_dim": 8,
+                "embedding_model": "bge-m3",
+                "global_threshold": 0.5,
+                "agent_thresholds": {},
+                "global_fused_gate": 0.4,
+                "agent_fused_gates": {},
+                "fused_gate_signal": "confidence",
+                "agent_betas": {},
+                "scoring_version": utils.SCORING_VERSION,
+                "calibrated_at": calibrated_at,
+            },
+            fh,
+        )
+
+
+def _calibrated_ago(**kw) -> str:
+    import datetime as _dt
+
+    return (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(**kw)).isoformat()
+
+
+@pytest_asyncio.fixture
+async def sidecar_agent(tmp_path, monkeypatch):
+    session.reset_pauses_for_tests()
+    db = await get_db()
+    agent = "b377.agent"
+    await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+    await db.commit()
+    monkeypatch.setattr(
+        admin, "_calibration_sidecar_path",
+        lambda: os.path.join(str(tmp_path), "sidecar.calibration.json"),
+    )
+    yield db, agent
+    await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "age, label",
+    [
+        ({"days": 90, "seconds": 1}, "one second past the threshold"),
+        ({"days": 90, "hours": 23, "minutes": 59}, "the far end of the old blind window"),
+        ({"days": 91}, "the control, one whole day older"),
+    ],
+)
+async def test_a_calibration_past_the_threshold_is_stale(
+    sidecar_agent, fake_embedding_client, age, label,
+):
+    db, agent = sidecar_agent
+    _write_calibration_sidecar(_calibrated_ago(**age))
+
+    result = await checks.deep_calibration_staleness(db, agent, fix=False)
+
+    assert result["status"] == "stale", (
+        f"{label}: got {result!r}. The threshold is "
+        f"{checks.CALIBRATION_STALE_DAYS} days, and an age past it is past it whatever "
+        "the floored day count says"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_calibration_inside_the_threshold_is_still_ok(sidecar_agent, fake_embedding_client):
+    """The other direction: deciding on seconds must not make a fresh sidecar stale."""
+    db, agent = sidecar_agent
+    _write_calibration_sidecar(_calibrated_ago(days=89, hours=23))
+
+    result = await checks.deep_calibration_staleness(db, agent, fix=False)
+    assert result["status"] == "ok", result
+    assert result["age_days"] == 89, result  # the report keeps the readable day count
+
+
+# --------------------------------------------------------------------------
+# bug-378 — the SQL detector and the shared verdict disagreed under a second.
+# --------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def frozen_boundary_db(monkeypatch):
+    """The reference instant is frozen only so the row and the boundary are not
+    decided by two different readings of the wall clock."""
+    session.reset_pauses_for_tests()
+    conn = await get_db()
+    agent = "b378.agent"
+    frozen = datetime.datetime(2026, 6, 1, 0, 0, 0, 100000, tzinfo=datetime.timezone.utc)
+    await conn.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+    await conn.commit()
+    monkeypatch.setattr(
+        checks, "future_timestamp_boundary", lambda: utils.future_timestamp_boundary(now=frozen)
+    )
+    yield conn, agent, frozen
+    await conn.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+    await conn.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("excess", [0.8, 2])
+async def test_a_row_past_the_allowance_is_found_at_either_precision(frozen_boundary_db, excess):
+    conn, agent, frozen = frozen_boundary_db
+    skew = config.FUTURE_TIMESTAMP_SKEW_SECONDS
+    stamp = (frozen + datetime.timedelta(seconds=skew + excess)).isoformat()
+
+    verdict = utils.future_timestamp_issue(stamp, now=frozen)
+    assert verdict is not None and verdict["ahead_by_seconds"] > skew, verdict
+
+    await conn.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) VALUES (?, ?, '{}', ?)",
+        (agent, f"ahead by {excess}", stamp),
+    )
+    await conn.commit()
+    issues, _ = await checks.run_health_checks(
+        conn, agent_id=agent, fix=False, checks=["future_timestamp"]
+    )
+    assert issues and issues[0]["type"] == "future_timestamp", (
+        f"the shared policy says this row is {verdict['ahead_by_seconds']}s ahead of a "
+        f"{skew}s allowance, and the health check found {issues!r} "
+        f"(boundary={utils.future_timestamp_boundary(now=frozen)!r}, row={stamp!r})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_row_inside_the_allowance_is_still_not_flagged(frozen_boundary_db):
+    """The boundary itself is accepted -- the precision fix must not move the line."""
+    conn, agent, frozen = frozen_boundary_db
+    stamp = (frozen + datetime.timedelta(seconds=config.FUTURE_TIMESTAMP_SKEW_SECONDS)).isoformat()
+    assert utils.future_timestamp_issue(stamp, now=frozen) is None
+
+    await conn.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) VALUES (?, ?, '{}', ?)",
+        (agent, "exactly at the boundary", stamp),
+    )
+    await conn.commit()
+    issues, _ = await checks.run_health_checks(
+        conn, agent_id=agent, fix=False, checks=["future_timestamp"]
+    )
+    assert issues == [], issues
+
+
+# --------------------------------------------------------------------------
+# bug-379 — a failed re-embed was byte-identical to a repair never attempted.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_failed_reembed_is_visible_in_the_result(clean_checks_db, fake_embedding_client):
+    db = clean_checks_db
+    agent = "b379.agent"
+    assert checks._blobs_are_stored(), "this configuration stores no local blobs"
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, timestamp) "
+        "VALUES (?, 'a row with no vector', '{}', '2026-01-01T00:00:00+00:00')",
+        (agent,),
+    )
+    await db.commit()
+    try:
+        # Control: the same check without fix, i.e. no repair was even attempted.
+        reported = await checks.check_null_embedding(db, agent, False)
+        assert len(reported) == 1 and reported[0]["type"] == "null_embedding"
+
+        # Now with fix=True, where the embedding succeeds and the guarded UPDATE fails.
+        proxy = _RaisingOn(db, "UPDATE memories SET embedding")
+        repaired = await checks.check_null_embedding(proxy, agent, True)
+
+        assert proxy.raised, "the test did not reach the UPDATE it meant to break"
+        iso = isolation_where(agent_id=agent)
+        still_null = (
+            await db.execute_fetchall(
+                f"SELECT COUNT(*) FROM memories WHERE embedding IS NULL{iso.and_clause}",
+                iso.params,
+            )
+        )[0][0]
+        assert still_null == 1, "the repair did not actually fail"
+        assert repaired != reported, (
+            f"check_null_embedding(fix=True) whose repair WRITE raised returned {repaired!r}, "
+            f"byte-for-byte the fix=False result {reported!r}: nothing distinguishes 'the "
+            "repair failed' from 'no repair was attempted'"
+        )
+        assert repaired[0]["re_embedded"] == 0, repaired
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-361 — a repair that raised part way through was committed half done.
+#
+# The fault is injected with a SQLite trigger that raises ABORT on the SECOND of
+# check_invalid_json's two repair statements. ABORT backs out only the statement
+# that hit it, so what the first one wrote is still in the transaction that then
+# commits -- which is the row state these tests refuse.
+# --------------------------------------------------------------------------
+_B361_AGENT = "b361.agent"
+_B361_TRIGGER = "b361_block_metadata_repair"
+
+
+async def _b361_row(db):
+    rows = await db.execute_fetchall(
+        "SELECT source, metadata FROM memories WHERE agent_id = ?", (_B361_AGENT,)
+    )
+    return rows[0]
+
+
+@pytest_asyncio.fixture
+async def broken_json_row():
+    session.reset_pauses_for_tests()
+    db = await get_db()
+    await db.execute("DELETE FROM memories WHERE agent_id = ?", (_B361_AGENT,))
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, source, metadata, timestamp, created_at,"
+        " locked) VALUES (?, ?, ?, ?, ?, ?, 0)",
+        (_B361_AGENT, "a row whose two JSON columns are both invalid", "not json",
+         "also not json", "2026-03-01T00:00:00+00:00", "2026-03-01 00:00:00"),
+    )
+    await db.commit()
+    yield db
+    await db.execute(f"DROP TRIGGER IF EXISTS {_B361_TRIGGER}")
+    await db.execute("DELETE FROM memories WHERE agent_id = ?", (_B361_AGENT,))
+    await db.commit()
+
+
+async def _b361_arm_trigger(db):
+    """Fail only the metadata repair — the SECOND statement of the same check."""
+    await db.execute(f"DROP TRIGGER IF EXISTS {_B361_TRIGGER}")
+    await db.execute(
+        f"CREATE TRIGGER {_B361_TRIGGER} BEFORE UPDATE OF metadata ON memories"
+        " FOR EACH ROW WHEN NEW.metadata = '{}' AND OLD.agent_id = '" + _B361_AGENT + "'"
+        " BEGIN SELECT RAISE(ABORT, 'test: metadata repair refused'); END"
+    )
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_the_repair_fixes_both_columns_when_nothing_fails(broken_json_row):
+    """Control: without the injected fault the check repairs both columns."""
+    out = await maintenance_handlers.do_check_health(
+        _B361_AGENT, fix=True, checks=["invalid_json"]
+    )
+    assert out["fixed"] is True, out
+    assert await _b361_row(broken_json_row) == ("{}", "{}")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_repair_leaves_no_half_written_row(broken_json_row):
+    """`transaction()` documents itself as the rollback boundary for a failed
+    multi-statement write. A repair that raised must leave the row as it was --
+    and the rest of the run must still commit, which is why this is a savepoint
+    and not a re-raise."""
+    await _b361_arm_trigger(broken_json_row)
+
+    out = await maintenance_handlers.do_check_health(
+        _B361_AGENT, fix=True, checks=["invalid_json"]
+    )
+    crashed = [i for i in out["issues"] if i.get("type") == "check_crashed"]
+    assert crashed, f"the injected fault never fired, so this proves nothing: {out}"
+
+    source, metadata = await _b361_row(broken_json_row)
+    assert (source, metadata) == ("not json", "also not json"), (
+        f"the row was committed half-repaired: source={source!r} metadata={metadata!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_run_wide_transaction_still_owns_the_end_of_the_run(broken_json_row):
+    """The per-check savepoints must not turn one run into per-check commits.
+
+    The run-level savepoint is deliberately never released -- releasing an
+    OUTERMOST savepoint commits -- so an exception escaping `transaction()` still
+    discards every repair the run made, exactly as it did before the savepoints
+    existed.
+    """
+    db = broken_json_row
+    with pytest.raises(RuntimeError):
+        async with transaction() as tdb:
+            await checks.run_health_checks(
+                tdb, agent_id=_B361_AGENT, fix=True, checks=["invalid_json"]
+            )
+            raise RuntimeError("the caller failed after the repairs")
+
+    source, metadata = await _b361_row(db)
+    assert (source, metadata) == ("not json", "also not json"), (
+        f"a repair survived a rolled-back transaction: source={source!r} metadata={metadata!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# bug-376 — the classification cap treated an exhaustive scan as truncated.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offenders, converged", [(3, True), (2, True), (4, False)])
+async def test_a_scan_that_returns_exactly_the_cap_is_exhaustive(
+    monkeypatch, clean_checks_db, offenders, converged,
+):
+    """With the cap at three: two and three offenders are both exhaustive scans,
+    four is genuinely truncated. Three is the boundary the strict comparison got
+    wrong, and it is the one a converged fix run lands on."""
+    db = clean_checks_db
+    agent = f"b376.agent{offenders}"
+    monkeypatch.setattr(checks, "INVALID_SOURCE_CLASSIFY_CAP", 3)
+    for i in range(offenders):
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp, locked) "
+            'VALUES (?, ?, \'"claude-code"\', ?, 0)',
+            (agent, f"row {i}", "2026-01-01T00:00:00+00:00"),
+        )
+    await db.commit()
+    try:
+        found = await checks.check_invalid_source_type(db, agent, fix=False)
+        assert found, "the fixture did not produce an invalid_source_type finding"
+        issue = found[0]
+        if converged:
+            assert "classified" not in issue, issue
+            assert issue["repairable"] is not None, issue
+        else:
+            assert issue["classified"] == 3, issue
+            assert issue["repairable"] is None, issue
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-384 — a non-finite row silently removed pairs from the merge candidates.
+# --------------------------------------------------------------------------
+def _b384_blob(values):
+    return struct.pack(f"<{len(values)}f", *values)
+
+
+@pytest.mark.asyncio
+async def test_a_non_finite_stored_blob_is_not_silently_dropped(clean_checks_db):
+    db = clean_checks_db
+    agent = "b384.agent"
+    good = _b384_blob([1.0, 0.0, 0.0, 0.01])
+    corrupt = _b384_blob([1.0, 0.0, math.nan, 0.02])  # the same row, one corrupt component
+    assert vector.stored_blob_is_finite(corrupt) is False, "test precondition"
+    for content, blob in (("the cat sat", good), ("the cat sat.", corrupt)):
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp, embedding) "
+            "VALUES (?, ?, '{}', '2026-01-01T00:00:00+00:00', ?)",
+            (agent, content, blob),
+        )
+    await db.commit()
+    try:
+        result = await checks.deep_near_duplicate(db, agent, fix=False)
+        assert "skipped" in result, (
+            f"a row holds a non-finite embedding and the check returned {result} -- no pair, "
+            "no error, and nothing saying it could not compare one. The mixed-width branch "
+            "beside it does disclose its own refusal"
+        )
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_an_infinity_blob_does_not_poison_unrelated_pairs(clean_checks_db):
+    """Bound, not reproduction: this one already passed before the fix.
+
+    An infinite component makes the row's norm inf and its unit vector 0/NaN, but
+    the finite pair beside it survived -- measured on the shipped code, which is
+    what bounds the finding to pairs involving the bad row. It is here so the
+    finiteness filter cannot regress the case it was added next to.
+    """
+    db = clean_checks_db
+    agent = "b384.infinity"
+    rows = [
+        ("the cat sat", _b384_blob([1.0, 0.0, 0.0, 0.01])),
+        ("the cat sat.", _b384_blob([1.0, 0.0, 0.0, 0.02])),
+        ("unrelated but broken", _b384_blob([math.inf, 0.0, 0.0, 0.0])),
+    ]
+    for content, blob in rows:
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp, embedding) "
+            "VALUES (?, ?, '{}', '2026-01-01T00:00:00+00:00', ?)",
+            (agent, content, blob),
+        )
+    await db.commit()
+    try:
+        result = await checks.deep_near_duplicate(db, agent, fix=False)
+        assert result["pairs"] == 1, (
+            "the finite near-duplicate pair was lost once a row with an infinite "
+            f"component entered the same matrix: {result}"
+        )
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_finite_corpus_still_reports_its_pair_and_says_nothing_extra(clean_checks_db):
+    """Control: the filter must not add a refusal note to a corpus that has none."""
+    db = clean_checks_db
+    agent = "b384.control"
+    for content, blob in (
+        ("the cat sat", _b384_blob([1.0, 0.0, 0.0, 0.01])),
+        ("the cat sat.", _b384_blob([1.0, 0.0, 0.0, 0.02])),
+    ):
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp, embedding) "
+            "VALUES (?, ?, '{}', '2026-01-01T00:00:00+00:00', ?)",
+            (agent, content, blob),
+        )
+    await db.commit()
+    try:
+        result = await checks.deep_near_duplicate(db, agent, fix=False)
+        assert result["pairs"] == 1, result
+        assert "skipped" not in result, result
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
         await db.commit()

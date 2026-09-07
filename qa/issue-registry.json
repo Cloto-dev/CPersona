@@ -4739,12 +4739,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "continue  # FTS table absent or command unsupported entirely",
+      "pattern": "await db\\.execute\\(FTS_TABLE_SQL\\[fts\\]\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check-masking",
-      "fix_sketch": "Distinguish absent from unsupported: look the table up in sqlite_master first and report a finding (repairable by recreating and rebuilding it) when it is missing, keeping the silent continue only for a build whose integrity command genuinely does not exist."
+      "fix_sketch": "Distinguish absent from unsupported: look the table up in sqlite_master first and report a finding (repairable by recreating and rebuilding it) when it is missing, keeping the silent continue only for a build whose integrity command genuinely does not exist.",
+      "fix_note": "check_fts_integrity now asks sqlite_master whether the index table exists before probing it, so an absent table is no longer indistinguishable from a build without the integrity command; the repair recreates it from FTS_TABLE_SQL (one statement, not executescript, which would commit the fix run transaction) and rebuilds. The read-path consequence named in the finding is closed too: the keyword FTS join in memory_handlers degrades to the documented LIKE fallback instead of raising. Regression: tests/test_2512b2_handlers.py (four tests, incl. the probe assertion restated as an invariant)."
     },
     {
       "id": "bug-327",
@@ -4765,13 +4767,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "DELETE FROM memories WHERE id IN \\(\\{placeholders\\}\\) AND locked = 0",
+      "pattern": "for start in range\\(0, len\\(ids\\), _SHORT_CONTENT_DELETE_CHUNK\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "write-path-bounds",
       "fix_sketch": "Delete in chunks bounded by the same id-fetch constant the vector paths use, summing rowcount across chunks so the reported repair count stays honest; the locked-row exclusion is unaffected by the split.",
-      "note": "The reported fixed: true alongside a recorded error is a second, smaller defect on the same path -- an operator reading the envelope cannot tell a completed repair from an aborted one."
+      "note": "The reported fixed: true alongside a recorded error is a second, smaller defect on the same path -- an operator reading the envelope cannot tell a completed repair from an aborted one.",
+      "fix_note": "The repair deletes in chunks of _SHORT_CONTENT_DELETE_CHUNK (500, the width vector._ID_FETCH_CHUNK uses for a scattered IN list, under the 999 floor of every SQLite before 3.32), summing rowcount across chunks so the reported count stays honest; the locked exclusion is per-statement and unaffected by the split. Regression: tests/test_2512b2_handlers.py drives the measured corpus (ceiling + 1 rows at the native limit) and pins the property that no single statement binds one parameter per matching row. The probe's other arm, which lowered SQLITE_LIMIT_VARIABLE_NUMBER on the live connection and required the repair to read it at run time, asserted a shape no chunked path here takes and was restated as that property."
     },
     {
       "id": "bug-329",
@@ -5132,12 +5136,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "Embedding dimension check failed",
+      "pattern": "logger\\.warning\\(\"Embedding dimension probe failed",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check-masking",
-      "fix_sketch": "Return a finding that says the check could not run, rather than an empty list, so a critical axis that failed to verify is counted as unverified instead of clean; letting the exception escape to the runner's crashed-check path would also work and needs no new shape."
+      "fix_sketch": "Return a finding that says the check could not run, rather than an empty list, so a critical axis that failed to verify is counted as unverified instead of clean; letting the exception escape to the runner's crashed-check path would also work and needs no new shape.",
+      "fix_note": "Only the live embedding probe keeps a silent skip, because an unreachable backend is check_embedding_backend's finding. Every database read below it is now unguarded, so a critical check that cannot verify reaches the runner's crashed-check path instead of answering what a verified-clean corpus answers. Regression: tests/test_2512b2_handlers.py, with a companion test pinning that a dead backend still skips rather than warning."
     },
     {
       "id": "bug-355",
@@ -5145,12 +5151,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "db_version = \\(await db\\.execute_fetchall\\(\"SELECT MAX\\(version\\) FROM schema_version\"\\)\\)\\[0\\]\\[0\\]",
+      "pattern": "^    db_version = \\(await db\\.execute_fetchall\\(\"SELECT MAX\\(version\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check-masking",
-      "fix_sketch": "Report the unreadable version as its own critical finding rather than as silence -- a database whose version cannot be read is exactly the state the check exists to name."
+      "fix_sketch": "Report the unreadable version as its own critical finding rather than as silence -- a database whose version cannot be read is exactly the state the check exists to name.",
+      "fix_note": "The guard is gone: a database whose version cannot be read is the state this critical check exists to name, and the runner already turns what escapes into a crashed-check finding. Regression: tests/test_2512b2_handlers.py, driving a real database that holds only a memories table (the shape the report-only maintenance path meets, since it skips boot migrations)."
     },
     {
       "id": "bug-356",
@@ -5186,12 +5194,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "f\"SELECT id, embedding FROM \\{table\\} WHERE embedding IS NOT NULL\\{iso\\.and_clause\\}\"",
+      "pattern": "\\(last_id, \\*iso\\.params, _NONFINITE_SCAN_CHUNK\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
-      "fix_sketch": "Page the read and test each chunk as it arrives, keeping only the offending ids -- the check's output is a list of ids, so nothing needs the blobs to be resident together."
+      "fix_sketch": "Page the read and test each chunk as it arrives, keeping only the offending ids -- the check's output is a list of ids, so nothing needs the blobs to be resident together.",
+      "fix_note": "The finiteness scan reads keyset pages of _NONFINITE_SCAN_CHUNK rows and tests each page as it arrives, keeping only the offending ids, so the peak no longer tracks the corpus. The page width is bounded by resident bytes rather than by the host-parameter limit, which is why it is a separate constant from the repair chunk beside it. Regression: tests/test_2512b2_handlers.py measures the peak at both 1,000 and 4,000 rows of 768-wide vectors."
     },
     {
       "id": "bug-359",
@@ -5226,12 +5236,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "found = \\[\\{\"type\": \"check_crashed\", \"check_name\": check\\.name",
+      "pattern": "await db\\.execute\\(\"SAVEPOINT health_run\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "transaction-atomicity",
-      "fix_sketch": "Wrap each repairing check in a savepoint and release or roll back to it around the runner, so a failed repair leaves the row as it was while the rest of the run still commits and the crashed-check finding is still reported."
+      "fix_sketch": "Wrap each repairing check in a savepoint and release or roll back to it around the runner, so a failed repair leaves the row as it was while the rest of the run still commits and the crashed-check finding is still reported.",
+      "fix_note": "Each check under fix runs inside its own savepoint, rolled back on the exception the runner converts into a crashed-check finding, so a repair that raised between its two statements leaves the row as it was while the rest of the run still commits. A re-raise was not available: one failed repair must not discard the others. The run-level savepoint is opened and never released, because RELEASE of an outermost savepoint commits and would have broken the run into per-check commits; transaction() still owns the end of the run. Regression: tests/test_2512b2_handlers.py drives the injected ABORT on the second repair statement, the no-fault control, and a transaction whose caller raises after the run, which must still discard every repair."
     },
     {
       "id": "bug-362",
@@ -5428,12 +5440,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "classified_all = len\\(rows\\) < INVALID_SOURCE_CLASSIFY_CAP",
+      "pattern": "INVALID_SOURCE_CLASSIFY_CAP \\+ 1",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "check-correctness",
-      "fix_sketch": "Ask for one row past the cap and classify the cap's worth, so exhaustion is answered by whether that extra row exists rather than by a count that is ambiguous exactly at the boundary."
+      "fix_sketch": "Ask for one row past the cap and classify the cap's worth, so exhaustion is answered by whether that extra row exists rather than by a count that is ambiguous exactly at the boundary.",
+      "fix_note": "The scan asks for one row past the cap and classifies the cap's worth, so exhaustion is answered by whether that extra row exists instead of by a count that is ambiguous at exactly the boundary. Regression: tests/test_2512b2_handlers.py drives the cap lowered to three at two, three and four offenders -- three being both the boundary and where a converged fix run lands."
     },
     {
       "id": "bug-377",
@@ -5441,12 +5455,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "age_days > CALIBRATION_STALE_DAYS",
+      "pattern": "if age\\.total_seconds\\(\\) > CALIBRATION_STALE_DAYS \\* 86400:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration-staleness",
-      "fix_sketch": "Compare total elapsed seconds against the threshold in seconds and keep the floored day count for the report, so the number shown stays readable while the decision is exact."
+      "fix_sketch": "Compare total elapsed seconds against the threshold in seconds and keep the floored day count for the report, so the number shown stays readable while the decision is exact.",
+      "fix_note": "The decision is made on elapsed seconds against the threshold in seconds; the floored day count is kept for the report so the number shown stays readable. Regression: tests/test_2512b2_handlers.py drives the two ages inside the old blind window (90d 1s and 90d 23h 59m), the 91-day control, and a fresh sidecar that must stay ok."
     },
     {
       "id": "bug-378",
@@ -5454,13 +5470,15 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "WHERE datetime\\(timestamp\\) > datetime\\(\\?\\)\\{iso\\.and_clause\\}",
+      "pattern": "strftime\\('%Y-%m-%d %H:%M:%f', timestamp\\) > strftime",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "detector-blind-spot",
       "fix_sketch": "Compare the stored strings against the boundary directly, or render the boundary and the compared value with the same subsecond precision, so the SQL detector and the shared verdict cannot disagree about the same row.",
-      "note": "Neighbouring but distinct from bug-294, which is the scoring path's clamp on a stamp already stored ahead of the clock; this is the detector that decides whether such a row is reported at all."
+      "note": "Neighbouring but distinct from bug-294, which is the scoring path's clamp on a stamp already stored ahead of the clock; this is the detector that decides whether such a row is reported at all.",
+      "fix_note": "The boundary is rendered with its subsecond part (cpersona/utils.py) and the SQL predicate compares with strftime('%Y-%m-%d %H:%M:%f', ...) on both sides, because SQLite's datetime() answers whole seconds whatever it is handed -- so the health check and the shared verdict now draw 'ahead' in the same place. Regression: tests/test_2512b2_handlers.py drives a row 0.8s past the allowance against a frozen reference, the whole-second control, and a row exactly at the boundary that must stay unflagged."
     },
     {
       "id": "bug-379",
@@ -5468,12 +5486,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "f\"UPDATE \\{table\\} SET embedding = \\? WHERE id = \\? AND embedding IS NULL AND \\{text_col\\} = \\?\"",
+      "pattern": "issue\\[\"re_embedded\"\\] = await _reembed_null_rows\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "repair-visibility",
-      "fix_sketch": "Count the failures alongside the successes and report them in the finding, so an operator can tell a repair that could not run from a corpus that needed none."
+      "fix_sketch": "Count the failures alongside the successes and report them in the finding, so an operator can tell a repair that could not run from a corpus that needed none.",
+      "fix_note": "The re_embedded count is reported whether or not it is positive, so a fix run that repaired nothing is distinguishable from a report-only run that never attempted one; a zero under fix is an outcome. The per-row guard stays non-fatal -- one unembeddable row must not abort the pass -- but logs the row and the reason instead of discarding it. Regression: tests/test_2512b2_handlers.py, with the repair WRITE raising and the row measured to be still NULL. The registry's sketch asked for a separate failure count, which would have added a response field this line does not take."
     },
     {
       "id": "bug-380",
@@ -5481,12 +5501,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "f\"SELECT COUNT\\(\\*\\) FROM memories WHERE json_valid\\(metadata\\) = 0\\{iso\\.and_clause\\}\"",
+      "pattern": "^    bad_source = \\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check-masking",
-      "fix_sketch": "Let the exception escape to the runner, which already turns it into a crashed-check finding, or report the counts that did succeed alongside a note that one column could not be read -- discarding both is the one answer that says nothing true."
+      "fix_sketch": "Let the exception escape to the runner, which already turns it into a crashed-check finding, or report the counts that did succeed alongside a note that one column could not be read -- discarding both is the one answer that says nothing true.",
+      "fix_note": "The two counts are no longer wrapped in one guard, so a failure on the second cannot discard the corruption the first already counted, and the exception reaches the runner. Regression: tests/test_2512b2_handlers.py, with the both-queries-succeed control in the same test."
     },
     {
       "id": "bug-381",
@@ -5533,13 +5555,15 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "sims = unit @ unit\\.T",
+      "pattern": "non_finite = \\[r\\[0\\] for r in rows if not vector\\.stored_blob_is_finite",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-degradation",
       "fix_sketch": "Filter the sample with the same finiteness helper the storage seam and the non-finite probe already use, and report the excluded rows the way the mixed-width branch reports its own refusal.",
-      "note": "Third site of the same missing guard: bug-343 writes such a blob and bug-312 lets one poison the calibrated threshold. Distinct seams, one shared helper."
+      "note": "Third site of the same missing guard: bug-343 writes such a blob and bug-312 lets one poison the calibrated threshold. Distinct seams, one shared helper.",
+      "fix_note": "The sample is filtered with the same finiteness helper the storage seam and the non-finite probe use, and the exclusion is disclosed in the field the mixed-width refusal beside it already uses. No ids are added: those rows belong to the nonfinite_embedding registry entry, which already lists them. Regression: tests/test_2512b2_handlers.py, with a finite control that must gain no note and the infinite-component case that already passed, kept as a bound."
     },
     {
       "id": "bug-385",
@@ -5929,12 +5953,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "for name, spec in _EXPECTED_OBJECTS\\.items\\(\\):",
+      "pattern": "\"idx_memories_agent_channel\": \\{",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "Add a golden test that compares the fresh database's own index and trigger names against `_EXPECTED_OBJECTS`, failing on any shipped load-bearing object the registry does not list."
+      "fix_sketch": "Add a golden test that compares the fresh database's own index and trigger names against `_EXPECTED_OBJECTS`, failing on any shipped load-bearing object the registry does not list.",
+      "fix_note": "A golden test now walks the fresh database's own indexes and triggers and fails on any shipped object _EXPECTED_OBJECTS does not list, which is the direction the one-way check could not run in. It found two: idx_memories_agent_channel and idx_episodes_agent_channel both ship from the migration ladder and were unwatched, so a deployment missing either got no drift issue and --fix had nothing to restore; both are now registered at warn, the severity their siblings carry. Detection power measured: deleting idx_episodes_isolation from the registry -- the mutation the finding names as staying green -- now fails tests/test_v2437_checkup.py."
     },
     {
       "id": "bug-415",
