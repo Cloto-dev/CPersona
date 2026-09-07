@@ -1,6 +1,5 @@
 {
   "$schema": "qa/issue-registry.schema.md",
-  "version": "1.0",
   "description": "Mechanical verification registry for documented cpersona issues. Source of truth for bug-existence proof; checked by scripts/verify-issues.sh (mirrors the ClotoCore infrastructure).",
   "issues": [
     {
@@ -6357,6 +6356,19 @@
       "category": "gate-reach",
       "fix_sketch": "Compare verified + stale + fixed + errors against total after the transport reconciliation, and fail when they disagree.",
       "fix_note": "The transport check that already existed proves the rows arrived; this proves they were checked, and the two are not the same question -- a dropped entry is still a row, so it goes missing from the buckets rather than from the input and the transport check passes while it happens. It is fatal on its own rather than adding to `errors`, so it does not depend on the order of the later checks. It reports the arithmetic (which numbers disagreed), since a mismatch names no entry and is otherwise unactionable. The guard is unreachable through the front door now that every known route is closed, so the tests reach it by dropping a counter increment from a copy of the script: asserting only that it stays quiet on healthy runs would pass just as well if it were deleted."
+    },
+    {
+      "id": "bug-433",
+      "summary": "(MEDIUM) The registry's `$schema` field was read by nothing, so the only pointer from the data to the document describing its shape was unverified. Here it happened to resolve; in a sibling registry the same field held a URL that had rotted into a 404, and in another it named a file that repository does not contain -- both with their gates green, because a pointer no one follows is free to be wrong in the one way that matters. The root `version` field was decoration for the same reason: four registries in this project all declared \"1.0\" for four incompatible shapes, because nothing compared the number to anything.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-08T00:00:00Z",
+      "version": "2.5.12b3",
+      "file": "scripts/verify-issues.sh",
+      "pattern": "is not a file in this repository",
+      "expected": "present",
+      "status": "fixed",
+      "category": "unchecked-pointer",
+      "fix_note": "The verifier refuses a registry whose `$schema` is absent, is a URL or an absolute path, or does not resolve to a file inside the repository. Repo-relative is the only form it accepts, because a gate that must work offline cannot follow a URL -- and the URL form is exactly the one that rotted elsewhere. The root `version` is removed rather than given a meaning: with one producer and one consumer, both here and versioned together by git, there is no skew for it to describe. Per-entry `version` is untouched, being a fact about the defect rather than about the file. The schema document also stops claiming the sibling scripts are kept in sync with this one -- they are not, and saying so was what let four verifiers diverge in detection power while every registry still said \"1.0\"."
     }
   ]
 }

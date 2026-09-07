@@ -91,7 +91,7 @@ fi
 # the whole gate loudly instead of dropping a row and exiting 0.
 issues_tsv="$(
     PYTHONUTF8=1 $PYTHON_CMD -c "
-import json, sys
+import json, os, sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 SEP = '\x1f'
 FIELDS = ('id', 'severity', 'file', 'pattern', 'expected', 'status', 'summary')
@@ -121,6 +121,35 @@ if 'issues' not in data:
 if not isinstance(data['issues'], list):
     sys.stderr.write(
         'FATAL: registry issues is %s, not a list.\n' % type(data['issues']).__name__
+    )
+    sys.exit(4)
+# bug-433: the registry names the document that describes its shape, and nothing
+# read that field. A pointer no one follows is free to be wrong in the one way
+# that matters -- a reader following it arrives nowhere -- and in a sibling
+# registry it already was: the URL there had rotted into a 404 while its gate
+# stayed green. It is checked as a repo-relative path because that is the only
+# form this script can follow; a URL cannot be resolved from inside a gate that
+# must work offline.
+schema_rel = data.get('\$schema')
+if not schema_rel:
+    sys.stderr.write(
+        'FATAL: registry names no \$schema. That field is the only pointer from the '
+        'data to the document saying what its shape is; without it the shape is '
+        'whatever the reader assumes.\n'
+    )
+    sys.exit(4)
+if '://' in schema_rel or os.path.isabs(schema_rel):
+    sys.stderr.write(
+        'FATAL: \$schema is %r; it must be a path relative to the repository root, '
+        'because that is the only form this check can follow.\n' % (schema_rel,)
+    )
+    sys.exit(4)
+_root = os.path.dirname(os.path.dirname(os.path.abspath('$_REGISTRY_PY')))
+_schema = os.path.normpath(os.path.join(_root, schema_rel))
+if not (_schema.startswith(_root + os.sep) and os.path.isfile(_schema)):
+    sys.stderr.write(
+        'FATAL: \$schema points at %r, which is not a file in this repository.\n'
+        % (schema_rel,)
     )
     sys.exit(4)
 lines = []
