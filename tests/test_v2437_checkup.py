@@ -22,6 +22,8 @@ os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 
 from cpersona import session  # noqa: E402
 from cpersona import checks  # noqa: E402
+from cpersona import checkup  # noqa: E402
+from cpersona import database  # noqa: E402
 from cpersona import maintenance_handlers  # noqa: E402
 from cpersona import vector  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
@@ -454,3 +456,279 @@ async def test_every_shipped_object_is_in_the_registry():
         f"these objects exist in a fresh database but are not in _EXPECTED_OBJECTS, so "
         f"check_schema_objects cannot report them missing on a deployment: {unwatched}"
     )
+
+
+# --------------------------------------------------------------------------
+# bug-324 — a deep fix run held the write lock across the report-only scans.
+# --------------------------------------------------------------------------
+#
+# Only two of the eight deep checks act on fix=True, and which two is already
+# declared (checks.DEEP_FIX_CAPABLE, asserted against the AST by the structural
+# gates). The runner ignored the declaration and wrapped the whole registry in
+# one transaction, so a fix run held the shared write lock across a dense
+# pairwise similarity matrix, thousands of row fetches per table, Unicode
+# normalisation of row content and a blocking read of the calibration sidecar --
+# with every concurrent writer waiting on all of it. The sibling health handler
+# was split on that ground earlier (bug-072); the split was not carried across.
+#
+# The lock is the observable, so the tests read it from inside the runners. The
+# corpus-scale cost is not measured here, only the scope.
+
+
+def _lock_spy(seen: dict):
+    def make(name):
+        async def runner(db, agent_id, fix):
+            seen[name] = database.write_lock().locked()
+            return {"count": 0}
+
+        return runner
+
+    return {name: make(name) for name in checks.DEEP_CHECK_NAMES}
+
+
+@pytest.mark.asyncio
+async def test_a_deep_fix_run_keeps_the_report_only_scans_off_the_write_lock(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(checks, "DEEP_CHECKS", _lock_spy(seen))
+
+    await maintenance_handlers.do_deep_check("a1", fix=True)
+
+    held = {n: seen[n] for n in checks.DEEP_REPORT_ONLY}
+    assert not any(held.values()), held
+
+
+@pytest.mark.asyncio
+async def test_a_deep_fix_run_still_serialises_the_checks_that_write(monkeypatch):
+    """The other half: bug-042/043 must keep holding for the repairing checks."""
+    seen: dict = {}
+    monkeypatch.setattr(checks, "DEEP_CHECKS", _lock_spy(seen))
+
+    await maintenance_handlers.do_deep_check("a1", fix=True)
+
+    held = {n: seen[n] for n in checks.DEEP_FIX_CAPABLE}
+    assert all(held.values()), held
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_deep_run_takes_the_write_lock_for_nothing(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(checks, "DEEP_CHECKS", _lock_spy(seen))
+
+    await maintenance_handlers.do_deep_check("a1", fix=False)
+
+    assert not any(seen.values()), seen
+
+
+@pytest.mark.asyncio
+async def test_the_deep_results_keep_the_requested_order_across_the_two_seams(monkeypatch):
+    """Splitting the loop must not reorder the response."""
+    monkeypatch.setattr(checks, "DEEP_CHECKS", _lock_spy({}))
+    requested = list(checks.DEEP_CHECK_NAMES)
+
+    out = await maintenance_handlers.do_deep_check("a1", fix=True, checks=requested)
+
+    assert list(out["results"]) == requested
+    assert out["checks_run"] == requested
+
+
+# --------------------------------------------------------------------------
+# bug-325 — an unknown deep check name read as a clean deep pass.
+# --------------------------------------------------------------------------
+#
+# The loop dropped any name the registry did not know and the schema enumerates
+# the legal values in prose without an enum, so a single typo answered
+# checks_run: [], results: {}, fixed: true. The sibling health tool has refused
+# the same input since bug-230, with the list of valid names; the two handlers
+# disagreed on a documented point, in the opposite direction from the one that
+# earlier fix recorded.
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_deep_check_name_is_refused_the_way_health_refuses_it():
+    result = await maintenance_handlers.do_deep_check("a1", checks=["deep_no_such"])
+
+    assert result["ok"] is False
+    assert result["unknown_checks"] == ["deep_no_such"]
+    assert result["valid_checks"] == list(checks.DEEP_CHECK_NAMES)
+    assert result["checks_run"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_deep_list_is_refused_rather_than_partly_run():
+    """The half that would have run is the half that makes the empty answer plausible."""
+    result = await maintenance_handlers.do_deep_check(
+        "a1", checks=["short_content", "deep_no_such"]
+    )
+
+    assert result["ok"] is False
+    assert result["unknown_checks"] == ["deep_no_such"]
+    assert "results" not in result
+
+
+@pytest.mark.asyncio
+async def test_a_known_deep_check_name_still_runs():
+    result = await maintenance_handlers.do_deep_check("a1", checks=["short_content"])
+
+    assert result["checks_run"] == ["short_content"]
+    assert "short_content" in result["results"]
+
+
+# --------------------------------------------------------------------------
+# bug-327 — the all-agent deep sweep swept one of the three tables it reads.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_deep_sweep_reaches_agents_that_hold_no_memories():
+    db = await get_db()
+    await _insert(db, agent_id="has-memories", content="hello")
+    await db.execute(
+        "INSERT INTO profiles (agent_id, user_id, content) VALUES (?,?,?)",
+        ("profile-only", "", "a stale profile"),
+    )
+    await db.execute(
+        "INSERT INTO episodes (agent_id, summary, keywords, start_time, end_time) "
+        "VALUES (?,?,?,?,?)",
+        ("episode-only", "an orphaned episode", "", TS_327, TS_327),
+    )
+    await db.commit()
+
+    agents = await checkup._deep_sweep_agents(None)
+
+    assert {"has-memories", "profile-only", "episode-only"} <= set(agents), agents
+
+
+@pytest.mark.asyncio
+async def test_a_named_agent_still_sweeps_only_that_agent():
+    assert await checkup._deep_sweep_agents("just-this-one") == ["just-this-one"]
+
+
+TS_327 = "2026-07-01T00:00:00+00:00"
+
+
+# --------------------------------------------------------------------------
+# bug-381 — a deep finding whose counts had other names printed as nothing.
+# --------------------------------------------------------------------------
+#
+# The filter read a hand-written key list; the anonymous-source check reports
+# `recoverable` / `unrecoverable`, so a row it found was invisible to every run
+# that was not --json. The replacement is a declared set rather than "any number
+# in the result": the same results carry threshold, tolerance, rows_scanned and
+# age_days, and reading those as findings prints every check on every run.
+
+
+def test_a_deep_finding_reported_without_a_count_key_is_printed():
+    findings = checkup._deep_findings(
+        {"anonymous_source": {"recoverable": 1, "unrecoverable": 0}}
+    )
+
+    assert "anonymous_source" in findings, findings
+
+
+def test_a_clean_deep_result_is_still_filtered_out():
+    findings = checkup._deep_findings(
+        {
+            "anonymous_source": {"recoverable": 0, "unrecoverable": 0},
+            "near_duplicate": {"pairs": 0, "rows_scanned": 500, "threshold": 0.97},
+            "stale_profile": {"count": 0, "threshold_days": 30},
+            "calibration_staleness": {"status": "ok", "age_days": 3},
+        }
+    )
+
+    assert findings == {}, findings
+
+
+def test_every_deep_check_reports_on_a_key_the_human_readable_filter_reads():
+    """So a check added later cannot ship invisible to the operator reading plain output."""
+    import ast
+    import inspect
+
+    readable = checkup.DEEP_FINDING_KEYS | {"status", "error"}
+    for name, runner in checks.DEEP_CHECKS.items():
+        keys = set()
+        for node in ast.walk(ast.parse(inspect.getsource(runner).lstrip())):
+            if isinstance(node, ast.Dict):
+                for k in node.keys:
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                        keys.add(k.value)
+        assert keys & readable, (
+            f"deep check {name!r} reports on none of {sorted(readable)}, so a finding "
+            f"from it cannot appear in a non-JSON checkup run; its keys are {sorted(keys)}"
+        )
+
+
+# --------------------------------------------------------------------------
+# bug-382 — the echoed check list disagreed with the counts beside it.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_health_check_name_is_echoed_once():
+    result = await maintenance_handlers.do_check_health(
+        checks=["empty_content", "empty_content"]
+    )
+
+    assert result["checks_run"] == ["empty_content"]
+
+
+@pytest.mark.asyncio
+async def test_the_echoed_health_check_list_keeps_the_callers_order():
+    result = await maintenance_handlers.do_check_health(
+        checks=["duplicate_content", "empty_content", "duplicate_content"]
+    )
+
+    assert result["checks_run"] == ["duplicate_content", "empty_content"]
+
+
+# --------------------------------------------------------------------------
+# bug-413 — --strict was pinned at the helper and never end to end.
+# --------------------------------------------------------------------------
+#
+# The flag exists for exactly one database state: warn issues, no critical ones.
+# exit_code's semantics were covered by calling it directly, and the subprocess
+# round trip exercised only the healthy and the critical cases -- so rewriting the
+# CLI's own call to pass strict=False left the suite green while the documented
+# contract was broken on the state the flag is for.
+
+
+def _warn_only_db() -> str:
+    import sqlite3 as sq
+
+    db_path = os.path.join(tempfile.mkdtemp(), "warn_only.db")
+    seed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio\n"
+            "from cpersona.database import get_db, close_db\n"
+            "async def s():\n"
+            "    db = await get_db()\n"
+            "    await db.execute('INSERT INTO memories (agent_id, content, source, "
+            "timestamp) VALUES (?,?,?,?)', ('a1', 'hello', "
+            "'{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}', "
+            "'2026-07-01T00:00:00+00:00'))\n"
+            "    await db.commit()\n"
+            "    await close_db()\n"
+            "asyncio.run(s())",
+        ],
+        env=dict(os.environ, CPERSONA_DB_PATH=db_path, CPERSONA_EMBEDDING_MODE="none"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert seed.returncode == 0, seed.stderr
+    # A warn-severity registered object: losing it costs recall latency, not answers,
+    # and boot recreates it -- which is why it is warn and not critical.
+    with sq.connect(db_path) as raw:
+        raw.execute("DROP " + "INDEX idx_memories_isolation")
+    return db_path
+
+
+def test_strict_gates_a_warn_only_database_through_the_cli():
+    db_path = _warn_only_db()
+
+    summary = json.loads(_cli(db_path, "--json").stdout)["severity_summary"]
+    assert summary["critical"] == 0 and summary["warn"] >= 1, summary
+
+    assert _cli(db_path).returncode == 0, "a warn-only database must not gate without --strict"
+    assert _cli(db_path, "--strict").returncode == 1, "--strict must gate on warn issues"

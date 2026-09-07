@@ -26,6 +26,18 @@ import os
 import sys
 
 
+#: The keys a deep check reports its finding COUNT on. Declared rather than
+#: written inline, because bug-381 was a check whose counts had names nobody had
+#: added to the inline list: the anonymous-source check reports ``recoverable`` /
+#: ``unrecoverable``, so a row it found was filtered out of the human-readable
+#: run entirely. Not "any non-zero number in the result" — the same results carry
+#: ``threshold``, ``tolerance``, ``rows_scanned`` and ``age_days``, and reading
+#: those as findings would print every check on every run. A structural gate
+#: asserts every registered deep check reports on one of these (or on ``status``),
+#: so a new check cannot ship invisible to the operator reading plain output.
+DEEP_FINDING_KEYS = frozenset({"count", "pairs", "recoverable", "unrecoverable"})
+
+
 def _deep_findings(results: dict) -> dict:
     """Filter one agent's deep-check results down to what is worth printing.
 
@@ -37,11 +49,36 @@ def _deep_findings(results: dict) -> dict:
     return {
         name: res
         for name, res in results.items()
-        if res.get("count")
-        or res.get("pairs")
+        if any(res.get(key) for key in DEEP_FINDING_KEYS)
         or "error" in res
         or res.get("status") not in (None, "ok", "not_applicable")
     }
+
+
+#: The tables the deep checks read. bug-327: the sweep discovered its population
+#: from ``memories`` alone, although two of the deep checks inspect profiles and
+#: episodes -- so an agent represented only by those tables was never swept, and
+#: the operator read a clean run where findings existed. Measured with a stale
+#: profile and an orphaned episode seeded for an agent holding zero memories: the
+#: deep handler called directly found each of them, the sweep reported nothing.
+_DEEP_SWEEP_TABLES = ("memories", "profiles", "episodes")
+
+
+async def _deep_sweep_agents(agent: str | None) -> list[str]:
+    """The agent ids the deep sweep must visit (all of them, unless one was named)."""
+    if agent:
+        return [agent]
+
+    from cpersona.database import connection
+    from cpersona.isolation import isolation_where
+
+    iso_all = isolation_where(agent_id=None)  # deliberate corpus-wide scan
+    sql = " UNION ".join(
+        f"SELECT DISTINCT agent_id FROM {table}{iso_all.where}"
+        for table in _DEEP_SWEEP_TABLES
+    )
+    async with connection() as db:
+        return [r[0] for r in await db.execute_fetchall(sql, iso_all.params * len(_DEEP_SWEEP_TABLES))]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -82,7 +119,7 @@ async def _run(args) -> int:
     # resolves CPERSONA_DB_PATH at import time.
     from cpersona import database
     from cpersona.checks import exit_code
-    from cpersona.database import close_db, connection
+    from cpersona.database import close_db
     from cpersona.maintenance_handlers import do_check_health, do_deep_check
 
     if not args.fix:
@@ -95,20 +132,7 @@ async def _run(args) -> int:
         report = await do_check_health(agent_id=args.agent, fix=args.fix)
 
         if args.deep:
-            if args.agent:
-                agents = [args.agent]
-            else:
-                from cpersona.isolation import isolation_where
-
-                iso_all = isolation_where(agent_id=None)  # deliberate corpus-wide scan
-                async with connection() as db:
-                    agents = [
-                        r[0]
-                        for r in await db.execute_fetchall(
-                            f"SELECT DISTINCT agent_id FROM memories{iso_all.where}",
-                            iso_all.params,
-                        )
-                    ]
+            agents = await _deep_sweep_agents(args.agent)
             report["deep"] = {}
             for agent in agents:
                 report["deep"][agent] = await do_deep_check(agent, fix=args.fix)
