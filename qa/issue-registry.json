@@ -4336,7 +4336,8 @@
       "status": "open",
       "category": "unbounded-receive",
       "fix_sketch": "Streaming the response bounds the receive side, but it changes the request path, which the docstring already states as the reason it was not done. Decide rather than patch: the backend is an operator-configured service and the default budget is 64 MiB, so the question is whether that origin is in the threat model at all.",
-      "note": "This file is vendored. A change here is not local: it needs the canonical package bumped, re-vendoring here, and the other consumers carried along, so the cost is a different class from a fix inside this package. Same shape as bug-297, which is local by comparison."
+      "note": "This file is vendored. A change here is not local: it needs the canonical package bumped, re-vendoring here, and the other consumers carried along, so the cost is a different class from a fix inside this package. Same shape as bug-297, which is local by comparison. Routing measured 2026-09-07. The canonical for this file is the mcp-common package (published as cloto-mcp-common), not the sibling servers tree: this package's vendored copy is byte-identical to it after the documented import rewrite, while the sibling tree's own copy of embedding_client.py carries neither _parse_within_budget nor max_response_bytes, so it is a different, older lineage and has nothing to fix here. The fix therefore needs the canonical package changed and re-vendored, and bounding the receive side means switching the request path to a streaming read -- a change to how the request is made, which is not a restoration of existing behaviour. That places it outside the freeze-eligible set for this line and in the next one, together with the threat-model question the sketch above raises.",
+      "routing": "2.6, cross-consumer"
     },
     {
       "id": "bug-299",
