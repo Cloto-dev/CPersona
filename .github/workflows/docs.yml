@@ -33,6 +33,9 @@ on:
       - "scripts/check-i18n-drift.py"
       - "scripts/check-lang-routing.js"
       - "scripts/translate-i18n-drift.py"
+      - "docs-versions.json"
+      - "scripts/build-all-versions.py"
+      - "scripts/build-docs.sh"
   pull_request:
     paths:
       - "docs/**"
@@ -47,6 +50,9 @@ on:
       - "scripts/check-i18n-drift.py"
       - "scripts/check-lang-routing.js"
       - "scripts/translate-i18n-drift.py"
+      - "docs-versions.json"
+      - "scripts/build-all-versions.py"
+      - "scripts/build-docs.sh"
 
 permissions:
   contents: read
@@ -147,11 +153,32 @@ jobs:
         # build, it renders English into the Japanese nav). Measured here:
         # docs/quality-assurance.md shipped with neither and every gate was green.
         run: python3 scripts/check-i18n-coverage.py --strict
+      - name: Assemble the published tree (every version line)
+        # Runs on pull requests too, not only on the publishing push. The
+        # cross-version failures live here and nowhere else -- a line whose
+        # branch cannot be built, a manifest that disagrees with the version
+        # map, a root that is not the current line -- and gating them only at
+        # publish time would find them after the merge that caused them.
+        #
+        # Each line is built from its own branch by that branch's own build
+        # script, so the checks above gate this checkout and no other: a gate
+        # added here never retroactively fails a line that is frozen.
+        #
+        # --as-branch says which line this checkout is. A pull request is
+        # checked out as a detached merge ref that is on no branch, so without
+        # it the line under review would be assembled from its published
+        # content and the change being reviewed would not be in the tree at
+        # all. On push, schedule and dispatch, base_ref is empty and the branch
+        # being built is the one that triggered the run.
+        run: >-
+          python3 scripts/build-all-versions.py
+          --out public
+          --as-branch "${{ github.base_ref || github.ref_name }}"
       - name: Upload Pages artifact
         if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site/
+          path: public/
 
   # Draft the missing translation on the same branch, so the blocking check above
   # has something to go green against.

@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Which documentation version lines the published site serves, and where each one lives.",
+    "",
+    "A line's documentation is whatever its branch currently holds, not what its newest tag",
+    "holds. That is deliberate: pinning to a tag would mean a typo in a released line could",
+    "not be corrected without cutting a release, and documentation errata must not require a",
+    "version bump. The cost -- that the site can describe a fix before it is released -- is",
+    "covered by a gate comparing the version a tree claims against that line's newest tag,",
+    "not by refusing to publish the branch.",
+    "",
+    "'current' names the line served at the root of the site. The root is a real build of that",
+    "line, not a redirect, so that absolute URLs already published in README, PyPI metadata,",
+    "the bundled skill and source comments keep resolving unchanged.",
+    "",
+    "Adding a line: create its entry here once its branch exists. Nothing else needs to change",
+    "-- the assembler builds whatever this file declares, and the version selector renders from",
+    "the manifest the assembler writes."
+  ],
+  "site_url": "https://cloto-dev.github.io/CPersona/",
+  "current": "2.5",
+  "versions": [
+    {
+      "id": "2.5",
+      "title": "2.5.x",
+      "branch": "master"
+    }
+  ]
+}

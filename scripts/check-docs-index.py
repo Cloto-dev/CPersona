@@ -59,6 +59,15 @@ LLMS = DOCS / "llms.txt"
 # check unable to run ahead of the build it is meant to gate.
 NAV_LEAF = re.compile(r"^\s*-\s+(?P<label>[^:]+):\s*(?P<path>\S+\.md)\s*$")
 SITE_URL = re.compile(r"^site_url:\s*(?P<url>\S+)\s*$")
+# The same tree is published at more than one URL -- under its version path, and
+# at the root when it is the current line -- so site_url is read from the
+# environment with the site's real root as the default. The links in llms.txt
+# are absolute links to that root, so it is the default that this check must
+# read, never whatever a particular build happened to pass in.
+SITE_URL_ENV = re.compile(
+    r"^site_url:\s*!ENV\s*\[\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"
+    r"[\"'](?P<url>[^\"']+)[\"']\s*\]\s*$"
+)
 MD_LINK = re.compile(r"\[(?P<label>[^\]]+)\]\((?P<url>[^)\s]+)\)")
 
 # The site root. `llms.txt` opens by describing the site itself, which is what
@@ -83,7 +92,7 @@ def fail(msg: str) -> None:
 
 def site_url() -> str:
     for line in MKDOCS.read_text().splitlines():
-        m = SITE_URL.match(line)
+        m = SITE_URL_ENV.match(line) or SITE_URL.match(line)
         if m:
             return m.group("url").rstrip("/")
     fail("mkdocs.yml: no `site_url:` — llms.txt links cannot be checked against it")

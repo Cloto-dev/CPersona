@@ -2,7 +2,12 @@ site_name: CPersona
 site_description: >-
   MCP memory server — persistent, searchable memory for Claude and any MCP
   host. Single SQLite file, 3-layer hybrid search, zero LLM dependency.
-site_url: https://cloto-dev.github.io/CPersona/
+# The assembler builds this tree more than once -- under its own version path,
+# and again at the root when this is the line served there -- and only site_url
+# differs between those builds. It is what canonical links and sitemap.xml are
+# built from, so it is read from the environment with the published root as the
+# default, which is what a plain `mkdocs build` and every local run still get.
+site_url: !ENV [MKDOCS_SITE_URL, "https://cloto-dev.github.io/CPersona/"]
 repo_url: https://github.com/Cloto-dev/cpersona
 repo_name: Cloto-dev/cpersona
 edit_uri: edit/master/docs/
