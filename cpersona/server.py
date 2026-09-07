@@ -1651,7 +1651,18 @@ registry.auto_tool(
     "derived from severity counts (info never degrades). The pre-2.5.2b1 "
     "`healthy` boolean (len(issues) == 0) is gone — it reported False for an "
     "info-only database that `status` called healthy; read `issues` / "
-    "`severity_summary` for the underlying counts.",
+    "`severity_summary` for the underlying counts. "
+    # bug-428: 'healthy' is read as "the installation works", which is more than
+    # this verdict can say. A database whose every row is missing its embedding
+    # because the backend was never reachable is healthy by this definition, and
+    # was reported that way to someone whose import had silently embedded nothing.
+    "Read `status` as a verdict on what is IN the database, not on whether the "
+    "pipeline that fills it is working: a corpus where every embedding is NULL is "
+    "internally consistent, so it scores healthy while semantic recall is dead. "
+    "Nothing here contacts the embedding backend unless fix=true — on a "
+    "report-only run the liveness findings cannot appear at all, and their absence "
+    "is not evidence the backend answered. The `null_embedding` finding carries "
+    "the reason its repair cannot run; read that before reading `status`.",
     {
         "type": "object",
         "properties": {

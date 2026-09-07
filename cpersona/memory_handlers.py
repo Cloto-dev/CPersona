@@ -67,6 +67,36 @@ from cpersona.vector import _search_vector
 
 logger = logging.getLogger(__name__)
 
+#: Set once the missing-client warning below has been emitted. The condition is a
+#: property of the process, not of the row being written: the client is installed
+#: once at startup, so a store that finds it absent will find it absent every time.
+#: Warning per store would bury the one line that matters under one line per write.
+_warned_no_embedding_client = False
+
+
+def _warn_once_no_embedding_client() -> None:
+    """Say that rows are being stored unembedded although the configuration asks
+    for embeddings.
+
+    ``vector._embedding_client`` is installed by ``server.main()``. Anything that
+    reaches ``do_store`` without going through it — an embedded caller, a script, a
+    test harness — stores rows with a NULL embedding and answers ``embedded: false``,
+    which is also the honest answer under ``EMBEDDING_MODE=none``. Nothing separated
+    the two, so an install that was silently not embedding anything looked exactly
+    like one deliberately configured not to, for as long as nobody searched.
+    """
+    global _warned_no_embedding_client
+    if _warned_no_embedding_client or config.EMBEDDING_MODE == "none":
+        return
+    _warned_no_embedding_client = True
+    logger.warning(
+        "CPERSONA_EMBEDDING_MODE is %r but no embedding client is installed, so rows "
+        "are being stored with no embedding and semantic recall will fall back to "
+        "keyword/FTS. The client is created during server startup; a process that "
+        "calls the handlers directly has to create it too. This is logged once.",
+        config.EMBEDDING_MODE,
+    )
+
 
 # ---------------------------------------------------------------------------
 # store outcome contract (2.5.2b1)
@@ -247,6 +277,8 @@ async def do_store(
                 embedding_blob = vector.pack_for_storage(embeddings[0])
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as e:
             logger.warning("Embedding failed during store: %s", e)
+    elif local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
+        _warn_once_no_embedding_client()
 
     # OR IGNORE lets the v12 UNIQUE dedup indexes absorb a concurrent writer
     # that slipped in between the SELECT-based dedup probes above and this

@@ -553,6 +553,42 @@ def _null_embedding_severity(null_count: int, total: int, *, blobs_expected: boo
     return "warn"
 
 
+def _unrepairable_null_hint(*, blobs_expected: bool = True) -> str | None:
+    """Why the NULL-embedding repair cannot run, when it cannot.
+
+    ``_reembeddable`` collapses three unrelated situations into ``repairable = 0``,
+    and the de-escalation that follows fills in the generic hint for that value:
+    every offending row is out of the fixer's reach, locked or shaped so it refuses
+    to rewrite it. That is true of the checks it was written for and false of this
+    one — here the ROWS are fine and the WRITER is missing. An operator whose import
+    embedded nothing was told the rows were locked, which sends them to look at the
+    corpus instead of at the configuration that never built a client.
+
+    The de-escalation uses ``setdefault``, so a hint set here survives it.
+    Returns None when the repair can run and there is nothing to explain.
+    """
+    if not blobs_expected:
+        return (
+            "Nothing to repair: this configuration stores no local memory embeddings, "
+            "so a NULL blob is the resting state rather than a backlog"
+        )
+    if not vector._embedding_client:
+        if config.EMBEDDING_MODE == "none":
+            return (
+                "Nothing to repair: CPERSONA_EMBEDDING_MODE is 'none', so no embeddings "
+                "are produced and a NULL blob is the resting state. Set a mode and "
+                "restart to start embedding, then re-run with fix to backfill"
+            )
+        return (
+            f"The rows are repairable but there is no writer: CPERSONA_EMBEDDING_MODE is "
+            f"{config.EMBEDDING_MODE!r} and no embedding client is installed in this "
+            "process, so nothing can produce the missing vectors. Check the embedding "
+            "settings and that the backend is reachable, restart CPersona, then re-run "
+            "with fix to backfill. The rows themselves are not locked"
+        )
+    return None
+
+
 def _reembeddable(null_count: int, *, blobs_expected: bool = True) -> int:
     """Rows the NULL-embedding repair would write this run (the `repairable`
     contract). Zero when the repair cannot run at all — no embedding client
@@ -866,6 +902,9 @@ async def check_null_embedding(db, agent_id: str, fix: bool, embedding_cache=Non
         # would describe work this run will not do.
         "repairable": _reembeddable(null_count, blobs_expected=blobs_expected),
     }
+    hint = _unrepairable_null_hint(blobs_expected=blobs_expected)
+    if hint:
+        issue["hint"] = hint
     if not blobs_expected:
         # bug-182: say why the repair does not run, so a NULL count that is never
         # going down reads as policy rather than as a fixer that keeps failing.
@@ -902,6 +941,9 @@ async def check_null_episode_embedding(db, agent_id: str, fix: bool, embedding_c
         # episode carries a BLOB in every configuration (bug-182).
         "repairable": _reembeddable(null_count),
     }
+    hint = _unrepairable_null_hint()
+    if hint:
+        issue["hint"] = hint
     if fix and vector._embedding_client:
         # bug-379: same as the memories twin above -- zero is an outcome under fix.
         issue["re_embedded"] = await _reembed_null_rows(

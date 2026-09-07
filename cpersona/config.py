@@ -427,6 +427,38 @@ EMBEDDING_API_KEY = os.environ.get("CPERSONA_EMBEDDING_API_KEY") or os.environ.g
 EMBEDDING_API_URL = os.environ.get("CPERSONA_EMBEDDING_API_URL") or os.environ.get("EMBEDDING_API_URL", "https://api.openai.com/v1/embeddings")
 EMBEDDING_MODEL = os.environ.get("CPERSONA_EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 
+#: Whether the model name above was configured or defaulted. Derived from the same
+#: two variables — not a setting of its own — because the default is only meaningful
+#: on one of the transports, and the resolved value alone cannot say which case it is.
+EMBEDDING_MODEL_CONFIGURED = bool(
+    os.environ.get("CPERSONA_EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL")
+)
+
+
+def reported_embedding_model() -> str:
+    """The model name to report to a caller, which is not always the resolved one.
+
+    Only the `api` transport sends the model: it posts `{"model": ..., "input": ...}`
+    to an OpenAI-compatible endpoint, so there the default is the model that really
+    embedded the text. The `http` transport posts `{"texts": ...}` and the backend
+    chooses; the name never leaves this process. Reporting the api default there named
+    an OpenAI model to operators running something else entirely, on a field whose
+    whole purpose is to say what the numbers were measured under.
+
+    Empty means "not known here" rather than "none": the backend has a model, this
+    process just has no way to learn its name.
+
+    Deliberately NOT used for the calibration sidecar or the vector-index fingerprint.
+    Those compare the stored name against the current one to decide whether the
+    embeddings still match, and changing what they store would make every existing
+    http-mode sidecar and index read as stale on upgrade — recalibrating thresholds
+    and rebuilding indexes that are, in fact, still valid.
+    """
+    if EMBEDDING_MODEL_CONFIGURED or EMBEDDING_MODE == "api":
+        return EMBEDDING_MODEL
+    return ""
+
+
 VECTOR_MIN_SIMILARITY = _parse_float("CPERSONA_VECTOR_MIN_SIMILARITY", 0.3)
 
 EMBEDDING_CACHE_SIZE = _parse_int("CPERSONA_EMBEDDING_CACHE_SIZE", 256)

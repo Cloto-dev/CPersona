@@ -498,7 +498,7 @@
         "std": 0.0455
       },
       "embedding_dim": 64,
-      "embedding_model": "text-embedding-3-small",
+      "embedding_model": "",
       "method": "separation",
       "new_threshold": 0.7859,
       "null_admit_rate": 0.0667,
@@ -1035,7 +1035,7 @@
         "std": 0.0455
       },
       "embedding_dim": 64,
-      "embedding_model": "text-embedding-3-small",
+      "embedding_model": "",
       "method": "percentile",
       "new_threshold": 0.789,
       "null_admit_rate": 0.0506,
@@ -1788,7 +1788,7 @@
       "agent_id": "cal",
       "distribution": "<volatile>",
       "embedding_dim": 64,
-      "embedding_model": "text-embedding-3-small",
+      "embedding_model": "",
       "method": "separation",
       "new_threshold": "<volatile>",
       "null_admit_rate": "<volatile>",

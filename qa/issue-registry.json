@@ -6276,6 +6276,58 @@
       "status": "fixed",
       "category": "test-isolation",
       "fix_note": "An autouse teardown runs the production comparison and repair (checks.check_schema_objects with fix=True) against the shared connection after every test and fails the test that left drift. A private copy of the canonical DDL in the test tree was rejected: it would drift away from the schema it is meant to pin, silently and in the direction that reports nothing. Reporting rather than only restoring follows the MGP-filter fixture beside it -- schema drift has a culprit to name, unlike the DB_PATH move, which is what the CLI under test is supposed to do. An object the repair cannot rebuild is reported once and then muted, so one leak fails one test instead of every test after it. The two leaking tests were also fixed at their source, with the schema restored after their rows are deleted rather than before, since the duplicates they seed are what blocks the UNIQUE create; the fixture is what keeps the class closed. The victim's precondition now asserts UNIQUE rather than the index name, so the same drift reaching it again reads as a diagnosis instead of an unexplained do_store result."
+    },
+    {
+      "id": "bug-427",
+      "summary": "(MEDIUM) do_store writes a row with a NULL embedding and answers `embedded: false` with nothing logged, although that is also the correct answer under EMBEDDING_MODE=none. cpersona/memory_handlers.py gates the embed on `vector._embedding_client`, which server.main() installs; any caller reaching the handlers without it -- an embedded host, a script, a harness -- stores unembedded rows silently. Reproduced with EMBEDDING_MODE=http and no client: result 'stored', embedded false, zero WARNING or ERROR records. An install whose whole corpus never got a vector is indistinguishable from one deliberately configured not to embed, until someone searches and finds nothing.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-07T09:00:00Z",
+      "version": "2.5.12b3",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "_warn_once_no_embedding_client",
+      "expected": "present",
+      "status": "fixed",
+      "category": "silent-degradation",
+      "fix_note": "Warn once per process when local blobs are expected and the client is absent, suppressed under EMBEDDING_MODE=none. Once rather than per row because the condition is a property of the process -- the client is installed at startup, so a store that finds it missing finds it missing every time, and per-row logging would bury the one line that matters under the import that provoked it. No response field was added: the caller already gets `embedded: false`, and what was missing is the reason, which belongs in the log the operator reads at startup rather than in a per-write payload."
+    },
+    {
+      "id": "bug-428",
+      "summary": "(MEDIUM) check_health / the checkup CLI report `status: healthy` and exit 0 for a database in which every row is missing its embedding and the configured backend is unreachable. Reproduced: 20 rows, all embeddings NULL, EMBEDDING_MODE=http pointing at a dead port -- status healthy, exit 0, severity_summary {critical 0, warn 0, info 3}. The verdict is derived from severity counts over findings about database contents, and by that definition an all-NULL corpus is internally consistent. The embedding_backend_unreachable / _not_probed findings cannot appear at all on a report-only run, because nothing contacts the backend unless fix=true, so their absence was read as evidence the backend answered.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-07T09:00:00Z",
+      "version": "2.5.12b3",
+      "file": "cpersona/server.py",
+      "pattern": "pipeline that fills it is working",
+      "expected": "present",
+      "status": "fixed",
+      "category": "overclaimed-verdict",
+      "fix_note": "The tool description and the CLI docstring now say what the verdict scores and what its silence does not prove. The `status` VALUE was deliberately left alone: it is a machine field derived from severity counts that callers branch on, so changing what it returns for the same database is a contract break, and the severity of null_embedding was likewise left where it is -- an all-NULL corpus really is a resting state under EMBEDDING_MODE=none, and escalating it would fire on every correctly configured install of that shape. Adding a liveness probe to the report-only path was rejected as a feature: it would make an unattended monitoring run reach the network."
+    },
+    {
+      "id": "bug-429",
+      "summary": "(MEDIUM) The NULL-embedding finding explains its own unrepairability with the generic hint for `repairable: 0` -- 'every offending row is out of its reach (locked, or a shape it refuses to rewrite)' -- when the actual cause is that no embedding client exists to produce the vectors. cpersona/checks.py _reembeddable collapses three unrelated situations into zero: EMBEDDING_MODE=none, a configuration that stores no local blob, and a client that was never built although the mode asks for one. Reproduced through `python -m cpersona.checkup --json` with EMBEDDING_MODE=http and an unreachable URL: repairable 0, needs_human_review true, and a hint blaming row locking. It sends the operator to inspect the corpus instead of the configuration.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-07T09:00:00Z",
+      "version": "2.5.12b3",
+      "file": "cpersona/checks.py",
+      "pattern": "_unrepairable_null_hint",
+      "expected": "present",
+      "status": "fixed",
+      "category": "misattributed-cause",
+      "fix_note": "Both NULL-embedding checks now set their own hint, naming which of the three situations produced the zero. The de-escalation that used to fill the generic text uses setdefault, so a hint set in the check survives it -- no change to the shared path was needed, and the checks that the generic wording IS true of keep it. The switched-off case gets its own wording rather than the missing-writer one, so an install that is behaving as configured is not described as broken."
+    },
+    {
+      "id": "bug-430",
+      "summary": "(MEDIUM) calibrate_threshold reports `embedding_model: text-embedding-3-small` on the http transport, where that name is never used. Measured in the client: the api path posts {\"model\": ..., \"input\": ...} to an OpenAI-compatible endpoint, while the http path posts {\"texts\": ...} and the backend chooses its own model -- the configured name never leaves the process. cpersona/config resolves EMBEDDING_MODEL to the api default when unset, so an operator running a local backend was shown an OpenAI model name on the field whose purpose is to say what the numbers were measured under.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-07T09:00:00Z",
+      "version": "2.5.12b3",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "reported_embedding_model",
+      "expected": "present",
+      "status": "fixed",
+      "category": "fabricated-report",
+      "fix_note": "A reporting helper returns the resolved name only when it was explicitly configured or the transport actually sends it, and empty otherwise -- empty meaning 'not knowable here', since the backend does have a model. Only the two response sites use it. The calibration sidecar and the vector-index fingerprint keep the resolved name on purpose: they compare a stored model against the current one to decide whether stored numbers still describe the corpus, so feeding them the reported value would make every existing http-mode sidecar and index read as stale on upgrade, recalibrating thresholds and rebuilding indexes that are still valid. That asymmetry is pinned by a test rather than left to be tidied up. Probing the backend for its real model name was rejected as a feature."
     }
   ]
 }
