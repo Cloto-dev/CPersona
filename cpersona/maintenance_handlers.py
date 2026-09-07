@@ -53,7 +53,14 @@ async def do_check_health(
             # the description promises.
             checks_run=[],
         )
-    checks_run = list(checks) if checks else list(checks_registry.HEALTH_CHECK_NAMES)
+    # bug-382: the runner deduplicates into a set, so echoing the caller's list
+    # verbatim reported a repeated name as two runs of one execution -- the echoed
+    # list disagreed with the counts printed beside it. dict.fromkeys keeps the
+    # caller's order while collapsing the repeat, so the list and the counts
+    # describe the same run.
+    checks_run = (
+        list(dict.fromkeys(checks)) if checks else list(checks_registry.HEALTH_CHECK_NAMES)
+    )
 
     # Under no-persist, downgrade fix=True to fix=False so the diagnostic
     # still runs but no rows are mutated. Clear no-persist and re-run to repair.
@@ -286,27 +293,62 @@ async def do_deep_check(
     repairs_skipped = bool(fix and session.is_paused_for(key))
     if repairs_skipped:
         fix = False
-    selected = checks if checks else checks_registry.DEEP_CHECK_NAMES
+    # bug-325: an unrecognised name used to be dropped mid-loop, so a single typo
+    # answered checks_run: [], results: {}, fixed: true -- which reads as a deep
+    # pass that ran, repaired and found nothing. The sibling health tool has
+    # refused the same input since bug-230, and the two disagreed on a documented
+    # point; the schema enumerates the legal values in prose and nothing validated
+    # them. A caller who asked for a probe that does not exist has learned nothing
+    # from an empty result.
+    unknown = [name for name in (checks or []) if name not in checks_registry.DEEP_CHECKS]
+    if unknown:
+        return error_response(
+            f"unknown check name(s): {', '.join(unknown)}. Valid names: "
+            f"{', '.join(checks_registry.DEEP_CHECK_NAMES)}",
+            unknown_checks=unknown,
+            valid_checks=list(checks_registry.DEEP_CHECK_NAMES),
+            checks_run=[],
+        )
+    selected = list(dict.fromkeys(checks)) if checks else list(checks_registry.DEEP_CHECK_NAMES)
     results: dict[str, dict] = {}
 
-    # bug-042/043: a fix run's writes + commit are serialised by transaction() so a
-    # concurrent import/merge cannot flush this run's partial repairs. The read-only
-    # (fix=False) path goes through the plain read seam.
-    async with (transaction() if fix else connection()) as db:
-        for name in selected:
-            runner = checks_registry.DEEP_CHECKS.get(name)
-            if runner is None:
-                continue  # unknown names are silently skipped (pre-registry behaviour)
+    async def _run(db, names: list[str]) -> None:
+        for name in names:
             try:
-                results[name] = await runner(db, agent_id, fix)
+                results[name] = await checks_registry.DEEP_CHECKS[name](db, agent_id, fix)
             except Exception as e:
                 logger.warning("deep check %s crashed: %s", name, e)
                 results[name] = {"error": str(e)}
 
+    # bug-324: only the checks declared fix-capable can write, and the whole
+    # registry used to run inside the transaction anyway -- so a fix run held the
+    # shared write lock across a dense pairwise similarity matrix, thousands of row
+    # fetches, Unicode normalisation of row content and a blocking read of the
+    # calibration sidecar, with every concurrent writer waiting on all of it. The
+    # sibling health handler was split on that ground earlier in this file (bug-072)
+    # and the split was not carried across. The declaration of which checks write
+    # already exists and is asserted against the AST, so this reads it rather than
+    # restating it.
+    #
+    # bug-042/043 still holds for the half that can write: its writes + commit are
+    # serialised by transaction() so a concurrent import/merge cannot flush this
+    # run's partial repairs.
+    writing = [n for n in selected if fix and n in checks_registry.DEEP_FIX_CAPABLE]
+    reporting = [n for n in selected if n not in writing]
+
+    if reporting:
+        async with connection() as db:
+            await _run(db, reporting)
+    if writing:
+        async with transaction() as db:
+            await _run(db, writing)
+
     out = {
         "agent_id": agent_id,
-        "checks_run": [n for n in selected if n in checks_registry.DEEP_CHECKS],
-        "results": results,
+        "checks_run": selected,
+        # Assembled in the requested order rather than in the order the two seams
+        # ran, so splitting the loop did not reorder the response.
+        "results": {name: results[name] for name in selected if name in results},
         "fixed": fix,
     }
     if repairs_skipped:

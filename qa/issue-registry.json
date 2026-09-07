@@ -4721,12 +4721,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "runner = checks_registry\\.DEEP_CHECKS\\.get\\(name\\)",
+      "pattern": "checks_registry\\.DEEP_FIX_CAPABLE",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
-      "fix_sketch": "Split the loop the way the health handler does: run the report-only checks on the read seam and open the transaction only around the two that are declared fix-capable."
+      "fix_sketch": "Split the loop the way the health handler does: run the report-only checks on the read seam and open the transaction only around the two that are declared fix-capable.",
+      "fix_note": "The deep runner now reads the declaration of which checks write, which already existed and is asserted against the AST, and opens the transaction only around those. The report-only scans run on the read seam, so a fix run no longer holds the shared write lock across the pairwise similarity matrix, the per-table row fetches, the Unicode normalisation and the blocking sidecar read. Serialisation still covers the half that can write, so the bug-042/043 property is unchanged. Results are assembled in the requested order rather than the order the two seams ran, so splitting the loop did not reorder the response; a test pins that."
     },
     {
       "id": "bug-325",
@@ -4734,12 +4736,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "continue  # unknown names are silently skipped",
+      "pattern": "valid_checks=list\\(checks_registry\\.DEEP_CHECK_NAMES\\),",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
-      "fix_sketch": "Validate the requested names against the registry before opening the run and refuse the call naming the unknown ones, the way the health handler already does; a caller who asked for a probe that did not exist has not learned anything from an empty result."
+      "fix_sketch": "Validate the requested names against the registry before opening the run and refuse the call naming the unknown ones, the way the health handler already does; a caller who asked for a probe that did not exist has not learned anything from an empty result.",
+      "fix_note": "deep_check now refuses an unrecognised name the way check_health has since bug-230, with the same error_response fields (unknown_checks, valid_checks, checks_run: []), so the two health tools agree again on a point the documentation states. A mixed list is refused rather than partly run: the half that would have executed is what made the empty answer look plausible. Adds no field the sibling did not already have."
     },
     {
       "id": "bug-326",
@@ -4762,12 +4766,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/checkup.py",
-      "pattern": "SELECT DISTINCT agent_id FROM memories\\{iso_all\\.where\\}",
+      "pattern": "_DEEP_SWEEP_TABLES = \\(\"memories\", \"profiles\", \"episodes\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "maintenance-cli",
-      "fix_sketch": "Union the distinct agent ids across the three tables the deep checks read, so the sweep's population matches what it is sweeping for."
+      "fix_sketch": "Union the distinct agent ids across the three tables the deep checks read, so the sweep's population matches what it is sweeping for.",
+      "fix_note": "The sweep now discovers its population from the three tables the deep checks read, so an agent represented only by a profile or an episode is visited. Measured: with a stale profile and an orphaned episode seeded for agents holding zero memories, the sweep returns both, and a named --agent still sweeps only that agent."
     },
     {
       "id": "bug-328",
@@ -5573,12 +5579,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/checkup.py",
-      "pattern": "or res\\.get\\(\"status\"\\) not in \\(None, \"ok\", \"not_applicable\"\\)",
+      "pattern": "DEEP_FINDING_KEYS = frozenset",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "maintenance-cli",
-      "fix_sketch": "Decide interestingness from the result rather than from a fixed key list -- any non-zero numeric field, or an explicit emptiness marker on each runner -- so a new check cannot ship invisible to the human-readable output."
+      "fix_sketch": "Decide interestingness from the result rather than from a fixed key list -- any non-zero numeric field, or an explicit emptiness marker on each runner -- so a new check cannot ship invisible to the human-readable output.",
+      "fix_note": "The human-readable filter now reads a declared set of finding-count keys (count / pairs / recoverable / unrecoverable) instead of a hand-written list, so the anonymous-source counts are printed. Not \"any non-zero number in the result\": the same results carry threshold, tolerance, rows_scanned and age_days, and reading those as findings would print every check on every run. A structural test asserts every registered deep check reports on one of those keys or on status, so a check added later cannot ship invisible to a non-JSON run."
     },
     {
       "id": "bug-382",
@@ -5586,12 +5594,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "checks_run = list\\(checks\\) if checks else",
+      "pattern": "list\\(dict\\.fromkeys\\(checks\\)\\) if checks else list\\(checks_registry\\.HEALTH_CHECK_NAMES\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape-consistency",
-      "fix_sketch": "Echo the names the runner actually selected, deduplicated in the same way, so the list and the counts describe one run."
+      "fix_sketch": "Echo the names the runner actually selected, deduplicated in the same way, so the list and the counts describe one run.",
+      "fix_note": "checks_run now echoes the names the runner actually selected, deduplicated the way the runner deduplicates them, so the echoed list and the counts beside it describe one run. dict.fromkeys keeps the caller order while collapsing the repeat."
     },
     {
       "id": "bug-383",
@@ -6029,12 +6039,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/checkup.py",
-      "pattern": "code = exit_code\\(report\\[\"severity_summary\"\\], strict=args\\.strict\\)",
+      "fixed_in": "2.5.12b3",
+      "file": "tests/test_v2437_checkup.py",
+      "pattern": "def test_strict_gates_a_warn_only_database_through_the_cli",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "fix_sketch": "Add a subprocess case that seeds a warn-only database, runs the CLI with `--strict`, and asserts exit code 1 (with the non-strict run asserted 0 on the same database)."
+      "fix_sketch": "Add a subprocess case that seeds a warn-only database, runs the CLI with `--strict`, and asserts exit code 1 (with the non-strict run asserted 0 on the same database).",
+      "fix_note": "A subprocess case now seeds a warn-only database (a warn-severity registered index dropped), asserts the CLI exits 0 without --strict and 1 with it. Measured: rewriting the CLI to pass strict=False now fails that case; before, it left the whole suite green."
     },
     {
       "id": "bug-414",
