@@ -332,3 +332,67 @@ def test_the_two_recognised_values_still_classify(tmp_path) -> None:
 
     assert result.returncode == 0, _strip_ansi(result.stdout)
     assert counts["verified"] == 1 and counts["fixed"] == 1 and counts["errors"] == 0
+
+
+# ---------------------------------------------------------------------------
+# bug-431 — an empty pattern read as a verdict the entry had not earned.
+# ---------------------------------------------------------------------------
+#
+# `grep -c "" file` matches every line, so a row whose pattern was the empty
+# string arrived at the `expected: present` branch with match_count set to the
+# file's line count and was reported [VERIFIED] -- against a file whose contents
+# were never consulted. The same shape as bug-012, bug-309 and bug-400: a row
+# that leaves the gate with a verdict nothing produced. A registry reaches it by
+# losing the pattern field in an edit, or by keeping the pattern under a nested
+# key the extractor does not read.
+
+
+def test_an_empty_pattern_fails_the_gate(tmp_path) -> None:
+    root = _make_root(tmp_path, [_row(pattern="")], {"src/thing.py": "needle\n"})
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    plain = _strip_ansi(result.stdout)
+
+    assert result.returncode != 0, "an entry that checks nothing exited 0:\n" + plain
+    assert "bug-999" in plain, "the unusable row left no trace in the output"
+    assert "VERIFIED" not in plain, (
+        "an empty pattern was still counted as proof:\n" + plain
+    )
+
+
+def test_an_empty_pattern_is_counted_as_an_error_not_a_pass(tmp_path) -> None:
+    """It must land in `errors`, so the counters still reconcile against total."""
+    root = _make_root(
+        tmp_path,
+        [_row(id="bug-901", pattern=""), _row(id="bug-902")],
+        {"src/thing.py": "needle\n"},
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    counts = _parse_summary(result.stdout)
+
+    assert counts["total"] == 2
+    assert counts["errors"] == 1 and counts["verified"] == 1
+    assert counts["verified"] + counts["stale"] + counts["fixed"] + counts["errors"] == 2
+
+
+def test_an_empty_pattern_is_refused_before_the_file_is_opened(tmp_path) -> None:
+    """Pins where the guard sits, not just that it exists.
+
+    A missing file with `expected: absent` is a legitimate [FIXED] -- the pattern
+    is trivially gone. Put the guard after that branch and this row passes, so an
+    entry that checks nothing keeps a green verdict by naming a file that is not
+    there. The empty pattern has to be refused first: no file content can make it
+    meaningful, and that includes the absence of the file.
+    """
+    root = _make_root(
+        tmp_path,
+        [_row(pattern="", expected="absent", file="src/deleted.py")],
+        {},
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    plain = _strip_ansi(result.stdout)
+
+    assert result.returncode != 0, "an entry that checks nothing exited 0:\n" + plain
+    assert "FIXED" not in plain, "the empty pattern was excused by the missing file:\n" + plain
