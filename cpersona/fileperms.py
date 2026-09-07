@@ -57,6 +57,9 @@ PRIVATE_DIR_MODE = 0o700
 # text mode, which rewrites "\n" as "\r\n" — silently corrupting the embedding
 # index, whose bytes are a struct, not a document.
 _BINARY = getattr(os, "O_BINARY", 0)
+# Absent on Windows, where a symlink needs a privilege to create in the first
+# place; 0 there leaves the flag word unchanged.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 _WRITE_MODES = ("w", "wb", "a", "ab")
 
@@ -95,7 +98,14 @@ def open_private(path, mode: str = "w", *, encoding: str | None = None):
             f"open_private is for creating files, not reading them: {mode!r} "
             f"is not one of {_WRITE_MODES}"
         )
-    flags = os.O_WRONLY | os.O_CREAT | _BINARY
+    # bug-352/bug-359: refuse a symlink at the final component. Following one
+    # breaks both halves of this module's contract at once -- the corpus is
+    # written into a file this process did not create and does not own, and the
+    # mode tightening below lands on the link's target, so a file that already
+    # existed does not keep the mode it had. Measured on the update cache: a
+    # planted link had its target truncated, rewritten with the verdict, and
+    # narrowed from 0644 to 0600.
+    flags = os.O_WRONLY | os.O_CREAT | _BINARY | _NOFOLLOW
     flags |= os.O_APPEND if "a" in mode else os.O_TRUNC
     fd = os.open(path, flags, PRIVATE_FILE_MODE)
     try:

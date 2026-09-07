@@ -26,6 +26,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
+import stat
 import sys
 import time
 
@@ -1057,3 +1059,50 @@ async def test_the_tool_is_registered_with_the_two_arguments(monkeypatch):
     assert tool.annotations.readOnlyHint is False
     assert "CPERSONA_UPDATE_CHECK=false" in tool.description
     assert "RESTART" in tool.description.upper()
+
+
+def test_the_cache_write_does_not_follow_a_link_planted_at_its_path(tmp_path, monkeypatch):
+    """bug-359: the cache path is fixed and sits in the database directory.
+
+    That directory is writable by whoever can write the database, so on a shared
+    host the name is both predictable and plantable — the one write path here
+    that names a durable file rather than a temp one it just minted. Measured
+    before the flag went in: the link's target was truncated, rewritten with the
+    verdict, and narrowed from 0644 to 0600, because the mode lands on the
+    descriptor and therefore on the target.
+
+    The refusal is swallowed by ``_write_cache`` on purpose — the in-memory
+    answer is already right and the only cost is one more request next start —
+    so the evidence is the untouched victim, not an exception.
+    """
+    dbdir = tmp_path / "dbdir"
+    dbdir.mkdir()
+    monkeypatch.setattr(config, "DB_PATH", str(dbdir / "corpus.sqlite3"))
+
+    victim = tmp_path / "victim.conf"
+    victim.write_text("KEEP=1\n")
+    os.chmod(victim, 0o644)
+
+    os.symlink(victim, dbdir / update_check.CACHE_FILENAME)
+
+    verdict = update_check._verdict_dict(update_check.STATE_OK, "2.5.10", None, None, None)
+    update_check._write_cache(verdict, "2026-01-01T00:00:00+00:00")
+
+    assert victim.read_text() == "KEEP=1\n", "the verdict was written through the link"
+    assert stat.S_IMODE(os.stat(victim).st_mode) == 0o644, (
+        "the link's target was narrowed to the private mode"
+    )
+
+
+def test_the_cache_write_still_lands_at_an_unplanted_path(tmp_path, monkeypatch):
+    """Control: a refusal that refused everything would satisfy the test above."""
+    dbdir = tmp_path / "dbdir"
+    dbdir.mkdir()
+    monkeypatch.setattr(config, "DB_PATH", str(dbdir / "corpus.sqlite3"))
+
+    verdict = update_check._verdict_dict(update_check.STATE_OK, "2.5.10", None, None, None)
+    update_check._write_cache(verdict, "2026-01-01T00:00:00+00:00")
+
+    written = dbdir / update_check.CACHE_FILENAME
+    assert json.loads(written.read_text())["fetched_at"] == "2026-01-01T00:00:00+00:00"
+    assert stat.S_IMODE(os.stat(written).st_mode) == 0o600

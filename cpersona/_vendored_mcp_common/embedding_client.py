@@ -236,8 +236,15 @@ class EmbeddingClient:
                     error=f"mode={self.mode} is not a supported embedding mode",
                 )
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError) as e:
-            logger.warning("Embedding request failed: %s", e)
-            return None, EmbedOutcome(attempted=True, ok=False, error=self._failure_evidence(e))
+            # bug-425: build the evidence first and log that, rather than logging the
+            # exception and sanitising only the value handed back. httpx puts the
+            # request URL inside its own message, so an endpoint configured with
+            # credentials in the userinfo or the query string reached the log verbatim
+            # while the returned error was already clean -- the sanitiser existed and
+            # this one line went around it.
+            evidence = self._failure_evidence(e)
+            logger.warning("Embedding request failed: %s", evidence)
+            return None, EmbedOutcome(attempted=True, ok=False, error=evidence)
 
         if not result:
             # A 2xx that carried no usable embeddings. Reported as a failure because

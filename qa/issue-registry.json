@@ -5130,13 +5130,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/fileperms.py",
-      "pattern": "fd = os\\.open\\(path, flags, PRIVATE_FILE_MODE\\)",
+      "pattern": "flags = os\\.O_WRONLY \\| os\\.O_CREAT \\| _BINARY \\| _NOFOLLOW",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "security",
       "fix_sketch": "Add the no-follow flag for the create-and-truncate case, and prefer exclusive creation for a temp file that is expected not to exist; a leftover from a crashed run should be removed deliberately rather than reused, since reuse is what makes the plant work.",
-      "note": "The predictable temp name is bug-350's mechanism as well -- a unique name per call removes both the collision and most of the plant window, but the open flags are the part that decides whether a plant works at all."
+      "note": "The predictable temp name is bug-350's mechanism as well -- a unique name per call removes both the collision and most of the plant window, but the open flags are the part that decides whether a plant works at all.",
+      "fix_note": "open_private now passes O_NOFOLLOW, so a symlink at the final component is refused instead of followed. Following one broke both halves of the module contract at once: the corpus went into a file this process did not create, and the mode tightening landed on the link target, so a file that already existed did not keep the mode it had. The pin is at the helper (tests/test_bug289_file_permissions.py, four write modes plus a control) rather than at the export path the report reached it through - minting the export temp name per call (bug-350, fixed in 2.5.12b2) had already removed the predictable name that plant needed, so a pin written against that path passes without the flag ever changing. Measured: each write mode raises ELOOP with the victim untouched at 0644, and the control still creates a new 0600 file."
     },
     {
       "id": "bug-353",
@@ -5230,13 +5232,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/update_check.py",
-      "pattern": "with fileperms\\.open_private\\(path, \"w\", encoding=\"utf-8\"\\) as handle:",
+      "fixed_in": "2.5.12b3",
+      "file": "cpersona/fileperms.py",
+      "pattern": "flags = os\\.O_WRONLY \\| os\\.O_CREAT \\| _BINARY \\| _NOFOLLOW",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "security",
       "fix_sketch": "Fixing the open flags (bug-352) removes this too; until then this caller could write through a freshly created unique temp file and rename it into place, which never opens the planted name at all.",
-      "note": "Same root cause as bug-352, seen from the second caller of the same helper. Filed separately because the anchor is a different file and a caller-level fix is available here."
+      "note": "Same root cause as bug-352, seen from the second caller of the same helper. Filed separately because the anchor is a different file and a caller-level fix is available here.",
+      "fix_note": "Closed by the flag change in fileperms.open_private (bug-352), which is the shared root this entry note predicted, so the anchor is that line rather than the caller. Caller-level regression in tests/test_update_check.py: a link planted at the cache filename inside the database directory is neither written through nor re-moded, with a control that the ordinary write still lands at 0600. The refusal stays swallowed by _write_cache by design, so the evidence is the untouched victim rather than a raised error."
     },
     {
       "id": "bug-360",
@@ -6166,13 +6170,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/_vendored_mcp_common/embedding_client.py",
-      "pattern": "logger\\.warning\\(\"Embedding request failed: %s\", e\\)",
+      "pattern": "evidence = self\\._failure_evidence\\(e\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "security",
       "fix_sketch": "Log the sanitised `_failure_evidence(e)` string (or the exception's class name plus the safe endpoint) instead of the exception itself.",
-      "note": "The copy of this client that ships inside this package has diverged from the shared library it was vendored from; the defect line exists only in this package's copy, so the fix lands here."
+      "note": "The copy of this client that ships inside this package has diverged from the shared library it was vendored from; the defect line exists only in this package's copy, so the fix lands here.",
+      "fix_note": "The safe evidence is built first and logged, so the sanitiser the returned error already went through now covers the log line too. httpx carries the request URL inside its own message, which is how an endpoint configured with credentials in the userinfo or the query string reached a WARNING record verbatim while the value handed to the caller was clean. Regression in tests/test_2512b2_handlers.py asserts both halves plus a control that the failure is still reported at all, so a log line that simply disappeared would not pass."
     }
   ]
 }
