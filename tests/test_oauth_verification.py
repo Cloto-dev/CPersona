@@ -26,6 +26,7 @@ only the network is replaced, by a fetch seam that serves the documents an
 authorization server would.
 """
 
+import asyncio
 import contextlib
 import json
 import time
@@ -70,6 +71,13 @@ class FakeIdp:
         # Extra fields merged into the metadata document — how a test declares
         # e.g. subject_types_supported without a second fake.
         self.metadata_extra: dict = {}
+        # The OIDC discovery document, served only when a test asks for it. Left
+        # off by default because the issuers this fake was written for publish
+        # the RFC 8414 spelling alone, and that is the shape most tests here
+        # want. Fields declared here are merged the way metadata_extra is, so a
+        # test can put subject_types_supported in the document OIDC actually
+        # requires it in rather than in the one that never carries it.
+        self.oidc_extra: dict | None = None
 
     # -- the fetch seam ----------------------------------------------------
 
@@ -83,6 +91,17 @@ class FakeIdp:
                     "issuer": self.metadata_issuer,
                     "jwks_uri": self.jwks_uri,
                     **self.metadata_extra,
+                }
+            ).encode()
+            return 200, body
+        if self.oidc_extra is not None and url.endswith("/.well-known/openid-configuration"):
+            if self.metadata_status != 200:
+                return self.metadata_status, b""
+            body = json.dumps(
+                {
+                    "issuer": self.metadata_issuer,
+                    "jwks_uri": self.jwks_uri,
+                    **self.oidc_extra,
                 }
             ).encode()
             return 200, body
@@ -831,3 +850,157 @@ async def test_http_get_stops_receiving_past_the_document_cap(monkeypatch):
     # and reports an oversized document rather than a JSON parse error on a
     # silently truncated one.
     assert len(body) > oauth_module.MAX_DOCUMENT_BYTES
+
+
+# ---------------------------------------------------------------------------
+# 7. What the gate reads, what the lock serialises, what the deadline bounds
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_pairwise_declaration_in_the_oidc_document_is_seen(idp):
+    """The gate has to read the document that carries the field (bug-339).
+
+    Discovery returned at the first document with a key set location, and the
+    first candidate is the RFC 8414 spelling — which the comment on the
+    candidate list says does not carry ``subject_types_supported``. So the
+    refusal was applied to a document structurally incapable of failing it, and
+    an issuer that declares pairwise-only in its OIDC document was accepted:
+    its subjects name a (person, client) pair, and the ledger would key one
+    person's memory space per client, which is what the setting exists to stop.
+    """
+    idp.oidc_extra = {"subject_types_supported": ["pairwise"]}
+    verifier = _verifier(idp, require_public_subject=True)
+    assert await verifier.verify_token(idp.mint()) is None
+    assert any(u.endswith("/.well-known/openid-configuration") for u in idp.requests), idp.requests
+
+
+@pytest.mark.asyncio
+async def test_a_public_declaration_in_the_oidc_document_passes(idp):
+    """The control: reading the second document is not itself the refusal."""
+    idp.oidc_extra = {"subject_types_supported": ["public", "pairwise"]}
+    verifier = _verifier(idp, require_public_subject=True)
+    assert await verifier.verify_token(idp.mint()) is not None
+
+
+@pytest.mark.asyncio
+async def test_the_second_document_is_not_fetched_when_the_gate_is_off(idp):
+    """Discovery costs one round trip unless the requirement asks for two."""
+    idp.oidc_extra = {"subject_types_supported": ["pairwise"]}
+    assert await _verifier(idp).verify_token(idp.mint()) is not None
+    assert not any(u.endswith("/.well-known/openid-configuration") for u in idp.requests), idp.requests
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_oidc_document_is_recorded_as_an_abstention(idp, caplog):
+    """Absence still passes — and now says that it did.
+
+    The rule this module states is that a document without the field is not a
+    pairwise declaration, so an issuer publishing only RFC 8414 metadata is
+    accepted as it always was. What was missing is the record: with the
+    requirement on, a gate that never ran read exactly like a gate that passed.
+    """
+    with caplog.at_level("WARNING", logger="cpersona"):
+        assert await _verifier(idp, require_public_subject=True).verify_token(idp.mint()) is not None
+    assert any("never checked" in r.getMessage() for r in caplog.records), caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_cached_key_is_served_while_another_refresh_is_in_flight(idp):
+    """The lock serialises refreshes, not verification (bug-338).
+
+    An unknown key id is the rotation signal, so any caller can provoke a fetch
+    without being authenticated at all — and while that fetch was held under the
+    per-issuer lock, a legitimate token whose key was already cached, needing no
+    network whatsoever, waited behind it. The bearer middleware awaits
+    verification before dispatch, so the wait is paid before anything runs.
+    """
+    clock = [1000.0]
+    verifier = _verifier(idp, now=lambda: clock[0])
+    assert await verifier.verify_token(idp.mint()) is not None  # warm the cache
+
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hung_refresh(issuer, entry):
+        entered.set()
+        await release.wait()
+
+    verifier._refresh = hung_refresh
+    clock[0] += oauth.JWKS_MIN_REFETCH_SECONDS + 1
+    forged = asyncio.create_task(verifier._signing_key(ISSUER, "a-key-we-do-not-hold"))
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    try:
+        cached = await asyncio.wait_for(verifier.verify_token(idp.mint()), timeout=0.5)
+    except asyncio.TimeoutError:
+        pytest.fail("a verification needing no network waited for another request's fetch")
+    finally:
+        release.set()
+        await asyncio.wait_for(forged, timeout=2)
+    assert cached is not None
+
+
+@pytest.mark.asyncio
+async def test_two_issuers_do_not_share_one_warning_window(idp, caplog):
+    """The rate limit is per issuer, because everything it gates is (bug-373).
+
+    Shared, an authorization server that flaps swallows another's identical
+    failure — and the same channel carries the pairwise verdict, which is the
+    one line explaining why a whole set of clients cannot authenticate.
+    """
+    other = "https://other-idp.example.com"
+    clock = [1000.0]
+    verifier = oauth.IdpTokenVerifier(
+        (ISSUER, other), RESOURCE, fetch=idp.fetch, now=lambda: clock[0]
+    )
+    idp.metadata_status = idp.jwks_status = 503
+    with caplog.at_level("WARNING", logger="cpersona"):
+        await verifier._signing_key(ISSUER, "k1")
+        clock[0] += 10  # well inside one cooldown
+        await verifier._signing_key(other, "k1")
+    logged = [r.getMessage() for r in caplog.records if "degraded" in r.getMessage()]
+    assert any(other in line for line in logged), logged
+    assert any(ISSUER in line for line in logged), logged
+
+
+@pytest.mark.asyncio
+async def test_the_fetch_is_bounded_by_a_deadline_and_not_by_each_read(monkeypatch):
+    """A per-read timeout lets the peer choose when the transfer ends (bug-340).
+
+    A real loopback server, because the property is in how the socket is read:
+    it trickles a chunk every 0.2 s, never idle for longer than one read
+    timeout, so nothing httpx models ever fires. Measured before the fix at
+    eight times the configured bound while delivering half a percent of the byte
+    cap. The fetch raises rather than returning the partial body: a truncated
+    document handed back as a 200 gets diagnosed as malformed JSON, which sends
+    an operator to read the issuer's document instead of the link to it.
+    """
+    monkeypatch.setattr(oauth, "_HTTP_TIMEOUT_SECONDS", 0.5)
+
+    async def handle(reader, writer):
+        with contextlib.suppress(Exception):
+            await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+            b"Transfer-Encoding: chunked\r\n\r\n"
+        )
+        with contextlib.suppress(Exception):
+            await writer.drain()
+            for _ in range(20):
+                await asyncio.sleep(0.2)
+                writer.write(b"%x\r\n" % 64 + b"x" * 64 + b"\r\n")
+                await writer.drain()
+        with contextlib.suppress(Exception):
+            writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/.well-known/openid-configuration"
+    try:
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            await oauth._http_get(url)
+        elapsed = time.monotonic() - started
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert elapsed <= 2 * oauth._HTTP_TIMEOUT_SECONDS, f"ran {elapsed:.2f}s"
