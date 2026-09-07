@@ -141,6 +141,18 @@ async def read_snapshot():
     for the whole scope — for long streaming reads (bug-073 export) that must
     see a stable row set across a COUNT header + the streamed body.
 
+    ON A FILE DATABASE. bug-356: the ``:memory:`` branch below yields the shared
+    write connection and opens no transaction, so on that deployment this helper
+    offers NO isolation and a commit landing mid-scope is visible to the rest of
+    it — measured end to end as an export whose header claims one memory while
+    its body carries two, which is exactly the inconsistency the import path
+    refuses. The branch's reason is sound (a second connect to an in-memory
+    database is a different, empty database) and the missing transaction is not
+    fixable by adding a BEGIN here: the commit boundary on that connection belongs
+    to the write seam, and taking it would either nest a transaction or hand a
+    reader the power to commit a writer's work. What this line does is stop the
+    promise above from covering a branch that does not keep it.
+
     Why not connection(): that yields the shared _read_db singleton. A long
     explicit transaction there (a) is rolled back by any other read scope's exit
     (the documented shared-connection limitation) and (b) pins the WAL snapshot

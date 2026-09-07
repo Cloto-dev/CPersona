@@ -85,6 +85,17 @@ class _Entry:
 # project_id='' (the global pool only), so the two must not collapse onto one entry.
 _cache: dict[tuple[str | None, str | None, str | None], _Entry] = {}
 
+# bug-319: the key is client-supplied, and this map had no cap and no eviction --
+# expiry here is a freshness test at READ time, so a stale entry is recomputed and
+# re-stamped under the same key rather than removed, and every recall reaches this
+# map. Measured: 500 calls with distinct project and channel values left 500
+# entries, and 2000 distinct triples traced 788,744 bytes. The three sibling
+# per-process maps keyed the same way are all bounded at 256 for exactly this
+# reason. Evicting in insertion order is the safe direction here as it is there: a
+# scope that has not been asked about recently is the entry whose recomputation
+# costs least, and recomputing returns the same answer.
+SCOPE_CACHE_ENTRY_CAP = 256
+
 
 def clear() -> None:
     """Drop every entry. For tests, and for anything that re-points the database."""
@@ -226,3 +237,5 @@ def _store(key, half: str, value, generation: int, now: float) -> None:
     setattr(entry, half, value)
     setattr(entry, f"{half}_generation", generation)
     setattr(entry, f"{half}_at", now)
+    while len(_cache) > SCOPE_CACHE_ENTRY_CAP:
+        _cache.pop(next(iter(_cache)))

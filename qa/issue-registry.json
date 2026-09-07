@@ -4649,12 +4649,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/scope_stats.py",
-      "pattern": "_cache: dict\\[tuple\\[str \\| None, str \\| None, str \\| None\\], _Entry\\] = \\{\\}",
+      "pattern": "SCOPE_CACHE_ENTRY_CAP",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-exhaustion",
-      "fix_sketch": "Bound it like its siblings -- an LRU capped at the same order of magnitude, evicting on insert -- since a scope that has not been asked about recently is exactly the entry whose recomputation costs least."
+      "fix_sketch": "Bound it like its siblings -- an LRU capped at the same order of magnitude, evicting on insert -- since a scope that has not been asked about recently is exactly the entry whose recomputation costs least.",
+      "fix_note": "The per-scope cache evicts in insertion order at the same 256-entry bound its three sibling per-process maps use, so a client that varies channel or project per conversation can no longer grow it for the life of the process. Insertion order is the safe direction here as it is there: a scope not asked about recently is the entry whose recomputation costs least, and recomputing returns the same answer. A test pins the cap against the siblings so the class of bound moves together."
     },
     {
       "id": "bug-320",
@@ -4678,12 +4680,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/config.py",
-      "pattern": "RECALL_PRECISION = os\\.environ\\.get\\(\"CPERSONA_RECALL_PRECISION\", \"balanced\"\\)\\.lower\\(\\)",
+      "pattern": "RECALL_PRECISION = _parse_choice",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "fail-open-config",
-      "fix_sketch": "Read it through the existing choice parser with the three legal values, so an unreadable setting falls back to the documented default and says so in the log."
+      "fix_sketch": "Read it through the existing choice parser with the three legal values, so an unreadable setting falls back to the documented default and says so in the log.",
+      "fix_note": "The setting is read through the choice parser this module already owns and already uses for the settings just above, so a trailing space resolves to the precision the operator asked for and an unrecognised value falls back to the documented default with a setting-specific warning instead of silently becoming balanced. The weight lookup no longer needs a default of its own, which is what made the discard invisible."
     },
     {
       "id": "bug-322",
@@ -5219,7 +5223,7 @@
       "status": "open",
       "category": "transaction-atomicity",
       "fix_sketch": "Open a deferred read transaction on the shared connection for the life of the scope and end it on exit, or state in the contract that this branch offers no isolation so callers who need one can refuse -- what cannot stand is a helper named for a snapshot that silently does not provide one.",
-      "note": "The shared connection is deliberate here: a second connection to an in-memory database is a different, empty database. The fix has to keep that and add the transaction, not replace the connection."
+      "note": "The shared connection is deliberate here: a second connection to an in-memory database is a different, empty database. The fix has to keep that and add the transaction, not replace the connection. Re-judged in 2.5.12b3 and split. CLOSED HERE: the docstring's opening promise no longer covers the branch that does not keep it -- the caveat existed only in a comment fifteen lines down, under a name and a first sentence that both say snapshot. STILL OPEN: the isolation itself. A BEGIN on the shared connection is not the fix -- the commit boundary there belongs to the write seam, so it would either nest a transaction or let a reader commit a writer's work -- and holding the write lock for the life of a streaming export trades the inconsistency for a deadlock hazard the structural gates do not cover. That is a design decision about what an in-memory deployment's export means, not a fix release."
     },
     {
       "id": "bug-357",
@@ -5672,7 +5676,7 @@
       "expected": "present",
       "status": "open",
       "category": "resource-exhaustion",
-      "note": "Deferred out of the frozen 2.5 line: the bound belongs on the published parameter as a `maxLength` refused at the boundary, and declaring one refuses calls that succeed today -- a change to the tool contract that a fix release on this line does not make. The caps that exist are not themselves the defect and count the right thing for their own purpose (which sessions have been told, which are paused); what is missing is a statement of what one key may weigh, which is a decision about the parameter rather than about the maps."
+      "note": "Deferred out of the frozen 2.5 line: the bound belongs on the published parameter as a `maxLength` refused at the boundary, and declaring one refuses calls that succeed today -- a change to the tool contract that a fix release on this line does not make. The caps that exist are not themselves the defect and count the right thing for their own purpose (which sessions have been told, which are paused); what is missing is a statement of what one key may weigh, which is a decision about the parameter rather than about the maps. Re-judged in 2.5.12b3 and the deferral holds. The alternatives to a maxLength were considered and are worse: bounding the stored key by hashing it changes what a pause covers (two long keys sharing a prefix would collide into one bucket), and truncating it silently merges sessions that declared different keys. Both are new mechanisms answering a question the parameter has not been asked yet -- what one key may weigh -- which is a decision about the contract."
     },
     {
       "id": "bug-387",
@@ -5833,7 +5837,7 @@
       "expected": "present",
       "status": "open",
       "category": "scoring-invariant",
-      "note": "Deferred out of the frozen 2.5 line: deciding what a zero-norm answer is -- a refusal at the wire validator, or a vector recorded as unusable -- changes what is stored and what is scored, and it lands on the same unit-norm invariant the open bug-250 is already holding for the next feature line, so the two belong together rather than one step apart. The guard itself is not the defect: dividing by a zero norm turns the whole vector into NaN, which is what the surrounding comment exists to prevent; what is missing is any branch that treats the un-normalised result as a failure. Detection of the resulting row is already shipped by bug-250's norm check, so the observable state is monitored -- only the acceptance is not."
+      "note": "Deferred out of the frozen 2.5 line: deciding what a zero-norm answer is -- a refusal at the wire validator, or a vector recorded as unusable -- changes what is stored and what is scored, and it lands on the same unit-norm invariant the open bug-250 is already holding for the next feature line, so the two belong together rather than one step apart. The guard itself is not the defect: dividing by a zero norm turns the whole vector into NaN, which is what the surrounding comment exists to prevent; what is missing is any branch that treats the un-normalised result as a failure. Detection of the resulting row is already shipped by bug-250's norm check, so the observable state is monitored -- only the acceptance is not. Re-judged in 2.5.12b3 and the deferral holds. It is also a vendored file, so any change here is a cross-consumer bump rather than a CPersona fix, which is a second reason to take it with the unit-norm work rather than one step ahead of it."
     },
     {
       "id": "bug-398",
@@ -6021,13 +6025,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/_vendored_mcp_common/mcp_utils.py",
-      "pattern": "for spec in params:",
+      "fixed_in": "2.5.12b3",
+      "file": "tests/test_structural_gates.py",
+      "pattern": "def _registration_sites",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-teeth",
       "fix_sketch": "Add a gate that iterates the registered tools and asserts each schema property has a matching `params` entry and vice versa, so a dropped extraction spec fails on the tool that declares it.",
-      "note": "Anchored on the extraction site rather than on one tool's params entry: the params spelling the finding names occurs 22 times in cpersona/server.py, so a pattern on it could never identify the defect. The schema/params pairs themselves live in cpersona/server.py; the missing gate would read both."
+      "note": "Anchored on the extraction site rather than on one tool's params entry: the params spelling the finding names occurs 22 times in cpersona/server.py, so a pattern on it could never identify the defect. The schema/params pairs themselves live in cpersona/server.py; the missing gate would read both.",
+      "fix_note": "A gate reads both lists where they are written. The registry keeps the Tool but not the params, so the live registry can only show one half; the pairs exist together at the registration sites, which the gate parses. Three assertions: every declared property is extracted, every extracted argument is declared, and the reader sees every registered tool -- the last one so a registration cannot pass by being invisible to it. Measured: dropping one property from a params list now fails on the tool that declares it."
     },
     {
       "id": "bug-411",

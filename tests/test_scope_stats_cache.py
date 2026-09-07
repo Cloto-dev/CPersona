@@ -366,3 +366,59 @@ async def test_the_disabled_cache_reads_the_aggregates_every_time(
             assert _matching(sql_spy, prefix), (
                 f"recall {attempt} answered `{prefix}` from a cache that is switched off"
             )
+
+
+# ---------------------------------------------------------------------------
+# bug-319 — the map was keyed on client-supplied values with no bound.
+# ---------------------------------------------------------------------------
+#
+# Expiry here is a freshness test at READ time, so a stale entry is recomputed and
+# re-stamped under the same key rather than removed, and every recall reaches this
+# map. Measured before the fix: 500 calls with distinct project and channel values
+# left 500 entries, and 2000 distinct triples traced 788,744 bytes. The three
+# sibling per-process maps keyed the same way are all bounded at 256, each with a
+# comment saying the key space is client-supplied.
+
+
+def _fill(entries: int) -> None:
+    for i in range(entries):
+        scope_stats._store(
+            ("agent", f"project-{i}", "chat"),
+            "counts",
+            (1, 1),
+            database.write_generation(),
+            0.0,
+        )
+
+
+def test_the_cache_does_not_grow_past_its_cap():
+    scope_stats.clear()
+    try:
+        _fill(scope_stats.SCOPE_CACHE_ENTRY_CAP * 2)
+
+        assert len(scope_stats._cache) <= scope_stats.SCOPE_CACHE_ENTRY_CAP, (
+            f"{len(scope_stats._cache)} entries retained for a client-supplied key space"
+        )
+    finally:
+        scope_stats.clear()
+
+
+def test_the_entry_evicted_is_the_least_recently_stored():
+    """Insertion order, as the sibling maps use: the oldest is the cheapest to lose."""
+    scope_stats.clear()
+    try:
+        _fill(scope_stats.SCOPE_CACHE_ENTRY_CAP + 1)
+
+        assert ("agent", "project-0", "chat") not in scope_stats._cache
+        assert ("agent", f"project-{scope_stats.SCOPE_CACHE_ENTRY_CAP}", "chat") in scope_stats._cache
+    finally:
+        scope_stats.clear()
+
+
+def test_the_cap_matches_the_bound_its_siblings_use():
+    """One number, so a later change to the class of bound moves them together."""
+    from cpersona import health, session as session_module, update_check
+
+    assert scope_stats.SCOPE_CACHE_ENTRY_CAP == health.ADVISORY_SESSION_CAP
+    assert scope_stats.SCOPE_CACHE_ENTRY_CAP == update_check.NOTICE_SESSION_CAP
+    assert scope_stats.SCOPE_CACHE_ENTRY_CAP == session_module._MAX_PAUSED_SESSIONS
