@@ -1147,8 +1147,13 @@ async def test_process_wide_denial_says_no_scope_would_have_helped(tmp_path, too
         acl.reset_principal(token)
 
     assert denied["error"] == "permission_denied"
-    assert "process-wide" in denied["detail"], denied["detail"]
     assert "no agent scope narrows this call" in denied["detail"], denied["detail"]
+    # bug-374: the detail used to say the switch is process-wide, which a pause
+    # carrying a session_key is not. The subject of this test is that the denial
+    # says no scope would have helped; the wording of the cause is pinned beside
+    # it, where it can be read against what the tool description promises.
+    assert "process-wide switch" not in denied["detail"], denied["detail"]
+    assert "session_key" in denied["detail"], denied["detail"]
 
 
 def test_every_intrinsic_sweep_classification_can_explain_itself():
@@ -1171,3 +1176,39 @@ def test_every_intrinsic_sweep_classification_can_explain_itself():
         "these tools demand every agent no matter how the call is scoped but "
         f"cannot say why: {sorted(silent)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# bug-374 — the denial sentence outlived the behaviour it described.
+# ---------------------------------------------------------------------------
+#
+# The pause became keyed by session: a pause armed with a declared key stops only
+# that key's bucket. The denial text still called persistence a process-wide switch
+# that stops writes for every agent the process serves, while the tool description
+# on the other surface states the keyed radius correctly -- so the server asserted
+# both readings, and an operator reading the denial could widen a client's grant far
+# beyond what the keyed call needed. What justifies the wildcard demand is the
+# widest BUCKET the call can reach, not the radius of any one call. Wording only:
+# the demand itself is unchanged, and the tests below pin both halves.
+
+
+@pytest.mark.parametrize("tool", ["pause_persistence", "resume_persistence"])
+def test_the_persistence_denial_does_not_claim_a_process_wide_switch(tool):
+    import inspect
+
+    source = inspect.getsource(acl)
+    start = source.index(f'"{tool}": _process_wide(')
+    sentence = source[start : source.index(")", start)]
+
+    assert "process-wide switch" not in sentence, sentence
+    assert "session_key" in sentence, (
+        "the denial must name what actually widens the blast radius"
+    )
+
+
+@pytest.mark.parametrize("tool", ["pause_persistence", "resume_persistence"])
+def test_the_persistence_tools_still_demand_a_wildcard(tool):
+    """The control: only the sentence moved, not the authorisation."""
+    demands = acl.ACL_CLASSIFICATION[tool]({})
+
+    assert any(scope == acl.WILDCARD for scope, _perm in demands), demands

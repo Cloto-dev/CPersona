@@ -61,6 +61,14 @@ def _structures_equal(a: Any, b: Any, *, abs_tol: float = _COMPARE_ABS_TOL) -> b
     compared exactly -- only float leaves get the tolerance. A missing key,
     extra row, or type change surfaces immediately.
     """
+    # bug-411: bool is a subclass of int, so a bool reaching the numeric branch was
+    # widened to 1.0 / 0.0 and compared equal to a float -- the one comparator built
+    # to catch response regressions between two implementations could not see a
+    # field turning from true into 1.0. Decided before the branch, and on both
+    # operands, because the defect is the PAIRING: bool against bool is an ordinary
+    # exact comparison and must stay one.
+    if (type(a) is bool) != (type(b) is bool):
+        return False
     if isinstance(a, float) or isinstance(b, float):
         # int/float mix (json.loads may hand back ints for whole numbers): treat
         # both as floats for the comparison.
@@ -302,3 +310,47 @@ async def test_repeating_a_scenario_reproduces_it():
             )
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# bug-411 — the comparator admitted a bool where a float was expected.
+# ---------------------------------------------------------------------------
+#
+# This file's own contract says everything but a float leaf is compared exactly and
+# a type change surfaces immediately. bool being a subclass of int meant an expected
+# {"persisted": true} matched an observed {"persisted": 1.0}, so the gate could not
+# see a boolean-to-float change in a response field -- which is precisely the class
+# of drift two implementations produce.
+
+
+def test_a_bool_is_not_a_float():
+    assert not _structures_equal(True, 1.0)
+    assert not _structures_equal(1.0, True)
+    assert not _structures_equal(False, 0.0)
+
+
+def test_a_bool_is_not_an_int_either():
+    """The same widening, one step earlier: the exact branch must not accept it."""
+    assert not _structures_equal(True, 1)
+    assert not _structures_equal(0, False)
+
+
+def test_bools_still_compare_to_bools():
+    """The pairing is the defect, not the type: bool against bool stays exact."""
+    assert _structures_equal(True, True)
+    assert _structures_equal(False, False)
+    assert not _structures_equal(True, False)
+
+
+def test_the_widening_is_caught_inside_a_response_shape():
+    """Where it would actually arrive: one field of one response."""
+    expected = {"ok": True, "persisted": True, "score": 0.5}
+    observed = {"ok": True, "persisted": 1.0, "score": 0.5}
+
+    assert not _structures_equal(expected, observed)
+
+
+def test_the_float_tolerance_is_untouched():
+    """The control: the one leaf type that is compared loosely still is."""
+    assert _structures_equal({"score": 0.5}, {"score": 0.5 + 1e-9})
+    assert _structures_equal(3, 3.0)

@@ -79,6 +79,7 @@ from cpersona.config import (
     local_blobs_stored,
 )
 from cpersona import config
+from cpersona import utils
 from cpersona import operating_context
 from cpersona import update_check
 from cpersona.session import resolve_session_key
@@ -877,7 +878,18 @@ registry.auto_tool(
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Normalized content strings to exclude from results (starts-with match). "
-                "Used to prevent duplication with conversation context already known to the caller.",
+                "Used to prevent duplication with conversation context already known to the caller. "
+                # bug-399: the starts-with rule holds only above a floor that was
+                # stated on no surface, while recall_with_context builds this list
+                # from every external_context entry -- so short conversational turns
+                # land under it in ordinary use and the caller gets back the
+                # duplication the parameter exists to prevent. The floor itself is
+                # deliberate (bug-217) and is not what changes here.
+                f"bug-399: the starts-with rule holds only at or above {utils.EXCLUDE_PREFIX_MIN_CHARS} characters. "
+                "A shorter entry has to EQUAL the stored content (after the normalization this parameter "
+                "already asks for: stripped and lower-cased) — a short prefix would otherwise suppress every "
+                "memory beginning with it, inside the retrievers and with nothing in the response reporting "
+                "the exclusion. Size entries at or above that length when you mean a prefix.",
             },
             "session_key": _SESSION_KEY_PROPERTY,
             "project_id": {

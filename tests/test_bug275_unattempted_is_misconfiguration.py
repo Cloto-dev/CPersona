@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from cpersona import checks, config, health, vector
+from cpersona import checks, config, findings, health, vector
 from cpersona.database import get_db
 
 UNATTEMPTED = "mode=openai is not a supported embedding mode"
@@ -148,3 +148,58 @@ def test_an_unsupported_mode_fails_at_startup(mode):
         config.assert_embedding_mode_supported(mode)
     assert "CPERSONA_EMBEDDING_MODE" in str(exc.value)
     assert "none, http, api" in str(exc.value), "the message must say what is accepted"
+
+
+# ---------------------------------------------------------------------------
+# bug-372 — the delivery key collapsed the two states this file separated.
+# ---------------------------------------------------------------------------
+#
+# The routing key was derived from the stamped severity, and the check stamps warn
+# on BOTH states: a backend that was asked and did not answer, and a configuration
+# under which no request ever left the process. Both therefore went out under the
+# key naming an unanswered backend, so a finding whose payload said "misconfigured"
+# arrived with a key that sends a consumer to restart a service nothing contacted --
+# the exact runbook this file exists to keep them off. Routing on the key is what
+# the key is documented for, so the contradiction is not cosmetic.
+
+
+def test_the_misconfigured_state_keeps_its_own_delivery_key():
+    issue = {
+        "check": "embedding_backend",
+        "type": "embedding_backend_misconfigured",
+        "severity": "warn",
+    }
+
+    assert findings.finding_kind(issue) == "embedding_backend_misconfigured"
+
+
+def test_the_unreachable_state_still_delivers_as_unreachable():
+    """The control: the state the key was named for must not move."""
+    issue = {
+        "check": "embedding_backend",
+        "type": "embedding_backend_unreachable",
+        "severity": "warn",
+    }
+
+    assert findings.finding_kind(issue) == "embedding_backend_unreachable"
+
+
+def test_a_configuration_fact_is_still_not_a_defect():
+    """Neither of the two warn states, so it stays on the plain key."""
+    issue = {"check": "embedding_backend", "type": "embedding_backend", "severity": "info"}
+
+    assert findings.finding_kind(issue) == "embedding_backend"
+
+
+def test_the_key_agrees_with_the_payload_the_check_actually_emits():
+    """End to end on the shipped shape, not on a dict written for the occasion."""
+    issue = {
+        "check": "embedding_backend",
+        "type": "embedding_backend_misconfigured",
+        "status": "misconfigured",
+        "severity": "warn",
+    }
+
+    assert findings.finding_kind(issue) == issue["type"], (
+        "the delivered key contradicts the payload it travels with"
+    )

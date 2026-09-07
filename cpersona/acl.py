@@ -533,14 +533,24 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     "persistence_status": lambda args: _AUTHENTICATED_ONLY,
     "get_queue_status": lambda args: _AUTHENTICATED_ONLY,
     "get_operating_context": lambda args: _AUTHENTICATED_ONLY,
-    # Process-wide persistence switch affects every agent's writes.
+    # The persistence switch can reach a bucket shared with every other caller.
+    # bug-374: these sentences predate the pause becoming keyed by session and said
+    # the switch is process-wide, which a keyed pause is not -- the tool description
+    # on the other surface states the keyed radius correctly, so the server asserted
+    # both readings and an operator reading the denial could widen a grant far
+    # beyond what the keyed call needed. What justifies the wildcard demand is the
+    # WIDEST BUCKET the call can reach, not the radius of any one call: a caller who
+    # omits the key arms the bucket every keyless session shares. The demand itself
+    # is unchanged.
     "pause_persistence": _process_wide(
-        "persistence is a process-wide switch, so pausing it stops writes for "
-        "every agent this process serves, not only the caller's"
+        "a pause without a session_key arms the bucket every keyless caller shares, "
+        "so it can stop writes for other sessions this process serves, not only the "
+        "caller's"
     ),
     "resume_persistence": _process_wide(
-        "persistence is a process-wide switch, so resuming it restarts writes "
-        "for every agent this process serves, not only the caller's"
+        "a resume without a session_key clears the bucket every keyless caller "
+        "shares, so it can restart writes for other sessions this process serves, "
+        "not only the caller's"
     ),
     # Per-agent reads.
     "recall": _scoped(PERM_READ),

@@ -86,3 +86,49 @@ async def test_recall_with_context_still_dedups_a_truncated_echo(fake_embedding_
     contents = [m["content"] for m in out["messages"]]
     assert LONG_MEMORY not in contents, "the caller already holds this text; it must be filtered"
     assert echo in contents, "the context entry itself is still merged into the response"
+
+
+# ---------------------------------------------------------------------------
+# bug-399 — the floor was real, deliberate, and stated on no surface.
+# ---------------------------------------------------------------------------
+#
+# The published schema said entries are matched starts-with, full stop. Below the
+# floor above, only an exact match excludes anything -- and recall_with_context
+# builds this list automatically from every external_context entry, so short
+# conversational turns land under it in ordinary use and the caller gets back the
+# duplication the parameter exists to prevent. Nothing about the runtime changed
+# here: what was defective is the sentence a caller sizes an exclusion list from.
+
+
+def _exclude_description() -> str:
+    from cpersona import server
+
+    tool = next(t for t in server.registry._tools if t.name == "recall")
+    return tool.inputSchema["properties"]["exclude_contents"]["description"]
+
+
+def test_the_floor_is_stated_where_the_caller_sizes_the_list():
+    description = _exclude_description()
+
+    assert str(EXCLUDE_PREFIX_MIN_CHARS) in description, description
+    assert "starts-with" in description, description
+
+
+def test_the_stated_floor_is_the_one_the_matcher_applies():
+    """Rendered from the constant, so the sentence cannot drift from the rule."""
+    floor = EXCLUDE_PREFIX_MIN_CHARS
+    stored = "Deploy approved by the team on Friday afternoon"
+    assert len(stored) > floor
+    # Entries arrive normalized, which is what the parameter asks for and what the
+    # matcher compares against.
+    normalized = stored.lower()
+
+    assert not _content_excluded(stored, [normalized[: floor - 1]]), (
+        "an entry under the floor prefix-matched, which is what the floor forbids"
+    )
+    assert _content_excluded(stored, [normalized[:floor]]), (
+        "an entry at the floor did not prefix-match, so the stated boundary is wrong"
+    )
+    assert _content_excluded(stored, [normalized]), (
+        "an exact match must still exclude"
+    )

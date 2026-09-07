@@ -5365,12 +5365,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/tasks.py",
-      "pattern": "SELECT id FROM pending_memory_tasks WHERE id IN \\(\\{placeholders\\}\\)",
+      "pattern": "_RECONCILE_READ_CHUNK",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
-      "fix_sketch": "Split the read at the same 500-per-statement bound the other id lists use and union the results; the map's own cap then stops being a statement-width decision."
+      "fix_sketch": "Split the read at the same 500-per-statement bound the other id lists use and union the results; the map's own cap then stops being a statement-width decision.",
+      "fix_note": "The reconcile reads in 500-id statements and unions the results, the same bound every other id list in this package uses, so the attribution map cap stops being a statement-width decision. Measured by lowering the variable limit to 999 on the READ connection the reconcile actually uses -- the first attempt lowered it on the write connection get_db returns and passed against the defect, which is why the test names the seam."
     },
     {
       "id": "bug-367",
@@ -5455,12 +5457,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/findings.py",
-      "pattern": "return \"embedding_backend_unreachable\" if stamped == \"warn\" else \"embedding_backend\"",
+      "pattern": "if reported in \\(\"embedding_backend_unreachable\", \"embedding_backend_misconfigured\"\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "misclassified-failure",
-      "fix_sketch": "Derive the key from the payload's own type rather than from the severity, so the two states the check already distinguishes stay distinguished on the way out."
+      "fix_sketch": "Derive the key from the payload's own type rather than from the severity, so the two states the check already distinguishes stay distinguished on the way out.",
+      "fix_note": "The delivery key is read from the payload type the check already emits, so the two states it deliberately separates stay separated on the way out. The severity cannot carry that distinction: the runner stamps warn on both. A misconfigured finding no longer travels under the key that sends a consumer to restart a service nothing contacted."
     },
     {
       "id": "bug-373",
@@ -5483,12 +5487,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/acl.py",
-      "pattern": "persistence is a process-wide switch, so pausing it stops writes for ",
+      "pattern": "a pause without a session_key arms the bucket every keyless caller shares",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "stale-prose",
-      "fix_sketch": "Restate the cause the way the tool description does -- the widest bucket, not the widest radius -- so the denial explains why a wildcard grant is demanded without asserting an effect the call does not have."
+      "fix_sketch": "Restate the cause the way the tool description does -- the widest bucket, not the widest radius -- so the denial explains why a wildcard grant is demanded without asserting an effect the call does not have.",
+      "fix_note": "The denial now names the widest bucket the call can reach rather than asserting a process-wide effect a keyed pause does not have, which is what the tool description on the other surface already says. The wildcard demand is unchanged and is pinned beside the wording. The existing prose pin asserted the stale sentence as a side effect of pinning what the denial is for; it now asserts both halves explicitly."
     },
     {
       "id": "bug-375",
@@ -5850,12 +5856,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/utils.py",
-      "pattern": "if len\\(excl\\) < EXCLUDE_PREFIX_MIN_CHARS:",
+      "fixed_in": "2.5.12b3",
+      "file": "cpersona/server.py",
+      "pattern": "the starts-with rule holds only at or above",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
-      "note": "Deferred out of the frozen 2.5 line: stating the floor where a caller reads it means changing the published parameter schema, and a schema change is what the current line preserves rather than makes. Lowering or removing the floor is not the alternative -- that restores bug-217, where a two-character acknowledgement arriving through external_context prefix-suppressed every memory starting with it, inside the retrievers and with nothing in the response reporting the exclusion. The runtime behaviour is right; only the sentence a caller sizes an exclusion list from is incomplete."
+      "note": "Deferred out of the frozen 2.5 line: stating the floor where a caller reads it means changing the published parameter schema, and a schema change is what the current line preserves rather than makes. Lowering or removing the floor is not the alternative -- that restores bug-217, where a two-character acknowledgement arriving through external_context prefix-suppressed every memory starting with it, inside the retrievers and with nothing in the response reporting the exclusion. The runtime behaviour is right; only the sentence a caller sizes an exclusion list from is incomplete.",
+      "fix_note": "The floor is stated where a caller sizes the list, rendered from the constant so the sentence cannot drift from the rule. The runtime is unchanged -- the floor is deliberate (bug-217) and lowering it would restore that defect. Two corrections while writing it: the boundary is at-or-above, not above, and the sub-floor comparison is exact against the ALREADY-NORMALIZED entry the parameter asks for, not case-insensitive on the caller behalf; the first draft of the sentence claimed the latter and the test that measured the boundary is what caught it."
     },
     {
       "id": "bug-400",
@@ -5953,12 +5961,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "tests/test_http_body_budget.py",
-      "pattern": "fresh = server\\.RequestBodyBudgetMiddleware\\(budget\\.app\\)",
+      "pattern": "def _untouched_app",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-teeth",
-      "fix_sketch": "Assert on the mounted instance itself before `_make_app` overwrites it (or read the mount's arguments from the middleware stack), so a hard-coded argument at the mount site fails the test."
+      "fix_sketch": "Assert on the mounted instance itself before `_make_app` overwrites it (or read the mount's arguments from the middleware stack), so a hard-coded argument at the mount site fails the test.",
+      "fix_note": "The assertion reads the mounted instance from the served middleware stack, on an app built without the overwrite the boundary tests perform, so the mount arguments are observed rather than a second object constructed from the same config. Measured: mounting with mode off now fails the test; before, it removed body accounting from the production transport with the file green."
     },
     {
       "id": "bug-407",
@@ -6025,12 +6035,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "tests/test_equivalence_252.py",
-      "pattern": "if not isinstance\\(a, \\(int, float\\)\\) or not isinstance\\(b, \\(int, float\\)\\):",
+      "pattern": "if \\(type\\(a\\) is bool\\) != \\(type\\(b\\) is bool\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "Reject a bool paired with a non-bool before the float branch (compare `type(a) is bool` against `type(b) is bool`), and add a case asserting `true` and `1.0` are reported unequal."
+      "fix_sketch": "Reject a bool paired with a non-bool before the float branch (compare `type(a) is bool` against `type(b) is bool`), and add a case asserting `true` and `1.0` are reported unequal.",
+      "fix_note": "A bool paired with a non-bool is rejected before the numeric branch, so the comparator can see a field turning from true into 1.0 -- the class of drift two implementations produce, and the one thing this gate exists to catch. Decided on the pairing rather than on the type, because bool against bool is an ordinary exact comparison and stays one."
     },
     {
       "id": "bug-412",
@@ -6128,12 +6140,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/proxy_stdio.py",
-      "pattern": "headers\\[\"Authorization\"\\] = f\"Bearer \\{AUTH_TOKEN\\}\"",
+      "fixed_in": "2.5.12b3",
+      "file": "tests/test_bug253_proxy_concurrency.py",
+      "pattern": "def test_the_forwarded_request_carries_the_configured_bearer",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-teeth",
-      "fix_sketch": "Have one mock-transport handler assert the request carries the bearer header built from the configured token, and a second assert the session id is echoed back on the following request."
+      "fix_sketch": "Have one mock-transport handler assert the request carries the bearer header built from the configured token, and a second assert the session id is echoed back on the following request.",
+      "fix_note": "Three cases over the real main and the mock transport: the forwarded request carries the bearer built from the configured token, an unset token sends no header at all rather than an empty credential, and a session id from one response rides on the next request. The last one holds the second request inside its handler until the first response has been processed, since the two are forwarded concurrently and would otherwise assert the scheduler."
     },
     {
       "id": "bug-419",

@@ -355,3 +355,99 @@ async def test_writer_survives_a_poisoned_emit_and_later_responses_flow(monkeypa
     assert [json.loads(m)["id"] for m in written] == [2], (
         "the poisoned emit (id 1) is dropped; the survivor (id 2) must still flow"
     )
+
+
+# ---------------------------------------------------------------------------
+# bug-418 — the bridge's only credential was asserted nowhere.
+# ---------------------------------------------------------------------------
+#
+# Both proxy test files drive main() end to end and neither reads a header: the
+# hand-written fake accepts a headers argument and discards it, and every handler
+# here branched on the request body alone. Deleting the two lines that build the
+# Authorization header therefore sent every forwarded message to an authenticated
+# remote uncredentialed -- which comes back 401 and is turned into a per-request
+# error -- with both files green. The session-id threading on the next line was
+# unobserved for the same reason, and it is what makes a stateful remote keep one
+# session across a client's requests instead of opening a new one per message.
+
+
+@pytest.mark.asyncio
+async def test_the_forwarded_request_carries_the_configured_bearer(monkeypatch):
+    seen_headers = []
+
+    async def handler(request):
+        seen_headers.append(dict(request.headers))
+        return httpx.Response(200, json=_result(json.loads(request.content)["id"]))
+
+    monkeypatch.setattr(proxy_stdio, "AUTH_TOKEN", "s3cret-token")
+    monkeypatch.setattr(proxy_stdio, "_write_stdout", lambda _m: None)
+    monkeypatch.setattr(proxy_stdio.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(proxy_stdio.threading, "Thread", _scripted_thread([_request(1)]))
+
+    await asyncio.wait_for(proxy_stdio.main(), timeout=10)
+
+    assert seen_headers, "no request reached the remote"
+    assert seen_headers[0].get("authorization") == "Bearer s3cret-token"
+
+
+@pytest.mark.asyncio
+async def test_no_bearer_is_sent_when_no_token_is_configured(monkeypatch):
+    """The control: an empty token must send no header rather than an empty one.
+
+    ``Bearer `` with nothing after it is a malformed credential, not an absent one.
+    """
+    seen_headers = []
+
+    async def handler(request):
+        seen_headers.append(dict(request.headers))
+        return httpx.Response(200, json=_result(json.loads(request.content)["id"]))
+
+    monkeypatch.setattr(proxy_stdio, "AUTH_TOKEN", "")
+    monkeypatch.setattr(proxy_stdio, "_write_stdout", lambda _m: None)
+    monkeypatch.setattr(proxy_stdio.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(proxy_stdio.threading, "Thread", _scripted_thread([_request(1)]))
+
+    await asyncio.wait_for(proxy_stdio.main(), timeout=10)
+
+    assert seen_headers and "authorization" not in seen_headers[0]
+
+
+@pytest.mark.asyncio
+async def test_a_session_id_from_one_response_rides_on_the_next_request(monkeypatch):
+    """Read at send time, so a session established mid-stream reaches later requests.
+
+    The two requests are forwarded concurrently, so the second is held inside its
+    handler until the first RESPONSE has been processed -- which is where
+    session["id"] is assigned, just before the reply is queued for stdout. Without
+    that gate the second request may be sent first and the test would be asserting
+    the scheduler rather than the threading.
+    """
+    seen_session_ids = {}
+    first_reply_handled = asyncio.Event()
+
+    async def handler(request):
+        req_id = json.loads(request.content)["id"]
+        if req_id == 2:
+            await first_reply_handled.wait()
+        seen_session_ids[req_id] = request.headers.get("mcp-session-id")
+        return httpx.Response(
+            200,
+            json=_result(req_id),
+            headers={"Mcp-Session-Id": "session-abc"},
+        )
+
+    def _stdout(message):
+        if json.loads(message)["id"] == 1:
+            first_reply_handled.set()
+
+    monkeypatch.setattr(proxy_stdio, "AUTH_TOKEN", "")
+    monkeypatch.setattr(proxy_stdio, "_write_stdout", _stdout)
+    monkeypatch.setattr(proxy_stdio.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(
+        proxy_stdio.threading, "Thread", _scripted_thread([_request(1), _request(2)])
+    )
+
+    await asyncio.wait_for(proxy_stdio.main(), timeout=10)
+
+    assert seen_session_ids[1] is None, "a session id was sent before one existed"
+    assert seen_session_ids[2] == "session-abc"
