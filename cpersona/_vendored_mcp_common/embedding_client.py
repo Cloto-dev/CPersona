@@ -391,7 +391,18 @@ class EmbeddingClient:
                 raise EmbeddingResponseError(
                     f"embedding {position}[{index}] is {_describe(value)}, expected a number"
                 )
-            number = float(value)
+            # JSON has no integer ceiling, so a body may carry an int with more
+            # digits than float64 can hold. `float()` answers that with
+            # OverflowError, an ArithmeticError, which is not in the failure
+            # boundary's except tuple and so escaped it — the caller's store path
+            # aborted instead of storing the row without a vector. The verdict is
+            # the same one a non-finite element gets: not a usable number.
+            try:
+                number = float(value)
+            except OverflowError:
+                raise EmbeddingResponseError(
+                    f"embedding {position}[{index}] does not fit in float64"
+                ) from None
             if not math.isfinite(number):
                 raise EmbeddingResponseError(
                     f"embedding {position}[{index}] is not finite"
@@ -473,13 +484,37 @@ class EmbeddingClient:
             raise EmbeddingResponseError(
                 f"embedding response `data` is {_describe(items)}, expected a list"
             )
-        raw = []
+        # Each item carries `index`, documented as its position in the input list;
+        # arrival order is not promised. Appending in arrival order therefore hands
+        # one text another text's vector whenever a backend answers out of order,
+        # and nothing downstream can see it: the count still matches, every vector
+        # is still well-formed, and the wrong vector is stored and searched for that
+        # text with no signal. Place by the index instead, and refuse a response
+        # whose indices are not exactly 0..n-1 — without them the correspondence
+        # cannot be established at all, and guessing it is what caused this.
+        raw: list[object] = [None] * len(items)
+        claimed: set[int] = set()
         for position, item in enumerate(items):
             if not isinstance(item, dict):
                 raise EmbeddingResponseError(
                     f"embedding {position} is {_describe(item)}, expected an object"
                 )
-            raw.append(item["embedding"])
+            slot = item.get("index")
+            # bool is an int subclass, so JSON `true` would otherwise index slot 1.
+            if isinstance(slot, bool) or not isinstance(slot, int):
+                raise EmbeddingResponseError(
+                    f"embedding {position} has index {_describe(slot)}, "
+                    f"expected an integer"
+                )
+            if not 0 <= slot < len(items) or slot in claimed:
+                raise EmbeddingResponseError(
+                    f"embedding indices are not exactly 0..{len(items) - 1}: "
+                    f"item at position {position} carries index {slot}"
+                )
+            claimed.add(slot)
+            raw[slot] = item["embedding"]
+        # Every index is unique and inside the range, and there are as many items as
+        # slots, so no slot is left unfilled and no `None` reaches the validator.
         embeddings = self._validate_batch(raw, len(texts))
 
         # L2-normalize for consistent cosine similarity via dot product. Every

@@ -6222,13 +6222,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/_vendored_mcp_common/embedding_client.py",
-      "pattern": "raw\\.append\\(item\\[\"embedding\"\\]\\)",
+      "pattern": "raw\\[slot\\] = item\\[\"embedding\"\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Read `index` from each item, refuse a response whose indices are not exactly 0..n-1 (missing, duplicated, or out of range), and place each vector by its index rather than its arrival position.",
-      "note": "The copy of this client that ships inside this package has diverged from the shared library it was vendored from; the defect line exists only in this package's copy, so the fix lands here."
+      "note": "The copy of this client that ships inside this package has diverged from the shared library it was vendored from; the defect line exists only in this package's copy, so the fix lands here.",
+      "fix_note": "Each item's index now places its vector, and a response whose indices are not exactly 0..n-1 -- missing, duplicated, out of range, or not an integer -- is refused rather than paired by arrival order. A backend that omits index was previously accepted and silently trusted to answer in order; it is now a reported failure, because the correspondence the pairing depends on cannot be established from such a response. Regression in tests/test_2512b2_handlers.py covers the out-of-order pairing and four refusals with an in-order answer as the control: restoring the whole pre-fix block turns those six red and leaves the control green."
     },
     {
       "id": "bug-424",
@@ -6236,13 +6238,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/_vendored_mcp_common/embedding_client.py",
-      "pattern": "number = float\\(value\\)",
+      "pattern": "does not fit in float64",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Convert inside a try that maps OverflowError to EmbeddingResponseError (the element is not a usable number, which is the same verdict as a non-finite one), or add OverflowError to the boundary's except tuple.",
-      "note": "The copy of this client that ships inside this package has diverged from the shared library it was vendored from; the defect line exists only in this package's copy, so the fix lands here."
+      "note": "The copy of this client that ships inside this package has diverged from the shared library it was vendored from; the defect line exists only in this package's copy, so the fix lands here.",
+      "fix_note": "The conversion runs inside a try that maps OverflowError to EmbeddingResponseError -- the same verdict a non-finite element already gets -- so an integer with more digits than float64 holds reaches the caller as the documented EmbedOutcome(attempted=True, ok=False) instead of escaping the failure boundary and aborting the caller's store path. Regression in tests/test_2512b2_handlers.py sends a 401-digit integer through the real client against a mock transport; restoring the unguarded conversion turns it red while the seven index tests stay green."
     },
     {
       "id": "bug-425",

@@ -3342,3 +3342,143 @@ def test_the_published_cap_is_the_one_the_handler_clamps_by():
     assert "_clamp_limit(limit, LIST_MEMORIES_MAX_ROWS)" in source, source
     source = inspect.getsource(admin_handlers.do_list_episodes)
     assert "_clamp_limit(limit, LIST_EPISODES_MAX_ROWS)" in source, source
+
+
+# ==========================================================================
+# bug-423 / bug-424 — the OpenAI-compatible embedding path.
+#
+# Both live in the vendored copy of the shared client, which has diverged from
+# the library it was vendored from: the defect lines exist only in this copy,
+# so the fix lands here. They are in this module rather than a new one so the
+# suite's module count, and with it the published quality-assurance figures,
+# does not move for a fix pass.
+#
+# bug-423  `data` was walked with enumerate and each `embedding` appended in
+#          arrival order, while the API documents `index` as the position in
+#          the input list and promises nothing about the order items arrive
+#          in. An out-of-order answer therefore stored one text's vector
+#          against a different text with ok=true -- the count matched and
+#          every vector was well-formed, so nothing downstream could see it.
+# bug-424  `float(value)` raises OverflowError for an int too large for
+#          float64, and OverflowError is an ArithmeticError, which is not in
+#          the boundary's except tuple. It escaped `embed_with_outcome`
+#          instead of becoming the documented failed EmbedOutcome, so the
+#          caller's store path aborted rather than storing the row unvectored.
+# ==========================================================================
+
+
+def _api_client(handler):
+    client = EmbeddingClient(
+        mode="api",
+        api_url="https://api.example/v1/embeddings",
+        api_key="k",
+        model="m",
+    )
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return client
+
+
+def _api_answering(items):
+    def handler(request):
+        return httpx.Response(200, json={"data": items})
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_order_api_answer_pairs_each_text_with_its_own_vector():
+    vectors, outcome = await _api_client(
+        _api_answering(
+            [
+                {"index": 1, "embedding": [0.0, 1.0]},
+                {"index": 0, "embedding": [1.0, 0.0]},
+            ]
+        )
+    ).embed_with_outcome(["first", "second"])
+
+    assert outcome.ok, outcome
+    # The api path L2-normalises, so these unit vectors come back unchanged.
+    assert vectors[0] == pytest.approx([1.0, 0.0]), vectors
+    assert vectors[1] == pytest.approx([0.0, 1.0]), vectors
+
+
+@pytest.mark.asyncio
+async def test_an_in_order_api_answer_still_lands_where_it_always_did():
+    """Control: the ordinary case is what the fix must not move."""
+    vectors, outcome = await _api_client(
+        _api_answering(
+            [
+                {"index": 0, "embedding": [1.0, 0.0]},
+                {"index": 1, "embedding": [0.0, 1.0]},
+            ]
+        )
+    ).embed_with_outcome(["first", "second"])
+
+    assert outcome.ok, outcome
+    assert vectors[0] == pytest.approx([1.0, 0.0]), vectors
+    assert vectors[1] == pytest.approx([0.0, 1.0]), vectors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "items,why",
+    [
+        (
+            [{"embedding": [1.0, 0.0]}, {"embedding": [0.0, 1.0]}],
+            "no index at all: the correspondence cannot be established",
+        ),
+        (
+            [
+                {"index": 0, "embedding": [1.0, 0.0]},
+                {"index": 0, "embedding": [0.0, 1.0]},
+            ],
+            "a duplicated index leaves one input unanswered",
+        ),
+        (
+            [
+                {"index": 0, "embedding": [1.0, 0.0]},
+                {"index": 7, "embedding": [0.0, 1.0]},
+            ],
+            "an index outside 0..n-1 names no input",
+        ),
+        (
+            [
+                {"index": "0", "embedding": [1.0, 0.0]},
+                {"index": "1", "embedding": [0.0, 1.0]},
+            ],
+            "a string is not a position",
+        ),
+        (
+            [
+                {"index": False, "embedding": [1.0, 0.0]},
+                {"index": True, "embedding": [0.0, 1.0]},
+            ],
+            "bool is an int subclass and would otherwise index slots 0 and 1",
+        ),
+    ],
+)
+async def test_an_api_answer_whose_indices_are_not_a_permutation_is_refused(items, why):
+    vectors, outcome = await _api_client(_api_answering(items)).embed_with_outcome(
+        ["first", "second"]
+    )
+
+    assert vectors is None, f"{why}: {vectors}"
+    assert outcome.attempted and not outcome.ok, f"{why}: {outcome}"
+    assert "index" in outcome.error, f"{why}: {outcome.error}"
+
+
+@pytest.mark.asyncio
+async def test_an_integer_too_large_for_float64_stays_inside_the_failure_boundary():
+    def handler(request):
+        # Written as bytes because json.dumps of this int is the point: JSON has
+        # no integer ceiling, so a body may carry more digits than float64 holds.
+        return httpx.Response(
+            200,
+            content=b'{"data": [{"index": 0, "embedding": [1' + b"0" * 400 + b', 1.0]}]}',
+        )
+
+    vectors, outcome = await _api_client(handler).embed_with_outcome(["x"])
+
+    assert vectors is None, vectors
+    assert outcome.attempted and not outcome.ok, outcome
+    assert "float64" in outcome.error, outcome.error
