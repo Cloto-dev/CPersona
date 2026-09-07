@@ -606,10 +606,21 @@ FUSED_GATE_CALIBRATION_DRAWS = max(1, _parse_int("CPERSONA_FUSED_GATE_CALIBRATIO
 # beta*specificity): strict=2.0 (fewer contaminants, more misses), balanced=1.0
 # (Youden's J), lenient=0.5 (fewer misses, more contaminants). A raw
 # CPERSONA_FUSED_GATE_BETA overrides the named level.
-RECALL_PRECISION = os.environ.get("CPERSONA_RECALL_PRECISION", "balanced").lower()
 _PRECISION_BETA = {"strict": 2.0, "balanced": 1.0, "lenient": 0.5}
+# bug-321: this was read with no trim and no membership check and then consumed
+# through a dict lookup whose default is the balanced weight, so 'strict ' with a
+# trailing space and an unrecognised 'high' both resolved to balanced with no
+# setting-specific warning -- and the readback handler re-derives the label from
+# the applied weight, so the response could not distinguish an operator who asked
+# for balanced from one whose strict setting was discarded. The same enum is
+# refused loudly at the tool surface, which left the environment as the one door
+# that accepted a bad value. This module already owns a parser for exactly this
+# shape and uses it for the settings just above.
+RECALL_PRECISION = _parse_choice(
+    "CPERSONA_RECALL_PRECISION", "balanced", tuple(_PRECISION_BETA)
+)
 FUSED_GATE_BETA = _parse_float(
-    "CPERSONA_FUSED_GATE_BETA", _PRECISION_BETA.get(RECALL_PRECISION, 1.0)
+    "CPERSONA_FUSED_GATE_BETA", _PRECISION_BETA[RECALL_PRECISION]
 )
 
 # Autocut (v2.4 / v2.4.13: relative gap ratio, enabled by default)

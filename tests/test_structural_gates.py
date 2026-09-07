@@ -2622,3 +2622,82 @@ async def test_store_content_description_matches_what_empty_content_actually_doe
             f"store's content description does not name {token!r}, which is the field a "
             "caller has to branch on to notice the refusal"
         )
+
+
+# ---------------------------------------------------------------------------
+# bug-410 — nothing tied a tool's declared schema to the args it is built from.
+# ---------------------------------------------------------------------------
+#
+# The registry builds a handler's positional arguments from the `params` list
+# alone, while the `schema` beside it is a separate hand-written artifact, so an
+# entry can be dropped from one and stay advertised in the other. Every
+# session_key test calls its handler directly with the keyword and no test
+# dispatches a real tool call carrying the argument, so: delete session_key from
+# store's params and a client that armed a keyed pause keeps sending it, the
+# handler receives the empty default, and the write lands in the shared bucket
+# during a pause that still reports itself as session-scoped -- with the whole
+# suite green.
+#
+# The two lists are read where they are written. The registry keeps the Tool but
+# not the params, so an inspection of the live registry can only see one half;
+# the pairs exist together only at the registration sites in server.py.
+
+
+def _registration_sites():
+    """(tool name, schema property names, params keys) for every registration."""
+    import ast
+
+    tree = ast.parse((PKG / "server.py").read_text(encoding="utf-8"))
+    for call in ast.walk(tree):
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+            continue
+        if call.func.attr not in ("auto_tool", "tool"):
+            continue
+        assert len(call.args) > 4, ast.dump(call)[:200]
+        name = call.args[0].value
+        schema, params = call.args[2], call.args[4]
+        assert isinstance(schema, ast.Dict) and isinstance(params, ast.List), (
+            f"{name}: this gate reads the literals at the registration site; one of "
+            "them is no longer a literal, so the gate has stopped seeing this tool"
+        )
+        properties: list[str] = []
+        for key, value in zip(schema.keys, schema.values):
+            if isinstance(key, ast.Constant) and key.value == "properties":
+                assert isinstance(value, ast.Dict), name
+                properties = [k.value for k in value.keys if isinstance(k, ast.Constant)]
+        keys = [e.elts[0].value for e in params.elts if isinstance(e, ast.Tuple)]
+        assert len(keys) == len(params.elts), f"{name}: a params entry is not a literal tuple"
+        yield name, properties, keys
+
+
+def test_every_declared_property_is_actually_extracted():
+    """A property advertised with no params entry is an argument silently dropped."""
+    for name, properties, keys in _registration_sites():
+        undelivered = sorted(set(properties) - set(keys))
+        assert not undelivered, (
+            f"{name} declares {undelivered} in its schema but does not extract them: a "
+            "client sending one gets the handler's default instead, with no error"
+        )
+
+
+def test_every_extracted_argument_is_actually_declared():
+    """The other direction: an argument no caller can discover from the schema."""
+    for name, properties, keys in _registration_sites():
+        undeclared = sorted(set(keys) - set(properties))
+        assert not undeclared, (
+            f"{name} extracts {undeclared} but declares neither in its schema, so no "
+            "client can learn to send them"
+        )
+
+
+def test_the_gate_sees_every_registered_tool():
+    """Otherwise a tool could pass by being invisible to the reader above."""
+    from cpersona import server
+
+    seen = {name for name, _p, _k in _registration_sites()}
+    registered = {tool.name for tool in server.registry._tools}
+
+    assert seen == registered, (
+        f"registration sites and the live registry disagree: only-in-source="
+        f"{sorted(seen - registered)}, only-in-registry={sorted(registered - seen)}"
+    )

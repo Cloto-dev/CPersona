@@ -49,3 +49,53 @@ def test_oauth_scopes_default_advertises_nothing(monkeypatch):
             assert reloaded.OAUTH_SCOPES == ""
     finally:
         importlib.reload(config)
+
+
+# ---------------------------------------------------------------------------
+# bug-321 — the precision setting was the one door that accepted a bad value.
+# ---------------------------------------------------------------------------
+#
+# It was read with no trim and no membership check and consumed through a dict
+# lookup whose default is the balanced weight, so a trailing space and an
+# unrecognised word both resolved to balanced with no setting-specific warning --
+# and the readback handler re-derives the label from the applied weight, so the
+# response could not distinguish an operator who asked for balanced from one whose
+# strict setting was discarded. The same enum is refused loudly at the tool
+# surface. The module already owned a parser for this shape.
+
+
+def _reloaded_precision(monkeypatch, raw):
+    with monkeypatch.context() as env:
+        env.setenv("CPERSONA_RECALL_PRECISION", raw)
+        reloaded = importlib.reload(config)
+        return reloaded.RECALL_PRECISION, reloaded.FUSED_GATE_BETA
+
+
+def test_a_precision_with_surrounding_space_is_still_that_precision(monkeypatch):
+    try:
+        assert _reloaded_precision(monkeypatch, "strict ") == ("strict", 2.0)
+        assert _reloaded_precision(monkeypatch, " lenient") == ("lenient", 0.5)
+    finally:
+        importlib.reload(config)
+
+
+def test_an_unrecognised_precision_says_so_and_falls_back(monkeypatch, caplog):
+    try:
+        with caplog.at_level("WARNING"):
+            level, beta = _reloaded_precision(monkeypatch, "high")
+        assert (level, beta) == ("balanced", 1.0)
+        assert any("CPERSONA_RECALL_PRECISION" in r.getMessage() for r in caplog.records), (
+            "an unreadable precision fell back silently, which is the defect: the "
+            "readback cannot tell it apart from an operator who asked for balanced"
+        )
+    finally:
+        importlib.reload(config)
+
+
+def test_the_three_legal_precisions_still_map_to_their_weights(monkeypatch):
+    try:
+        assert _reloaded_precision(monkeypatch, "strict") == ("strict", 2.0)
+        assert _reloaded_precision(monkeypatch, "balanced") == ("balanced", 1.0)
+        assert _reloaded_precision(monkeypatch, "lenient") == ("lenient", 0.5)
+    finally:
+        importlib.reload(config)
