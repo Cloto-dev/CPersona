@@ -524,16 +524,30 @@ def check_axis_claims(acceptance: dict[str, list[str]]) -> None:
 def check_calibrate_default(method: str) -> None:
     if not method:
         return  # already reported by the measurement
+    # bug-360: this reported a mismatch only where the pattern matched, and never
+    # asked whether it had matched anything. A rewording of the documented
+    # sentence, or an edit to the expression, turned the check into a silent pass
+    # over the claim it exists to guard. Same doctrine as the benchmark tables
+    # below: a comparison with nothing to compare is a failure, not a skip.
+    seen = 0
     for doc in DOC_FILES:
         text = doc.read_text()
         rel = doc.relative_to(ROOT)
         for m in re.finditer(r"by default \(`(\w+)`\)|既定 \(`(\w+)`\)", text):
+            seen += 1
             claimed = m.group(1) or m.group(2)
             if claimed != method:
                 fail(
                     f"{rel}: claims calibrate_threshold defaults to `{claimed}`, but "
                     f"CPERSONA_CALIBRATE_METHOD defaults to `{method}`"
                 )
+    if not seen:
+        fail(
+            "no document states the calibrate_threshold default any more: the "
+            "pattern this gate reads (\"by default (`method`)\" / \"既定 (`method`)\") "
+            "matched nothing across DOC_FILES. Restore the sentence or update the "
+            "pattern — a gate that cannot find its subject must not pass."
+        )
 
 
 def check_embed_batch(batch: int) -> None:
@@ -772,11 +786,27 @@ BENCH_ROW = re.compile(r"^\|\s*([\w.\-/]+)\s*\|\s*\d+M\s*\|.*$", re.M)
 
 
 def _bench_rows(doc: Path) -> dict[str, str]:
+    """One row per model, and a failure when a model has two.
+
+    bug-412: this was a dict comprehension keyed on the model, so a table
+    carrying two rows for one model -- a stale measurement first, the current one
+    second -- silently kept the last and the two tables then compared equal. The
+    conflicting row stayed in the published document that this gate exists to
+    check, with the gate reporting the tables consistent.
+    """
     text = doc.read_text()
-    return {
-        m.group(1): re.sub(r"\s+", " ", m.group(0)).strip()
-        for m in BENCH_ROW.finditer(text)
-    }
+    rows: dict[str, str] = {}
+    for m in BENCH_ROW.finditer(text):
+        model = m.group(1)
+        row = re.sub(r"\s+", " ", m.group(0)).strip()
+        if model in rows:
+            fail(
+                f"{doc.relative_to(ROOT)}: publishes two benchmark rows for {model!r}. "
+                f"Only the last one is read by anything, so the other is a claim no "
+                f"gate checks:\n      {rows[model]}\n      {row}"
+            )
+        rows[model] = row
+    return rows
 
 
 def check_benchmark_tables_agree() -> None:

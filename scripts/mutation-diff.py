@@ -282,7 +282,18 @@ def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
     survival_rate = (counts["survived"] / valid) if valid else None
     return {
         "counts": counts,
-        "in_scope": valid + counts["incompetent"] + counts["worker_error"],
+        # bug-415: not_executed was counted and then left out of the denominator,
+        # so a work item that produced no result vanished from the generated
+        # count -- the run reported on fewer mutants than it had, and said
+        # nothing about the difference. It belongs in the total precisely
+        # because it is not in survival_rate: the rate is over what was
+        # classified, the total is over what the lane took on.
+        "in_scope": (
+            valid
+            + counts["incompetent"]
+            + counts["worker_error"]
+            + counts["not_executed"]
+        ),
         "survival_rate": survival_rate,
         "survivors": survivors,
     }
@@ -307,7 +318,7 @@ def write_summary(report: dict, path: str | None) -> None:
             "_Not executed. A priced refusal is a measurement; a run killed by the job ceiling is not._",
             "",
         ]
-    if status in ("ok", "capped"):
+    if status in ("ok", "capped", "incomplete"):
         c = report.get("counts", {})
         rate = report.get("survival_rate")
         rate_s = f"{rate:.1%}" if isinstance(rate, float) else "n/a"
@@ -385,6 +396,23 @@ def main(argv: list[str] | None = None) -> int:
     waiver_path = Path(args.waivers)
     if waiver_path.exists():
         registry = mutation_waivers.load_registry(waiver_path)
+        # bug-419: active_waivers indexes each entry by whatever fingerprint it
+        # declares, and the check that a declared fingerprint matches the one the
+        # entry's own file / definition / operator / line produce lives in
+        # verify() -- which this lane never called. An approved, unexpired,
+        # code-present waiver carrying another survivor's fingerprint was
+        # therefore applied to that other survivor, understating
+        # survived_unwaived in the report that is read as the result. The hard
+        # problems are malformed-registry findings that do not heal by waiting,
+        # so they stop the lane; the soft ones (expiry, tool drift) stay
+        # advisory, which is what they were designed to be.
+        problems = mutation_waivers.verify(REPO, registry, date.today())
+        hard = [p for p in problems if p.get("severity") == "hard"]
+        if hard:
+            raise SystemExit(
+                "waiver registry is malformed; refusing to apply it:\n"
+                + "\n".join(f"  {p['id']}: {p['kind']} — {p['detail']}" for p in hard)
+            )
         active = mutation_waivers.active_waivers(REPO, registry, date.today())
     else:
         registry, active = {"waivers": []}, {}
@@ -496,7 +524,18 @@ def main(argv: list[str] | None = None) -> int:
 
     run(["cosmic-ray", "exec", str(config_path), str(session)])
     result = classify(session, REPO, active)
-    emit({**base_report, "status": "ok", **result}, args.json_out, summary_path)
+    # bug-415: "ok" over a run that left work items unexecuted reads as a
+    # complete measurement. The counts table is still worth printing -- what is
+    # wrong is only the word on top of it.
+    unexecuted = result["counts"]["not_executed"]
+    status = {"status": "ok"} if not unexecuted else {
+        "status": "incomplete",
+        "reason": (
+            f"{unexecuted} mutant(s) produced no worker result, so this run measured "
+            "less than it took on; treat the figures below as a lower bound"
+        ),
+    }
+    emit({**base_report, **status, **result}, args.json_out, summary_path)
     return 0
 
 

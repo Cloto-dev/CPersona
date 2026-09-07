@@ -4,6 +4,10 @@ No cosmic-ray dependency: these gate the waiver logic itself — content-based
 fingerprints, the verification rules, and the approval/expiry gating — under the
 ordinary `test` job. The point of a waiver registry is that IT does not silently
 rot; that promise is only real if these invariants are checked.
+
+The lane's own accounting is here too (bug-415, bug-419), for the same reason and
+by the same means: the session is plain SQLite and the classifier is a function,
+so what the report says about a run can be measured without running one.
 """
 
 import sys
@@ -202,3 +206,172 @@ def test_a_stale_waiver_is_not_also_reported_as_a_mismatch(tmp_path):
     kinds = {p["kind"] for p in problems}
     assert "code_changed" in kinds
     assert "fingerprint_mismatch" not in kinds
+
+
+# ---------------------------------------------------------------------------
+# The lane's accounting: what the report says about the run it describes.
+# ---------------------------------------------------------------------------
+
+import importlib.util  # noqa: E402
+import sqlite3  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+def _load_lane():
+    """scripts/ is not a package and the filename is hyphenated."""
+    spec = importlib.util.spec_from_file_location(
+        "mutation_diff", REPO / "scripts" / "mutation-diff.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+lane = _load_lane()
+
+
+def _session(tmp_path, rows):
+    """A cosmic-ray session holding the given (spec, result) pairs.
+
+    Only the two columns the lane reads are populated; a row whose result is None
+    is the work item that produced no worker result.
+    """
+    path = tmp_path / "session"
+    con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE mutation_specs (job_id TEXT, module_path TEXT, "
+        "start_pos_row INTEGER, operator_name TEXT, definition_name TEXT)"
+    )
+    con.execute(
+        "CREATE TABLE work_results (job_id TEXT, worker_outcome TEXT, test_outcome TEXT)"
+    )
+    for i, (worker, test) in enumerate(rows):
+        con.execute(
+            "INSERT INTO mutation_specs VALUES (?,?,?,?,?)",
+            (str(i), "cpersona/isolation.py", 1 + i, "core/ReplaceTrueWithFalse", "foo"),
+        )
+        if worker is not None:
+            con.execute("INSERT INTO work_results VALUES (?,?,?)", (str(i), worker, test))
+    con.commit()
+    con.close()
+    return path
+
+
+# ---------------------------------------------------------------------------
+# bug-415 — an unexecuted work item was counted and then left out of the total.
+# ---------------------------------------------------------------------------
+
+
+def test_an_unexecuted_item_is_inside_the_generated_count(tmp_path):
+    """It was counted in `not_executed` and excluded from `in_scope`, so the
+    report described fewer mutants than the lane took on and said nothing about
+    the difference."""
+    session = _session(tmp_path, [("NORMAL", "KILLED"), (None, None)])
+
+    result = lane.classify(session, REPO, {})
+
+    assert result["counts"]["not_executed"] == 1
+    assert result["in_scope"] == 2, result
+
+
+def test_the_survival_rate_still_excludes_it(tmp_path):
+    """It belongs in the total precisely because it is not in the rate: the rate
+    is over what was classified, the total over what was taken on."""
+    session = _session(tmp_path, [("NORMAL", "KILLED"), ("NORMAL", "SURVIVED"), (None, None)])
+
+    result = lane.classify(session, REPO, {})
+
+    assert result["survival_rate"] == pytest.approx(0.5)
+    assert result["in_scope"] == 3
+
+
+def test_a_fully_executed_run_counts_the_same_as_before(tmp_path):
+    """The control: nothing moved for the runs that had no unexecuted items."""
+    session = _session(
+        tmp_path,
+        [("NORMAL", "KILLED"), ("NORMAL", "SURVIVED"), ("NORMAL", "INCOMPETENT"),
+         ("SKIPPED", None)],
+    )
+
+    result = lane.classify(session, REPO, {})
+
+    assert result["counts"]["skipped_by_filter"] == 1
+    assert result["in_scope"] == 3  # filter-skipped mutants were never in scope
+
+
+# ---------------------------------------------------------------------------
+# bug-419 — the lane used the waiver registry without verifying it.
+# ---------------------------------------------------------------------------
+#
+# active_waivers indexes each entry by whatever fingerprint it declares. The check
+# that a declared fingerprint matches the one the entry's own file, definition,
+# operator and line produce lives in verify() and was never called from the lane,
+# so an approved, unexpired, code-present waiver carrying another survivor's
+# fingerprint was applied to that other survivor -- understating
+# survived_unwaived in the report that is read as the result.
+
+
+def test_the_lane_verifies_the_registry_before_applying_it():
+    """The wiring, asserted where it is: verify() must run before active_waivers()."""
+    import inspect
+
+    source = inspect.getsource(lane.main)
+    verify_at = source.find("mutation_waivers.verify(")
+    active_at = source.find("mutation_waivers.active_waivers(")
+
+    assert verify_at != -1, "the lane applies the registry without verifying it"
+    assert verify_at < active_at, "the registry is applied before it is verified"
+
+
+def test_a_hard_registry_problem_stops_the_lane(tmp_path, monkeypatch):
+    """A malformed registry does not heal by waiting, so it is not advisory."""
+    registry = tmp_path / "waivers.json"
+    registry.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(lane.mutation_waivers, "load_registry", lambda _p: {"waivers": []})
+    monkeypatch.setattr(
+        lane.mutation_waivers,
+        "verify",
+        lambda *a, **k: [
+            {"id": "waiver-x", "severity": "hard", "kind": "fingerprint_mismatch",
+             "detail": "declared fingerprint belongs to another survivor"}
+        ],
+    )
+    called = []
+    monkeypatch.setattr(
+        lane.mutation_waivers, "active_waivers", lambda *a, **k: called.append(1) or {}
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        lane.main(["--waivers", str(registry)])
+
+    assert "fingerprint_mismatch" in str(excinfo.value)
+    assert called == [], "the malformed registry was applied anyway"
+
+
+def test_a_soft_registry_problem_stays_advisory(tmp_path, monkeypatch):
+    """Expiry and tool drift were designed to be advisory; they stay that way."""
+    registry = tmp_path / "waivers.json"
+    registry.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(lane.mutation_waivers, "load_registry", lambda _p: {"waivers": []})
+    monkeypatch.setattr(
+        lane.mutation_waivers,
+        "verify",
+        lambda *a, **k: [
+            {"id": "waiver-x", "severity": "soft", "kind": "expired", "detail": "past"}
+        ],
+    )
+    reached = []
+    monkeypatch.setattr(
+        lane.mutation_waivers, "active_waivers", lambda *a, **k: reached.append(1) or {}
+    )
+
+    # The lane goes on to want a git tree and a cosmic-ray config, neither of
+    # which this test provides; what is being asserted is only that it got past
+    # the registry gate, so however it ends afterwards is not the subject.
+    try:
+        lane.main(["--waivers", str(registry)])
+    except BaseException:  # noqa: BLE001 - see above
+        pass
+
+    assert reached == [1], "a soft problem stopped the lane before it applied the registry"

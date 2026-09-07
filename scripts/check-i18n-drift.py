@@ -106,7 +106,12 @@ def main() -> int:
             continue
 
         text = ja.read_text()
-        m = MARKER.search(text)
+        # bug-401: the marker is first-line metadata by this file's own contract,
+        # and this searched the whole document. A page that lost its first line
+        # but quotes the marker later -- in a fenced example, or in copied prose --
+        # had that occurrence's hash validated and was reported current, so a page
+        # this gate exists to prove is stamped passed unstamped.
+        m = MARKER.search(text.split("\n", 1)[0])
         if not m:
             if LEGACY_MARKER.search(text):
                 findings.append(

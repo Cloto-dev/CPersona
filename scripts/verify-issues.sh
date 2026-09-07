@@ -221,6 +221,16 @@ while IFS=$'\x1f' read -r id severity file pattern expected status summary; do
             echo -e "           Pattern still present in $file (${match_count} matches)"
             errors=$((errors + 1))
         fi
+    else
+        # bug-400: an `expected` that is neither present nor absent used to fall
+        # through both branches without a verdict -- the row incremented `total`
+        # and touched none of the four counters, so the entry left the check with
+        # the run green. A gate whose whole purpose is to prove that every entry
+        # still describes the tree cannot have a row class it says nothing about,
+        # and a typo in one field is all it took to reach it.
+        echo -e "  ${RED}[INVALID]${NC} $id ($severity): $summary"
+        echo -e "           expected must be 'present' or 'absent', got '${expected}'"
+        errors=$((errors + 1))
     fi
 
 done <<< "$issues_tsv"

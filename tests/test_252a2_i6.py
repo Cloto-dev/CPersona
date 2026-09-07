@@ -254,3 +254,81 @@ def test_a_filter_matching_nothing_is_still_a_pass(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, _strip_ansi(result.stdout + result.stderr)
     assert "No issues matched" in _strip_ansi(result.stdout)
+
+
+# ---------------------------------------------------------------------------
+# bug-400 — a row with an unrecognised `expected` got no verdict, and passed.
+# ---------------------------------------------------------------------------
+#
+# The verdict block was an `if present` / `elif absent` with no else, so a row
+# spelled any other way incremented `total` and touched none of the four
+# counters. A gate whose whole purpose is to prove that every entry still
+# describes the tree therefore had a row class it said nothing about, and a typo
+# in one field was enough to remove that entry from the check with the run green.
+# The same shape as bug-012: a verdict that evaporates while the gate exits 0.
+
+
+def _row(**over) -> dict:
+    row = {
+        "id": "bug-999",
+        "severity": "LOW",
+        "file": "src/thing.py",
+        "pattern": "needle",
+        "expected": "present",
+        "status": "open",
+        "summary": "a crafted row",
+    }
+    row.update(over)
+    return row
+
+
+def test_an_unrecognised_expected_value_fails_the_gate(tmp_path) -> None:
+    root = _make_root(
+        tmp_path, [_row(expected="bogus")], {"src/thing.py": "needle\n"}
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+
+    assert result.returncode != 0, (
+        "a row the gate cannot classify exited 0:\n" + _strip_ansi(result.stdout)
+    )
+    assert "bug-999" in _strip_ansi(result.stdout), (
+        "the unclassifiable row left no trace in the output"
+    )
+
+
+def test_every_row_reaches_one_of_the_four_counters(tmp_path) -> None:
+    """Total must equal the counters, whatever the rows say -- the bug-012 property."""
+    root = _make_root(
+        tmp_path,
+        [
+            _row(id="bug-901", expected="present"),
+            _row(id="bug-902", expected="absent", pattern="nowhere"),
+            _row(id="bug-903", expected="bogus"),
+        ],
+        {"src/thing.py": "needle\n"},
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    counts = _parse_summary(result.stdout)
+
+    assert counts["total"] == 3
+    assert counts["verified"] + counts["stale"] + counts["fixed"] + counts["errors"] == 3
+
+
+def test_the_two_recognised_values_still_classify(tmp_path) -> None:
+    """The control: the else branch must not have eaten the branches beside it."""
+    root = _make_root(
+        tmp_path,
+        [
+            _row(id="bug-901", expected="present"),
+            _row(id="bug-902", expected="absent", pattern="nowhere"),
+        ],
+        {"src/thing.py": "needle\n"},
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    counts = _parse_summary(result.stdout)
+
+    assert result.returncode == 0, _strip_ansi(result.stdout)
+    assert counts["verified"] == 1 and counts["fixed"] == 1 and counts["errors"] == 0

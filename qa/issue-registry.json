@@ -5274,12 +5274,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "scripts/check-docs-facts.py",
-      "pattern": "for m in re\\.finditer\\(r\"by default \\\\\\(`\\(\\\\w\\+\\)`\\\\\\)",
+      "pattern": "if not seen:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-integrity",
-      "fix_sketch": "Count the matches and fail when a document that is supposed to carry the claim yields none, so a pattern that stops finding its subject reports itself instead of passing."
+      "fix_sketch": "Count the matches and fail when a document that is supposed to carry the claim yields none, so a pattern that stops finding its subject reports itself instead of passing.",
+      "fix_note": "The check now counts its matches across DOC_FILES and fails when the pattern found nothing, so a reworded sentence or an edited expression reports itself instead of turning the gate into a silent pass. Same doctrine the benchmark-table gate in this file already states: a comparison with nothing to compare is a failure, not a skip. Both spellings (English and Japanese) count toward the same subject, and only one page need carry it."
     },
     {
       "id": "bug-361",
@@ -5861,12 +5863,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "scripts/verify-issues.sh",
-      "pattern": "elif \\[\\[ \"\\$expected\" == \"absent\" \\]\\]; then",
+      "pattern": "INVALID",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "Reject an unrecognised `expected` value where the row is parsed, counting it as an error rather than falling through, and add a case feeding the verifier a row with an invalid `expected` and asserting a non-zero exit."
+      "fix_sketch": "Reject an unrecognised `expected` value where the row is parsed, counting it as an error rather than falling through, and add a case feeding the verifier a row with an invalid `expected` and asserting a non-zero exit.",
+      "fix_note": "The verdict block has an else branch: a row whose expected is neither present nor absent is reported and counted as an error rather than leaving the check with no verdict and the run green. Pinned with the same property bug-012 established -- Total equals the sum of the four counters, whatever the rows say -- so a row class the gate says nothing about fails the reconciliation too."
     },
     {
       "id": "bug-401",
@@ -5874,12 +5878,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "scripts/check-i18n-drift.py",
-      "pattern": "m = MARKER\\.search\\(text\\)",
+      "pattern": "MARKER\\.search\\(text\\.split",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "Match the marker against the first line only (or assert the match offset is inside it), and add a case whose translation carries the marker in a fenced block and no first-line marker, asserting the checker reports it."
+      "fix_sketch": "Match the marker against the first line only (or assert the match offset is inside it), and add a case whose translation carries the marker in a fenced block and no first-line marker, asserting the checker reports it.",
+      "fix_note": "The marker is matched against the first line only, which is what this file documents it to be. A page carrying the marker text later -- in a fenced example, or in copied prose -- and nothing on its first line is now reported as missing its marker rather than validated against that later occurrence. Measured against all 25 translated pages first: every one already carries the marker on line 1, so the gate did not become stricter than the tree."
     },
     {
       "id": "bug-402",
@@ -6032,12 +6038,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "scripts/check-docs-facts.py",
-      "pattern": "def _bench_rows\\(doc: Path\\) -> dict\\[str, str\\]:",
+      "pattern": "if model in rows:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "Collect rows as a list per model and fail when a model appears more than once in one table, before comparing the two tables."
+      "fix_sketch": "Collect rows as a list per model and fail when a model appears more than once in one table, before comparing the two tables.",
+      "fix_note": "Rows are collected one at a time and a second row for the same model fails the gate before the two tables are compared, so a table publishing a stale measurement above the current one can no longer pass as agreement. Measured both shapes: the duplicate on one side, and the duplicate on both sides, which is the one a key-by-key compare cannot see at all."
     },
     {
       "id": "bug-413",
@@ -6075,12 +6083,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "scripts/mutation-diff.py",
-      "pattern": "\"in_scope\": valid \\+ counts\\[\"incompetent\"\\] \\+ counts\\[\"worker_error\"\\],",
+      "pattern": "\\+ counts\\[\"not_executed\"\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "mutation-result-accounting",
-      "fix_sketch": "Include `not_executed` in `in_scope` (or refuse to emit `status: ok` while it is non-zero), and add a case over a seeded session with one resultless work item asserting the report is not reported healthy."
+      "fix_sketch": "Include `not_executed` in `in_scope` (or refuse to emit `status: ok` while it is non-zero), and add a case over a seeded session with one resultless work item asserting the report is not reported healthy.",
+      "fix_note": "not_executed is inside the generated count now, and a run holding one no longer reports status ok: it reports incomplete with a reason saying the figures are a lower bound. The counts table is still rendered, because what was wrong is only the word on top of it. It stays out of survival_rate by design -- the rate is over what was classified, the total over what the lane took on. The CI step only echoes the status, so nothing gates differently."
     },
     {
       "id": "bug-416",
@@ -6131,12 +6141,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "scripts/mutation-diff.py",
-      "pattern": "active = mutation_waivers\\.active_waivers\\(REPO, registry, date\\.today\\(\\)\\)",
+      "pattern": "problems = mutation_waivers\\.verify",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "mutation-result-accounting",
-      "fix_sketch": "Run the registry verifier before computing active waivers and fail the report on a fingerprint mismatch, with a case seeding an approved waiver whose declared fingerprint belongs to another survivor."
+      "fix_sketch": "Run the registry verifier before computing active waivers and fail the report on a fingerprint mismatch, with a case seeding an approved waiver whose declared fingerprint belongs to another survivor.",
+      "fix_note": "The lane runs the registry verifier before computing active waivers and refuses to apply a registry with hard problems, of which a declared fingerprint that does not match the entry own file, definition, operator and line is one. Soft problems (expiry, tool-version drift) stay advisory, which is what they were designed to be. Pinned two ways: the ordering is asserted in the lane source, and a hard problem is measured to stop it before active_waivers is reached."
     },
     {
       "id": "bug-420",
