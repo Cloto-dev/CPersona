@@ -72,6 +72,12 @@ _AXIS_FIELDS = ("agent_code", "project_code", "channel_code", "source_code")
 NULL_CODE = -1  # a source id that is SQL NULL: LIKE never matches it
 
 
+#: The tables an index can be built for. One list, because anything that has to
+#: walk every index file (the purge in ``admin_handlers``) and anything that has
+#: to offer them (the CLI) would otherwise each carry their own copy and drift.
+INDEXED_TABLES = ("memories", "episodes")
+
+
 def index_path(table: str = "memories") -> str:
     """Where the index for `table` lives — beside the database, like the calibration sidecar."""
     return f"{config.DB_PATH}.{table}.vecindex"
@@ -466,7 +472,7 @@ def _build_parser():
             "current working directory. The index is written beside it."
         ),
     )
-    ap.add_argument("--table", default="memories", choices=("memories", "episodes"))
+    ap.add_argument("--table", default=INDEXED_TABLES[0], choices=INDEXED_TABLES)
     ap.add_argument("--json", action="store_true", help="Emit the result as JSON")
     sub = ap.add_subparsers(dest="command", required=True)
     sub.add_parser(

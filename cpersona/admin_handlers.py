@@ -27,6 +27,7 @@ from cpersona import fileperms
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
+from cpersona import vector_index
 from cpersona.session import resolve_session_key
 from cpersona.config import (
     CALIBRATE_FLOOR,
@@ -683,6 +684,47 @@ async def _remove_moved_source_vectors(source_agent_id: str, tally: "_MergeTally
         )
 
 
+def _purge_local_vector_index(counts: dict) -> list:
+    """Drop the contiguous index files a purge just made stale (bug-337).
+
+    The index is a derived copy of the rows: it carries their embeddings and
+    their agent / project / channel / source identifiers, so a purge that left
+    it in place would keep the deleted agent's data on disk under a tool whose
+    contract is that all of it is gone. Nothing in the running server rebuilds
+    or invalidates the file — building it is an operator action — so the residue
+    would otherwise survive until someone next ran that command.
+
+    Removal rather than a rebuild without the agent: the module states the file
+    is derived, never repaired and safe to delete, and rebuilding it here would
+    move an operator-paced cost onto a delete. Queries fall back to the live
+    scan, which is the behaviour before any index was built.
+
+    Only the tables that actually lost rows, so a delete that matched nothing
+    does not cost an operator their index. The lookup defaults to "it changed"
+    on a key this function does not recognise: the failure worth avoiding here
+    is leaving residue behind, not dropping a file that is safe to drop.
+
+    Non-DB side effect — call AFTER the delete transaction commits, like the
+    calibration and remote-namespace purges beside it.
+    """
+    removed = []
+    for table in vector_index.INDEXED_TABLES:
+        if not counts.get(f"deleted_{table}", 1):
+            continue
+        path = vector_index.index_path(table)
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            # A file we cannot remove is residue we cannot claim to have removed,
+            # and the rows are already gone — say so rather than fail the delete.
+            logger.warning("Could not remove the stale vector index %s: %s", path, exc)
+            continue
+        removed.append(path)
+    return removed
+
+
 async def _purge_agent_remote_namespace(agent_id: str) -> None:
     """Purge the agent's remote vector namespace (network I/O — post-commit only)."""
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
@@ -722,9 +764,19 @@ async def do_delete_agent_data(agent_id: str, session_key: str = "") -> dict:
         counts = await _delete_agent_rows(db, agent_id)
 
     _purge_agent_calibration(agent_id)
+    dropped_indexes = _purge_local_vector_index(counts)
     await _purge_agent_remote_namespace(agent_id)
 
     result = {"ok": True, "agent_id": agent_id, **counts}
+    if dropped_indexes:
+        # Not in the response: the shape of this result is the tool's contract.
+        # An operator whose next query runs the live scan should still find the
+        # reason in the log beside the delete that caused it.
+        logger.info(
+            "Dropped the stale contiguous index after purging %s: %s",
+            agent_id,
+            ", ".join(dropped_indexes),
+        )
     logger.info(
         "Deleted agent data for %s: %d memories, %d profiles, %d episodes, %d pending tasks",
         agent_id,

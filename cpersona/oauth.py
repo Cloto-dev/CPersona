@@ -356,6 +356,21 @@ class IdpTokenVerifier:
             if (now - entry.last_attempt) >= JWKS_MIN_REFETCH_SECONDS:
                 entry.last_attempt = now
                 await self._refresh(issuer, entry)
+            # A successful refresh is the only thing that moves ``fetched_at``,
+            # so reading it again *after* the attempt is what separates a key
+            # set that was revalidated from one we merely still hold. The bound
+            # belongs on the answer and not only on the fetch: ``JWKS_TTL_SECONDS``
+            # is how long a fetched set is *reused*, and ``_refresh`` owes that
+            # the keys already held keep working "until they age out" — this is
+            # where they age out. Serving them past it would mean a key the
+            # issuer revoked keeps verifying tokens for as long as the provider
+            # is unreachable, which inverts the cost route (b) was chosen with
+            # (docs/OAUTH_DESIGN.md §11): an outage there authenticates nobody.
+            # The refusal is not logged here: every failed refresh already
+            # reports the cause through the same once-per-cooldown warning, so a
+            # second line would be suppressed by it in the very case it is for.
+            if entry.keys and (self._now() - entry.fetched_at) >= JWKS_TTL_SECONDS:
+                return None
             if kid:
                 return entry.keys.get(kid)
             # A token with no ``kid`` is unambiguous only when the issuer

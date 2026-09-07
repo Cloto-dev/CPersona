@@ -62,6 +62,7 @@ from cpersona import (  # noqa: E402
     session,
     utils,
     vector,
+    vector_index,
 )
 from cpersona import admin_handlers as admin  # noqa: E402
 from cpersona import findings as findings_module  # noqa: E402
@@ -3061,3 +3062,110 @@ async def test_a_failed_embed_keeps_endpoint_credentials_out_of_the_log(caplog):
     assert "POST" in outcome.error and "api.example" in outcome.error, outcome.error
     assert "s3cretpw" not in caplog.text and "qsecret" not in caplog.text, caplog.text
     assert "Embedding request failed" in caplog.text, "the failure stopped being reported at all"
+
+
+# ==========================================================================
+# bug-337 — the purge walked the database, the calibration sidecar and the
+# remote namespace, but not the contiguous index, so the embeddings and the
+# agent / source identifiers of everything it deleted stayed on disk under a
+# tool whose contract is that all of the agent's data is gone. Nothing in the
+# running server rebuilds that file, so the residue outlived the delete.
+# ==========================================================================
+AGENT_337 = "probe-c49-tenant"
+OTHER_337 = "probe-c49-keeper"
+
+
+def _vec_337(seed: int, dim: int = 8) -> bytes:
+    return np.random.default_rng(seed).standard_normal(dim).astype(np.float32).tobytes()
+
+
+@pytest_asyncio.fixture
+async def clean_337():
+    conn = await get_db()
+
+    async def _wipe():
+        await conn.execute("DELETE FROM memories WHERE agent_id IN (?, ?)", (AGENT_337, OTHER_337))
+        await conn.commit()
+        for table in vector_index.INDEXED_TABLES:
+            path = vector_index.index_path(table)
+            if os.path.exists(path):
+                os.unlink(path)
+
+    await _wipe()
+    yield conn
+    await _wipe()
+
+
+async def _insert_337(db, agent, seed, source_id):
+    await db.execute(
+        "INSERT INTO memories (agent_id, project_id, channel, content, source, timestamp,"
+        " created_at, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            agent,
+            "probe-c49-project",
+            "probe-c49-channel",
+            f"secret content {seed}",
+            json.dumps({"type": "User", "id": source_id}),
+            "2026-03-01T00:00:00+00:00",
+            "2026-03-01 00:00:0%d" % seed,
+            _vec_337(seed),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_data_leaves_no_identifiers_in_the_local_index(clean_337):
+    for seed, src in ((1, "discord:Alice"), (2, "discord:Bob")):
+        await _insert_337(clean_337, AGENT_337, seed, src)
+    await _insert_337(clean_337, OTHER_337, 3, "discord:Carol")
+    await clean_337.commit()
+
+    built = await vector_index.build_index(clean_337, "memories")
+    assert built.get("built"), built
+    path = vector_index.index_path("memories")
+    before = open(path, "rb").read()
+    # The control: without this the assertion below could pass on an index that
+    # never held the agent in the first place.
+    assert AGENT_337.encode() in before and b"discord:Alice" in before
+
+    result = await admin.do_delete_agent_data(agent_id=AGENT_337)
+    assert result["ok"] and result["deleted_memories"] == 2, result
+
+    residue = open(path, "rb").read() if os.path.exists(path) else b""
+    leaked = [t for t in (AGENT_337.encode(), b"discord:Alice", b"discord:Bob") if t in residue]
+    assert not leaked, f"{path} still names {leaked} after a purge that reported ok ({len(residue)} bytes)"
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_data_leaves_no_embedding_bytes_in_the_local_index(clean_337):
+    await _insert_337(clean_337, AGENT_337, 7, "discord:Alice")
+    await clean_337.commit()
+    await vector_index.build_index(clean_337, "memories")
+    path = vector_index.index_path("memories")
+    assert _vec_337(7) in open(path, "rb").read(), "the index did not capture the embedding"
+
+    await admin.do_delete_agent_data(agent_id=AGENT_337)
+
+    residue = open(path, "rb").read() if os.path.exists(path) else b""
+    assert _vec_337(7) not in residue, f"the deleted row's float32 embedding is still in {path}"
+
+
+@pytest.mark.asyncio
+async def test_a_delete_that_matched_nothing_keeps_the_operators_index(clean_337):
+    """The other side of the fix: the index is dropped by a purge, not by a call.
+
+    Rebuilding is an operator action, so a delete naming an agent with no rows
+    must not cost them the file — otherwise anyone able to call the tool could
+    keep the server on the live scan indefinitely.
+    """
+    await _insert_337(clean_337, OTHER_337, 4, "discord:Carol")
+    await clean_337.commit()
+    await vector_index.build_index(clean_337, "memories")
+    path = vector_index.index_path("memories")
+    before = open(path, "rb").read()
+
+    result = await admin.do_delete_agent_data(agent_id=AGENT_337)
+    assert result["ok"] and result["deleted_memories"] == 0, result
+
+    assert os.path.exists(path), "a delete that removed no rows dropped the index anyway"
+    assert open(path, "rb").read() == before
