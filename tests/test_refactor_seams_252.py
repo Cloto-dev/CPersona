@@ -15,6 +15,7 @@ So these tests read the DB back.
 
 import json
 
+import aiosqlite
 import pytest
 import pytest_asyncio
 
@@ -215,3 +216,84 @@ async def test_remote_by_id_fetch_refuses_rows_outside_the_isolation_axes(clean_
     # blocking everything and the assertion above would be vacuous.
     found = await vector._search_vector(db, "agent-r", "q", 10, project_id="proj-a")
     assert any(r.get("id") == mem_id for r in found), "the fetch predicate blocks legitimate rows too"
+
+
+# ---------------------------------------------------------------------------
+# M11 — bug-349 moved the content probe onto both arms, so on a real run it now
+# intercepts a collision before the INSERT ever sees one. That made the
+# `INSERT OR IGNORE` unobservable to the suite: flipping it to OR REPLACE
+# changed nothing any test read, and the mutation survived. The clause did not
+# stop mattering — it stopped being the FIRST line. It is the second one, and it
+# covers the window the probe cannot: a row committed between the SELECT and the
+# write. So the pin moves with it. Blind the probe, and assert the write itself
+# still refuses.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_write_refuses_a_collision_the_probe_did_not_see(clean_db, tmp_path, monkeypatch):
+    db = clean_db
+    await db.execute(
+        "INSERT INTO memories"
+        " (agent_id, project_id, channel, content, source, timestamp, locked, recall_count)"
+        " VALUES ('a-race', '', '', 'contended text', '{}', '2026-01-01T00:00:00Z', 1, 7)"
+    )
+    await db.commit()
+    kept = (
+        await db.execute_fetchall("SELECT id, locked, recall_count FROM memories WHERE agent_id = 'a-race'")
+    )[0]
+
+    # The race window, made deterministic. The content probe answers "no such
+    # row" while the row is in fact there — which is exactly what a concurrent
+    # importer committing between the SELECT and the INSERT looks like from
+    # inside this handler. Only that one statement is blinded: the msg_id probe
+    # (SELECT id ...) and every other read the handler makes stay honest, so a
+    # skip here can only have come from the write.
+    #
+    # Patched on the class, for the reason `sql_spy` in test_scope_stats_cache
+    # gives: patching one connection object leaves an instance attribute behind
+    # once the undo runs, and that attribute shadows the class for the rest of
+    # the session — a spy installed on the class by a later test then sees
+    # nothing on this connection.
+    real_fetchall = aiosqlite.Connection.execute_fetchall
+
+    async def blind_content_probe(self, sql, parameters=None):
+        text = " ".join(str(sql).split())
+        if text.startswith("SELECT 1 FROM memories") and "AND content = ?" in text:
+            return []
+        return await real_fetchall(self, sql, parameters)
+
+    monkeypatch.setattr(aiosqlite.Connection, "execute_fetchall", blind_content_probe)
+
+    path = str(tmp_path / "race.jsonl")
+    with open(path, "w", encoding="utf-8") as f:
+        # Same agent/project/channel/content as the stored row, but carrying the
+        # values a replace would overwrite it with.
+        f.write(
+            json.dumps(
+                {
+                    "_type": "memory",
+                    "agent_id": "a-race",
+                    "content": "contended text",
+                    "source": {},
+                    "timestamp": "2026-02-02T00:00:00Z",
+                    "locked": False,
+                    "recall_count": 0,
+                }
+            )
+            + "\n"
+        )
+
+    result = await admin_handlers.do_import_memories(path, target_agent_id="a-race")
+
+    assert result["imported_memories"] == 0
+    assert result["skipped_memories"] == 1, "the write must refuse a collision the probe let through"
+
+    rows = await db.execute_fetchall(
+        "SELECT id, locked, recall_count FROM memories WHERE agent_id = 'a-race'"
+    )
+    assert len(rows) == 1, "the refused row was written anyway"
+    assert tuple(rows[0]) == tuple(kept), (
+        "the stored row was replaced — OR REPLACE deletes the original and takes its id, "
+        "its lock and its recall count with it"
+    )
