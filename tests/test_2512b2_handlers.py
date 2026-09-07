@@ -64,7 +64,8 @@ from cpersona import (  # noqa: E402
 from cpersona import admin_handlers as admin  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: E402
 from cpersona.database import connection, get_db, transaction  # noqa: E402
-from cpersona.isolation import isolation_where  # noqa: E402
+from cpersona.utils import _parse_timestamp_utc as _parse_ts  # noqa: E402
+from cpersona.isolation import isolation_where, source_id_where  # noqa: E402
 
 # ==========================================================================
 # bug-323 — four remote side-effect posts never read their response.
@@ -1652,10 +1653,17 @@ class _RecordingExecute:
     def __init__(self, real):
         self._real = real
         self.binds: list[tuple[str, int]] = []
+        self.statements: list[tuple[str, int]] = []  # (sql, host-parameter count)
 
     async def execute(self, sql, params=()):
         self.binds.append((sql.split()[0].upper(), len(params)))
+        self.statements.append((sql, len(params)))
         return await self._real.execute(sql, params)
+
+    async def execute_fetchall(self, sql, params=()):
+        self.binds.append((sql.split()[0].upper(), len(params)))
+        self.statements.append((sql, len(params)))
+        return await self._real.execute_fetchall(sql, params)
 
     def __getattr__(self, name):
         return getattr(self._real, name)
@@ -2173,4 +2181,518 @@ async def test_a_finite_corpus_still_reports_its_pair_and_says_nothing_extra(cle
         assert "skipped" not in result, result
     finally:
         await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# ==========================================================================
+# The memory_handlers findings.
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# bug-403 — `deep` halving the calibrated fused gate was never executed.
+#
+# The one test that pinned the published claim ran with no global gate and an
+# empty per-agent table, so `gate is None` and only the `min_score * 0.5` half
+# was exercised. Deleting the line left every calibrated deployment answering
+# `deep=true` exactly as it answers a normal recall, with the suite green.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_deep_halves_the_calibrated_fused_gate(monkeypatch, clean_checks_db, fake_embedding_client):
+    agent = "b403.agent"
+    db = clean_checks_db
+    for index in range(40):
+        await memory_handlers.do_store(agent, {"content": f"filler row {index} gardening soil"})
+    await memory_handlers.do_store(agent, {"content": "quantum tunnelling diodes"})
+    try:
+        # Read the row's own gate score first, so the gate is placed against a
+        # measured value rather than a guessed one.
+        baseline = await memory_handlers.do_recall(agent, "quantum diodes tunnelling", limit=10)
+        scored = [m for m in baseline["messages"] if m.get("match_reason")]
+        assert scored, f"nothing came back scored, so there is no gate score to sit above: {baseline}"
+        target = scored[0]
+        signal = target["match_reason"]["signal"]
+        score = target["match_reason"]["score"]
+
+        # A gate just above the row: refused at deep=false, admitted at deep=true,
+        # where the same gate is halved.
+        monkeypatch.setattr(config, "FUSED_GATE_ENABLED", True)
+        monkeypatch.setattr(memory_handlers.config, "FUSED_GATE_ENABLED", True)
+        monkeypatch.setitem(vector._agent_fused_gates, agent, score * 1.2)
+        monkeypatch.setattr(vector, "_fused_gate_signal", signal)
+
+        shallow = await memory_handlers.do_recall(agent, "quantum diodes tunnelling", limit=10)
+        deep = await memory_handlers.do_recall(agent, "quantum diodes tunnelling", limit=10, deep=True)
+
+        shallow_contents = {m["content"] for m in shallow["messages"]}
+        deep_contents = {m["content"] for m in deep["messages"]}
+        assert target["content"] not in shallow_contents, (
+            f"a gate at {score * 1.2} did not refuse a row scoring {score}: {shallow}"
+        )
+        assert target["content"] in deep_contents, (
+            f"deep=true did not halve the calibrated gate ({score * 1.2} -> {score * 0.6}) for a "
+            f"row scoring {score}, so the halving is unobserved on any calibrated install: {deep}"
+        )
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-405 — under rank-sum fusion the episode keyword channel never returned a
+# row, so the sign it applies to bm25 was unverified. Drop the minus and the
+# normaliser scores the worst-matching episode 1.0 and the best 0.0.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_rsf_episode_channel_ranks_the_stronger_bm25_higher(
+    monkeypatch, clean_checks_db, fake_embedding_client,
+):
+    agent = "b405.agent"
+    db = clean_checks_db
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rsf")
+    # The vector channel is switched off for this one, and that is the point: with
+    # it on, cosine separates these two episodes by itself (0.79 against 0.29) and
+    # the fused order is the same whichever sign the keyword channel applies -- the
+    # measurement would pass on the mutant. Verified by mutation both ways.
+    monkeypatch.setattr(vector, "_embedding_client", None)
+    strong = "photosynthesis photosynthesis photosynthesis in chloroplast membranes"
+    weak = "a note that mentions photosynthesis once, mostly about unrelated tooling"
+    await memory_handlers.do_archive_episode(agent, [], summary=strong, keywords="photosynthesis")
+    await memory_handlers.do_archive_episode(agent, [], summary=weak, keywords="tooling")
+    try:
+        # Read the fused list before the quality gate: the claim is about the order
+        # the channel produces, and gating one of the two rows out would make the
+        # comparison unavailable rather than false.
+        fused = await memory_handlers._recall_rsf(
+            db, agent, "photosynthesis", 10, False, "", set(),
+        )
+        episodes = [r for r in fused if str(r.get("content", "")).startswith("[Episode]")]
+        assert len(episodes) == 2, (
+            "the rank-sum episode keyword channel returned fewer than both episodes, so "
+            f"the sign it applies to bm25 is still unobserved: {[r.get('content') for r in fused]}"
+        )
+        assert episodes[0]["content"] == f"[Episode] {strong}", (
+            "the weaker lexical match outranked the stronger one, which is what dropping "
+            "the negation on bm25 does -- bm25 is better when more negative, so an "
+            f"un-negated channel normalises the worst match to 1.0: {[r['content'] for r in episodes]}"
+        )
+    finally:
+        await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-416 — `_minmax_norm`'s all-None branch, the one the LIKE fallback lands
+# on, never executed. It is a crash guard and a scoring decision at once:
+# delete it and recall raises out of min(); return 0.0 and every exact
+# substring match casts a zero keyword vote and is pushed under the gate.
+# --------------------------------------------------------------------------
+def test_minmax_norm_gives_an_all_none_channel_a_full_vote():
+    assert memory_handlers._minmax_norm({("mem", 1): None, ("mem", 2): None}) == {
+        ("mem", 1): 1.0,
+        ("mem", 2): 1.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_rsf_like_fallback_still_casts_a_full_keyword_vote(
+    monkeypatch, clean_checks_db, fake_embedding_client,
+):
+    """A two-character term can never match a trigram index, so the FTS query is
+    empty and the keyword channel comes back from the LIKE fallback with every
+    bm25 None -- the all-None branch, which no test reached at all.
+
+    What this pins is that the branch is reached and the row survives end to end.
+    It does NOT pin the 1.0-against-0.0 decision: measured by mutation, a 0.0 vote
+    still leaves this row above the adaptive gate on a corpus this small, and a
+    corpus tuned until it did not would be pinning the gate's arithmetic rather
+    than the normaliser. The scoring half is pinned directly, one test above.
+    """
+    agent = "b416.agent"
+    db = clean_checks_db
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rsf")
+    await memory_handlers.do_store(agent, {"content": "the release is tagged v9 for the rollout"})
+    for index in range(10):
+        await memory_handlers.do_store(agent, {"content": f"unrelated filler row {index}"})
+    try:
+        assert memory_handlers._build_fts_query("v9") == "", (
+            "the query no longer forces the LIKE fallback, so this exercises the wrong branch"
+        )
+        out = await memory_handlers.do_recall(agent, "v9", limit=10)
+        contents = [m["content"] for m in out["messages"]]
+        assert "the release is tagged v9 for the rollout" in contents, (
+            "the exact substring match did not survive the quality gate. The all-None "
+            "channel must normalise to a full 1.0 vote, not 0.0, or every LIKE-fallback "
+            f"hit is pushed under the gate: {out}"
+        )
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-318 — the recall-count read bound one parameter per result id.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_the_recall_count_read_is_chunked_like_its_sibling():
+    """Its width came from the fused result list before truncation, not from the
+    caller's limit, while the sibling on the same pass was already chunked."""
+    session.reset_pauses_for_tests()
+    db = await get_db()
+    spy = _RecordingExecute(db)
+    results = [{"id": n, "content": f"row {n}"} for n in range(1, 1002)]
+    # CONFIDENCE_ENABLED is what populates recall_counts, and it ships false, so the
+    # read under test only runs with it on.
+    monkeypatch_confidence = memory_handlers.CONFIDENCE_ENABLED
+    memory_handlers.CONFIDENCE_ENABLED = True
+    try:
+        await memory_handlers._apply_recall_scoring(
+            spy, "b318.agent", results, False, project_id="", channel="", query="a query",
+        )
+    finally:
+        memory_handlers.CONFIDENCE_ENABLED = monkeypatch_confidence
+    widths = [n for sql, n in spy.statements if "recall_count" in sql]
+    assert widths, [sql for sql, _ in spy.statements]
+    assert max(widths) <= vector._ID_FETCH_CHUNK, (
+        f"the recall-count read bound {max(widths)} host parameters for {len(results)} "
+        "results; the bound belongs to the pair of reads on this pass, not to how many "
+        "rows a caller asked for"
+    )
+    assert sum(widths) == len(results), (
+        f"the chunks do not cover every result id: {widths} for {len(results)} results"
+    )
+
+
+# --------------------------------------------------------------------------
+# bug-331 — the get_contents budget counted one field of the item it returns.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_get_contents_budget_counts_the_whole_item(clean_checks_db):
+    db = clean_checks_db
+    agent = "b331.agent"
+    big_source = json.dumps({"type": "User", "id": "u", "name": "n" * 7_800})
+    refs = []
+    for index in range(20):
+        cur = await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) "
+            "VALUES (?, ?, ?, '2026-01-01T00:00:00+00:00')",
+            (agent, f"tiny {index}", big_source),
+        )
+        refs.append(f"mem:{cur.lastrowid}")
+    await db.commit()
+    try:
+        out = await memory_handlers.do_get_contents(agent, refs)
+        size = len(json.dumps(out["items"], ensure_ascii=False))
+        assert size <= memory_handlers.GET_CONTENTS_MAX_CHARS * 1.1, (
+            f"the response carried {size} characters against a "
+            f"{memory_handlers.GET_CONTENTS_MAX_CHARS}-character budget, because only "
+            "`content` was charged while `source` rode outside the cap entirely"
+        )
+        assert out.get("deferred"), (
+            f"the budget never fired, so the rest of the batch was served rather than "
+            f"deferred: {out.get('count')} items, deferred={out.get('deferred')}"
+        )
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-332 — a failed remote index push was reported only at debug level.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_store_remote_index_failure_is_visible(monkeypatch, fake_embedding_client, caplog):
+    calls = []
+
+    async def unavailable_index(request):
+        calls.append(str(request.url))
+        return httpx.Response(500, request=request)
+
+    monkeypatch.setattr(memory_handlers, "VECTOR_SEARCH_MODE", "remote")
+    monkeypatch.setattr(memory_handlers, "STORE_BLOB", True)
+    monkeypatch.setattr(fake_embedding_client, "_http_url", "http://b332.invalid/embed")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unavailable_index)) as http:
+        monkeypatch.setattr(fake_embedding_client, "_client", http)
+        with caplog.at_level(logging.DEBUG, logger=memory_handlers.__name__):
+            result = await memory_handlers.do_store(
+                "b332.agent", {"content": "embedded locally, remote index unavailable"}
+            )
+    records = [r for r in caplog.records if r.name == memory_handlers.__name__]
+    warnings = [r.getMessage() for r in records if r.levelno >= logging.WARNING]
+    assert result["ok"] and result["result"] == "stored"
+    assert calls == ["http://b332.invalid/index"]
+    assert warnings, (
+        "the row is in the database and not in the index, and `embedded` is the OR of "
+        "the two surfaces so it says nothing about the shortfall. Non-fatal is not the "
+        f"same as unreported: {[(r.levelname, r.getMessage()) for r in records]}"
+    )
+
+
+# --------------------------------------------------------------------------
+# bug-335 — the injected profile row set the autocut gap it was measured against.
+# --------------------------------------------------------------------------
+def test_autocut_does_not_cut_every_memory_for_the_profile_row():
+    """The profile carries no cosine, so under confidence it takes the strictly
+    higher time-decay-only branch and sorts above every real hit. The step down to
+    the first memory is then the largest gap in the list."""
+    rows = [
+        {"id": -1, "content": "[Profile] the user prefers Japanese", "_confidence_score": 0.8385},
+        {"id": 11, "content": "memory one", "_confidence_score": 0.52},
+        {"id": 12, "content": "memory two", "_confidence_score": 0.48},
+        {"id": 13, "content": "memory three", "_confidence_score": 0.45},
+    ]
+    cut = memory_handlers._autocut(list(rows))
+    assert [r["content"] for r in cut] != ["[Profile] the user prefers Japanese"], (
+        "autocut returned the profile row alone: the gap it measured was between a "
+        "row scored on one branch and rows scored on another"
+    )
+    assert cut == rows, cut
+
+
+def test_autocut_still_cuts_a_real_gap_with_a_profile_row_present():
+    """The other direction: excluding the sentinel from the measurement must not
+    disable the cut for the rows that ARE comparable."""
+    rows = [
+        {"id": -1, "content": "[Profile] the user prefers Japanese", "_confidence_score": 0.83},
+        {"id": 11, "content": "memory one", "_confidence_score": 0.80},
+        {"id": 12, "content": "memory two", "_confidence_score": 0.78},
+        {"id": 13, "content": "memory three", "_confidence_score": 0.10},
+    ]
+    cut = memory_handlers._autocut(list(rows))
+    contents = [r["content"] for r in cut]
+    assert "memory three" not in contents, contents
+    assert "[Profile] the user prefers Japanese" in contents, (
+        "the profile row is not a retrieval result and is not what the cut is about; "
+        f"it must survive wherever the cut lands: {contents}"
+    )
+
+
+# --------------------------------------------------------------------------
+# bug-336 / bug-317 — the source_id filter folded ASCII case, so a recall scoped
+# to one principal returned another's rows; the contiguous index resolved the
+# same axis case-sensitively, so the two arms disagreed and the SQL side was the
+# permissive one.
+# --------------------------------------------------------------------------
+_B336_ALICE = "discord:Alice"
+_B336_BOB = "discord:alice"
+
+
+@pytest_asyncio.fixture
+async def two_principals(clean_checks_db):
+    db = clean_checks_db
+    agent = "b336.agent"
+    for uid, content in ((_B336_ALICE, "alpha secret plan Alice"), (_B336_BOB, "beta secret plan bob")):
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) VALUES (?, ?, ?, ?)",
+            (agent, content, json.dumps({"type": "User", "id": uid}), "2026-01-01T00:00:00+00:00"),
+        )
+    await db.commit()
+    yield db, agent
+    await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["secret", ""])
+async def test_source_id_filter_is_case_sensitive(two_principals, query):
+    """Both arms that carry the clause: the keyword search and the empty-query
+    recency read. `source_id` is published as a per-user restriction, so two
+    principals differing only in ASCII case must not see each other's rows."""
+    db, agent = two_principals
+    rows = await memory_handlers._search_memories_keyword(
+        db, agent, query, 10, source_id=_B336_ALICE
+    )
+    assert [r["content"] for r in rows] == ["alpha secret plan Alice"], (
+        f"the {_B336_ALICE} filter also returned {_B336_BOB}'s row: "
+        f"{[r['content'] for r in rows]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_shared_source_predicate_is_case_sensitive(two_principals):
+    """The predicate itself, through the helper every arm now builds it with."""
+    db, agent = two_principals
+    src = source_id_where(_B336_ALICE)
+    rows = await db.execute_fetchall(
+        f"SELECT content FROM memories WHERE agent_id = ?{src.and_clause} ORDER BY id",
+        (agent, *src.params),
+    )
+    assert [r[0] for r in rows] == ["alpha secret plan Alice"], (
+        f"the shared predicate matched both spellings: {[r[0] for r in rows]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_source_id_with_like_wildcards_is_still_matched_literally(clean_checks_db):
+    """The old predicate escaped `%` and `_`; equality needs no escaping, and the
+    literal match must survive the change of operator."""
+    db = clean_checks_db
+    agent = "b336.wildcards"
+    for uid, content in (("discord:100%_x", "the literal one"), ("discord:100AB", "the wildcard bait")):
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, source, timestamp) VALUES (?, ?, ?, ?)",
+            (agent, content, json.dumps({"type": "User", "id": uid}), "2026-01-01T00:00:00+00:00"),
+        )
+    await db.commit()
+    try:
+        rows = await memory_handlers._search_memories_keyword(
+            db, agent, "", 10, source_id="discord:100%_x"
+        )
+        assert [r["content"] for r in rows] == ["the literal one"], [r["content"] for r in rows]
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-369 — the episode span was the lexical min and max of the raw stamps.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_episode_span_is_chosen_by_instant_not_byte_order(clean_checks_db, fake_embedding_client):
+    db = clean_checks_db
+    agent = "b369.agent"
+    # The first entry is an hour EARLIER, written in a different offset, so its
+    # byte sequence sorts above the later one.
+    history = [
+        {"role": "user", "content": "first", "timestamp": "2026-03-01T10:00:00+09:00"},
+        {"role": "assistant", "content": "second", "timestamp": "2026-03-01T02:00:00+00:00"},
+    ]
+    await memory_handlers.do_archive_episode(agent, history, summary="a session")
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT start_time, end_time FROM episodes WHERE agent_id = ?", (agent,)
+        )
+        start, end = rows[0]
+        assert _parse_ts(start) < _parse_ts(end), (
+            f"the stored span starts after it ends: start={start!r} end={end!r}. Byte "
+            "order equals chronological order only while every stamp carries the same "
+            "offset, and this value is written into the row and never recomputed"
+        )
+        assert start == "2026-03-01T10:00:00+09:00", start  # the ORIGINAL string, not a rewrite
+    finally:
+        await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_same_offset_history_is_the_control(clean_checks_db, fake_embedding_client):
+    db = clean_checks_db
+    agent = "b369.control"
+    history = [
+        {"role": "user", "content": "first", "timestamp": "2026-03-01T01:00:00+00:00"},
+        {"role": "assistant", "content": "second", "timestamp": "2026-03-01T02:00:00+00:00"},
+    ]
+    await memory_handlers.do_archive_episode(agent, history, summary="a session")
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT start_time, end_time FROM episodes WHERE agent_id = ?", (agent,)
+        )
+        assert tuple(rows[0]) == ("2026-03-01T01:00:00+00:00", "2026-03-01T02:00:00+00:00"), rows[0]
+    finally:
+        await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+# --------------------------------------------------------------------------
+# bug-370 — the malformed-entry report said "merged" for entries that were dropped.
+#
+# The probe asserted the other resolution: that such an entry BE merged. That
+# would mean inventing content for an entry that carries none, so what was wrong
+# is the report, and the tests below pin the report against what happened.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "entry, fields",
+    [
+        ({"role": "user", "content": 12345, "name": "alice"}, ["content"]),
+        ("just a string", ["<entry>"]),
+    ],
+)
+async def test_an_entry_with_no_usable_content_is_reported_as_dropped(
+    clean_checks_db, fake_embedding_client, entry, fields,
+):
+    out = await memory_handlers.do_recall_with_context(
+        "b370.agent", "anything", external_context=[entry], limit=5
+    )
+    report = out.get("context_field_issues")
+    assert report is not None, f"warn mode did not report the malformed entry: {out}"
+    assert report["entries"] == [{"index": 0, "fields": fields}], report
+    merged = [m for m in out["messages"] if m.get("context_type") == "conversation"]
+    assert merged == [], merged
+    assert "dropped" in report["note"], (
+        f"the entry reached neither messages nor the exclusion list, and the report "
+        f"still says it was merged: {report}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_entry_with_bad_metadata_is_still_reported_as_merged(
+    clean_checks_db, fake_embedding_client,
+):
+    """Control: the case the original note was true for."""
+    out = await memory_handlers.do_recall_with_context(
+        "b370.agent",
+        "anything",
+        external_context=[{"role": "user", "content": "the deploy is approved", "name": 12345}],
+        limit=5,
+    )
+    report = out["context_field_issues"]
+    assert report["entries"] == [{"index": 0, "fields": ["name"]}], report
+    assert "merged without them" in report["note"], report
+    merged = [m["content"] for m in out["messages"] if m.get("context_type") == "conversation"]
+    assert merged == ["the deploy is approved"], out
+
+
+# --------------------------------------------------------------------------
+# bug-394 — the episode-session boundary was chosen by byte order over a TEXT
+# column, so a row spelling the separator differently won whatever instant it
+# named. Every row this server writes uses a space; import and merge write the
+# record's own value with no format validation, and 'T' sorts above ' '.
+#
+# The registry entry deferred this as a scoring change. Re-judged per finding:
+# datetime() answers the same normalised form for both spellings, so on a corpus
+# whose rows already agree the boundary is unchanged -- the ordering only moves
+# where it was already wrong. The import-seam validation named as the other half
+# is a decision about what an import may carry and is not made here.
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_the_episode_boundary_is_chosen_by_instant_not_separator(clean_checks_db):
+    db = clean_checks_db
+    agent = "b394.agent"
+    # Same date; the earlier instant is the one whose bytes sort higher.
+    rows = [("2026-09-06 10:00:00", "the later session"), ("2026-09-06T09:00:00", "an imported row")]
+    for created_at, summary in rows:
+        await db.execute(
+            "INSERT INTO episodes (agent_id, summary, created_at) VALUES (?, ?, ?)",
+            (agent, summary, created_at),
+        )
+    await db.commit()
+    try:
+        boundary = await memory_handlers._get_episode_boundary_ts(db, agent)
+        assert boundary == _parse_ts("2026-09-06 10:00:00"), (
+            f"the boundary is {boundary}, the EARLIER of the two rows. It was chosen by "
+            "byte order over a TEXT column, where 'T' sorts above ' ' at column 10, so "
+            "one imported row moved which memories count as this session"
+        )
+    finally:
+        await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent,))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_uniformly_spelled_corpus_gets_the_same_boundary(clean_checks_db):
+    """The no-change half: every row this server writes carries the space form, and
+    for those the answer is what it always was."""
+    db = clean_checks_db
+    agent = "b394.control"
+    for created_at in ("2026-09-06 09:00:00", "2026-09-06 10:00:00", "2026-09-05 23:00:00"):
+        await db.execute(
+            "INSERT INTO episodes (agent_id, summary, created_at) VALUES (?, 's', ?)",
+            (agent, created_at),
+        )
+    await db.commit()
+    try:
+        boundary = await memory_handlers._get_episode_boundary_ts(db, agent)
+        assert boundary == _parse_ts("2026-09-06 10:00:00"), boundary
+    finally:
+        await db.execute("DELETE FROM episodes WHERE agent_id = ?", (agent,))
         await db.commit()

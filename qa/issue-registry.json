@@ -251,13 +251,13 @@
       "version": "2.4.37",
       "commit": "6919f3a",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "if any\\(r\\.get\\(\"_cosine\"\\) is None for r in results\\)",
+      "pattern": "if any\\(r\\.get\\(\"_cosine\"\\) is None for r in results_for_gap\\)",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
       "fix_sketch": "When the ordering signal is not uniformly present (rows lacking _cosine under cascade/confidence-off), skip autocut or run gap detection only over rows that carry the chosen score, mirroring the rrf/rsf early-return.",
       "fixed_in": "2.4.38",
-      "fix_note": "v2.4.38: _autocut's cosine fallback branch now returns the list whole when any row lacks _cosine (cascade concatenates non-vector stages that carry no cosine), instead of scoring the gap as 0 and truncating every non-vector hit. Homogeneous cosine-scored and confidence-sorted cuts are unchanged. Regression: test_autocut_signal.py::test_cascade_mixed_signal_is_not_cut."
+      "fix_note": "v2.4.38: _autocut's cosine fallback branch now returns the list whole when any row lacks _cosine (cascade concatenates non-vector stages that carry no cosine), instead of scoring the gap as 0 and truncating every non-vector hit. Homogeneous cosine-scored and confidence-sorted cuts are unchanged. Regression: test_autocut_signal.py::test_cascade_mixed_signal_is_not_cut. Re-anchored in 2.5.12b2: the guard is unchanged, but bug-335 moved the list it reads from `results` to `results_for_gap`, which excludes the injected profile row from the gap measurement."
     },
     {
       "id": "bug-019",
@@ -4616,13 +4616,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/vector_index.py",
-      "pattern": "str\\(v\\)\\.startswith\\(source_id\\)",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_vector_index_inclusion.py",
+      "pattern": "\"User-1\", \"USER-2\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "index-divergence",
       "fix_sketch": "Fold both sides for the ASCII range before comparing, matching what LIKE does, and give the inclusion check variance on the case axis so it can fail; the containment direction means over-offering is safe, so folding is the conservative choice.",
-      "note": "Read-side sibling of bug-336, which is the same case-folding divergence on the SQL LIKE used for per-user source filtering; this entry is the index's mirror of that predicate, not the predicate itself."
+      "note": "Read-side sibling of bug-336, which is the same case-folding divergence on the SQL LIKE used for per-user source filtering; this entry is the index's mirror of that predicate, not the predicate itself.",
+      "fix_note": "Settled on the case-sensitive side rather than by folding both: the permissive half was the SQL authority, and folding would have kept a recall scoped to one principal returning another's rows. See bug-336 for the predicate. The second half of this entry is closed here: the designated inclusion check had no variance on the case axis, so containment held vacuously on the broken code. Its corpus now carries both spellings, and reverting the predicate to the folding form makes it red -- measured."
     },
     {
       "id": "bug-318",
@@ -4630,12 +4632,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "SELECT id, recall_count, last_recalled_at FROM memories WHERE id IN \\(\\{placeholders\\}\\)",
+      "pattern": "for start in range\\(0, len\\(mem_ids\\), vector\\._ID_FETCH_CHUNK\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
-      "fix_sketch": "Loop the read at the same id-fetch chunk its sibling uses and merge the partial rows, so both statements on this pass carry the bound the pair shares."
+      "fix_sketch": "Loop the read at the same id-fetch chunk its sibling uses and merge the partial rows, so both statements on this pass carry the bound the pair shares.",
+      "fix_note": "The recall-count read is chunked at vector._ID_FETCH_CHUNK, the width its sibling on the same pass already used; the partial rows are merged. Its width came from the fused result list before truncation, so it tracked how many rows a caller asked for rather than a bound anyone reasoned about. Regression: tests/test_2512b2_handlers.py records the host-parameter count of every statement the scoring pass issues and pins both the per-statement bound and that the chunks cover every id."
     },
     {
       "id": "bug-319",
@@ -4810,12 +4814,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "used \\+ len\\(item\\[\"content\"\\]\\) > GET_CONTENTS_MAX_CHARS",
+      "pattern": "cost = _item_budget_cost\\(item\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
-      "fix_sketch": "Charge the budget for the whole item the caller receives -- content plus the serialised source -- and change the pinning test to measure the response rather than the one field the handler happens to count."
+      "fix_sketch": "Charge the budget for the whole item the caller receives -- content plus the serialised source -- and change the pinning test to measure the response rather than the one field the handler happens to count.",
+      "fix_note": "Admission and charging count the whole item the caller receives, not the one field the loop held. Source carries its own much higher cap, so a budget over content alone was not a bound on the response: twenty rows of large source objects returned about four times the budget with neither a deferred list nor a budget field. Regression: tests/test_2512b2_handlers.py measures the serialised response against the budget and asserts the batch defers."
     },
     {
       "id": "bug-332",
@@ -4823,13 +4829,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "Remote index failed \\(non-fatal\\)",
+      "pattern": "Remote index push failed for mem",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-degradation",
       "fix_sketch": "Say it once at WARNING naming the row and namespace, as the bulk sibling now does, and report the two outcomes separately rather than OR-ing them into a single embedded flag -- non-fatal is not the same as unreported.",
-      "note": "The single-item counterpart of bug-304 (fixed), which was deliberately scoped to the bulk push; bug-323 is the same shortfall on the four admin side-effect posts. The existing test on this path uses a double whose embed returns an empty vector, so no local blob is written and the flag reflects the remote push alone -- an isolation that does not exist with a real backend."
+      "note": "The single-item counterpart of bug-304 (fixed), which was deliberately scoped to the bulk push; bug-323 is the same shortfall on the four admin side-effect posts. The existing test on this path uses a double whose embed returns an empty vector, so no local blob is written and the flag reflects the remote push alone -- an isolation that does not exist with a real backend.",
+      "fix_note": "The failed push is reported once at WARNING naming the row and the namespace, the correction the bulk sibling took and was deliberately scoped away from on this path. The embedded flag is unchanged: splitting it into two outcomes is a response-shape change this line does not take, and the finding is that the shortfall was unreported rather than that the flag is wrong. Regression: tests/test_2512b2_handlers.py drives a mock index answering 500 and asserts a record at WARNING or above."
     },
     {
       "id": "bug-333",
@@ -4863,13 +4871,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "if first\\.get\\(\"_confidence_score\"\\) is not None:",
+      "pattern": "sentinels = \\[r for r in results if r\\.get\\(\"id\"\\) == -1\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "recall-correctness",
       "fix_sketch": "Give the confidence branch the same homogeneity guard the cosine branch has, or exclude the injected profile row from the list the gap is measured over -- it is not a retrieval result and its score comes from a different branch, so it cannot be compared with the rows below it.",
-      "note": "The existing pin gives every row a confidence score, so the mixed-branch case it would have to see does not occur in it."
+      "note": "The existing pin gives every row a confidence score, so the mixed-branch case it would have to see does not occur in it.",
+      "fix_note": "The injected profile row is removed from the list the gap is measured over and returned regardless of where the cut lands. The guard it needed was not homogeneity of the field, which the sentinel has, but that a row scored on a different branch is not a member of the comparison at all. Regression: tests/test_2512b2_handlers.py pins the measured mixture that returned the profile alone, and a companion case where a real gap must still cut while the sentinel survives."
     },
     {
       "id": "bug-336",
@@ -4877,13 +4887,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "src_like = _like_escape_prefix\\(source_id\\)",
+      "fixed_in": "2.5.12b2",
+      "file": "cpersona/isolation.py",
+      "pattern": "def source_id_where\\(source_id: str",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "recall-isolation-scope",
       "fix_sketch": "Compare the extracted id with a case-sensitive operator (GLOB, or an explicit BINARY collation on the LIKE) once the wildcards are escaped, so the SQL authority means what the schema says. Whichever way this is settled, the index's own resolution must be settled the same way -- see bug-317, where the two currently disagree.",
-      "note": "Distinct from bug-317: that entry is the index's case-sensitive resolution of the same axis. They are opposite halves of one disagreement, and today the SQL side is the permissive one."
+      "note": "Distinct from bug-317: that entry is the index's case-sensitive resolution of the same axis. They are opposite halves of one disagreement, and today the SQL side is the permissive one.",
+      "fix_note": "The per-user restriction is an exact prefix comparison built once in the isolation module and used by every arm, instead of a LIKE prefix spelled at four call sites. LIKE folds ASCII case unless a pragma nothing here sets, so a recall scoped to one principal returned rows tagged to another whose id differed only in case; equality compares with BINARY collation and needs no wildcard escaping. This is also the resolution the contiguous index already used, so the two arms now answer the same question. Regression: tests/test_2512b2_handlers.py covers the keyword arm, the empty-query recency arm, the shared predicate itself, and a source id containing LIKE wildcards that must still match literally."
     },
     {
       "id": "bug-337",
@@ -5347,13 +5359,15 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "start_time = min\\(timestamps\\) if timestamps else None",
+      "pattern": "parseable = \\[\\(instant, stamp\\) for stamp in timestamps",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Choose the two ends by parsed instant and store the corresponding original strings, so the stored span names the earliest and latest moments rather than the first and last byte sequences.",
-      "note": "The write-side counterpart of bug-286, which is the same lexical ordering on the read side over the stored column. Distinct seams: fixing one does not correct the other, and this one persists the wrong value."
+      "note": "The write-side counterpart of bug-286, which is the same lexical ordering on the read side over the stored column. Distinct seams: fixing one does not correct the other, and this one persists the wrong value.",
+      "fix_note": "The two ends are chosen by parsed instant and the original strings are stored. Byte order equals chronological order only while every stamp carries the same offset, and this value is written into the row and never recomputed, so the episode was ranked and displayed at the wrong instant for the rest of its life. Stamps nobody can parse take no part in choosing the ends, and a history where none parse falls back to byte order rather than becoming absent. Regression: tests/test_2512b2_handlers.py drives the mixed-offset history and the same-offset control."
     },
     {
       "id": "bug-370",
@@ -5361,12 +5375,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "the entries were merged without them",
+      "pattern": "dropped = \\[i for i in field_issues if not _ctx_content",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "diagnostics",
-      "fix_sketch": "Split the report by consequence: entries whose metadata was unusable were merged without those fields, entries with no usable content were dropped -- the two are different facts and the caller acts differently on each."
+      "fix_sketch": "Split the report by consequence: entries whose metadata was unusable were merged without those fields, entries with no usable content were dropped -- the two are different facts and the caller acts differently on each.",
+      "fix_note": "The report is split by consequence: entries whose metadata was unusable were merged without those fields, entries with no usable content were dropped, and a mixed batch says both. Merging an entry that carries no usable content would mean inventing content for it, so what changes is the report rather than the merge. Regression: tests/test_2512b2_handlers.py covers the non-string content and non-mapping shapes and the bad-metadata control."
     },
     {
       "id": "bug-371",
@@ -5623,12 +5639,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "docs/behavior-contracts.md",
-      "pattern": "Rows that were never scored omit the key entirely",
+      "pattern": "With confidence on, the profile row is scored like any other and",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
-      "note": "Deferred out of the frozen 2.5 line: the sentence is a published behaviour contract callers are told to branch on, and correcting what it promises for a documented configuration changes that contract rather than fixing a typo in it. It goes with the next feature line beside bug-390, the missing precondition in section 7 of the same document, so the two sections are rewritten once against one description of the behaviour instead of drifting apart again. No runtime change is warranted: the code does what section 7 already describes."
+      "note": "Deferred out of the frozen 2.5 line: the sentence is a published behaviour contract callers are told to branch on, and correcting what it promises for a documented configuration changes that contract rather than fixing a typo in it. It goes with the next feature line beside bug-390, the missing precondition in section 7 of the same document, so the two sections are rewritten once against one description of the behaviour instead of drifting apart again. No runtime change is warranted: the code does what section 7 already describes.",
+      "fix_note": "Section 3 now says the injected profile row carries match_reason under confidence and omits it only with confidence off, which is what the scoring loop and the response loop do. Rewritten together with the section 7 precondition against one description of the behaviour, which is why this was held for a pair. Regression: tests/test_docs_behavioural_claims.py measures the row carrying match_reason under confidence and quotes the sentence, so a rewrite that drops the correction is red."
     },
     {
       "id": "bug-390",
@@ -5636,12 +5654,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "if memory_count >= 50:",
+      "fixed_in": "2.5.12b2",
+      "file": "docs/behavior-contracts.md",
+      "pattern": "The row is dropped \\*\\*before any scoring branch\\*\\*",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
-      "note": "Deferred out of the frozen 2.5 line: the correction changes what a published behaviour contract promises for a documented configuration, which a fix release on this line does not do; it belongs beside bug-389, the other half of the same two sections, so section 2 and section 7 are written once against one description. No runtime change is warranted -- the 50-row pool rule is stated in two other documents and pinned by tests, so the sentence is the part that is wrong."
+      "note": "Deferred out of the frozen 2.5 line: the correction changes what a published behaviour contract promises for a documented configuration, which a fix release on this line does not do; it belongs beside bug-389, the other half of the same two sections, so section 2 and section 7 are written once against one description. No runtime change is warranted -- the 50-row pool rule is stated in two other documents and pinned by tests, so the sentence is the part that is wrong.",
+      "fix_note": "Section 7 now states the precondition it was missing: the row is dropped before any scoring branch on a pool under 50, with confidence on as well as off, and the pool is the summed memories and episodes count for the recall's isolation scope. No runtime change, which the entry already ruled: the rule is stated in two other documents and pinned by tests, and the sentence was the part that was wrong. Regression: tests/test_docs_behavioural_claims.py asserts the section names the threshold, beside the existing measurement of the 49-against-50 boundary."
     },
     {
       "id": "bug-391",
@@ -5688,12 +5708,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "SELECT created_at FROM episodes\\{scope\\.where\\} ORDER BY created_at DESC LIMIT 1",
+      "pattern": "ORDER BY datetime\\(created_at\\) DESC, created_at DESC LIMIT 1",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
-      "note": "Deferred out of the frozen 2.5 line: the boundary is a scoring input, and changing how it is selected changes ranking -- the axis the pre-release ladder exists to keep readable -- so it joins the scoring rework on the next feature line rather than moving while this one soaks. A neighbouring seam to the open bug-286 and not the same defect: that one is MIN/MAX over `memories.timestamp` in the span statement and turns on differing UTC offsets, while this is a different statement and a different column where two stamps in the same offset still order backwards on the separator alone. Validating `created_at` at the import seam is the other half of the answer and is a decision about what the import may carry, which is a second reason this is not a spot fix."
+      "note": "Deferred out of the frozen 2.5 line: the boundary is a scoring input, and changing how it is selected changes ranking -- the axis the pre-release ladder exists to keep readable -- so it joins the scoring rework on the next feature line rather than moving while this one soaks. A neighbouring seam to the open bug-286 and not the same defect: that one is MIN/MAX over `memories.timestamp` in the span statement and turns on differing UTC offsets, while this is a different statement and a different column where two stamps in the same offset still order backwards on the separator alone. Validating `created_at` at the import seam is the other half of the answer and is a decision about what the import may carry, which is a second reason this is not a spot fix.",
+      "fix_note": "The boundary is ordered by instant. Re-judged rather than carried forward as deferred: datetime() answers the same normalised form for both separator spellings, so on a corpus whose rows already agree the boundary does not move, and the ordering changes only where it was already wrong. Rows whose stamp cannot be read sort last instead of winning on their bytes. Validating created_at at the import seam is the other half named in this entry and is a decision about what an import may carry, so it is not made here. Regression: tests/test_2512b2_handlers.py drives the same-date pair that inverts on the separator, plus a uniformly spelled control that must be unchanged."
     },
     {
       "id": "bug-395",
@@ -5809,12 +5831,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "gate = gate \\* 0\\.5",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_2512b2_handlers.py",
+      "pattern": "def test_deep_halves_the_calibrated_fused_gate",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "fix_sketch": "Add a recall case that sets a fused gate for the agent and asserts a row admitted at `deep=true` is refused at `deep=false` on the same corpus, so the halving is observed through the gate rather than through `min_score`."
+      "fix_sketch": "Add a recall case that sets a fused gate for the agent and asserts a row admitted at `deep=true` is refused at `deep=false` on the same corpus, so the halving is observed through the gate rather than through `min_score`.",
+      "fix_note": "A recall case sets a fused gate for the agent just above a row's measured gate score and asserts the row is refused at deep false and admitted at deep true, so the halving is observed through the gate rather than through min_score. Detection power measured: deleting the halving makes it red, which the existing pin could not do because it ran with no global gate and an empty per-agent table."
     },
     {
       "id": "bug-404",
@@ -5835,12 +5859,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "ep_raw\\[rid\\] = -bm if bm is not None else None",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_2512b2_handlers.py",
+      "pattern": "def test_rsf_episode_channel_ranks_the_stronger_bm25_higher",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "fix_sketch": "Add a rank-sum fusion case with episodes that match the query lexically, asserting the episode with the strongest bm25 outranks the weakest in the fused result."
+      "fix_sketch": "Add a rank-sum fusion case with episodes that match the query lexically, asserting the episode with the strongest bm25 outranks the weakest in the fused result.",
+      "fix_note": "A rank-sum case with two episodes matching the query lexically asserts the stronger bm25 outranks the weaker in the fused list, read before the quality gate so gating one row out cannot make the comparison unavailable. The vector channel is switched off for it deliberately: with it on, cosine separates the two by itself and the order is the same whichever sign the keyword channel applies. Detection power measured both ways -- dropping the negation is red with the vector arm off and green with it on."
     },
     {
       "id": "bug-406",
@@ -5981,12 +6007,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "^    if not vals:$",
+      "fixed_in": "2.5.12b2",
+      "file": "tests/test_2512b2_handlers.py",
+      "pattern": "def test_minmax_norm_gives_an_all_none_channel_a_full_vote",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "fix_sketch": "Add a rank-sum fusion case with a two-character query that forces the LIKE fallback, asserting an exact substring match survives the gate and that the normaliser returns 1.0 for that channel."
+      "fix_sketch": "Add a rank-sum fusion case with a two-character query that forces the LIKE fallback, asserting an exact substring match survives the gate and that the normaliser returns 1.0 for that channel.",
+      "fix_note": "Two cases: a direct one pinning that an all-None channel normalises to a full 1.0 vote, and a rank-sum recall with a two-character query that forces the LIKE fallback so the branch is reached end to end. Detection power measured: returning 0.0 and deleting the guard outright are both red. The end-to-end case does not pin the 1.0-against-0.0 decision -- a 0.0 vote still clears the adaptive gate on a corpus that small, and tuning a corpus until it did not would pin the gate's arithmetic instead -- which is why the scoring half is pinned directly."
     },
     {
       "id": "bug-417",

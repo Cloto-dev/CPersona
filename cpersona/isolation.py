@@ -104,3 +104,36 @@ def isolation_where(
         params.append(channel)
 
     return IsolationFilter(clause=" AND ".join(fragments), params=tuple(params))
+
+
+def source_id_where(source_id: str, *, alias: str = "") -> IsolationFilter:
+    """The per-user ``source_id`` prefix restriction, as a helper-derived fragment.
+
+    bug-336: this was a ``LIKE`` prefix predicate, and SQLite folds ASCII case in
+    ``LIKE`` unless ``PRAGMA case_sensitive_like`` is set, which nothing in this
+    package sets. So a recall scoped to ``discord:Alice`` also returned rows
+    tagged ``discord:alice`` -- a different principal -- on every arm that used
+    the clause: the keyword arm, the empty-query recency arm, the vector window
+    read and its by-id hydrate. The escape helper neutralised the wildcards and
+    nothing neutralised the folding.
+
+    ``substr(...) = ?`` instead. Equality compares with BINARY collation, which
+    is what the schema means by an id, and it needs no wildcard escaping at all,
+    so the ``%``/``_``/``\\`` dance that used to sit in front of every call site
+    goes with it. It is also the resolution the contiguous index already used on
+    its side (a Python ``startswith``), so the two arms now answer the same
+    question -- they disagreed, and the SQL side was the permissive one.
+
+    Built here rather than at each arm because it is a read-side isolation
+    predicate, which is what this module is for, and because four hand-rolled
+    copies is how the axis came to be spelled four times and fixed in none.
+    Empty ``source_id`` yields an empty filter, so callers can branch on it the
+    way they always did.
+    """
+    if not source_id:
+        return IsolationFilter(clause="", params=())
+    pre = f"{alias}." if alias else ""
+    return IsolationFilter(
+        clause=f"substr(json_extract({pre}source, '$.id'), 1, ?) = ?",
+        params=(len(source_id), source_id),
+    )

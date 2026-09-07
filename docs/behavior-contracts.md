@@ -54,9 +54,11 @@ queries; with it off, they agreed on fewer than 10%.
 
 The ranking / gate signal priority chain is: **confidence > rsf > cosine >
 rrf** — a scored row's `match_reason.signal` reports which branch actually keyed
-for it. Rows that were never scored omit the key entirely: the injected profile
-row, and the FTS / keyword rows a `cascade` recall fills with. Treat
-`match_reason` as present-or-absent, not as a field on every row.
+for it. Rows that were never scored omit the key entirely: the FTS / keyword
+rows a `cascade` recall fills with, and — with confidence off — the injected
+profile row. With confidence on, the profile row is scored like any other and
+carries `match_reason` too. Treat `match_reason` as present-or-absent, not as a
+field on every row.
 
 Note that confidence is **not match strength**: it blends cosine similarity,
 time decay, resolved status, and recall count into a separate quantity. An
@@ -207,12 +209,19 @@ it does not participate in scoring. There is at most one: `profiles` is unique
 on `(agent_id, user_id)` and every write path binds `user_id` to `''`, so a
 second `update_profile` replaces the first rather than accumulating.
 
-- With **confidence off** (the default), profile rows have no score, sort
-  last, and are **cut by `limit`** when the scored results already fill it.
-  Measured under `rsf` with `limit=10` on a full corpus: **0 profile rows
-  survived**.
-- With **confidence on**, profile rows receive a high confidence score and
-  reliably surface near the top.
+- The row is dropped **before any scoring branch** on a pool of fewer than 50
+  rows, with confidence on or off. The pool is the summed memories + episodes
+  count for the recall's isolation scope, so a small or narrowly scoped corpus
+  gets no profile row however the rest of the recall is configured. Measured on
+  a 30-row pool with a query no stored row answers — so `limit` cuts nothing —
+  a confidence-on recall returned no messages at all, while the 50-row control
+  in the same run returned the profile.
+- Above that threshold, with **confidence off** (the default), profile rows have
+  no score, sort last, and are **cut by `limit`** when the scored results
+  already fill it. Measured under `rsf` with `limit=10` on a full corpus:
+  **0 profile rows survived**.
+- Above that threshold, with **confidence on**, profile rows receive a high
+  confidence score and reliably surface near the top.
 
 Do not treat the profile as a guaranteed always-injected channel unless you
 run with confidence enabled. For *must-always-be-present* facts, the correct

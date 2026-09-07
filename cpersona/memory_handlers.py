@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 import aiosqlite
 import httpx
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
-from cpersona.isolation import isolation_where
+from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import health
 from cpersona import scope_stats
@@ -309,7 +309,23 @@ async def do_store(
             resp.raise_for_status()
             remote_embedded = True
         except Exception as e:
-            logger.debug("Remote index failed (non-fatal): %s", e)
+            # bug-332: non-fatal is not the same as unreported -- the same
+            # correction the bulk sibling took in bug-304, on the single-row path
+            # it was deliberately scoped away from. This went to a debug record
+            # that is off in any normal deployment, and `embedded` below is the
+            # OR of the two surfaces, so a written local blob reported success
+            # whatever the index answered. The row is then in the database and
+            # not in the index, and a corpus that answers recalls with silence is
+            # the one symptom that does not look like a fault. Still non-fatal,
+            # still ok:true -- what changes is that the shortfall is said once, at
+            # a level that is on, naming the row and the namespace.
+            logger.warning(
+                "Remote index push failed for mem:%s in namespace cpersona:%s "
+                "(non-fatal; the row is stored but will not be found by remote search): %s",
+                mem_id,
+                agent_id,
+                e,
+            )
 
     result = {
         "ok": True,
@@ -664,8 +680,21 @@ def _autocut(results: list[dict]) -> list[dict]:
     still-relevant second hit. Below the floor there are too few rows for a gap to
     be meaningful, so keep them all.
     """
-    if len(results) < AUTOCUT_MIN_RESULTS:
+    # bug-335: the injected profile row is not a retrieval result and is not
+    # scored like one. It carries no cosine by construction, so under confidence
+    # it takes the strictly higher time-decay-only branch, sorts to the top, and
+    # the step down to the first real memory is the largest gap in the list --
+    # measured, a profile at 0.8385 against memories from 0.52 to 0.45 made this
+    # return the profile alone. The cosine branch already refuses a list whose
+    # rows do not all carry the signal; the confidence branch had no such guard,
+    # and the guard it needs is not homogeneity of the field (the sentinel has
+    # one) but that the sentinel is not a member of the comparison at all. It is
+    # removed from the measurement and returned regardless of where the cut lands.
+    sentinels = [r for r in results if r.get("id") == -1]
+    scored = [r for r in results if r.get("id") != -1] if sentinels else results
+    if len(scored) < AUTOCUT_MIN_RESULTS:
         return results
+    results_for_gap = scored
     # bug-013: gap detection is only meaningful on similarity-scale signals
     # (confidence / cosine). Rank-fusion scores (rrf / rsf) decay
     # hyperbolically by construction — their "gaps" encode retriever overlap
@@ -673,7 +702,7 @@ def _autocut(results: list[dict]) -> list[dict]:
     # corpora autocut sliced a 17k-hit recall down to 2 rows. Fusion-ordered
     # results rely on the fused quality gate for contamination control; skip
     # the cut unless the ordering signal is similarity-scale.
-    first = results[0]
+    first = results_for_gap[0]
     if first.get("_confidence_score") is not None:
         key = "_confidence_score"
     elif first.get("_rsf_score") is not None or first.get("_rrf_score") is not None:
@@ -689,10 +718,10 @@ def _autocut(results: list[dict]) -> list[dict]:
         # vector-only (drops profile injection + keyword hits). Same category
         # error bug-013 fixed for rrf/rsf. Only gap-cut a homogeneous
         # cosine-scored list where every row actually carries the signal.
-        if any(r.get("_cosine") is None for r in results):
+        if any(r.get("_cosine") is None for r in results_for_gap):
             return results
         key = "_cosine"
-    scores = [r.get(key) or 0 for r in results]
+    scores = [r.get(key) or 0 for r in results_for_gap]
     max_score = scores[0]
     if max_score <= 0:
         return results
@@ -701,7 +730,11 @@ def _autocut(results: list[dict]) -> list[dict]:
     if max_gap / max_score < AUTOCUT_MIN_GAP_RATIO:
         return results  # no meaningful breakpoint
     cut_idx = max(range(len(gaps)), key=lambda i: gaps[i]) + 1
-    return results[:cut_idx]
+    if not sentinels:
+        return results[:cut_idx]
+    # Kept in the order the caller assembled, sentinel included wherever it sat.
+    survivors = {id(r) for r in results_for_gap[:cut_idx]} | {id(r) for r in sentinels}
+    return [r for r in results if id(r) in survivors]
 
 
 def _adaptive_min_score(memory_count: int) -> float:
@@ -911,8 +944,22 @@ async def _get_episode_boundary_ts(
     read (corpus-wide callers, e.g. gate calibration).
     """
     scope = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    # bug-394: ordered by instant, not by byte order. `created_at` is TEXT and SQLite
+    # compares it byte by byte, so the separator alone decides: every row this server
+    # writes carries datetime('now') with a space, while import and merge write the
+    # record's own value through COALESCE with no format validation, and 'T' sorts
+    # above ' ' at column 10. One imported row spelling the separator differently
+    # therefore won the comparison whatever instant it named, and this boundary is a
+    # scoring input -- it decides which memories are "this session". datetime() reads
+    # both spellings and answers the same normalised form for each, so on a corpus
+    # where every row already agrees this changes nothing. Rows whose stamp datetime()
+    # cannot read sort last rather than winning on their bytes, which is the same
+    # ruling the invalid-timestamp checks make: a stamp nobody can parse names no
+    # instant. Validating created_at at the import seam is the other half and is a
+    # decision about what an import may carry, so it is not made here.
     rows = await db.execute_fetchall(
-        f"SELECT created_at FROM episodes{scope.where} ORDER BY created_at DESC LIMIT 1",
+        f"SELECT created_at FROM episodes{scope.where} "
+        "ORDER BY datetime(created_at) DESC, created_at DESC LIMIT 1",
         scope.params,
     )
     if not rows or not rows[0][0]:
@@ -1172,13 +1219,21 @@ async def _apply_recall_scoring(
             for r in results
             if isinstance(r.get("id"), int) and r["id"] > 0 and not _is_episode_result(r)
         ]
-        if mem_ids:
-            placeholders = ",".join("?" * len(mem_ids))
+        # bug-318: chunked at the same width as _backfill_cosines above, for the
+        # same reason and on the same pass. Its width came from the fused result
+        # list before truncation rather than from the caller's limit, so 1,001
+        # results produced one statement binding 1,001 parameters and 32,776 of
+        # them raised "too many SQL variables". The bound belongs to the pair,
+        # and its sibling was the one that was reasoned about, so the constant is
+        # imported rather than chosen again here.
+        for start in range(0, len(mem_ids), vector._ID_FETCH_CHUNK):
+            chunk = mem_ids[start : start + vector._ID_FETCH_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
             rc_rows = await db.execute_fetchall(
                 f"SELECT id, recall_count, last_recalled_at FROM memories WHERE id IN ({placeholders})",
-                mem_ids,
+                chunk,
             )
-            recall_counts = {r[0]: (r[1], r[2] or "") for r in rc_rows}
+            recall_counts.update({r[0]: (r[1], r[2] or "") for r in rc_rows})
 
     # v2.4.14: Episode boundary soft penalty (L3) — weaken cross-session memories
     # before quality gate so current-session signals take precedence.
@@ -1846,13 +1901,35 @@ async def do_recall_with_context(
     # payload -- and it names the entry index, because the caller built the list
     # and the index is what lets them find the row.
     if field_issues and mode == "warn":
-        result["context_field_issues"] = {
-            "entries": field_issues,
-            "note": (
+        # bug-370: the note used to say "the entries were merged without them" for
+        # every reported entry, which is true only when the unusable field is one
+        # of the metadata fields. An entry whose CONTENT is not a string, or that
+        # is not a mapping at all, is read as having no content -- so the merge
+        # loop above skips it, the exclusion list skips it and the filter-only
+        # disclosure skips it, and it reaches the caller as a report saying it was
+        # merged when nothing of it survived. The two are different facts and a
+        # caller acts differently on each: a dropped turn is one they must re-send.
+        # Merging it instead would mean inventing content for it, so what changes
+        # is the report, not the merge.
+        dropped = [i for i in field_issues if not _ctx_content(ctx[i["index"]])]
+        if not dropped:
+            note = (
                 "these fields were not strings and were read as absent; "
                 "the entries were merged without them"
-            ),
-        }
+            )
+        elif len(dropped) == len(field_issues):
+            note = (
+                "these entries carry no usable content and were dropped: they are "
+                "absent from messages and did not filter the recall"
+            )
+        else:
+            note = (
+                "these fields were not strings and were read as absent; entries "
+                "carrying no usable content were dropped (absent from messages and "
+                "not used to filter the recall), the rest were merged without the "
+                "named fields"
+            )
+        result["context_field_issues"] = {"entries": field_issues, "note": note}
         logger.warning(
             "recall_with_context: %d external_context entr%s carried a non-string "
             "declared field (%s). They were read as absent; set "
@@ -1896,6 +1973,21 @@ GET_CONTENTS_MAX_REFS = 20
 # worst case used to be. It is deliberately not derived from MAX_CONTENT_LENGTH:
 # raise that cap to any value and one response stays the size it is today.
 GET_CONTENTS_MAX_CHARS = 40000
+
+
+def _item_budget_cost(item: dict) -> int:
+    """What one get_contents item costs against the character budget (bug-331).
+
+    The content plus everything else the caller receives with it. `source` is the
+    field that mattered: it carries its own, much higher cap, so a budget that
+    counted content alone was not a bound on the response at all.
+    """
+    cost = len(item.get("content") or "")
+    for key, value in item.items():
+        if key == "content":
+            continue
+        cost += len(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
+    return cost
 
 
 async def do_get_contents(agent_id: str, refs: list) -> dict:
@@ -1977,10 +2069,19 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
             # budget is spent the REST of the batch is deferred rather than
             # partially served, so the caller re-fetches on a boundary it can
             # see instead of guessing which refs were dropped.
-            if items and used + len(item["content"]) > GET_CONTENTS_MAX_CHARS:
+            # bug-331: charged for the whole item the caller receives, not for the
+            # one field this loop happens to hold. `source` is capped separately
+            # and much higher, so counting content alone let a batch of rows with
+            # large source objects return about four times the budget with neither
+            # a deferred list nor a budget field -- the coupling this constant
+            # exists to break. Serialised because that is the size the caller
+            # pays for, and the cheapest measure that does not depend on how the
+            # transport spells the object.
+            cost = _item_budget_cost(item)
+            if items and used + cost > GET_CONTENTS_MAX_CHARS:
                 deferred = [str(r) for r in refs[position:]]
                 break
-            used += len(item["content"])
+            used += cost
             items.append(item)
     result: dict = {"items": items, "missing": missing, "count": len(items)}
     if deferred:
@@ -2108,11 +2209,12 @@ async def _search_memories_keyword(
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     iso_m = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="m")
 
-    src_like = _like_escape_prefix(source_id)
-    src_clause_bare = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
-    src_params_bare = (src_like,) if src_like else ()
-    src_clause_m = " AND json_extract(m.source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
-    src_params_m = (src_like,) if src_like else ()
+    src_bare = source_id_where(source_id)
+    src_m = source_id_where(source_id, alias="m")
+    src_clause_bare = src_bare.and_clause
+    src_params_bare = src_bare.params
+    src_clause_m = src_m.and_clause
+    src_params_m = src_m.params
 
     if not query.strip():
         rows = await db.execute_fetchall(
@@ -2295,8 +2397,25 @@ async def _prepare_episode_row(
     # string -- a span that cannot be compared with its neighbours (the shape
     # bug-286 is about). Absent is the honest answer for both.
     timestamps = [stamp for msg in history if (stamp := _ctx_string(msg, "timestamp"))]
-    start_time = min(timestamps) if timestamps else None
-    end_time = max(timestamps) if timestamps else None
+    # bug-369: the two ends are chosen by parsed instant, and the ORIGINAL strings
+    # are what gets stored. min()/max() over the raw strings is byte order, and
+    # byte order equals chronological order only while every stamp carries the
+    # same offset -- a history whose first entry is an hour earlier in a different
+    # offset stored a start after its own end. Unlike the read-side ordering
+    # defects, this value is written into the row and never recomputed: it is what
+    # the confidence scoring and the content expansion read afterwards, so the
+    # episode is ranked and displayed at the wrong instant for the rest of its life.
+    # A stamp nobody can parse names no instant, so it takes no part in choosing
+    # the ends -- the same ruling _ctx_string already makes for a non-string one --
+    # and if none of them parse the span falls back to byte order rather than
+    # becoming absent, because two unparseable ends still bound the same history.
+    parseable = [(instant, stamp) for stamp in timestamps if (instant := _parse_timestamp_utc(stamp))]
+    if parseable:
+        start_time = min(parseable, key=lambda pair: pair[0])[1]
+        end_time = max(parseable, key=lambda pair: pair[0])[1]
+    else:
+        start_time = min(timestamps) if timestamps else None
+        end_time = max(timestamps) if timestamps else None
 
     embedding_blob = None
     if vector._embedding_client and summary:

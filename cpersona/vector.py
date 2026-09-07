@@ -11,7 +11,7 @@ import struct
 
 import aiosqlite
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
-from cpersona.isolation import IsolationFilter, isolation_where
+from cpersona.isolation import IsolationFilter, isolation_where, source_id_where
 
 from cpersona import config
 from cpersona import health
@@ -810,9 +810,9 @@ async def _index_tail_rows(
     # Only memories carry a source column; the episode caller passes source_id
     # empty, and the guard here is what keeps a non-empty one from becoming a
     # reference to a column the table does not have.
-    src_like = _escape_like_prefix(source_id) if table == "memories" else ""
-    src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
-    src_params = (src_like,) if src_like else ()
+    src_filter = source_id_where(source_id if table == "memories" else "")
+    src_clause = src_filter.and_clause
+    src_params = src_filter.params
 
     # The holes travel as ONE parameter — a JSON array — rather than one placeholder
     # per id. A placeholder per id makes the cap on named holes a cap on SQL
@@ -1697,9 +1697,12 @@ async def _search_vector(
     iso_fetch = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     iso_ep_fetch = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
 
-    src_like = _escape_like_prefix(source_id)
-    src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
-    src_params = (src_like,) if src_like else ()
+    src_filter = source_id_where(source_id)
+    # The episode arms branch on whether the filter is on at all (they have no
+    # source column, so a non-empty one drops them); the clause doubles as that flag.
+    src_like = src_filter.clause
+    src_clause = src_filter.and_clause
+    src_params = src_filter.params
 
     # bug-027: honor the caller's min_similarity in the remote branch too. The
     # local branch (below) lowers the threshold for _recall_rrf/_recall_rsf so
