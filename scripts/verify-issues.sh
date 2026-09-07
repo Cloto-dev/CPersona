@@ -179,6 +179,20 @@ while IFS=$'\x1f' read -r id severity file pattern expected status summary; do
     fi
 
     total=$((total + 1))
+
+    # An empty pattern is not a check. `grep -c ""` matches every line, so an
+    # entry carrying one is reported VERIFIED against a file whose contents were
+    # never consulted -- the same shape as the failures already guarded here: a
+    # row that passes without being checked. It is refused before the file is
+    # opened, because no file content can make an empty pattern meaningful, and
+    # counted as an error so the run cannot end green with it in the registry.
+    if [[ -z "$pattern" ]]; then
+        echo -e "  ${RED}[INVALID]${NC} $id ($severity): $summary"
+        echo -e "           empty pattern: it matches every line, so this entry would pass without checking anything"
+        errors=$((errors + 1))
+        continue
+    fi
+
     full_path="$PROJECT_ROOT/$file"
 
     # Check file exists

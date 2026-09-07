@@ -6329,6 +6329,20 @@
       "status": "fixed",
       "category": "fabricated-report",
       "fix_note": "A reporting helper returns the resolved name only when it was explicitly configured or the transport actually sends it, and empty otherwise -- empty meaning 'not knowable here', since the backend does have a model. Only the two response sites use it. The calibration sidecar and the vector-index fingerprint keep the resolved name on purpose: they compare a stored model against the current one to decide whether stored numbers still describe the corpus, so feeding them the reported value would make every existing http-mode sidecar and index read as stale on upgrade, recalibrating thresholds and rebuilding indexes that are still valid. That asymmetry is pinned by a test rather than left to be tidied up. Probing the backend for its real model name was rejected as a feature."
+    },
+    {
+      "id": "bug-431",
+      "summary": "(MEDIUM) The registry verifier reported [VERIFIED] for any entry whose pattern was the empty string, without consulting the file it named. `grep -c \"\" file` matches every line, so match_count came back as the file's line count, the `expected: present` branch saw a positive count, and the entry was recorded as proven while nothing about it had been checked. Same shape as bug-309 and bug-400 — a row that leaves the gate with a verdict it did not earn — reached from a different direction: a registry edit that drops the pattern field, or a registry whose pattern sits under a nested key the extractor does not read. Measured on 2026-09-08 with a crafted single-entry registry carrying pattern \"\": the run printed [VERIFIED] and exited 0.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-08T00:00:00Z",
+      "version": "2.5.12b3",
+      "file": "scripts/verify-issues.sh",
+      "pattern": "empty pattern: it matches every line",
+      "expected": "present",
+      "status": "fixed",
+      "category": "gate-reach",
+      "fix_sketch": "Refuse an empty pattern where the row is checked, counting it as an error rather than handing it to grep, and add a case feeding the verifier such a row and asserting a non-zero exit.",
+      "fix_note": "The check refuses an empty pattern before the file is opened rather than after: no file content can make an empty pattern meaningful, so there is nothing the open would tell us. It is counted as an error, which keeps the property bug-012 established — Total equals the sum of the four counters — and makes the run non-zero, so an entry that checks nothing cannot sit in the registry with the gate green. Found by comparing this script against the sibling implementations it was forked from and forked into: each had hardened against a different failure and none had converged, and this particular guard existed in the oldest of them since July 2026."
     }
   ]
 }
