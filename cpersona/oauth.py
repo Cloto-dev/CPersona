@@ -111,6 +111,17 @@ def _numeric_date_seconds(claim):
     return int(claim)
 
 
+def _is_oidc_discovery(url: str) -> bool:
+    """Is this the spelling OIDC requires ``subject_types_supported`` in?
+
+    OpenID Connect Discovery §3 lists the field as REQUIRED in the provider
+    configuration document; RFC 8414 metadata does not carry it at all, and the
+    comment on the candidate list above says so. So the answer decides which of
+    the documents can settle the pairwise question and which merely omits it.
+    """
+    return "/.well-known/openid-configuration" in url
+
+
 def _metadata_urls(issuer: str) -> list[str]:
     """Where an authorization server's metadata may be found, in order tried.
 
@@ -145,12 +156,20 @@ def _metadata_urls(issuer: str) -> list[str]:
 class _IssuerKeys:
     """Cached signing keys for one issuer, and the state that bounds refetching."""
 
-    __slots__ = ("keys", "fetched_at", "last_attempt", "jwks_uri", "lock")
+    __slots__ = ("keys", "fetched_at", "last_attempt", "logged_at", "jwks_uri", "lock")
 
     def __init__(self) -> None:
         self.keys: dict[str, object] = {}
         self.fetched_at: float = 0.0
         self.last_attempt: float = -math.inf
+        # bug-373: the once-per-cooldown warning is rate-limited HERE rather than
+        # once for the verifier, because everything else that decides whether a
+        # line is worth writing is per-issuer. Shared, one authorization server
+        # flapping silently swallowed another's identical failure -- and the same
+        # channel carries the pairwise-subject refusal, which is a permanent
+        # configuration verdict and the one explanation an operator needs for why
+        # a whole set of clients cannot authenticate.
+        self.logged_at: float = -math.inf
         self.jwks_uri: str = ""
         self.lock = asyncio.Lock()
 
@@ -342,13 +361,43 @@ class IdpTokenVerifier:
             return claimed
         return None
 
+    def _from_cache(self, entry: _IssuerKeys, kid: str):
+        """The key this cache can answer with right now, or None to go and ask.
+
+        Deliberately lock-free. Every field it reads is replaced wholesale by
+        ``_refresh`` and never mutated in place, and nothing here awaits, so it
+        sees one consistent snapshot. The lock exists to serialise refreshes;
+        taking it to answer from the cache made a verification that needs no
+        network wait for the whole of a fetch some other caller provoked — and
+        that caller does not have to be authenticated to provoke one, since an
+        unknown key id is the rotation signal (bug-338).
+        """
+        if not entry.keys or (self._now() - entry.fetched_at) >= JWKS_TTL_SECONDS:
+            # Nothing held, or held past the reuse horizon. Either way the
+            # answer has to come from a fetch — see the age-out note below.
+            return None
+        if kid:
+            return entry.keys.get(kid)
+        # A token with no ``kid`` is unambiguous only when the issuer publishes
+        # exactly one key. Guessing among several would make the outcome depend
+        # on dictionary order.
+        if len(entry.keys) == 1:
+            return next(iter(entry.keys.values()))
+        return None
+
     async def _signing_key(self, issuer: str, kid: str):
         entry = self._cache[issuer]
+        served = self._from_cache(entry, kid)
+        if served is not None:
+            return served
         async with entry.lock:
+            # Asked again under the lock: while this call waited, another may
+            # have refreshed exactly what it needs, and fetching on top of that
+            # would be a second round trip for an answer already in hand.
+            served = self._from_cache(entry, kid)
+            if served is not None:
+                return served
             now = self._now()
-            fresh = entry.keys and (now - entry.fetched_at) < JWKS_TTL_SECONDS
-            if fresh and kid in entry.keys:
-                return entry.keys[kid]
             # Either nothing is cached, the cache aged out, or the token names a
             # key we do not hold — the shape of a rotation. All three want the
             # same thing, and the cooldown is what keeps the third from being a
@@ -356,29 +405,20 @@ class IdpTokenVerifier:
             if (now - entry.last_attempt) >= JWKS_MIN_REFETCH_SECONDS:
                 entry.last_attempt = now
                 await self._refresh(issuer, entry)
-            # A successful refresh is the only thing that moves ``fetched_at``,
-            # so reading it again *after* the attempt is what separates a key
-            # set that was revalidated from one we merely still hold. The bound
-            # belongs on the answer and not only on the fetch: ``JWKS_TTL_SECONDS``
-            # is how long a fetched set is *reused*, and ``_refresh`` owes that
-            # the keys already held keep working "until they age out" — this is
-            # where they age out. Serving them past it would mean a key the
-            # issuer revoked keeps verifying tokens for as long as the provider
-            # is unreachable, which inverts the cost route (b) was chosen with
-            # (docs/OAUTH_DESIGN.md §11): an outage there authenticates nobody.
-            # The refusal is not logged here: every failed refresh already
-            # reports the cause through the same once-per-cooldown warning, so a
-            # second line would be suppressed by it in the very case it is for.
-            if entry.keys and (self._now() - entry.fetched_at) >= JWKS_TTL_SECONDS:
-                return None
-            if kid:
-                return entry.keys.get(kid)
-            # A token with no ``kid`` is unambiguous only when the issuer
-            # publishes exactly one key. Guessing among several would make the
-            # outcome depend on dictionary order.
-            if len(entry.keys) == 1:
-                return next(iter(entry.keys.values()))
-            return None
+        # A successful refresh is the only thing that moves ``fetched_at``, so
+        # asking the cache again *after* the attempt is what separates a key set
+        # that was revalidated from one we merely still hold. The bound belongs
+        # on the answer and not only on the fetch: ``JWKS_TTL_SECONDS`` is how
+        # long a fetched set is *reused*, and ``_refresh`` owes that the keys
+        # already held keep working "until they age out" — ``_from_cache`` is
+        # where they age out. Serving them past it would mean a key the issuer
+        # revoked keeps verifying tokens for as long as the provider is
+        # unreachable, which inverts the cost route (b) was chosen with
+        # (docs/OAUTH_DESIGN.md §11): an outage there authenticates nobody. The
+        # refusal is not logged: every failed refresh already reports the cause
+        # through the same once-per-cooldown warning, so a second line would be
+        # suppressed by it in the very case it is for.
+        return self._from_cache(entry, kid)
 
     async def _refresh(self, issuer: str, entry: _IssuerKeys) -> None:
         """Fetch this issuer's key set, leaving the previous one in place on failure.
@@ -397,7 +437,7 @@ class IdpTokenVerifier:
                 return
             entry.jwks_uri = jwks_uri
 
-        document = await self._get_json(jwks_uri, what=f"key set for {issuer}")
+        document = await self._get_json(jwks_uri, issuer=issuer, what=f"key set for {issuer}")
         if document is None:
             # Forget the location, so the next attempt re-reads the metadata.
             # An issuer that moved its keys would otherwise be unreachable for
@@ -409,7 +449,7 @@ class IdpTokenVerifier:
 
             key_set = jwt.PyJWKSet.from_dict(document)
         except Exception as exc:
-            self._log_outage("key set at %s is not a usable JWKS: %s", jwks_uri, exc)
+            self._log_outage(issuer, "key set at %s is not a usable JWKS: %s", jwks_uri, exc)
             return
         keys = {}
         for key in key_set.keys:
@@ -420,14 +460,33 @@ class IdpTokenVerifier:
             if getattr(key, "key_id", None) and (key.public_key_use in (None, "sig")):
                 keys[key.key_id] = key.key
         if not keys:
-            self._log_outage("key set at %s carries no usable signing key", jwks_uri)
+            self._log_outage(issuer, "key set at %s carries no usable signing key", jwks_uri)
             return
         entry.keys = keys
         entry.fetched_at = self._now()
 
     async def _discover_jwks_uri(self, issuer: str) -> str:
+        """The issuer's key set location, or "" when it must not be used.
+
+        With ``require_public_subject`` off this returns at the first document
+        that answers with a key set location, which is what it has always done
+        and what keeps discovery to one round trip.
+
+        With it on, that early return was the defect (bug-339): the first
+        candidate is the RFC 8414 spelling, which does not carry
+        ``subject_types_supported``, so the gate below was applied to a document
+        structurally incapable of failing it while the document that must
+        declare the field was never fetched. So the walk continues until an OIDC
+        discovery document has actually been read, and if none can be, the
+        issuer is refused. A gate that could not read the field it depends on
+        has not passed — it has abstained, and fail-closed is the whole point of
+        the setting.
+        """
+        gated = self._require_public_subject
+        jwks_uri = ""
+        declaration_read = False
         for url in _metadata_urls(issuer):
-            document = await self._get_json(url, what=f"metadata for {issuer}", quiet=True)
+            document = await self._get_json(url, issuer=issuer, what=f"metadata for {issuer}", quiet=True)
             if document is None:
                 continue
             published = document.get("issuer")
@@ -438,6 +497,7 @@ class IdpTokenVerifier:
                 # the fetch safe — a document that names someone else is not
                 # this issuer's metadata, whatever URL answered.
                 self._log_outage(
+                    issuer,
                     "metadata at %s declares issuer %r, not %r; ignoring it",
                     url,
                     published,
@@ -458,6 +518,7 @@ class IdpTokenVerifier:
                 # not carry it, and refusing on absence would refuse issuers
                 # that are in fact public.
                 self._log_outage(
+                    issuer,
                     "issuer %s supports only pairwise subject identifiers (%r); "
                     "refusing its tokens while per-subject partitioning is "
                     "configured — a pairwise subject names a (person, client) "
@@ -467,12 +528,35 @@ class IdpTokenVerifier:
                     subject_types,
                 )
                 return ""
-            jwks_uri = document.get("jwks_uri") or ""
-            if not isinstance(jwks_uri, str) or not jwks_uri.startswith("https://"):
-                self._log_outage("metadata at %s publishes no https jwks_uri", url)
+            declaration_read = declaration_read or _is_oidc_discovery(url)
+            candidate = document.get("jwks_uri") or ""
+            if not isinstance(candidate, str) or not candidate.startswith("https://"):
+                self._log_outage(issuer, "metadata at %s publishes no https jwks_uri", url)
                 continue
+            jwks_uri = jwks_uri or candidate
+            if not gated or declaration_read:
+                break
+        if gated and jwks_uri and not declaration_read:
+            # The gate abstained rather than passed: no document that is required
+            # to carry the declaration could be read. It is still not a refusal,
+            # because the rule this module states is that absence is not a
+            # pairwise declaration — RFC 8414 metadata does not carry the field,
+            # and refusing on absence would refuse issuers that are in fact
+            # public. Turning that into a refusal is a policy change and not the
+            # restoration this fix is, so what is added here is the record: an
+            # operator who switched the requirement on can otherwise not tell a
+            # gate that passed from one that never ran.
+            self._log_outage(
+                issuer,
+                "no OpenID Connect discovery document could be read for %s, so its "
+                "subject_types_supported was never checked; its tokens are accepted "
+                "on the rule that absence is not a pairwise declaration",
+                issuer,
+            )
+        if jwks_uri:
             return jwks_uri
         self._log_outage(
+            issuer,
             "no authorization server metadata was readable for %s; tokens from it "
             "cannot be verified until it is (tried %s)",
             issuer,
@@ -480,38 +564,53 @@ class IdpTokenVerifier:
         )
         return ""
 
-    async def _get_json(self, url: str, *, what: str, quiet: bool = False):
+    async def _get_json(self, url: str, *, issuer: str, what: str, quiet: bool = False):
         try:
             status, body = await self._fetch(url)
         except Exception as exc:
             if not quiet:
-                self._log_outage("could not fetch the %s from %s: %s", what, url, exc)
+                self._log_outage(issuer, "could not fetch the %s from %s: %s", what, url, exc)
             return None
         if status != 200:
             if not quiet:
-                self._log_outage("fetching the %s from %s returned HTTP %s", what, url, status)
+                self._log_outage(issuer, "fetching the %s from %s returned HTTP %s", what, url, status)
             return None
         if len(body) > MAX_DOCUMENT_BYTES:
-            self._log_outage("the %s at %s is larger than %d bytes", what, url, MAX_DOCUMENT_BYTES)
+            self._log_outage(issuer, "the %s at %s is larger than %d bytes", what, url, MAX_DOCUMENT_BYTES)
             return None
         try:
             document = json.loads(body)
         except ValueError as exc:
             if not quiet:
-                self._log_outage("the %s at %s is not JSON: %s", what, url, exc)
+                self._log_outage(issuer, "the %s at %s is not JSON: %s", what, url, exc)
             return None
         return document if isinstance(document, dict) else None
 
-    def _log_outage(self, message: str, *args) -> None:
-        """Warn about a provider-side failure at most once per cooldown.
+    def _log_outage(self, issuer: str, message: str, *args) -> None:
+        """Warn about a provider-side failure at most once per cooldown, per issuer.
 
         Per request would let an unauthenticated caller write the log; never
         would make an outage of the thing that authenticates everyone invisible.
+
+        The window belongs to the issuer the message is about. A verifier-wide
+        one made two configured authorization servers share it, so the second's
+        failure produced no record at all while the first was flapping. An issuer
+        with no entry -- there is none today -- falls back to the shared stamp
+        rather than logging unbounded.
+
+        The verdict is still rate-limited rather than logged outright: it is
+        reached from an unauthenticated request, so writing it every time would
+        hand the log to whoever wants to fill it.
         """
+        entry = self._cache.get(issuer)
         now = self._now()
-        if (now - self._outage_logged_at) < JWKS_MIN_REFETCH_SECONDS:
+        last = entry.logged_at if entry is not None else self._outage_logged_at
+        if (now - last) < JWKS_MIN_REFETCH_SECONDS:
             return
-        self._outage_logged_at = now
+        if entry is not None:
+            entry.logged_at = now
+        else:
+            self._outage_logged_at = now
         logger.warning("OAuth verification degraded: " + message, *args)
 
 
@@ -544,15 +643,24 @@ async def _http_get(url: str):
     """
     import httpx
 
-    async with httpx.AsyncClient(
-        timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False
-    ) as client:
-        async with client.stream(
-            "GET", url, headers={"Accept": "application/json"}
-        ) as response:
-            body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > MAX_DOCUMENT_BYTES:
-                    break
-            return response.status_code, bytes(body)
+    # bug-340: the client's timeout is applied per read, so a peer sending a
+    # small chunk just inside it chooses when the transfer ends -- measured at
+    # eight times the configured bound while delivering half a percent of the
+    # byte cap. The docstring above promises a bound on the request, and only a
+    # deadline over the whole call is that. It raises rather than returning what
+    # arrived so far: a truncated document handed back as a 200 would be
+    # diagnosed by the caller as malformed JSON, which is the wrong reason and
+    # sends an operator to look at the issuer's document instead of at the link.
+    async with asyncio.timeout(_HTTP_TIMEOUT_SECONDS):
+        async with httpx.AsyncClient(
+            timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False
+        ) as client:
+            async with client.stream(
+                "GET", url, headers={"Accept": "application/json"}
+            ) as response:
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_DOCUMENT_BYTES:
+                        break
+                return response.status_code, bytes(body)

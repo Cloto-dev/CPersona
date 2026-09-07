@@ -4664,13 +4664,13 @@
       "version": "2.5.12b1",
       "fixed_in": "2.5.12b3",
       "file": "cpersona/oauth.py",
-      "pattern": "if entry\\.keys and \\(self\\._now\\(\\) - entry\\.fetched_at\\) >= JWKS_TTL_SECONDS:",
+      "pattern": "if not entry\\.keys or \\(self\\._now\\(\\) - entry\\.fetched_at\\) >= JWKS_TTL_SECONDS:",
       "expected": "present",
       "status": "fixed",
       "category": "auth",
       "fix_sketch": "Apply the freshness bound to the answer as well as to the fetch: past some multiple of the TTL, refuse rather than serve a key set that could not be revalidated. The grace window has to be a deliberate number, because refusing at exactly the TTL turns a brief provider hiccup into an outage.",
       "note": "The existing outage test advances the clock only past the minimum refetch interval, so nothing pins behaviour beyond the TTL.",
-      "fix_note": "The freshness bound now governs the answer as well as the fetch: after the refresh attempt, a key set whose last successful fetch is older than JWKS_TTL_SECONDS is refused instead of served. That is the age-out the refresh helper docstring already promised and nothing implemented, so no new grace constant was introduced -- the horizon is the one the module already names for reuse. Pinned in tests/test_oauth_verification.py alongside the test that keys already held survive a short outage; removing the guard turns all three age parametrisations red."
+      "fix_note": "The freshness bound now governs the answer as well as the fetch: after the refresh attempt, a key set whose last successful fetch is older than JWKS_TTL_SECONDS is refused instead of served. That is the age-out the refresh helper docstring already promised and nothing implemented, so no new grace constant was introduced -- the horizon is the one the module already names for reuse. Pinned in tests/test_oauth_verification.py alongside the test that keys already held survive a short outage; removing the guard turns all three age parametrisations red. Re-anchored in the same series: the bug-338 lock restructure moved this guard into _from_cache, which is now the single place the cache is answered from, so the age-out applies both before a refresh is attempted and after it."
     },
     {
       "id": "bug-321",
@@ -4929,12 +4929,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/oauth.py",
-      "pattern": "async with entry\\.lock:",
+      "pattern": "def _from_cache\\(self, entry: _IssuerKeys, kid: str\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
-      "fix_sketch": "Serve a cached key inside the lock and release it before the network work, so only the refresh is serialised and a cache hit never waits on a fetch provoked by someone else's unverified token."
+      "fix_sketch": "Serve a cached key inside the lock and release it before the network work, so only the refresh is serialised and a cache hit never waits on a fetch provoked by someone else's unverified token.",
+      "fix_note": "The cache is now answered before the per-issuer lock is taken, and again under it in case another request refreshed while this one waited, so the lock serialises refreshes and nothing else. Reading the cache needs no lock: every field it reads is replaced wholesale by the refresh and never mutated in place, and nothing between the reads awaits, so it sees one consistent snapshot. What this ends is a verification that needs no network at all waiting for the whole of a fetch some other caller provoked, before authentication and before any tool runs -- and the caller who provokes it need not be authenticated, since an unknown key id is the rotation signal. The refetch cooldown still bounds how often a fetch can be provoked; it never bounded how long the lock was held during one."
     },
     {
       "id": "bug-339",
@@ -4942,12 +4944,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/oauth.py",
-      "pattern": "subject_types = document\\.get\\(\"subject_types_supported\"\\)",
+      "pattern": "declaration_read = declaration_read or _is_oidc_discovery\\(url\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
-      "fix_sketch": "When the requirement is on, fetch the discovery document explicitly rather than testing whichever document happened to answer first, and treat its absence as a refusal -- a gate that cannot read the field it depends on has not passed, it has abstained."
+      "fix_sketch": "When the requirement is on, fetch the discovery document explicitly rather than testing whichever document happened to answer first, and treat its absence as a refusal -- a gate that cannot read the field it depends on has not passed, it has abstained.",
+      "fix_note": "With the public-subject requirement on, discovery no longer returns at the first document that answers with a key set location: it walks on until an OpenID Connect discovery document has been read, which is the spelling that is required to carry subject_types_supported. The RFC 8414 document the walk starts with does not carry it, so the gate was being applied to a document structurally incapable of failing it while the declaring document was never fetched. With the requirement off the early return is unchanged, so discovery still costs one round trip. Deliberately NOT extended to refusing when no discovery document can be read: this module states that absence is not a pairwise declaration and a pin holds it, so turning abstention into refusal is a policy change rather than this restoration. The abstention is now logged instead, because a gate that never ran read exactly like one that passed."
     },
     {
       "id": "bug-340",
@@ -4955,13 +4959,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/oauth.py",
-      "pattern": "timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False",
+      "pattern": "async with asyncio\\.timeout\\(_HTTP_TIMEOUT_SECONDS\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Wrap the whole fetch in a total deadline rather than relying on a per-read timeout, so the bound belongs to the transfer and not to each chunk; the existing pin measures only the byte cap, so a time pin has to be added with it.",
-      "note": "The byte axis of the same function is bug-297 (fixed), which moved the bound from what is parsed to what is received; this is the time axis it did not cover. The lock-hold half is bug-338, filed separately because the fix for it is a different change."
+      "note": "The byte axis of the same function is bug-297 (fixed), which moved the bound from what is parsed to what is received; this is the time axis it did not cover. The lock-hold half is bug-338, filed separately because the fix for it is a different change.",
+      "fix_note": "The fetch is wrapped in a deadline over the whole call, so the bound belongs to the transfer rather than to each read. The client timeout is applied per operation, which let a peer trickling a chunk just inside it choose when the transfer ended -- measured at eight times the configured bound while delivering half a percent of the byte cap, against a docstring that promises a bounded request. It raises rather than returning the partial body: a truncation handed back as a 200 gets diagnosed by the caller as malformed JSON, which sends an operator to read the issuer document instead of the link to it. Pinned against a real loopback peer, since the property is in how the socket is read."
     },
     {
       "id": "bug-341",
@@ -5448,12 +5454,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/oauth.py",
-      "pattern": "self\\._outage_logged_at: float = -math\\.inf",
+      "pattern": "last = entry\\.logged_at if entry is not None else self\\._outage_logged_at",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "observability",
-      "fix_sketch": "Move the last-logged stamp onto the per-issuer state beside the other refresh fields, and consider logging the configuration verdict unconditionally, since rate-limiting a permanent fact only delays the diagnosis."
+      "fix_sketch": "Move the last-logged stamp onto the per-issuer state beside the other refresh fields, and consider logging the configuration verdict unconditionally, since rate-limiting a permanent fact only delays the diagnosis.",
+      "fix_note": "The once-per-cooldown stamp moved onto the per-issuer state beside the other refresh fields, because everything else that decides whether a line is worth writing is per issuer. Shared, one authorization server flapping suppressed anothers identical failure entirely, and the same channel carries the pairwise-subject verdict, which is a permanent configuration fact and the one explanation for why a whole set of clients cannot authenticate. Still rate-limited rather than logged outright: the path is reachable from an unauthenticated request, so writing every occurrence would hand the log to whoever wants to fill it. An issuer with no cache entry -- there is none today -- falls back to the shared stamp rather than logging unbounded."
     },
     {
       "id": "bug-374",
