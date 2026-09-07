@@ -3024,3 +3024,40 @@ def test_a_populated_sidecar_reaches_the_initialize_response(tmp_path, enabled, 
         [sys.executable, "-c", read], env=env, capture_output=True, text=True, check=True
     ).stdout.strip()
     assert ("rev 2026-07-18.1" in out) is expect_text, out
+
+
+# ---------------------------------------------------------------------------
+# bug-425: the sanitiser existed and one line went around it.
+#
+# `embed_with_outcome` logged the raw exception and only then built the safe
+# evidence for the caller. httpx puts the request URL inside its own message,
+# so an endpoint configured with credentials in the userinfo or the query
+# string was clean in the returned error and verbatim in the log — the copy an
+# operator ships to a log collector.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_failed_embed_keeps_endpoint_credentials_out_of_the_log(caplog):
+    def handler(request):
+        return httpx.Response(500, text="boom")
+
+    client = EmbeddingClient(
+        mode="api",
+        api_url="https://user:s3cretpw@api.example/v1/embeddings?key=qsecret",
+        api_key="k",
+        model="m",
+    )
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    with caplog.at_level(logging.WARNING):
+        vectors, outcome = await client.embed_with_outcome(["x"])
+
+    assert vectors is None and outcome.attempted and not outcome.ok
+    # The returned value was already sanitised before this fix; it is the control
+    # that says the sanitiser works, so a log assertion that passed because the
+    # whole line vanished would not look the same as this.
+    assert "s3cretpw" not in outcome.error and "qsecret" not in outcome.error, outcome.error
+    assert "POST" in outcome.error and "api.example" in outcome.error, outcome.error
+    assert "s3cretpw" not in caplog.text and "qsecret" not in caplog.text, caplog.text
+    assert "Embedding request failed" in caplog.text, "the failure stopped being reported at all"

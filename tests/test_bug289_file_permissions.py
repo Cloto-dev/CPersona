@@ -13,6 +13,7 @@ runner's. The bug IS umask sensitivity, so a suite that ran at ``umask 077``
 would pass against the unfixed code and prove nothing.
 """
 
+import errno
 import os
 import sqlite3
 import stat
@@ -370,3 +371,56 @@ async def test_no_warning_where_the_bits_are_not_the_access_control(tmp_path, ca
 
     assert not any("group/world-accessible" in m for m in messages), messages
     assert mode_of(widened) == 0o644, "and it still does not touch the file"
+
+
+# ---------------------------------------------------------------------------
+# bug-352 / bug-359: the helper refuses a symlink at the path it is handed.
+#
+# Following one broke both halves of this module's contract at the same time.
+# The corpus went into a file this process did not create -- the module exists
+# so that "there is no window in which the corpus exists world-readable" -- and
+# the tightening landed on the link's target, so a file that already existed
+# did not, contrary to the docstring above it, keep the mode it had.
+#
+# The pin lives here rather than on a caller. The defect is in the flag word,
+# and five call sites share it; the export path that the report reached it
+# through had already stopped being reachable by the time this was fixed,
+# because minting the temp name per call (bug-350) removed the predictable name
+# the plant needed. A pin written against that path would have gone green
+# without the flag ever changing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["w", "wb", "a", "ab"])
+def test_open_private_refuses_a_symlink_at_its_path(tmp_path, mode):
+    victim = tmp_path / f"victim-{mode}.conf"
+    victim.write_text("KEEP=1\n")
+    os.chmod(victim, 0o644)
+
+    link = tmp_path / f"link-{mode}"
+    os.symlink(victim, link)
+
+    with pytest.raises(OSError) as excinfo:
+        with fileperms.open_private(str(link), mode) as handle:
+            handle.write(b"x" if "b" in mode else "x")
+
+    assert excinfo.value.errno in (errno.ELOOP, errno.EMLINK), excinfo.value
+    assert victim.read_text() == "KEEP=1\n", "the link's target was written through"
+    assert mode_of(victim) == 0o644, (
+        "the link's target was re-moded -- an existing file must keep the mode it has"
+    )
+
+
+def test_open_private_still_creates_a_new_file_at_a_plain_path(tmp_path):
+    """Control: the flag refuses links, not ordinary creation.
+
+    Without this, a helper that raised on every path would satisfy the test
+    above and look fixed.
+    """
+    plain = tmp_path / "plain.jsonl"
+    with fileperms.open_private(str(plain), "w", encoding="utf-8") as handle:
+        handle.write("row\n")
+
+    assert plain.read_text(encoding="utf-8") == "row\n"
+    assert mode_of(plain) == 0o600
+    assert not plain.is_symlink()
