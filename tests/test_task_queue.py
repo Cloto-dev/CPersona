@@ -20,6 +20,7 @@ os.environ["CPERSONA_LLM_PROXY_URL"] = "http://127.0.0.1:1/noop"  # will fail â†
 from cpersona import admin_handlers # noqa: E402
 from cpersona import memory_handlers # noqa: E402
 from cpersona import server # noqa: E402,F401  (imports trigger registry init for transitive coverage)
+from cpersona import database # noqa: E402
 from cpersona import tasks # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
@@ -385,3 +386,54 @@ async def test_get_queue_status_tool():
     tasks._task_queue = None
     status = await admin_handlers.do_get_queue_status()
     assert status["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# bug-366 â€” the attribution reconcile bound one host parameter per held id.
+# ---------------------------------------------------------------------------
+#
+# The map is capped at 4096, four times the 999-variable ceiling older SQLite
+# builds carry, and every other id list in this package is deliberately split at
+# 500 with a comment naming that floor. On a host with the older ceiling the
+# statement raised too-many-SQL-variables on every pass, the drain's own handler
+# swallowed it, and attributions for rows deleted out of band were never forgotten.
+#
+# The limit is lowered on the connection the queue actually uses, so what is
+# measured is the statement this code emits rather than a reimplementation of it.
+
+
+@pytest.mark.asyncio
+async def test_the_reconcile_survives_the_older_variable_ceiling():
+    import sqlite3
+
+    queue = tasks.MemoryTaskQueue()
+    held = list(range(1, queue._MAX_ATTRIBUTED_TASKS + 1))
+    queue._task_sessions = {task_id: "session-a" for task_id in held}
+
+    db = await get_db()
+    await db.execute("DELETE FROM pending_memory_tasks")
+    await db.execute(
+        "INSERT INTO pending_memory_tasks (id, task_type, agent_id, payload) "
+        "VALUES (?, 'update_profile', 'a1', 'x')",
+        (held[0],),
+    )
+    await db.commit()
+
+    # The reconcile reads through connection(), which is the READ connection, not
+    # the write one get_db() returns. Lowering the limit on the wrong object is a
+    # test that passes against the defect: it did, until this was measured.
+    read_db = await database._get_read_db()
+    await read_db._execute(
+        lambda: read_db._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+    )
+    try:
+        await queue._forget_vanished_rows()
+    finally:
+        await read_db._execute(
+            lambda: read_db._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 250000)
+        )
+
+    assert list(queue._task_sessions) == [held[0]], (
+        "the reconcile did not prune: it either raised and was swallowed, or it "
+        f"kept {len(queue._task_sessions)} attributions for one live row"
+    )

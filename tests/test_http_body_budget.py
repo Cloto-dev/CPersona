@@ -73,6 +73,24 @@ def _make_app(*, max_bytes=BUDGET, mode="warn", auth_token=""):
     return app, seen, budget
 
 
+def _untouched_app():
+    """The production app with nothing written over the mounted middleware.
+
+    ``_make_app`` overwrites ``max_bytes`` and ``mode`` on the mounted instance so
+    the boundary tests can use a small budget; every one of those overwrites is a
+    place where the mount's own arguments stop being observable.
+    """
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        yield
+
+    async def endpoint(scope, receive, send):  # pragma: no cover - never called
+        raise AssertionError("this app is built to be inspected, not served")
+
+    return server._build_http_app("", endpoint, lifespan)
+
+
 def _mounted_budget(app):
     """The instance the app will actually serve with — not a fresh copy of it.
 
@@ -171,13 +189,20 @@ def test_the_budget_is_mounted_between_cors_and_authentication():
 
 
 def test_the_mounted_budget_takes_its_settings_from_config():
-    """A mounted middleware built with a hard-coded limit enforces the wrong one."""
-    app, _, _ = _make_app()
-    budget = _mounted_budget(app)
-    # _make_app overwrites these; rebuild one untouched to read what wiring gives.
-    fresh = server.RequestBodyBudgetMiddleware(budget.app)
-    assert fresh.max_bytes == config.HTTP_MAX_BODY_BYTES
-    assert fresh.mode == config.HTTP_BODY_LIMIT_MODE
+    """A mounted middleware built with a hard-coded limit enforces the wrong one.
+
+    bug-406: this used to read a middleware it constructed itself. Its ``__init__``
+    reads the config unconditionally, so the assertion was ``config == config`` --
+    true whatever the mount site passes. Mutating the mount to
+    ``Middleware(RequestBodyBudgetMiddleware, mode="off")`` removed body accounting
+    from the production transport with the whole file green. The mounted instance
+    is the only object that can answer this, so the app is built WITHOUT the
+    overwrite ``_make_app`` performs, and read from the served stack.
+    """
+    budget = _mounted_budget(_untouched_app())
+
+    assert budget.max_bytes == config.HTTP_MAX_BODY_BYTES
+    assert budget.mode == config.HTTP_BODY_LIMIT_MODE
 
 
 def test_the_shipped_default_is_measure_only():

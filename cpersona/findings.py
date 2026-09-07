@@ -143,9 +143,18 @@ def finding_kind(issue: dict) -> str:
             return f"{check}_expected"
         return check
     if check == "embedding_backend":
-        # warn is the runner's stamp for "configured and not answering"; the other
-        # states are configuration facts, not defects.
-        return "embedding_backend_unreachable" if stamped == "warn" else "embedding_backend"
+        # bug-372: this read the severity, and the runner stamps warn on TWO states
+        # it deliberately separated -- a backend that was asked and did not answer,
+        # and a configuration under which no request ever left the process. Both
+        # went out under the key naming an unanswered backend, so a consumer routing
+        # on the key (which is what the key is documented for) was sent to restart a
+        # service that was never contacted, while the payload beside it said
+        # misconfigured. The payload's own type already carries the distinction the
+        # check made; read that instead of re-deriving it from a coarser field.
+        reported = issue.get("type")
+        if reported in ("embedding_backend_unreachable", "embedding_backend_misconfigured"):
+            return reported
+        return "embedding_backend"
     if check == "vector_index":
         # warn is the runner's stamp for "an index exists and is not being
         # used"; the unstamped states are observations, not defects.

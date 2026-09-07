@@ -17,6 +17,12 @@ from cpersona.isolation import isolation_where
 logger = logging.getLogger(__name__)
 
 
+#: Ids per reconcile statement. The same 500 the other id lists in this package
+#: use, which stays well under SQLite's bound-variable ceiling (999 on older
+#: builds) with room for anything riding along.
+_RECONCILE_READ_CHUNK = 500
+
+
 class MemoryTaskQueue:
     """DB-persisted background task queue with crash recovery.
 
@@ -142,12 +148,25 @@ class MemoryTaskQueue:
         held = list(self._task_sessions)
         if not held:
             return
-        placeholders = ",".join("?" * len(held))
+        # bug-366: one host parameter per held attribution, against a map capped at
+        # 4096 -- four times SQLite's older 999-variable ceiling, which every other
+        # id list in this package is deliberately split at. Measured by lowering the
+        # limit on the connection the queue actually uses: at 4096 attributions the
+        # statement raised too-many-SQL-variables and left every attribution in
+        # place, and the drain's own handler swallows it, so on a host with the
+        # older ceiling the reconcile never ran again for as long as the map stayed
+        # large. Splitting here is what stops the map's cap from being a
+        # statement-width decision.
+        live: set[int] = set()
         async with connection() as db:
-            rows = await db.execute_fetchall(
-                f"SELECT id FROM pending_memory_tasks WHERE id IN ({placeholders})", held
-            )
-        live = {row[0] for row in rows}
+            for start in range(0, len(held), _RECONCILE_READ_CHUNK):
+                chunk = held[start : start + _RECONCILE_READ_CHUNK]
+                rows = await db.execute_fetchall(
+                    "SELECT id FROM pending_memory_tasks WHERE id IN "
+                    f"({','.join('?' * len(chunk))})",
+                    chunk,
+                )
+                live.update(row[0] for row in rows)
         for task_id in held:
             if task_id not in live:
                 self._forget_session(task_id)
