@@ -361,14 +361,29 @@ CREATE INDEX IF NOT EXISTS idx_memories_span
     ON memories(agent_id, timestamp, project_id, channel);
 """
 
-FTS_SQL = """
-CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+# bug-326: the two virtual-table statements, addressable on their own. A health
+# repair that finds one index table absent has to recreate exactly that table
+# while it is inside the fix run's transaction — executescript(FTS_SQL) would
+# commit the repairs made before it. FTS_SQL below is composed from these, so
+# the DDL still has one definition.
+FTS_TABLE_SQL: dict[str, str] = {
+    "episodes_fts": """CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
     summary,
     keywords,
     content=episodes,
     content_rowid=id,
     tokenize='trigram'
-);
+);""",
+    "memories_fts": """CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    content,
+    content=memories,
+    content_rowid=id,
+    tokenize='trigram'
+);""",
+}
+
+FTS_SQL = f"""
+{FTS_TABLE_SQL["episodes_fts"]}
 
 CREATE TRIGGER IF NOT EXISTS episodes_ai AFTER INSERT ON episodes BEGIN
     INSERT INTO episodes_fts(rowid, summary, keywords)
@@ -388,12 +403,7 @@ WHEN old.summary <> new.summary OR old.keywords <> new.keywords BEGIN
     VALUES (new.id, new.summary, new.keywords);
 END;
 
-CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-    content,
-    content=memories,
-    content_rowid=id,
-    tokenize='trigram'
-);
+{FTS_TABLE_SQL["memories_fts"]}
 
 CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
     INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);

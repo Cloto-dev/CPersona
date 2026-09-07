@@ -147,7 +147,7 @@ on the token economics of session-end → `/clear` → `recall`.
 
 Every release is gated by a machine-verifiable process: multi-agent audit rounds with adversarial verification, a [bug ledger](https://github.com/Cloto-dev/cpersona/blob/master/qa/issue-registry.json) that fails CI if a fix marker disappears or a removed defect returns, structural gates for invariants a plain test cannot express, a mutation proof that those gates go red when the invariant is broken, and gates holding the documented counts, defaults and version claims to the source that defines them.
 
-Behind it: **~1,615 test functions** across ~133 test modules (~2,060 cases parametrised, more test code than server code), on **Schema v13** — [how a release is gated](https://cloto-dev.github.io/CPersona/quality-assurance/).
+Behind it: **~1,670 test functions** across ~134 test modules (~2,140 cases parametrised, more test code than server code), on **Schema v13** — [how a release is gated](https://cloto-dev.github.io/CPersona/quality-assurance/).
 
 ## Support
 

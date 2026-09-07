@@ -75,6 +75,7 @@ the counting stays in the runner and only the verdict moves:
   the meta-test over the registry, not this fallback.
 """
 
+import contextlib
 import datetime
 import json
 import logging
@@ -94,7 +95,7 @@ from cpersona.config import (
     VECTOR_SEARCH_MODE,
     local_blobs_stored,
 )
-from cpersona.database import SCHEMA_VERSION, release_read_probe_transaction
+from cpersona.database import FTS_TABLE_SQL, SCHEMA_VERSION, release_read_probe_transaction
 from cpersona.utils import (
     SCORING_VERSION,
     _MEMORY_ANNOTATION_PATTERN,
@@ -354,6 +355,11 @@ async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
 
 # SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999 on older builds; stay under it.
 _NONFINITE_REPAIR_CHUNK = 500
+# bug-358: the scan page. Bounded by peak memory rather than by SQLITE_MAX_VARIABLE_NUMBER,
+# which is why it is smaller than the repair chunk above and why the two are separate
+# constants: a page holds full embedding blobs (768 floats = 3 KB each at the shipped
+# width), so 100 rows is ~300 KB resident whatever the corpus is.
+_NONFINITE_SCAN_CHUNK = 100
 
 
 async def check_nonfinite_embedding(db, agent_id: str, fix: bool) -> list[dict]:
@@ -382,11 +388,27 @@ async def check_nonfinite_embedding(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     findings = []
     for table in ("memories", "episodes"):
-        rows = await db.execute_fetchall(
-            f"SELECT id, embedding FROM {table} WHERE embedding IS NOT NULL{iso.and_clause}",
-            iso.params,
-        )
-        bad = [int(r[0]) for r in rows if not vector.stored_blob_is_finite(r[1])]
+        # bug-358: read in keyset pages rather than materialising every stored
+        # vector. The output of this scan is a list of ids, so nothing needs the
+        # blobs resident together, and the peak was measured to track the corpus
+        # linearly (1.04x at both 1,000 and 4,000 rows of 768-wide vectors) on the
+        # default health path, with no adversary involved. The repair side beside
+        # it was already chunked; this is the same discipline on the read.
+        bad: list[int] = []
+        last_id = 0
+        while True:
+            rows = await db.execute_fetchall(
+                f"SELECT id, embedding FROM {table} "
+                f"WHERE embedding IS NOT NULL AND id > ?{iso.and_clause} "
+                "ORDER BY id LIMIT ?",
+                (last_id, *iso.params, _NONFINITE_SCAN_CHUNK),
+            )
+            if not rows:
+                break
+            bad.extend(int(r[0]) for r in rows if not vector.stored_blob_is_finite(r[1]))
+            last_id = int(rows[-1][0])
+            if len(rows) < _NONFINITE_SCAN_CHUNK:
+                break
         if not bad:
             continue
         if fix:
@@ -418,70 +440,75 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cach
     if not vector._embedding_client:
         return []
     iso = isolation_where(agent_id=agent_id or None)
-    try:
-        # bug-083: when do_check_health pre-probed the dimension outside the write seam
-        # (embedding_cache carries it as "expected_dim"), use that instead of a live
-        # probe — a fix=True run executes this check INSIDE transaction(), and an embed
-        # here holds the shared write lock across an HTTP round-trip bounded only by the
-        # embedding timeout, stalling every other writer (the bug-072 class). A None
-        # probe result skips the check, same as a failed live probe.
-        if embedding_cache is not None:
-            expected_dim = embedding_cache.get("expected_dim")
-        else:
+    # bug-083: when do_check_health pre-probed the dimension outside the write seam
+    # (embedding_cache carries it as "expected_dim"), use that instead of a live
+    # probe — a fix=True run executes this check INSIDE transaction(), and an embed
+    # here holds the shared write lock across an HTTP round-trip bounded only by the
+    # embedding timeout, stalling every other writer (the bug-072 class). A None
+    # probe result skips the check, same as a failed live probe.
+    if embedding_cache is not None:
+        expected_dim = embedding_cache.get("expected_dim")
+    else:
+        try:
             test_emb = await vector._embedding_client.embed(["test"])
-            expected_dim = len(test_emb[0]) if test_emb and test_emb[0] else None
-        if not expected_dim:
+        except Exception as e:
+            # bug-354: an unreachable backend is check_embedding_backend's finding,
+            # not this one, so the probe alone keeps its silent skip. Everything
+            # below reads the database: a failure there is this critical check
+            # failing to VERIFY, and it must reach the runner's crashed-check path
+            # rather than being spelled the same way as a verified-clean corpus.
+            logger.warning("Embedding dimension probe failed: %s", e)
             return []
-        expected_bytes = expected_dim * 4
-        mismatched_mem = (
-            await db.execute_fetchall(
-                f"""SELECT COUNT(*) FROM memories
-                WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
-                (expected_bytes, *iso.params),
-            )
-        )[0][0]
-        mismatched_ep = (
-            await db.execute_fetchall(
-                f"""SELECT COUNT(*) FROM episodes
-                WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
-                (expected_bytes, *iso.params),
-            )
-        )[0][0]
-        mismatched = mismatched_mem + mismatched_ep
-        if mismatched == 0:
-            return []
-        if fix:
-            # NULL out mismatched BLOBs so the null_embedding fixer re-embeds them.
-            if mismatched_mem > 0:
-                await db.execute(
-                    f"""UPDATE memories SET embedding = NULL
-                    WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
-                    (expected_bytes, *iso.params),
-                )
-            if mismatched_ep > 0:
-                await db.execute(
-                    f"""UPDATE episodes SET embedding = NULL
-                    WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
-                    (expected_bytes, *iso.params),
-                )
-        return [
-            {
-                "type": "embedding_dimension_mismatch",
-                "count": mismatched,
-                "memories": mismatched_mem,
-                "episodes": mismatched_ep,
-                "expected_dim": expected_dim,
-                # Every mismatched row is writable: this fixer NULLs a BLOB
-                # rather than rewriting caller data, so it carries no locked = 0
-                # guard (bug-098 protects authored content, and a wrong-length
-                # vector is not that). The declaration is still required — and
-                # `critical` is never de-escalated regardless.
-                "repairable": mismatched,
-            }
-        ]
-    except Exception as e:
-        logger.warning("Embedding dimension check failed: %s", e)
+        expected_dim = len(test_emb[0]) if test_emb and test_emb[0] else None
+    if not expected_dim:
         return []
+    expected_bytes = expected_dim * 4
+    mismatched_mem = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+            WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
+            (expected_bytes, *iso.params),
+        )
+    )[0][0]
+    mismatched_ep = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM episodes
+            WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
+            (expected_bytes, *iso.params),
+        )
+    )[0][0]
+    mismatched = mismatched_mem + mismatched_ep
+    if mismatched == 0:
+        return []
+    if fix:
+        # NULL out mismatched BLOBs so the null_embedding fixer re-embeds them.
+        if mismatched_mem > 0:
+            await db.execute(
+                f"""UPDATE memories SET embedding = NULL
+                WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
+                (expected_bytes, *iso.params),
+            )
+        if mismatched_ep > 0:
+            await db.execute(
+                f"""UPDATE episodes SET embedding = NULL
+                WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
+                (expected_bytes, *iso.params),
+            )
+    return [
+        {
+            "type": "embedding_dimension_mismatch",
+            "count": mismatched,
+            "memories": mismatched_mem,
+            "episodes": mismatched_ep,
+            "expected_dim": expected_dim,
+            # Every mismatched row is writable: this fixer NULLs a BLOB
+            # rather than rewriting caller data, so it carries no locked = 0
+            # guard (bug-098 protects authored content, and a wrong-length
+            # vector is not that). The declaration is still required — and
+            # `critical` is never de-escalated regardless.
+            "repairable": mismatched,
+        }
+    ]
 
 
 def _blobs_are_stored() -> bool:
@@ -794,8 +821,11 @@ async def _reembed_null_rows(db, table: str, text_col: str, iso, embedding_cache
                 )
                 if getattr(cur, "rowcount", 0) == 1:
                     re_embedded += 1
-        except Exception:
-            pass
+        except Exception as e:
+            # bug-379: still per-row and still non-fatal -- one unembeddable row
+            # must not abort the pass over the others -- but no longer silent.
+            # The caller reports the count; this says which row and why.
+            logger.warning("re-embed failed for %s id=%s: %s", table, row_id, e)
     return re_embedded
 
 
@@ -826,9 +856,14 @@ async def check_null_embedding(db, agent_id: str, fix: bool, embedding_cache=Non
         # going down reads as policy rather than as a fixer that keeps failing.
         issue["repair"] = "skipped: this configuration stores no local memory embeddings"
     elif fix and vector._embedding_client:
-        re_embedded = await _reembed_null_rows(db, "memories", "content", iso, embedding_cache)
-        if re_embedded > 0:
-            issue["re_embedded"] = re_embedded
+        # bug-379: reported whether or not it is positive. Omitting the zero made a
+        # repair that could not write byte-identical to a run that never attempted
+        # one, so an operator could not tell a failing fixer from a corpus that
+        # needed no repair. Under fix the key is the repair's outcome, and zero is
+        # an outcome; without fix it stays absent, which is what says "not attempted".
+        issue["re_embedded"] = await _reembed_null_rows(
+            db, "memories", "content", iso, embedding_cache
+        )
     return [issue]
 
 
@@ -853,9 +888,10 @@ async def check_null_episode_embedding(db, agent_id: str, fix: bool, embedding_c
         "repairable": _reembeddable(null_count),
     }
     if fix and vector._embedding_client:
-        re_embedded = await _reembed_null_rows(db, "episodes", "summary", iso, embedding_cache)
-        if re_embedded > 0:
-            issue["re_embedded"] = re_embedded
+        # bug-379: same as the memories twin above -- zero is an outcome under fix.
+        issue["re_embedded"] = await _reembed_null_rows(
+            db, "episodes", "summary", iso, embedding_cache
+        )
     return [issue]
 
 
@@ -895,20 +931,35 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     for table, fts in (("memories", "memories_fts"), ("episodes", "episodes_fts")):
         rebuild = f"INSERT INTO {fts}({fts}) VALUES('rebuild')"
         corrupt = False
-        try:
-            await db.execute(f"INSERT INTO {fts}({fts}, rank) VALUES('integrity-check', 1)")
-        except sqlite3.OperationalError:
-            # Enhanced (external-content) form unsupported — structural check only.
+        # bug-326: absent is not the same as unsupported, and both integrity
+        # statements raise OperationalError for either — so the fallback ladder
+        # below read a dropped index table as a build without the command and
+        # skipped it. SQLite keeps the triggers, whose bodies merely reference
+        # the table, so nothing else noticed; the next keyword recall met the
+        # missing table on its join. Ask sqlite_master first, where the two
+        # states are distinguishable, and let the ladder keep the silent skip
+        # for the one it was written for.
+        present = await db.execute_fetchall(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (fts,)
+        )
+        missing = not present
+        if missing:
+            corrupt = True
+        else:
             try:
-                await db.execute(f"INSERT INTO {fts}({fts}) VALUES('integrity-check')")
+                await db.execute(f"INSERT INTO {fts}({fts}, rank) VALUES('integrity-check', 1)")
             except sqlite3.OperationalError:
-                await _release_probe_transaction()
-                continue  # FTS table absent or command unsupported entirely
+                # Enhanced (external-content) form unsupported — structural check only.
+                try:
+                    await db.execute(f"INSERT INTO {fts}({fts}) VALUES('integrity-check')")
+                except sqlite3.OperationalError:
+                    await _release_probe_transaction()
+                    continue  # the command itself is unavailable on this build
+                except sqlite3.DatabaseError:
+                    corrupt = True
             except sqlite3.DatabaseError:
                 corrupt = True
-        except sqlite3.DatabaseError:
-            corrupt = True
-        await _release_probe_transaction()
+            await _release_probe_transaction()
         if not corrupt:
             continue
         # Object-scoped, not row-scoped: the repair is one whole-index rebuild,
@@ -921,6 +972,12 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
             "repairable": 1,
         }
         if fix:
+            if missing:
+                # Recreate before rebuilding: the rebuild command needs the table
+                # to exist. One statement, not executescript(FTS_SQL) — this runs
+                # inside the fix run's transaction, which executescript would
+                # commit out from under (see FTS_TABLE_SQL in database.py).
+                await db.execute(FTS_TABLE_SQL[fts])
             await db.execute(rebuild)
             # bug-069: mirror the detection fallback ladder. The enhanced rank=1 verify is
             # unsupported on SQLite < 3.42 and raises OperationalError there; without this
@@ -943,10 +1000,12 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_schema_version(db, agent_id: str, fix: bool) -> list[dict]:
-    try:
-        db_version = (await db.execute_fetchall("SELECT MAX(version) FROM schema_version"))[0][0]
-    except Exception:
-        return []
+    # bug-355: no guard here on purpose. A database whose version cannot be read
+    # -- the shape the report-only maintenance path meets, since it skips boot
+    # migrations -- is exactly the state this critical check exists to name, and
+    # swallowing the error spelled it the same way as a current schema. The
+    # runner turns what escapes into a crashed-check finding.
+    db_version = (await db.execute_fetchall("SELECT MAX(version) FROM schema_version"))[0][0]
     if db_version == SCHEMA_VERSION:
         return []
     return [
@@ -1039,6 +1098,22 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "severity": "warn",
         "sql": "CREATE INDEX idx_episodes_isolation "
         "ON episodes(agent_id, project_id, created_at DESC)",
+    },
+    # bug-414: both of these ship from database.py's migration ladder and neither
+    # was listed here, so the check that exists to notice a missing index could not
+    # see them. They were found by comparing a fresh database's own objects against
+    # this registry -- the direction the golden test did not run in.
+    "idx_memories_agent_channel": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_memories_agent_channel "
+        "ON memories(agent_id, channel, created_at DESC)",
+    },
+    "idx_episodes_agent_channel": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_episodes_agent_channel "
+        "ON episodes(agent_id, channel, created_at DESC)",
     },
     "idx_memories_agent": {
         "kind": "index",
@@ -1354,19 +1429,20 @@ async def axis_distribution(db, agent_id: str = "") -> dict:
 
 async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
-    try:
-        bad_source = (
-            await db.execute_fetchall(
-                f"SELECT COUNT(*) FROM memories WHERE json_valid(source) = 0{iso.and_clause}", iso.params
-            )
-        )[0][0]
-        bad_metadata = (
-            await db.execute_fetchall(
-                f"SELECT COUNT(*) FROM memories WHERE json_valid(metadata) = 0{iso.and_clause}", iso.params
-            )
-        )[0][0]
-    except Exception:
-        return []
+    # bug-380: no guard around the two counts. One guard over both meant a failure
+    # on the second query threw away the corruption the first one had already
+    # counted, and returning [] left the runner nothing to synthesise a
+    # crashed-check finding from either -- the one answer that says nothing true.
+    bad_source = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM memories WHERE json_valid(source) = 0{iso.and_clause}", iso.params
+        )
+    )[0][0]
+    bad_metadata = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM memories WHERE json_valid(metadata) = 0{iso.and_clause}", iso.params
+        )
+    )[0][0]
     if bad_source + bad_metadata == 0:
         return []
     # Before the repair, or it would count what it just cleared. One row can be
@@ -1484,7 +1560,7 @@ async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     ahead = (
         await db.execute_fetchall(
             f"""SELECT COUNT(*) FROM memories
-                WHERE datetime(timestamp) > datetime(?){iso.and_clause}""",
+                WHERE strftime('%Y-%m-%d %H:%M:%f', timestamp) > strftime('%Y-%m-%d %H:%M:%f', ?){iso.and_clause}""",
             (boundary, *iso.params),
         )
     )[0][0]
@@ -1495,7 +1571,7 @@ async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     repairable = (
         await db.execute_fetchall(
             f"""SELECT COUNT(*) FROM memories
-                WHERE datetime(timestamp) > datetime(?)
+                WHERE strftime('%Y-%m-%d %H:%M:%f', timestamp) > strftime('%Y-%m-%d %H:%M:%f', ?)
                 AND datetime(created_at) IS NOT NULL
                 AND datetime(created_at) <= datetime(?)
                 AND locked = 0{iso.and_clause}""",
@@ -1507,7 +1583,7 @@ async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
         await db.execute(
             f"""UPDATE memories
                 SET timestamp = strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at)
-                WHERE datetime(timestamp) > datetime(?)
+                WHERE strftime('%Y-%m-%d %H:%M:%f', timestamp) > strftime('%Y-%m-%d %H:%M:%f', ?)
                 AND datetime(created_at) IS NOT NULL
                 AND datetime(created_at) <= datetime(?)
                 AND locked = 0{iso.and_clause}""",
@@ -1952,8 +2028,17 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
             WHERE {invalid_source_type_where(canonical_types)}
             AND locked = 0{iso.and_clause}
             LIMIT ?""",
-        (*iso.params, INVALID_SOURCE_CLASSIFY_CAP),
+        # bug-376: one row past the cap. Exhaustion used to be decided by
+        # `len(rows) < CAP`, which calls a scan that returned exactly the cap --
+        # an exhaustive one -- truncated, so a converged fix run still answered
+        # with a classified count, a null repairable and the run-again hint.
+        # Asking for the extra row makes the question "is there more" instead of
+        # a count that is ambiguous at exactly the boundary; it is then dropped,
+        # so classification still walks at most the cap.
+        (*iso.params, INVALID_SOURCE_CLASSIFY_CAP + 1),
     )
+    classified_all = len(rows) <= INVALID_SOURCE_CLASSIFY_CAP
+    rows = rows[:INVALID_SOURCE_CLASSIFY_CAP]
     repairs: list[tuple[int, dict]] = []
     unmapped = 0
     for row_id, raw in rows:
@@ -2017,7 +2102,6 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
             )
         )[0][0]
 
-    classified_all = len(rows) < INVALID_SOURCE_CLASSIFY_CAP
     if not classified_all:
         issue["classified"] = len(rows)
     # 2.5.5: this check's local de-escalation became the registry-wide
@@ -2644,17 +2728,48 @@ async def run_health_checks(
     selected = set(checks) if checks else None
     issues: list[dict] = []
     summary = {"critical": 0, "warn": 0, "info": 0}
+    if fix:
+        # bug-361: the loop below turns every exception from a check into an
+        # ordinary finding, so nothing escapes to transaction()'s rollback and a
+        # repair that raised between its two statements was committed half done
+        # (measured: one column rewritten, the other left invalid, with only a
+        # crashed-check finding to say so). The runner cannot simply re-raise --
+        # one failed repair must not discard the rest of the run's -- so each
+        # check gets its own savepoint instead, which is the boundary that can
+        # undo one check while the rest of the run still commits.
+        #
+        # This outer savepoint is opened and never released: it guarantees an open
+        # transaction for the per-check savepoints to nest inside, because
+        # RELEASE of an OUTERMOST savepoint commits, which would break the run
+        # into per-check commits. transaction() still owns the end of the run --
+        # its commit releases every savepoint, its rollback discards them all.
+        await db.execute("SAVEPOINT health_run")
     for check in HEALTH_CHECKS:
         if selected is not None and check.name not in selected:
             continue
+        savepoint = f"health_check_{check.name}" if fix else None
+        if savepoint:
+            await db.execute(f'SAVEPOINT "{savepoint}"')
         try:
             if embedding_cache is not None and check.name in _EMBEDDING_CHECKS:
                 found = await check.runner(db, agent_id, fix, embedding_cache=embedding_cache)
             else:
                 found = await check.runner(db, agent_id, fix)
         except Exception as e:
+            if savepoint:
+                # Undo this check's writes only. A statement-level abort keeps the
+                # statements that ran before it, which is exactly the half-written
+                # row this rolls back to.
+                with contextlib.suppress(Exception):
+                    await db.execute(f'ROLLBACK TO "{savepoint}"')
             logger.warning("health check %s crashed: %s", check.name, e)
             found = [{"type": "check_crashed", "check_name": check.name, "detail": str(e), "severity": "warn"}]
+        finally:
+            if savepoint:
+                # ROLLBACK TO does not pop the savepoint; RELEASE does, on both
+                # paths. Never the outermost one, so this never commits.
+                with contextlib.suppress(Exception):
+                    await db.execute(f'RELEASE "{savepoint}"')
         for issue in found:
             issue.setdefault("severity", check.base_severity)
             issue.setdefault("check", check.name)
@@ -2793,6 +2908,12 @@ async def deep_anonymous_source(db, agent_id: str, fix: bool) -> dict:
     return result
 
 
+# bug-328: rows per DELETE in the short-content repair. 500 is the same width
+# vector._ID_FETCH_CHUNK uses for a scattered `IN (...)`, chosen to stay well under
+# 999 -- the compile-time SQLITE_MAX_VARIABLE_NUMBER of every SQLite before 3.32.0.
+_SHORT_CONTENT_DELETE_CHUNK = 500
+
+
 async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
     rows = await db.execute_fetchall(
         "SELECT id, content FROM memories WHERE agent_id = ? AND LENGTH(TRIM(content)) <= ?",
@@ -2801,14 +2922,24 @@ async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
     fixed_count = 0
     if fix and rows:
         ids = [r[0] for r in rows]
-        placeholders = ",".join("?" * len(ids))
-        # Never delete locked rows (bug-015 / the bug-007 invariant): a memory the
-        # user explicitly locked must survive maintenance even when it is short.
-        # rowcount (not len(ids)) so the reported count excludes the survivors.
-        cur = await db.execute(
-            f"DELETE FROM memories WHERE id IN ({placeholders}) AND locked = 0", ids
-        )
-        fixed_count = cur.rowcount
+        # bug-328: one host parameter per matching row, in a single statement, hit
+        # SQLITE_MAX_VARIABLE_NUMBER on a corpus large enough to need the repair --
+        # measured at 32,767 rows against the native ceiling of 32,766, where the
+        # statement raised "too many SQL variables", nothing was deleted, and the
+        # handler still answered fixed. Chunked at the width every other scattered
+        # `IN (...)` in this codebase uses (vector._ID_FETCH_CHUNK), summing rowcount
+        # so the reported repair count stays honest. The locked exclusion is
+        # per-statement and so is unaffected by the split.
+        for start in range(0, len(ids), _SHORT_CONTENT_DELETE_CHUNK):
+            chunk = ids[start : start + _SHORT_CONTENT_DELETE_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            # Never delete locked rows (bug-015 / the bug-007 invariant): a memory the
+            # user explicitly locked must survive maintenance even when it is short.
+            # rowcount (not len(chunk)) so the reported count excludes the survivors.
+            cur = await db.execute(
+                f"DELETE FROM memories WHERE id IN ({placeholders}) AND locked = 0", chunk
+            )
+            fixed_count += cur.rowcount
     result = {"count": len(rows)}
     if fix:
         result["fixed"] = fixed_count
@@ -2910,13 +3041,17 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
         }
     calibrated_at = state.get("calibrated_at")
     try:
-        age_days = (
-            datetime.datetime.now(datetime.timezone.utc)
-            - datetime.datetime.fromisoformat(calibrated_at)
-        ).days
+        age = datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(
+            calibrated_at
+        )
     except (TypeError, ValueError):
         return {"status": "unknown", "reason": "sidecar has no parseable calibrated_at"}
-    if age_days > CALIBRATION_STALE_DAYS:
+    # bug-377: decide on elapsed seconds, report floored days. `.days` truncates, so
+    # deciding on it made a calibration one second past the threshold read as fresh
+    # for another whole day -- a false-freshness window as wide as the unit it was
+    # measured in. The number shown stays the readable day count.
+    age_days = age.days
+    if age.total_seconds() > CALIBRATION_STALE_DAYS * 86400:
         return {
             "status": "stale",
             "age_days": age_days,
@@ -2943,11 +3078,34 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
            ORDER BY id DESC LIMIT ?""",
         (agent_id, NEAR_DUPLICATE_ROW_CAP),
     )
+    # bug-384: a non-finite component makes every comparison against the threshold
+    # false, so one bad row removed its own pairs -- and, through the norm, unrelated
+    # finite pairs sharing the matrix -- from a merge-candidate list that said
+    # nothing about it. The branch below already discloses a sample it refuses to
+    # compare; this refusal is disclosed the same way. The verdict comes from the
+    # same helper the storage seam and the non-finite probe use, so the three cannot
+    # each hold their own idea of "finite".
+    non_finite = [r[0] for r in rows if not vector.stored_blob_is_finite(r[2])]
+    if non_finite:
+        rows = [r for r in rows if r[0] not in set(non_finite)]
+    # Said in the field the sibling refusal already uses, and only there: the ids
+    # belong to check_health's nonfinite_embedding probe, which is the registry
+    # entry that owns those rows and already lists them.
+    def _with_skipped(result: dict) -> dict:
+        if not non_finite:
+            return result
+        note = f"{len(non_finite)} row(s) excluded: non-finite embedding"
+        existing = result.get("skipped")
+        result["skipped"] = f"{existing}; {note}" if existing else note
+        return result
+
     if len(rows) < 2:
-        return {"pairs": 0, "rows_scanned": len(rows)}
+        return _with_skipped({"pairs": 0, "rows_scanned": len(rows)})
     dims = {len(r[2]) for r in rows}
     if len(dims) != 1:
-        return {"pairs": 0, "rows_scanned": len(rows), "skipped": "mixed embedding dimensions"}
+        return _with_skipped(
+            {"pairs": 0, "rows_scanned": len(rows), "skipped": "mixed embedding dimensions"}
+        )
     matrix = np.frombuffer(b"".join(r[2] for r in rows), dtype=np.float32).reshape(len(rows), -1)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
@@ -2969,7 +3127,9 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
             }
         )
     pairs.sort(key=lambda p: -p["cosine"])
-    result = {"pairs": len(pairs), "rows_scanned": n, "threshold": NEAR_DUPLICATE_COSINE}
+    result = _with_skipped(
+        {"pairs": len(pairs), "rows_scanned": n, "threshold": NEAR_DUPLICATE_COSINE}
+    )
     if pairs:
         result["samples"] = pairs[:20]
         result["hint"] = "review with merge_memories / delete_memory (agent judgment)"

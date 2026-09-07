@@ -426,3 +426,31 @@ def test_cli_roundtrip_exit_codes():
 
     missing = _cli(os.path.join(cli_dir, "nope.db"))
     assert missing.returncode == 2
+
+
+@pytest.mark.asyncio
+async def test_every_shipped_object_is_in_the_registry():
+    """The other direction (bug-414).
+
+    ``check_schema_objects`` walks ``_EXPECTED_OBJECTS`` and asks the database
+    about each entry; nothing asked the database what it holds. So an entry
+    deleted from the registry made a real, load-bearing object *invisible*
+    rather than reported -- the object still existed, and the one-way golden
+    test above stayed green because it only asserts that the surviving entries
+    are present. This walks the fresh database instead, which is the only
+    direction that can notice an object nobody is watching.
+
+    Auto-indexes (``sql IS NULL`` / the ``sqlite_`` prefix) are SQLite's own and
+    are excluded: they are not objects this package ships or could repair.
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type IN ('index', 'trigger') "
+        "AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
+    )
+    shipped = {r[0] for r in rows}
+    unwatched = sorted(shipped - set(checks._EXPECTED_OBJECTS))
+    assert not unwatched, (
+        f"these objects exist in a fresh database but are not in _EXPECTED_OBJECTS, so "
+        f"check_schema_objects cannot report them missing on a deployment: {unwatched}"
+    )

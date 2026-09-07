@@ -220,7 +220,13 @@ def future_timestamp_boundary(*, now: datetime | None = None) -> str:
     """
     reference = now if now is not None else datetime.now(timezone.utc)
     boundary = reference + timedelta(seconds=FUTURE_TIMESTAMP_SKEW_SECONDS)
-    return boundary.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    # bug-378: rendered with the subsecond part. Truncating it here truncated the
+    # SQL side of the comparison too -- both the boundary and the row's stamp were
+    # cut to the second -- so a row less than a second past the allowance compared
+    # equal and was missed, while `future_timestamp_issue`, which subtracts real
+    # instants, called the same row ahead. The two are supposed to agree about
+    # where "ahead" begins; the precision is part of that agreement.
+    return boundary.strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
 
 
 def episode_timestamp(start_time: str | None, created_at: str | None) -> str:
