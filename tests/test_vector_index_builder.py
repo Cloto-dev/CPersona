@@ -273,3 +273,54 @@ async def test_temp_file_does_not_survive_a_failed_build(corpus, tmp_path, monke
         await vector_index.build_index(corpus, "memories", path)
     assert not os.path.exists(f"{path}.tmp")
     assert not os.path.exists(path)
+
+
+# ---------------------------------------------------------------------------
+# bug-368 — the two "is this the canonical stamp" tests disagreed.
+# ---------------------------------------------------------------------------
+#
+# The builder asks the question twice: in SQL, as a GLOB against an ASCII-only
+# character class, and in Python, where str.isdigit() is also true for fullwidth
+# forms, other scripts' digits and superscripts. The streaming pass documents the
+# two as the same test. They were not, and the SQL side is a strict subset, so a
+# row with such a stamp made the embedding pass and the metadata pass disagree on
+# the row count -- which the builder reports as its snapshot-isolation check,
+# deleting its temp file and pointing the operator at a concurrent writer that
+# does not exist. Nothing answers wrongly; the corpus simply cannot be indexed
+# until the row is found by hand.
+#
+# The non-ASCII digits are written as escapes so the test file stays ASCII and
+# the characters cannot be normalised by an editor into something else.
+
+_FULLWIDTH_STAMP = "\uff12\uff10\uff12\uff16-01-01 00:00:00"
+_SUPERSCRIPT_STAMP = "20\u00b2\u00b6-01-01 00:00:00"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        "2026-01-01 00:00:00",
+        _FULLWIDTH_STAMP,
+        _SUPERSCRIPT_STAMP,
+        "2026-01-01T00:00:00",
+        "2026-01-01 00:00:00.5",
+        "",
+    ],
+)
+async def test_the_python_and_sql_canonical_tests_agree(stamp):
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        f"SELECT ? GLOB '{vector_index.CANONICAL_CREATED_AT}'", (stamp,)
+    )
+    in_sql = bool(rows[0][0])
+
+    assert vector_index._is_canonical(stamp) is in_sql, (
+        f"{stamp!r}: Python says {vector_index._is_canonical(stamp)}, SQL says {in_sql}; "
+        "the streaming pass documents them as the same test"
+    )
+
+
+def test_a_fullwidth_digit_is_not_a_canonical_stamp():
+    """The one the defect turned on, asserted on its own so a GLOB change cannot hide it."""
+    assert vector_index._is_canonical(_FULLWIDTH_STAMP) is False

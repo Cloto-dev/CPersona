@@ -162,16 +162,31 @@ class AliasLedger:
         self._aliases.setdefault(issuer, {})[subject] = alias
         try:
             self._persist()
-        except OSError as e:
+        except BaseException as e:
             # Undo the in-memory entry: handing out an alias that survives only
             # in this process would strand the first session's writes behind a
             # different alias after restart.
+            #
+            # bug-348: this used to catch OSError only, so a persist that failed
+            # any other way left the unpersisted alias live in memory and the
+            # retry took the cached fast path -- returning it with no error, and
+            # authorising the caller under an identity recorded nowhere. That is
+            # the loss this module exists to prevent, reached through the one
+            # exception class the rollback did not name. What the persist can
+            # raise is not a list worth keeping current: the rollback is correct
+            # for every way it can fail, so it runs for all of them. An exception
+            # that is not an ordinary error (cancellation, interrupt) is still
+            # rolled back and then re-raised as itself -- turning it into a
+            # ledger error would tell the caller the ledger failed when it did
+            # not.
             del self._aliases[issuer][subject]
             if not self._aliases[issuer]:
                 del self._aliases[issuer]
-            raise AliasLedgerError(
-                f"alias ledger {self._path!r} could not be written: {e}"
-            ) from e
+            if isinstance(e, Exception):
+                raise AliasLedgerError(
+                    f"alias ledger {self._path!r} could not be written: {e}"
+                ) from e
+            raise
         logger.info(
             "alias issued: %s for subject %r at issuer %s (ledger %s)",
             alias,
@@ -222,13 +237,29 @@ class AliasLedger:
             indent=2,
             sort_keys=True,
         )
+        # bug-322: the mode goes through the package's own helper rather than a
+        # bare os.fchmod. That attribute does not exist on Windows and this
+        # package ships as OS-independent, so the bare call raised AttributeError
+        # there -- past the OSError handler below, so the temp file and its
+        # descriptor leaked and the caller was authorised under an alias that had
+        # never been written. The helper returns quietly where the attribute is
+        # absent and logs a filesystem that cannot honour the mode. (The chmod is
+        # belt-and-braces either way: a file created through mkstemp is already
+        # private by contract.)
         fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".alias_ledger.")
+        owned = True
         try:
-            os.fchmod(fd, fileperms.PRIVATE_FILE_MODE)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fileperms.tighten(fd, tmp_path)
+            f = os.fdopen(fd, "w", encoding="utf-8")
+            owned = False  # fdopen took the descriptor; closing it is now f's job
+            with f:
                 f.write(payload + "\n")
             os.replace(tmp_path, self._path)
-        except OSError:
+        except BaseException:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
             raise
+        finally:
+            if owned:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
