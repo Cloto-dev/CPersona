@@ -516,6 +516,36 @@ async def test_keys_already_held_survive_an_outage(idp):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("hours", [2, 24, 168])
+async def test_keys_held_through_an_outage_stop_working_once_they_age_out(idp, hours):
+    """The other half of the promise above: *until they age out*.
+
+    ``_refresh`` says the keys already held keep working until they age out, and
+    ``JWKS_TTL_SECONDS`` says how long a fetched set is reused. With the bound on
+    the fetch alone nothing ages them out, so a key the issuer revoked would keep
+    verifying tokens for the whole length of a provider outage — the opposite of
+    the cost route (b) was chosen with (docs/OAUTH_DESIGN.md §11).
+
+    Only the cache clock moves here. Token expiry is still checked against real
+    time, so what this pins is stale-*key* acceptance and not expired tokens.
+    """
+    clock = [1000.0]
+    verifier = _verifier(idp, now=lambda: clock[0])
+    token = idp.mint()
+    assert await verifier.verify_token(token) is not None
+
+    idp.rotate("replacement")
+    idp.jwks_status = idp.metadata_status = 503
+    clock[0] += hours * 3600
+    assert await verifier.verify_token(token) is None
+
+    # And again past the cooldown, where the forgotten key set location sends the
+    # refresh through the metadata endpoint instead: still no acceptance.
+    clock[0] += oauth.JWKS_MIN_REFETCH_SECONDS + 1
+    assert await verifier.verify_token(token) is None
+
+
+@pytest.mark.asyncio
 async def test_a_failed_key_fetch_makes_the_next_attempt_re_read_the_metadata(idp):
     """An issuer that moves its key set must not be unreachable for the process.
 

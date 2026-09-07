@@ -326,6 +326,116 @@ def test_failed_persist_refuses_the_issuance(tmp_path, monkeypatch):
     assert ledger.peek(ISSUER, "user-1") is None
 
 
+# bug-351: the ledger was read once at startup and every issuance rewrote the
+# whole file from that snapshot, so a write the process did not make was erased.
+# The module docstring names both second writers this loses: the operator doing
+# manual account linking, and another server process over the same path.
+
+
+def _write_ledger(path, mapping):
+    path.write_text(
+        json.dumps({"version": 1, "aliases": mapping}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_an_operator_edit_survives_a_later_issuance(tmp_path):
+    """The documented escape hatch, made while the server is running.
+
+    Losing it is not a cosmetic loss: after a restart the relinked subject mints
+    a fresh alias and the memory space it already owns becomes unreachable.
+    """
+    path = tmp_path / "ledger.json"
+    _write_ledger(path, {ISSUER: {"old-sub": "u-aaaaaaaaaaaa"}})
+    ledger = aliases.AliasLedger(str(path))  # the process-lifetime instance
+
+    _write_ledger(
+        path,
+        {ISSUER: {"old-sub": "u-aaaaaaaaaaaa", "reissued-sub": "u-aaaaaaaaaaaa"}},
+    )
+    ledger.resolve_or_issue(ISSUER, "brand-new-sub")  # any first sign-in
+
+    on_disk = json.loads(path.read_text())["aliases"][ISSUER]
+    assert on_disk["reissued-sub"] == "u-aaaaaaaaaaaa", on_disk
+    assert on_disk["old-sub"] == "u-aaaaaaaaaaaa", on_disk
+    assert "brand-new-sub" in on_disk, on_disk
+    # And in memory, so this instance resolves the linked row without a restart.
+    assert ledger.peek(ISSUER, "reissued-sub") == "u-aaaaaaaaaaaa"
+
+
+def test_an_operator_relinking_an_existing_row_survives_a_later_issuance(tmp_path):
+    """The linking edit is a *change* to a row, not only an addition.
+
+    "Pointing two (issuer, subject) rows at one alias" rewrites the alias of a
+    subject the running process already holds under a different one, so a merge
+    that let this process's snapshot win for a row present in both would still
+    erase it. Separated from the additive case above because only this one
+    distinguishes the two merge directions.
+    """
+    path = tmp_path / "ledger.json"
+    _write_ledger(path, {ISSUER: {"sub-a": "u-aaaaaaaaaaaa", "sub-b": "u-bbbbbbbbbbbb"}})
+    ledger = aliases.AliasLedger(str(path))
+    assert ledger.peek(ISSUER, "sub-b") == "u-bbbbbbbbbbbb"
+
+    # The operator points sub-b at sub-a's space — the provider re-issue repair.
+    _write_ledger(path, {ISSUER: {"sub-a": "u-aaaaaaaaaaaa", "sub-b": "u-aaaaaaaaaaaa"}})
+    ledger.resolve_or_issue(ISSUER, "sub-c")
+
+    on_disk = json.loads(path.read_text())["aliases"][ISSUER]
+    assert on_disk["sub-b"] == "u-aaaaaaaaaaaa", on_disk
+    assert ledger.peek(ISSUER, "sub-b") == "u-aaaaaaaaaaaa"
+
+
+def test_two_processes_over_one_path_keep_both_issuances(tmp_path):
+    """One ledger instance per process, one file — the second shape it loses."""
+    path = tmp_path / "ledger.json"
+    a = aliases.AliasLedger(str(path))
+    b = aliases.AliasLedger(str(path))
+
+    alias_a, _ = a.resolve_or_issue(ISSUER, "subject-a")
+    alias_b, _ = b.resolve_or_issue(ISSUER, "subject-b")
+
+    on_disk = json.loads(path.read_text())["aliases"][ISSUER]
+    assert on_disk == {"subject-a": alias_a, "subject-b": alias_b}, on_disk
+
+
+def test_an_alias_another_process_already_issued_is_adopted_not_rivalled(tmp_path):
+    """Two processes, one *pair*: the row on disk is the one that survives a
+    restart, so the second must return it rather than mint a rival for the same
+    person — and must not claim the issuance."""
+    path = tmp_path / "ledger.json"
+    a = aliases.AliasLedger(str(path))
+    b = aliases.AliasLedger(str(path))
+
+    alias_a, issued_a = a.resolve_or_issue(ISSUER, "shared-sub")
+    alias_b, issued_b = b.resolve_or_issue(ISSUER, "shared-sub")
+
+    assert (alias_b, issued_a, issued_b) == (alias_a, True, False)
+    assert json.loads(path.read_text())["aliases"][ISSUER] == {"shared-sub": alias_a}
+
+
+def test_a_ledger_that_stopped_parsing_refuses_the_issuance(tmp_path):
+    """The startup posture, at the write. Overwriting an unparseable ledger with
+    this process's snapshot would destroy whatever it holds."""
+    path = tmp_path / "ledger.json"
+    ledger = aliases.AliasLedger(str(path))
+    path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(aliases.AliasLedgerError, match="not valid JSON"):
+        ledger.resolve_or_issue(ISSUER, "user-1")
+    assert ledger.peek(ISSUER, "user-1") is None, "the refused mint left residue behind"
+    assert path.read_text() == "{not json", "the unreadable ledger was overwritten"
+
+
+def test_control_a_single_writer_keeps_its_own_rows(tmp_path):
+    """The falsifier for the merge: with no second writer nothing changes."""
+    path = tmp_path / "ledger.json"
+    ledger = aliases.AliasLedger(str(path))
+    first, _ = ledger.resolve_or_issue(ISSUER, "s1")
+    second, _ = ledger.resolve_or_issue(ISSUER, "s2")
+    assert json.loads(path.read_text())["aliases"][ISSUER] == {"s1": first, "s2": second}
+
+
 @pytest.mark.asyncio
 async def test_a_persist_failure_denies_the_call_rather_than_erroring(tmp_path, monkeypatch):
     _activate(tmp_path)

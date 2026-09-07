@@ -4662,13 +4662,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/oauth.py",
-      "pattern": "return entry\\.keys\\.get\\(kid\\)",
+      "pattern": "if entry\\.keys and \\(self\\._now\\(\\) - entry\\.fetched_at\\) >= JWKS_TTL_SECONDS:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "auth",
       "fix_sketch": "Apply the freshness bound to the answer as well as to the fetch: past some multiple of the TTL, refuse rather than serve a key set that could not be revalidated. The grace window has to be a deliberate number, because refusing at exactly the TTL turns a brief provider hiccup into an outage.",
-      "note": "The existing outage test advances the clock only past the minimum refetch interval, so nothing pins behaviour beyond the TTL."
+      "note": "The existing outage test advances the clock only past the minimum refetch interval, so nothing pins behaviour beyond the TTL.",
+      "fix_note": "The freshness bound now governs the answer as well as the fetch: after the refresh attempt, a key set whose last successful fetch is older than JWKS_TTL_SECONDS is refused instead of served. That is the age-out the refresh helper docstring already promised and nothing implemented, so no new grace constant was introduced -- the horizon is the one the module already names for reuse. Pinned in tests/test_oauth_verification.py alongside the test that keys already held survive a short outage; removing the guard turns all three age parametrisations red."
     },
     {
       "id": "bug-321",
@@ -4912,12 +4914,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "_purge_agent_calibration\\(agent_id\\)",
+      "pattern": "dropped_indexes = _purge_local_vector_index\\(counts\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "data-remanence",
-      "fix_sketch": "Add the index files to the same enumeration of derived copies the purge already walks -- deleting them is safe by the artifact's own contract, and rebuilding is an operator action either way, so removal is the conservative choice."
+      "fix_sketch": "Add the index files to the same enumeration of derived copies the purge already walks -- deleting them is safe by the artifact's own contract, and rebuilding is an operator action either way, so removal is the conservative choice.",
+      "fix_note": "The purge now walks the contiguous index files alongside the calibration sidecar and the remote namespace, post-commit, dropping the index for each indexed table that actually lost rows. Removal rather than a rebuild without the agent: the module states the file is derived, never repaired and safe to delete, and rebuilding it here would move an operator-paced cost onto a delete. A delete that matched nothing leaves the file alone, so the tool cannot be used to keep the server on the live scan. The table list moved into vector_index.INDEXED_TABLES so the purge and the CLI cannot drift apart. Three tests in tests/test_2512b2_handlers.py pin it, and removing either the call or the row-count guard turns the matching ones red."
     },
     {
       "id": "bug-338",
@@ -5117,12 +5121,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/aliases.py",
-      "pattern": "\\{\"version\": _LEDGER_VERSION, \"aliases\": self\\._aliases\\}",
+      "pattern": "self\\._aliases = self\\._merged_with_disk\\(\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "data-loss",
-      "fix_sketch": "Re-read the file under a lock and merge before writing, refusing rather than overwriting when the on-disk state has changed since it was read; a modification-time or content fingerprint check is enough to notice, and the merge direction is unambiguous because entries are only ever added."
+      "fix_sketch": "Re-read the file under a lock and merge before writing, refusing rather than overwriting when the on-disk state has changed since it was read; a modification-time or content fingerprint check is enough to notice, and the merge direction is unambiguous because entries are only ever added.",
+      "fix_note": "The one path that writes now re-reads the file before it mints, and merges: a row present in both copies resolves to the one on disk, because this process persists every row it adds in the same call, so a row of ours that disagrees with the file is somebody else s edit and never a stale read of our own. That covers both second writers the module names -- the operator relinking rows for a provider re-issue, and another server process over the same path -- without adding a refusal for a changed file. Merging before the mint rather than at the write also means a second process that already issued for the pair is adopted rather than rivalled, and the collision check for a fresh alias sees the rows only the file knows. A ledger that stopped parsing raises, as it does at startup, before anything is added in memory. Six tests in tests/test_per_subject.py pin it; removing the re-read turns four red and reversing the merge direction turns the relink test red."
     },
     {
       "id": "bug-352",

@@ -139,6 +139,21 @@ class AliasLedger:
         existing = self.peek(issuer, subject)
         if existing is not None:
             return existing, False
+        # A miss is the one case where the snapshot taken at startup may be out
+        # of date, and the only case that writes. Re-read before minting: this
+        # module names the operator as a second writer (manual account linking
+        # is an edit to this file), and a second server process over the same
+        # path is the other one. Merging here rather than at the write is what
+        # makes the whole-file rewrite below safe, and it is also what keeps the
+        # freshly minted alias from colliding with one only the file knows.
+        self._aliases = self._merged_with_disk()
+        existing = self.peek(issuer, subject)
+        if existing is not None:
+            # Someone else issued for this pair between our startup and now.
+            # Theirs is the one on disk, so it is the one that survives a
+            # restart — return it rather than minting a rival for the same
+            # person, and say we did not issue it, because we did not.
+            return existing, False
         taken = {a for subjects in self._aliases.values() for a in subjects.values()}
         while True:
             alias = ALIAS_PREFIX + secrets.token_hex(6)
@@ -166,8 +181,36 @@ class AliasLedger:
         )
         return alias, True
 
+    def _merged_with_disk(self) -> dict:
+        """This process's rows, under any row a second writer has since made.
+
+        A row present in both copies resolves to the one on disk. That is safe
+        in the only direction it can differ: this process adds a row and
+        persists it in the same call, so a row of ours that disagrees with the
+        file is not a stale read of our own write — it is somebody else's edit.
+        And the edit the operator makes is a change to an existing pair (two
+        rows pointed at one alias), not only an addition, so a merge that let
+        the snapshot win would still erase the documented workflow.
+
+        A ledger on disk that no longer parses raises, as it does at startup:
+        overwriting it with this snapshot would destroy whatever it holds, which
+        is the loss this file exists to prevent. Refusing the issuance is the
+        posture the module docstring already states for a persist that fails.
+        """
+        merged = {issuer: dict(subjects) for issuer, subjects in self._aliases.items()}
+        if not os.path.exists(self._path):
+            return merged
+        for issuer, subjects in self._load(self._path).items():
+            merged.setdefault(issuer, {}).update(subjects)
+        return merged
+
     def _persist(self) -> None:
         """Write the whole ledger atomically (temp file + rename), mode 0600.
+
+        The write is wholesale, so it is only correct directly after the
+        re-read in ``resolve_or_issue`` — that is where a second writer's rows
+        are picked up, and this method must not be called from anywhere that
+        has not just done it.
 
         The ledger maps identities rather than secrets, but it decides whose
         memory space a request reaches, so it gets the same file hygiene the
