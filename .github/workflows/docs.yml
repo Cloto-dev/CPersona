@@ -77,11 +77,13 @@ permissions:
 
 concurrency:
   group: docs-${{ github.ref }}
-  # A superseded review build is worth cancelling; a superseded publish is not.
-  # Every publishing event resolves to the same ref and so shares one group, and
-  # cancelling there reproduces precisely the failure the published-site check
-  # was written for: a deploy cancelled by a run that does not replace it, after
-  # which nothing retries and nothing reports. Publishes queue instead.
+  # A publish that has started is never killed by a later one; a review build is.
+  # Measured, because the two halves of this are not the same rule: a run already
+  # going always finishes, while among the runs waiting behind it only the newest
+  # survives. Both are wanted here. The first is the failure the published-site
+  # check exists to catch -- a deploy cancelled by a run that does not replace it,
+  # after which nothing retries and nothing reports. The second costs nothing: a
+  # queued run would publish content the newer one is about to supersede.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
