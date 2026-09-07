@@ -6343,6 +6343,20 @@
       "category": "gate-reach",
       "fix_sketch": "Refuse an empty pattern where the row is checked, counting it as an error rather than handing it to grep, and add a case feeding the verifier such a row and asserting a non-zero exit.",
       "fix_note": "The check refuses an empty pattern before the file is opened rather than after: no file content can make an empty pattern meaningful, so there is nothing the open would tell us. It is counted as an error, which keeps the property bug-012 established — Total equals the sum of the four counters — and makes the run non-zero, so an entry that checks nothing cannot sit in the registry with the gate green. Found by comparing this script against the sibling implementations it was forked from and forked into: each had hardened against a different failure and none had converged, and this particular guard existed in the oldest of them since July 2026."
+    },
+    {
+      "id": "bug-432",
+      "summary": "(MEDIUM) The registry verifier had no reconciliation between Total and the four counters, so a row that reached no verdict at all was invisible. bug-309, bug-400 and bug-431 each closed one route to that state, but each was found only after it had already hidden an entry, and the check that made the original instance visible -- Total 344 against 149 + 0 + 192 + 0 = 341 -- was never carried into this script. Without it, a row counted in Total and absent from every bucket produces no output and exits 0, which is indistinguishable from a clean run. Measured on 2026-09-08 by dropping one counter increment from a copy of the script: two rows were counted in Total, none in any bucket, and the run exited 0.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-08T00:00:00Z",
+      "version": "2.5.12b3",
+      "file": "scripts/verify-issues.sh",
+      "pattern": "reached no check",
+      "expected": "present",
+      "status": "fixed",
+      "category": "gate-reach",
+      "fix_sketch": "Compare verified + stale + fixed + errors against total after the transport reconciliation, and fail when they disagree.",
+      "fix_note": "The transport check that already existed proves the rows arrived; this proves they were checked, and the two are not the same question -- a dropped entry is still a row, so it goes missing from the buckets rather than from the input and the transport check passes while it happens. It is fatal on its own rather than adding to `errors`, so it does not depend on the order of the later checks. It reports the arithmetic (which numbers disagreed), since a mismatch names no entry and is otherwise unactionable. The guard is unreachable through the front door now that every known route is closed, so the tests reach it by dropping a counter increment from a copy of the script: asserting only that it stays quiet on healthy runs would pass just as well if it were deleted."
     }
   ]
 }

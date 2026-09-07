@@ -396,3 +396,86 @@ def test_an_empty_pattern_is_refused_before_the_file_is_opened(tmp_path) -> None
 
     assert result.returncode != 0, "an entry that checks nothing exited 0:\n" + plain
     assert "FIXED" not in plain, "the empty pattern was excused by the missing file:\n" + plain
+
+
+# ---------------------------------------------------------------------------
+# Bucket reconciliation — the backstop for row classes not yet found.
+# ---------------------------------------------------------------------------
+#
+# bug-309, bug-400 and bug-431 each close one route by which a row reached no
+# verdict. The reconciliation closes the class: Total must equal the sum of the
+# four counters, so a row that touches none of them fails the run whatever the
+# route was. It is the check that made bug-012 visible in the first place --
+# `Total: 344` against `149 + 0 + 192 + 0 = 341` -- and it is deliberately not
+# reachable through the front door, since every known route is now guarded.
+# These cases therefore reach it the only honest way: by breaking the script.
+
+
+def _root_with_broken_script(tmp_path: Path, issues: list[dict], old: str, new: str) -> Path:
+    """A project root whose copy of the script has had one substitution applied.
+
+    Injecting the defect is the point. A guard that no input can trigger cannot
+    be shown to work by feeding it input, and asserting only that it stays
+    quiet on healthy runs would pass just as well if it were deleted.
+    """
+    root = _make_root(tmp_path, issues, {"src/thing.py": "needle\n"})
+    script = root / "scripts" / "verify-issues.sh"
+    text = script.read_text(encoding="utf-8")
+    assert text.count(old) == 1, f"anchor {old!r} appears {text.count(old)} times"
+    script.write_text(text.replace(old, new), encoding="utf-8")
+    return root
+
+
+def test_a_row_that_reaches_no_counter_fails_the_gate(tmp_path) -> None:
+    root = _root_with_broken_script(
+        tmp_path,
+        [_row(id="bug-901"), _row(id="bug-902")],
+        "verified=$((verified + 1))",
+        ":  # counter dropped on purpose",
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    plain = _strip_ansi(result.stdout)
+
+    assert result.returncode != 0, (
+        "two rows were counted in Total and none in any bucket, and the run "
+        "still exited 0:\n" + plain
+    )
+    assert "reached no check" in plain, plain
+
+
+def test_the_reconciliation_reports_the_arithmetic(tmp_path) -> None:
+    """The message has to say which numbers disagreed, or it cannot be acted on."""
+    root = _root_with_broken_script(
+        tmp_path,
+        [_row(id="bug-901")],
+        "verified=$((verified + 1))",
+        ":  # counter dropped on purpose",
+    )
+
+    plain = _strip_ansi(_run(root / "scripts" / "verify-issues.sh", root).stdout)
+
+    assert "= 0, against a total of 1" in plain, plain
+
+
+def test_the_reconciliation_stays_quiet_on_a_healthy_run(tmp_path) -> None:
+    """The control: it must not fire on rows that did reach a verdict."""
+    root = _make_root(
+        tmp_path,
+        [
+            _row(id="bug-901", expected="present"),
+            _row(id="bug-902", expected="absent", pattern="nowhere"),
+            _row(id="bug-903", expected="bogus"),
+            _row(id="bug-904", pattern=""),
+        ],
+        {"src/thing.py": "needle\n"},
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    plain = _strip_ansi(result.stdout)
+
+    assert "reached no check" not in plain, (
+        "the reconciliation fired on rows that all reached a verdict:\n" + plain
+    )
+    counts = _parse_summary(result.stdout)
+    assert counts["total"] == 4 and counts["errors"] == 2
