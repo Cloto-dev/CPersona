@@ -239,7 +239,11 @@ MUTATIONS: list[Mutation] = [
         replace="""            "INSERT OR REPLACE INTO memories"
             " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,\"""",
         breaks="a re-import overwrites existing rows instead of skipping — silent data loss on restore",
-        expect="test_import_skips_rows_whose_msg_id_already_exists",
+        # bug-349 put a content probe on the real-run arm too, so this clause is
+        # now the SECOND line of defence and an ordinary collision never reaches
+        # it. The pin that catches this moved with it: it blinds the probe and
+        # asserts the write still refuses.
+        expect="test_import_write_refuses_a_collision_the_probe_did_not_see",
     ),
     # ---------------------------------------------------------------------
     # do_merge_memories (admin_handlers.py).
