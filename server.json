@@ -3,7 +3,7 @@
   "name": "io.github.Cloto-dev/cpersona",
   "title": "CPersona",
   "description": "Persistent memory for AI agents in one SQLite file: hybrid vector + full-text + keyword search, no LLM in the loop, honest about degraded recall.",
-  "version": "2.5.12b2",
+  "version": "2.5.12b3",
   "websiteUrl": "https://github.com/Cloto-dev/cpersona#readme",
   "repository": {
     "url": "https://github.com/Cloto-dev/cpersona",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "cpersona",
-      "version": "2.5.12b2",
+      "version": "2.5.12b3",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
