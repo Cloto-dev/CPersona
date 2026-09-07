@@ -32,15 +32,20 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-from cpersona import vector, vector_index
+from cpersona import vector_index
 from cpersona.database import get_db
-from cpersona.isolation import isolation_where
+from cpersona.isolation import isolation_where, source_id_where
 
 DIM = 6
 AGENTS = ("agent.a", "agent.b", "")
 PROJECTS = ("", "proj.x", "proj.y")
 CHANNELS = ("", "chan.1", "chan.2")
-SOURCES = (None, "user-1", "user-2", "user-10")
+# bug-317: the case axis carries variance on purpose. While every source id here
+# was lowercase, the containment assertion held vacuously on code where the SQL
+# authority folded ASCII case and the index did not -- the check designated to
+# catch that disagreement could not fail on it. "User-1" and "user-1" are two
+# principals, and the corpus now contains both.
+SOURCES = (None, "user-1", "user-2", "user-10", "User-1", "USER-2")
 
 
 @pytest_asyncio.fixture
@@ -85,11 +90,14 @@ async def indexed():
 async def _authority_admits(db, agent_id, project_id, channel, source_id):
     """Exactly the rows the SQL predicate lets through — the authority's answer."""
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
-    src_like = vector._escape_like_prefix(source_id) if source_id else ""
-    src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
+    # bug-336: the authority answers through the same helper the arms use. While
+    # this spelled the predicate itself, "the authority's answer" was this file's
+    # answer, and the two stopped agreeing on ASCII case without anything saying so.
+    src_filter = source_id_where(source_id)
     rows = await db.execute_fetchall(
-        f"SELECT id FROM memories WHERE {iso.clause} AND embedding IS NOT NULL{src_clause}",
-        (*iso.params, *((src_like,) if src_like else ())),
+        f"SELECT id FROM memories WHERE {iso.clause} AND embedding IS NOT NULL"
+        f"{src_filter.and_clause}",
+        (*iso.params, *src_filter.params),
     )
     return {r[0] for r in rows}
 

@@ -56,7 +56,7 @@ import pytest_asyncio
 
 from cpersona import vector, vector_index
 from cpersona.database import get_db
-from cpersona.isolation import isolation_where
+from cpersona.isolation import isolation_where, source_id_where
 from tests.conftest import fake_embed_one
 
 AGENT = "chunkscan.agent"
@@ -368,9 +368,10 @@ async def _scan_memories(db, *, agent_id, project_id, channel, source_id, limit=
                          min_sim=-1.0):
     """`_scan_memories_local` wired the way `_search_vector` wires it."""
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
-    src_like = vector._escape_like_prefix(source_id)
-    src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
-    src_params = (src_like,) if src_like else ()
+    # bug-336: the shared helper, so this double cannot drift from the arm it wires.
+    src_filter = source_id_where(source_id)
+    src_clause = src_filter.and_clause
+    src_params = src_filter.params
     return await vector._scan_memories_local(
         db, iso, src_clause, src_params, SCAN_LIMIT, limit, ONE_HOT, DIM, min_sim,
         agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,

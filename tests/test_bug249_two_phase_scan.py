@@ -35,7 +35,7 @@ import pytest_asyncio  # noqa: E402
 from conftest import FakeEmbeddingClient, fake_embed_one  # noqa: E402
 from cpersona import vector  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
-from cpersona.isolation import isolation_where  # noqa: E402
+from cpersona.isolation import isolation_where, source_id_where  # noqa: E402
 
 AGENT = "agent.bug249"
 TOPIC = "zebra migration corridor sighting report"
@@ -175,9 +175,12 @@ def _args(*, project_id=None, channel="", source_id="", min_sim=0.0, limit=vecto
     a separate claim with its own section.
     """
     iso = isolation_where(agent_id=AGENT, project_id=project_id, channel=channel)
-    src_like = vector._escape_like_prefix(source_id)
-    src_clause = " AND json_extract(source, '$.id') LIKE ? ESCAPE '\\'" if src_like else ""
-    src_params = (src_like,) if src_like else ()
+    # bug-336: built by the shared helper, not spelled again here. A double that
+    # keeps its own copy of the predicate stops mirroring the arm it stands for the
+    # moment the real one changes -- which is exactly what happened to this axis.
+    src_filter = source_id_where(source_id)
+    src_clause = src_filter.and_clause
+    src_params = src_filter.params
     query_vec = np.array(fake_embed_one(TOPIC), dtype=np.float32)
     return dict(
         iso=iso,

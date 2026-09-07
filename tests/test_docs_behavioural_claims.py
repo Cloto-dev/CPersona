@@ -19,6 +19,7 @@ contract, and the test is downstream of it. When a claim is deliberately
 changed, the page and the test move together.
 """
 
+import pathlib
 import pytest
 import pytest_asyncio
 
@@ -1076,4 +1077,60 @@ async def test_embedded_is_reported_only_by_the_store_that_wrote_the_row(
     assert refused["result"] == "rejected", f"expected empty content to be refused: {refused}"
     assert "embedded" not in refused, (
         f"the FAQ names `rejected` alongside `skipped` as omitting the key: {refused}"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# docs/behavior-contracts.md §3 told callers that `match_reason` is absent on the
+# injected profile row (bug-389), and §7 named `limit` as the only thing that cuts that
+# row (bug-390). The code was right in both cases and the sentences were not, so what
+# these pin is the description against the behaviour -- measured here, and quoted from
+# the page so a rewrite that drops the correction is red.
+# --------------------------------------------------------------------------------------
+_CONTRACTS = pathlib.Path(__file__).resolve().parent.parent / "docs" / "behavior-contracts.md"
+
+
+@pytest.mark.asyncio
+async def test_the_profile_row_carries_match_reason_under_confidence(
+    clean_db, fake_embedding_client, monkeypatch
+):
+    """The scoring loop assigns a confidence to every row with no exclusion for the
+    `id == -1` sentinel, and the response loop emits `match_reason` for any row it
+    scored -- so with confidence on the profile row carries one."""
+    from cpersona import admin_handlers
+
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    await admin_handlers.do_update_profile(AGENT_A, "operator prefers metric units")
+    for index in range(50):
+        await memory_handlers.do_store(AGENT_A, {"content": f"gardening notes {index} soil"})
+
+    result = await memory_handlers.do_recall(AGENT_A, "gardening soil", limit=60)
+    profiles = [m for m in result["messages"] if m["content"].startswith("[Profile]")]
+    assert profiles, f"no profile row came back at a 50-row pool: {result}"
+    assert "match_reason" in profiles[0], (
+        "the profile row came back without match_reason under confidence, so §3's "
+        f"corrected sentence is now wrong in the other direction: {profiles[0]}"
+    )
+
+    text = _CONTRACTS.read_text(encoding="utf-8")
+    assert "With confidence on, the profile row is scored like any other and" in text, (
+        "§3 no longer says the profile row carries match_reason under confidence, "
+        "which is what this test measures it doing"
+    )
+
+
+def test_section_seven_names_the_pool_threshold_not_only_limit():
+    """§7 used to name `limit` as the only thing that removes the profile row, while
+    the row is dropped before any scoring branch on a pool under 50 -- the rule the
+    test above at `_recall_with(memories=49)` already measures, stated in two other
+    documents, and absent from the section a reader is sent to."""
+    text = _CONTRACTS.read_text(encoding="utf-8")
+    section = text.split("## 7.")[1].split("\n## ")[0]
+    assert "fewer than 50" in section, (
+        "§7 does not state the pool precondition, so a reader who reaches it after a "
+        "profile row went missing is told to look at `limit`, which cut nothing"
+    )
+    assert "before any scoring branch" in section, (
+        "§7 does not say the drop happens before scoring, which is why it applies with "
+        "confidence on as well as off"
     )
