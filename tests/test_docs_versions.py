@@ -175,13 +175,21 @@ def test_publishing_is_not_only_driven_by_pushes_to_this_branch():
     assert re.search(r"^  workflow_dispatch:\s*$", text, re.M), "the manual publish is gone"
 
 
-def test_a_superseded_publish_is_not_cancelled():
-    """Only review builds cancel their predecessors.
+def test_only_review_builds_cancel_a_publish_that_is_already_running():
+    """A publish that has started is never killed by a later one.
 
-    Publishing events all resolve to the same ref and share one concurrency
-    group. Cancelling there is the failure the published-site check exists to
-    catch: a deploy cancelled by a run that does not replace it, after which
-    nothing retries and nothing reports.
+    Measured rather than assumed. With a push mid-flight and two dispatches sent
+    ten seconds apart into the same group: the running push deployed
+    successfully, the first dispatch was cancelled while still *pending* and
+    never started a job, and the second ran to a successful deploy afterwards.
+
+    So this setting buys two things, and only the first is what it is named
+    after: a run that has begun always finishes, and among the runs waiting
+    behind it only the newest survives. Both are what this site wants. The first
+    is the failure the published-site check exists to catch -- a deploy
+    cancelled by a run that does not replace it, after which nothing retries and
+    nothing reports. The second is free: a queued run would publish content the
+    newer one is about to supersede.
     """
     text = _workflow_text()
     match = re.search(r"^\s*cancel-in-progress: (?P<value>.+)$", text, re.M)
