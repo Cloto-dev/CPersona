@@ -14,6 +14,13 @@
 # differs between those builds, and it is what canonical links and sitemap.xml
 # are built from, so a copy would publish the wrong ones.
 #
+# The version selector's three values (CPERSONA_DOC_VERSIONS, _VERSION_ID and
+# _SITE_ROOT) are not arguments: they are read from the environment by mkdocs.yml
+# and inherited by the build, so a branch's copy of this script carries them
+# without knowing they exist. Unset, which is every local build, the selector
+# renders nothing -- a local build cannot produce working cross-version links
+# anyway.
+#
 # Usage: scripts/build-docs.sh <output-dir> <site-url>
 
 set -euo pipefail

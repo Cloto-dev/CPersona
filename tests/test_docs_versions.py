@@ -197,3 +197,63 @@ def test_only_review_builds_cancel_a_publish_that_is_already_running():
     assert "pull_request" in match.group("value"), (
         f"cancel-in-progress is {match.group('value')!r}: publishes cancel each other again"
     )
+
+
+def test_the_version_list_marks_the_build_it_is_for():
+    """Exactly one row carries the marker, and it is the one asked for.
+
+    The marker rides inside the delimited string rather than in an environment
+    variable of its own because mkdocs parses an environment value as YAML: a
+    bare "2.5" arrives as the float 2.5 and never equals the string "2.5". That
+    was measured, not guessed, and it failed in the worst available way -- the
+    selector rendered, its links worked, and only the marker saying where the
+    reader was went missing, which nothing else checks.
+    """
+    assembler = _assembler()
+    config = {
+        "versions": [
+            {"id": "2.5", "title": "2.5.x"},
+            {"id": "2.6", "title": "2.6.x"},
+        ]
+    }
+    rows = assembler.version_list(config, "2.6").split(";")
+    assert [row.split("|")[2] for row in rows] == ["", "here"]
+    assert [row.split("|")[0] for row in rows] == ["2.5", "2.6"]
+
+
+def test_a_delimiter_in_a_version_field_is_refused(tmp_path):
+    """A delimiter inside a field would split one row into two, silently.
+
+    The list reaches the selector as one string joined on ";" and "|", so a field
+    containing either does not produce a broken string -- it produces a different,
+    plausible list. Refused at the map instead, where the message can name the
+    field.
+    """
+    assembler = _assembler()
+    bad = tmp_path / "docs-versions.json"
+    bad.write_text(
+        json.dumps(
+            {
+                "site_url": "https://example.test/",
+                "current": "2.5",
+                "versions": [{"id": "2.5", "title": "2.5|beta", "branch": "master"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(assembler.BuildError, match="delimiter"):
+        assembler.load_config(bad)
+
+
+def test_the_themes_own_version_selector_stays_off():
+    """Setting `extra.version` would switch Material's selector on, and it is wrong here.
+
+    It derives its base from the last path segment of the URL, so under /2.5/ja/
+    it reads "ja" as a version name and fetches a versions.json that is not
+    there. The Japanese pages would carry a broken selector and no gate would
+    say so, which is why the absence of this one key is worth an assertion.
+    """
+    text = MKDOCS_PATH.read_text(encoding="utf-8")
+    assert not re.search(r"^\s{2}version:\s", text, re.M), (
+        "mkdocs.yml sets extra.version: Material's own version selector is now on"
+    )

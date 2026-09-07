@@ -77,3 +77,41 @@
     })();
   </script>
 {% endblock %}
+
+{#
+  Version selector.
+
+  Rendered here at build time, from three values the assembler puts in the
+  environment, rather than by Material's own selector. Material's derives its
+  base from the last path segment of the URL, so under /2.5/ja/ it reads "ja" as
+  a version name and fetches a versions.json that is not there; the Japanese
+  pages would carry a broken selector and nothing would say so.
+
+  Links point at each version's root, not at the same page under another
+  version. A page exists in one line and not another often enough -- that is
+  what separate lines are for -- and a selector that sometimes lands on 404 is
+  worse than one that always lands somewhere real.
+
+  Renders nothing when the environment carries no versions, which is every local
+  build and every `mkdocs serve`. The theme guards the banner around this block
+  on the block having produced content, so empty here means absent there rather
+  than an empty bar.
+#}
+{% block announce %}
+  {%- set spec = config.extra.doc_versions | default("", true) | string -%}
+  {%- set root = config.extra.doc_site_root | default("", true) | string -%}
+  {%- if spec and root -%}
+    {%- set japanese = (config.theme.language | default("en", true) | string) == "ja" -%}
+    {%- set label = "バージョン" if japanese else "Version" -%}
+    <nav class="cp-versions" aria-label="{{ label }}">
+      <span class="cp-versions__label">{{ label }}</span>
+      {%- for entry in spec.split(";") -%}
+        {%- set parts = entry.split("|") -%}
+        {%- if parts | length >= 3 and parts[0] -%}
+          <a class="cp-versions__link" href="{{ root }}{{ parts[0] }}/"
+            {%- if parts[2] == "here" %} aria-current="true"{% endif %}>{{ parts[1] }}</a>
+        {%- endif -%}
+      {%- endfor -%}
+    </nav>
+  {%- endif -%}
+{% endblock %}
