@@ -5631,11 +5631,11 @@
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "_clamp_limit\\(limit, (500|200)\\)",
+      "pattern": "_clamp_limit\\(limit, LIST_(MEMORIES|EPISODES)_MAX_ROWS\\)",
       "expected": "present",
       "status": "open",
       "category": "undeclared-bound",
-      "note": "Deferred out of the frozen 2.5 line: every candidate fix moves a published surface -- declaring `maximum` on the two schemas refuses calls that succeed today, and adding a truncation marker adds a key to a documented response -- and a fix release on this line does neither. It belongs with the next feature line, where the row cap and the bug-255 character budget can be given one reporting shape instead of a marker for one and silence for the other. bug-255 closed the character half of the same two handlers and left the row cap undeclared; this is the remaining half rather than a regression of it."
+      "note": "Split in 2.5.12b3, and open for the half that is not freeze-eligible. CLOSED HERE (adds nothing to the contract): the two bare literals became one named constant each (admin_handlers.LIST_MEMORIES_MAX_ROWS / LIST_EPISODES_MAX_ROWS), the clamp and the tool descriptions render the same value, and the sentence that read 'none is dropped' now says which bound it speaks of -- so the ceiling is discoverable where a caller reads, and the published number cannot drift from the one the handler clamps by. STILL OPEN: declaring `maximum` in the two schemas would refuse calls that succeed today, and attaching a truncation marker would add a key to a documented response; neither restores established behaviour, so both belong to the next line, where the row cap and the bug-255 character budget can be given one reporting shape instead of a marker for one and silence for the other. Documenting the cap does not make a capped answer distinguishable from a complete one at runtime, which is the half this entry stays open for."
     },
     {
       "id": "bug-386",
@@ -5729,12 +5729,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "\"reason\": \"empty after sanitization\"",
+      "pattern": "\"ok\": False, \"profiles_updated\": 0, \"reason\": \"empty after sanitization\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape-consistency",
-      "note": "Deferred out of the frozen 2.5 line: the fix is a refusal contract -- either the response gains `ok:false` / `result:'rejected'` as its sibling has, or the description names the fields a caller must read -- and both change what a documented response promises, which a fix release on this line does not do. The narrower half of the claim is what reproduced: the outcome is distinguishable to a caller that reads `profiles_updated`, so this is a gap for a caller following the published branch rule rather than an undetectable write loss."
+      "note": "Deferred out of the frozen 2.5 line: the fix is a refusal contract -- either the response gains `ok:false` / `result:'rejected'` as its sibling has, or the description names the fields a caller must read -- and both change what a documented response promises, which a fix release on this line does not do. The narrower half of the claim is what reproduced: the outcome is distinguishable to a caller that reads `profiles_updated`, so this is a gap for a caller following the published branch rule rather than an undetectable write loss.",
+      "fix_note": "A refused profile write now answers on the axis docs/behavior-contracts.md section 10 names: both branches (empty, and text that sanitises away) return ok:false, matching the store seam this path shares, which calls the same two inputs a rejection. The pause branch stays ok:true -- a no-persist skip is nothing going wrong, and the queue drain routes ok:false into its retry path. Nothing was added to the response: reason and profiles_updated were already there and already pinned. The bug-188 exact-dict pin in tests/test_253_silent_failures.py encoded the old verdict as a side effect of pinning the reason, and was rewritten to assert the two fields it exists for."
     },
     {
       "id": "bug-393",
@@ -5742,12 +5744,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
+      "fixed_in": "2.5.12b3",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "return \\{\"enabled\": False, \"pending\": 0\\}",
+      "pattern": "\"max_retries\": TASK_MAX_RETRIES,",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
-      "note": "Deferred out of the frozen 2.5 line: adding the two keys changes the observable response on the disabled branch, and a fix release on this line does not make fields appear in a shape a consumer already reads. It belongs with the next feature line beside the other asymmetries between a tool's live and inert branches (the bug-104 / bug-111 class), so one rule covers them. Narrowing the description and docs/tools.md to promise retry state only when the queue is enabled is the alternative, and is the same contract change from the other side."
+      "note": "Deferred out of the frozen 2.5 line: adding the two keys changes the observable response on the disabled branch, and a fix release on this line does not make fields appear in a shape a consumer already reads. It belongs with the next feature line beside the other asymmetries between a tool's live and inert branches (the bug-104 / bug-111 class), so one rule covers them. Narrowing the description and docs/tools.md to promise retry state only when the queue is enabled is the alternative, and is the same contract change from the other side.",
+      "fix_note": "The inert branch now reports the retry state three published surfaces promise unconditionally (the tool description \"pending tasks, retry config\", docs/tools.md \"Depth and retry state\", docs/architecture.md \"reports depth and retries\"). The two values are module-level constants that exist whether or not a queue runs, so the fix reports what was already there rather than adding a field: both branches now answer on the same keys, and a dashboard reading them no longer breaks on the queue-disabled deployment only."
     },
     {
       "id": "bug-394",
@@ -6122,12 +6126,14 @@
       "severity": "LOW",
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
-      "file": "cpersona/admin_handlers.py",
-      "pattern": "async def do_get_profile\\(agent_id: str\\) -> dict:",
+      "fixed_in": "2.5.12b3",
+      "file": "tests/test_2512b2_handlers.py",
+      "pattern": "async def test_get_profile_returns_what_update_profile_stored",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "fix_sketch": "Add a round-trip case: `update_profile` a known string, then assert `get_profile` returns it for that agent and an empty profile for an agent that has none."
+      "fix_sketch": "Add a round-trip case: `update_profile` a known string, then assert `get_profile` returns it for that agent and an empty profile for an agent that has none.",
+      "fix_note": "Round-trip coverage added in tests/test_2512b2_handlers.py: update_profile then get_profile for the same agent, plus an agent with no profile so an empty answer means absence rather than the read failing open. Measured: replacing the return in do_get_profile with an empty profile now fails 5 cases; before it left the whole suite green."
     },
     {
       "id": "bug-421",
