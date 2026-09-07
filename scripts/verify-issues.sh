@@ -260,6 +260,24 @@ if [[ "$rows_read" -ne "$registry_count" ]]; then
     exit 1
 fi
 
+# Bucket reconciliation: every row counted in `total` must have landed in
+# exactly one of the four counters. The transport check above proves the rows
+# arrived; this proves they were checked, and the two are not the same question
+# -- a dropped entry is still a row, so it goes missing from the buckets rather
+# than from the input, and the transport check passes while it happens. That is
+# precisely how bug-012 stayed invisible: counted in Total, absent from every
+# bucket, no output, exit 0. The named guards above (bug-309, bug-400, bug-431)
+# each close one route to that state; this closes the class, including routes
+# not yet found. Fatal on its own rather than adding to `errors`, so it does not
+# depend on the order of the checks printed below.
+counted=$((verified + stale + fixed + errors))
+if [[ "$counted" -ne "$total" ]]; then
+    echo ""
+    echo -e "  ${RED}[ERROR]${NC} $((total - counted)) of $total entries reached no check — the report above is incomplete."
+    echo -e "         verified $verified + stale $stale + fixed $fixed + errors $errors = $counted, against a total of $total."
+    exit 1
+fi
+
 # Summary
 echo ""
 echo -e "${CYAN}=== Summary ===${NC}"
