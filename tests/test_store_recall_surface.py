@@ -148,9 +148,18 @@ async def test_concurrent_unique_index_loser_reports_skipped(clean_db, monkeypat
     """
     db = clean_db
     indexes = await db.execute_fetchall(
-        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_memories_dedup_content'"
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_memories_dedup_content'"
     )
     assert indexes, "the v12 dedup UNIQUE index is missing; this branch cannot be reached"
+    # The name is not the precondition — UNIQUE is. An earlier test that replaced
+    # this index with a non-UNIQUE one of the same name used to satisfy a
+    # name-only check and then surface here as `INSERT OR IGNORE` reporting
+    # 'stored', which reads as a bug in do_store rather than as a missing
+    # constraint.
+    assert "UNIQUE" in (indexes[0][0] or "").upper(), (
+        "idx_memories_dedup_content exists but is not UNIQUE, so INSERT OR IGNORE "
+        f"has nothing to conflict with and this branch cannot be reached: {indexes[0][0]!r}"
+    )
 
     content = "the row that loses the insert race"
     real_transaction = memory_handlers.transaction

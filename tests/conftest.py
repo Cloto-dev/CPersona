@@ -197,6 +197,68 @@ def _no_leaked_mgp_log_filter():
     )
 
 
+#: Objects already reported by ``_no_leaked_schema_drift`` that it could NOT repair.
+#: Without this, one unrepairable leak fails every test after it and the culprit's
+#: name is buried in the wall — the same reason the MGP filter above detaches what
+#: it finds.
+_UNREPAIRED_SCHEMA_DRIFT: set[str] = set()
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_schema_drift(request):
+    """Fail the test that leaves the shared database's schema objects drifted.
+
+    ``conftest`` pins ONE ``CPERSONA_DB_PATH`` for the whole process, so the
+    indexes and triggers a test drops or redefines stay dropped or redefined for
+    every test after it. Several tests legitimately drift them as setup — that is
+    how you exercise ``check_schema_objects``, the migration's non-fatal index
+    creation, and the ACL-scoped repair — and their fixtures put the ROWS back
+    without putting the SCHEMA back.
+
+    Measured 2026-09-07: two tests leaked, and the damage was invisible from
+    either end. ``test_store_recall_surface.py`` asserted the dedup index was
+    present, got the drifted NON-UNIQUE index of the same name, and then failed
+    on ``INSERT OR IGNORE`` returning ``stored`` — under ``-k`` selection only,
+    green alone and green in the full suite, naming the victim rather than the
+    test that dropped the UNIQUE.
+
+    The comparison and the repair are the production ones
+    (``checks.check_schema_objects``) rather than a second implementation here:
+    a private copy of the canonical DDL would drift away from the schema it is
+    supposed to be pinning, silently and in the direction that reports nothing.
+
+    An object that could not be repaired is reported once and then muted, so
+    exactly one test fails for it.
+    """
+    import asyncio
+
+    yield
+    from cpersona import checks, database
+
+    db = database._db
+    if db is None:  # the test never opened the shared connection
+        return
+    issues = asyncio.run(checks.check_schema_objects(db, "", fix=True))
+    if not issues:
+        return
+    unreported = [i for i in issues if i["object"] not in _UNREPAIRED_SCHEMA_DRIFT]
+    for issue in issues:
+        if not issue.get("fixed"):
+            _UNREPAIRED_SCHEMA_DRIFT.add(issue["object"])
+    assert not unreported, (
+        "this test left the shared database's schema drifted: "
+        + "; ".join(
+            f"{i['object']} {i['state']}"
+            + ("" if i.get("fixed") else f" (repair failed: {i.get('fix_error')})")
+            for i in unreported
+        )
+        + ". The next test to read one of these objects gets the drifted definition "
+        "and fails on something unrelated. Restore the schema in this test's teardown "
+        "— after its rows are deleted, since a UNIQUE index cannot be recreated over "
+        "the duplicates that were seeded to block it."
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _close_singleton_db():
     """Close the cached aiosqlite connection at session end.

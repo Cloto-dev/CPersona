@@ -98,6 +98,30 @@ def _deactivate_acl_310():
     acl.activate(None)
 
 
+@pytest.fixture(autouse=True)
+def _restore_dedup_msg_id_schema():
+    """Undo what ``_seed_dedup_collisions`` leaves on the shared database.
+
+    It drops ``idx_memories_dedup_msg_id`` and seeds the duplicate msg_ids that
+    make that index unbuildable, both on the one database this process shares
+    with every other test module. The rows have to go first: while they are
+    there the canonical UNIQUE index cannot be recreated, so the leak is not
+    merely a missing index but a state in which nothing downstream can repair it.
+    """
+    yield
+    db = database._db
+    if db is None:
+        return
+    asyncio.run(_reset_dedup_msg_id_schema(db))
+
+
+async def _reset_dedup_msg_id_schema(db):
+    await db.execute("DELETE FROM memories WHERE agent_id IN (?, ?)", (ALICE, BOB))
+    await db.commit()
+    await checks.check_schema_objects(db, "", fix=True)
+    await db.commit()
+
+
 @pytest.mark.asyncio
 async def test_a_grant_on_one_agent_does_not_rewrite_another_agents_rows(tmp_path):
     db = await get_db()
