@@ -1692,7 +1692,7 @@ async def do_calibrate_threshold(
                 "z_factor": z,
                 "percentile": cal_percentile,
                 "embedding_dim": None,
-                "embedding_model": config.EMBEDDING_MODEL,
+                "embedding_model": config.reported_embedding_model(),
                 "distribution": None,
                 "null_admit_rate": None,
                 "old_threshold": vector._get_vector_threshold(agent_id),
@@ -1844,7 +1844,7 @@ async def do_calibrate_threshold(
         "z_factor": z,
         "percentile": cal_percentile,
         "embedding_dim": embedding_dim,
-        "embedding_model": config.EMBEDDING_MODEL,
+        "embedding_model": config.reported_embedding_model(),
         "distribution": {
             "mean": stats["mean"],
             "std": stats["std"],

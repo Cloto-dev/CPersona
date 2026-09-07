@@ -13,6 +13,16 @@ Defaults are deliberately safe for unattended runs: read-only (no ``--fix``)
 and non-strict (only critical failures flip the exit code). Automatic repair
 is intentionally not meant for timers — detect unattended, repair deliberately.
 
+What ``status: healthy`` and exit 0 mean, and what they do not (bug-428): the
+verdict scores what is IN the database, not whether the pipeline that fills it
+works. A corpus where every embedding is NULL is internally consistent, so it
+reports healthy while semantic recall is dead. Without ``--fix`` nothing here
+contacts the embedding backend, so the liveness findings cannot appear on a
+report-only run and their absence says nothing about the backend. When rows are
+missing embeddings the ``null_embedding`` finding carries the reason its repair
+cannot run — that line, not the exit code, is what says whether an install is
+actually working.
+
 Note on no-persist: the MCP server's no-persist pause is per-process state and
 does not extend to this CLI. That is by design — the pause guards against
 agent-driven write contamination, while a CLI ``--fix`` is an operator's
