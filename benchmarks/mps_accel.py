@@ -166,14 +166,20 @@ class FastVectorSearch:
     # -- the patched _search_vector ----------------------------------------
 
     async def search_vector(self, db, agent_id, query, limit, min_similarity=None,
-                            channel="", project_id=None, source_id=""):
+                            channel="", project_id=None, source_id="", *, far_out=None):
         c = self.cache
         # Fidelity guard: anything the cache doesn't model goes to the original.
-        if (channel or project_id is not None or source_id
+        # `far_out` (vector reach past the scan window, v2.5.10) is modelled only
+        # in its default: with CPERSONA_VECTOR_REACH unset the original leaves the
+        # list empty, and so does this path by not touching it. A reach above the
+        # window is a second ranked list the cache does not build, so it goes to
+        # the original like every other unmodelled input.
+        reach_active = far_out is not None and self.vector_mod.far_list_enabled()
+        if (channel or project_id is not None or source_id or reach_active
                 or c["agent_id"] != agent_id or c["dim"] == 0):
             self.stats["fallbacks"] += 1
             return await self.original(db, agent_id, query, limit, min_similarity,
-                                       channel, project_id, source_id)
+                                       channel, project_id, source_id, far_out=far_out)
 
         emb_client = self.vector_mod._embedding_client
         embeddings = await emb_client.embed([query])
@@ -247,14 +253,25 @@ class FastVectorSearch:
                     break
         if not ok:
             self.stats["mismatches"] += 1
-            logger.error("selfcheck MISMATCH (query=%r): fast n=%d vs ref n=%d — "
-                         "first divergence logged at debug level",
-                         query[:80], len(fast_result), len(ref))
-            for i, (a, b) in enumerate(zip(fast_result, ref)):
-                if a["_rid"] != b["_rid"] or abs(a["_cosine"] - b["_cosine"]) > self.selfcheck_tol:
-                    logger.debug("  rank %d: fast=%s(%.7f) ref=%s(%.7f)",
-                                 i, a["_rid"], a["_cosine"], b["_rid"], b["_cosine"])
-                    break
+            first = next(
+                (
+                    (i, a, b)
+                    for i, (a, b) in enumerate(zip(fast_result, ref))
+                    if a["_rid"] != b["_rid"] or abs(a["_cosine"] - b["_cosine"]) > self.selfcheck_tol
+                ),
+                None,
+            )
+            # The divergence is the finding; a mismatch line without it sends the
+            # reader back to rerun at debug level (and the run that produced it is
+            # gone). Same level as the verdict, on the same line.
+            if first is None:
+                where = "lengths differ"
+            else:
+                i, a, b = first
+                where = "rank %d: fast=%s(%.7f) ref=%s(%.7f)" % (
+                    i, a["_rid"], a["_cosine"], b["_rid"], b["_cosine"])
+            logger.error("selfcheck MISMATCH (query=%r): fast n=%d vs ref n=%d — %s",
+                         query[:80], len(fast_result), len(ref), where)
 
 
 def install_fast_accel(server_mod, vector_mod, mh_mod, *, backend="numpy",

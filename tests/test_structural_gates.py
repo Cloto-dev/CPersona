@@ -2236,6 +2236,83 @@ def test_embedding_double_gate_has_teeth(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Gate 16b (stale-double class, vector arm): every replacement of _search_vector
+# accepts what the recall paths pass it.
+#
+# The benchmark accelerator rebinds `memory_handlers._search_vector` to its own
+# coroutine. When the recall paths grew a keyword (`far_out`, the vector reach
+# past the scan window) the production signature moved and the replacement did
+# not: every `--fast` Track B run died on the first query with a TypeError, in
+# the harness that exists to measure the recall path. Same class as Gate 16 —
+# a double that no longer offers the surface production calls dies before the
+# measurement — pinned at the signature so the drift is caught before a run.
+# ---------------------------------------------------------------------------
+
+
+def _function_param_names(fn: ast.AST) -> tuple[set[str], bool]:
+    """Names a def accepts by keyword, and whether it takes **kwargs."""
+    a = fn.args
+    names = {p.arg for p in a.args + a.kwonlyargs}
+    return names, a.kwarg is not None
+
+
+def _production_search_vector_params() -> set[str]:
+    tree = ast.parse((PKG / "vector.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_search_vector":
+            names, _ = _function_param_names(node)
+            return names - {"db"}
+    raise AssertionError("gate collapsed — cpersona/vector.py no longer defines _search_vector")
+
+
+def _search_vector_doubles(paths):
+    found = []
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in (
+                "search_vector",
+                "_search_vector",
+            ):
+                names, has_kwargs = _function_param_names(node)
+                found.append((path, node.name, names, has_kwargs))
+    return found
+
+
+def test_search_vector_doubles_accept_what_recall_passes():
+    required = _production_search_vector_params()
+    assert "far_out" in required, (
+        "gate collapsed — production _search_vector no longer takes far_out, re-derive the class"
+    )
+    doubles = _search_vector_doubles(_embedding_double_paths())
+    assert doubles, "gate collapsed — no _search_vector replacement found under benchmarks/"
+    missing = {
+        f"{path.relative_to(PKG.parent)}::{name}": sorted(required - names)
+        for path, name, names, has_kwargs in doubles
+        if not has_kwargs and required - names
+    }
+    assert not missing, (
+        "a _search_vector replacement lacks a parameter the recall paths pass, so the "
+        f"harness dies on its first query instead of measuring the path: {missing}"
+    )
+
+
+def test_search_vector_double_gate_has_teeth(tmp_path):
+    stale = tmp_path / "stale_accel.py"
+    stale.write_text(
+        "class Stale:\n"
+        "    async def search_vector(self, db, agent_id, query, limit, min_similarity=None):\n"
+        "        return []\n",
+        encoding="utf-8",
+    )
+    ((_, name, names, has_kwargs),) = _search_vector_doubles([stale])
+    assert name == "search_vector" and not has_kwargs
+    assert _production_search_vector_params() - names, (
+        "the gate must report the missing surface for a double frozen at the old signature"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Gate 19: one place decides what becomes a stored vector.
 #
 # Callers used to each write `if embeddings and embeddings[0]:

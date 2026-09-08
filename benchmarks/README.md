@@ -63,13 +63,17 @@ model (e.g. `embcache`, `embcache_minilm`) is the safe pattern.
    `--dtype float16`. Keep flags identical across runs you intend to
    compare.
    `--unclamp_limit` is obsolete since 2.5.0 and accepted as a no-op:
-   `do_recall`'s in-library cap is now the scan window (MAX_MEMORIES), so
-   the harness's `limit=corpus_size` full-ranking convention works against
-   a stock checkout — the agent-facing 100 cap moved to the MCP boundary
-   (JSON Schema `maximum`), which the library path does not traverse. Only
-   pre-2.5.0 checkouts (v2.4.38..v2.4.40, which capped at 100 in-library
-   and under-measured large tasks: bge-m3 LongMemEval 81.17 → 48.98 at
-   depth 100) still need the flag.
+   the agent-facing 100 cap moved to the MCP boundary (JSON Schema
+   `maximum`), which the library path does not traverse. Only pre-2.5.0
+   checkouts (v2.4.38..v2.4.40, which capped at 100 in-library and
+   under-measured large tasks: bge-m3 LongMemEval 81.17 → 48.98 at depth
+   100) still need the flag. Since 2.5.12a1 the library has its own row
+   ceiling (`CPERSONA_RECALL_LIBRARY_MAX_LIMIT`, default 10,000); the
+   harness raises it to `--max_memories` so `limit=corpus_size` still
+   ranks every row. A run that forgets this is the 100-cap failure one
+   level up (65k-document QASPER reduced to a 10,000-row ranking, with a
+   warning per query in the log); `--record_admission` reports it as
+   `queries_censored_by_limit` > 0.
 3. **Calibration noise.** Auto-calibration samples with `ORDER BY
    RANDOM()`, so run-to-run NDCG noise of roughly ±1–3 pt per subtask
    (±1–2 pt per task mean) is inherent. Equivalence comparisons must share
@@ -184,6 +188,27 @@ fell back would compare the live scan against itself and report agreement.
 
 Long runs should be launched fully detached
 (`nohup bash benchmarks/run_trackb.sh > run.log 2>&1 &`).
+
+Calibration instrumentation (Track B, additive keys in each task JSON):
+
+```bash
+# three calibration methods as arms on the same tasks, with the admission probe
+for m in separation percentile zscore; do
+  OUTPUT_DIR=trackb_cal_$m bash benchmarks/run_trackb.sh --fast \
+      --tasks QASPER,TMD --calibrate_method $m --record_admission
+done
+```
+
+`--calibrate_method` sets `CPERSONA_CALIBRATE_METHOD` before cpersona is
+imported (the default is the checkout's own). `--record_admission` wraps the
+`_search_vector` binding the recall paths call — after the `--fast` patch, so
+it observes the accelerated function — and records, per subtask, what fraction
+of the corpus the vector arm let past its admission floor on the NDCG pass
+(`vector_admission`). `calibration` holds one record per corpus group: method,
+positive proxy, null / positive statistics, operating point, and the derived
+fusion floor (`new_threshold x RRF_THRESHOLD_FACTOR`). Neither flag changes a
+score; the harness used to print the calibration to the log only, so the
+operating point could not be correlated with the per-task score afterwards.
 
 ### Prompted / task-adapter models
 

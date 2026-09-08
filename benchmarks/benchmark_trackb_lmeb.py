@@ -508,6 +508,59 @@ async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], bat
     return total
 
 
+class VectorAdmissionProbe:
+    """Counts what the vector arm admits, per query, without touching cpersona.
+
+    Wraps the ``_search_vector`` binding the recall paths call (after any
+    --fast patch, so it observes the accelerated function too). Under the
+    full-ranking convention (limit = corpus size) the rows the arm returns are
+    exactly the rows at or above the admission floor
+    (``threshold x RRF_THRESHOLD_FACTOR``), so ``returned / corpus_size`` is the
+    admitted fraction. When ``returned == limit`` the count is censored by the
+    limit rather than by the floor, and the query is flagged as such.
+
+    Only calls made while ``active`` is True are recorded, so the production
+    shaped limit=10 latency pass does not pollute the NDCG-pass numbers.
+    """
+
+    def __init__(self, mh_mod):
+        self.mh_mod = mh_mod
+        self.original = mh_mod._search_vector
+        self.active = False
+        self.records: list[tuple[int, int, float | None]] = []
+        mh_mod._search_vector = self._wrapped
+
+    async def _wrapped(self, db, agent_id, query, limit, min_similarity=None, *args, **kwargs):
+        rows = await self.original(db, agent_id, query, limit, min_similarity, *args, **kwargs)
+        if self.active:
+            self.records.append((len(rows), int(limit), min_similarity))
+        return rows
+
+    def reset(self):
+        self.records = []
+
+    def summary(self, corpus_size: int) -> dict | None:
+        if not self.records:
+            return None
+        fractions = sorted(n / corpus_size for n, _, _ in self.records) if corpus_size else []
+        floors = sorted({round(f, 6) for _, _, f in self.records if f is not None})
+
+        def _pct(q: float) -> float:
+            return round(fractions[min(int(len(fractions) * q), len(fractions) - 1)], 4)
+
+        return {
+            "queries": len(self.records),
+            "floor": floors[0] if len(floors) == 1 else floors,
+            "admitted_fraction_mean": round(sum(fractions) / len(fractions), 4),
+            "admitted_fraction_p10": _pct(0.10),
+            "admitted_fraction_p50": _pct(0.50),
+            "admitted_fraction_p90": _pct(0.90),
+            "queries_admitting_none": sum(1 for n, _, _ in self.records if n == 0),
+            "queries_admitting_all": sum(1 for n, _, _ in self.records if n >= corpus_size),
+            "queries_censored_by_limit": sum(1 for n, lim, _ in self.records if n >= lim and lim < corpus_size),
+        }
+
+
 async def run_subtask(
     server_mod,
     emb_client,
@@ -519,6 +572,7 @@ async def run_subtask(
     recall_limit: int = 0,
     dump_rankings_sink=None,
     task_name: str = "",
+    admission_probe: "VectorAdmissionProbe | None" = None,
 ) -> float:
     """Run a single subtask using cpersona's actual do_recall().
 
@@ -563,6 +617,9 @@ async def run_subtask(
     # for byte.
     effective_limit = recall_limit if recall_limit > 0 else corpus_size
 
+    if admission_probe is not None:
+        admission_probe.reset()
+        admission_probe.active = True
     for i, q in enumerate(queries_data):
         qid = str(q["id"])  # Ensure string for consistent matching with qrels (CSV returns strings)
         qtext = q["text"]
@@ -628,6 +685,8 @@ async def run_subtask(
 
         if (i + 1) % 200 == 0:
             logger.info(f"      Queried {i + 1}/{total_q}")
+    if admission_probe is not None:
+        admission_probe.active = False
 
     # Production-shaped latency pass: same queries, MCP default limit=10 and
     # the shipped MAX_MEMORIES=500 scan cap (the benchmark env raises the cap
@@ -655,6 +714,39 @@ async def run_subtask(
     return compute_ndcg(qrels, results, k=10)
 
 
+_CALIBRATION_KEYS = (
+    "method", "proxy_source", "old_threshold", "new_threshold", "sampled_embeddings",
+    "num_pairs", "z_factor", "percentile", "embedding_dim", "distribution",
+    "null_admit_rate", "pos_admit_rate", "pos_mean", "youden_j",
+)
+
+
+def _calibration_record(cal: dict, group_subtasks: list[dict], corpus_size: int) -> dict:
+    """Reduce a do_calibrate_threshold response to the fields the analysis reads.
+
+    Keeps every field that describes the null / positive populations and the
+    operating point chosen on them, plus which subtasks share this calibration
+    (one corpus group = one calibration). The effective admission floor is
+    derived here from the same factor the fusion paths apply, so a reader does
+    not have to know the multiplier.
+    """
+    rec = {"subtasks": [st["name"] for st in group_subtasks], "corpus_size": corpus_size,
+           "ok": bool(cal.get("ok"))}
+    if not cal.get("ok"):
+        rec["error"] = cal.get("error") or cal.get("reason")
+        return rec
+    for key in _CALIBRATION_KEYS:
+        if key in cal:
+            rec[key] = cal[key]
+    try:
+        from cpersona.config import RRF_THRESHOLD_FACTOR
+        rec["fusion_admission_floor"] = round(float(cal["new_threshold"]) * RRF_THRESHOLD_FACTOR, 4)
+        rec["rrf_threshold_factor"] = RRF_THRESHOLD_FACTOR
+    except Exception:  # pre-package checkouts via CPERSONA_REPO
+        pass
+    return rec
+
+
 async def run_task(
     task_name: str,
     server_mod,
@@ -667,6 +759,7 @@ async def run_task(
     skip_latency_pass: bool = False,
     recall_limit: int = 0,
     dump_rankings_sink=None,
+    admission_probe: "VectorAdmissionProbe | None" = None,
 ) -> dict | None:
     task_dir = os.path.join(EVAL_DATA, TASK_MAP[task_name])
     if not os.path.isdir(task_dir):
@@ -692,6 +785,8 @@ async def run_task(
         corpus_groups[st["corpus"]].append(st)
 
     subtask_results: dict[str, float] = {}
+    calibration_records: list[dict] = []
+    admission_results: dict[str, dict] = {}
     latencies_full: list[float] = []
     latencies_limit10: list[float] = []
     task_start = time.time()
@@ -714,8 +809,11 @@ async def run_task(
             cal = await server_mod.do_calibrate_threshold(AGENT_ID)
             if cal.get("ok"):
                 logger.info(f"    Calibrated: {cal['old_threshold']} → {cal['new_threshold']} "
-                            f"(z={cal['z_factor']:.1f}, mean={cal['distribution']['mean']:.4f}, "
-                            f"std={cal['distribution']['std']:.4f})")
+                            f"(method={cal.get('method')} proxy={cal.get('proxy_source')} "
+                            f"z={cal['z_factor']:.1f}, mean={cal['distribution']['mean']:.4f}, "
+                            f"std={cal['distribution']['std']:.4f} "
+                            f"null_admit={cal.get('null_admit_rate')} pos_admit={cal.get('pos_admit_rate')})")
+            calibration_records.append(_calibration_record(cal, group_subtasks, corpus_size))
 
         # GPU preload: load all embeddings into GPU memory once
         if hasattr(server_mod, '_preload_gpu_cache'):
@@ -732,9 +830,17 @@ async def run_task(
                 recall_limit=recall_limit,
                 dump_rankings_sink=dump_rankings_sink,
                 task_name=task_name,
+                admission_probe=admission_probe,
             )
             eval_time = time.time() - eval_start
             subtask_results[st["name"]] = ndcg
+            if admission_probe is not None:
+                adm = admission_probe.summary(corpus_size)
+                if adm is not None:
+                    admission_results[st["name"]] = adm
+                    logger.info(f"      vector admission: floor={adm['floor']} "
+                                f"mean={adm['admitted_fraction_mean']} p50={adm['admitted_fraction_p50']} "
+                                f"none={adm['queries_admitting_none']} all={adm['queries_admitting_all']}")
             logger.info(f"      NDCG@10={ndcg:.2f} ({eval_time:.1f}s)")
 
     # Final cleanup
@@ -768,6 +874,15 @@ async def run_task(
         "recall_latency_full": _pcts(latencies_full),
         "recall_latency_limit10": _pcts(latencies_limit10),
     }
+    # Calibration instrumentation (additive keys; absent when not measured).
+    # `calibration` = one record per corpus group (the unit do_calibrate_threshold
+    # ran on); `vector_admission` = per subtask, what the vector arm let through
+    # its admission floor on the NDCG pass. Needed to correlate the calibrated
+    # operating point with the per-task score instead of reading it off a log.
+    if calibration_records:
+        result["calibration"] = calibration_records
+    if admission_results:
+        result["vector_admission"] = admission_results
     if skip_latency_pass:
         result["accel"] = True
         result["latency_note"] = ("run with --fast acceleration; latency numbers are "
@@ -799,8 +914,19 @@ async def async_main(args):
     # Benchmark needs to scan all stored documents, not just the default 500.
     # These are configuration knobs, not code changes — users can set these too.
     os.environ["CPERSONA_MAX_MEMORIES"] = str(args.max_memories)
+    # 2.5.12a1 gave do_recall its own row ceiling (CPERSONA_RECALL_LIBRARY_MAX_LIMIT,
+    # default 10,000), separate from the scan window. The full-ranking convention
+    # passes limit=corpus_size, and a 65k-document corpus was silently reduced to
+    # a 10,000-row ranking -- the bug-085 failure shape again, one level up. The
+    # ceiling follows the window here so one call may materialise every row the
+    # window scans; the admission probe reports `queries_censored_by_limit` > 0
+    # if a checkout ever reintroduces a cap this harness does not know about.
+    os.environ["CPERSONA_RECALL_LIBRARY_MAX_LIMIT"] = str(args.max_memories)
     os.environ["CPERSONA_VECTOR_MIN_SIMILARITY"] = str(args.min_similarity)
     os.environ["CPERSONA_RECALL_MODE"] = args.recall_mode
+    if getattr(args, "calibrate_method", None):
+        # Read at import time by cpersona.config, so it must be set here.
+        os.environ["CPERSONA_CALIBRATE_METHOD"] = args.calibrate_method
 
     # Import the actual cpersona server module
     import cpersona.server as server_mod
@@ -848,7 +974,14 @@ async def async_main(args):
             device=args.device if backend == "torch" else "cpu",
             selfcheck_rate=args.selfcheck_rate,
         )
-    elif args.device and args.device.startswith("cuda"):
+    # Vector-admission probe: installed AFTER the --fast patch so it wraps the
+    # binding recall actually calls. Observes only; never changes a result.
+    admission_probe = None
+    if getattr(args, "record_admission", False):
+        import cpersona.memory_handlers as mh_mod
+        admission_probe = VectorAdmissionProbe(mh_mod)
+        logger.info("  Vector-admission probe installed")
+    if not args.fast and args.device and args.device.startswith("cuda"):
         # Legacy CUDA patch (pre-package-layout; kept for old checkouts via
         # CPERSONA_REPO. On the v2.4.20+ package layout it does not reach the
         # recall path — use --fast instead.)
@@ -976,6 +1109,7 @@ async def async_main(args):
             skip_latency_pass=bool(args.fast),
             recall_limit=args.recall_limit,
             dump_rankings_sink=dump_sink,
+            admission_probe=admission_probe,
         )
         if result:
             all_results.append(result)
@@ -1090,6 +1224,16 @@ def main():
                              "production-realistic MCP-shaped limit (e.g. 10). Small "
                              "limits change which rows survive the quality gate / "
                              "autocut, so ranking-only bugs (e.g. bug-155) show up first.")
+    parser.add_argument("--calibrate_method", default=None,
+                        choices=["separation", "percentile", "zscore"],
+                        help="CPERSONA_CALIBRATE_METHOD for --auto_calibrate (default: the "
+                             "checkout's own default, separation since v2.4.24). Set it to "
+                             "run the three methods as arms on the same corpus.")
+    parser.add_argument("--record_admission", action="store_true",
+                        help="Record, per subtask, the fraction of the corpus the vector "
+                             "arm admits past its calibrated floor on the NDCG pass "
+                             "(task JSON key `vector_admission`; `calibration` records "
+                             "the operating point per corpus group). Observes only.")
     parser.add_argument("--dump_rankings", default=None,
                         help="Path to a JSONL file. Writes one record per query with "
                              "task, subtask, query id, ordered returned doc ids (top-20), "
