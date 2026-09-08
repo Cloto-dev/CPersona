@@ -125,7 +125,9 @@ def main() -> int:
     allowed = read_allowlist()
     seen_allowed: set[str] = set()
 
-    for en in sorted(DOCS.glob("*.md")):
+    # rglob, not glob: docs/research/ pages are served like any other, so an
+    # untranslated one there would be the same silent English page.
+    for en in sorted(DOCS.rglob("*.md")):
         if en.name.endswith(".ja.md"):
             continue
         rel = str(en.relative_to(ROOT))

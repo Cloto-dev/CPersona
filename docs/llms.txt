@@ -54,6 +54,15 @@ note and the pages above disagree, the pages above win.
 - [Reach, recency and the far vote](https://cloto-dev.github.io/CPersona/REACH_AND_RECENCY_PLAN/): three measurements of the scan window, the reach and the far list's length in one account, and the plan for pricing the far vote in the 2.6 line
 - [Embedding degradation advisory](https://cloto-dev.github.io/CPersona/DEGRADED_ADVISORY_DESIGN/): how recall reports a dead embedding layer instead of silently degrading
 
+## Research notes
+
+What the design pages rest on: derivations, measurements and refutations, each
+with its assumptions and the observation that would refute it. Not behaviour.
+
+- [Research notes overview](https://cloto-dev.github.io/CPersona/research/): the status vocabulary (derivation / measurement / refuted / superseded) and how a note is written
+- [Adaptive fusion, a derivation](https://cloto-dev.github.io/CPersona/research/adaptive-fusion-derivation/): combining retrieval arms through null exceedance probabilities; a mixture rule with closed-form per-row influence whose limit is reciprocal rank fusion; the measurements that must precede implementation
+- [Calibration and the admission floor](https://cloto-dev.github.io/CPersona/research/calibration-admission-floor-2026-09/): three calibration methods on seven losing tasks — the floor is not the cause, the null came from the wrong pair population, small corpora starve the dense arm
+
 ## Optional
 
 - [Sponsorship](https://cloto-dev.github.io/CPersona/sponsorship/): what sponsoring does and does not buy, where it goes, and the ways to help that cost nothing

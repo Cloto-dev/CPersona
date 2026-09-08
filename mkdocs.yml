@@ -92,6 +92,10 @@ plugins:
             Project standards: プロジェクト標準
             Sponsorship: 支援について
             Design notes: 設計ノート
+            Research notes: 研究ノート
+            Overview: 概要
+            Adaptive fusion, a derivation: 適応的融合の導出
+            Calibration and the admission floor: 較正と admission floor
             Access and identity: アクセスと同一性
             Retrieval and storage: 検索と保存
             Reliability: 信頼性
@@ -162,6 +166,13 @@ extra:
 extra_css:
   - stylesheets/extra.css
 
+# Equations in the research notes. MathJax is fetched from unpkg at view time,
+# like mermaid below, and degrades to the raw TeX when it fails — readable,
+# unlike a diagram that does not render.
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
 markdown_extensions:
   - admonition
   # Grid cards on the index page are markdown inside a <div>, which needs this.
@@ -175,6 +186,10 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.highlight
+  # Equations (\( \) inline, \[ \] display) in docs/research/. generic mode
+  # leaves the TeX in the HTML for javascripts/mathjax.js to typeset.
+  - pymdownx.arithmatex:
+      generic: true
   # Icons in the index page's cards. The tags below are why every script in
   # scripts/ parses this file by hand instead of with yaml.safe_load, which
   # refuses them.
@@ -244,6 +259,12 @@ nav:
           - Reach, recency and the far vote: REACH_AND_RECENCY_PLAN.md
       - Reliability:
           - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md
+  # What the design pages rest on: derivations, measurements, refutations.
+  # A note never overrides a design page; a disagreement is the finding.
+  - Research notes:
+      - Overview: research/index.md
+      - Adaptive fusion, a derivation: research/adaptive-fusion-derivation.md
+      - Calibration and the admission floor: research/calibration-admission-floor-2026-09.md
   # Last on purpose: it asks for something, and every page above answers
   # something. A reader looking for how the software works never has to
   # scroll past it.
