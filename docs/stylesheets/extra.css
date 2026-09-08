@@ -55,32 +55,33 @@
  * language selector is built on, so both open the same way, in the same place,
  * with the same arrow pointing back at their button.
  *
- * md-select positions its own panel (top, left and the transform are all in the
- * theme), so nothing here touches that. What is left is the button, which is a
- * word where every other control in this row is an icon.
+ * md-select places its panel at `top: calc(100% - .2rem)` of the control, so
+ * the two controls have to be the same height or the shorter one opens its
+ * panel inside the header. That is not tuned here to a number that looked
+ * right: the button is given the theme's own button box and a line box of
+ * exactly the height the theme gives an icon, so the two are the same by
+ * construction and stay so if the theme changes either.
+ *
+ * Note what is NOT set on the wrapper: font-size. The line box of an
+ * inline-block is measured against its parent's strut, so sizing the wrapper
+ * would make this control's box differ from the language one's again, in a way
+ * no rule here would name.
  *
  * Every rule below overrides one the theme sets, at equal specificity, and wins
  * on order -- extra_css is emitted after the theme stylesheet. */
-.cp-version {
-  /* Centres the label against the language and search icons. The icons get
-   * this from being inline-block against the header's line box; a flex child
-   * would otherwise sit at the top of a stretched row. Safe on md-select,
-   * whose panel is placed by explicit offsets rather than by where it would
-   * have fallen in flow. */
-  align-items: center;
-  display: flex;
-  /* Comes from md-version upstream, which is not the wrapper any more. */
+.cp-version__current {
   font-size: 0.8rem;
+  /* .md-icon gives its svg height: 1.2rem. This is that, for a word. */
+  line-height: 1.2rem;
 }
 
-/* The gap that separated the label from the site title. There is no title on
- * this side -- the palette toggle is the neighbour, and it brings its own. */
-[dir="ltr"] .cp-version .md-version__current {
-  margin-left: 0;
-}
-
-[dir="rtl"] .cp-version .md-version__current {
-  margin-right: 0;
+/* The theme's margins for this label assume it sits just after the site title,
+ * on the left. Replaced by the margin every button in this corner carries. */
+.cp-version .md-version__current {
+  margin: 0.2rem;
+  /* The .05rem nudge that lines the label up against a site title, which is not
+   * what it is lined up against here. */
+  top: 0;
 }
 
 /* The line being read. Marked by weight alone: the row is still a link, because
