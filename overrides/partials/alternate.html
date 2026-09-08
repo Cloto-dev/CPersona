@@ -83,6 +83,17 @@
     <div class="md-header__option">
       <div class="md-select cp-version">
         {#-
+          Three classes, one job each: md-header__button for the box every other
+          control in this corner has, md-version__current for the label colour
+          and the dropdown caret, and cp-version__current for the text metrics
+          that make the first of those come out the same size as an icon.
+
+          The box has to match, not merely look close. md-select places its panel
+          at `top: calc(100% - .2rem)` of the control, so a shorter control opens
+          its panel inside the header instead of below it -- which is what a text
+          label did before, being a line of text where the neighbours are a
+          1.2rem icon in .4rem of padding.
+
           The label falls back to the word rather than to the first row: with no
           row marked, naming one anyway would state a version the reader is not
           on, and a control that reads "Version" is merely uninformative. The
@@ -90,7 +101,7 @@
           and a test holds it to that -- this branch is for the day that stops
           being true.
         -#}
-        <button class="md-version__current" aria-label="{{ label }}">
+        <button class="md-header__button md-version__current cp-version__current" aria-label="{{ label }}">
           {{- names.here or label -}}
         </button>
         <div class="md-select__inner">

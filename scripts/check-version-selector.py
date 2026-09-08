@@ -40,9 +40,14 @@ CONFIG_PATH = REPO_ROOT / "docs-versions.json"
 
 HEADER = re.compile(r'<header class="md-header[^"]*"[^>]*>(?P<body>.*?)</header>', re.S)
 CONTROL = re.compile(r'<div class="md-select cp-version">(?P<body>.*?)</ul>', re.S)
-CURRENT_LABEL = re.compile(
-    r'<button class="md-version__current"[^>]*>(?P<label>.*?)</button>', re.S
-)
+CURRENT_LABEL = re.compile(r"<button (?P<attrs>[^>]*)>(?P<label>.*?)</button>", re.S)
+
+# The theme sizes an icon button by giving its svg an explicit height. The
+# version button holds a word instead, so its line box has to be set to that
+# same height by hand -- see below for why the two must agree.
+# Whitespace-tolerant: the theme ships minified, our own sheet ships as written.
+ICON_HEIGHT = re.compile(r"\.md-icon svg\s*\{[^}]*?[^-]height:\s*(?P<value>[\d.]+rem)")
+LABEL_HEIGHT = re.compile(r"\.cp-version__current\s*\{[^}]*?line-height:\s*(?P<value>[\d.]+rem)")
 LINK = re.compile(
     r'<a href="(?P<href>[^"]+)" class="md-select__link"(?P<attrs>[^>]*)>(?P<title>.*?)</a>',
     re.S,
@@ -52,6 +57,22 @@ LINK = re.compile(
 def text(raw: str) -> str:
     """Collapse the whitespace a template's indentation leaves inside an element."""
     return " ".join(raw.split())
+
+
+def _stated(paths, tree, ids, current, pattern: re.Pattern) -> dict[str, str]:
+    """What `pattern` states, per version line, across `paths`.
+
+    Bucketed by line rather than reduced to one value, because each line is
+    built from its own branch with its own pinned theme: one tree's answer is
+    not evidence about another's, and taking the first file found would silently
+    make it so.
+    """
+    stated: dict[str, str] = {}
+    for path in sorted(paths):
+        found = pattern.search(path.read_text(encoding="utf-8", errors="replace"))
+        if found:
+            stated.setdefault(line_of(path, tree, ids, current), found.group("value"))
+    return stated
 
 
 def line_of(page: pathlib.Path, tree: pathlib.Path, ids: set[str], current: str) -> str:
@@ -117,6 +138,12 @@ def main(argv: list[str]) -> int:
         label = CURRENT_LABEL.search(control.group("body"))
         if not label:
             problems.append(f"{where}: the selector shows no current version")
+        elif "md-header__button" not in label.group("attrs"):
+            # Half of the box equality below. The other controls in this corner
+            # are md-header__button; a version button that is not one is a
+            # different size, and md-select opens its panel at a fixed offset
+            # from the control's own height.
+            problems.append(f"{where}: the version button is not an md-header__button")
         elif text(label.group("label")) != expected_title:
             problems.append(
                 f"{where}: the selector reads {text(label.group('label'))!r}, "
@@ -138,6 +165,31 @@ def main(argv: list[str]) -> int:
             target = tree / href[len(site_url):] / "index.html"
             if not target.is_file():
                 problems.append(f"{where}: selector link has no page in the tree: {href}")
+
+    # The two controls in the header corner are the same component, so md-select
+    # places both panels at `top: calc(100% - .2rem)` of their own control. If
+    # the controls are not the same height, the shorter one opens its panel
+    # inside the header rather than below it -- measured, twice, before this
+    # check existed. The theme gives an icon button its height through
+    # `.md-icon svg`; the version button holds a word, so the same height is
+    # written as a line-height. Read from the stylesheets each tree ships, so a
+    # theme bump that moves the icon height is a red gate rather than a panel
+    # drifting a few pixels into the header.
+    ids = set(titles)
+    icons = _stated(tree.rglob("assets/stylesheets/main.*.min.css"), tree, ids, current, ICON_HEIGHT)
+    labels = _stated(tree.rglob("stylesheets/extra.css"), tree, ids, current, LABEL_HEIGHT)
+    for line in sorted(set(icons) | set(labels)):
+        icon, label_box = icons.get(line), labels.get(line)
+        if icon is None:
+            problems.append(f"{line}: the theme stylesheet states no icon height")
+        elif label_box is None:
+            problems.append(f"{line}: the version button states no line box to be sized to")
+        elif icon != label_box:
+            problems.append(
+                f"{line}: the version button's line box is {label_box} where the theme's "
+                f"icons are {icon}, so the two header controls are different heights and "
+                f"one of them opens its panel inside the header"
+            )
 
     if not checked:
         # An empty pass is the one outcome that means nothing. A tree with no
