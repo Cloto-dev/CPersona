@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:a088c82b9f6d5f82ecf9e9d54825109d58571c49 -->
+<!-- i18n-source: docs/configuration.md@blob:fd89bf8dac5c986b2ccfa22f01f1b4c8c8de858f -->
 
 # 設定リファレンス
 
@@ -29,6 +29,7 @@
 | `CPERSONA_MAX_MEMORIES` | `10000` | ベクトル検索の**走査ウィンドウ** (保存件数の上限ではありません) — 大きなコーパスでは引き上げてください ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_REACH` | `0` | ベクトル検索が走査ウィンドウの先をどこまで見てよいか (行数)。効果を持たせるには **`CPERSONA_MAX_MEMORIES` より大きくする必要があります**: 同値以下 (既定の `0` を含む) では遠方リストは存在せず、追加の処理は一切走りません。大きくすると、2 つの数値の間にある行が**第 2 のリスト**としてランク付けされ、第 1 のリストと並んで融合されます。つまりウィンドウは新しさの事前分布として働き続けたまま、到達距離だけを独立に伸ばせます。ローカルのベクトル検索と `rrf`/`rsf` の融合モードでのみ有効です ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_FAR_LIMIT` | `0` | その第 2 のリストのうち何行を融合層に渡すか。`0` (既定) は**応答の `limit` と同じ**という意味で、この設定なしで構築される第 2 のリストそのものです。正の値を与えると `min(limit, N)` 行に切り詰められます。これは候補件数の上限であり、行のスコア計算は一切変わりません。したがって残るのは、フル長のリストが先頭に並べていた行そのものです。`CPERSONA_VECTOR_REACH` が `CPERSONA_MAX_MEMORIES` より大きくない限り無関係で、第 1 のリスト側の打ち切りは `limit` のままです ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
+| `CPERSONA_RECALL_DEPTH_FLOOR` | `0` | 想起深度 (Recall Depth): `limit` が何行を求めていても、各検索アームが融合層に渡す候補の最少数。深度は `max(limit, この値)` で、`CPERSONA_RECALL_LIBRARY_MAX_LIMIT` を上限とします。`0` では `limit` と等しく、これは 2.5 系が出荷していた結合そのものです — 設定するまでランキングは何も動きません。`limit` を超えている時は応答に `depth` が載り、5 行の応答がアームごとに 5 件より多い候補から順位付けされたことを呼び出し側が確認できます。融合モードのみ: `cascade` は `limit` 個のスロットを段ごとに埋める方式で、深くする対象のリストを持ちません ([設計](RELIABLE_RECALL_2_6.md#4-depth-is-not-count)) |
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。autocut は類似度スケールのシグナル — confidence スコアリング下、あるいは `cascade` が作る生 cosine だけの均質なリスト — に対して発火し、`rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。したがってこのつまみが働くかどうかを決めるのは融合モードです |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | 融合後の品質ゲート。無効化は最終手段です: フィルタはプール規模のヒューリスティックにフォールバックし、粗くはなりますが弱い一致は依然として弾かれます — 失うのはこのコーパスに対して測定された動作点です |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | 埋め込みが利用不能な間、recall 応答に `advisory` を付ける ([runbook](operations.md#detecting-a-dead-embedding-server)) |
