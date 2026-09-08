@@ -380,3 +380,242 @@ def test_the_selector_gate_runs_on_the_tree_the_assembler_writes():
     assert invocation.group("dir") == written.group("dir"), (
         f"the gate reads {invocation.group('dir')!r} but the assembler writes {written.group('dir')!r}"
     )
+
+
+def _version_map_gate():
+    """Import the version-map gate by path — `scripts/` is not a package."""
+    path = REPO_ROOT / "scripts" / "check-version-map.py"
+    spec = importlib.util.spec_from_file_location("check_version_map_under_test", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _site_link_gate():
+    """Import the site-link gate by path — `scripts/` is not a package."""
+    path = REPO_ROOT / "scripts" / "check-site-urls.py"
+    spec = importlib.util.spec_from_file_location("check_site_urls_under_test", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _support_table(rows: str) -> str:
+    return (
+        "# Support\n\n## Status\n\n"
+        "| Line | Tier | Frozen | Decision | Notes |\n| --- | --- | --- | --- | --- |\n"
+        f"{rows}\n\n## Known issues\n\nnone\n"
+    )
+
+
+def _written_support(tmp_path, rows: str):
+    path = tmp_path / "SUPPORT.md"
+    path.write_text(_support_table(rows), encoding="utf-8")
+    return path
+
+
+_TWO_LINES = "| 2.4.x | **Stable** | — | certified | . |\n| 2.5.x | **Current** | not yet | — | . |"
+
+
+def _map(**overrides) -> dict:
+    config = {
+        "current": "2.5",
+        "versions": [{"id": "2.5", "title": "2.5.x", "branch": "master"}],
+        "lines_without_docs": [{"line": "2.4.x", "reason": "no mkdocs tree on that branch"}],
+    }
+    config.update(overrides)
+    return config
+
+
+def test_a_map_that_agrees_with_the_support_table_reports_nothing(tmp_path):
+    """The positive control.
+
+    Without it, every assertion below is satisfied by a checker that reports on
+    everything -- which is the same evidence as a checker that works.
+    """
+    gate = _version_map_gate()
+    problems = gate.check_declarations(_map(), "map.json", _written_support(tmp_path, _TWO_LINES))
+    assert problems == [], problems
+
+
+def test_a_supported_line_must_be_published_or_declared_undocumented(tmp_path):
+    """Silence is the failure: a line nobody published and nobody excused.
+
+    The exclusion of 2.4.x is real and permanent -- that branch has no mkdocs
+    tree to build -- so this cannot be a check that every supported line is
+    published. What it can require is that the omission was written down, which
+    is what tells it apart from forgetting a line that does have documentation.
+    """
+    gate = _version_map_gate()
+    problems = gate.check_declarations(
+        _map(lines_without_docs=[]), "map.json", _written_support(tmp_path, _TWO_LINES)
+    )
+    assert any("neither published nor declared" in problem for problem in problems), problems
+
+
+def test_an_exemption_without_a_reason_is_not_an_exemption(tmp_path):
+    gate = _version_map_gate()
+    problems = gate.check_declarations(
+        _map(lines_without_docs=[{"line": "2.4.x", "reason": "   "}]),
+        "map.json",
+        _written_support(tmp_path, _TWO_LINES),
+    )
+    assert any("with no reason" in problem for problem in problems), problems
+
+
+def test_an_exemption_outliving_its_line_is_reported(tmp_path):
+    """An exemption for a line the table no longer has stops excusing anything.
+
+    Left in place it is worse than absent: the next line that needs excusing
+    reads as already covered.
+    """
+    gate = _version_map_gate()
+    problems = gate.check_declarations(
+        _map(lines_without_docs=[{"line": "1.9.x", "reason": "gone"}]),
+        "map.json",
+        _written_support(tmp_path, _TWO_LINES),
+    )
+    assert any("outlived its subject" in problem for problem in problems), problems
+
+
+def test_the_root_must_serve_a_line_the_table_calls_current(tmp_path):
+    """Not "the only Current line" -- v1.4 of the standard removed that exclusivity."""
+    gate = _version_map_gate()
+    rows = "| 2.4.x | **Stable** | — | certified | . |\n| 2.5.x | **Candidate** | not yet | — | . |"
+    problems = gate.check_declarations(_map(), "map.json", _written_support(tmp_path, rows))
+    assert any("Current tier" in problem for problem in problems), problems
+
+    both = _TWO_LINES + "\n| 2.6.x | **Current** | not yet | — | . |"
+    relaxed = gate.check_declarations(
+        _map(lines_without_docs=[
+            {"line": "2.4.x", "reason": "no mkdocs tree"},
+            {"line": "2.6.x", "reason": "not published yet"},
+        ]),
+        "map.json",
+        _written_support(tmp_path, both),
+    )
+    assert relaxed == [], relaxed
+
+
+def test_a_line_cannot_be_published_and_excused_at_once(tmp_path):
+    gate = _version_map_gate()
+    problems = gate.check_declarations(
+        _map(lines_without_docs=[{"line": "2.5.x", "reason": "contradiction"}]),
+        "map.json",
+        _written_support(tmp_path, _TWO_LINES),
+    )
+    assert any("both as a published version" in problem for problem in problems), problems
+
+
+def test_an_unreadable_status_table_fails_rather_than_passes(tmp_path):
+    """A parse that finds no rows would satisfy every comparison above."""
+    gate = _version_map_gate()
+    path = tmp_path / "SUPPORT.md"
+    path.write_text("# Support\n\nNo table here.\n", encoding="utf-8")
+    problems = gate.check_declarations(_map(), "map.json", path)
+    assert problems and "no Status table" in problems[0], problems
+
+
+def test_the_version_map_gate_is_reachable_from_a_support_md_edit():
+    """It runs in CI, and in the workflow whose trigger SUPPORT.md can reach.
+
+    docs.yml filters on paths and SUPPORT.md is on that list only for the link
+    gate; the map gate has to run for edits that touch neither docs/ nor the
+    map, so it lives in ci.yml, whose pull_request trigger has no paths filter
+    at all. If that filter is ever added, this gate stops running on exactly the
+    edits it exists for -- silently.
+    """
+    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    # Four spaces, not "any indentation": a job's own keys are indented deeper
+    # than the job name, so a laxer body pattern runs on through the next job.
+    # Measured while mutating this test -- with `[ \t]+` the body reached the
+    # docs-facts job below and read *its* fetch-depth, leaving this assertion
+    # green with this job's checkout gone shallow.
+    job = re.search(r"^  version-map:\n(?P<body>(?:[ ]{4,}.*\n|\n)*)", ci, re.M)
+    assert job, "ci.yml has no version-map job"
+    body = job.group("body")
+    assert "scripts/check-version-map.py" in body, "the version-map job no longer runs the gate"
+    # Scoped to this job on purpose: `fetch-depth: 0` appears elsewhere in the
+    # file, so a search over the whole workflow would stay green with this job's
+    # checkout gone shallow -- and a shallow checkout carries no tags, which is
+    # half of what the gate reads.
+    assert "fetch-depth: 0" in body, (
+        "the version-map job's checkout is shallow: it carries neither the tags nor the "
+        "branches the gate reads"
+    )
+
+    trigger = re.search(r"^on:\n(?P<body>(?:[ \t]+.*\n|\n)*?)^\S", ci, re.M)
+    assert trigger, "ci.yml declares no triggers"
+    inside_pr = False
+    for line in trigger.group("body").splitlines():
+        if re.match(r"^  \S", line):
+            inside_pr = line.strip().startswith("pull_request:")
+            continue
+        if inside_pr and line.strip().startswith("paths"):
+            raise AssertionError(
+                "ci.yml's pull_request trigger grew a paths filter: the version-map gate "
+                "would stop running on the SUPPORT.md edits it exists to catch"
+            )
+
+
+def _trigger_paths(text: str, trigger: str) -> list[str]:
+    """The `paths:` entries under one trigger in a workflow, read textually."""
+    block = re.search(
+        rf"^  {trigger}:\n(?P<body>(?:    .*\n|\n)*)", text, re.M
+    )
+    assert block, f"no {trigger} trigger found"
+    return re.findall(r'^      - "(?P<path>[^"]+)"', block.group("body"), re.M)
+
+
+def _glob_matches(pattern: str, path: str) -> bool:
+    regex = re.escape(pattern).replace(r"\*\*", "\x00").replace(r"\*", "[^/]*").replace("\x00", ".*")
+    return re.fullmatch(regex, path) is not None
+
+
+def test_every_file_publishing_a_site_link_is_on_the_docs_trigger():
+    """The gate is only as wide as the trigger that runs it.
+
+    check-site-urls.py scans the whole repository on purpose -- a hand-kept list
+    of files that publish links produces, when it falls behind, a new file whose
+    links nothing checks, which looks exactly like success. The workflow's paths
+    filter is such a hand-kept list, one level up: a publisher outside it is
+    scanned only when some other file drags the workflow into running. This
+    turns that into a red suite instead of a silent gap.
+    """
+    gate = _site_link_gate()
+    site_url = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))["site_url"]
+    publishers = sorted(
+        {str(path.relative_to(REPO_ROOT)) for path, _, _ in gate.links(re.compile(re.escape(site_url) + gate.URL_BODY))}
+    )
+    assert publishers, "no file publishes a site link — the scan is broken, not the repository"
+
+    text = _workflow_text()
+    for trigger in ("push", "pull_request"):
+        patterns = _trigger_paths(text, trigger)
+        missing = [
+            publisher
+            for publisher in publishers
+            if not any(_glob_matches(pattern, publisher) for pattern in patterns)
+        ]
+        assert not missing, (
+            f"these files publish links into the site but are not on docs.yml's {trigger} "
+            f"paths filter, so editing one does not run the link gate: {missing}"
+        )
+
+
+def test_the_site_link_gate_runs_on_the_tree_the_assembler_writes():
+    """Same pair of failures as the selector gate: wrong directory, or never run."""
+    text = _workflow_text()
+    assert text.count('- "scripts/check-site-urls.py"') == 2, (
+        "the link gate is missing from a paths filter: editing it would not run it"
+    )
+    invocation = re.search(r"check-site-urls\.py (?P<dir>\S+)", text)
+    assert invocation, "the build job no longer runs the link gate"
+    written = re.search(r"build-all-versions\.py\s*\n?\s*--out (?P<dir>\S+)", text)
+    assert written, "the assembly step no longer passes --out"
+    assert invocation.group("dir") == written.group("dir"), (
+        f"the gate reads {invocation.group('dir')!r} but the assembler writes "
+        f"{written.group('dir')!r}"
+    )

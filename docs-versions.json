@@ -15,10 +15,20 @@
     "",
     "Adding a line: create its entry here once its branch exists. Nothing else needs to change",
     "-- the assembler builds whatever this file declares, and the version selector renders from",
-    "the manifest the assembler writes."
+    "the manifest the assembler writes.",
+    "",
+    "A supported line that is not published here must say so in 'lines_without_docs'. The",
+    "omission is real and is not going to be fixed by publishing -- but stated, it can be told",
+    "apart from having forgotten a line that does have documentation."
   ],
   "site_url": "https://cloto-dev.github.io/CPersona/",
   "current": "2.5",
+  "lines_without_docs": [
+    {
+      "line": "2.4.x",
+      "reason": "The 2.4.x branch carries no scripts/build-docs.sh and only two files under docs/, so there is no mkdocs tree for the assembler to build. The Stable line's documentation is its README, SUPPORT.md and the two design records on that branch; publishing it here would mean back-porting the documentation site to a frozen line."
+    }
+  ],
   "versions": [
     {
       "id": "2.5",
