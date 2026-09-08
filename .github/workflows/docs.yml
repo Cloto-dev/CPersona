@@ -32,6 +32,7 @@ on:
       - "scripts/check-i18n-coverage.py"
       - "scripts/check-i18n-drift.py"
       - "scripts/check-lang-routing.js"
+      - "scripts/check-version-selector.py"
       - "scripts/translate-i18n-drift.py"
       - "docs-versions.json"
       - "scripts/build-all-versions.py"
@@ -49,6 +50,7 @@ on:
       - "scripts/check-i18n-coverage.py"
       - "scripts/check-i18n-drift.py"
       - "scripts/check-lang-routing.js"
+      - "scripts/check-version-selector.py"
       - "scripts/translate-i18n-drift.py"
       - "docs-versions.json"
       - "scripts/build-all-versions.py"
@@ -199,6 +201,20 @@ jobs:
           python3 scripts/build-all-versions.py
           --out public
           --as-branch "${{ github.base_ref || github.ref_name }}"
+      - name: Version selector (blocking)
+        # Runs against the assembled tree, because a single build declares no
+        # versions and renders no selector -- correct there, and vacuous as a
+        # subject for this check.
+        #
+        # The control lives in the header, which the theme reaches by including
+        # partials/alternate.html, which it includes only when the build has
+        # language alternates. So an i18n configuration change can take the
+        # version selector off every published page while touching nothing that
+        # looks like version code, and no build fails. That is what this watches
+        # for, along with the failure already measured on this selector once: the
+        # marker naming the reader's line went missing while the selector still
+        # rendered and its links still worked.
+        run: python3 scripts/check-version-selector.py public
       - name: Upload Pages artifact
         # Everything that is not a review publishes: a push, the daily run, and a
         # manual dispatch. This condition and the deploy job's have to be widened

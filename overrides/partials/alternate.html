@@ -1,0 +1,107 @@
+{#-
+  The header's two "which variant of this page am I reading" controls, side by
+  side: version, then language.
+
+  Overriding this partial is how the version selector reaches the header at all.
+  `partials/header.html` carries no block to extend, and the only other place a
+  template can write into the chrome is the announcement banner -- which is
+  where this selector started. That put a second bar above a sticky header,
+  which then scrolled away, so past the first screenful nothing on the page said
+  which version was being read.
+
+  The version list is rendered here at build time rather than by Material's own
+  selector, which derives its base from the last path segment of the URL: under
+  /2.5/ja/ it reads "ja" as a version name and fetches a versions.json that is
+  not there. Its stylesheet ships with the theme whether or not that script ever
+  runs, so the markup below is the theme's own -- md-version and its children --
+  and inherits the native appearance without inheriting the script.
+
+  Links point at each version's root, not at the same page under another
+  version. A page exists in one line and not another often enough -- that is
+  what separate lines are for -- and a selector that sometimes lands on a 404 is
+  worse than one that always lands somewhere real.
+
+  With no versions in the environment -- every local build, every `mkdocs serve`
+  -- the version control is absent and the language selector is alone, which is
+  the header this file replaced. The language selector is unconditional because
+  this partial only runs when the theme has alternates to offer.
+
+  Everything from the marker below is a verbatim copy of
+  partials/alternate.html as shipped by mkdocs-material 9.7.7, the version
+  pinned in scripts/build-docs.sh. A copy is what the placement costs, so it is
+  a copy and not a rewrite: the language routing in main.html finds a reader's
+  explicit choice by looking for an .md-select__link carrying an hreflang, and a
+  paraphrase that dropped either would go on rendering a selector that silently
+  stopped remembering which language was picked. A test pins the theme version
+  in the line above against the pin the build actually uses, so bumping the
+  theme cannot leave this copy behind unnoticed.
+-#}
+{%- set spec = config.extra.doc_versions | default("", true) | string -%}
+{%- set root = config.extra.doc_site_root | default("", true) | string -%}
+{%- if spec and root -%}
+  {%- set rows = [] -%}
+  {%- for entry in spec.split(";") -%}
+    {%- set parts = entry.split("|") -%}
+    {%- if parts | length >= 3 and parts[0] -%}
+      {%- set _ = rows.append(parts) -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- if rows -%}
+    {%- set japanese = (config.theme.language | default("en", true) | string) == "ja" -%}
+    {%- set label = "バージョン" if japanese else "Version" -%}
+    {%- set names = namespace(here="") -%}
+    {%- for parts in rows -%}
+      {%- if parts[2] == "here" -%}
+        {%- set names.here = parts[1] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    <div class="md-header__option">
+      <div class="md-version">
+        {#-
+          The label falls back to the word rather than to the first row: with no
+          row marked, naming one anyway would state a version the reader is not
+          on, and a control that reads "Version" is merely uninformative. The
+          assembler marks exactly one row on every build it runs, root included,
+          and a test holds it to that -- this branch is for the day that stops
+          being true.
+        -#}
+        <button class="md-version__current" aria-label="{{ label }}">
+          {{ names.here or label }}
+        </button>
+        <ul class="md-version__list">
+          {%- for parts in rows %}
+            <li class="md-version__item">
+              <a href="{{ root }}{{ parts[0] }}/" class="md-version__link"
+                {#- The line being read is marked for the same reason its link is
+                    left in place: the row has to be visible as the current one,
+                    and it still has to lead somewhere real from a subpage. -#}
+                {%- if parts[2] == "here" %} aria-current="true"{% endif %}>
+                {{- parts[1] -}}
+              </a>
+            </li>
+          {%- endfor %}
+        </ul>
+      </div>
+    </div>
+  {%- endif -%}
+{%- endif -%}
+{#- verbatim from mkdocs-material 9.7.7 partials/alternate.html -#}
+<div class="md-header__option">
+  <div class="md-select">
+    {% set icon = config.theme.icon.alternate or "material/translate" %}
+    <button class="md-header__button md-icon" aria-label="{{ lang.t('select.language') }}">
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        {% for alt in config.extra.alternate %}
+          <li class="md-select__item">
+            <a href="{{ alt.link | url }}" hreflang="{{ alt.lang }}" class="md-select__link">
+              {{ alt.name }}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
