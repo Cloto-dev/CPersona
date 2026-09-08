@@ -17,7 +17,9 @@ repository.
    `zscore`) SciFact, ESGReports and TMD score the same within a point, and
    all three stay four to eight points below the raw embedding. Replicates
    agree to within 0.21 NDCG@10, so the calibration's random draw does not
-   move the top ten. The remaining loss sits on the **combination** side.
+   move the top ten. The remaining loss sits **after admission** — in the
+   combination, in the post-fusion stages, or in the candidate population —
+   and this measurement did not separate those three.
 2. **The exception is QASPER**: `zscore`, which places the floor lower, gains
    +2.1 (45.46 against 43.32). Where the floor cuts into gold, admission
    matters.
@@ -41,8 +43,9 @@ repository.
   no encoding was performed.
 - Regime: the Track B regime of `benchmarks/run_trackb.sh` (reciprocal rank
   fusion with automatic calibration, the calibrated fused gate and autocut
-  disabled, `limit` equal to the corpus size), on the tree at the commit that
-  added the admission instrumentation. Note that disabling the calibrated
+  disabled, `limit` equal to the corpus size), on the tree at commit
+  [`ad7dfed`](https://github.com/Cloto-dev/cpersona/tree/ad7dfed5a554f76f606bd69e6bdd303455a3b91c),
+  the one that added the admission instrumentation. Note that disabling the calibrated
   gate does not disable `_apply_quality_gate`; its heuristic branch still
   runs, which the derivation note records as an open attribution problem.
 - `--fast --accel_backend numpy`; the self-check found 0 mismatches in 1,084
@@ -185,10 +188,15 @@ On the calibration side, three things remain:
    production-shaped corpus, so a fixed-p admission can be shown not to cut.
 
 Beyond calibration: the losses on SciFact, TMD and ESGReports are the same
-under all three methods and remain below Track A, so they are a property of
-the combination, not of admission. Reducing the lexical vote per query when
-the dense arm's top scores are far from its null is the only route that can
-recover them — which is what the derivation note formalises.
+under all three methods and remain below Track A, so changing the admission
+floor cannot explain them. What does is not settled by this measurement: the
+loss may sit in the fusion, in the heuristic gate that still runs after it,
+or in the candidate population (section 4 left one discrepancy open). The
+next measurement therefore separates those stages on frozen candidates
+before any fusion rule is chosen — the derivation note's section 9 gives the
+order. If the loss does sit in the fusion, the derivation's mixture rule is
+the candidate remedy; note that the influence it derives is per row, not per
+query.
 
 ## 8. By-products
 
@@ -242,10 +250,14 @@ Reading:
   the more the same family loses.**
 - **Gorilla loses on all three models** (−13.98 / −1.63 / −1.44); MemBench,
   ConvoMem and ReMe are at or below zero on all three. This is the family
-  the fusion structurally harms.
+  the hybrid pipeline harms whatever the embedding model; whether the
+  harm is done by the fusion or by a later stage is what the frozen-stage
+  replay has to decide.
 - QASPER changes sign (+25 → −4 → −3): the lexical arm rescues a weak model
   and the same votes harm a strong one. The tasks that gain on all three
   (LongMemEval, LooGLE, KnowMeBench, CovidQA, NovelQA) are equally
   consistent.
-- Admission does not move this family (section 2). A per-query rule for how
-  much lexical vote to admit is the only mechanism left that can.
+- Admission does not move this family (section 2), so whatever recovers it
+  has to act after admission. The derivation note's candidate is a rule that
+  weighs the lexical vote against the dense arm's distance from its null, per
+  row; it remains a candidate until the stages are separated.
