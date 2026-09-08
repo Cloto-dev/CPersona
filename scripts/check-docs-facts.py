@@ -30,6 +30,11 @@ Checked facts and their sources of truth:
                   stale the moment a tag is cut, and it went stale twice
                   (README and SUPPORT both named a superseded release) before
                   this check existed
+  applies-to line must not be written at all. The banner naming the release
+                  line a page describes is filled in at build time from the
+                  version the tree states (scripts/docs_version.py); a
+                  hand-written one is right until the branch is copied to
+                  start the next line, and then wrong on every page at once
   volatile stats  LOC / test-function / test-module / collected-case counts,
                   re-measured here with the same commands the docs cite;
                   docs state them as rounded `~` values and this check allows
@@ -47,6 +52,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import docs_version  # noqa: E402 — sibling script, not an installable package
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -767,6 +775,47 @@ def check_release_claims(finals: dict[str, str]) -> None:
                     )
 
 
+def check_applies_to_banners() -> None:
+    """No page writes the version line it applies to; every banner asks for it.
+
+    Forbidden rather than checked, for the same reason the tool count is: a
+    label compared against this tree's own version passes on the day the tree is
+    copied to start the next line, because on that day it is still the label the
+    copy inherited and the version has not been bumped yet. And a check that
+    followed DOC_FILES would say nothing about a page added later — the banner
+    is the single most copied paragraph on the site, so a new page gets one by
+    being written next to a page that has one.
+
+    So every markdown file under docs/ is read, not the scanned list, and the
+    only accepted label is the placeholder that scripts/docs_version.py fills in
+    at build time.
+    """
+    scanned = sorted(set(DOC_FILES) | set((ROOT / "docs").rglob("*.md")))
+    seen = 0
+    for doc in scanned:
+        if not doc.is_file():
+            continue
+        rel = doc.relative_to(ROOT)
+        for match in docs_version.BANNER.finditer(doc.read_text()):
+            seen += 1
+            label = match.group("label")
+            if label != docs_version.PLACEHOLDER:
+                fail(
+                    f"{rel}: the 'applies to' banner names {label!r} in the page source. "
+                    f"Write {docs_version.PLACEHOLDER} instead — the line is filled in at "
+                    f"build time from the version this tree states, so a copy of this page "
+                    f"on the next line names that line without being edited"
+                )
+    if not seen:
+        # The check above is a ban, and a ban over nothing is green forever. If
+        # the banners really have been retired, this line is the one that has to
+        # be deleted deliberately.
+        fail(
+            "no 'applies to' banner found in any page under docs/ — the ban on writing "
+            "the version line by hand now has no subject, so it proves nothing"
+        )
+
+
 # The LMEB Track A/B table is published twice: in the README, where a visitor
 # decides whether the pipeline costs ranking quality, and in benchmarks/README,
 # beside the harness that produced it. Two copies of the same measurement is
@@ -857,6 +906,7 @@ def main() -> int:
     check_env_names()
     check_volatile_claims(stats)
     check_release_claims(finals)
+    check_applies_to_banners()
     check_axis_claims(acceptance)
     check_external_commands()
     check_script_file_invocations()

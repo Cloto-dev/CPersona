@@ -33,6 +33,13 @@ on:
       - "scripts/check-i18n-drift.py"
       - "scripts/check-lang-routing.js"
       - "scripts/check-version-selector.py"
+      - "scripts/docs_version.py"
+      # The banner on each page names the line the build is for, and it is
+      # derived from the version stated here. A bump within a line rebuilds
+      # to the same bytes; the bump that moves the branch to the next line is
+      # the one that has to reach the published pages without waiting for the
+      # daily run.
+      - "cpersona/__init__.py"
       - "scripts/translate-i18n-drift.py"
       - "docs-versions.json"
       - "scripts/build-all-versions.py"
@@ -63,6 +70,13 @@ on:
       - "scripts/check-i18n-drift.py"
       - "scripts/check-lang-routing.js"
       - "scripts/check-version-selector.py"
+      - "scripts/docs_version.py"
+      # The banner on each page names the line the build is for, and it is
+      # derived from the version stated here. A bump within a line rebuilds
+      # to the same bytes; the bump that moves the branch to the next line is
+      # the one that has to reach the published pages without waiting for the
+      # daily run.
+      - "cpersona/__init__.py"
       - "scripts/translate-i18n-drift.py"
       - "docs-versions.json"
       - "scripts/build-all-versions.py"

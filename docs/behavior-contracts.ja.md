@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:119ef9133d5a8f518e3ca527d512b2ef015bef65 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:3144d6ca44e3c90cafee3c846d6550427badc849 -->
 
 # 挙動契約 (Behavior Contracts)
 
-> **対象: CPersona 2.5.x。** このページの記述は現行リリースラインのソースと
+> **対象: CPersona {{ version_line }}。** このページの記述は現行リリースラインのソースと
 > 照合済みです。ここに書かれた挙動は**契約**です: 呼び出し側は依存してよく、
 > 変更する場合は pre-release ladder とリリースノートを通ります
 > ([リリースライフサイクル](RELEASE_LIFECYCLE_STANDARD.md) 参照) — 黙って

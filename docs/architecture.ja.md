@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/architecture.md@blob:0755d89ad57b037fbd3052b18fd97fc4bfecd8d8 -->
+<!-- i18n-source: docs/architecture.md@blob:f52abbeadbbf39fe396e4d212423da79025efbce -->
 
 # アーキテクチャ
 
-> **対象: CPersona 2.5.x。** このページは各部品がどう噛み合っているか、そして
+> **対象: CPersona {{ version_line }}。** このページは各部品がどう噛み合っているか、そして
 > なぜそうなっているかを説明します。呼び出し側から見える保証は
 > [挙動契約](behavior-contracts.md) に置き、ここでは繰り返さずリンクします。
 >

@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/tools.md@blob:b19849abdf55cf7e95b2c9375dc211be7b5ca3be -->
+<!-- i18n-source: docs/tools.md@blob:e039e6376e1f646f2cb3b690c7709edb6ab8ec42 -->
 
 # ツール一覧
 
-> **対象: CPersona 2.5.x。** 各引数の権威ある説明は、そのツール自身の MCP
+> **対象: CPersona {{ version_line }}。** 各引数の権威ある説明は、そのツール自身の MCP
 > description です — あなたのクライアントがそれを読み、あなたが動かしている版と
 > 一緒に配布されます。このページは **すべてのツール**を「何のために手を伸ばすか」で
 > グループ分けし、名前から想像できない挙動を持つものは契約へリンクします。

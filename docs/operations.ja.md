@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/operations.md@blob:7602bdccf03e88ae3a06cdb79d7da193f5d90081 -->
+<!-- i18n-source: docs/operations.md@blob:058ed5326e5a90b5732ccf4c5c37daaf145690d4 -->
 
 # 運用 Runbook
 
-> **対象: CPersona 2.5.x。** このページは運用に関する正式リファレンスです:
+> **対象: CPersona {{ version_line }}。** このページは運用に関する正式リファレンスです:
 > バックアップ、劣化検知、recall のチューニング、CJK の指針、コーパス索引の
 > パターン。ここが依拠している挙動の事実は契約です —
 > [挙動契約](behavior-contracts.md) を参照してください。

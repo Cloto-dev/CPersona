@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """Every published page states which version line it is, and offers the others.
 
+A page states it twice, and both statements are checked here. The selector in
+the header is one. The other is the "Applies to: CPersona <line>" banner the
+main pages open with, which is filled in at build time by the hook in
+scripts/docs_version.py from the version its own branch states -- so the banner
+is the one place where what the branch believes about itself meets where the
+assembler filed it. Nothing inside a build can compare those: a build has only
+its own branch to look at, and publishes whatever that branch says. A build with
+the hook switched off does not fail either; it publishes the placeholder to
+readers, and this is the gate that sees it.
+
 The selector is rendered at build time into the site header by
 `overrides/partials/alternate.html`. Overriding that partial is what puts it in
 the header at all -- `partials/header.html` carries no block to extend -- and it
@@ -35,6 +45,9 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import docs_version  # noqa: E402 — sibling script, not an installable package
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_ROOT / "docs-versions.json"
 
@@ -51,6 +64,13 @@ LABEL_HEIGHT = re.compile(r"\.cp-version__current\s*\{[^}]*?line-height:\s*(?P<v
 LINK = re.compile(
     r'<a href="(?P<href>[^"]+)" class="md-select__link"(?P<attrs>[^>]*)>(?P<title>.*?)</a>',
     re.S,
+)
+# The rendered banner, in either language. The label is captured loosely rather
+# than matched as a version, so an unsubstituted placeholder is reported as the
+# wrong label instead of as no banner at all -- "the hook did not run" and "this
+# page has no banner" must not look the same from here.
+BANNER = re.compile(
+    r"<strong>(?:Applies to|対象):\s*CPersona\s+(?P<label>[^<]*?)\s*[.。]</strong>"
 )
 
 
@@ -102,6 +122,10 @@ def main(argv: list[str]) -> int:
 
     problems: list[str] = []
     checked = 0
+    # Counted per line, for the reason `_stated` gives below: each line is built
+    # from its own branch, so one line's banners are no evidence that another
+    # line's build substituted anything.
+    banners: dict[str, int] = {}
 
     for page in sorted(tree.rglob("*.html")):
         html = page.read_text(encoding="utf-8", errors="replace")
@@ -113,13 +137,34 @@ def main(argv: list[str]) -> int:
         checked += 1
         where = page.relative_to(tree)
 
+        expected_id = line_of(page, tree, set(titles), current)
+        expected_title = titles[expected_id]
+
+        # Before the control is looked for, because the two statements are
+        # independent: a page can lose the selector and keep the banner, and a
+        # banner naming the wrong line is worth reporting on a page whose
+        # selector is missing as well as on one whose selector is fine.
+        #
+        # Compared against the line id, not against the title in the map: the
+        # map's title only has to start with the id, so a decorated one
+        # ("2.5.x (Current)") would fail a banner that is perfectly correct.
+        # What is being tested is the line, and the two sides get it from
+        # genuinely different places -- the banner from the version its branch
+        # states, this from where the assembler put the page.
+        expected_label = docs_version.label_for_line(expected_id)
+        for banner in BANNER.finditer(html):
+            banners[expected_id] = banners.get(expected_id, 0) + 1
+            if banner.group("label") != expected_label:
+                problems.append(
+                    f"{where}: the page says it applies to "
+                    f"{banner.group('label')!r}, but sits in the {expected_id} tree "
+                    f"(expected {expected_label!r})"
+                )
+
         control = CONTROL.search(header.group("body"))
         if not control:
             problems.append(f"{where}: no version selector in the page header")
             continue
-
-        expected_id = line_of(page, tree, set(titles), current)
-        expected_title = titles[expected_id]
 
         marked = [
             match for match in LINK.finditer(control.group("body"))
@@ -191,6 +236,19 @@ def main(argv: list[str]) -> int:
                 f"one of them opens its panel inside the header"
             )
 
+    # Same reasoning as the empty tree below, one level down: the banner check
+    # above is a comparison, and a comparison that ran against nothing reports
+    # green over an unexamined claim. A line whose pages carry no banner at all
+    # is either a build that lost them or a decision to stop stating the line,
+    # and the second one should have to delete this.
+    for identifier in sorted(titles):
+        if not banners.get(identifier):
+            problems.append(
+                f"{identifier}: no page states which line it applies to, so nothing "
+                f"compared the line this tree was built from against the one it is "
+                f"published under"
+            )
+
     if not checked:
         # An empty pass is the one outcome that means nothing. A tree with no
         # themed pages is a broken assembly, not a clean run.
@@ -203,7 +261,11 @@ def main(argv: list[str]) -> int:
         print(f"\n{len(problems)} problem(s) across {checked} page(s)", file=sys.stderr)
         return 1
 
-    print(f"version selector: {checked} page(s) name their own line and link to trees that exist")
+    print(
+        f"version selector: {checked} page(s) name their own line and link to trees "
+        f"that exist; {sum(banners.values())} applies-to banner(s) name the line they "
+        f"are published under"
+    )
     return 0
 
 
