@@ -50,33 +50,45 @@
   color: var(--cp-nav-subcategory-color);
 }
 
-/* Version selector, rendered into the theme's announcement banner by
- * overrides/main.html. Styled here rather than inline so the markup stays
- * readable, and kept to spacing and weight: the banner already carries the
- * theme's colours in both schemes, so restating them here would be a second
- * palette to keep in step. */
-.cp-versions {
+/* Version selector, rendered into the header by
+ * overrides/partials/alternate.html using the theme's own md-version markup.
+ * The theme ships the appearance of that component whether or not the script
+ * that normally builds it ever runs, so what is left here is placement: the
+ * component was designed to sit just after the site title on the left, and this
+ * one sits in the right-hand cluster beside the language selector.
+ *
+ * Every rule below overrides one the theme sets, at equal specificity, and wins
+ * on order -- extra_css is emitted after the theme stylesheet. */
+.md-version {
+  /* The dropdown is positioned absolutely and the theme leaves it to resolve
+   * against the header, which works where the control is: at the left edge.
+   * From the right-hand cluster the list would fly to the far left. */
+  position: relative;
+  /* Centres the label against the language and search icons; upstream gets this
+   * from the flex container it is dropped into, which is not this one. */
+  align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.2rem 0.6rem;
-  justify-content: center;
-  font-size: 0.7rem;
 }
 
-.cp-versions__label {
-  opacity: 0.7;
+/* The gap that separated the label from the site title. There is no title on
+ * this side -- the search field is the neighbour, and it brings its own. */
+[dir="ltr"] .md-version__current {
+  margin-left: 0;
 }
 
-.cp-versions__link {
-  color: inherit;
-  text-decoration: underline;
+[dir="rtl"] .md-version__current {
+  margin-right: 0;
 }
 
-/* The version being read. Marked by weight and by removing the affordance,
- * because a link to the page you are already on reads as an invitation to go
- * somewhere and then does nothing. */
-.cp-versions__link[aria-current="true"] {
+/* Hung from the right edge of the control rather than the left, so a list of
+ * version names cannot open past the edge of the window. */
+.md-version__list {
+  margin: 0.2rem 0;
+  right: 0;
+}
+
+/* The line being read. Marked by weight alone: the row is still a link, because
+ * from a subpage it is the way back to that line's root. */
+.md-version__link[aria-current="true"] {
   font-weight: 700;
-  text-decoration: none;
 }

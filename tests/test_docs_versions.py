@@ -257,3 +257,101 @@ def test_the_themes_own_version_selector_stays_off():
     assert not re.search(r"^\s{2}version:\s", text, re.M), (
         "mkdocs.yml sets extra.version: Material's own version selector is now on"
     )
+
+
+# The version selector: where it is rendered, and what its placement costs.
+#
+# It is rendered into the site header by overrides/partials/alternate.html.
+# Overriding that partial is the only way into the header -- partials/header.html
+# carries no block to extend -- and it buys the placement with two liabilities
+# that nothing else in this repository would notice: a verbatim copy of a theme
+# file, and a dependency on the theme including that file at all.
+
+ALTERNATE_PATH = REPO_ROOT / "overrides" / "partials" / "alternate.html"
+MAIN_TEMPLATE_PATH = REPO_ROOT / "overrides" / "main.html"
+BUILD_SCRIPT_PATH = REPO_ROOT / "scripts" / "build-docs.sh"
+
+
+def test_the_version_selector_is_rendered_into_the_header():
+    """It is in the header partial, and not in the announcement banner.
+
+    The banner was where it started, and the banner sits above a sticky header
+    and scrolls away with the page: past the first screenful nothing said which
+    version was being read, which is most of what the control is for. Pinned
+    because "put it back in the banner" is a one-line change that looks like a
+    simplification -- the banner block needs no override of a theme partial.
+    """
+    partial = ALTERNATE_PATH.read_text(encoding="utf-8")
+    assert 'class="md-version"' in partial, (
+        "the version selector is no longer rendered in the header partial"
+    )
+    main = MAIN_TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert not re.search(r"\{%-?\s*block\s+announce\s*-?%\}", main), (
+        "main.html defines the announcement banner again: the selector belongs in the header"
+    )
+
+
+def test_the_copied_theme_file_names_the_theme_the_build_installs():
+    """The copy states which theme version it was taken from, and it is the pinned one.
+
+    Half of overrides/partials/alternate.html is a verbatim copy of the theme's
+    own partial, which is what an override costs when the file being overridden
+    has no block to extend. A copy is only safe while it is a copy of what is
+    actually installed: bump the pin and the header silently keeps rendering the
+    older theme's markup, with no build failure and nothing visibly wrong.
+
+    Checked against scripts/build-docs.sh rather than the workflow, because that
+    script is what every published tree is built by -- the workflow's own pin
+    builds the review tree, which is not the one readers get.
+    """
+    pinned = re.search(r"mkdocs-material==(?P<version>[\w.]+)", BUILD_SCRIPT_PATH.read_text(encoding="utf-8"))
+    assert pinned, "scripts/build-docs.sh no longer pins mkdocs-material"
+    claimed = re.search(r"mkdocs-material (?P<version>\d[\w.]*)", ALTERNATE_PATH.read_text(encoding="utf-8"))
+    assert claimed, "the header partial no longer says which theme version it was copied from"
+    assert claimed.group("version") == pinned.group("version"), (
+        f"the header partial was copied from mkdocs-material {claimed.group('version')}, "
+        f"but the build installs {pinned.group('version')}: re-sync the copy"
+    )
+
+
+def test_the_copied_language_selector_keeps_what_the_routing_reads():
+    """The routing finds a reader's explicit choice through markup this copy now owns.
+
+    overrides/main.html records a language as chosen by watching for a click on
+    an .md-select__link and reading its hreflang. Both attributes used to be the
+    theme's to guarantee; they are ours since the copy. Paraphrase either away
+    and the selector still renders, still navigates, and silently stops
+    remembering -- the reader is bounced back to their browser's language on the
+    next page, which reads as the site ignoring them.
+    """
+    partial = ALTERNATE_PATH.read_text(encoding="utf-8")
+    main = MAIN_TEMPLATE_PATH.read_text(encoding="utf-8")
+    for rendered, read_back in (
+        ('class="md-select__link"', "md-select__link"),
+        ('hreflang="', "hreflang"),
+    ):
+        assert rendered in partial, f"the copied language selector dropped {rendered}"
+        assert read_back in main, (
+            f"main.html no longer reads {read_back}: this pin is watching the wrong pair"
+        )
+
+
+def test_the_selector_gate_runs_on_the_tree_the_assembler_writes():
+    """The gate is wired to the built tree, and editing it runs it.
+
+    Two failures in one: a gate pointed at a directory the assembly does not
+    write reports nothing and exits 0, and a checker missing from the trigger's
+    paths list is the one file whose edit cannot be tested -- the workflow says
+    so itself, above those lists.
+    """
+    text = _workflow_text()
+    assert text.count('- "scripts/check-version-selector.py"') == 2, (
+        "the selector gate is missing from a paths filter: editing it would not run it"
+    )
+    invocation = re.search(r"check-version-selector\.py (?P<dir>\S+)", text)
+    assert invocation, "the build job no longer runs the selector gate"
+    written = re.search(r"build-all-versions\.py\s*\n?\s*--out (?P<dir>\S+)", text)
+    assert written, "the assembly step no longer passes --out"
+    assert invocation.group("dir") == written.group("dir"), (
+        f"the gate reads {invocation.group('dir')!r} but the assembler writes {written.group('dir')!r}"
+    )
