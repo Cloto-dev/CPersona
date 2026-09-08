@@ -17,7 +17,7 @@ a float. Nothing was red. So the three questions here are asked separately --
 
   * is the control on the page at all,
   * does it name the line the page actually belongs to,
-  * do its links lead to trees that exist
+  * do its links lead to trees that exist, without claiming to be languages
 
 -- because each can fail while the other two pass, and only the first is visible
 to someone glancing at a screenshot.
@@ -39,12 +39,12 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_ROOT / "docs-versions.json"
 
 HEADER = re.compile(r'<header class="md-header[^"]*"[^>]*>(?P<body>.*?)</header>', re.S)
-CONTROL = re.compile(r'<div class="md-version">(?P<body>.*?)</div>\s*</div>', re.S)
+CONTROL = re.compile(r'<div class="md-select cp-version">(?P<body>.*?)</ul>', re.S)
 CURRENT_LABEL = re.compile(
     r'<button class="md-version__current"[^>]*>(?P<label>.*?)</button>', re.S
 )
 LINK = re.compile(
-    r'<a href="(?P<href>[^"]+)" class="md-version__link"(?P<attrs>[^>]*)>(?P<title>.*?)</a>',
+    r'<a href="(?P<href>[^"]+)" class="md-select__link"(?P<attrs>[^>]*)>(?P<title>.*?)</a>',
     re.S,
 )
 
@@ -125,6 +125,13 @@ def main(argv: list[str]) -> int:
 
         for match in LINK.finditer(control.group("body")):
             href = match.group("href")
+            if "hreflang" in match.group("attrs"):
+                # The language routing files any clicked md-select__link with an
+                # hreflang as the reader's language choice, and then honours it
+                # on every later page. A version row carrying one would send a
+                # reader to a language named after a version number, with the
+                # selector still looking correct.
+                problems.append(f"{where}: a version row carries hreflang: {href}")
             if not href.startswith(site_url):
                 problems.append(f"{where}: selector link leaves the site: {href}")
                 continue

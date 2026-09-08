@@ -272,6 +272,17 @@ MAIN_TEMPLATE_PATH = REPO_ROOT / "overrides" / "main.html"
 BUILD_SCRIPT_PATH = REPO_ROOT / "scripts" / "build-docs.sh"
 
 
+def _version_block(partial: str) -> str:
+    """The version control's own markup, cut out of the partial.
+
+    The file holds two controls built from the same theme classes: this one and
+    a verbatim copy of the language selector. Anything asserted against the
+    whole file is answered by whichever of the two still satisfies it.
+    """
+    start = partial.index('class="md-select cp-version"')
+    return partial[start:partial.index("</ul>", start)]
+
+
 def test_the_version_selector_is_rendered_into_the_header():
     """It is in the header partial, and not in the announcement banner.
 
@@ -282,8 +293,22 @@ def test_the_version_selector_is_rendered_into_the_header():
     simplification -- the banner block needs no override of a theme partial.
     """
     partial = ALTERNATE_PATH.read_text(encoding="utf-8")
-    assert 'class="md-version"' in partial, (
+    assert 'class="md-select cp-version"' in partial, (
         "the version selector is no longer rendered in the header partial"
+    )
+    # Read the version control on its own. The file also holds a copy of the
+    # theme's language selector, which is built from the same classes -- so an
+    # unscoped `in partial` is satisfied by that copy no matter what happens to
+    # the version control. Measured: replacing md-select__inner in the version
+    # block left this test green until it was narrowed to the block.
+    block = _version_block(partial)
+    assert 'class="md-select__inner"' in block, (
+        "the version list is no longer built on md-select: md-version's list carries no "
+        "top or left, so from this position it opens on top of its own button"
+    )
+    assert "hreflang" not in block, (
+        "a version row carries hreflang: the language routing would file a click on it "
+        "as a choice of language and honour it on every page after"
     )
     main = MAIN_TEMPLATE_PATH.read_text(encoding="utf-8")
     assert not re.search(r"\{%-?\s*block\s+announce\s*-?%\}", main), (
