@@ -207,7 +207,17 @@ def build_tree(
     subprocess.run(["bash", str(script), str(out), site_url], cwd=source, check=True, env=env)
 
 
-def write_manifest(out: pathlib.Path, config: dict) -> None:
+def write_manifest(out: pathlib.Path, config: dict, commits: dict[str, str]) -> None:
+    """Describe what was built, including the commit each line was built from.
+
+    The commit is what lets a reader of the published site tell "this tree is
+    behind its branch" from "this tree does not match what it was built from".
+    Without it the only available comparison is against the branch head as it is
+    right now, which reports every unpublished commit as a defect -- and since
+    publishing runs on a clock, that is the normal state between two runs rather
+    than a fault. The manifest travels with the site, so the answer is read from
+    the artifact itself and needs no state kept anywhere else.
+    """
     current = config["current"]
     manifest = {
         "current": current,
@@ -217,6 +227,8 @@ def write_manifest(out: pathlib.Path, config: dict) -> None:
                 "title": version.get("title", version["id"]),
                 "path": f"{version['id']}/",
                 "current": version["id"] == current,
+                "branch": version["branch"],
+                "commit": commits.get(version["id"], ""),
             }
             for version in config["versions"]
         ],
@@ -240,6 +252,7 @@ def assemble(config: dict, out: pathlib.Path, as_branch: str | None = None) -> l
     with tempfile.TemporaryDirectory(prefix="docs-versions-") as scratch:
         try:
             sources: dict[str, pathlib.Path] = {}
+            commits: dict[str, str] = {}
             for version in config["versions"]:
                 branch = version["branch"]
                 if here is not None and branch == here:
@@ -247,11 +260,14 @@ def assemble(config: dict, out: pathlib.Path, as_branch: str | None = None) -> l
                     # honest about uncommitted work, and in CI the checkout is
                     # the branch, so the two agree.
                     sources[version["id"]] = REPO_ROOT
+                    commits[version["id"]] = git("rev-parse", "HEAD")
                     continue
                 path = pathlib.Path(scratch) / f"branch-{version['id']}"
-                git("worktree", "add", "--detach", str(path), resolve_ref(branch))
+                ref = resolve_ref(branch)
+                git("worktree", "add", "--detach", str(path), ref)
                 worktrees.append(path)
                 sources[version["id"]] = path
+                commits[version["id"]] = git("rev-parse", ref)
 
             # The root is built first. mkdocs empties its target directory, and
             # the root's target is the parent of every version subtree, so any
@@ -279,7 +295,7 @@ def assemble(config: dict, out: pathlib.Path, as_branch: str | None = None) -> l
                 )
                 built.append(f"{identifier}/ <- {version['branch']}")
 
-            write_manifest(out, config)
+            write_manifest(out, config, commits)
         finally:
             for path in worktrees:
                 subprocess.run(
