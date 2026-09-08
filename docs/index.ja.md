@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:86a3e12d9cd7f62f1d90e18bc07c2d5e3e5607cc -->
+<!-- i18n-source: docs/index.md@blob:6f85566b6d3ebbd14701b6130b269f3f1658982b -->
 
 # CPersona ドキュメント
 
@@ -144,6 +144,18 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
   記述にまとめ、確立したことと、2.6 系で far の票に値段を付ける計画。
 - [埋め込み劣化の通知](DEGRADED_ADVISORY_DESIGN.md) — 埋め込み層が死んだとき、
   静かに質を落とすのではなく recall がそれを報告する仕組み。
+
+## 研究ノート { #research-notes }
+
+設計ページが拠って立つもの — 導出・実測・反証 — を、信じるのではなく検算できる
+形で置いた記録です。[概要](research/index.md) に status の語彙があります。
+
+- [適応的融合の導出](research/adaptive-fusion-derivation.md) — 各検索アームを
+  null 分布に対する超過確率で結合する。行ごとの影響度が閉じた形で出る混合則で、
+  その極限が現行の reciprocal rank fusion になる。
+- [較正と admission floor](research/calibration-admission-floor-2026-09.md) —
+  負けている 7 タスクを 3 つの較正法で再走: 床は原因ではない、null は誤った
+  ペア母集団から取られていた、小コーパスでは dense アームが飢餓する。
 
 ## 3 つの記憶タイプ { #the-three-memory-types }
 

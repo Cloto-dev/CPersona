@@ -152,6 +152,21 @@ above disagree, the guides win.
 - [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
   reports a dead embedding layer instead of quietly getting worse.
 
+## Research notes
+
+What the design pages rest on — derivations, measurements and refutations,
+each written to be checked rather than trusted. The
+[overview](research/index.md) explains the status vocabulary.
+
+- [Adaptive fusion, a derivation](research/adaptive-fusion-derivation.md) —
+  combining retrieval arms through their null exceedance probabilities; a
+  mixture rule with a closed-form per-row influence whose limit is today's
+  reciprocal rank fusion.
+- [Calibration and the admission floor](research/calibration-admission-floor-2026-09.md) —
+  three calibration methods on seven losing tasks: the floor is not the cause,
+  the null came from the wrong pair population, small corpora starve the
+  dense arm.
+
 ## The three memory types
 
 - **Declarative** — individual facts, decisions, rules (`store` / `recall`).

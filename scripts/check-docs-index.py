@@ -81,7 +81,9 @@ HOME = "index.md"
 # A relative link to a sibling page, which is how index.md addresses the rest
 # of the site. Absolute links (the repository, SUPPORT.md on GitHub) are not
 # an index over docs/ and are ignored.
-HOME_LINK = re.compile(r"^(?P<page>[A-Za-z0-9_.-]+\.md)(?:#[^)]*)?$")
+# One path segment per level: a page in a subdirectory (research/index.md)
+# is linked from the home page the same way a sibling is.
+HOME_LINK = re.compile(r"^(?P<page>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md)(?:#[^)]*)?$")
 
 failures: list[str] = []
 
@@ -141,10 +143,13 @@ def llms_links(base: str) -> dict[str, str]:
         if not slug:
             fail(f"docs/llms.txt: {url} is the site root, which llms.txt already describes")
             continue
-        if "/" in slug:
-            fail(f"docs/llms.txt: {url} is not a top-level page of this site")
-            continue
+        # mkdocs publishes docs/<dir>/<page>.md at /<dir>/<page>/ and a
+        # directory's index.md at /<dir>/, so the slug maps back to a page
+        # path in one of those two forms; the second is tried only when the
+        # first does not exist, which is how mkdocs itself resolves it.
         page = f"{slug}.md"
+        if not (DOCS / page).exists() and (DOCS / slug / "index.md").exists():
+            page = f"{slug}/index.md"
         if page in found:
             fail(f"docs/llms.txt: links {page} twice — an index that repeats itself has drifted")
         found[page] = url
@@ -174,12 +179,16 @@ def main() -> int:
         if not (DOCS / page).exists():
             fail(f"mkdocs.yml: nav points at docs/{page}, which does not exist")
 
-    for path in sorted(DOCS.glob("*.md")):
+    # rglob, not glob: a page in a subdirectory (docs/research/) is published
+    # exactly like a top-level one, and a flat walk would leave it unlisted
+    # with every gate green — the failure this check exists to catch.
+    for path in sorted(DOCS.rglob("*.md")):
         if path.name.endswith(".ja.md"):
             continue  # the translation is routed by mkdocs-static-i18n, not by nav
-        if path.name not in seen:
+        rel = path.relative_to(DOCS).as_posix()
+        if rel not in seen:
             fail(
-                f"docs/{path.name} is not in mkdocs.yml `nav:`. mkdocs logs this at INFO "
+                f"docs/{rel} is not in mkdocs.yml `nav:`. mkdocs logs this at INFO "
                 "and --strict does not promote it, so the page publishes unreachable."
             )
 

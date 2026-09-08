@@ -1,0 +1,11 @@
+# Pages that stay English on purpose. One path per line; a page listed here
+# passes scripts/check-i18n-coverage.py without a .ja.md twin, and fails it
+# the day a twin appears (drop the line then).
+#
+# Research notes are records of derivations and measurements. Their tables and
+# equations are the content, and a translation that lags behind a correction
+# would state a number the English note has already retracted. They stay
+# English until the note is stable enough that a translation cannot drift.
+docs/research/index.md
+docs/research/adaptive-fusion-derivation.md
+docs/research/calibration-admission-floor-2026-09.md
