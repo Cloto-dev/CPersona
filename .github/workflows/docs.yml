@@ -37,6 +37,18 @@ on:
       - "docs-versions.json"
       - "scripts/build-all-versions.py"
       - "scripts/build-docs.sh"
+      - "scripts/check-site-urls.py"
+      # The files below publish absolute links into this site and are checked
+      # here by check-site-urls.py, so an edit to one of them has to run this
+      # workflow: they are the surfaces where a link goes stale without any
+      # page under docs/ changing. skills/ is on the list twice over -- it
+      # ships on the reader's disk and no gate that walks the built site can
+      # open it, because it is outside docs_dir.
+      - "README.md"
+      - "SUPPORT.md"
+      - "pyproject.toml"
+      - "skills/**"
+      - "scripts/check-docs-live.py"
   pull_request:
     paths:
       - "docs/**"
@@ -55,6 +67,18 @@ on:
       - "docs-versions.json"
       - "scripts/build-all-versions.py"
       - "scripts/build-docs.sh"
+      - "scripts/check-site-urls.py"
+      # The files below publish absolute links into this site and are checked
+      # here by check-site-urls.py, so an edit to one of them has to run this
+      # workflow: they are the surfaces where a link goes stale without any
+      # page under docs/ changing. skills/ is on the list twice over -- it
+      # ships on the reader's disk and no gate that walks the built site can
+      # open it, because it is outside docs_dir.
+      - "README.md"
+      - "SUPPORT.md"
+      - "pyproject.toml"
+      - "skills/**"
+      - "scripts/check-docs-live.py"
   # A line's documentation is whatever its branch holds, so a branch other than
   # this one can change what this site should publish without producing any
   # event here. Nothing in a push to master can observe that, which is why
@@ -215,6 +239,17 @@ jobs:
         # marker naming the reader's line went missing while the selector still
         # rendered and its links still worked.
         run: python3 scripts/check-version-selector.py public
+      - name: Absolute links into the site resolve (blocking)
+        # The links this repository publishes to its own site, checked against
+        # the tree that is about to be published. No other gate can see them:
+        # check-doc-anchors.py reads in-site links only, so a link written as
+        # the full published URL is invisible to it, and the two files under
+        # skills/ that carry these links are outside docs_dir entirely.
+        #
+        # Fragments are the half that rots quietly -- mkdocs --strict fails a
+        # broken page link and passes a broken #fragment, which is how a slug
+        # guessed from a heading shipped once with every gate green.
+        run: python3 scripts/check-site-urls.py public
       - name: Upload Pages artifact
         # Everything that is not a review publishes: a push, the daily run, and a
         # manual dispatch. This condition and the deploy job's have to be widened

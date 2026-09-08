@@ -67,6 +67,33 @@ jobs:
         # code-drift are advisory until L6 (#299) turns on --strict.
         run: python3 scripts/mutation_waivers.py
 
+  version-map:
+    # What the site publishes, what SUPPORT.md says is supported, and what the
+    # tags say was released have to describe the same lines. Nothing else can
+    # notice when they stop: an assembly succeeds for any map naming buildable
+    # branches, so the map that publishes a 2.6 branch under a 2.5 label builds,
+    # renders and links exactly like the correct one.
+    #
+    # Here rather than in docs.yml because SUPPORT.md is the subject and is not
+    # on that workflow's path filter — the edit that most needs this check is
+    # the one that would not have triggered it.
+    if: github.event_name != 'schedule'  # locked/pinned — see lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Reads the tags on each line, and resolves the branch each line is
+          # published from. A shallow checkout has neither.
+          fetch-depth: 0
+      - name: Version map, support table and tags agree (blocking)
+        # --as-branch for the same reason the assembler takes it: a pull request
+        # is a detached merge ref on no branch, so without it the line under
+        # review is read from its published content and the change being
+        # reviewed is not examined at all.
+        run: >-
+          python3 scripts/check-version-map.py
+          --as-branch "${{ github.base_ref || github.ref_name }}"
+
   test:
     if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
