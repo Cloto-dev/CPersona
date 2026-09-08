@@ -22,10 +22,16 @@ are both silent:
     this is that gate.
 
 What it deliberately does NOT check: whether a page's body text names the right
-patch version. Pages state their line ("2.5.x"), not their patch, and the banner
-that states it is still hand-written -- deriving it from the build is separate
-work. So the agreement checked here is at line granularity, which is the
-granularity at which a tree currently names a version at all.
+patch version. Pages state their line ("2.5.x"), never their patch -- a patch
+label would be wrong between a cut and the next bump, and nothing about a page
+changes per patch. So the agreement checked here is at line granularity, which
+is the granularity at which a tree names a version at all.
+
+The banner that states the line is filled in at build time from the same two
+places this reads (scripts/docs_version.py), and whether the published page ends
+up under the line it names is checked against the assembled tree by
+scripts/check-version-selector.py. This gate is the one that can see the branch
+and the tags, and that is the half it answers.
 
 Reads the version a branch is on from that branch, and which ref that is from
 the assembler, so the gate cannot check a different ref than the one the site is
@@ -45,22 +51,19 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from docs_version import LINE_PREFIX, VERSION_SOURCES  # noqa: E402 — sibling script
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "docs-versions.json"
 SUPPORT_PATH = ROOT / "SUPPORT.md"
 ASSEMBLER_PATH = ROOT / "scripts" / "build-all-versions.py"
-# Where a line states its version, in the order the packaging resolves it. Both
-# shapes are live: this line points `[tool.hatch.version]` at the package, while
-# 2.4.x carries a static `version` in pyproject.toml and no `__version__` at all
-# -- measured, and the reason this is a list rather than one path. A frozen line
-# is exactly the case where the older shape is the one still in use, so reading
-# only the current shape would report "states no version" about a line that
-# states it perfectly well.
-VERSION_SOURCES = (
-    ("cpersona/__init__.py", re.compile(r'^__version__\s*=\s*"(?P<version>[^"]+)"', re.M)),
-    ("pyproject.toml", re.compile(r'^version\s*=\s*"(?P<version>[^"]+)"', re.M)),
-)
-LINE_PREFIX = re.compile(r"^(?P<line>\d+\.\d+)(?:\D|$)")
+# VERSION_SOURCES and LINE_PREFIX are imported, not declared: the documentation
+# build reads the same two places to fill in the line each page says it applies
+# to (scripts/docs_version.py). Two implementations of "where a tree states its
+# version" would let this gate agree with a map the pages disagree with, which
+# is the same class of green-and-meaningless as reading a different ref than the
+# site is built from.
 STATUS_HEADING = re.compile(r"^##\s+Status\s*$")
 NEXT_HEADING = re.compile(r"^##\s")
 EMPHASIS = re.compile(r"[*_`]")

@@ -12,7 +12,7 @@ deterministic given a calibrated gate, but the gate itself is measured by
 sampling the corpus at random, so two installs on identical data can settle on
 different operating points.
 
-> **Applies to: CPersona 2.5.x.** This site is the canonical documentation —
+> **Applies to: CPersona {{ version_line }}.** This site is the canonical documentation —
 > when the README or the bundled skill disagrees with a page here, this site
 > wins, and the discrepancy is a bug worth
 > [reporting](https://github.com/Cloto-dev/cpersona/issues/new?template=bug_report.yml).

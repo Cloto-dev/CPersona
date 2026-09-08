@@ -1,6 +1,6 @@
 # FAQ
 
-> **Applies to: CPersona 2.5.x.** Seeded from real questions asked by
+> **Applies to: CPersona {{ version_line }}.** Seeded from real questions asked by
 > production operators (anonymized). Short answers here; the canonical detail
 > lives in [Behavior Contracts](behavior-contracts.md) and the
 > [Operations Runbook](operations.md).

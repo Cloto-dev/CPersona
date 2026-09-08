@@ -1,6 +1,6 @@
 # Behavior Contracts
 
-> **Applies to: CPersona 2.5.x.** Statements here are verified against the
+> **Applies to: CPersona {{ version_line }}.** Statements here are verified against the
 > source of the current release line. Behaviors documented on this page are
 > **contracts**: callers may rely on them, and a change goes through the
 > pre-release ladder and release notes

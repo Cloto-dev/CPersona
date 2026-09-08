@@ -1,6 +1,6 @@
 # Getting Started
 
-> **Applies to: CPersona 2.5.x.** This page is the canonical installation and
+> **Applies to: CPersona {{ version_line }}.** This page is the canonical installation and
 > setup reference. The README keeps a condensed version of the same steps
 > because it is also the PyPI project page; when the two disagree, this page
 > wins.

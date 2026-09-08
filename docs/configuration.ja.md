@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/configuration.md@blob:fa3804aebbe68ac44cde2d6d7b8f17da3e8cfc0c -->
+<!-- i18n-source: docs/configuration.md@blob:a088c82b9f6d5f82ecf9e9d54825109d58571c49 -->
 
 # 設定リファレンス
 
-> **対象: CPersona 2.5.x。** 設定はすべて環境変数で、妥当な既定値を持ちます。
+> **対象: CPersona {{ version_line }}。** 設定はすべて環境変数で、妥当な既定値を持ちます。
 > このページが正本で、README は quick start に必要な部分集合だけを持ちます。
 >
 > **翻訳について**: 正本は英語版です。変数名・既定値・型は原文のまま保持して

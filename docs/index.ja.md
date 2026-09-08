@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:da04beb3ecff9b8588cf27c65e829a300e9215b4 -->
+<!-- i18n-source: docs/index.md@blob:86a3e12d9cd7f62f1d90e18bc07c2d5e3e5607cc -->
 
 # CPersona ドキュメント
 
@@ -13,7 +13,7 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 前提にすれば決定論的ですが、そのゲート自体はコーパスをランダムに標本して測るため、
 同一データの 2 つの環境が別々の動作点に落ち着きうることです。
 
-> **対象: CPersona 2.5.x。** このサイトが正式ドキュメントです — README や同梱
+> **対象: CPersona {{ version_line }}。** このサイトが正式ドキュメントです — README や同梱
 > skill の記述とこのサイトが食い違う場合はサイトが優先で、その食い違い自体が
 > [報告に値するバグ](https://github.com/Cloto-dev/cpersona/issues/new?template=bug_report.yml)
 > です。

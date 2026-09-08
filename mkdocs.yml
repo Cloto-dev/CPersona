@@ -113,6 +113,19 @@ plugins:
             Policy block standard: ポリシーブロック標準
             SuperAuditor standard: SuperAuditor 標準
 
+# The "Applies to: CPersona <line>" banner the pages open with is derived, not
+# written: this hook puts the line the tree states it is on where each page asks
+# for it, while the page is still markdown. It is a hook rather than a plugin
+# because the assembler builds each line from its own branch with only the two
+# pinned packages installed, and a line's documentation must not need a
+# dependency added to build the sentence naming that line.
+#
+# A build with this key removed still succeeds and publishes the placeholder
+# verbatim. scripts/check-version-selector.py reads the assembled tree and is
+# what makes that red, because nothing in a build can notice it.
+hooks:
+  - scripts/docs_version.py
+
 # Sidebar sub-category labels only. Kept as a stylesheet rather than an
 # override so that the theme keeps owning the markup — this file changes one
 # colour, and records why the level above it is left to the theme.

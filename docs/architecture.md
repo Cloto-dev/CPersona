@@ -1,6 +1,6 @@
 # Architecture
 
-> **Applies to: CPersona 2.5.x.** This page explains how the pieces fit
+> **Applies to: CPersona {{ version_line }}.** This page explains how the pieces fit
 > together and why. Where a mechanism has a caller-visible guarantee, the
 > guarantee lives in [Behavior Contracts](behavior-contracts.md) and is linked
 > from here rather than restated.

@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/getting-started.md@blob:7bd98c3279e961705d560e670360bc25faa10337 -->
+<!-- i18n-source: docs/getting-started.md@blob:6468a01632946dfac1d5f318dc657a7bea992445 -->
 
 # はじめに
 
-> **対象: CPersona 2.5.x。** このページがインストールとセットアップの正本です。
+> **対象: CPersona {{ version_line }}。** このページがインストールとセットアップの正本です。
 > README は PyPI のプロジェクトページも兼ねるため同じ手順の短縮版を持ちます。
 > 食い違う場合はこのページが優先されます。
 >

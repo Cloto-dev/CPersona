@@ -1,6 +1,6 @@
 # Configuration
 
-> **Applies to: CPersona 2.5.x.** All settings are environment variables with
+> **Applies to: CPersona {{ version_line }}.** All settings are environment variables with
 > sensible defaults. This page is the canonical reference; the README keeps
 > only the quick-start subset.
 

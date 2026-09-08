@@ -1,6 +1,6 @@
 # Tools
 
-> **Applies to: CPersona 2.5.x.** The authoritative description of every
+> **Applies to: CPersona {{ version_line }}.** The authoritative description of every
 > argument is the tool's own MCP description — your client reads it, and it
 > ships with the version you are running. This page groups **every tool** by
 > what you reach for them for, and links to the contract when a tool behaves in

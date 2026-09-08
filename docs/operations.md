@@ -1,6 +1,6 @@
 # Operations Runbook
 
-> **Applies to: CPersona 2.5.x.** This page is the canonical operations
+> **Applies to: CPersona {{ version_line }}.** This page is the canonical operations
 > reference: backup, degradation detection, recall tuning, CJK guidance, and
 > corpus indexing patterns. The behavior facts it relies on are contracts —
 > see [Behavior Contracts](behavior-contracts.md).

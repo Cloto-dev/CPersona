@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/faq.md@blob:061f9f9e52a506188c4abc04505c22a636e7cd02 -->
+<!-- i18n-source: docs/faq.md@blob:f2ad8e54ba9fefedabc8a9a547a154bdec1d858d -->
 
 # FAQ
 
-> **対象: CPersona 2.5.x。** 実運用オペレーターから実際に寄せられた質問
+> **対象: CPersona {{ version_line }}。** 実運用オペレーターから実際に寄せられた質問
 > (匿名化済み) を種にしています。ここには短い回答だけを置き、正確な詳細は
 > [挙動契約](behavior-contracts.md) と [運用 Runbook](operations.md)
 > (いずれも英語が正本) にあります。
