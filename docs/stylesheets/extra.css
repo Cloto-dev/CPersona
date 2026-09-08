@@ -51,44 +51,42 @@
 }
 
 /* Version selector, rendered into the header by
- * overrides/partials/alternate.html using the theme's own md-version markup.
- * The theme ships the appearance of that component whether or not the script
- * that normally builds it ever runs, so what is left here is placement: the
- * component was designed to sit just after the site title on the left, and this
- * one sits in the right-hand cluster beside the language selector.
+ * overrides/partials/alternate.html on md-select -- the same component the
+ * language selector is built on, so both open the same way, in the same place,
+ * with the same arrow pointing back at their button.
+ *
+ * md-select positions its own panel (top, left and the transform are all in the
+ * theme), so nothing here touches that. What is left is the button, which is a
+ * word where every other control in this row is an icon.
  *
  * Every rule below overrides one the theme sets, at equal specificity, and wins
  * on order -- extra_css is emitted after the theme stylesheet. */
-.md-version {
-  /* The dropdown is positioned absolutely and the theme leaves it to resolve
-   * against the header, which works where the control is: at the left edge.
-   * From the right-hand cluster the list would fly to the far left. */
-  position: relative;
-  /* Centres the label against the language and search icons; upstream gets this
-   * from the flex container it is dropped into, which is not this one. */
+.cp-version {
+  /* Centres the label against the language and search icons. The icons get
+   * this from being inline-block against the header's line box; a flex child
+   * would otherwise sit at the top of a stretched row. Safe on md-select,
+   * whose panel is placed by explicit offsets rather than by where it would
+   * have fallen in flow. */
   align-items: center;
   display: flex;
+  /* Comes from md-version upstream, which is not the wrapper any more. */
+  font-size: 0.8rem;
 }
 
 /* The gap that separated the label from the site title. There is no title on
- * this side -- the search field is the neighbour, and it brings its own. */
-[dir="ltr"] .md-version__current {
+ * this side -- the palette toggle is the neighbour, and it brings its own. */
+[dir="ltr"] .cp-version .md-version__current {
   margin-left: 0;
 }
 
-[dir="rtl"] .md-version__current {
+[dir="rtl"] .cp-version .md-version__current {
   margin-right: 0;
 }
 
-/* Hung from the right edge of the control rather than the left, so a list of
- * version names cannot open past the edge of the window. */
-.md-version__list {
-  margin: 0.2rem 0;
-  right: 0;
-}
-
 /* The line being read. Marked by weight alone: the row is still a link, because
- * from a subpage it is the way back to that line's root. */
-.md-version__link[aria-current="true"] {
+ * from a subpage it is the way back to that line's root. Scoped to the version
+ * list, though no language row carries the attribute today -- an unscoped rule
+ * would quietly start styling one that did. */
+.cp-version .md-select__link[aria-current="true"] {
   font-weight: 700;
 }

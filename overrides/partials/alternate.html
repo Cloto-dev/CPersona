@@ -55,8 +55,33 @@
         {%- set names.here = parts[1] -%}
       {%- endif -%}
     {%- endfor -%}
+    {#-
+      Built on md-select, the same component the language selector below is
+      built on, so the two controls behave identically: the list opens beneath
+      the button, centred under it and pointed at it by the arrow the theme
+      draws, and it closes on the same delay.
+
+      md-version was the obvious component to reach for and was wrong for this
+      position. Its list carries no `top` and no `left`, because upstream places
+      that control at the left of the header where the static position happens
+      to land correctly; over here it opened on top of its own button and hid the
+      version it was showing. md-select positions its panel explicitly, so it
+      does not depend on where in the header it sits.
+
+      What is kept from md-version is the button: the label colour, the
+      dropdown caret, and the affordance of a control whose face is a word
+      rather than an icon.
+
+      The rows are md-select__link and deliberately carry no hreflang. The
+      language routing in main.html records a reader's choice by reading the
+      hreflang off any clicked md-select__link, so a version row that had one
+      would be filed as a language preference -- and the reader would be
+      redirected to a language named after a version number from then on. A gate
+      checks for this rather than a comment, because the attribute is the
+      natural thing for someone to add while making the two lists look alike.
+    -#}
     <div class="md-header__option">
-      <div class="md-version">
+      <div class="md-select cp-version">
         {#-
           The label falls back to the word rather than to the first row: with no
           row marked, naming one anyway would state a version the reader is not
@@ -66,21 +91,24 @@
           being true.
         -#}
         <button class="md-version__current" aria-label="{{ label }}">
-          {{ names.here or label }}
+          {{- names.here or label -}}
         </button>
-        <ul class="md-version__list">
-          {%- for parts in rows %}
-            <li class="md-version__item">
-              <a href="{{ root }}{{ parts[0] }}/" class="md-version__link"
-                {#- The line being read is marked for the same reason its link is
-                    left in place: the row has to be visible as the current one,
-                    and it still has to lead somewhere real from a subpage. -#}
-                {%- if parts[2] == "here" %} aria-current="true"{% endif %}>
-                {{- parts[1] -}}
-              </a>
-            </li>
-          {%- endfor %}
-        </ul>
+        <div class="md-select__inner">
+          <ul class="md-select__list">
+            {%- for parts in rows %}
+              <li class="md-select__item">
+                <a href="{{ root }}{{ parts[0] }}/" class="md-select__link"
+                  {#- The line being read is marked for the same reason its link
+                      is left in place: the row has to be visible as the current
+                      one, and it still has to lead somewhere real from a
+                      subpage. -#}
+                  {%- if parts[2] == "here" %} aria-current="true"{% endif %}>
+                  {{- parts[1] -}}
+                </a>
+              </li>
+            {%- endfor %}
+          </ul>
+        </div>
       </div>
     </div>
   {%- endif -%}
