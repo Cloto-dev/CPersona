@@ -4,12 +4,11 @@ name: docs (published)
 # the repository, which is why none of them can see this failure: the published
 # site can stop matching the source without any source being wrong.
 #
-# The path that gets there is in the docs workflow itself. It cancels an
-# in-progress run when another push arrives on the same ref, and its triggers are
-# path-filtered — so a push touching a documentation path can have its deploy
-# cancelled by a following push that touches none, which starts no run to replace
-# it. Nothing retries and nothing reports; the source stays correct and the site
-# keeps serving what it served before.
+# The path that gets there is in the docs workflow itself. A run already going is
+# never cancelled, but a run waiting behind one is replaced rather than queued,
+# and the triggers are path-filtered — so a deploy can be dropped by a following
+# push that starts no run to replace it. Nothing retries and nothing reports; the
+# source stays correct and the site keeps serving what it served before.
 #
 # Runs on a schedule rather than after a deploy, deliberately. The drift this
 # looks for is defined by a deploy NOT happening, so hanging the check off a
@@ -18,12 +17,19 @@ name: docs (published)
 # A daily run has neither problem, and catches drift that arrives with no commit
 # at all.
 #
+# It does NOT try to run after the publish. Both are scheduled workflows, both
+# have been measured firing four to six hours late, and their delays are
+# independent — so any design that needs "the publish went first" is relying on
+# an ordering neither workflow can promise. The comparison is made against the
+# provenance the site carries instead: what commit each published line was built
+# from, read off the site itself.
+#
 # There is deliberately no pull_request trigger: on a branch the published site
 # SHOULD differ from the build, so running this there would fail by design and be
 # ignored into uselessness. That leaves the script itself unexercised by PRs, so
 # the part of it that decides — the URL mapping, and keeping "the site is behind"
-# separate from "the site could not be reached" — is covered by unit tests in the
-# suite, which every PR runs.
+# apart from "the site is missing a line" and from "the site could not be
+# reached" — is covered by unit tests in the suite, which every PR runs.
 
 on:
   schedule:
@@ -36,7 +42,7 @@ permissions:
   contents: read
 
 concurrency:
-  # Deliberately NOT cancel-in-progress. This workflow exists because a cancelled
+  # Deliberately NOT cancel-in-progress. This workflow exists because a dropped
   # run left work undone; cancelling its own runs would reproduce the shape of
   # the defect inside the detector.
   group: docs-live
@@ -44,15 +50,30 @@ concurrency:
 jobs:
   compare:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The assembly builds every line from its own branch, and the check
+          # reads the age of the commit a line is waiting to publish. A shallow
+          # checkout has neither the branches nor the dates.
+          fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-      - name: Build the site the way the deploying workflow builds it
-        # Same pinned versions as docs.yml. A different generator version would
-        # produce different bytes and report drift that is the build's, not the
-        # site's — the comparison is only meaningful between identical builders.
-        run: uvx --with mkdocs-material==9.7.7 --with mkdocs-static-i18n==1.3.1 mkdocs build --strict
-      - name: Compare every published page against that build
-        run: python3 scripts/check-docs-live.py --site site
+      - name: Assemble the tree the way the deploying workflow assembles it
+        # The same script, not the same steps written out again. The comparison
+        # is only meaningful between identical builders, and a second
+        # implementation of the assembly here would drift from the one that
+        # publishes — reporting the difference between two builders as a
+        # difference between the site and the source.
+        #
+        # It also has to be the assembly rather than a plain `mkdocs build`:
+        # each line is published from its own branch, so a single build of this
+        # checkout is the right tree for at most one of them, and would report
+        # every other line as entirely drifted.
+        run: >-
+          python3 scripts/build-all-versions.py
+          --out public
+          --as-branch "${{ github.base_ref || github.ref_name }}"
+      - name: Compare every published page against that assembly
+        run: python3 scripts/check-docs-live.py --site public

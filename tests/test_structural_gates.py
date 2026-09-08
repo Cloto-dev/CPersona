@@ -1945,53 +1945,206 @@ def test_built_pages_map_to_their_published_urls(tmp_path):
     (tmp_path / "tools" / "index.html").write_text("tools")
     (tmp_path / "ja" / "tools").mkdir(parents=True)
     (tmp_path / "ja" / "tools" / "index.html").write_text("ja tools")
+    (tmp_path / "2.5" / "tools").mkdir(parents=True)
+    (tmp_path / "2.5" / "tools" / "index.html").write_text("2.5 tools")
 
-    urls = {url for url, _ in live.page_urls(tmp_path, "https://example.test/CPersona/")}
+    urls = {url for url, _, _ in live.page_urls(tmp_path, "https://example.test/CPersona/")}
     assert urls == {
         "https://example.test/CPersona/",
         "https://example.test/CPersona/tools/",
         "https://example.test/CPersona/ja/tools/",
+        "https://example.test/CPersona/2.5/tools/",
     }
     # A base without its trailing slash must not produce "…CPersonatools/".
-    urls_no_slash = {url for url, _ in live.page_urls(tmp_path, "https://example.test/CPersona")}
+    urls_no_slash = {url for url, _, _ in live.page_urls(tmp_path, "https://example.test/CPersona")}
     assert urls_no_slash == urls
 
 
-def test_an_empty_site_is_not_agreement(tmp_path, capsys):
+def test_an_empty_site_is_not_agreement(tmp_path):
     """Comparing nothing must fail, not pass — the vacuous-green class."""
     live = _docs_live_module()
     assert live.page_urls(tmp_path, "https://example.test/") == []
 
 
-def test_drift_and_unreachable_are_reported_separately(tmp_path, monkeypatch):
-    """A site that is behind and a site that cannot be seen are different answers.
+def test_a_page_the_site_does_not_have_is_missing_not_unreachable(tmp_path):
+    """Three findings, not two: behind, missing, and could-not-see.
 
-    Collapsing them would send a reader to republish the docs when the real
-    finding was that the check could not reach the host at all.
+    404 used to land in "could not be fetched", which reads as a network fault
+    and sends the reader to check the host. It is the opposite: the host
+    answered, and answered that it does not have a page this tree builds. With
+    one tree per version line that distinction decides whether a whole line was
+    never published or whether the check was blind.
     """
     live = _docs_live_module()
-    (tmp_path / "same").mkdir()
-    (tmp_path / "same" / "index.html").write_bytes(b"identical")
-    (tmp_path / "stale").mkdir()
-    (tmp_path / "stale" / "index.html").write_bytes(b"new content")
-    (tmp_path / "gone").mkdir()
-    (tmp_path / "gone" / "index.html").write_bytes(b"whatever")
+    for name, body in (("same", b"identical"), ("stale", b"new content"), ("gone", b"whatever"),
+                       ("down", b"whatever")):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "index.html").write_bytes(body)
 
     def fake_fetch(url):
         if url.endswith("/same/"):
             return b"identical", None
         if url.endswith("/stale/"):
             return b"old content", None
-        return None, "HTTP 404"
+        if url.endswith("/gone/"):
+            return None, "HTTP 404"
+        return None, "URLError: timed out"
 
-    monkeypatch.setattr(live, "fetch", fake_fetch)
-    drifted, unreachable, checked = live.compare(tmp_path, "https://example.test/", jobs=2)
+    found = live.compare(
+        tmp_path, "https://example.test/", jobs=2,
+        line_verdicts={"2.5": live.STRICT}, current="2.5", fetcher=fake_fetch,
+    )
 
-    assert checked == 3
-    assert drifted == ["https://example.test/stale/"]
-    assert unreachable == ["https://example.test/gone/ (HTTP 404)"]
-    # The matching page appears in neither list — a finding must name a real page.
-    assert not any("/same/" in entry for entry in drifted + unreachable)
+    assert len(found["checked"]) == 4
+    assert found["drifted"] == ["https://example.test/stale/"]
+    assert found["missing"] == ["https://example.test/gone/"]
+    assert found["unreachable"] == ["https://example.test/down/ (URLError: timed out)"]
+    # The matching page appears in none of them — a finding must name a real page.
+    assert not any("/same/" in entry for bucket in ("drifted", "missing", "unreachable")
+                   for entry in found[bucket])
+
+
+def test_the_fetcher_is_replaceable_at_call_time(tmp_path):
+    """Replacing the module attribute has to reach `compare`.
+
+    A default argument would bind the real fetch at definition, so a test that
+    swapped the attribute would go on measuring the live network while reporting
+    that it had not.
+    """
+    live = _docs_live_module()
+    (tmp_path / "index.html").write_bytes(b"page")
+    calls = []
+
+    def fake_fetch(url):
+        calls.append(url)
+        return b"page", None
+
+    live.fetch = fake_fetch
+    found = live.compare(tmp_path, "https://example.test/", jobs=1,
+                         line_verdicts={"2.5": live.STRICT}, current="2.5")
+    assert calls == ["https://example.test/"], "compare did not use the replaced fetcher"
+    assert not found["drifted"]
+
+
+def test_a_lagging_line_is_not_fetched_at_all(tmp_path):
+    """The clock-delay false positive, closed at the source.
+
+    Publishing runs on a schedule, so between two runs the site is *supposed* to
+    be behind the branches. Fetching a lagging line's pages would report that
+    ordinary interval as drift every morning. The line is named once instead.
+    """
+    live = _docs_live_module()
+    (tmp_path / "2.6" / "tools").mkdir(parents=True)
+    (tmp_path / "2.6" / "tools" / "index.html").write_bytes(b"unpublished")
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "index.html").write_bytes(b"current")
+
+    def fake_fetch(url):
+        return b"current", None
+
+    found = live.compare(
+        tmp_path, "https://example.test/", jobs=2,
+        line_verdicts={"2.5": live.STRICT, "2.6": live.LAGGING}, current="2.5",
+        fetcher=fake_fetch,
+    )
+    assert found["checked"] == ["https://example.test/tools/"]
+    assert not found["drifted"] and not found["missing"]
+
+
+def test_which_line_a_page_belongs_to(tmp_path):
+    """The root serves the current line; every other subtree is named by its id."""
+    live = _docs_live_module()
+    ids = {"2.5", "2.6"}
+    assert live.line_of("", ids, "2.5") == "2.5"
+    assert live.line_of("tools", ids, "2.5") == "2.5"
+    assert live.line_of("ja/tools", ids, "2.5") == "2.5"
+    assert live.line_of("2.6/tools", ids, "2.5") == "2.6"
+    assert live.line_of("2.6/ja/tools", ids, "2.5") == "2.6"
+
+
+def test_both_gates_place_a_page_in_the_same_line(tmp_path):
+    """The selector gate answers the same question and must answer it the same way.
+
+    Two gates disagreeing about which line a page is in would each be coherent
+    about a different page: one would assert the selector of a page it thinks is
+    2.6 while the other suppressed comparison for 2.5.
+    """
+    live = _docs_live_module()
+    spec = importlib.util.spec_from_file_location(
+        "check_version_selector",
+        pathlib.Path(__file__).parent.parent / "scripts" / "check-version-selector.py",
+    )
+    selector = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(selector)
+
+    ids, current = {"2.5", "2.6"}, "2.5"
+    for relative in ("index.html", "tools/index.html", "ja/tools/index.html",
+                     "2.6/index.html", "2.6/ja/tools/index.html"):
+        page = tmp_path / relative
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("x")
+        where = page.parent.relative_to(tmp_path).as_posix()
+        theirs = selector.line_of(page, tmp_path, ids, current)
+        mine = live.line_of("" if where == "." else where, ids, current)
+        assert mine == theirs, f"{relative}: docs-live says {mine}, selector says {theirs}"
+
+
+def test_provenance_decides_lag_rather_than_the_clock(tmp_path):
+    """Every verdict `verdicts()` can reach, and the reason for each.
+
+    This is the part no pull request exercises — the workflow has no
+    pull_request trigger by design — so it is pinned here or nowhere.
+    """
+    live = _docs_live_module()
+    local = {"current": "2.5", "versions": [
+        {"id": "2.5", "commit": "aaa"}, {"id": "2.6", "commit": "bbb"}]}
+
+    same = {"versions": [{"id": "2.5", "commit": "aaa"}, {"id": "2.6", "commit": "bbb"}]}
+    assert live.verdicts(local, same, {}, 48) == {"2.5": live.STRICT, "2.6": live.STRICT}
+
+    behind = {"versions": [{"id": "2.5", "commit": "aaa"}, {"id": "2.6", "commit": "old"}]}
+    assert live.verdicts(local, behind, {"2.6": 3.0}, 48)["2.6"] == live.LAGGING
+    assert live.verdicts(local, behind, {"2.6": 90.0}, 48)["2.6"] == live.STALLED
+    # An age this clone cannot compute must not decide the gate either way.
+    assert live.verdicts(local, behind, {"2.6": None}, 48)["2.6"] == live.LAGGING
+
+    without = {"versions": [{"id": "2.5", "commit": "aaa"}]}
+    assert live.verdicts(local, without, {}, 48)["2.6"] == live.ABSENT
+
+    # No manifest on the site at all: the pre-provenance behaviour, not a pass.
+    assert live.verdicts(local, None, {}, 48) == {"2.5": live.STRICT, "2.6": live.STRICT}
+    # A published entry carrying no commit is the same legacy case, per line.
+    legacy = {"versions": [{"id": "2.5", "commit": ""}, {"id": "2.6", "commit": "bbb"}]}
+    assert live.verdicts(local, legacy, {}, 48)["2.5"] == live.STRICT
+
+
+def test_the_published_check_assembles_every_line_the_way_the_publisher_does(tmp_path):
+    """It builds with the shared assembler, into the directory it then reads.
+
+    A plain `mkdocs build` here would be the right tree for at most one line and
+    would report every other line as entirely drifted; a second copy of the
+    assembly would drift from the one that publishes and report the difference
+    between two builders as drift in the site.
+    """
+    text = (pathlib.Path(__file__).parent.parent
+            / ".github" / "workflows" / "docs-live.yml").read_text(encoding="utf-8")
+    # Comments stripped first: this workflow explains in prose why it does not
+    # run a single build, so a search over the whole file matches the sentence
+    # saying so and fails on the explanation rather than on the command.
+    executed = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "mkdocs build" not in executed, (
+        "docs-live builds a single tree again: it can only match one line that way"
+    )
+    written = re.search(r"build-all-versions\.py\s*\n?\s*--out (?P<dir>\S+)", text)
+    read_back = re.search(r"check-docs-live\.py --site (?P<dir>\S+)", text)
+    assert written and read_back, "the assemble/compare pair is no longer wired"
+    assert written.group("dir") == read_back.group("dir")
+    assert "fetch-depth: 0" in text, (
+        "a shallow checkout carries neither the branches the assembly builds nor the "
+        "commit dates the lag bound reads"
+    )
 
 
 # --------------------------------------------------------------------------------------
