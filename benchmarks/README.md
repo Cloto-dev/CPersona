@@ -55,13 +55,27 @@ model (e.g. `embcache`, `embcache_minilm`) is the safe pattern.
 
 ## Measurement regime (doctrine)
 
-1. **Truncation layers off.** Full-precision ranking benchmarks run with
-   `CPERSONA_AUTOCUT_ENABLED=false` and `CPERSONA_FUSED_GATE_ENABLED=false`
-   (the launcher sets both). These layers exist for contamination
-   prevention in live use; on a ranking metric they can only remove items
-   from an already-ranked list, so they are neutral at best and lossy at
-   worst. Their value is measured separately with precision-type metrics,
-   not with NDCG.
+1. **Calibrated gate and autocut off; the pool-size gate stays on.** Ranking
+   benchmarks run with `CPERSONA_AUTOCUT_ENABLED=false` and
+   `CPERSONA_FUSED_GATE_ENABLED=false` (the launcher sets both). Those two
+   layers exist for contamination prevention in live use and can only remove
+   items from an already-ranked list, so they are kept out of a ranking
+   metric. What the launcher does **not** switch off is the pool-size
+   heuristic gate that `do_recall` applies when no calibrated gate is
+   configured: Track B measures the shipped recall path *including* that
+   gate. Measured with the frozen-stage replay (`frozen_replay.py`;
+   [research note](../docs/research/frozen-stage-replay-2026-09.md)), the
+   gate is neutral on pools of a few hundred rows or more, but on pools of
+   thirty rows or fewer it removes every lexical-only row and cuts relevant
+   dense rows too — up to 10 (jina-v5-nano) and 19 (MiniLM) NDCG@10 points
+   on EPBench, whose corpus groups are as small as 19 rows. The Track B
+   numbers on such tasks are therefore lower than the fused ranking they
+   contain; the record below carries the pre-gate score next to them so the
+   difference is visible. The gate's behaviour on small pools is a defect in
+   the shipped path, tracked in the
+   [adaptive fusion design](../docs/ADAPTIVE_FUSION_DESIGN.md) (D2); the
+   regime is not redefined around it, so that the benchmark keeps measuring
+   what a deployment runs and shows the improvement when the defect is fixed.
 2. **Fixed flags.** `--recall_mode rrf --auto_calibrate --budget_encode`,
    `--dtype float16`. Keep flags identical across runs you intend to
    compare.
@@ -360,6 +374,34 @@ Read the deltas as "the pipeline does not cost ranking quality, and recovers a
 lot of it on weaker embeddings" rather than as a uniform gain. Two models are
 two points: they bound the direction of the effect on this corpus, not its size
 on an embedding neither of them resembles.
+
+### What the pool-size gate does to the record
+
+Track B includes the shipped pool-size gate (doctrine 1). The frozen-stage
+replay scores the same fused ranking before the gate (S2) and after it (S3 =
+Track B) on identical candidates; where the two differ, the gap is the gate's
+doing, not the fusion's. Mean NDCG@10 over subtasks; tasks with more than 200
+queries per subtask (QASPER, TMD, MemBench, ConvoMem, LongMemEval) are
+200-query-per-subtask subsamples, the others every query. Tasks where the
+gate moves a model by less than 0.2 points are omitted.
+
+| Task | MiniLM S2 → S3 | jina-v5-nano S2 → S3 | bge-m3 S2 → S3 |
+|---|---|---|---|
+| EPBench | 76.64 → 57.70 (−18.94) | 87.67 → 77.47 (−10.19) | 90.11 → 89.94 (−0.17) |
+| QASPER | 42.69 → 40.15 (−2.53) | 46.11 → 42.43 (−3.68) | 47.84 → 48.00 (+0.16) |
+| Gorilla | 29.02 → 26.59 (−2.43) | 34.22 → 33.83 (−0.39) | 33.01 → 33.01 (0.00) |
+| ReMe | 59.20 → 57.70 (−1.50) | 60.68 → 61.32 (+0.64) | 58.88 → 58.88 (0.00) |
+| LongMemEval | 76.79 → 75.62 (−1.17) | 80.09 → 80.76 (+0.67) | 79.78 → 79.78 (0.00) |
+| MemBench | 62.60 → 62.79 (+0.19) | 64.71 → 65.50 (+0.78) | 64.07 → 64.31 (+0.23) |
+| MLDR | 79.64 → 79.25 (−0.39) | 80.13 → 80.13 (0.00) | 79.80 → 79.80 (0.00) |
+
+The loss concentrates where pools are tiny: 99.6 % of EPBench's gate loss on
+jina-v5-nano sits in its four 19–20-row corpus groups. On the strong model the
+gate is nearly inert because its dense rows clear the gate's cosine threshold
+and fill the top ten on their own. The small positive entries are the gate
+removing lexical-tail intruders on larger pools, which is what it is for. The
+remaining eleven tasks are being replayed; the pre-gate 22-task mean will be
+added beside the Track B mean when they are in.
 
 ## Results
 
