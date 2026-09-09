@@ -25,6 +25,9 @@ Two tracks are measured:
 | `mps_accel.py` | Optional behavior-invariant recall acceleration (`--fast`): preloads each corpus group's embeddings into one matrix instead of per-query full-table scans. Zero changes to cpersona itself |
 | `mps_accel_equivalence_gate.py` | Equivalence gate proving `mps_accel` returns identical results to the original `_search_vector` (numpy backend: bitwise; torch: ≤1e-5), including a `do_recall` integration comparison. `--mode sidecar` turns the same harness on the contiguous embedding index, comparing `_search_vector` with and without the index file present. Deliberately NOT named `test_*.py`: it is a standalone script that mutates `os.environ` at import time, so pytest must never collect it |
 | `run_trackb.sh` | Track B launcher encoding the official measurement regime |
+| `frozen_replay.py` | Frozen-stage replay of the Track B path: scores the dense-only order, the admitted order, the fused order and the gated order per query on the same frozen embeddings and lexical scores, so Track B − Track A can be attributed to a stage. Reproduces Track A at the first stage and the recorded Track B at the last, and compares its fused/gated orders row for row with the live `_recall_rrf` / `do_recall` on a sample of queries |
+| `replay_summary.py` | Tabulates `frozen_replay.py` output across models: stage decomposition, lexical-weight sweep, top-ten move taxonomy, per-corpus calibration |
+| `replay_query_analysis.py` | Per-query view of the same output: fusion delta by top-cosine quartile, the one-parameter cosine switch and its oracle, gold visibility |
 | `benchmark_latency.py` | Production-stack latency runner: end-to-end `do_recall()` / `do_store()` wall clock against a REAL HTTP embedding backend (CEmbedding `/embed`), in both `local` and `remote` (matrix `/search`) vector-search modes |
 
 ## Prerequisites
@@ -209,6 +212,47 @@ positive proxy, null / positive statistics, operating point, and the derived
 fusion floor (`new_threshold x RRF_THRESHOLD_FACTOR`). Neither flag changes a
 score; the harness used to print the calibration to the log only, so the
 operating point could not be correlated with the per-task score afterwards.
+
+### Frozen-stage replay (where does Track B − Track A arise?)
+
+`frozen_replay.py` stores a corpus exactly as the Track B runner does, then for
+every query computes the dense ranking from the preloaded matrix, the lexical
+list from the real FTS path, and re-derives the fusion and the heuristic gate
+with the pipeline's own arithmetic, scoring each stage with the harness's
+`compute_ndcg`. The stages are S0 (dense only), S1 (after the admission floor),
+S2 (reciprocal rank fusion, before the gate) and S3 (after the pool-size gate,
+which is what `do_recall` returns in the Track B regime — the fused gate and
+autocut are off, the heuristic gate is not). Two identities are checked on
+every run: S0 must reproduce Track A, and S3 must reproduce the recorded Track
+B when `--pin_from` points at a Track B output directory whose `<task>.json`
+carries the calibration records (`--record_admission`), which pins the
+threshold instead of drawing a new calibration. Every `--identity_every` N-th
+query is additionally compared row for row with the live `_recall_rrf` and
+`do_recall`.
+
+```bash
+# jina-v5-text-nano, threshold pinned to a recorded calibration arm:
+LMEB_DIR=~/lmeb python benchmarks/frozen_replay.py \
+    --model_path jinaai/jina-embeddings-v5-text-nano \
+    --emb_cache_dir ~/lmeb/embcache_jinanano --trust_remote_code --default_task retrieval \
+    --pin_from ~/lmeb/trackb_cal_jinanano_separation_r1 \
+    --tasks LMEB_SciFact,ESGReports,QASPER,TMD,EPBench,ReMe,Gorilla,MemBench,ConvoMem,LongMemEval,MLDR \
+    --out_dir replay_jinanano --max_queries_per_subtask 200
+# bge-m3, calibrating live (no arm to pin to):
+LMEB_DIR=~/lmeb python benchmarks/frozen_replay.py \
+    --model_path BAAI/bge-m3 --emb_cache_dir ~/lmeb/embcache_bgem3_p1 --emb_cache_model BAAI/bge-m3 \
+    --tasks LMEB_SciFact,QASPER --out_dir replay_bgem3 --max_queries_per_subtask 200
+# tabulate (REPLAY_ROOT = the directory holding replay_<model>/):
+REPLAY_ROOT=. python benchmarks/replay_summary.py jinanano=jina-v5-nano bgem3=bge-m3
+REPLAY_ROOT=. python benchmarks/replay_query_analysis.py jinanano=jina-v5-nano
+```
+
+`--max_queries_per_subtask N` replays every k-th query so that at most N per
+subtask are scored (the 10,000-query tasks otherwise take hours per model);
+the identity checks still run on the replayed queries, and the per-task numbers
+are then subsample means, not the published Track B numbers. Fusion is sorted
+over a bounded working set (`--work_depth`, default 3000 per arm; every
+allowed row when a candidate subset applies), which is exact for the top ten.
 
 ### Prompted / task-adapter models
 
