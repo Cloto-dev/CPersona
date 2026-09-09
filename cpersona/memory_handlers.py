@@ -483,7 +483,7 @@ async def _recall_rrf(
     db,
     agent_id: str,
     query: str,
-    limit: int,
+    depth: int,
     deep: bool,
     channel: str = "",
     exclude_set: set[str] | None = None,
@@ -492,6 +492,11 @@ async def _recall_rrf(
 ) -> list[dict]:
     """v2.4 RRF recall: run vector and FTS5 independently, merge with
     Reciprocal Rank Fusion. Avoids cascade's positional bias.
+
+    `depth` is the Recall Depth (2.6): the top-K each arm hands to the fusion.
+    It is not the response count -- `do_recall` cuts the fused list to `limit`
+    afterwards -- so the fusion may consider more rows than the caller receives.
+    The fused list is returned whole; nothing here knows the count.
     """
     k = RRF_K
     doc_map: dict[tuple, dict] = {}
@@ -505,7 +510,7 @@ async def _recall_rrf(
         # the scan window, and stays empty otherwise.
         far_results: list[dict] = []
         vector_results = await _search_vector(
-            db, agent_id, query, limit, min_similarity=rrf_min_sim,
+            db, agent_id, query, depth, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
             far_out=far_results,
         )
@@ -538,7 +543,7 @@ async def _recall_rrf(
     # one channel and is allowed even with source_id set (grounding path).
     if FTS_ENABLED and (not source_id or channel):
         fts_ep_results = await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id
         )
         for rank, row in enumerate(fts_ep_results):
             rid = ("ep", row["id"])
@@ -548,7 +553,7 @@ async def _recall_rrf(
 
     if FTS_ENABLED:
         fts_mem_results = await _search_memories_keyword(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id
         )
         for rank, row in enumerate(fts_mem_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -593,7 +598,7 @@ async def _recall_rsf(
     db,
     agent_id: str,
     query: str,
-    limit: int,
+    depth: int,
     deep: bool,
     channel: str = "",
     exclude_set: set[str] | None = None,
@@ -602,7 +607,8 @@ async def _recall_rsf(
 ) -> list[dict]:
     """Relative-Score-Fusion recall: like RRF but fuse the per-query min-max
     normalized *raw* score of each channel (cosine for vector, -bm25 for FTS)
-    instead of rank.
+    instead of rank. `depth` is the Recall Depth, as in `_recall_rrf`: the
+    per-arm top-K, not the response count.
 
     RRF's rank-only fusion crushes large score margins — a rank-1 vs rank-4
     bm25 gap collapses to ~5% at K=60 — so a near-tie vector channel can
@@ -631,7 +637,7 @@ async def _recall_rsf(
     if vector._embedding_client:
         far_rows: list[dict] = []
         near_rows = await _search_vector(
-            db, agent_id, query, limit, min_similarity=rsf_min_sim,
+            db, agent_id, query, depth, min_similarity=rsf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
             far_out=far_rows,
         )
@@ -662,7 +668,7 @@ async def _recall_rsf(
     # Episodes lack per-user source tagging (mirrors _recall_rrf gating).
     if FTS_ENABLED and (not source_id or channel):
         for row in await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id
         ):
             rid = ("ep", row["id"])
             doc_map.setdefault(rid, row)
@@ -671,7 +677,7 @@ async def _recall_rsf(
 
     if FTS_ENABLED:
         for row in await _search_memories_keyword(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id
         ):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -1340,6 +1346,18 @@ async def _apply_recall_scoring(
     return results, time_range_hours, recall_counts, newest_age_hours
 
 
+def _recall_depth(limit: int) -> int:
+    """Recall Depth for a response count of `limit` (2.6, "Depth is not count").
+
+    `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)`, clamped to the library ceiling.
+    Read from `config` at call time so a process can be pointed at a floor
+    without a restart of the module graph (tests do this; an operator changes
+    the env and restarts). The floor never lowers the depth below the count:
+    a caller asking for 200 rows still gets a fusion at least 200 deep.
+    """
+    return _clamp_limit(max(limit, config.RECALL_DEPTH_FLOOR), RECALL_LIBRARY_MAX_LIMIT)
+
+
 async def do_recall(
     agent_id: str,
     query: str,
@@ -1400,6 +1418,16 @@ async def do_recall(
             limit,
         )
 
+    # 2.6 (Depth is not count): `limit` is how many rows come back; `depth` is
+    # how far the fusion digs -- the per-arm top-K. They were one number, and the
+    # coupling cost accuracy in a measurable way (a limit of 5 put rows
+    # structurally out of reach at every gate value, see Goal-level notes in
+    # docs/RELIABLE_RECALL_2_6.md section 4). At the default floor the two are
+    # still equal, so nothing about today's ranking moves until the floor does.
+    # The cascade path is untouched: it fills `limit` slots stage by stage and
+    # fuses nothing, so a depth has no list to deepen there.
+    depth = _recall_depth(limit)
+
     # Detect the static degraded case (mode=none) before dispatch; the runtime fault case
     # is observed at the embedding boundary in vector._search_vector. See health.py.
     health.observe_config()
@@ -1411,12 +1439,12 @@ async def do_recall(
     async with connection() as db:
         if RECALL_MODE == "rrf" and query.strip():
             results = await _recall_rrf(
-                db, agent_id, query, limit, deep, channel, exclude_set,
+                db, agent_id, query, depth, deep, channel, exclude_set,
                 project_id=project_id, source_id=source_id,
             )
         elif RECALL_MODE == "rsf" and query.strip():
             results = await _recall_rsf(
-                db, agent_id, query, limit, deep, channel, exclude_set,
+                db, agent_id, query, depth, deep, channel, exclude_set,
                 project_id=project_id, source_id=source_id,
             )
         else:
@@ -1665,6 +1693,13 @@ async def do_recall(
                 logger.warning("recall_count bump failed (non-fatal): %s", e)
 
     result: dict = {"messages": messages}
+    # 2.6: say how deep the fusion looked, but only when that is not the count
+    # the caller already knows. At the default floor the two are equal and the
+    # key is absent, so every response recorded before the depth existed is
+    # unchanged byte for byte; once a floor is set, the caller can see that the
+    # ranking behind a 5-row answer considered more than 5 candidates per arm.
+    if depth != limit:
+        result["depth"] = depth
     # bug-183: present ONLY when the rescue fired. A `false` on every other recall would
     # change the payload of the whole surface (and every recorded golden) to say nothing.
     if gate_fallback:
