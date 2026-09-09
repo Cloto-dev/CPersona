@@ -104,17 +104,49 @@ they carry evidence, contains reciprocal rank fusion as an identifiable limit,
 and fits no per-arm weight — the unknown prevalence of relevant rows cancels
 from the order.
 
-*What "evidence" is estimated from.* Both densities come from a **reference
-panel** declared per agent scope: a fixed sample of documents and a fixed set
-of queries, chosen independently of any retrieval (retained past queries where
-they exist, pseudo-queries drawn from stored text otherwise, with the query
-encoder role applied). The null joint is the score pair over random
-query–document pairs of the panel; the population joint is the score pair over
-all pairs. Because the panel does not depend on what a recall returns, the
-score is candidate-set independent by construction. The panel is bounded
-(caps on documents and queries), fingerprinted like the calibration sidecar
-(model, dimension, tokenizer, null definition, seed) so that a model swap or a
-scoring change invalidates it, and rebuilt in the background.
+*What "evidence" is estimated from — and the open problem that gates this mode.*
+Both densities were to come from a **reference panel** declared per agent scope:
+a fixed sample of documents and a fixed set of queries, chosen independently of
+any retrieval. **The sampling recipe first written here was wrong, and the mode
+is blocked until it is replaced.** It said the null was the score pair over
+random query–document pairs of the panel and the population was the score pair
+over all pairs of the panel. Those are the same distribution: drawing a pair
+uniformly from a Cartesian product has exactly the law of enumerating that
+product, so \(h/f_0\equiv1\), every score is zero, and no panel size repairs it.
+The identifiability note's construction is untouched — there \(h_q\) is
+conditioned on the query and contains that query's own relevant rows with prior
+\(\rho_q>0\), while the null breaks the query–document association. What this
+page did was drop the conditioning and average over queries, which collapses the
+two.
+
+The consequence is a real constraint, not a wording fix: **an unlabelled panel
+drawn from one pair population cannot separate the mixture from its own null.**
+Identifying them needs one of three things, and choosing between them is the
+open problem this mode waits on.
+
+1. **Labels.** With relevance judgements, the judged negatives define a null
+   directly. Available on the benchmark, under an explicit completeness
+   assumption; unavailable in a deployment.
+2. **An independently justified null population.** Pairs whose irrelevance is
+   established by construction rather than assumed — a different isolation
+   scope, a declared held-out set, or verified irrelevant pairs. A different
+   corpus is not automatically a valid null: its vocabulary and length
+   distribution move the marginals for reasons that have nothing to do with
+   relevance, and that must be measured before such a null is used.
+3. **A structural assumption strong enough to identify the mixture** from one
+   sample, which would have to be stated and refutable rather than assumed.
+
+Until one of those is in place, the mode is not implementable and the design
+proceeds with the constant of D3-now and the structural fixes of D1 and D2. The
+first experiment is therefore a **labelled diagnostic on the benchmark**: it can
+say whether conditional lexical evidence exists and how large it is, which is
+worth knowing before anyone builds a deployment estimator for it.
+
+Whatever supplies the null, the panel keeps the properties this design needs:
+it does not depend on what a recall returns, so the score stays candidate-set
+independent; it is bounded (caps on documents and queries); and it is
+fingerprinted like the calibration sidecar (model, dimension, tokenizer, null
+definition, seed) so that a model swap or a scoring change invalidates it.
 
 *How the densities are represented.* A discretised joint: cosine quantile
 bins from the null × lexical bins (absent from the lexical list as its own
@@ -162,6 +194,21 @@ so that starvation does not confound the comparison.
 **Success.** The condition the 2.6 page fixed: the 22-task mean of
 NDCG@10 against the *dense-only order* is above zero on both endpoint models.
 Not against the admitted list, not against the gated list.
+
+**What this experiment can and cannot resolve.** The per-task differences
+already measured put a floor under the comparison's resolution. Taking the
+observed spread of (shipped fusion − dense) against (lexical weight 0.1 −
+dense) as the planning proxy, the paired spread across the twenty-two tasks is
+2.6 to 3.5 NDCG@10 points depending on the model. A one-sided paired test over
+twenty-two tasks then detects a mean improvement of about two to three points
+at conventional power, and has **under twenty percent power against a
+one-point improvement**. The per-query oracle gap is three to six points, so a
+rule that captures a large part of it is visible here and a rule that captures
+a little of it is not. Two consequences are pre-registered rather than
+discovered later: an inconclusive result is reported as *unresolved*, never as
+"the constant is equivalent" — that claim needs a declared equivalence margin
+and its own test — and no arm is added, no panel resized, and no evaluation
+repeated after seeing the numbers.
 
 **Refutation.** The criteria of the identifiability note, section 9, apply
 verbatim: any strict pair order that disagrees with the rule's own reversal
