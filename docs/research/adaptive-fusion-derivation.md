@@ -216,6 +216,13 @@ For Fisher's rule \(\partial S_F/\partial(-\log p_a)=1\): the dense arm can
 confident dense arm silences lexical votes" is a property of the mixture rule,
 not of p-value combination in general.
 
+*Correction (September 2026).* "Silences" describes the influence on one
+row's score, not the fused order. The rule is symmetric in the arms: a row
+that is extreme on the lexical arm alone outranks a row that is extreme on
+the dense arm alone, as the worked pair in the
+[identifiability note](adaptive-fusion-identifiability.md#2-the-mixture-rule-is-symmetric-in-the-arms-a-correction)
+shows. Read \(\omega_a\) as a per-row derivative, and nothing more.
+
 ## 4. When equal-weight RRF harms
 
 Let \(X_a(d)=1/(K+r_a(d))\) if \(d\) occurs in arm \(a\) and \(0\) otherwise

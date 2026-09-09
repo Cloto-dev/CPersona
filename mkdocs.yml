@@ -96,6 +96,9 @@ plugins:
             Overview: 概要
             Adaptive fusion, a derivation: 適応的融合の導出
             Calibration and the admission floor: 較正と admission floor
+            Where the loss is, a frozen-stage replay: 損失はどこにあるか、凍結段リプレイ
+            Two arms, one decision: 2 本のアーム、1 つの決定
+            Adaptive fusion: 適応的融合
             Access and identity: アクセスと同一性
             Retrieval and storage: 検索と保存
             Reliability: 信頼性
@@ -257,6 +260,7 @@ nav:
           - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
           - Reach and recency in the scan window: SCAN_WINDOW_REACH_DESIGN.md
           - Reach, recency and the far vote: REACH_AND_RECENCY_PLAN.md
+          - Adaptive fusion: ADAPTIVE_FUSION_DESIGN.md
       - Reliability:
           - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md
   # What the design pages rest on: derivations, measurements, refutations.
@@ -265,6 +269,8 @@ nav:
       - Overview: research/index.md
       - Adaptive fusion, a derivation: research/adaptive-fusion-derivation.md
       - Calibration and the admission floor: research/calibration-admission-floor-2026-09.md
+      - Where the loss is, a frozen-stage replay: research/frozen-stage-replay-2026-09.md
+      - Two arms, one decision: research/adaptive-fusion-identifiability.md
   # Last on purpose: it asks for something, and every page above answers
   # something. A reader looking for how the software works never has to
   # scroll past it.

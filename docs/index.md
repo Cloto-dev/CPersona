@@ -149,6 +149,10 @@ above disagree, the guides win.
 - [Reach, recency and the far vote](REACH_AND_RECENCY_PLAN.md) — the three
   measurements in one account, what they establish, and the plan for pricing
   the far vote in the 2.6 line.
+- [Adaptive fusion](ADAPTIVE_FUSION_DESIGN.md) — a reservation invariant
+  across the recall path, the pool-size gate's rank cut removed, one measured
+  lexical-weight constant now and a conditional-evidence fusion mode later,
+  and the pre-registered comparison that decides between them.
 - [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
   reports a dead embedding layer instead of quietly getting worse.
 
@@ -166,6 +170,15 @@ each written to be checked rather than trusted. The
   three calibration methods on seven losing tasks: the floor is not the cause,
   the null came from the wrong pair population, small corpora starve the
   dense arm.
+- [Where the loss is, a frozen-stage replay](research/frozen-stage-replay-2026-09.md) —
+  every stage of the Track B path scored on frozen embeddings, three models,
+  pinned to the live pipeline: the pure-ranking losses are the fusion step,
+  Gorilla's is admission, EPBench's is the gate, QASPER's gain is replenishment.
+- [Two arms, one decision](research/adaptive-fusion-identifiability.md) — what
+  a fusion rule must know to avoid those losses: not per-arm calibration but
+  the lexical evidence conditional on the dense score; a joint density ratio
+  that supplies it without a fitted weight; closed forms for starvation, gate
+  extinction and reservation.
 
 ## The three memory types
 

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:a1a2fc0aeef1c522dca9bfbfa5b7a4e31316ff20 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:ec82df089757dca19bdf309d1da94787578973e1 -->
 
 # Reliable Recall — 2.6 系
 
@@ -202,6 +202,15 @@ limit 5 はどの gate 値でも行を構造的に到達不能にしました。
 
 この節は意図して最も短くしています。その中身は計測プログラムであり、本ページはその
 プログラムが示すべきものだけを固定します。
+
+そのプログラムは最初の結果と設計を出しました。[凍結段リプレイ](research/frozen-stage-replay-2026-09.md)
+は損失の在り処を特定しました: 純 ranking のタスクでは損失は融合段そのもの — lexical の票が
+dense 行を関連行の上へ持ち上げる — であり、残りの損失は小さすぎる宇宙に適用された
+admission floor と gate です。[識別可能性ノート](research/adaptive-fusion-identifiability.md)
+は、アームごとの較正では融合を決められないことを示し、決められる量を名指しします。
+両者から従う[設計](ADAPTIVE_FUSION_DESIGN.md) — 予約不変条件、gate の順位カットの撤去、
+計測済みの lexical 重み定数、default-off の条件付き証拠モード — は、上で固定した成功条件に
+照らしてそこで決定されます。
 
 ## 6. 手がかりとしての連想と溢れ分の連鎖 { #6-associations-and-overflow-chains-as-cues }
 

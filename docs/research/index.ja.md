@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/research/index.md@blob:7d1a0c0f20c3ce3feae0fa2131513a27bf54dba3 -->
+<!-- i18n-source: docs/research/index.md@blob:941bfaebff0475e20709faef1a6e016335b7ae4a -->
 
 # 研究ノート { #research-notes }
 
@@ -28,6 +28,8 @@
 | --- | --- | --- |
 | [適応的融合の導出](adaptive-fusion-derivation.md) | derivation | 各検索アームを、それぞれの null に対する超過確率を通して結合する Bayes 最適な方法。行ごとの影響度が閉じた形で出る混合則で、その極限は現行の reciprocal rank fusion に厳密に一致する。実装に先立って済ませなければならない実測。 |
 | [較正は字面アームの損失の原因か?](calibration-admission-floor-2026-09.md) | measurement | 3 つの較正法、2 回の反復、負けている 7 タスク: admission floor は原因ではない、null は誤ったペア母集団から取られていた、小コーパスは dense アームを飢餓させる。 |
+| [損失はどこにあるか — 凍結段リプレイ](frozen-stage-replay-2026-09.md) | measurement | Track B 経路のすべての段を凍結した埋め込みと字面スコアの上で採点し、3 モデル、稼働中の pipeline に固定: 純 ranking の損失は融合段であり、lexical の票で持ち上げられた dense 行から成る。Gorilla の損失は admission、EPBench の損失はプールサイズ gate、QASPER の正の融合差は補充。 |
+| [2 本のアーム、1 つの決定](adaptive-fusion-identifiability.md) | derivation | アームごとのスコアと null 超過確率しか見ない規則は、lexical の証拠が dense の証拠を上書きすべき時を決められない。決める量は dense スコアで条件付けた lexical の証拠。参照パネル上の同時密度比が、重みを当てはめずにそれを供給する。飢餓、gate の全滅、予約不変条件の閉形式。 |
 
 ## ノートの書き方 { #how-a-note-is-written }
 

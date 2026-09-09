@@ -25,6 +25,8 @@ through the [release lifecycle](../RELEASE_LIFECYCLE_STANDARD.md).
 | --- | --- | --- |
 | [Adaptive fusion — a derivation](adaptive-fusion-derivation.md) | derivation | The Bayes-optimal way to combine retrieval arms through their null exceedance probabilities; a mixture rule with closed-form per-row influence whose limit is today's reciprocal rank fusion; the measurements that must precede an implementation. |
 | [Is calibration the cause of the lexical-arm losses?](calibration-admission-floor-2026-09.md) | measurement | Three calibration methods, two replicates, seven losing tasks: the admission floor is not the cause; the null was taken from the wrong pair population; small corpora starve the dense arm. |
+| [Where the loss is — a frozen-stage replay](frozen-stage-replay-2026-09.md) | measurement | Every stage of the Track B path scored on frozen embeddings and lexical scores, three models, pinned to the live pipeline: the pure-ranking losses are the fusion step and consist of dense rows lifted by lexical votes; Gorilla's loss is admission; EPBench's is the pool-size gate; QASPER's positive fusion delta is replenishment. |
+| [Two arms, one decision](adaptive-fusion-identifiability.md) | derivation | No rule that sees only per-arm scores and null exceedance probabilities can decide when lexical evidence should override dense evidence; the deciding quantity is the lexical evidence conditional on the dense score; a joint density ratio over a reference panel supplies it without a fitted weight; closed forms for starvation, gate extinction and a reservation invariant. |
 
 ## How a note is written
 

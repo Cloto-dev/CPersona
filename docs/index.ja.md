@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:6f85566b6d3ebbd14701b6130b269f3f1658982b -->
+<!-- i18n-source: docs/index.md@blob:897f346192ba79ad571cec6785232100fdd417d7 -->
 
 # CPersona ドキュメント
 
@@ -142,6 +142,9 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
   2 本目の順位付きリスト。
 - [到達範囲・新しさ・far の票](REACH_AND_RECENCY_PLAN.md) — 3 つの計測を 1 つの
   記述にまとめ、確立したことと、2.6 系で far の票に値段を付ける計画。
+- [適応的融合](ADAPTIVE_FUSION_DESIGN.md) — 想起経路全体の予約不変条件、プールサイズ
+  gate の順位カットの撤去、いまは計測済みの lexical 重み定数 1 つ・後で条件付き証拠の
+  融合モード、そして両者のあいだを決める事前登録済みの比較。
 - [埋め込み劣化の通知](DEGRADED_ADVISORY_DESIGN.md) — 埋め込み層が死んだとき、
   静かに質を落とすのではなく recall がそれを報告する仕組み。
 
@@ -156,6 +159,13 @@ keyword をランクまたは相対スコアで融合) で想起されます。�
 - [較正と admission floor](research/calibration-admission-floor-2026-09.md) —
   負けている 7 タスクを 3 つの較正法で再走: 床は原因ではない、null は誤った
   ペア母集団から取られていた、小コーパスでは dense アームが飢餓する。
+- [損失はどこにあるか、凍結段リプレイ](research/frozen-stage-replay-2026-09.md) —
+  Track B 経路のすべての段を凍結した埋め込みの上で採点、3 モデル、稼働中の pipeline に
+  固定: 純 ranking の損失は融合段、Gorilla は admission、EPBench は gate、QASPER の利得は補充。
+- [2 本のアーム、1 つの決定](research/adaptive-fusion-identifiability.md) — その損失を
+  避けるために融合則が知らねばならないもの: アームごとの較正ではなく、dense スコアで
+  条件付けた lexical の証拠。重みを当てはめずにそれを供給する同時密度比。飢餓・gate の
+  全滅・予約の閉形式。
 
 ## 3 つの記憶タイプ { #the-three-memory-types }
 
