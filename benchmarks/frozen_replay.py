@@ -302,19 +302,32 @@ async def main(args):
                         W_set_dense = set(W_dense)
 
                         def fuse(admit_n: int, w: float) -> list[str]:
-                            # rows: admitted dense rows (dense order), then lexical-only rows (lex order) — the
-                            # insertion order of _recall_rrf's score dict; stable sort by score desc.
-                            rows_: list[str] = []
+                            # Exactly _recall_rrf's score dict: every ADMITTED row in the working set
+                            # gets its dense vote (including rows deeper than D that the lexical pool
+                            # brought in -- they are admitted in the pipeline too), then lexical votes.
+                            # Insertion order = dense rows in dense order, then lexical-only rows in
+                            # lexical order; the stable sort keeps that order for exact ties.
                             score: dict[str, float] = {}
+                            dense_rows: list[tuple[int, str]] = []
                             for d in W_dense:
-                                j = id_to_idx[d]
-                                rd = int(rank_of[j])
-                                if rd >= admit_n:
+                                rd = int(rank_of[id_to_idx[d]])
+                                if rd < admit_n:
+                                    dense_rows.append((rd, d))
+                            for d in W_lexonly_pool:
+                                if d in W_set_dense:
                                     continue
+                                j = id_to_idx.get(d)
+                                if j is not None:
+                                    rd = int(rank_of[j])
+                                    if rd < admit_n:
+                                        dense_rows.append((rd, d))
+                            dense_rows.sort()
+                            rows_: list[str] = []
+                            for rd, d in dense_rows:
                                 score[d] = 1.0 / (k + rd + 1)
                                 rows_.append(d)
                             for d in W_lexonly_pool:
-                                if d in score or (d in W_set_dense and int(rank_of[id_to_idx[d]]) < admit_n):
+                                if d in score:
                                     continue
                                 score[d] = 0.0
                                 rows_.append(d)
@@ -329,11 +342,12 @@ async def main(args):
                         dense_adm_W = [d for d in W_dense if int(rank_of[id_to_idx[d]]) < n_adm]
                         s2 = fuse(n_adm, 1.0)
                         s2nf = fuse(n_mem, 1.0)
-                        dense_adm_set = set(dense_adm_W)
+                        dense_adm_set = {d for d in set(W_dense) | set(W_lexonly_pool) if d in id_to_idx and int(rank_of[id_to_idx[d]]) < n_adm}
 
                         def gate_keep(d: str) -> bool:
-                            if d in dense_adm_set:
-                                return float(sims[id_to_idx[d]]) >= min_score
+                            j = id_to_idx.get(d)
+                            if j is not None and int(rank_of[j]) < n_adm:
+                                return float(sims[j]) >= min_score
                             return (1.0 / (k + lex_rank[d] + 1)) >= rrf_gate
                         s3 = [d for d in s2 if gate_keep(d)]
 
