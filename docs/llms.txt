@@ -52,6 +52,7 @@ note and the pages above disagree, the pages above win.
 - [Contiguous embedding index](https://cloto-dev.github.io/CPersona/CONTIGUOUS_INDEX_DESIGN/): moving the vector scan's read off SQLite rows onto a contiguous sidecar, with bit-identical answers
 - [Reach and recency in the scan window](https://cloto-dev.github.io/CPersona/SCAN_WINDOW_REACH_DESIGN/): why widening the vector scan window loses recent answers, and the second ranked list that lets reach move without removing the recency prior
 - [Reach, recency and the far vote](https://cloto-dev.github.io/CPersona/REACH_AND_RECENCY_PLAN/): three measurements of the scan window, the reach and the far list's length in one account, and the plan for pricing the far vote in the 2.6 line
+- [Adaptive fusion](https://cloto-dev.github.io/CPersona/ADAPTIVE_FUSION_DESIGN/): a reservation invariant across the recall path, the pool-size gate's rank cut removed, a measured lexical-weight constant now and a conditional-evidence fusion mode later, and the pre-registered comparison that decides between them
 - [Embedding degradation advisory](https://cloto-dev.github.io/CPersona/DEGRADED_ADVISORY_DESIGN/): how recall reports a dead embedding layer instead of silently degrading
 
 ## Research notes
@@ -62,6 +63,8 @@ with its assumptions and the observation that would refute it. Not behaviour.
 - [Research notes overview](https://cloto-dev.github.io/CPersona/research/): the status vocabulary (derivation / measurement / refuted / superseded) and how a note is written
 - [Adaptive fusion, a derivation](https://cloto-dev.github.io/CPersona/research/adaptive-fusion-derivation/): combining retrieval arms through null exceedance probabilities; a mixture rule with closed-form per-row influence whose limit is reciprocal rank fusion; the measurements that must precede implementation
 - [Calibration and the admission floor](https://cloto-dev.github.io/CPersona/research/calibration-admission-floor-2026-09/): three calibration methods on seven losing tasks — the floor is not the cause, the null came from the wrong pair population, small corpora starve the dense arm
+- [Where the loss is, a frozen-stage replay](https://cloto-dev.github.io/CPersona/research/frozen-stage-replay-2026-09/): every stage of the Track B path scored on frozen embeddings and lexical scores, three models, pinned to the live pipeline — the pure-ranking losses are the fusion step, Gorilla's is admission, EPBench's is the pool-size gate, QASPER's positive fusion delta is replenishment
+- [Two arms, one decision](https://cloto-dev.github.io/CPersona/research/adaptive-fusion-identifiability/): no rule that sees only per-arm scores and null exceedance probabilities can decide when lexical evidence should override dense evidence; the deciding quantity is the lexical evidence conditional on the dense score; a joint density ratio over a reference panel supplies it without a fitted weight
 
 ## Optional
 

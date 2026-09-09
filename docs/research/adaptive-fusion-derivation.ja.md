@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/research/adaptive-fusion-derivation.md@blob:230361f5045f140c7d81b5f819cab642f2206772 -->
+<!-- i18n-source: docs/research/adaptive-fusion-derivation.md@blob:1b7148b8f80fa604abb3a4ae4d5eb96bf0120913 -->
 
 # 適応的融合の導出 { #adaptive-fusion-a-derivation }
 
@@ -203,6 +203,12 @@ p_{\mathrm{comb}}=\min(1,1/E),\qquad\Pr_0(p_{\mathrm{comb}}\le\alpha)\le\alpha.
 Fisher の則では \(\partial S_F/\partial(-\log p_a)=1\) です: dense アームはより多く
 *寄与*できますが、字面の限界影響度は決して縮みません。「自信のある dense アームが字面の
 票を黙らせる」は混合則の性質であって、p 値の結合一般の性質ではありません。
+
+*訂正 (2026 年 9 月)。* 「黙らせる」は 1 行のスコアへの影響を述べたもので、融合後の順序を
+述べたものではありません。この規則はアームについて対称です: lexical アームだけで極端な行は、
+dense アームだけで極端な行より上位になります。
+[識別可能性ノート](adaptive-fusion-identifiability.md#2-the-mixture-rule-is-symmetric-in-the-arms-a-correction)
+の計算例がそれを示します。\(\omega_a\) は行ごとの導関数として読み、それ以上のものとしては読まないでください。
 
 ## 4. 等重みの RRF が害する時 { #4-when-equal-weight-rrf-harms }
 

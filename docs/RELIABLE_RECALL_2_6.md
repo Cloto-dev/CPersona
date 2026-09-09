@@ -235,6 +235,18 @@ benchmark that produced the record.
 This section is deliberately the shortest. Its content is a measurement
 programme, and this page only fixes what the programme must show.
 
+The programme has produced its first results and a design. The
+[frozen-stage replay](research/frozen-stage-replay-2026-09.md) located the
+losses: on the pure-ranking tasks they are the fusion step itself — dense rows
+lifted past relevant ones by lexical votes — while the remaining losses are an
+admission floor and a gate applied to universes too small for them. The
+[identifiability note](research/adaptive-fusion-identifiability.md) shows that
+per-arm calibration cannot decide the fusion and names the quantity that can.
+The [design](ADAPTIVE_FUSION_DESIGN.md) that follows from both — a reservation
+invariant, the gate's rank cut removed, a measured lexical-weight constant and a
+default-off conditional-evidence mode — is decided there, against the success
+condition fixed above.
+
 ## 6. Associations and overflow chains as cues
 
 Two features of this line were designed as retrieval paths; the recall process
