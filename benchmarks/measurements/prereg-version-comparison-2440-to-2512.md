@@ -22,9 +22,23 @@ data. So the only way to place today's build on that scale is to run it.
 
 | | Baseline | Today |
 |---|---|---|
-| Build | v2.4.40 (recorded, `trackb_results_v2440_bgem3`) | 2.5.12b3 (`e43ad34`) |
+| Build | v2.4.40 (recorded, `trackb_results_v2440_bgem3`) | the development head, `e43ad34` |
 | Run date | 2026-07-10 | this run |
 | Overall mean | 57.66 | to be measured |
+
+**The second arm is a branch state, not a release.** `e43ad34` reports its
+version as `2.5.12b3` because a version string moves only at a release, and the
+head sits **27 commits past** the tag of that name. Naming the arm after the
+version string would claim a number for what users of that release get; this
+measures what the line has become since.
+
+For this benchmark the two happen to coincide, and that is checked rather than
+assumed: of those 27 commits exactly one touches the shipped package, and it
+adds reporting only — the three deleted lines are an `embedding_model` report
+field and a docstring, and the diff touches no symbol on the retrieval path
+(`do_recall`, `_recall_*`, `_apply_quality_gate`, `_autocut`, the score fields,
+the gate constants). So the number will also describe the released tag on this
+path. The arm is still labelled by its commit, because that is what was run.
 
 **Held fixed, and measured to be fixed:** the launcher and every flag it pins
 (`--recall_mode rrf --auto_calibrate`, autocut and the fused gate disabled by
@@ -51,10 +65,36 @@ which the probe above shows to be inert.
 
 ## What will be reported
 
-Per task, the delta, and the overall mean delta. **One run per arm**: the
-pipeline is deterministic given fixed data, so these differences are exact for
-this corpus up to floating-point tie effects — but one corpus is not a sample
-over corpora, and no significance will be claimed from a single pair of runs.
+Per task, the delta, and the overall mean delta.
+
+**Which claim is being made.** Two estimands are available and they are not the
+same, so this file names the one in use before the numbers arrive.
+
+1. *This benchmark's difference.* With one deterministic execution per arm over
+   fixed data, observing all 22 tasks **determines** the mean difference. There
+   is no sampling error to estimate; the only numerical uncertainty is the
+   two-decimal storage of each task score, which bounds a difference of two
+   rounded scores by 0.01 points, plus floating-point tie sensitivity.
+2. *A population of tasks.* "The new build is better on tasks of this kind"
+   needs a stated distribution over benchmark packages, and a paired test over
+   the 22 task-level differences addresses it only under task transportability,
+   task independence, and a workable normal approximation for a bounded score.
+   A purposively assembled benchmark supplies no design-based sampling
+   distribution for any of that.
+
+**This run reports (1).** A paired *t* over the tasks will also be shown for
+orientation, labelled as conditional on the model in (2) and not as evidence
+that the model holds. Saying "one run per arm makes significance impossible"
+would be wrong; declining to claim it without a task-population model is the
+defensible position, and that is the one taken.
+
+**What this design can resolve, fixed in advance.** At n = 22, α = 0.05
+two-sided and 80 % power, the minimum detectable mean difference is
+0.6264 × the standard deviation of the per-task difference (noncentral *t*,
+λ = 2.938171, computed and reproduced independently). At the dispersion the
+sibling analysis on this same benchmark shows — sd 1.6 to 3.6 points — that is
+**1.00 to 2.26 points**. A version difference need not have that dispersion,
+and its own is unknown until this run completes.
 
 Fixed now, so the framing cannot be chosen after the numbers are in:
 
@@ -75,6 +115,36 @@ One task was run as a protocol smoke test before this file was written:
 disclosed because it is not zero and because it points against the comfortable
 answer. It is one task of 22, and the smoke test's purpose was to prove the
 harness still executes the old regime, which it does.
+
+## The one confound found before running, and how it was closed
+
+The launcher pins autocut and the fused gate off as the benchmark regime. **The
+launcher did not exist when the baseline ran** — it was added two days later —
+the harness does not set those variables itself, and at v2.4.40 both defaulted
+to *on*. The baseline's log records neither. So the baseline's regime for those
+two layers is not recoverable from the record, and this arm has them off.
+
+The tempting argument — "those layers only remove rows from a ranked list, so
+they can only lower a ranking metric, hence the recorded 57.66 is a lower
+bound" — is the launcher's own comment, and it is **only half right**. It holds
+for a suffix cut, where surviving rows keep their positions. It fails for a
+removal from the middle: everything below moves up, and a relevant row can be
+promoted into the top ten. The two layers differ exactly there — autocut keeps
+a prefix (`results[:cut_idx]`), while the quality gate compares a *different*
+key (confidence, else cosine) from the one the list is ordered by in rrf mode,
+so it can drop a row from the middle.
+
+Closed two ways rather than argued:
+
+- **Structurally**: autocut refuses to cut a rank-fusion-ordered list at all —
+  it returns the list unchanged as soon as a row carries `_rrf_score`, because
+  fusion gaps mark retriever agreement rather than a relevance break. This
+  benchmark runs `--recall_mode rrf`, so autocut is inert in both arms
+  whatever the environment says.
+- **By measurement**: the same build was run on four tasks with both layers
+  *enabled*, the regime the baseline's defaults would have given it. The
+  results are reported alongside the main arm; where they agree, the baseline's
+  unknown regime cannot have moved its numbers either.
 
 ## What would invalidate the run
 
