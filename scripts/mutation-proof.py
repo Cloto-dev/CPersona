@@ -107,15 +107,15 @@ MUTATIONS: list[Mutation] = [
         id="R04",
         target="reservation: taken BEFORE the floor (scan path)",
         file="cpersona/vector.py",
-        find="""                    if want_reserve:
+        find="""                    if want_reserve and sim_val == sim_val:
                         heapq.heappush(reserved, (float(sim_val), -position, row_id))
                         if len(reserved) > reserve_k:
                             heapq.heappop(reserved)
-                    if sim_val < effective_min_sim:
+                    if not (sim_val >= effective_min_sim):
                         continue""",
-        replace="""                    if sim_val < effective_min_sim:
+        replace="""                    if not (sim_val >= effective_min_sim):
                         continue
-                    if want_reserve:
+                    if want_reserve and sim_val == sim_val:
                         heapq.heappush(reserved, (float(sim_val), -position, row_id))
                         if len(reserved) > reserve_k:
                             heapq.heappop(reserved)""",
@@ -157,6 +157,15 @@ MUTATIONS: list[Mutation] = [
         replace="                    if want_reserve:",
         breaks="a non-finite row enters the reservation and is ordered by accident",
         expect="test_260a1_reservation_and_gate.py::test_a_nan_score_is_not_admitted_by_the_absent_threshold",
+    ),
+    Mutation(
+        id="R10",
+        target="the scan's floor test refuses NaN, as the index phase always has",
+        file="cpersona/vector.py",
+        find="                    if not (sim_val >= effective_min_sim):",
+        replace="                    if sim_val < effective_min_sim:",
+        breaks="the two suppliers of the dense list disagree about non-finite rows again, and a NaN in the candidate list reorders the finite rows around it",
+        expect="the non-finite behaviour goldens (corpus-nonfinite-recall-scan*)",
     ),
     Mutation(
         id="R07",

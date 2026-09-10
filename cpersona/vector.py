@@ -1251,16 +1251,30 @@ async def _chunked_cosine_scan(
                 for row_id, sim_val in zip(ids, _cosine_batch(query_vec, query_dim, blobs)):
                     position = ordinal
                     ordinal += 1
-                    # `sim_val == sim_val` is the NaN test. A non-finite embedding
-                    # scores NaN, NaN orders arbitrarily inside a heap, and a row
-                    # whose similarity is not a number is not one of "the dense
-                    # arm's top rows" under any reading. Kept out of the
-                    # reservation rather than sorted by accident.
+                    # Written as "did it clear the floor" rather than "is it
+                    # below" because the two spellings differ on NaN, and a
+                    # non-finite embedding scores NaN. `<` says False there and
+                    # admits the row; `>=` says False too and refuses it.
+                    #
+                    # The index phase has always used the `>=` form, so through
+                    # 2.5 the two suppliers of this same list disagreed about
+                    # non-finite rows -- recorded, deliberately, rather than
+                    # decided. 2.6 decides it, and in the direction the index
+                    # already took, because a NaN is not a similarity: it defeats
+                    # every comparison it meets, so a row carrying one was never
+                    # admitted on its merits, and while it sits in the candidate
+                    # list it also perturbs `nlargest` around it -- displacing
+                    # real rows in an order that differs between platforms.
+                    # (Measured: one interpreter ranked a finite row third and
+                    # another sixth, on the same corpus and the same query.)
+                    # The reservation is taken BEFORE the floor -- that is the
+                    # whole of D1 -- and it takes the same NaN answer, by the same
+                    # test written the same way.
                     if want_reserve and sim_val == sim_val:
                         heapq.heappush(reserved, (float(sim_val), -position, row_id))
                         if len(reserved) > reserve_k:
                             heapq.heappop(reserved)
-                    if sim_val < effective_min_sim:
+                    if not (sim_val >= effective_min_sim):
                         continue
                     score = float(sim_val)
                     if limit is None:

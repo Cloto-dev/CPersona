@@ -7545,6 +7545,44 @@
             "age_hours": 8760.0,
             "score": 0.5477
           },
+          "content": "apples, every element +inf",
+          "match_reason": {
+            "rrf": 0.0153846154,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:3",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples, every element NaN",
+          "match_reason": {
+            "rrf": 0.015625,
+            "score": 0.5477,
+            "signal": "confidence"
+          },
+          "ref": "mem:2",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
           "content": "apples, one element -inf",
           "match_reason": {
             "rrf": 0.0158730159,
@@ -7562,55 +7600,11 @@
         {
           "confidence": {
             "age_hours": 8760.0,
-            "cosine": "<nan>",
-            "score": 0.5477
-          },
-          "content": "apples, every element NaN",
-          "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0314980159,
-            "score": 0.5477,
-            "signal": "confidence"
-          },
-          "ref": "mem:2",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:02Z"
-        },
-        {
-          "confidence": {
-            "age_hours": 8760.0,
-            "cosine": "<nan>",
-            "score": 0.5477
-          },
-          "content": "apples, every element +inf",
-          "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0315136476,
-            "score": 0.5477,
-            "signal": "confidence"
-          },
-          "ref": "mem:3",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:03Z"
-        },
-        {
-          "confidence": {
-            "age_hours": 8760.0,
-            "cosine": "<nan>",
             "score": 0.5477
           },
           "content": "apples, one element NaN",
           "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0325224749,
+            "rrf": 0.0161290323,
             "score": 0.5477,
             "signal": "confidence"
           },
@@ -9345,21 +9339,6 @@
     "result": {
       "messages": [
         {
-          "content": "apples, another finite vector",
-          "match_reason": {
-            "rrf": 0.0151515152,
-            "score": 0.0151515152,
-            "signal": "rrf"
-          },
-          "ref": "mem:106",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:06Z"
-        },
-        {
           "content": "apples, one element -inf",
           "match_reason": {
             "rrf": 0.0158730159,
@@ -9389,6 +9368,21 @@
             "type": "User"
           },
           "timestamp": "2026-01-03T00:00:25Z"
+        },
+        {
+          "content": "apples, one element NaN",
+          "match_reason": {
+            "rrf": 0.0161290323,
+            "score": 0.0161290323,
+            "signal": "rrf"
+          },
+          "ref": "mem:104",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:04Z"
         },
         {
           "content": "unrelated filler about bicycles number 5",

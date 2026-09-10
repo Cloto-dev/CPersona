@@ -414,10 +414,15 @@ async def test_a_nan_score_is_not_admitted_by_the_absent_threshold(fake_embeddin
     from conftest import _FAKE_DIM
 
     db = await get_db()
+    # The broken row shares no term with the query, so the lexical arm cannot
+    # bring it in: the only way it reaches the caller is on its similarity, and
+    # its similarity is not a number. (A lexical hit whose embedding happens to
+    # be broken is a different row and a genuine one — it arrives on the FTS
+    # arm's evidence, with no cosine at all.)
     await db.execute(
         "INSERT INTO memories (agent_id, content, embedding, timestamp, created_at) "
         "VALUES (?, ?, ?, ?, ?)",
-        (AGENT, "reticle stepper alignment with a broken vector",
+        (AGENT, "orchard pears harvest with a broken vector",
          EmbeddingClient.pack_embedding([float("nan")] * _FAKE_DIM),
          "2026-05-01T00:00:00Z", "2026-05-01T00:00:00Z"),
     )
@@ -430,7 +435,11 @@ async def test_a_nan_score_is_not_admitted_by_the_absent_threshold(fake_embeddin
     assert "reticle stepper alignment note" in contents, (
         f"fixture regression: the finite row did not survive: {out}"
     )
-    assert "reticle stepper alignment with a broken vector" not in contents, (
+    assert "orchard pears harvest with a broken vector" not in contents, (
         "a row whose similarity is not a number reached the caller — as a hit if it "
         f"passed the gate, as a reservation row if it was reserved: {out}"
     )
+    assert all(
+        m.get("match_reason", {}).get("score") == m.get("match_reason", {}).get("score")
+        for m in out["messages"]
+    ), f"a NaN score reached the response: {out}"
