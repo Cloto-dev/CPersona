@@ -74,10 +74,22 @@ def _reset_calibration_globals() -> None:
 
 @pytest_asyncio.fixture(autouse=True)
 async def _fresh_state(tmp_path, monkeypatch):
+    """Truncate before AND after.
+
+    The after half is not symmetry for its own sake: `get_db()` is one
+    process-wide connection, so rows left behind are deleted by whichever file
+    truncates next — and a delete of a row this file inserted, executed under
+    another file's fixtures, is a write nothing in either file is reading.
+    Cleaning up here keeps every row's whole life inside the test that made it.
+    """
     db = await get_db()
-    for table in ("memories", "episodes", "profiles"):
-        await db.execute(f"DELETE FROM {table}")
-    await db.commit()
+
+    async def _truncate():
+        for table in ("memories", "episodes", "profiles"):
+            await db.execute(f"DELETE FROM {table}")
+        await db.commit()
+
+    await _truncate()
     _reset_calibration_globals()
     monkeypatch.setattr(
         admin_handlers,
@@ -85,6 +97,7 @@ async def _fresh_state(tmp_path, monkeypatch):
         lambda: os.path.join(str(tmp_path), "sidecar.calibration.json"),
     )
     yield
+    await _truncate()
     _reset_calibration_globals()
 
 
