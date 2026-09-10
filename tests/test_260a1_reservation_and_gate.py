@@ -397,3 +397,40 @@ async def test_lexical_weight_scales_the_lexical_vote(fake_embedding_client, mon
         "silencing the lexical arm left its row on top, so the weight is not reaching "
         f"the vote: {silenced}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_nan_score_is_not_admitted_by_the_absent_threshold(fake_embedding_client):
+    """"No threshold applies" must not read as "everything passes".
+
+    A non-finite embedding scores NaN, and every comparison against NaN is
+    false — so through 2.5 such a row was refused by whichever threshold it met,
+    and refused for the wrong reason: the arithmetic, not a decision. With the
+    pool-size heuristic gone there is no comparison left to refuse it, and the
+    row's position in the answer would then be decided by however the platform
+    orders NaN. Measured the hard way: recorded on one interpreter, the same
+    scenario ranked differently on another.
+    """
+    from conftest import _FAKE_DIM
+
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, embedding, timestamp, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (AGENT, "reticle stepper alignment with a broken vector",
+         EmbeddingClient.pack_embedding([float("nan")] * _FAKE_DIM),
+         "2026-05-01T00:00:00Z", "2026-05-01T00:00:00Z"),
+    )
+    await db.commit()
+    await _insert("reticle stepper alignment note")
+
+    out = await M.do_recall(AGENT, "reticle stepper alignment", limit=10)
+
+    contents = [m["content"] for m in out["messages"]]
+    assert "reticle stepper alignment note" in contents, (
+        f"fixture regression: the finite row did not survive: {out}"
+    )
+    assert "reticle stepper alignment with a broken vector" not in contents, (
+        "a row whose similarity is not a number reached the caller — as a hit if it "
+        f"passed the gate, as a reservation row if it was reserved: {out}"
+    )

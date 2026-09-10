@@ -876,6 +876,16 @@ def _apply_quality_gate(
     gate still applies on the branch it was calibrated for, and the confidence
     branch, the profile rule and the volume rule are untouched.
 
+    One thing that is NOT admitted by "no threshold": a score that is not a
+    number. A non-finite embedding produces a NaN cosine, and every comparison
+    against NaN is false — so through 2.5 such a row was refused by whichever
+    threshold it met, and it was refused for the wrong reason (the arithmetic,
+    not a decision). Passing a row *because* no threshold applies would turn
+    that accident into an admission, and the row's position would then be
+    decided by how the platform happens to order NaN. Refused explicitly here,
+    which keeps the shipped behaviour and leaves the question of why a NaN
+    reaches this point at all to the read path that produces it.
+
     The heuristic never was a quality judgement on a fused list. Against a
     reciprocal-rank score ``1/(K+r+1)`` the rescaled threshold is a cut at a
     lexical RANK that moves with the pool: rank 40 above 500 rows, rank 21 at
@@ -899,6 +909,10 @@ def _apply_quality_gate(
     """
     if not results:
         return results
+
+    def _is_a_number(value: float) -> bool:
+        """False for NaN. See the D2 note above: no-threshold is not no-question."""
+        return value == value
 
     filtered = []
     stats = {"confidence": 0, "rsf": 0, "cosine": 0, "rrf": 0, "unscored": 0, "profile": 0, "blocked": 0}
@@ -934,7 +948,7 @@ def _apply_quality_gate(
             # so this comparison against a cosine-scale threshold is
             # query-dependent. See _recall_rsf.
             calibrated = gate if (gate is not None and gate_signal == "rsf") else None
-            if calibrated is None and fused_order:
+            if calibrated is None and fused_order and _is_a_number(rsf):
                 filtered.append(r)  # D2: no pool-size heuristic on a fused row
                 stats["rsf"] += 1
             elif rsf >= (calibrated if calibrated is not None else min_score):
@@ -944,7 +958,7 @@ def _apply_quality_gate(
                 stats["blocked"] += 1
         elif cosine is not None:
             calibrated = gate if (gate is not None and gate_signal == "cosine") else None
-            if calibrated is None and fused_order:
+            if calibrated is None and fused_order and _is_a_number(cosine):
                 filtered.append(r)  # D2
                 stats["cosine"] += 1
             elif cosine >= (calibrated if calibrated is not None else min_score):
@@ -956,7 +970,7 @@ def _apply_quality_gate(
             # Calibrated gate is on the raw RRF scale (calibrated on raw _rrf_score), so
             # compare directly; otherwise rescale the cosine-scale heuristic min_score.
             calibrated = gate if (gate is not None and gate_signal == "rrf") else None
-            if calibrated is None and fused_order:
+            if calibrated is None and fused_order and _is_a_number(rrf):
                 filtered.append(r)  # D2
                 stats["rrf"] += 1
             elif rrf >= (calibrated if calibrated is not None else min_score * RRF_MAX_SCALE):

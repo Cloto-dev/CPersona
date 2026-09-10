@@ -1251,7 +1251,12 @@ async def _chunked_cosine_scan(
                 for row_id, sim_val in zip(ids, _cosine_batch(query_vec, query_dim, blobs)):
                     position = ordinal
                     ordinal += 1
-                    if want_reserve:
+                    # `sim_val == sim_val` is the NaN test. A non-finite embedding
+                    # scores NaN, NaN orders arbitrarily inside a heap, and a row
+                    # whose similarity is not a number is not one of "the dense
+                    # arm's top rows" under any reading. Kept out of the
+                    # reservation rather than sorted by accident.
+                    if want_reserve and sim_val == sim_val:
                         heapq.heappush(reserved, (float(sim_val), -position, row_id))
                         if len(reserved) > reserve_k:
                             heapq.heappop(reserved)
@@ -1380,9 +1385,9 @@ async def _scan_memories_local(
         if want_reserve:
             # The survivors' key, over every row instead of the ones that cleared
             # the floor: highest score first, earlier scan position wins a tie.
-            picked = heapq.nlargest(
-                reserve_k, range(len(sims)), key=lambda i: (float(sims[i]), -i)
-            )
+            # NaN excluded for the reason the scan path excludes it.
+            finite = [i for i in range(len(sims)) if sims[i] == sims[i]]
+            picked = heapq.nlargest(reserve_k, finite, key=lambda i: (float(sims[i]), -i))
             reserved = [(valid_ids[i], float(sims[i])) for i in sorted(picked)]
         # Survivors keep the scan's order (created_at DESC): heapq.nlargest in
         # _search_vector is stable, so this order is what breaks a tie between two
@@ -1612,9 +1617,8 @@ async def _scan_episodes_local(
             return []
         ep_sims = _cosine_matrix(query_vec, mat)
         if want_reserve:
-            picked = heapq.nlargest(
-                reserve_k, range(len(ep_sims)), key=lambda i: (float(ep_sims[i]), -i)
-            )
+            finite = [i for i in range(len(ep_sims)) if ep_sims[i] == ep_sims[i]]
+            picked = heapq.nlargest(reserve_k, finite, key=lambda i: (float(ep_sims[i]), -i))
             reserved = [(valid_ids[i], float(ep_sims[i])) for i in sorted(picked)]
         # Survivors keep the scan's order, for the same reason as in the memory
         # scan: the caller's nlargest is stable, and this order is its tie-break.

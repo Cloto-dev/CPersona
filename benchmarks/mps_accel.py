@@ -255,13 +255,17 @@ class FastVectorSearch:
                 }))
 
         if want_reserve:
+            # NaN excluded, as the scan does: a non-finite embedding is not a
+            # candidate for "the dense arm's top rows".
             if sims is not None and n_mem:
-                picked = heapq.nlargest(reserve_k, range(n_mem),
+                finite = [i for i in range(n_mem) if sims[i] == sims[i]]
+                picked = heapq.nlargest(reserve_k, finite,
                                         key=lambda i: (float(sims[i]), -i))
                 reserved.extend((float(sims[i]), _mem_row(i, float(sims[i])))
                                 for i in sorted(picked))
             if ep_sims is not None and n_ep:
-                picked = heapq.nlargest(reserve_k, range(n_ep),
+                finite = [i for i in range(n_ep) if ep_sims[i] == ep_sims[i]]
+                picked = heapq.nlargest(reserve_k, finite,
                                         key=lambda i: (float(ep_sims[i]), -i))
                 reserved.extend((float(ep_sims[i]), _ep_row(i, float(ep_sims[i])))
                                 for i in sorted(picked))

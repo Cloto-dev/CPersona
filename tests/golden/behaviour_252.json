@@ -5433,27 +5433,6 @@
           {
             "confidence": {
               "age_hours": 8760.0,
-              "cosine": 0.0241,
-              "score": 0.0
-            },
-            "content": "apples, a finite vector",
-            "fallback": true,
-            "match_reason": {
-              "cosine": 0.0241107494,
-              "score": 0.0241107494,
-              "signal": "cosine"
-            },
-            "ref": "mem:1",
-            "source": {
-              "id": "u",
-              "name": "n",
-              "type": "User"
-            },
-            "timestamp": "2026-01-01T00:00:01Z"
-          },
-          {
-            "confidence": {
-              "age_hours": 8760.0,
               "cosine": -0.0923,
               "score": 0.0
             },
@@ -5471,6 +5450,27 @@
               "type": "User"
             },
             "timestamp": "2026-01-01T00:00:06Z"
+          },
+          {
+            "confidence": {
+              "age_hours": 8760.0,
+              "cosine": 0.0241,
+              "score": 0.0
+            },
+            "content": "apples, a finite vector",
+            "fallback": true,
+            "match_reason": {
+              "cosine": 0.0241107494,
+              "score": 0.0241107494,
+              "signal": "cosine"
+            },
+            "ref": "mem:1",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-01T00:00:01Z"
           },
           {
             "confidence": {
@@ -9345,6 +9345,52 @@
     "result": {
       "messages": [
         {
+          "content": "apples, another finite vector",
+          "match_reason": {
+            "rrf": 0.0151515152,
+            "score": 0.0151515152,
+            "signal": "rrf"
+          },
+          "ref": "mem:106",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "content": "apples, one element -inf",
+          "match_reason": {
+            "rrf": 0.0158730159,
+            "score": 0.0158730159,
+            "signal": "rrf"
+          },
+          "ref": "mem:105",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
+        },
+        {
+          "content": "unrelated filler about bicycles number 85",
+          "match_reason": {
+            "cosine": 0.2315237969,
+            "rrf": 0.0158730159,
+            "score": 0.2315237969,
+            "signal": "cosine"
+          },
+          "ref": "mem:86",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-03T00:00:25Z"
+        },
+        {
           "content": "unrelated filler about bicycles number 5",
           "match_reason": {
             "cosine": 0.2385508716,
@@ -9390,54 +9436,6 @@
             "type": "User"
           },
           "timestamp": "2026-01-03T00:00:07Z"
-        },
-        {
-          "content": "apples, every element +inf",
-          "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0307692308,
-            "score": "<nan>",
-            "signal": "cosine"
-          },
-          "ref": "mem:103",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:03Z"
-        },
-        {
-          "content": "apples, every element NaN",
-          "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0307765152,
-            "score": "<nan>",
-            "signal": "cosine"
-          },
-          "ref": "mem:102",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:02Z"
-        },
-        {
-          "content": "apples, one element NaN",
-          "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0317540323,
-            "score": "<nan>",
-            "signal": "cosine"
-          },
-          "ref": "mem:104",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:04Z"
         }
       ]
     },
