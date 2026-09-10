@@ -161,3 +161,54 @@ Each is checked in the result rather than assumed.
 Whether any *unshipped* work — the reservation, the depth/count separation, the
 adaptive fusion line — helps. None of it is on the shipping line, so none of it
 is in this measurement. This compares two released regimes and nothing else.
+
+---
+
+## Third arm, registered before it runs: the line with its 2.6 work merged
+
+The two arms above compare released regimes. This one asks the question that
+prompted them: *does the work that is not yet merged move the number?*
+
+**The arm.** The development head with the two unmerged runtime branches on top
+— the depth/count separation and the reservation with its gate change — merged
+with their conflict resolved (both changes apply: the fused arms search to the
+depth and fill the reservation; the cascade path keeps the caller's count, as
+the depth change left it). 2405 tests pass on the merge, 5 skipped. Same
+protocol, same model, same warm cache, same 22 tasks.
+
+**The prediction, fixed here.** This protocol cannot see most of that work, and
+the reasons are structural rather than statistical:
+
+- *Depth is inert.* The harness asks for the full ranking, so the count already
+  is the corpus, and the depth floor's default of 0 keeps the depth equal to
+  the count. There is nothing for a depth to widen.
+- *The lexical weight is inert.* Its default of 1.0 is the division the fusion
+  has always computed, bit for bit.
+- *The reservation is nearly out of reach.* It appends only when the qualified
+  rows fall short of ten, measured at 0.21 % of 24,244 queries — and those are
+  the queries whose eligible universe is smaller than ten to begin with.
+- *The gate change is out of reach on the branch that could have mattered.*
+  Dropping the pool-size heuristic for a fused row fires only where no
+  calibrated gate applies, which the benchmark regime does supply; but on the
+  cosine branch it can only re-admit rows whose similarity sits below that
+  heuristic, and every calibration measured in this run puts the admission
+  floor **above** it (thresholds 0.5420 to 0.7106, floors 0.27 to 0.36, against
+  a heuristic of 0.20). On the rank branch it re-admits rows below a threshold
+  applied to the *same* key the list is ordered by, which is a suffix: the rows
+  return to the tail, not to the top ten.
+
+**So the registered expectation is a null: the third arm reproduces the second,
+task for task.** A difference beyond the two-decimal storage would mean one of
+the four readings above is wrong, and the result section will say which.
+
+**What a null here does and does not mean.** It would say this benchmark is
+blind to that work — not that the work is worthless. Every one of the four
+mechanisms bites where this protocol does not look: at a caller's ten rows
+rather than a full ranking, and on pools small enough for an absolute floor to
+empty them. Measuring their value needs a protocol built for that, and the
+absence of one is the finding to carry forward.
+
+**Cost control.** The prediction is tested on three tasks first — the ones the
+second arm has already scored — and the full 22-task arm is run only if those
+three disagree with it. A 13-hour run to confirm a null that three tasks can
+show is not a measurement, it is a habit.
