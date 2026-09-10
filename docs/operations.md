@@ -126,10 +126,15 @@ The knobs, in the order you should reach for them:
    ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)),
    so under the default configuration this knob does nothing — but it is the
    fusion mode that decides that, not the confidence flag.
-4. **`CPERSONA_FUSED_GATE_ENABLED=false`** — last resort. Without the gate,
-   filtering falls back to the pool-size heuristic (`_adaptive_min_score`),
-   which still rejects weak matches — it is a coarser gate, not an open door.
-   What you give up is the operating point measured for *this* corpus.
+4. **`CPERSONA_FUSED_GATE_ENABLED=false`** — last resort, and under a fusion
+   mode it really is an open door. Since 2.6 the pool-size heuristic does not
+   apply to a fused row
+   ([contract §12](behavior-contracts.md#12-what-filters-a-fused-order)), so
+   with the calibrated gate off, `rrf` and `rsf` are filtered by the dense arm's
+   admission floor and nothing else. Under `cascade` the heuristic still cuts,
+   so there it remains a coarser gate rather than none. Either way what you give
+   up is the operating point measured for *this* corpus — calibrate instead of
+   disabling.
 
 **Choosing a precision**: the trade is asymmetric per use case. For
 index-style corpora (recall feeds an AI that can discard irrelevant rows), a

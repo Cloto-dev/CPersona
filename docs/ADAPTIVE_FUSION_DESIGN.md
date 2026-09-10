@@ -1,9 +1,12 @@
 # Adaptive Fusion — design
 
-Status: design for the 2.6 line, not behaviour. Everything below ships
-default-off behind a mode switch; the shipped fusion is untouched until the
-success condition of the
-[2.6 design page](RELIABLE_RECALL_2_6.md#5-adaptive-fusion) is met on the
+Status: design for the 2.6 line. The two structural decisions (D1, D2) and the
+constant of D3-now have shipped, default-on, because they remove defects rather
+than add behaviour; what they changed, per task and per model, is in
+`benchmarks/measurements/results-reservation-and-gate.md`.
+The **adaptive** layer — D3-later — remains design: it ships default-off behind a
+mode switch, and the shipped fusion stays untouched until the success condition
+of the [2.6 design page](RELIABLE_RECALL_2_6.md#5-adaptive-fusion) is met on the
 measurement this document pre-registers. The facts this design rests on are in
 two research notes — the
 [frozen-stage replay](research/frozen-stage-replay-2026-09.md), which located
@@ -61,6 +64,14 @@ neither is repaired by any fusion rule.
 *Shape.* A `fallback: true` marker on appended rows, additive to the existing
 message shape; the count of fallback rows in the response. No new tool.
 
+*Shipped.* The reservation is taken by the dense arm on its way past the floor
+and read once, at final selection. Measured over eight tasks and three models it
+is at or above the previous answer everywhere — +14.1 points on the weakest
+model's worst task, +9.0 on the mid model's, and within 0.11 of zero on the
+strongest, which starves nothing. On every one of 20,397 replayed queries the
+refilled top ten is the dense order's, which is the identity this decision rests
+on, measured rather than argued.
+
 ### D2. The pool-size gate stops being a rank cut on the lexical arm
 
 The heuristic gate compares a lexical-only row's fused score \(1/(K+r+1)\)
@@ -71,7 +82,21 @@ rank-fusion score with a cosine-scale threshold, and it produced EPBench's
 entire loss (−10.2, 99.6 % in the four 19–20-row groups). The gate's rank
 branch is removed for rows the fusion produced; a row's admission to the output
 is decided by the fusion mode's own evidence scale (D3) and by D1. The cosine
-branch keeps its role for dense-only orders. Whether the benchmark regime is
+branch keeps its role for dense-only orders.
+
+Both branches, and the measurement is why it is both. Removing the rank cut
+alone — leaving the cosine branch to apply the pool-size threshold to rows with
+a dense vote — was scored against removing neither: on EPBench with the mid
+model it reaches 81.29 where the reservation alone reaches 86.44, because it
+re-admits the lexical-only rows while still deleting the dense rows they
+outrank, so the answer fills with the weaker arm. Dropping the heuristic from
+both branches is worth +4.4 points summed over eight tasks on the weakest
+model, −0.6 on the mid and −0.1 on the strongest, on top of the reservation.
+What remains between a fused row and the caller is the dense arm's calibrated
+admission floor and the calibrated fused gate; on a corpus that has never been
+calibrated, only the former.
+
+Whether the benchmark regime is
 redefined to bypass the heuristic gate — which moves the published small-corpus
 Track B numbers — is a separate decision, recorded in the benchmark
 documentation when taken; this design does not depend on it.
@@ -245,9 +270,9 @@ after regularisation refutes the representation. In addition:
 
 1. D1 and D2 — structural, model-independent, measurable on the existing
    replay (S1 and S3 must rise to S0 and S2 on the affected tasks with no
-   change elsewhere). They ship first, default-on, through the ordinary ladder,
-   because they remove defects rather than add behaviour.
-2. D3-now — the knob, default 1.0; ships with D1/D2.
+   change elsewhere). **Done**: they shipped first, default-on, through the
+   ordinary ladder, because they remove defects rather than add behaviour.
+2. D3-now — the knob, default 1.0. **Done**: shipped with D1/D2.
 3. The row-keyed dump and the panel builder as benchmark-side instruments.
 4. The pre-registered comparison of section 2.
 5. D3-later — implemented only if the comparison selects it; the default flip

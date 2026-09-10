@@ -195,7 +195,9 @@ breaks. That is only true of similarity-scale signals:
 - **Deliberately inert**: under `rsf` and `rrf` ordering. Rank-fusion scores
   decay hyperbolically by construction — their gaps encode retriever overlap,
   not relevance breaks. Fusion-ordered results rely on the fused quality gate
-  for contamination control instead.
+  for contamination control instead — and since 2.6 on that gate alone, because
+  the pool-size heuristic that used to stand behind it no longer applies to a
+  fused row ([§12](#12-what-filters-a-fused-order)).
 
 So in the default configuration (confidence off, `rrf` or `rsf`), tuning
 `CPERSONA_AUTOCUT_MIN_RESULTS` **has no effect on recall size**. The knob that
@@ -238,8 +240,12 @@ semantically distant from the query text.
 
 **The rescue path exists only under confidence scoring.** The rows it returns
 are marked by the same backfill that runs when `CPERSONA_CONFIDENCE_ENABLED`
-is on, so in the default configuration `gate_fallback` can never appear: an
-all-below-gate recall simply returns nothing.
+is on, so in the default configuration `gate_fallback` can never appear.
+
+What an all-below-gate recall returns instead changed in 2.6: no qualified row,
+and the reservation's marked rows in their place
+([§11](#11-an-answer-is-never-shorter-than-the-reservation)). It no longer
+returns nothing.
 
 ## 9. `lock_memory` protects; it does not boost
 
@@ -276,3 +282,63 @@ Two shapes stay outside that rule, and always did:
 
 Both are covered by the rule above, which is why the rule is phrased as "treat
 a response carrying `error` as a failure" rather than "check `ok`".
+
+## 11. An answer is never shorter than the reservation
+
+Since **2.6** a recall over a scope that holds embedded rows does not come back
+empty. When the retrieval leaves fewer than ten rows, the dense arm's top rows —
+reserved before the admission floor, so a floor calibrated for a large corpus
+cannot empty a small universe — are **appended** to the answer, and each one
+carries `fallback: true`. The response reports how many in `fallback_rows`
+(absent when none were appended).
+
+A reservation row is not a hit. It promises no relevance; it says *this is what
+there was*. Concretely:
+
+- It is **appended**, so under the last-is-best order of [§1](#1-recall-return-order-last-is-best)
+  every reservation row sits **before** every qualified row. A caller that
+  ignores the marker still never finds one where the best answer belongs.
+- It earns **no `recall_count` credit**, for the same reason a `gate_fallback`
+  row earns none: the count raises a row's own confidence floor, and a row that
+  came back because nothing else filled the answer must not climb on that.
+- It obeys `exclude_contents`, and it stays inside `limit` — the reservation is
+  a floor **inside** the caller's ceiling, never above it. The reservation holds
+  ten candidates, so an exclusion shortens it rather than reaching deeper.
+- It changes nothing about the rows that qualified: the same candidates, the
+  same scores, the same order. The reservation is a cardinality contract over
+  the path, not a scoring change.
+
+**What replaced the empty response.** Before 2.6 an absolute admission floor
+could leave the top ten empty — measured, for a third of one benchmark task's
+queries — and the response was indistinguishable from "there is nothing here".
+The reservation makes the two distinguishable in the other direction: rows plus
+a marker, rather than silence.
+
+A genuinely empty scope still answers empty. So does an empty-query listing,
+which has no dense arm to reserve from.
+
+## 12. What filters a fused order
+
+Three things do, and since **2.6** the pool-size heuristic is not one of them.
+
+- The **admission floor** the dense arm applies — the per-agent vector
+  threshold, calibrated for this corpus.
+- The **calibrated fused gate**, on the branch it was calibrated for
+  (`CPERSONA_FUSED_GATE_ENABLED`, on by default; the operating point comes from
+  `calibrate_threshold`).
+- Nothing else. On a fused order the pool-size heuristic is not applied: against
+  a reciprocal-rank score it was a cut at a lexical *rank* that moved with the
+  pool — rank 40 above 500 rows, rank 21 at 196, and no lexical row at all at 30
+  or fewer — and against a dense row's cosine it was a second absolute floor
+  above the calibrated one the retriever had already applied. Measured, the two
+  together cost one benchmark task 10.2 points on a mid embedding model and 18.9
+  on the weakest.
+
+On a **dense-only order** (`cascade`) the heuristic keeps its role: the argument
+above is about a fused score, and there is none there.
+
+The practical consequence is that turning the calibrated gate off under `rrf` or
+`rsf` leaves the admission floor as the only filter, and that an uncalibrated
+corpus is filtered by a default threshold rather than by one measured for it.
+Calibrate rather than disable — see the
+[tuning runbook](operations.md#tuning-recall).
