@@ -2212,7 +2212,12 @@ async def test_deep_halves_the_calibrated_fused_gate(monkeypatch, clean_checks_d
         # Read the row's own gate score first, so the gate is placed against a
         # measured value rather than a guessed one.
         baseline = await memory_handlers.do_recall(agent, "quantum diodes tunnelling", limit=10)
-        scored = [m for m in baseline["messages"] if m.get("match_reason")]
+        # Qualified rows only. Since 2.6 the answer is padded with reservation rows
+        # from BELOW the admission floor, and one of those cannot be admitted by
+        # moving the gate at all -- it never reaches the gate. Picking one as the
+        # target would make this a test of the floor wearing the gate's name.
+        scored = [m for m in baseline["messages"]
+                  if m.get("match_reason") and not m.get("fallback")]
         assert scored, f"nothing came back scored, so there is no gate score to sit above: {baseline}"
         target = scored[0]
         signal = target["match_reason"]["signal"]
@@ -2228,8 +2233,12 @@ async def test_deep_halves_the_calibrated_fused_gate(monkeypatch, clean_checks_d
         shallow = await memory_handlers.do_recall(agent, "quantum diodes tunnelling", limit=10)
         deep = await memory_handlers.do_recall(agent, "quantum diodes tunnelling", limit=10, deep=True)
 
-        shallow_contents = {m["content"] for m in shallow["messages"]}
-        deep_contents = {m["content"] for m in deep["messages"]}
+        # 2.6 (D1): a refused row can still come back APPENDED and marked
+        # `fallback`, so "was it refused" is a question about the QUALIFIED rows.
+        # Reading the whole message list would now answer a different question --
+        # "did anything reach the caller" -- which the gate never decided.
+        shallow_contents = {m["content"] for m in shallow["messages"] if not m.get("fallback")}
+        deep_contents = {m["content"] for m in deep["messages"] if not m.get("fallback")}
         assert target["content"] not in shallow_contents, (
             f"a gate at {score * 1.2} did not refuse a row scoring {score}: {shallow}"
         )

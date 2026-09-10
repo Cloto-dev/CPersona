@@ -46,7 +46,7 @@ class _FakeDB:
 
 
 async def _fake_rsf(db, agent_id, query, limit, deep, channel="", exclude_set=None,
-                    project_id=None, source_id=""):
+                    project_id=None, source_id="", *, reserve_out=None):
     return [
         {"id": 1, "msg_id": "m-1", "content": "memory row content",
          "source": '{"type": "User", "id": "u1", "name": "U"}',

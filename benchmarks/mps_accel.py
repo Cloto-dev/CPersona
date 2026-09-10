@@ -166,7 +166,8 @@ class FastVectorSearch:
     # -- the patched _search_vector ----------------------------------------
 
     async def search_vector(self, db, agent_id, query, limit, min_similarity=None,
-                            channel="", project_id=None, source_id="", *, far_out=None):
+                            channel="", project_id=None, source_id="", *, far_out=None,
+                            reserve_out=None, reserve_k=0):
         c = self.cache
         # Fidelity guard: anything the cache doesn't model goes to the original.
         # `far_out` (vector reach past the scan window, v2.5.10) is modelled only
@@ -179,7 +180,8 @@ class FastVectorSearch:
                 or c["agent_id"] != agent_id or c["dim"] == 0):
             self.stats["fallbacks"] += 1
             return await self.original(db, agent_id, query, limit, min_similarity,
-                                       channel, project_id, source_id, far_out=far_out)
+                                       channel, project_id, source_id, far_out=far_out,
+                                       reserve_out=reserve_out, reserve_k=reserve_k)
 
         emb_client = self.vector_mod._embedding_client
         embeddings = await emb_client.embed([query])
@@ -190,7 +192,8 @@ class FastVectorSearch:
         if len(query_vec) != c["dim"]:
             self.stats["fallbacks"] += 1
             return await self.original(db, agent_id, query, limit, min_similarity,
-                                       channel, project_id, source_id)
+                                       channel, project_id, source_id,
+                                       reserve_out=reserve_out, reserve_k=reserve_k)
 
         effective_min_sim = (min_similarity if min_similarity is not None
                              else self.vector_mod._get_vector_threshold(agent_id))
@@ -202,6 +205,26 @@ class FastVectorSearch:
         scan_limit = self.vector_mod.MAX_MEMORIES
 
         candidates: list[tuple[float, dict]] = []
+        # The 2.6 reservation (D1): the same top-k-without-the-floor the scan
+        # computes, over the same similarities, so this path models it too. Kept
+        # to the original's merge order (memories, then episodes, then nlargest
+        # on the score) because that order is what breaks its ties.
+        want_reserve = reserve_out is not None and reserve_k > 0
+        reserved: list[tuple[float, dict]] = []
+
+        def _mem_row(i, sim):
+            mem_id, msg_id, content, source, timestamp = c["mem_meta"][i]
+            return {"id": mem_id, "_rid": ("mem", mem_id), "_cosine": sim,
+                    "msg_id": msg_id, "content": content,
+                    "source": source, "timestamp": timestamp}
+
+        def _ep_row(i, sim):
+            ep_id, summary, start_time, ep_resolved = c["ep_meta"][i]
+            return {"id": ep_id, "_rid": ("ep", ep_id), "_cosine": sim,
+                    "content": f"[Episode] {summary}",
+                    "source": {"System": "episode"},
+                    "timestamp": start_time or "",
+                    "_resolved": bool(ep_resolved)}
 
         n_mem = min(scan_limit, len(c["mem_meta"]))
         sims = self._sims(c["mem_mat"], n_mem, query_vec)
@@ -231,8 +254,26 @@ class FastVectorSearch:
                     "_resolved": bool(ep_resolved),
                 }))
 
+        if want_reserve:
+            if sims is not None and n_mem:
+                picked = heapq.nlargest(reserve_k, range(n_mem),
+                                        key=lambda i: (float(sims[i]), -i))
+                reserved.extend((float(sims[i]), _mem_row(i, float(sims[i])))
+                                for i in sorted(picked))
+            if ep_sims is not None and n_ep:
+                picked = heapq.nlargest(reserve_k, range(n_ep),
+                                        key=lambda i: (float(ep_sims[i]), -i))
+                reserved.extend((float(ep_sims[i]), _ep_row(i, float(ep_sims[i])))
+                                for i in sorted(picked))
+
         top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
         result = [x[1] for x in top_k]
+        if want_reserve:
+            returned = {row.get("_rid") for _score, row in top_k}
+            reserve_out.extend(
+                row for _score, row in heapq.nlargest(reserve_k, reserved, key=lambda x: x[0])
+                if row.get("_rid") not in returned
+            )
         self.stats["queries"] += 1
 
         if self.selfcheck_rate and random.random() < self.selfcheck_rate:

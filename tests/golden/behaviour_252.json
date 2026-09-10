@@ -3543,10 +3543,36 @@
     "result": {
       "messages": [
         {
-          "content": "[Profile] profile body",
+          "content": "unrelated filler about bicycles number 68",
+          "match_reason": {
+            "cosine": 0.230216369,
+            "rrf": 0.015625,
+            "score": 0.230216369,
+            "signal": "cosine"
+          },
+          "ref": "mem:69",
           "source": {
-            "System": "profile"
-          }
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-03T00:00:08Z"
+        },
+        {
+          "content": "unrelated filler about bicycles number 85",
+          "match_reason": {
+            "cosine": 0.2315237969,
+            "rrf": 0.0158730159,
+            "score": 0.2315237969,
+            "signal": "cosine"
+          },
+          "ref": "mem:86",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-03T00:00:25Z"
         },
         {
           "content": "apples, another finite vector",
@@ -3562,6 +3588,22 @@
             "type": "User"
           },
           "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "content": "unrelated filler about bicycles number 5",
+          "match_reason": {
+            "cosine": 0.2385508716,
+            "rrf": 0.0161290323,
+            "score": 0.2385508716,
+            "signal": "cosine"
+          },
+          "ref": "mem:6",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-03T00:00:05Z"
         },
         {
           "content": "apples, a finite vector",
@@ -5386,7 +5428,50 @@
         "watermark": 6
       },
       "recalled": {
+        "fallback_rows": 2,
         "messages": [
+          {
+            "confidence": {
+              "age_hours": 8760.0,
+              "cosine": 0.0241,
+              "score": 0.0
+            },
+            "content": "apples, a finite vector",
+            "fallback": true,
+            "match_reason": {
+              "cosine": 0.0241107494,
+              "score": 0.0241107494,
+              "signal": "cosine"
+            },
+            "ref": "mem:1",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-01T00:00:01Z"
+          },
+          {
+            "confidence": {
+              "age_hours": 8760.0,
+              "cosine": -0.0923,
+              "score": 0.0
+            },
+            "content": "apples, another finite vector",
+            "fallback": true,
+            "match_reason": {
+              "cosine": -0.0923131704,
+              "score": -0.0923131704,
+              "signal": "cosine"
+            },
+            "ref": "mem:6",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-01T00:00:06Z"
+          },
           {
             "confidence": {
               "age_hours": 8760.0,
@@ -7197,36 +7282,6 @@
       "recalled": {
         "messages": [
           {
-            "content": "apples, every element +inf",
-            "match_reason": {
-              "rrf": 0.0153846154,
-              "score": 0.0153846154,
-              "signal": "rrf"
-            },
-            "ref": "mem:103",
-            "source": {
-              "id": "u",
-              "name": "n",
-              "type": "User"
-            },
-            "timestamp": "2026-01-01T00:00:03Z"
-          },
-          {
-            "content": "apples, every element NaN",
-            "match_reason": {
-              "rrf": 0.015625,
-              "score": 0.015625,
-              "signal": "rrf"
-            },
-            "ref": "mem:102",
-            "source": {
-              "id": "u",
-              "name": "n",
-              "type": "User"
-            },
-            "timestamp": "2026-01-01T00:00:02Z"
-          },
-          {
             "content": "apples, one element -inf",
             "match_reason": {
               "rrf": 0.0158730159,
@@ -7242,6 +7297,22 @@
             "timestamp": "2026-01-01T00:00:05Z"
           },
           {
+            "content": "unrelated filler about bicycles number 85",
+            "match_reason": {
+              "cosine": 0.2315237969,
+              "rrf": 0.0158730159,
+              "score": 0.2315237969,
+              "signal": "cosine"
+            },
+            "ref": "mem:86",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-03T00:00:25Z"
+          },
+          {
             "content": "apples, one element NaN",
             "match_reason": {
               "rrf": 0.0161290323,
@@ -7255,6 +7326,22 @@
               "type": "User"
             },
             "timestamp": "2026-01-01T00:00:04Z"
+          },
+          {
+            "content": "unrelated filler about bicycles number 5",
+            "match_reason": {
+              "cosine": 0.2385508716,
+              "rrf": 0.0161290323,
+              "score": 0.2385508716,
+              "signal": "cosine"
+            },
+            "ref": "mem:6",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-03T00:00:05Z"
           },
           {
             "content": "apples, a finite vector",
@@ -7409,7 +7496,50 @@
     "outbound": [],
     "raised": null,
     "result": {
+      "fallback_rows": 2,
       "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": -0.0923,
+            "score": 0.0
+          },
+          "content": "apples, another finite vector",
+          "fallback": true,
+          "match_reason": {
+            "cosine": -0.0923131704,
+            "score": -0.0923131704,
+            "signal": "cosine"
+          },
+          "ref": "mem:6",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.0241,
+            "score": 0.0
+          },
+          "content": "apples, a finite vector",
+          "fallback": true,
+          "match_reason": {
+            "cosine": 0.0241107494,
+            "score": 0.0241107494,
+            "signal": "cosine"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
         {
           "confidence": {
             "age_hours": 8760.0,
@@ -9215,40 +9345,20 @@
     "result": {
       "messages": [
         {
-          "content": "[Profile] profile body",
-          "source": {
-            "System": "profile"
-          }
-        },
-        {
-          "content": "apples, another finite vector",
+          "content": "unrelated filler about bicycles number 5",
           "match_reason": {
-            "rrf": 0.0151515152,
-            "score": 0.0151515152,
-            "signal": "rrf"
+            "cosine": 0.2385508716,
+            "rrf": 0.0161290323,
+            "score": 0.2385508716,
+            "signal": "cosine"
           },
-          "ref": "mem:106",
+          "ref": "mem:6",
           "source": {
             "id": "u",
             "name": "n",
             "type": "User"
           },
-          "timestamp": "2026-01-01T00:00:06Z"
-        },
-        {
-          "content": "apples, one element -inf",
-          "match_reason": {
-            "rrf": 0.0158730159,
-            "score": 0.0158730159,
-            "signal": "rrf"
-          },
-          "ref": "mem:105",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:05Z"
+          "timestamp": "2026-01-03T00:00:05Z"
         },
         {
           "content": "apples, a finite vector",
@@ -9280,6 +9390,54 @@
             "type": "User"
           },
           "timestamp": "2026-01-03T00:00:07Z"
+        },
+        {
+          "content": "apples, every element +inf",
+          "match_reason": {
+            "cosine": "<nan>",
+            "rrf": 0.0307692308,
+            "score": "<nan>",
+            "signal": "cosine"
+          },
+          "ref": "mem:103",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "content": "apples, every element NaN",
+          "match_reason": {
+            "cosine": "<nan>",
+            "rrf": 0.0307765152,
+            "score": "<nan>",
+            "signal": "cosine"
+          },
+          "ref": "mem:102",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "content": "apples, one element NaN",
+          "match_reason": {
+            "cosine": "<nan>",
+            "rrf": 0.0317540323,
+            "score": "<nan>",
+            "signal": "cosine"
+          },
+          "ref": "mem:104",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-01-01T00:00:04Z"
         }
       ]
     },
@@ -12308,7 +12466,25 @@
     "outbound": [],
     "raised": null,
     "result": {
+      "fallback_rows": 1,
       "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.0728,
+            "score": 0.0
+          },
+          "content": "raspberry pi cluster wiring",
+          "fallback": true,
+          "match_reason": {
+            "cosine": 0.0728273392,
+            "score": 0.0728273392,
+            "signal": "cosine"
+          },
+          "ref": "mem:2",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
         {
           "confidence": {
             "age_hours": 8760.0,
@@ -12387,7 +12563,25 @@
     "outbound": [],
     "raised": null,
     "result": {
+      "fallback_rows": 1,
       "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": -0.0137,
+            "score": 0.0
+          },
+          "content": "apples zzz yyy www",
+          "fallback": true,
+          "match_reason": {
+            "cosine": -0.013740249,
+            "score": -0.013740249,
+            "signal": "cosine"
+          },
+          "ref": "mem:2",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
         {
           "confidence": {
             "age_hours": 8760.0,
@@ -12560,7 +12754,25 @@
     "outbound": [],
     "raised": null,
     "result": {
+      "fallback_rows": 1,
       "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.0728,
+            "score": 0.0
+          },
+          "content": "raspberry pi cluster wiring",
+          "fallback": true,
+          "match_reason": {
+            "cosine": 0.0728273392,
+            "score": 0.0728273392,
+            "signal": "cosine"
+          },
+          "ref": "mem:2",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
         {
           "confidence": {
             "age_hours": 8760.0,
@@ -12941,7 +13153,25 @@
     "outbound": [],
     "raised": null,
     "result": {
+      "fallback_rows": 1,
       "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.0728,
+            "score": 0.0
+          },
+          "content": "raspberry pi cluster wiring",
+          "fallback": true,
+          "match_reason": {
+            "cosine": 0.0728273392,
+            "score": 0.0728273392,
+            "signal": "cosine"
+          },
+          "ref": "mem:2",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
         {
           "confidence": {
             "age_hours": 8760.0,
@@ -12978,7 +13208,7 @@
     "thresholds": {}
   },
   "recall-no-hits": {
-    "covers": "recall: a query matching no row returns messages=[] and does not touch recall_count",
+    "covers": "recall: a query matching no row returns no qualified row — since 2.6 the reservation fills the answer with marked fallback rows (fallback_rows) — and does not touch recall_count",
     "db": {
       "episodes": [
         {
@@ -13127,7 +13357,71 @@
     "outbound": [],
     "raised": null,
     "result": {
-      "messages": []
+      "fallback_rows": 4,
+      "messages": [
+        {
+          "content": "raspberry pi cluster wiring",
+          "fallback": true,
+          "match_reason": {
+            "cosine": -0.0381509624,
+            "score": -0.0381509624,
+            "signal": "cosine"
+          },
+          "ref": "mem:2",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:02Z"
+        },
+        {
+          "content": "apples and pears in the orchard",
+          "fallback": true,
+          "match_reason": {
+            "cosine": 0.0139555708,
+            "score": 0.0139555708,
+            "signal": "cosine"
+          },
+          "ref": "mem:1",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:01Z"
+        },
+        {
+          "content": "apples in another project",
+          "fallback": true,
+          "match_reason": {
+            "cosine": 0.0656733364,
+            "score": 0.0656733364,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "content": "[Episode] chat apples episode",
+          "fallback": true,
+          "match_reason": {
+            "cosine": 0.0696298182,
+            "score": 0.0696298182,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
+        },
+        {
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.1845626352,
+            "rrf": 0.016393306,
+            "score": 0.1845626352,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        }
+      ]
     },
     "seam": "store-recall-health",
     "thresholds": {}

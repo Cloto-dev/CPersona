@@ -253,7 +253,7 @@ def _install_fake_recall(monkeypatch, rows, mode="rsf", confidence=True):
         yield fake
 
     async def fake_driver(db, agent_id, query, limit, deep, channel="", exclude_set=None,
-                          project_id=None, source_id=""):
+                          project_id=None, source_id="", *, reserve_out=None):
         # Deep-copy so the do_recall scoring pipeline mutates OUR list, not the
         # test's constant — otherwise a second recall in the same test would
         # see leftover _confidence_score / _rid entries.
