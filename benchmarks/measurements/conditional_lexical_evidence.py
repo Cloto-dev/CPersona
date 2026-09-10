@@ -69,18 +69,35 @@ def _bin_index(edges: list[int], x: int) -> int:
 def load_task(dump_dir: Path, task: str):
     """Rows and per-query meta for one task. Rows come back as arrays."""
     meta = json.load(open(dump_dir / f"{task}.meta.json"))
-    fallback = {m["qid"] for m in meta["queries"] if m["lex_fallback"]}
+    # A query is identified by (subtask, id), never by id alone: several tasks
+    # here number their queries per subtask, so "query_1" names a different
+    # question against a different corpus in each of them. Keying on the bare id
+    # merges them into one stratum and compares a gold row of one corpus with
+    # non-gold rows of another, which is not the comparison this measures.
+    fallback = {(m["subtask"], m["qid"]) for m in meta["queries"] if m["lex_fallback"]}
     qid, vr, v, y, lscore, lrank = [], [], [], [], [], []
     with gzip.open(dump_dir / f"{task}.rows.csv.gz", "rt", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
-            if r["qid"] in fallback:          # abstention bucket 1
+            if (r["subtask"], r["qid"]) in fallback:          # abstention bucket 1
                 continue
-            qid.append(r["qid"])
+            qid.append(f'{r["subtask"]}\x1f{r["qid"]}')
             vr.append(int(r["vr"]))
             v.append(float(r["v"]))
             y.append(int(r["y"]))
             lscore.append(float(r["l"]) if r["l"] != "" else NEG_INF)
             lrank.append(int(r["lr"]) if r["lr"] != "" else LEX_ABSENT)
+    # Qualification on the real dump, not on synthetic rows: the number of
+    # distinct query keys must equal the number of query records the dump wrote.
+    # The synthetic self-tests below cannot catch a key that merges queries,
+    # because they give every query a unique id by construction -- so this is the
+    # check that would have caught the 2026-09-10 correction, and it runs on
+    # every load.
+    expected = sum(1 for m in meta["queries"] if not m["lex_fallback"])
+    seen = len(set(qid))
+    if seen != expected:
+        raise SystemExit(
+            f"{task}: {seen} distinct query keys but {expected} queries in the dump -- "
+            "the key merges or splits queries, and every stratum below would be wrong")
     return (meta, np.array(qid), np.asarray(vr, dtype=np.int64), np.asarray(v, dtype=np.float64),
             np.asarray(y, dtype=np.int8), np.asarray(lscore, dtype=np.float64),
             np.asarray(lrank, dtype=np.int64))

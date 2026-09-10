@@ -74,12 +74,12 @@ the per-task fusion delta the replay already measured:
 
 | Task | MiniLM (weakest) | jina-v5-nano | bge-m3 (strongest) | fusion Δ (min/jina/bge) |
 |---|---|---|---|---|
-| EPBench | **0.913** (0.50) | **0.899** (0.51) | **0.834** (0.52) | +25.58 / +9.69 / +2.66 |
+| EPBench | **0.922** (0.51) | **0.925** (0.51) | **0.871** (0.54) | +25.58 / +9.69 / +2.66 |
 | Gorilla | **0.684** (0.51) | **0.559** (0.42) | **0.647** (0.49) | +20.73 / +5.22 / −0.15 |
-| ReMe | **0.654** (0.50) | **0.597** (0.50) | **0.659** (0.50) | −1.28 / −4.30 / −2.42 |
+| TMD | **0.612** (0.49) | **0.558** (0.49) | **0.572** (0.49) | +4.16 / −6.44 / −4.92 |
 | QASPER | **0.614** (0.58) | 0.544 (0.46) | 0.501 (0.46) | +4.38 / +2.15 / −4.14 |
 | LMEB_SciFact | **0.610** (0.51) | 0.567 (0.56) | **0.580** (0.52) | +1.33 / −5.37 / −2.17 |
-| TMD | **0.578** (0.49) | **0.537** (0.50) | **0.523** (0.49) | +4.16 / −6.44 / −4.92 |
+| ReMe | **0.588** (0.48) | 0.533 (0.52) | **0.579** (0.49) | −1.28 / −4.30 / −2.42 |
 | *MLDR* | *0.812* (0.44) | *0.750* (0.50) | *0.769* (0.62) | +6.89 / +0.15 / −1.53 |
 | *ESGReports* | *0.535* (0.50) | *0.488* (0.47) | *0.509* (0.61) | +10.19 / −7.92 / +0.62 |
 
@@ -97,9 +97,9 @@ effect is claimed, so the dense score is genuinely pinned. Where the control is
 *not* at one half (QASPER/MiniLM 0.58, SciFact/jina 0.56, and both under-powered
 tasks) the claim is weakened accordingly and is not counted as clean.
 
-The largest samples make the smallest claims most solid: EPBench rests on 368 k–503 k
-matched pairs (z = 85–122) and TMD on 865 k–1.24 M (z = 13–42), so TMD's modest
-0.523–0.578 is a small effect measured precisely, not a noisy one.
+The largest samples make the smallest claims most solid: TMD rests on 162 k–260 k
+matched pairs over 14 k–18 k strata, so its modest 0.558–0.612 is a small effect
+measured precisely, not a noisy one.
 
 ### How large, in the units the mode would use
 
@@ -133,27 +133,34 @@ loses where the lexical arm has nothing conditional to say. The pre-registration
 fixed the refutation: *refuted if the losing tasks show an effect as large as the
 winning ones.*
 
-**They do.** ReMe is the decisive case: the shipped fusion loses on **all three**
-models (−1.28, −4.30, −2.42) while carrying among the largest measured evidence
-(0.654, 0.597, 0.659), on tight intervals with the control at exactly 0.50. TMD
-loses on two models and is positive on all three. SciFact loses on two and is
-positive on all three.
+**Not as stated, and the corrected numbers say something narrower.** The losing
+tasks are **not redundant** — every one of them carries measurable conditional
+evidence — but their effect is smaller than the largest winner's, so "as large as
+the winning ones" is not met against EPBench.
+
+TMD is the clearest case: the shipped fusion loses on two of three models
+(−6.44, −4.92) and the evidence is positive on **all three** (0.612, 0.558,
+0.572), on the tightest intervals in the table and with the control at 0.49.
+ReMe loses on all three models and is positive on two of them, the mid model's
+interval covering 0.5. SciFact loses on two and is positive on two.
 
 So the shipped fusion is not losing because the lexical arm is uninformative
 there. It is losing while the information is present — which locates the fault in
 **how reciprocal rank fusion uses the lexical arm**, not in whether the arm has
-anything to say. That is a positive result for the evidence mode's premise and a
-negative one for the explanation the design page offered.
+anything to say. What the corrected numbers withdraw is the stronger claim that
+the losing tasks carry the *largest* evidence: they carry real but middling
+evidence, and the largest sits on a task fusion already wins.
 
 ### The model dependence, measured in evidence rather than in NDCG
 
-\(\widehat A\) falls as the dense model strengthens on the tasks where it is
-largest — EPBench 0.913 → 0.899 → 0.834, TMD 0.578 → 0.537 → 0.523, QASPER 0.614
-→ 0.544 → 0.501 — which is the model dependence this line exists to solve, now
-visible in the conditional-evidence units instead of only in retrieval scores. It
-does **not** vanish for the strongest model: bge-m3 still shows 0.834 on EPBench,
-0.659 on ReMe and 0.647 on Gorilla. A stronger encoder absorbs more of the
-lexical signal; it does not absorb all of it.
+\(\widehat A\) falls from the weakest model to the strongest where it is largest
+— EPBench 0.922 → 0.925 → 0.871, QASPER 0.614 → 0.544 → 0.501 — which is the
+model dependence this line exists to solve, now visible in conditional-evidence
+units instead of only in retrieval scores. It is **not** monotone everywhere
+(TMD 0.612 → 0.558 → 0.572, ReMe 0.588 → 0.533 → 0.579), so "a stronger encoder
+absorbs more of the lexical signal" is a tendency in this data rather than a law.
+What is uniform is that it does not vanish for the strongest model: bge-m3 still
+shows 0.871 on EPBench, 0.647 on Gorilla and 0.579 on ReMe.
 
 ## What this does not settle
 
@@ -170,3 +177,43 @@ lexical signal; it does not absorb all of it.
   order that the design's success condition names.
 - **Two tasks were never in the decision.** MLDR and ESGReports are reported for
   completeness and were excluded in advance.
+
+## Correction, 2026-09-10: a query is (subtask, id), not id
+
+The first version of this page keyed a query by its id alone. Three of the eight
+tasks number their queries **per subtask**, so `query_1` names a different
+question against a different corpus in each of them — one id appears in
+fifty-four subtasks on the largest task. Keying on the bare id merged them into
+one stratum, and the statistic then compared a gold row of one corpus with
+non-gold rows of another. That is not the comparison this page measures.
+
+Found by a check that had nothing to do with it: the sampling weights of the
+row-keyed dump must sum to the eligible universe the dump recorded
+independently, and they were out by a factor of twenty. The weights were right;
+the key was wrong. A downstream number would never have revealed it, because a
+merged stratum still produces a plausible AUC.
+
+**What moved.** The five single-subtask tasks are unchanged to three decimals,
+which is what confirms the fix touched only what it should:
+
+| Task | before → after (MiniLM / jina / bge-m3) |
+|---|---|
+| EPBench | 0.913 → **0.922** / 0.899 → **0.925** / 0.834 → **0.871** |
+| ReMe | 0.654 → **0.588** / 0.597 → **0.533** / 0.659 → **0.579** |
+| TMD | 0.578 → **0.612** / 0.537 → **0.558** / 0.523 → **0.572** |
+| Gorilla, QASPER, LMEB_SciFact, MLDR, ESGReports | unchanged |
+
+**What survives.** The decision rule is still met: the bootstrap lower bound
+clears 0.5 on six of six adequately powered tasks for the weakest model and five
+of six for the strongest. The leakage control still sits at 0.48–0.54 wherever
+the effect is claimed.
+
+**What is withdrawn.** The claim that the losing tasks carry *the largest*
+evidence. ReMe fell from among the largest to the middle of the table, and its
+mid-model interval now covers 0.5. The narrower finding — that the losing tasks
+are not redundant — stands, and TMD rather than ReMe is now its clearest case.
+
+The instrument-qualification checks did not catch this, because every one of them
+runs on synthetic rows where each query has a unique id. A check that a real
+dump's weights reconstruct its recorded universe is now the thing that would
+catch it, and it is the reason this correction exists.
