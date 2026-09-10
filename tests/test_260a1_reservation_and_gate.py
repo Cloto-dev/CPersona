@@ -443,3 +443,34 @@ async def test_a_nan_score_is_not_admitted_by_the_absent_threshold(fake_embeddin
         m.get("match_reason", {}).get("score") == m.get("match_reason", {}).get("score")
         for m in out["messages"]
     ), f"a NaN score reached the response: {out}"
+
+
+def test_the_gate_refuses_a_nan_score_with_no_threshold_to_refuse_it():
+    """The same question at the gate's own seam, where a NaN can still arrive.
+
+    The scan and the index both refuse a non-finite similarity now, so the
+    pipeline above no longer hands one down — but the gate is not only reachable
+    from there. The remote vector service answers with rows the local floor never
+    filtered, and a fused score is computed from whatever cosine arrives. The
+    guard is therefore not dead code; it is code the retrieval path happens not
+    to exercise, which is exactly the shape that rots unless something calls it
+    directly.
+    """
+    rows = [
+        {"id": 1, "content": "finite", "_cosine": 0.42, "_rrf_score": 0.03},
+        {"id": 2, "content": "not a number", "_cosine": float("nan"), "_rrf_score": 0.03},
+    ]
+    kept = M._apply_quality_gate(
+        [dict(r) for r in rows], min_score=0.5, memory_count=11, gate=None,
+        gate_signal=None, fused_order=True,
+    )
+
+    contents = [r["content"] for r in kept]
+    assert "finite" in contents, (
+        "the fused row below the pool-size threshold was refused, so the heuristic is "
+        f"gating a fused order again: {kept}"
+    )
+    assert "not a number" not in contents, (
+        "a NaN score was admitted because no threshold applied to it. No threshold is "
+        f"not no question: {kept}"
+    )
