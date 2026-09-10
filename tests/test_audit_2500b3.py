@@ -67,8 +67,42 @@ async def test_empty_query_recall_bypasses_unscored_volume_gate(clean_db, fake_e
     assert candidates, "the unrelated query must produce a real pre-gate vector candidate"
 
     unrelated = await memory_handlers.do_recall(agent_id, query=unrelated_query, limit=10)
-    assert unrelated["messages"] == [], (
-        "a meaningful single-channel match in a small corpus must still be quality-gated"
+    # 2.6 (D2): on a FUSED order the pool-size heuristic no longer gates, so a
+    # four-row corpus with no calibrated gate has nothing left to refuse these
+    # rows -- the admission floor let them in and there is no second opinion.
+    # That is the decision, not an accident: the heuristic's small-pool value
+    # (0.5 at four rows) is a threshold nobody measured against this corpus, and
+    # it was deleting rows the calibrated floor had deliberately admitted.
+    #
+    # Pinned on the side that still holds: install a gate calibrated for THIS
+    # branch and the rows go again. Without this half the test would also pass on
+    # an implementation that gates nothing anywhere.
+    assert unrelated["messages"], (
+        "the heuristic gate is back on a fused order in a small pool; docs/"
+        "behavior-contracts.md and the D2 note in _apply_quality_gate say it is not"
+    )
+    ordinary = [m for m in unrelated["messages"] if not m.get("fallback")]
+    assert ordinary, (
+        "every row arrived as a reservation row, so nothing measured the gate here -- "
+        f"the rows this half is about are the ones the fusion admitted: {unrelated}"
+    )
+
+    from cpersona import config as _config
+
+    top_cosine = max(m["match_reason"]["cosine"] for m in ordinary)
+    gated = None
+    try:
+        vector._agent_fused_gates[agent_id] = top_cosine * 1.5
+        previous_signal = vector._fused_gate_signal
+        vector._fused_gate_signal = "cosine"
+        assert _config.FUSED_GATE_ENABLED, "the calibrated gate is off; this half measures nothing"
+        gated = await memory_handlers.do_recall(agent_id, query=unrelated_query, limit=10)
+    finally:
+        vector._agent_fused_gates.pop(agent_id, None)
+        vector._fused_gate_signal = previous_signal
+    assert not [m for m in gated["messages"] if not m.get("fallback")], (
+        "a gate calibrated for the cosine branch did not refuse rows below it, so "
+        f"nothing filters this corpus at all: {gated}"
     )
 
 

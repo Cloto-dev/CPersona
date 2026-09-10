@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:058ed5326e5a90b5732ccf4c5c37daaf145690d4 -->
+<!-- i18n-source: docs/operations.md@blob:3aadc65490761227239ea98b8996bdbb3c478f1c -->
 
 # 運用 Runbook
 
@@ -129,11 +129,14 @@
    ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))、
    既定構成ではこのつまみは何もしません — ただしそれを決めているのは融合モード
    であって confidence フラグではありません。
-4. **`CPERSONA_FUSED_GATE_ENABLED=false`** — 最後の手段。ゲートが無いとフィルタ
-   はプール規模のヒューリスティック (`_adaptive_min_score`) にフォールバック
-   しますが、それでも弱い一致は弾かれます — 開けっ放しになるのではなく、粗い
-   ゲートになるということです。失うのは*このコーパスに対して*測定された動作点
-   です。
+4. **`CPERSONA_FUSED_GATE_ENABLED=false`** — 最後の手段であり、融合モードでは
+   文字どおり開けっ放しになります。2.6 以降、プール規模のヒューリスティックは
+   融合された行には適用されないので
+   ([契約 §12](behavior-contracts.md#12-what-filters-a-fused-order))、較正済み
+   ゲートを切った `rrf` / `rsf` を絞るのは dense アームの受理フロアだけです。
+   `cascade` ではヒューリスティックが今も切るので、そちらでは「粗いゲート」の
+   ままです。いずれにせよ失うのは*このコーパスに対して*測定された動作点なので、
+   無効化ではなく較正してください。
 
 **precision の選び方**: トレードオフは用途ごとに非対称です。索引的なコーパス
 (recall が、無関係な行を捨てられる AI に供給される) では**取りこぼしの方が

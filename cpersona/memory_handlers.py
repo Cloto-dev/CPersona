@@ -40,6 +40,7 @@ from cpersona.config import (
     MAX_METADATA_LENGTH,
     RECALL_LIBRARY_MAX_LIMIT,
     RECALL_MODE,
+    RECALL_RESERVE_ROWS,
     REMOTE_INDEX_TIMEOUT_SECS,
     RRF_K,
     RRF_MAX_SCALE,
@@ -425,6 +426,8 @@ async def _recall_cascade(
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    *,
+    reserve_out: list[dict] | None = None,
 ) -> list[dict]:
     """Original cascading recall: stages fill remaining slots sequentially.
 
@@ -440,7 +443,8 @@ async def _recall_cascade(
 
     if vector._embedding_client and query.strip():
         vector_results = await _search_vector(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id,
+            reserve_out=reserve_out, reserve_k=RECALL_RESERVE_ROWS if reserve_out is not None else 0,
         )
         for row in vector_results:
             rid = row.get("_rid", row["id"])
@@ -489,11 +493,21 @@ async def _recall_rrf(
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    *,
+    reserve_out: list[dict] | None = None,
 ) -> list[dict]:
     """v2.4 RRF recall: run vector and FTS5 independently, merge with
     Reciprocal Rank Fusion. Avoids cascade's positional bias.
+
+    2.6: the two lexical arms' votes carry ``config.RRF_LEXICAL_WEIGHT``. At its
+    default of 1.0 the expression below is the same division this has always
+    computed, so the fused scores are bit-identical; the weight is read here
+    rather than imported so that a sweep can move it without reloading the
+    module. See the constant for why it is a control arm rather than a tuning
+    knob.
     """
     k = RRF_K
+    w_lex = config.RRF_LEXICAL_WEIGHT
     doc_map: dict[tuple, dict] = {}
     rrf_scores: dict[tuple, float] = {}
     _excl = exclude_set or set()
@@ -508,6 +522,7 @@ async def _recall_rrf(
             db, agent_id, query, limit, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
             far_out=far_results,
+            reserve_out=reserve_out, reserve_k=RECALL_RESERVE_ROWS if reserve_out is not None else 0,
         )
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -544,7 +559,7 @@ async def _recall_rrf(
             rid = ("ep", row["id"])
             if rid not in doc_map:
                 doc_map[rid] = row
-            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + w_lex / (k + rank + 1)
 
     if FTS_ENABLED:
         fts_mem_results = await _search_memories_keyword(
@@ -556,7 +571,7 @@ async def _recall_rrf(
             rid = ("mem", row["id"])
             if rid not in doc_map:
                 doc_map[rid] = row
-            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + w_lex / (k + rank + 1)
 
     sorted_rids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)
     results = []
@@ -599,6 +614,8 @@ async def _recall_rsf(
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    *,
+    reserve_out: list[dict] | None = None,
 ) -> list[dict]:
     """Relative-Score-Fusion recall: like RRF but fuse the per-query min-max
     normalized *raw* score of each channel (cosine for vector, -bm25 for FTS)
@@ -634,6 +651,7 @@ async def _recall_rsf(
             db, agent_id, query, limit, min_similarity=rsf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
             far_out=far_rows,
+            reserve_out=reserve_out, reserve_k=RECALL_RESERVE_ROWS if reserve_out is not None else 0,
         )
         for row in near_rows:
             if _content_excluded(row.get("content", ""), _excl):
@@ -814,6 +832,7 @@ def _apply_quality_gate(
     gate: float | None = None,
     gate_signal: str | None = None,
     pure_recency: bool = False,
+    fused_order: bool = False,
 ) -> list[dict]:
     """Adaptive quality gate — remove results below a dynamic threshold.
 
@@ -850,9 +869,50 @@ def _apply_quality_gate(
     legacy heuristic. v2.4.27 extends this to the confidence branch: when
     CONFIDENCE_ENABLED, confidence is the active gate signal (it takes precedence over
     rsf/rrf), so the calibrated gate must live there for #132 to bite in production.
+
+    2.6 (D2): ``fused_order`` says the list came out of a fusion rather than a
+    dense-only ranking, and where it is true the POOL-SIZE HEURISTIC is not
+    applied to a fused row on either the cosine or the rank branch. A calibrated
+    gate still applies on the branch it was calibrated for, and the confidence
+    branch, the profile rule and the volume rule are untouched.
+
+    One thing that is NOT admitted by "no threshold": a score that is not a
+    number. A non-finite embedding produces a NaN cosine, and every comparison
+    against NaN is false — so through 2.5 such a row was refused by whichever
+    threshold it met, and it was refused for the wrong reason (the arithmetic,
+    not a decision). Passing a row *because* no threshold applies would turn
+    that accident into an admission, and the row's position would then be
+    decided by how the platform happens to order NaN. Refused explicitly here,
+    which keeps the shipped behaviour and leaves the question of why a NaN
+    reaches this point at all to the read path that produces it.
+
+    The heuristic never was a quality judgement on a fused list. Against a
+    reciprocal-rank score ``1/(K+r+1)`` the rescaled threshold is a cut at a
+    lexical RANK that moves with the pool: rank 40 above 500 rows, rank 21 at
+    196, and no lexical row at all at 30 or fewer. On the cosine branch the same
+    ``min_score`` is a second absolute floor above the calibrated admission floor
+    the dense arm already applied, so on a small pool it deletes rows the
+    retriever deliberately admitted. Measured, the two together cost one
+    benchmark task 10.2 points on the mid embedding model and 18.9 on the
+    weakest, 99.6 % of it in its four corpus groups of nineteen and twenty rows
+    (docs/research/frozen-stage-replay-2026-09.md section 4).
+
+    Both branches go, and the measurement is the reason it is both. Removing the
+    rank cut alone -- keeping the cosine floor on rows with a dense vote -- scored
+    BELOW leaving the gate untouched on that task: it re-admits the lexical-only
+    rows while still deleting the dense rows they outrank, so the answer fills
+    with the weaker arm. The two branches are one decision.
+
+    What replaces it is not nothing: the dense arm's calibrated admission floor,
+    the calibrated fused gate where one exists, and the reservation (D1) that
+    guarantees the answer is not empty.
     """
     if not results:
         return results
+
+    def _is_a_number(value: float) -> bool:
+        """False for NaN. See the D2 note above: no-threshold is not no-question."""
+        return value == value
 
     filtered = []
     stats = {"confidence": 0, "rsf": 0, "cosine": 0, "rrf": 0, "unscored": 0, "profile": 0, "blocked": 0}
@@ -887,15 +947,21 @@ def _apply_quality_gate(
             # candidates (weakest survivor pins to 0.0, a lone candidate to 1.0),
             # so this comparison against a cosine-scale threshold is
             # query-dependent. See _recall_rsf.
-            rsf_threshold = gate if (gate is not None and gate_signal == "rsf") else min_score
-            if rsf >= rsf_threshold:
+            calibrated = gate if (gate is not None and gate_signal == "rsf") else None
+            if calibrated is None and fused_order and _is_a_number(rsf):
+                filtered.append(r)  # D2: no pool-size heuristic on a fused row
+                stats["rsf"] += 1
+            elif rsf >= (calibrated if calibrated is not None else min_score):
                 filtered.append(r)
                 stats["rsf"] += 1
             else:
                 stats["blocked"] += 1
         elif cosine is not None:
-            cos_threshold = gate if (gate is not None and gate_signal == "cosine") else min_score
-            if cosine >= cos_threshold:
+            calibrated = gate if (gate is not None and gate_signal == "cosine") else None
+            if calibrated is None and fused_order and _is_a_number(cosine):
+                filtered.append(r)  # D2
+                stats["cosine"] += 1
+            elif cosine >= (calibrated if calibrated is not None else min_score):
                 filtered.append(r)
                 stats["cosine"] += 1
             else:
@@ -903,8 +969,11 @@ def _apply_quality_gate(
         elif rrf is not None:
             # Calibrated gate is on the raw RRF scale (calibrated on raw _rrf_score), so
             # compare directly; otherwise rescale the cosine-scale heuristic min_score.
-            rrf_threshold = gate if (gate is not None and gate_signal == "rrf") else min_score * RRF_MAX_SCALE
-            if rrf >= rrf_threshold:
+            calibrated = gate if (gate is not None and gate_signal == "rrf") else None
+            if calibrated is None and fused_order and _is_a_number(rrf):
+                filtered.append(r)  # D2
+                stats["rrf"] += 1
+            elif rrf >= (calibrated if calibrated is not None else min_score * RRF_MAX_SCALE):
                 filtered.append(r)
                 stats["rrf"] += 1
             else:
@@ -1408,21 +1477,27 @@ async def do_recall(
     if exclude_contents:
         exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
 
+    # 2.6 (D1): the dense arm's reservation. Filled by the vector arm on the way
+    # past the admission floor, read at final selection below, and never fused --
+    # a reserved row is a row the answer may fall back on, not a candidate that
+    # competes for a rank.
+    reserved_rows: list[dict] = []
     async with connection() as db:
+        fused_order = RECALL_MODE in ("rrf", "rsf") and bool(query.strip())
         if RECALL_MODE == "rrf" and query.strip():
             results = await _recall_rrf(
                 db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                project_id=project_id, source_id=source_id, reserve_out=reserved_rows,
             )
         elif RECALL_MODE == "rsf" and query.strip():
             results = await _recall_rsf(
                 db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                project_id=project_id, source_id=source_id, reserve_out=reserved_rows,
             )
         else:
             results = await _recall_cascade(
                 db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                project_id=project_id, source_id=source_id, reserve_out=reserved_rows,
             )
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
@@ -1467,6 +1542,7 @@ async def do_recall(
         gate=gate,
         gate_signal=gate_signal,
         pure_recency=pure_recency,
+        fused_order=fused_order,
     )
 
     # bug-183 (2.5.2): the gate is a filter with no floor, so a query whose every hit is
@@ -1539,6 +1615,49 @@ async def do_recall(
         results = _autocut(results)
 
     results = results[:limit]
+
+    # 2.6 (D1): the reservation is read here, at final selection, and nowhere
+    # else. Every stage above ran on exactly the candidates it ran on before --
+    # the reserved rows were never fused, never scored and never gated, so no
+    # ranking moved because they exist. What they change is only how SHORT the
+    # answer may be: an absolute admission floor calibrated over a large corpus
+    # can leave a small eligible universe with fewer than ten rows, or none, and
+    # no fusion rule repairs that (docs/research/frozen-stage-replay-2026-09.md
+    # section 4: the top ten was emptied for a third of one task's queries).
+    #
+    # Appended, so a fallback row can never displace a qualified one, and marked,
+    # so a caller is never told a near miss is a hit. `limit` still bounds the
+    # answer: the reservation is a floor inside the caller's ceiling, not above
+    # it. The profile sentinel is not a retrieval answer and does not count
+    # toward the floor -- the same rule the gate-fallback branch above applies.
+    fallback_rows = 0
+    # Ids collected here rather than read back after the message loop: that loop
+    # strips the private keys off the row, so a marker read afterwards is always
+    # gone. (Measured the hard way -- the check below silently passed everything.)
+    fallback_memory_ids: set[int] = set()
+    if reserved_rows:
+        target = min(RECALL_RESERVE_ROWS, limit)
+        held = sum(1 for r in results if r.get("id") != -1)
+        present = {r.get("_rid", ("mem", r.get("id"))) for r in results}
+        for row in reserved_rows:
+            if held >= target or len(results) >= limit:
+                break
+            rid = row.get("_rid", ("mem", row.get("id")))
+            if rid in present:
+                continue
+            # The exclusion list is the caller saying it already holds this text;
+            # a fallback row is still an answer, so it obeys the same filter the
+            # retrieval arms do.
+            if _content_excluded(row.get("content", ""), exclude_set):
+                continue
+            row["_reserved_fallback"] = True
+            results.append(row)
+            present.add(rid)
+            held += 1
+            fallback_rows += 1
+            if isinstance(row.get("id"), int) and row["id"] > 0 and not _is_episode_result(row):
+                fallback_memory_ids.add(row["id"])
+
     results.reverse()
 
     messages = []
@@ -1559,6 +1678,11 @@ async def do_recall(
             msg["timestamp"] = r["timestamp"]
         if r.get("msg_id"):
             msg["id"] = r["msg_id"]
+        # 2.6 (D1): present only on an appended reserved row, so a caller can tell
+        # "this is what there was" from "this qualified". Absent everywhere else,
+        # for the reason gate_fallback is absent everywhere else.
+        if r.get("_reserved_fallback"):
+            msg["fallback"] = True
         if CONFIDENCE_ENABLED:
             raw_cosine = r.get("_cosine")
             ts = r.get("timestamp", "")
@@ -1606,6 +1730,7 @@ async def do_recall(
         r.pop("_rrf_score", None)
         r.pop("_rsf_score", None)
         r.pop("_resolved", None)
+        r.pop("_reserved_fallback", None)
         messages.append(msg)
 
     # bug-038: the recall_count/last_recalled_at bump is a write that feeds
@@ -1636,7 +1761,15 @@ async def do_recall(
         returned_ids = [
             r.get("id", -1)
             for r in results
-            if isinstance(r.get("id"), int) and r["id"] > 0 and not _is_episode_result(r)
+            if isinstance(r.get("id"), int)
+            and r["id"] > 0
+            and not _is_episode_result(r)
+            # 2.6 (D1): a reserved row is credited no more than a rescued one, and
+            # for the same reason -- recall_count raises the confidence floor, so
+            # crediting a row that was returned BECAUSE nothing else filled the
+            # answer would let it drift upward until it starts qualifying on
+            # unrelated queries.
+            and r.get("id") not in fallback_memory_ids
         ]
         if returned_ids:
             # bug-052: this ranking-bookkeeping write is non-essential — recall is
@@ -1669,6 +1802,11 @@ async def do_recall(
     # change the payload of the whole surface (and every recorded golden) to say nothing.
     if gate_fallback:
         result["gate_fallback"] = True
+    # 2.6 (D1): how many of the messages are reservation rows rather than hits.
+    # Absent when none were appended, which is every recall the floor did not
+    # starve.
+    if fallback_rows:
+        result["fallback_rows"] = fallback_rows
     advisory = health.maybe_advisory(session_key_resolved, session_key_declared)
     if advisory is not None:
         result["advisory"] = advisory

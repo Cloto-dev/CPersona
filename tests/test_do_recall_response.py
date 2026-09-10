@@ -88,7 +88,10 @@ class _FakeDB:
 
 
 async def _fake_rsf(db, agent_id, query, limit, deep, channel="", exclude_set=None,
-                    project_id=None, source_id=""):
+                    project_id=None, source_id="", *, reserve_out=None):
+    # `reserve_out` named rather than swallowed by **kwargs: this double stands in
+    # for the retrieval, so the day it falls behind the real signature again it
+    # should fail here rather than quietly accept anything.
     return [
         {"id": 1, "content": "recall precision calibration gate", "source": {"System": "t"},
          "timestamp": "2026-06-26T12:00:00+00:00", "_cosine": 0.82, "_rsf_score": 0.82,
@@ -440,10 +443,10 @@ def _patch_capture_limit(monkeypatch):
     seen: dict = {}
 
     async def _capture_rsf(db, agent_id, query, limit, deep, channel="", exclude_set=None,
-                           project_id=None, source_id=""):
+                           project_id=None, source_id="", *, reserve_out=None):
         seen["limit"] = limit
         return await _fake_rsf(db, agent_id, query, limit, deep, channel, exclude_set,
-                               project_id, source_id)
+                               project_id, source_id, reserve_out=reserve_out)
 
     monkeypatch.setattr(M, "_recall_rsf", _capture_rsf)
     return seen

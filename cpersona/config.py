@@ -681,6 +681,20 @@ RECALL_MODE = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
 # disables trimming. Boundary-layer only — library callers (do_recall) always
 # receive full content, same layering as the limit cap.
 RECALL_PREVIEW_CHARS = _parse_int("CPERSONA_RECALL_PREVIEW_CHARS", 500)
+# 2.6 reservation (D1): the dense arm's top rows are kept reachable across the
+# admission floor and every stage after it, and are appended -- marked as
+# fallback, never as qualified -- when the answer would otherwise be shorter.
+# k is min(this, the eligible universe), and the universe bounds it on its own:
+# a scope with three rows can reserve three.
+#
+# Ten, and deliberately not an environment knob. It is the response limit the
+# tools default to and the depth the benchmark scores at, so the reservation
+# guarantees exactly the window a caller is looking at. A tunable here would be
+# a second, silent way to change how much of a recall is fallback rather than
+# result -- and the number is not a performance dial: the reservation costs at
+# most this many extra rows of hydrate, and only on queries the floor starved.
+RECALL_RESERVE_ROWS = 10
+
 RRF_K = max(1, _parse_int("CPERSONA_RRF_K", 60))
 RRF_THRESHOLD_FACTOR = _parse_float("CPERSONA_RRF_THRESHOLD_FACTOR", 0.5)
 # v2.4.12: Max theoretical _rrf_score ≈ num_retrievers / (RRF_K + 1), with 3
@@ -688,6 +702,27 @@ RRF_THRESHOLD_FACTOR = _parse_float("CPERSONA_RRF_THRESHOLD_FACTOR", 0.5)
 # _apply_quality_gate to map cosine-scale min_score (0.2–1.0) into the RRF
 # score's tight range (0–~0.05).
 RRF_MAX_SCALE = 3.0 / (RRF_K + 1)
+
+# 2.6: the weight the lexical arms' reciprocal-rank votes carry in the RRF
+# fusion. One global constant -- not per model, not per task -- and 1.0 is the
+# fusion this server has always shipped: the vote is computed as
+# `weight / (K + rank + 1)`, so at the default it is the same division as
+# before and every score is bit-identical.
+#
+# It exists because the measurement says a single constant cannot serve every
+# embedding model: reducing the lexical weight recovers most of the pure-ranking
+# loss on mid and strong models and costs the weakest model most of its gains
+# (docs/research/frozen-stage-replay-2026-09.md section 2). So this is the
+# non-adaptive control arm of the comparison that decides the fusion, and the
+# fallback if the adaptive mode does not earn its place -- not a knob an
+# operator is expected to tune by feel. Moving the DEFAULT is a ranking change
+# and goes through the release ladder, after that measurement.
+#
+# Negative weights are clamped to zero: a negative vote would rank a row for
+# being a lexical match, which no reading of the fusion supports. Zero is
+# meaningful and is the sweep's endpoint -- dense rows first, lexical-only rows
+# in the tail, all tied at nothing.
+RRF_LEXICAL_WEIGHT = max(0.0, _parse_float("CPERSONA_RRF_LEXICAL_WEIGHT", 1.0))
 
 # OAuth 2.0 as a protected resource: discovery (RFC 9728,
 # docs/OAUTH_DESIGN.md §7) and token verification (§8). The metadata document
