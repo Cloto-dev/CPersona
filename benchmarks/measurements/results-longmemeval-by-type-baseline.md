@@ -100,13 +100,14 @@ same three types carry it, with the same sign on every type except
 Recall@5 does not fall (+1.43), so in a ten-row call the relevant session is
 still among the first five and the loss is in ordering within them.
 `temporal_reasoning` loses 1.71 of NDCG@10 and 2.94 of Recall@5.
-`multi_session` loses about 2 to 2.7 on every metric. The isolated haystack
-scores each type within about two points of the pooled full ranking for the
-same build, which says the pooled protocol with the scene filter applied
-afterwards was, for this task, a fair stand-in for one user's memory — at the
-full ranking. It was not at limit ten: the pooled run of the same build and
-regime settings scored 3.33 on `single_session_preference` against 56.98
-isolated, which is why the regime exists.
+`multi_session` loses about 2 to 2.7 on every metric. One observation across
+the regimes, offered as a check on the protocol rather than as a comparison
+the instrument is for: for one build, the isolated ten-row haystack scores
+each type within about two points of the pooled full ranking, so the pooled
+protocol with the scene filter applied afterwards stood in for one user's
+memory at the full ranking. It did not at limit ten: the pooled run of the
+same build and regime settings scored 3.33 on `single_session_preference`
+against 56.98 isolated, which is why the regime exists.
 
 ## Raw outputs
 
