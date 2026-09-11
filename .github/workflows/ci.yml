@@ -217,10 +217,14 @@ jobs:
     # adding signal.
     if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
-    # The script runs the suite up to ~13 times, but caught mutants fail fast (-x)
-    # and every test is bounded by the 60s per-test timeout; local wall time is
-    # ~12s. 15 minutes is a generous hang ceiling, matching the `test` job.
-    timeout-minutes: 15
+    # The script runs the suite once per mutation plus a baseline; caught
+    # mutants fail fast (-x), but each run still pays collection and whatever
+    # precedes the catching test, and every test is bounded by the 60s
+    # per-test timeout. Measured on this runner: 12.5-13 minutes at 18
+    # mutations (master, 2026-09-09), and the 15-minute ceiling cancelled the
+    # 27-mutation run of the reconstructive-recall change. 30 minutes is a
+    # hang ceiling with room for the registry to grow, not a budget to fill.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
