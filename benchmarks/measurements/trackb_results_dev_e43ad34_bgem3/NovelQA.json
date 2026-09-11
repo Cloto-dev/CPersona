@@ -1,0 +1,62 @@
+{
+  "task": "NovelQA",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 33.83,
+  "subtasks": {
+    "Character": 45.55,
+    "Meaning": 53.81,
+    "Plot": 26.17,
+    "Relation": 27.54,
+    "Setting": 52.65,
+    "Span": 7.68,
+    "Times": 23.43
+  },
+  "num_subtasks": 7,
+  "time_s": 1454.3,
+  "recall_latency_full": {
+    "n": 1541,
+    "p50_ms": 872.96,
+    "p95_ms": 1422.4,
+    "p99_ms": 2273.37,
+    "mean_ms": 894.53
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "Character",
+        "Meaning",
+        "Plot",
+        "Relation",
+        "Setting",
+        "Span",
+        "Times"
+      ],
+      "corpus_size": 79286,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.5667,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.4713,
+        "std": 0.07,
+        "median": 0.4754,
+        "p95": 0.5792
+      },
+      "null_admit_rate": 0.0761,
+      "pos_admit_rate": 0.8794,
+      "pos_mean": 0.646,
+      "youden_j": 0.8032,
+      "fusion_admission_floor": 0.2833,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

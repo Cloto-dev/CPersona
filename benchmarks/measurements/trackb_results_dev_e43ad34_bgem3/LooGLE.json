@@ -1,0 +1,79 @@
+{
+  "task": "LooGLE",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 61.99,
+  "subtasks": {
+    "LongDepQA": 44.13,
+    "ShortDepQA": 79.86
+  },
+  "num_subtasks": 2,
+  "time_s": 524.0,
+  "recall_latency_full": {
+    "n": 3052,
+    "p50_ms": 126.69,
+    "p95_ms": 388.19,
+    "p99_ms": 588.86,
+    "mean_ms": 162.98
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "LongDepQA"
+      ],
+      "corpus_size": 18048,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.5878,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.4111,
+        "std": 0.1077,
+        "median": 0.4052,
+        "p95": 0.5679
+      },
+      "null_admit_rate": 0.0245,
+      "pos_admit_rate": 0.9146,
+      "pos_mean": 0.6698,
+      "youden_j": 0.8901,
+      "fusion_admission_floor": 0.2939,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "ShortDepQA"
+      ],
+      "corpus_size": 10142,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.5546,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.3182,
+        "std": 0.0777,
+        "median": 0.309,
+        "p95": 0.4393
+      },
+      "null_admit_rate": 0.0177,
+      "pos_admit_rate": 0.9447,
+      "pos_mean": 0.6907,
+      "youden_j": 0.927,
+      "fusion_admission_floor": 0.2773,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

@@ -1,0 +1,108 @@
+{
+  "task": "Gorilla",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 33.03,
+  "subtasks": {
+    "gorilla_huggingface": 29.71,
+    "gorilla_pytorch": 33.7,
+    "gorilla_tensor": 35.69
+  },
+  "num_subtasks": 3,
+  "time_s": 84.7,
+  "recall_latency_full": {
+    "n": 598,
+    "p50_ms": 131.87,
+    "p95_ms": 231.37,
+    "p99_ms": 298.22,
+    "mean_ms": 140.33
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "gorilla_huggingface"
+      ],
+      "corpus_size": 907,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6988,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6269,
+        "std": 0.0634,
+        "median": 0.6267,
+        "p95": 0.7234
+      },
+      "null_admit_rate": 0.1037,
+      "pos_admit_rate": 0.7688,
+      "pos_mean": 0.7693,
+      "youden_j": 0.6652,
+      "fusion_admission_floor": 0.3494,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "gorilla_pytorch"
+      ],
+      "corpus_size": 43,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.7107,
+      "sampled_embeddings": 43,
+      "num_pairs": 903,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.7049,
+        "std": 0.0728,
+        "median": 0.6987,
+        "p95": 0.8257
+      },
+      "null_admit_rate": 0.4507,
+      "pos_admit_rate": 0.619,
+      "pos_mean": 0.7406,
+      "youden_j": 0.1683,
+      "fusion_admission_floor": 0.3553,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "gorilla_tensor"
+      ],
+      "corpus_size": 55,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.8042,
+      "sampled_embeddings": 55,
+      "num_pairs": 1485,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.8225,
+        "std": 0.0766,
+        "median": 0.816,
+        "p95": 0.9583
+      },
+      "null_admit_rate": 0.5785,
+      "pos_admit_rate": 0.6852,
+      "pos_mean": 0.8297,
+      "youden_j": 0.1067,
+      "fusion_admission_floor": 0.4021,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

@@ -1,11 +1,92 @@
 # Results — what the shipping line did to the score since 2.4.40
 
 Pre-registration: `prereg-version-comparison-2440-to-2512.md` (with its two
-amendments). This file is written in the order the arms finish. The second
-arm — the development head `e43ad34` on all 22 tasks — was still running when
-the section below was recorded (three tasks scored), so its table is not here
-yet; what is here is the third arm, which finished first because it turned out
-to need seven tasks rather than twenty-two.
+amendments). This file is written in the order the arms finish: the third arm
+finished first, because it turned out to need seven tasks rather than
+twenty-two, and its section was recorded while the second arm — the
+development head `e43ad34` on all 22 tasks — was still running. The second
+arm's section follows it now that it is complete.
+
+## Second arm: the development head on all 22 tasks (2026-09-12)
+
+The run the pre-registration describes: the development head at package
+commit `e43ad34` (the harness commit was `a68c646`, which is `e43ad34` plus a
+harness-only change so that an empty default prompt does not alter the
+embedding cache key), `run_trackb.sh --fast` on the bare cache, started
+2026-09-11 09:39 and finished 2026-09-12 01:51. It shared the machine with
+two other benchmark runs for part of that time, which affects the clock and
+nothing else. The records are under `trackb_results_dev_e43ad34_bgem3/`.
+
+**The invalidation conditions, checked before the table was read:** every
+batch in every task hit the embedding cache in full (zero `cache: k/n` lines
+with k < n across the run); the `--fast` self-check reported no mismatch;
+twenty-two task records landed. The run stands.
+
+| task | v2.4.40 | second arm `e43ad34` | Δ |
+| --- | ---: | ---: | ---: |
+| REALTALK | 43.04 | 38.01 | −5.03 |
+| KnowMeBench | 51.62 | 47.40 | −4.22 |
+| LoCoMo | 45.91 | 41.85 | −4.06 |
+| DeepPlanning | 56.70 | 53.89 | −2.81 |
+| NovelQA | 36.11 | 33.83 | −2.28 |
+| LooGLE | 64.12 | 61.99 | −2.13 |
+| ToolBench | 52.22 | 50.11 | −2.11 |
+| TMD | 25.18 | 23.20 | −1.98 |
+| ESGReports | 43.23 | 41.38 | −1.85 |
+| CovidQA | 83.93 | 82.34 | −1.59 |
+| LongMemEval | 81.17 | 79.79 | −1.38 |
+| MemBench | 65.61 | 64.59 | −1.02 |
+| PeerQA | 30.04 | 29.10 | −0.94 |
+| MLDR | 80.66 | 79.80 | −0.86 |
+| ConvoMem | 61.60 | 60.80 | −0.80 |
+| ReMe | 59.61 | 58.96 | −0.65 |
+| LMEB_SciFact | 74.87 | 74.32 | −0.55 |
+| EPBench | 90.23 | 89.94 | −0.29 |
+| Proced_mem_bench | 52.13 | 52.13 | +0.00 |
+| MemGovern | 89.04 | 89.16 | +0.12 |
+| Gorilla | 32.90 | 33.03 | +0.13 |
+| QASPER | 48.56 | 48.71 | +0.15 |
+| **mean (22 tasks)** | **57.66** | **56.11** | **−1.55** |
+
+**Verdict, by the rule fixed before the run.** The overall mean fell, from
+57.66 to 56.11. That is a **regression**, and it is reported in that word.
+Eighteen tasks fell, three rose by at most 0.15, one did not move. There is
+no per-task story under which this is "mixed": the tasks that fell are not a
+minority, they are all but four.
+
+**Orientation, conditional on the task-population model the pre-registration
+declines to claim:** the per-task difference has mean −1.55 and standard
+deviation 1.46, so the resolution fixed in advance is 0.6264 × 1.46 = 0.91
+points and the observed mean shift is 1.7 times it; a paired *t* over the 22
+differences is −5.00 (p = 6 × 10⁻⁵). The deterministic estimand needs none
+of this: the 22-task difference is −1.55 and is determined.
+
+**The one task past 5 points.** REALTALK fell 5.03, and it fell on all three
+of its subtasks by about the same amount (commonsense −3.99, multi_hop −5.24,
+temporal_reasoning −5.89) on one corpus group of 8,944 rows. A loss that is
+uniform across subtasks that ask different things is the shape of a change
+in what gets admitted or selected, not of a change in how fused candidates
+are ordered for a particular kind of query; the pre-registration's named
+candidates on the gate and selection side (the bug-183/184 gate, the ranking
+of rows without an age, the two-phase scan) are where a bisection would look
+first. This run's calibrated threshold on that corpus was 0.6602; the 2.4.40
+record carries no calibration record, so whether the threshold moved between
+the arms is not known from the records. **This is a hypothesis about where to
+look, not a finding**: the design cannot attribute the delta to a cause.
+
+**Where the LongMemEval part of it sits.** The per-question-type instrument
+built alongside this measurement (`results-longmemeval-by-type-baseline.md`,
+on its own branch until merged) reads the −1.38 on LongMemEval as three
+question types — `single_session_user` −3.96, `temporal_reasoning` −2.32,
+`multi_session` −1.75 — with the other three flat, in the full-ranking regime
+and again with ten rows over one scene's history. The same reading, under the
+production regime, of the same regression.
+
+**What follows.** The pre-registration's exits, in order: this table (done);
+a bisection over the recall-path commits between the arms for the tasks that
+moved most; and a gate, so that the next loss of this size is seen when it
+lands rather than two months later — the gate is defined beside the
+per-question-type instrument.
 
 ## Third arm: the line with its 2.6 work merged (2026-09-11)
 
