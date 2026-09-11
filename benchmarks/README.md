@@ -111,6 +111,22 @@ model (e.g. `embcache`, `embcache_minilm`) is the safe pattern.
    shifts the comparison. When subsets differ, re-run the missing tasks
    (`--tasks A,B,C` reuses the cache for the rest) or restrict every
    model to the intersection before comparing.
+6. **Track B is the regression gate; LongMemEval by question type is the
+   daily instrument.** A change to the recall path is *claimed* per
+   LongMemEval question type against a pre-registration
+   (`measurements/prereg-longmemeval-template.md`), and is *gated* by one
+   22-task Track B run before its pull request merges:
+   `run_trackb.sh --fast` on the bare cache, at the change's commit, read
+   against the most recent recorded development-head run on the line
+   (`measurements/results-version-comparison-2440-to-dev.md` while that is
+   the latest). The judgement is that record's pre-registration's: the
+   overall mean falling is a regression and is reported in that word; a
+   task that moves more than 5 points in either direction is named with a
+   hypothesis about the cause, labelled as one. A run with a cache miss in
+   a task, a `--fast` self-check mismatch, or fewer than 22 tasks landed is
+   not a gate result and is re-run. The gate exists because the loss the
+   version comparison found (−1.57 on twenty tasks) had accumulated for two
+   months with nothing running that could see it.
 
 ## Wall-clock cost (measured 2026-08-03..06, Apple M5, 22 tasks)
 
@@ -258,6 +274,34 @@ the identity checks still run on the replayed queries, and the per-task numbers
 are then subsample means, not the published Track B numbers. Fusion is sorted
 over a bounded working set (`--work_depth`, default 3000 per arm; every
 allowed row when a candidate subset applies), which is exact for the top ten.
+
+### LongMemEval by question type, under two regimes
+
+`run_longmemeval_by_type.sh` runs the LongMemEval task twice for one build and
+`longmemeval_by_type.py` reads the two runs by question type (the six LMEB
+subtasks: knowledge update, multi-session, temporal reasoning, and the three
+single-session types). The `full` regime is the Track B regime above — the
+pooled corpus, limit = corpus size, autocut and the fused gate off. The
+`limit10` regime is what a caller of the MCP `recall` tool receives over their
+own memory: one scene's history as the haystack (each scene stored as its own
+channel), limit = 10, both layers at their shipped defaults. Pooled, the top
+ten of the 237k-session corpus is 0.3% own-scene rows, so a limit of ten over
+the pool measures nothing; the two regimes therefore differ in the haystack
+too, and numbers are compared across builds within a regime, never across
+regimes. The question types map one to one onto the 2.6 recall
+work, so a change is claimed per type against a pre-registration, never as one
+overall mean; the launcher records both regimes in the dump header and the
+reader refuses a directory whose dump says otherwise, and refuses a dump that
+does not reproduce the NDCG the harness recorded.
+
+```bash
+# one arm per build; CPERSONA_REPO selects the checkout under measurement
+OUTPUT_DIR=~/lmeb/lme_by_type/v2.4.40 CPERSONA_REPO=/path/to/v2.4.41 \
+    benchmarks/run_longmemeval_by_type.sh
+OUTPUT_DIR=~/lmeb/lme_by_type/dev benchmarks/run_longmemeval_by_type.sh
+# one table per regime; the first arm is the reference for the deltas
+python benchmarks/longmemeval_by_type.py v2.4.40=~/lmeb/lme_by_type/v2.4.40 dev=~/lmeb/lme_by_type/dev
+```
 
 ### Prompted / task-adapter models
 
