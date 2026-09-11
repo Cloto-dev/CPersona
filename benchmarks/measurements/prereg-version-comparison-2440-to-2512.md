@@ -247,3 +247,51 @@ autocut/gate regime, stopped at 09:14 after two tasks reproduced the second
 arm to the last digit, and the three-task test of the third arm). They share
 no database and no output; they cost wall-clock, so this run's latency fields
 are not representative and are not compared.
+
+## Amendment 2 (2026-09-11 09:25 JST, after two of the three third-arm tasks, before MLDR and ReMe)
+
+**What was seen.** The three-task test of the third arm did not reproduce the
+second arm. EPBench came back 90.11 against 89.94; KnowMeBench reproduced
+47.40 to the digit; LoCoMo was still running when this was written. Under the
+cost-control rule above, the disagreement calls for the full 22-task arm. This
+amendment replaces that with a narrower run, for a reason that was found and
+verified before any further number was taken.
+
+**Which reading was wrong, and why.** The fourth reading — that dropping the
+pool-size heuristic on a fused row is out of reach because every calibrated
+floor sits above a heuristic of 0.20 — took the heuristic for a constant. It
+is not: it is `0.5 − 0.3·log(n+1)/log(500)`, and 0.20 is only its value at a
+pool of 500 rows and beyond. At 20 rows it is 0.353, above every calibrated
+floor in this run (0.27–0.36). The 2.5 gate keys a fused row on its cosine, so
+a row the dense arm admitted past the floor was then refused by the heuristic
+wherever the pool was small enough — and because the fused order is not the
+cosine order, those rows are not a suffix: re-admitting them re-orders the top
+ten in both directions. Verified by replaying the four EPBench short-corpus
+subtasks on both builds (the replay reproduced the two runs' numbers to the
+digit, with no cache miss): every one of the 1,911 re-admitted rows carrying a
+cosine sat in `[floor, heuristic)`, none outside; the 369 without a cosine were
+lexical-only rows the rank branch had refused for the same reason; the 36
+long-corpus subtasks, where the heuristic (0.245) sits below the floor, were
+identical row for row.
+
+**Where the protocol can see it.** The heuristic exceeds the calibrated floor
+in exactly seven corpus groups of the 22 tasks, read from this model's
+recorded per-group floor and pool size: four in EPBench (19–20 rows), two in
+ReMe (99 and 110 rows) and one in MLDR (1,535 rows, where the two sit 0.004
+apart). Every other group has its floor above the heuristic, so on those the
+gate change is the identity and the other three mechanisms remain inert as
+registered.
+
+**The prediction, fixed here.** On the third arm, MLDR and ReMe move and no
+other task does: the 19 remaining tasks reproduce the second arm to the digit.
+A move anywhere else falsifies this reading too. The third arm is therefore
+run on MLDR and ReMe only, and its per-task record is read against the second
+arm's. If the prediction holds, the 13-hour full arm is not run, because the
+same reading that predicts the two movers predicts the nineteen non-movers,
+and LoCoMo and KnowMeBench (5,882 and 6,644–11,995 rows) already test the
+non-mover half.
+
+**What this does not say.** Whether the re-admission improves retrieval. On
+EPBench it moved twelve small-corpus subtasks, eight up and four down, for a
+task mean of +0.17; that is one task, and the sign on MLDR and ReMe is not
+predicted here.
