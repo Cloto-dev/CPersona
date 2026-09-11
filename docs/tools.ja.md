@@ -17,6 +17,7 @@
 | `recall` | 3 層ハイブリッド検索で記憶を取り出します。**末尾の要素が最良のマッチ**です ([順序の契約](behavior-contracts.md#1-recall-return-order-last-is-best)) |
 | `recall_with_context` | 想起 *と同時に*、渡した会話履歴と重複排除しつつ統合します。返るのはスコア順ではなく**時系列**の統合です |
 | `get_contents` | recall が返したプレビュー参照 (`mem:<id>` / `ep:<id>`) を全文に展開します ([プレビュー階層の設計](RECALL_PREVIEW_TIER_DESIGN.md)) |
+| `reconstruct` | recall が出した候補行から **recall item** を組み立てます: 選び、並べ、役割を与えるだけで、文を合成しません。`count` は上限であって、埋める目標でも探索深度でもありません。広さ (`top_k` / `max_hops` / `max_evidence`) は別の境界です ([出口](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit)) |
 | `archive_episode` | セッション要約を保存します。同時に [エピソード境界](behavior-contracts.md#3-episode-boundary-penalty) を動かし、それ以前に書かれたものを減点します |
 | `update_memory` | 既存の記憶の内容を変更します。保存済みの事実を訂正する方法はこれであって、同じ `msg_id` での再 `store` ではありません |
 
@@ -128,7 +129,7 @@ dry-run を強制されて `repairs_skipped` を返し、`persisted` キー自�
 ## 分離のための引数 { #isolation-arguments }
 
 3 つの分離軸は一様には提供されていません。`agent_id` はほとんどのツール
-(22 個) が受け取り、`project_id` は 6 個、`channel` はちょうど 4 個 — `store` /
-`recall` / `recall_with_context` / `archive_episode` — だけです。これらは入れ子の
+(23 個) が受け取り、`project_id` は 7 個、`channel` はちょうど 5 個 — `store` /
+`recall` / `recall_with_context` / `reconstruct` / `archive_episode` — だけです。これらは入れ子の
 階層ではなく独立した 3 軸であり、読み取り時に「空の値」と「省略」は異なる意味を
 持ちます — [分離軸](architecture.md#isolation-axes) を参照してください。
