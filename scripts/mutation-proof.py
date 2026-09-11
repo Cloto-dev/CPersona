@@ -364,6 +364,100 @@ MUTATIONS: list[Mutation] = [
             "test_equivalence_252.py[corpus-unnormalized-deep-check]"
         ),
     ),
+    # ---------------------------------------------------------------------
+    # reconstruct (reconstruct.py) — the reconstructive recall exit.
+    # The design states eight invariants and a count window. Each entry below
+    # destroys exactly one of them; a SURVIVED line here means an invariant is
+    # written down but not held.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M15",
+        target="reconstruct invariant 7 — count and breadth are decoupled",
+        file="cpersona/reconstruct.py",
+        find="bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))",
+        replace="bounds_top_k = effective_count",
+        breaks="the candidate depth is derived from the response count again, so asking for fewer items also searches less deeply",
+        expect="test_reconstruct.py::test_count_alone_does_not_move_the_pool",
+    ),
+    Mutation(
+        id="M16",
+        target="reconstruct invariant 8 — one cluster is one item",
+        file="cpersona/reconstruct.py",
+        find="    clusters = [sorted(members) for _, members in sorted(grouped.items())]",
+        replace="    clusters = [[i] for i in range(len(candidates))]",
+        breaks="a bundled record is split back into one item per row, so the window is padded with fragments of one memory",
+        expect="test_reconstruct.py::test_msg_id_bundles_and_derives_supersedes, ::test_4b_evidence_cut_sets_truncated",
+    ),
+    Mutation(
+        id="M17",
+        target="reconstruct invariant 3 — the written-down total order",
+        file="cpersona/reconstruct.py",
+        find="        -c.ts.timestamp() if c.ts is not None else 0.0,",
+        replace="        0.0,",
+        breaks="the head of a cluster stops being its newest statement, so an item quotes a superseded version as current",
+        expect="test_reconstruct.py::test_msg_id_bundles_and_derives_supersedes",
+    ),
+    Mutation(
+        id="M18",
+        target="reconstruct invariant 2 — content is a quotation",
+        file="cpersona/reconstruct.py",
+        find='        "content": head.content,',
+        replace='        "content": f"summary of {len(ordered)} rows",',
+        breaks="the server writes a sentence it did not store — the one thing a zero-model read path must never do",
+        expect="test_reconstruct.py::test_2_content_is_a_quotation",
+    ),
+    Mutation(
+        id="M19",
+        target="reconstruct invariant 4 — a cut is reported",
+        file="cpersona/reconstruct.py",
+        find='    bounds["truncated"] = bool(evidence_truncated or walk_truncated or pool_truncated)',
+        replace='    bounds["truncated"] = False',
+        breaks="a bounded response claims it saw everything, so a caller cannot tell a full pool from a cut one",
+        expect="test_reconstruct.py::test_4_bounds_are_declared_and_a_cut_is_reported, ::test_4b_evidence_cut_sets_truncated",
+    ),
+    Mutation(
+        id="M20",
+        target="reconstruct invariant 5 — every element says why it is present",
+        file="cpersona/reconstruct.py",
+        find='    evidence = [{"ref": m.ref, "why": why.get(m.ref, "seed")} for m in evidence_rows[:max_evidence]]',
+        replace='    evidence = [{"ref": m.ref, "why": ""} for m in evidence_rows[:max_evidence]]',
+        breaks="evidence stops naming the key that admitted it, so an item cannot be audited back to a reason",
+        expect="test_reconstruct.py::test_5_every_element_says_why",
+    ),
+    Mutation(
+        id="M21",
+        target="reconstruct — the Reconstruction Window's ceiling",
+        file="cpersona/reconstruct.py",
+        find="    effective = min(base, maximum)",
+        replace="    effective = base",
+        breaks="the server maximum stops bounding the window, so a caller's number is the only limit on payload size",
+        expect="test_reconstruct.py::test_count_window_arithmetic",
+    ),
+    Mutation(
+        id="M22",
+        target="reconstruct stage 2 — 'adjacent timestamps, same source' is ONE key",
+        file="cpersona/reconstruct.py",
+        find="""                gap = abs(candidates[right].ts.timestamp() - candidates[left].ts.timestamp())
+                if gap <= window:
+                    uf.union(left, right, "cluster:adjacent")""",
+        replace='                uf.union(left, right, "cluster:adjacent")',
+        breaks="source alone bundles, so in a single-agent store every candidate folds into one item on every call",
+        expect="test_reconstruct.py::test_source_alone_does_not_bundle",
+    ),
+    Mutation(
+        id="M23",
+        target="reconstruct invariant 1 — stored rows are never modified",
+        file="cpersona/reconstruct.py",
+        find="    uf = bundle(candidates, spans)",
+        replace="""    async with connection() as _mutant_db:
+        await _mutant_db.execute(
+            "UPDATE memories SET content = content || ' (touched)' WHERE agent_id = ?", (agent_id,)
+        )
+        await _mutant_db.commit()
+    uf = bundle(candidates, spans)""",
+        breaks="the read path writes to the rows it read — an injected defect, because an invariant of absence cannot be broken by deletion",
+        expect="test_reconstruct.py::test_1_stored_rows_are_not_modified",
+    ),
 ]
 
 
