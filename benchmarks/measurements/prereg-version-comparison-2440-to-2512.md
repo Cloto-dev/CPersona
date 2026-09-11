@@ -248,7 +248,7 @@ arm to the last digit, and the three-task test of the third arm). They share
 no database and no output; they cost wall-clock, so this run's latency fields
 are not representative and are not compared.
 
-## Amendment 2 (2026-09-11 09:25 JST, after two of the three third-arm tasks, before MLDR and ReMe)
+## Amendment 2 (2026-09-11 09:17 JST, after two of the three third-arm tasks, before MLDR and ReMe)
 
 **What was seen.** The three-task test of the third arm did not reproduce the
 second arm. EPBench came back 90.11 against 89.94; KnowMeBench reproduced
