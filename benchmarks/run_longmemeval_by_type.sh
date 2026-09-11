@@ -76,9 +76,11 @@ run_regime() {
         --output_dir "$out" \
         --dump_rankings "$out/rankings.jsonl" \
         "${REGIME_ARGS[@]}" \
-        "${EXTRA_ARGS[@]}"
+        ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 }
 
+# The ${arr[@]+"${arr[@]}"} form is the empty-array-safe expansion under
+# set -u on bash 3.2 (macOS), where "${arr[@]}" of an empty array is unbound.
 EXTRA_ARGS=("$@")
 
 # --unclamp_limit is a no-op on 2.5.0+ and lifts the bug-032 limit=100 clamp
