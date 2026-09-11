@@ -18,8 +18,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
-FULL = {"recall_limit": 0, "autocut_enabled_effective": False, "fused_gate_enabled_effective": False}
-LIMIT10 = {"recall_limit": 10, "autocut_enabled_effective": True, "fused_gate_enabled_effective": True}
+FULL = {"recall_limit": 0, "autocut_enabled_effective": False, "fused_gate_enabled_effective": False,
+        "scene_isolated": False}
+LIMIT10 = {"recall_limit": 10, "autocut_enabled_effective": True, "fused_gate_enabled_effective": True,
+           "scene_isolated": True}
 
 
 def _load():
@@ -130,6 +132,14 @@ def test_refuses_a_header_that_never_recorded_the_gate(tmp_path, qrels):
     d = _write_arm(tmp_path / "arm", "limit10", header)
     with pytest.raises(SystemExit, match="does not record `autocut_enabled_effective`"):
         mod.score_arm(d, "limit10", by_type)
+
+
+def test_refuses_a_full_dump_taken_over_isolated_scenes(tmp_path, qrels):
+    """Isolation changes the Track B number, so a `full` dump must be pooled."""
+    mod, by_type = qrels
+    d = _write_arm(tmp_path / "arm", "full", {**FULL, "scene_isolated": True})
+    with pytest.raises(SystemExit, match="scene_isolated=True"):
+        mod.score_arm(d, "full", by_type)
 
 
 def test_full_regime_does_not_constrain_the_gate(tmp_path, qrels):

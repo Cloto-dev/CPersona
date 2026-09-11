@@ -11,18 +11,26 @@
 # The two regimes differ in exactly two things, and the dump header records
 # both so the reader can refuse a mislabelled directory:
 #
-#   full     --recall_limit 0 (limit = corpus size), autocut and the fused gate
-#            off — the Track B regime run_trackb.sh pins. Comparable to the
-#            shipped Track B record.
-#   limit10  --recall_limit 10, autocut and the fused gate at their shipped
-#            defaults (on) — what a caller of the MCP `recall` tool receives.
-#            The variables are unset here rather than set to true, so the
-#            regime is the build's own default and not this script's opinion.
+#   full     the pooled corpus, --recall_limit 0 (limit = corpus size), autocut
+#            and the fused gate off — the Track B regime run_trackb.sh pins.
+#            Comparable to the shipped Track B record.
+#   limit10  --isolate_scenes (one scene's history is the haystack, stored as
+#            its own channel), --recall_limit 10, autocut and the fused gate
+#            at their shipped defaults (on) — what a caller of the MCP `recall`
+#            tool receives over their own memory. The gate variables are unset
+#            here rather than set to true, so the regime is the build's own
+#            default and not this script's opinion. Pooled, the top ten of the
+#            237k-session corpus is 0.3% own-scene rows, so limit=10 over the
+#            pool would measure nothing.
 #
 # Everything else mirrors run_trackb.sh: bge-m3, float16, budget batching,
-# rrf, live calibration, and --fast (behaviour-invariant acceleration; the
-# per-query latency numbers are not representative and are not what this
-# measures). Extra arguments pass through to the harness, e.g. --subtasks.
+# rrf, live calibration. The full regime adds --fast (behaviour-invariant
+# acceleration of the pooled scan); the isolated regime does not need it — a
+# scene is a few hundred rows — and the accelerator's fallback for a channel
+# filter calls the original search with the current signature, which an older
+# build does not have. Per-query latency numbers are not representative in
+# either regime and are not what this measures. Extra arguments pass through
+# to the harness, e.g. --subtasks.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,7 +71,7 @@ run_regime() {
       "$PYTHON_BIN" "$SCRIPT_DIR/benchmark_trackb_lmeb.py" \
         --model_path "$MODEL_PATH" \
         --device "$DEVICE" --dtype float16 --budget_encode \
-        --recall_mode rrf --auto_calibrate --fast \
+        --recall_mode rrf --auto_calibrate \
         --tasks LongMemEval \
         --output_dir "$out" \
         --dump_rankings "$out/rankings.jsonl" \
@@ -76,8 +84,8 @@ EXTRA_ARGS=("$@")
 # --unclamp_limit is a no-op on 2.5.0+ and lifts the bug-032 limit=100 clamp
 # on a v2.4.38..v2.4.41 checkout, so the same command line is full-ranking on
 # either; the harness logs which of the two it did.
-REGIME_ARGS=(--recall_limit 0 --unclamp_limit)
+REGIME_ARGS=(--recall_limit 0 --unclamp_limit --fast)
 run_regime full CPERSONA_AUTOCUT_ENABLED=false CPERSONA_FUSED_GATE_ENABLED=false
 
-REGIME_ARGS=(--recall_limit 10)
+REGIME_ARGS=(--recall_limit 10 --isolate_scenes --skip_latency_pass)
 run_regime limit10 -u CPERSONA_AUTOCUT_ENABLED -u CPERSONA_FUSED_GATE_ENABLED

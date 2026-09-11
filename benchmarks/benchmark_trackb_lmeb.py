@@ -441,7 +441,8 @@ _DOC_ENCODE_KW: dict = {}
 _QUERY_ENCODE_KW: dict = {}
 
 
-async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], batch_size: int = 256) -> int:
+async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], batch_size: int = 256,
+                       isolate_scenes: bool = False) -> int:
     """Store corpus using cpersona's schema and FTS5 triggers with batch optimization.
 
     Optimizations (all external to cpersona — no cpersona code changes):
@@ -478,15 +479,19 @@ async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], bat
         rows = []
         for doc, text, emb in zip(batch, texts, embeddings):
             blob = struct.pack(f"<{len(emb)}f", *emb)
-            rows.append((AGENT_ID, str(doc["id"]), text, source_json, timestamp, metadata_json, blob))
+            # --isolate_scenes: each scene is its own channel, so a query sees
+            # only its own history (the production haystack) instead of the
+            # whole pooled corpus with the scene filter applied afterwards.
+            channel = get_scene_id(str(doc["id"])) if isolate_scenes else ""
+            rows.append((AGENT_ID, str(doc["id"]), text, source_json, timestamp, metadata_json, blob, channel))
 
         # v2.4.36 enforces UNIQUE(agent_id, project_id, channel, content) and
         # UNIQUE(agent_id, project_id, msg_id) — exact-duplicate corpus docs
         # collapse, which is the shipped dedup behaviour. OR IGNORE mirrors
         # do_store; the dropped count is logged below (no silent truncation).
         await db.executemany(
-            "INSERT OR IGNORE INTO memories (agent_id, msg_id, content, source, timestamp, metadata, embedding) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO memories (agent_id, msg_id, content, source, timestamp, metadata, embedding, channel) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         await db.commit()  # FTS5 triggers have already fired on each INSERT
@@ -573,6 +578,7 @@ async def run_subtask(
     dump_rankings_sink=None,
     task_name: str = "",
     admission_probe: "VectorAdmissionProbe | None" = None,
+    isolate_scenes: bool = False,
 ) -> float:
     """Run a single subtask using cpersona's actual do_recall().
 
@@ -629,10 +635,12 @@ async def run_subtask(
         # The Cascading Recall still applies: Stage 0 (vector) returns docs with
         # cosine >= 0.3, then Stage 3 (FTS5) fills remaining with keyword matches.
         t0 = time.perf_counter()
+        recall_kwargs = {"channel": get_scene_id(qid)} if isolate_scenes else {}
         recall_result = await server_mod.do_recall(
             agent_id=AGENT_ID,
             query=qtext,
             limit=effective_limit,
+            **recall_kwargs,
         )
         if latencies_full is not None:
             latencies_full.append((time.perf_counter() - t0) * 1000)
@@ -766,6 +774,7 @@ async def run_task(
     recall_limit: int = 0,
     dump_rankings_sink=None,
     admission_probe: "VectorAdmissionProbe | None" = None,
+    isolate_scenes: bool = False,
 ) -> dict | None:
     task_dir = os.path.join(EVAL_DATA, TASK_MAP[task_name])
     if not os.path.isdir(task_dir):
@@ -806,7 +815,8 @@ async def run_task(
         logger.info(f"    Corpus: {len(corpus)} docs")
 
         store_start = time.time()
-        corpus_size = await store_corpus(server_mod, emb_client, st_model, corpus, batch_size=batch_size)
+        corpus_size = await store_corpus(server_mod, emb_client, st_model, corpus, batch_size=batch_size,
+                                         isolate_scenes=isolate_scenes)
         store_time = time.time() - store_start
         logger.info(f"    Store: {store_time:.1f}s ({len(corpus) / max(store_time, 0.01):.0f} docs/s)")
 
@@ -837,6 +847,7 @@ async def run_task(
                 dump_rankings_sink=dump_rankings_sink,
                 task_name=task_name,
                 admission_probe=admission_probe,
+                isolate_scenes=isolate_scenes,
             )
             eval_time = time.time() - eval_start
             subtask_results[st["name"]] = ndcg
@@ -1096,6 +1107,7 @@ async def async_main(args):
             "confidence_enabled_env": os.environ.get("CPERSONA_CONFIDENCE_ENABLED", ""),
             "autocut_enabled_effective": bool(_cfg.AUTOCUT_ENABLED),
             "fused_gate_enabled_effective": bool(_cfg.FUSED_GATE_ENABLED),
+            "scene_isolated": bool(getattr(args, "isolate_scenes", False)),
         }
         dump_fh.write(json.dumps(header) + "\n")
         dump_fh.flush()
@@ -1144,10 +1156,11 @@ async def async_main(args):
             task_name, server_mod, emb_client, st_model,
             args.output_dir, batch_size=args.batch_size, auto_calibrate=args.auto_calibrate,
             subtask_filter=set(args.subtasks.split(",")) if args.subtasks else None,
-            skip_latency_pass=bool(args.fast),
+            skip_latency_pass=bool(args.fast) or bool(getattr(args, "skip_latency_pass", False)),
             recall_limit=args.recall_limit,
             dump_rankings_sink=dump_sink,
             admission_probe=admission_probe,
+            isolate_scenes=bool(getattr(args, "isolate_scenes", False)),
         )
         if result:
             all_results.append(result)
@@ -1272,6 +1285,19 @@ def main():
                              "arm admits past its calibrated floor on the NDCG pass "
                              "(task JSON key `vector_admission`; `calibration` records "
                              "the operating point per corpus group). Observes only.")
+    parser.add_argument("--skip_latency_pass", action="store_true",
+                        help="Skip the production-shaped latency pass (limit=10, MAX_MEMORIES=500) "
+                             "that follows the NDCG pass. --fast implies it; this is for runs "
+                             "that measure ranking only and cannot use --fast (e.g. "
+                             "--isolate_scenes on an older checkout)")
+    parser.add_argument("--isolate_scenes", action="store_true",
+                        help="Store each scene as its own channel and recall inside the query's "
+                             "scene, so the haystack is one conversation history (the "
+                             "production shape) rather than the pooled corpus filtered "
+                             "afterwards. Pooled, the top ten of a 237k-session LongMemEval "
+                             "corpus is 0.3%% own-scene rows, so a limit=10 call returns "
+                             "nothing the scene filter keeps. Changes the Track B number: "
+                             "keep it off for the full-ranking regime")
     parser.add_argument("--dump_rankings", default=None,
                         help="Path to a JSONL file. Writes one record per query with "
                              "task, subtask, query id, ordered returned doc ids (top-20), "

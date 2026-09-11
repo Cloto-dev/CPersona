@@ -8,11 +8,19 @@ the delta of every later arm against the first.
 
 Two regimes are read, each from its own directory under an arm:
 
-    full      the Track B regime: limit = corpus size, autocut and the fused
-              gate off. Comparable to the shipped Track B numbers.
-    limit10   the production regime: limit = 10, autocut and the fused gate at
-              their shipped defaults (on). What a caller of the MCP `recall`
-              tool actually receives.
+    full      the Track B regime: the pooled corpus (every scene in one
+              store, the scene's candidate filter applied afterwards),
+              limit = corpus size, autocut and the fused gate off. Comparable
+              to the shipped Track B numbers.
+    limit10   the production regime: one scene's history is the haystack
+              (each scene stored as its own channel), limit = 10, autocut and
+              the fused gate at their shipped defaults (on). What a caller of
+              the MCP `recall` tool receives over their own memory. Pooled,
+              the top ten of the 237k-session corpus is 0.3% own-scene rows,
+              so a limit of ten over the pool measures nothing.
+
+The regimes differ in the haystack as well as in the limit and the gates, so
+a number is compared across builds within a regime, never across regimes.
 
 Each regime directory is what `run_longmemeval_by_type.sh` writes: the
 harness's `LongMemEval.json` and a `rankings.jsonl` produced with
@@ -52,11 +60,12 @@ TASK_SUBDIR = os.path.join("eval_data", "Dialogue", "LongMemEval")
 # layers must be on, or the table would be comparing a limit against a limit
 # plus a gate.
 REGIME_HEADER = {
-    "full": {"recall_limit": 0},
+    "full": {"recall_limit": 0, "scene_isolated": False},
     "limit10": {
         "recall_limit": 10,
         "autocut_enabled_effective": True,
         "fused_gate_enabled_effective": True,
+        "scene_isolated": True,
     },
 }
 

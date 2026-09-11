@@ -264,10 +264,15 @@ allowed row when a candidate subset applies), which is exact for the top ten.
 `run_longmemeval_by_type.sh` runs the LongMemEval task twice for one build and
 `longmemeval_by_type.py` reads the two runs by question type (the six LMEB
 subtasks: knowledge update, multi-session, temporal reasoning, and the three
-single-session types). The `full` regime is the Track B regime above —
-limit = corpus size, autocut and the fused gate off. The `limit10` regime is
-what a caller of the MCP `recall` tool receives: limit = 10 with both layers at
-their shipped defaults. The question types map one to one onto the 2.6 recall
+single-session types). The `full` regime is the Track B regime above — the
+pooled corpus, limit = corpus size, autocut and the fused gate off. The
+`limit10` regime is what a caller of the MCP `recall` tool receives over their
+own memory: one scene's history as the haystack (each scene stored as its own
+channel), limit = 10, both layers at their shipped defaults. Pooled, the top
+ten of the 237k-session corpus is 0.3% own-scene rows, so a limit of ten over
+the pool measures nothing; the two regimes therefore differ in the haystack
+too, and numbers are compared across builds within a regime, never across
+regimes. The question types map one to one onto the 2.6 recall
 work, so a change is claimed per type against a pre-registration, never as one
 overall mean; the launcher records both regimes in the dump header and the
 reader refuses a directory whose dump says otherwise, and refuses a dump that
