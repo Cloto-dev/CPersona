@@ -1,0 +1,58 @@
+{
+  "task": "LoCoMo",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 41.85,
+  "subtasks": {
+    "adversarial": 43.81,
+    "multi_hop": 29.48,
+    "open_domain": 25.95,
+    "single_hop": 56.54,
+    "temporal_reasoning": 53.47
+  },
+  "num_subtasks": 5,
+  "time_s": 39.6,
+  "recall_latency_full": {
+    "n": 1976,
+    "p50_ms": 15.67,
+    "p95_ms": 29.96,
+    "p99_ms": 116.12,
+    "mean_ms": 18.96
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "adversarial",
+        "multi_hop",
+        "open_domain",
+        "single_hop",
+        "temporal_reasoning"
+      ],
+      "corpus_size": 5882,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.7098,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6179,
+        "std": 0.0602,
+        "median": 0.6169,
+        "p95": 0.7195
+      },
+      "null_admit_rate": 0.0662,
+      "pos_admit_rate": 0.8744,
+      "pos_mean": 0.7932,
+      "youden_j": 0.8083,
+      "fusion_admission_floor": 0.3549,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

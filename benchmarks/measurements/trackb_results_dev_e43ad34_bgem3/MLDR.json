@@ -1,0 +1,50 @@
+{
+  "task": "MLDR",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 79.8,
+  "subtasks": {
+    ".": 79.8
+  },
+  "num_subtasks": 1,
+  "time_s": 7.5,
+  "recall_latency_full": {
+    "n": 100,
+    "p50_ms": 64.99,
+    "p95_ms": 102.91,
+    "p99_ms": 207.2,
+    "mean_ms": 65.59
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "."
+      ],
+      "corpus_size": 1536,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.406,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.3083,
+        "std": 0.0675,
+        "median": 0.303,
+        "p95": 0.4199
+      },
+      "null_admit_rate": 0.0678,
+      "pos_admit_rate": 0.7487,
+      "pos_mean": 0.5183,
+      "youden_j": 0.6809,
+      "fusion_admission_floor": 0.203,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

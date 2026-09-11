@@ -1,0 +1,108 @@
+{
+  "task": "DeepPlanning",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 53.89,
+  "subtasks": {
+    "shopping_level1": 54.47,
+    "shopping_level2": 46.48,
+    "shopping_level3": 60.72
+  },
+  "num_subtasks": 3,
+  "time_s": 107.7,
+  "recall_latency_full": {
+    "n": 120,
+    "p50_ms": 743.15,
+    "p95_ms": 1200.4,
+    "p99_ms": 1327.26,
+    "mean_ms": 777.34
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "shopping_level1"
+      ],
+      "corpus_size": 8257,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6391,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6333,
+        "std": 0.0579,
+        "median": 0.6256,
+        "p95": 0.7406
+      },
+      "null_admit_rate": 0.393,
+      "pos_admit_rate": 0.5628,
+      "pos_mean": 0.6626,
+      "youden_j": 0.1698,
+      "fusion_admission_floor": 0.3196,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "shopping_level2"
+      ],
+      "corpus_size": 8167,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6311,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6316,
+        "std": 0.0582,
+        "median": 0.6226,
+        "p95": 0.7389
+      },
+      "null_admit_rate": 0.4333,
+      "pos_admit_rate": 0.6583,
+      "pos_mean": 0.6604,
+      "youden_j": 0.2252,
+      "fusion_admission_floor": 0.3155,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "shopping_level3"
+      ],
+      "corpus_size": 3415,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6589,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6307,
+        "std": 0.0549,
+        "median": 0.6227,
+        "p95": 0.7311
+      },
+      "null_admit_rate": 0.2513,
+      "pos_admit_rate": 0.4925,
+      "pos_mean": 0.6626,
+      "youden_j": 0.2412,
+      "fusion_admission_floor": 0.3295,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

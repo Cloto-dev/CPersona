@@ -1,0 +1,132 @@
+{
+  "task": "KnowMeBench",
+  "memory_type": "Episodic",
+  "mean_ndcg_at_10": 47.4,
+  "subtasks": {
+    "event_driven/adversarial_abstention": 49.69,
+    "event_driven/information_extraction": 66.22,
+    "event_driven/mind-body_interaction": 33.74,
+    "event_driven/mnestic_trigger_analysis": 25.15,
+    "event_driven/temporal_reasoning": 36.75,
+    "flashback_intensive/adversarial_abstention": 51.36,
+    "flashback_intensive/information_extraction": 55.66,
+    "flashback_intensive/mind-body_interaction": 35.32,
+    "flashback_intensive/mnestic_trigger_analysis": 50.5,
+    "flashback_intensive/temporal_reasoning": 17.43,
+    "psychological_depth/adversarial_abstention": 61.88,
+    "psychological_depth/information_extraction": 79.78,
+    "psychological_depth/mind-body_interaction": 40.75,
+    "psychological_depth/mnestic_trigger_analysis": 44.46,
+    "psychological_depth/temporal_reasoning": 62.37
+  },
+  "num_subtasks": 15,
+  "time_s": 156.7,
+  "recall_latency_full": {
+    "n": 2162,
+    "p50_ms": 54.46,
+    "p95_ms": 161.27,
+    "p99_ms": 182.06,
+    "mean_ms": 68.06
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "event_driven/adversarial_abstention",
+        "event_driven/information_extraction",
+        "event_driven/mind-body_interaction",
+        "event_driven/mnestic_trigger_analysis",
+        "event_driven/temporal_reasoning"
+      ],
+      "corpus_size": 11995,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6674,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6089,
+        "std": 0.0585,
+        "median": 0.6058,
+        "p95": 0.7091
+      },
+      "null_admit_rate": 0.1386,
+      "pos_admit_rate": 0.8794,
+      "pos_mean": 0.7594,
+      "youden_j": 0.7406,
+      "fusion_admission_floor": 0.3337,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "flashback_intensive/adversarial_abstention",
+        "flashback_intensive/information_extraction",
+        "flashback_intensive/mind-body_interaction",
+        "flashback_intensive/mnestic_trigger_analysis",
+        "flashback_intensive/temporal_reasoning"
+      ],
+      "corpus_size": 6644,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6198,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.5385,
+        "std": 0.0569,
+        "median": 0.536,
+        "p95": 0.6344
+      },
+      "null_admit_rate": 0.077,
+      "pos_admit_rate": 0.7387,
+      "pos_mean": 0.6788,
+      "youden_j": 0.6617,
+      "fusion_admission_floor": 0.3099,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "psychological_depth/adversarial_abstention",
+        "psychological_depth/information_extraction",
+        "psychological_depth/mind-body_interaction",
+        "psychological_depth/mnestic_trigger_analysis",
+        "psychological_depth/temporal_reasoning"
+      ],
+      "corpus_size": 8423,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.7014,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6524,
+        "std": 0.0559,
+        "median": 0.6502,
+        "p95": 0.7474
+      },
+      "null_admit_rate": 0.1892,
+      "pos_admit_rate": 0.8543,
+      "pos_mean": 0.7559,
+      "youden_j": 0.6652,
+      "fusion_admission_floor": 0.3507,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

@@ -1,0 +1,50 @@
+{
+  "task": "ESGReports",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 41.38,
+  "subtasks": {
+    ".": 41.38
+  },
+  "num_subtasks": 1,
+  "time_s": 4.1,
+  "recall_latency_full": {
+    "n": 36,
+    "p50_ms": 61.61,
+    "p95_ms": 145.59,
+    "p99_ms": 225.46,
+    "mean_ms": 69.82
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "."
+      ],
+      "corpus_size": 2407,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.5715,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.4981,
+        "std": 0.0757,
+        "median": 0.4988,
+        "p95": 0.6192
+      },
+      "null_admit_rate": 0.1624,
+      "pos_admit_rate": 0.7487,
+      "pos_mean": 0.6305,
+      "youden_j": 0.5863,
+      "fusion_admission_floor": 0.2858,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

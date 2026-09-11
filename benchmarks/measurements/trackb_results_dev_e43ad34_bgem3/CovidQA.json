@@ -1,0 +1,50 @@
+{
+  "task": "CovidQA",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 82.34,
+  "subtasks": {
+    ".": 82.34
+  },
+  "num_subtasks": 1,
+  "time_s": 87.6,
+  "recall_latency_full": {
+    "n": 1111,
+    "p50_ms": 66.32,
+    "p95_ms": 193.64,
+    "p99_ms": 249.85,
+    "mean_ms": 76.19
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "."
+      ],
+      "corpus_size": 3351,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.5223,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.4417,
+        "std": 0.0671,
+        "median": 0.4381,
+        "p95": 0.5561
+      },
+      "null_admit_rate": 0.1095,
+      "pos_admit_rate": 0.7387,
+      "pos_mean": 0.6087,
+      "youden_j": 0.6291,
+      "fusion_admission_floor": 0.2611,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

@@ -1,0 +1,54 @@
+{
+  "task": "MLDR",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 79.8,
+  "subtasks": {
+    ".": 79.8
+  },
+  "num_subtasks": 1,
+  "time_s": 4.2,
+  "recall_latency_full": {
+    "n": 100,
+    "p50_ms": 25.87,
+    "p95_ms": 39.24,
+    "p99_ms": 88.08,
+    "mean_ms": 26.29
+  },
+  "recall_latency_limit10": {
+    "n": 100,
+    "p50_ms": 6.58,
+    "p95_ms": 9.46,
+    "p99_ms": 11.15,
+    "mean_ms": 6.68
+  },
+  "calibration": [
+    {
+      "subtasks": [
+        "."
+      ],
+      "corpus_size": 1536,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.4063,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.3026,
+        "std": 0.0692,
+        "median": 0.2982,
+        "p95": 0.4108
+      },
+      "null_admit_rate": 0.0552,
+      "pos_admit_rate": 0.7487,
+      "pos_mean": 0.5183,
+      "youden_j": 0.6935,
+      "fusion_admission_floor": 0.2031,
+      "rrf_threshold_factor": 0.5
+    }
+  ]
+}

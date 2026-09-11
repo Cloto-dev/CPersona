@@ -1,0 +1,50 @@
+{
+  "task": "PeerQA",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 29.1,
+  "subtasks": {
+    ".": 29.1
+  },
+  "num_subtasks": 1,
+  "time_s": 43.7,
+  "recall_latency_full": {
+    "n": 136,
+    "p50_ms": 195.53,
+    "p95_ms": 402.0,
+    "p99_ms": 587.38,
+    "mean_ms": 235.76
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "."
+      ],
+      "corpus_size": 18593,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.4682,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.4045,
+        "std": 0.0677,
+        "median": 0.4016,
+        "p95": 0.5184
+      },
+      "null_admit_rate": 0.176,
+      "pos_admit_rate": 0.6985,
+      "pos_mean": 0.5101,
+      "youden_j": 0.5226,
+      "fusion_admission_floor": 0.2341,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

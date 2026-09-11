@@ -1025,8 +1025,17 @@ async def async_main(args):
     # break asymmetric retrieval. Promptless models (bge-m3, MiniLM) get {}
     # and encode exactly as before. Explicit prompt_name also keeps the
     # embedding disk-cache keys identical to Track A's mteb-wrapper encodes.
+    #
+    # sentence-transformers 5.x gives every model a default prompts dict of
+    # {"query": "", "document": ""}. An empty prompt changes nothing about the
+    # vector, but a prompt_name that is merely present changes the cache key
+    # (the tag is part of it), and a full run then re-encodes a corpus whose
+    # bare-keyed vectors it already holds. A model is prompted only when its
+    # prompt has text.
     global _DOC_ENCODE_KW, _QUERY_ENCODE_KW
-    st_prompts = getattr(st_model, "prompts", None) or {}
+    st_prompts = {
+        name: text for name, text in (getattr(st_model, "prompts", None) or {}).items() if text
+    }
     _DOC_ENCODE_KW = {"prompt_name": "document"} if "document" in st_prompts else {}
     _QUERY_ENCODE_KW = {"prompt_name": "query"} if "query" in st_prompts else {}
     if _DOC_ENCODE_KW or _QUERY_ENCODE_KW:
