@@ -179,6 +179,58 @@ RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT"
 # depth sweep), not here: a number written before the sweep is a guess baked
 # into a default. See docs/RELIABLE_RECALL_2_6.md section 4.
 RECALL_DEPTH_FLOOR = max(0, _parse_int("CPERSONA_RECALL_DEPTH_FLOOR", 0))
+
+# 2.6: the Reconstruction Window and the bounds of the reconstruct tool
+# (docs/RELIABLE_RECALL_2_6.md section 7). `count` is the CEILING on how many
+# recall items come back -- not a fill target and not a search depth:
+#
+#     base      = forced_count ?? requested_count ?? default_count
+#     effective = min(base, max_count)
+#     0 <= returned <= effective
+#
+# RECONSTRUCT_FORCED_COUNT pins the base for every call and is None unless an
+# operator sets it. A configuration whose default or forced value exceeds the
+# maximum is a STARTUP ERROR, not a silent clamp -- see validate_reconstruct_counts().
+RECONSTRUCT_DEFAULT_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", 1))
+RECONSTRUCT_MAX_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_MAX_COUNT", 10))
+_forced_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_COUNT")
+RECONSTRUCT_FORCED_COUNT = (
+    max(1, _parse_int("CPERSONA_RECONSTRUCT_FORCED_COUNT", 1))
+    if _forced_raw not in (None, "")
+    else None
+)
+# Breadth. Invariant 7 of section 7: none of these may be derived from `count`.
+# They are the bounds the caller declares (or the server defaults), and the test
+# that holds the line is "change count alone and the candidate id set does not
+# move" -- tests/test_reconstruct.py::test_count_alone_does_not_move_the_pool.
+RECONSTRUCT_TOP_K = max(1, _parse_int("CPERSONA_RECONSTRUCT_TOP_K", 20))
+RECONSTRUCT_MAX_HOPS = max(0, _parse_int("CPERSONA_RECONSTRUCT_MAX_HOPS", 2))
+RECONSTRUCT_MAX_EVIDENCE = max(1, _parse_int("CPERSONA_RECONSTRUCT_MAX_EVIDENCE", 40))
+# Stage 2 bundling: how close two rows from the SAME source must sit in time to
+# count as one conversational moment. A constant in seconds because the key is
+# "adjacent timestamps, same source" -- source alone is not a bundling key (in a
+# single-agent store it is constant, and would fold the whole pool into one item).
+RECONSTRUCT_ADJACENCY_SECONDS = max(0, _parse_int("CPERSONA_RECONSTRUCT_ADJACENCY_SECONDS", 60))
+
+
+def validate_reconstruct_counts() -> None:
+    """Refuse a count configuration that can only lie about what it will do.
+
+    Section 7: "A configuration in which the default or the forced value exceeds
+    the maximum is a startup error, not a silent clamp." Called at server start;
+    raising here is the point -- a server that clamps quietly reports an
+    effective_count the operator never chose.
+    """
+    if RECONSTRUCT_DEFAULT_COUNT > RECONSTRUCT_MAX_COUNT:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_DEFAULT_COUNT={RECONSTRUCT_DEFAULT_COUNT} exceeds "
+            f"CPERSONA_RECONSTRUCT_MAX_COUNT={RECONSTRUCT_MAX_COUNT}"
+        )
+    if RECONSTRUCT_FORCED_COUNT is not None and RECONSTRUCT_FORCED_COUNT > RECONSTRUCT_MAX_COUNT:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_FORCED_COUNT={RECONSTRUCT_FORCED_COUNT} exceeds "
+            f"CPERSONA_RECONSTRUCT_MAX_COUNT={RECONSTRUCT_MAX_COUNT}"
+        )
 # How many embedding rows the fallback vector scan turns into a matrix at a
 # time. The scan reads `MAX_MEMORIES` rows of `(id, embedding)`; it used to
 # fetch all of them in one call and then join the blobs, which holds TWO copies

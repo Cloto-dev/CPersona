@@ -356,7 +356,7 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 
 | Group | Tools |
 |-------|-------|
-| Core read/write | `store`, `recall`, `recall_with_context`, `get_contents`, `list_memories`, `list_episodes` |
+| Core read/write | `store`, `recall`, `recall_with_context`, `reconstruct`, `get_contents`, `list_memories`, `list_episodes` |
 | Episodes / profile | `archive_episode`, `get_profile`, `update_profile` |
 | Editing / protection | `update_memory`, `lock_memory`, `unlock_memory`, `delete_memory`, `delete_episode`, `delete_agent_data` |
 | Recall tuning | `set_recall_precision`, `get_recall_precision`, `calibrate_threshold` |
