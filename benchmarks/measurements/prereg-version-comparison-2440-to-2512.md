@@ -295,3 +295,32 @@ non-mover half.
 EPBench it moved twelve small-corpus subtasks, eight up and four down, for a
 task mean of +0.17; that is one task, and the sign on MLDR and ReMe is not
 predicted here.
+
+## Amendment 3 (2026-09-11 09:45 JST, second arm stopped at three tasks and restarted)
+
+**What was seen.** The second arm stalled on its fourth task for two hours
+with the encoder busy and the cache not growing. The cause is in the harness,
+not the server: sentence-transformers 5.x hands every model a default prompts
+dict of `{"query": "", "document": ""}`, and the harness (since it learned to
+drive prompted models) treated the presence of a `document` prompt as the
+model being prompted. The empty prompt leaves the vector unchanged — bare and
+prompt-tagged vectors for the same text agree to a cosine of 0.999997 or
+better — but the prompt name is part of the cache key, so the run looked up
+`document`-tagged keys, found the baseline's bare-keyed vectors invisible, and
+began re-encoding six large corpora (about 1.87 million texts) on the CPU at
+roughly 25 texts a minute. The three tasks it did score hit tagged keys that an
+earlier replay had written under today's settings.
+
+**The fix, applied to every arm.** The harness now treats a model as prompted
+only when its prompt has text. bge-m3 is promptless again, every lookup is a
+bare key, and every corpus in the suite is already there from the baseline's
+own run (0 of 2.37 million texts missing, checked directly against the cache).
+The change touches no server code; it is the same harness for all arms.
+
+**What is re-run and what is kept.** The second arm restarts from the first
+task on the fixed harness, with the baseline's `--fast` acceleration and its
+self-check, so that its inputs are the baseline's vectors rather than
+re-encodes. The three scored tasks are re-taken with the rest. The third arm's
+seven tasks are kept as recorded: their vectors were the tagged re-encodes,
+which agree with the bare ones to within float noise, and the reading they
+established does not depend on that difference; the results file says so.
