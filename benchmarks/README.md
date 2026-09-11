@@ -111,6 +111,22 @@ model (e.g. `embcache`, `embcache_minilm`) is the safe pattern.
    shifts the comparison. When subsets differ, re-run the missing tasks
    (`--tasks A,B,C` reuses the cache for the rest) or restrict every
    model to the intersection before comparing.
+6. **Track B is the regression gate; LongMemEval by question type is the
+   daily instrument.** A change to the recall path is *claimed* per
+   LongMemEval question type against a pre-registration
+   (`measurements/prereg-longmemeval-template.md`), and is *gated* by one
+   22-task Track B run before its pull request merges:
+   `run_trackb.sh --fast` on the bare cache, at the change's commit, read
+   against the most recent recorded development-head run on the line
+   (`measurements/results-version-comparison-2440-to-dev.md` while that is
+   the latest). The judgement is that record's pre-registration's: the
+   overall mean falling is a regression and is reported in that word; a
+   task that moves more than 5 points in either direction is named with a
+   hypothesis about the cause, labelled as one. A run with a cache miss in
+   a task, a `--fast` self-check mismatch, or fewer than 22 tasks landed is
+   not a gate result and is re-run. The gate exists because the loss the
+   version comparison found (−1.57 on twenty tasks) had accumulated for two
+   months with nothing running that could see it.
 
 ## Wall-clock cost (measured 2026-08-03..06, Apple M5, 22 tasks)
 

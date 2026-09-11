@@ -109,6 +109,44 @@ memory at the full ranking. It did not at limit ten: the pooled run of the
 same build and regime settings scored 3.33 on `single_session_preference`
 against 56.98 isolated, which is why the regime exists.
 
+## What this pair can resolve, per type
+
+The per-query paired difference is sparse and, where it moves, large: on the
+`full` regime between 2 and 54 of a type's queries moved at all, and the
+standard deviation of the per-query difference runs from 5.6 to 14.2 points.
+The minimum detectable mean difference at α = 0.05 two-sided and 80% power for
+a paired *t* over that many queries (noncentral *t*; the factor is 0.6264 at
+n = 22, the version comparison's value, and 0.24–0.53 at these n) is
+therefore coarse, and **none of the per-type deltas above reaches it** —
+`single_session_user`'s −3.96 sits under an MDE of 4.83, `temporal_reasoning`'s
+−2.32 under 3.14, `multi_session`'s −1.75 under 2.48. The one deterministic
+execution per arm determines this benchmark's difference, as the version
+comparison says of its own; what the MDE bounds is what a *claim* per type
+would need, and the pre-registration template fixes these values for that.
+Produced by `longmemeval_by_type_resolution.py` on the two arms:
+
+### regime `full` — per-query NDCG@10, dev-e43ad34 minus v2.4.41
+
+| question type | n | mean Δ | sd | queries moved | MDE (points) |
+| --- | --- | --- | --- | --- | --- |
+| `knowledge_update` | 78 | +0.07 | 5.60 | 17 | 1.80 |
+| `multi_session` | 133 | -1.75 | 10.12 | 54 | 2.48 |
+| `single_session_assistant` | 56 | +0.28 | 5.72 | 2 | 2.18 |
+| `single_session_preference` | 30 | -0.60 | 12.56 | 7 | 6.65 |
+| `single_session_user` | 70 | -3.96 | 14.23 | 12 | 4.83 |
+| `temporal_reasoning` | 133 | -2.32 | 12.85 | 47 | 3.14 |
+
+### regime `limit10` — per-query NDCG@10, dev-e43ad34 minus v2.4.41
+
+| question type | n | mean Δ | sd | queries moved | MDE (points) |
+| --- | --- | --- | --- | --- | --- |
+| `knowledge_update` | 78 | +0.63 | 8.15 | 16 | 2.62 |
+| `multi_session` | 133 | -1.94 | 7.96 | 53 | 1.95 |
+| `single_session_assistant` | 56 | +1.32 | 6.91 | 2 | 2.63 |
+| `single_session_preference` | 30 | -2.65 | 21.90 | 9 | 11.59 |
+| `single_session_user` | 70 | -3.95 | 14.51 | 15 | 4.93 |
+| `temporal_reasoning` | 133 | -1.71 | 12.76 | 46 | 3.12 |
+
 ## Raw outputs
 
 The harness records (`LongMemEval.json`, with the calibration record) for each
