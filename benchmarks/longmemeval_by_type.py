@@ -158,11 +158,21 @@ def score_arm(regime_dir: Path, regime: str, qrels_by_type: dict[str, dict[str, 
                 "this measurement; refusing to tabulate."
             )
         out[qtype] = {"n": int(n), "ndcg10": got, "r5": r5 / n * 100, "r10": r10 / n * 100}
+    # The calibrated admission threshold is drawn from a random sample of the
+    # corpus on every run (200 embeddings, unseeded), so two runs of one build
+    # do not share it. It is printed under the table so that a delta between
+    # arms can be read against it rather than attributed to the build alone.
+    cal = record.get("calibration") or []
+    out["_calibration"] = {
+        "threshold": cal[0].get("new_threshold") if cal else None,
+        "sampled": cal[0].get("sampled_embeddings") if cal else None,
+    }
+    types = [v for k, v in out.items() if not k.startswith("_")]
     macro = {
-        "n": sum(v["n"] for v in out.values()),
-        "ndcg10": sum(v["ndcg10"] for v in out.values()) / len(out),
-        "r5": sum(v["r5"] for v in out.values()) / len(out),
-        "r10": sum(v["r10"] for v in out.values()) / len(out),
+        "n": sum(v["n"] for v in types),
+        "ndcg10": sum(v["ndcg10"] for v in types) / len(types),
+        "r5": sum(v["r5"] for v in types) / len(types),
+        "r10": sum(v["r10"] for v in types) / len(types),
     }
     out["macro mean"] = macro
     return out
@@ -179,12 +189,22 @@ def render(regime: str, arms: list[tuple[str, dict]]) -> str:
     lines = [f"### regime `{regime}`", "", "| " + " | ".join(head) + " |",
              "| " + " | ".join(["---"] * len(head)) + " |"]
     for qtype in ref:
+        if qtype.startswith("_"):
+            continue
         row = [f"`{qtype}`" if qtype != "macro mean" else "**macro mean**", str(ref[qtype]["n"])]
         for _, scores in arms:
             row += [f"{scores[qtype][m]:.2f}" for m, _ in metrics]
         for _, scores in arms[1:]:
             row += [f"{scores[qtype][m] - ref[qtype][m]:+.2f}" for m, _ in metrics]
         lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+    cal_bits = []
+    for name, scores in arms:
+        c = scores.get("_calibration") or {}
+        thr = c.get("threshold")
+        cal_bits.append(f"{name} = {thr:.4f} ({c.get('sampled')} sampled)" if thr is not None else f"{name} = not recorded")
+    lines.append("calibrated admission threshold (an unseeded random draw per run, so not shared "
+                 "between runs of one build): " + "; ".join(cal_bits))
     lines.append("")
     return "\n".join(lines)
 

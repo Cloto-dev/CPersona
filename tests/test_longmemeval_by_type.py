@@ -74,7 +74,10 @@ def _write_arm(arm_dir: Path, regime: str, header: dict, ranked=RANKED, recorded
         qtype: round(EXPECT[qtype]["ndcg10"], 2) for qtype in ranked
     }
     (d / "LongMemEval.json").write_text(
-        json.dumps({"task": "LongMemEval", "mean_ndcg_at_10": 0.0, "subtasks": subtasks}),
+        json.dumps({
+            "task": "LongMemEval", "mean_ndcg_at_10": 0.0, "subtasks": subtasks,
+            "calibration": [{"ok": True, "new_threshold": 0.4491, "sampled_embeddings": 200}],
+        }),
         encoding="utf-8",
     )
     with (d / "rankings.jsonl").open("w", encoding="utf-8") as fh:
@@ -187,6 +190,7 @@ def test_render_takes_deltas_against_the_first_arm(tmp_path, qrels):
     )
     table = mod.render("limit10", [("ref", a), ("cand", b)])
     assert "ΔNDCG@10 vs ref (cand)" in table
+    assert "ref = 0.4491 (200 sampled)" in table and "cand = 0.4491 (200 sampled)" in table
     row = next(line for line in table.splitlines() if line.startswith("| `temporal_reasoning`"))
     cells = [c.strip() for c in row.strip("|").split("|")]
     delta = float(cells[-3])
