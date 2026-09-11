@@ -648,11 +648,25 @@ async def run_subtask(
             if msg_id:
                 doc_ids.append(msg_id)
 
-        # Optional per-query ranking dump (before candidate filtering, since a
-        # bug-155-style ranking bug affects the raw recall list, not the LMEB
-        # candidate-filtered one). Cap the returned rows at 20 to keep the file
-        # bounded; the confidence and match-reason.cosine fields let the parent
-        # script compute cosine prevalence + disturbance externally.
+        raw_ids = doc_ids
+
+        # Filter by candidates (same as LMEB SubsetRetrieval)
+        if candidates:
+            scene_id = get_scene_id(qid)
+            if scene_id in candidates:
+                allowed = candidates[scene_id]
+                doc_ids = [d for d in doc_ids if d in allowed]
+
+        results[qid] = doc_ids
+
+        # Optional per-query ranking dump. `returned_ids` is the raw recall
+        # list before candidate filtering (a bug-155-style ranking bug
+        # affects the raw list, not the LMEB candidate-filtered one);
+        # `filtered_ids` is the list the NDCG above is scored on, so a reader
+        # can recompute NDCG@10 and Recall@k per query without re-running the
+        # recall. Both are capped at 20 to keep the file bounded; the
+        # confidence and match-reason.cosine fields let the parent script
+        # compute cosine prevalence + disturbance externally.
         if dump_rankings_sink is not None:
             rows_out = []
             for msg in messages[:20]:
@@ -670,18 +684,10 @@ async def run_subtask(
                 "task": task_name,
                 "subtask": subtask.get("name", ""),
                 "query_id": qid,
-                "returned_ids": doc_ids[:20],
+                "returned_ids": raw_ids[:20],
+                "filtered_ids": doc_ids[:20],
                 "rows": rows_out,
             })
-
-        # Filter by candidates (same as LMEB SubsetRetrieval)
-        if candidates:
-            scene_id = get_scene_id(qid)
-            if scene_id in candidates:
-                allowed = candidates[scene_id]
-                doc_ids = [d for d in doc_ids if d in allowed]
-
-        results[qid] = doc_ids
 
         if (i + 1) % 200 == 0:
             logger.info(f"      Queried {i + 1}/{total_q}")
@@ -948,13 +954,27 @@ async def async_main(args):
     await _get_db()
     logger.info(f"cpersona DB initialized at {tmp_db_path}")
 
-    # --unclamp_limit is obsolete since 2.5.0: do_recall's in-library
-    # cap is now the scan window (MAX_MEMORIES), so the harness's
-    # limit=corpus_size full-ranking convention works against a stock checkout.
-    # The flag is still accepted (no-op) so pre-2.5.0 command lines keep working;
-    # on a pre-2.5.0 checkout you still need the old monkeypatch build.
+    # --unclamp_limit lifts bug-032's limit=100 clamp on a v2.4.38..v2.5.0a1
+    # checkout, where do_recall runs `_clamp_limit(limit, 100)` and would turn
+    # the harness's limit=corpus_size full-ranking regime into a limit=100
+    # regime without saying so. It rebinds that import-time name the way
+    # mps_accel rebinds _search_vector. From 2.5.0 the same call clamps to the
+    # scan window (MAX_MEMORIES, later RECALL_LIBRARY_MAX_LIMIT), which the
+    # convention already fits, and lifting it there would be a behaviour
+    # change on a corpus larger than the window — so the flag is a no-op
+    # unless the literal-100 call is present in the checkout's source. That is
+    # the only reliable tell: `__version__` is absent before 2.5, and
+    # `_clamp_limit` itself exists in every build. The log line says which of
+    # the two happened.
     if getattr(args, "unclamp_limit", False):
-        logger.info("  --unclamp_limit: no-op since 2.5.0 (do_recall caps at the scan window)")
+        import inspect
+
+        import cpersona.memory_handlers as _mh_unclamp
+        if "_clamp_limit(limit, 100)" in inspect.getsource(_mh_unclamp):
+            _mh_unclamp._clamp_limit = lambda limit, cap: max(0, limit)
+            logger.info("  --unclamp_limit: pre-2.5.0 checkout, bug-032 limit=100 clamp bypassed")
+        else:
+            logger.info("  --unclamp_limit: no-op on this checkout (do_recall caps at the scan window)")
 
     # --- Fast acceleration (external, behavior-invariant — see mps_accel.py) ---
     # Preloads each corpus group's embeddings once instead of the per-query
@@ -1026,7 +1046,16 @@ async def async_main(args):
     # and encode exactly as before. Explicit prompt_name also keeps the
     # embedding disk-cache keys identical to Track A's mteb-wrapper encodes.
     global _DOC_ENCODE_KW, _QUERY_ENCODE_KW
-    st_prompts = getattr(st_model, "prompts", None) or {}
+    #
+    # sentence-transformers 5.x gives every model a default prompts dict of
+    # {"query": "", "document": ""}. An empty prompt changes nothing about the
+    # vector, but a prompt_name that is merely present changes the cache key
+    # (the tag is part of it), and a full run then re-encodes a corpus whose
+    # bare-keyed vectors it already holds. A model is prompted only when its
+    # prompt has text.
+    st_prompts = {
+        name: text for name, text in (getattr(st_model, "prompts", None) or {}).items() if text
+    }
     _DOC_ENCODE_KW = {"prompt_name": "document"} if "document" in st_prompts else {}
     _QUERY_ENCODE_KW = {"prompt_name": "query"} if "query" in st_prompts else {}
     if _DOC_ENCODE_KW or _QUERY_ENCODE_KW:
@@ -1049,8 +1078,15 @@ async def async_main(args):
         # memory_handlers.CONFIDENCE_ENABLED currently holds. Log it and pin
         # it in the dump header so the parent script cannot misread the
         # results after the fact.
+        import cpersona.config as _cfg
         import cpersona.memory_handlers as _mh
         effective_flag = bool(_mh.CONFIDENCE_ENABLED)
+        # The two gate layers are pinned the same way, and for the same
+        # reason: a per-question-type reader compares a full-ranking dump
+        # against a limit=10 dump, and the regimes differ in exactly these
+        # two layers (the launcher turns them off; production leaves them
+        # on). A dump that does not say which regime produced it cannot be
+        # told apart from the other one after the fact.
         header = {
             "header": True,
             "recall_limit": args.recall_limit,
@@ -1058,6 +1094,8 @@ async def async_main(args):
             "min_similarity": args.min_similarity,
             "confidence_enabled_effective": effective_flag,
             "confidence_enabled_env": os.environ.get("CPERSONA_CONFIDENCE_ENABLED", ""),
+            "autocut_enabled_effective": bool(_cfg.AUTOCUT_ENABLED),
+            "fused_gate_enabled_effective": bool(_cfg.FUSED_GATE_ENABLED),
         }
         dump_fh.write(json.dumps(header) + "\n")
         dump_fh.flush()

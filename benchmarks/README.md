@@ -259,6 +259,29 @@ are then subsample means, not the published Track B numbers. Fusion is sorted
 over a bounded working set (`--work_depth`, default 3000 per arm; every
 allowed row when a candidate subset applies), which is exact for the top ten.
 
+### LongMemEval by question type, under two regimes
+
+`run_longmemeval_by_type.sh` runs the LongMemEval task twice for one build and
+`longmemeval_by_type.py` reads the two runs by question type (the six LMEB
+subtasks: knowledge update, multi-session, temporal reasoning, and the three
+single-session types). The `full` regime is the Track B regime above —
+limit = corpus size, autocut and the fused gate off. The `limit10` regime is
+what a caller of the MCP `recall` tool receives: limit = 10 with both layers at
+their shipped defaults. The question types map one to one onto the 2.6 recall
+work, so a change is claimed per type against a pre-registration, never as one
+overall mean; the launcher records both regimes in the dump header and the
+reader refuses a directory whose dump says otherwise, and refuses a dump that
+does not reproduce the NDCG the harness recorded.
+
+```bash
+# one arm per build; CPERSONA_REPO selects the checkout under measurement
+OUTPUT_DIR=~/lmeb/lme_by_type/v2.4.40 CPERSONA_REPO=/path/to/v2.4.41 \
+    benchmarks/run_longmemeval_by_type.sh
+OUTPUT_DIR=~/lmeb/lme_by_type/dev benchmarks/run_longmemeval_by_type.sh
+# one table per regime; the first arm is the reference for the deltas
+python benchmarks/longmemeval_by_type.py v2.4.40=~/lmeb/lme_by_type/v2.4.40 dev=~/lmeb/lme_by_type/dev
+```
+
 ### Prompted / task-adapter models
 
 Some models need extra flags on both tracks:
