@@ -1,0 +1,60 @@
+{
+  "task": "LongMemEval",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 80.04,
+  "subtasks": {
+    "knowledge_update": 91.22,
+    "multi_session": 78.26,
+    "single_session_assistant": 89.14,
+    "single_session_preference": 59.64,
+    "single_session_user": 84.21,
+    "temporal_reasoning": 77.77
+  },
+  "num_subtasks": 6,
+  "time_s": 1346.0,
+  "recall_latency_full": {
+    "n": 500,
+    "p50_ms": 771.23,
+    "p95_ms": 5853.98,
+    "p99_ms": 6510.81,
+    "mean_ms": 2013.85
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "knowledge_update",
+        "multi_session",
+        "single_session_assistant",
+        "single_session_preference",
+        "single_session_user",
+        "temporal_reasoning"
+      ],
+      "corpus_size": 237655,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.4818,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.4586,
+        "std": 0.0614,
+        "median": 0.455,
+        "p95": 0.5637
+      },
+      "null_admit_rate": 0.3289,
+      "pos_admit_rate": 0.4472,
+      "pos_mean": 0.4701,
+      "youden_j": 0.1187,
+      "fusion_admission_floor": 0.2409,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}
