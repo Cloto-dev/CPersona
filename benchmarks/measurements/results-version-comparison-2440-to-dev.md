@@ -31,6 +31,15 @@ each; the two must agree to the last digit, as a replay of four EPBench
 subtasks did against the full run's record. The per-task JSON of the third arm
 is in `trackb_results_thirdarm_bgem3/`.
 
+One more disclosure, from Amendment 3: every run in this section looked the
+cache up under prompt-tagged keys (the harness defect that amendment fixes), so
+its vectors were re-encodes written under today's settings by an earlier
+replay, not the baseline's own vectors. Bare and tagged vectors for the same
+text agree to a cosine of 0.999997 or better, and the reading below rests on
+row membership inside a cosine band a hundred times wider than that; it does
+not depend on the difference. The second arm's full run, restarted on the
+fixed harness, uses the baseline's vectors.
+
 Every task but one reproduced the second arm to the digit, subtask by subtask.
 The one that did not is EPBench, and within it only the twelve subtasks whose
 corpus has 19 or 20 rows: eight rose, four fell, and the 36 subtasks with
