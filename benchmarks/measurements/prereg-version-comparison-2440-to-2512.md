@@ -296,7 +296,7 @@ EPBench it moved twelve small-corpus subtasks, eight up and four down, for a
 task mean of +0.17; that is one task, and the sign on MLDR and ReMe is not
 predicted here.
 
-## Amendment 3 (2026-09-11 09:45 JST, second arm stopped at three tasks and restarted)
+## Amendment 3 (2026-09-11 09:37 JST, second arm stopped at three tasks and restarted)
 
 **What was seen.** The second arm stalled on its fourth task for two hours
 with the encoder busy and the cache not growing. The cause is in the harness,
