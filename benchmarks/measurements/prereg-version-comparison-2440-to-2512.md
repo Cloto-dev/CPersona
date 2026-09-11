@@ -212,3 +212,38 @@ absence of one is the finding to carry forward.
 second arm has already scored — and the full 22-task arm is run only if those
 three disagree with it. A 13-hour run to confirm a null that three tasks can
 show is not a measurement, it is a habit.
+
+## Amendment 1 (2026-09-11 09:15 JST, after three tasks, before the fourth was scored)
+
+**What was seen.** The second arm's log shows one embedding-cache batch that did
+not fully hit: 128 of 256 texts in the fourth task, LongMemEval, at 07:59.
+Every batch in the three tasks scored before it — EPBench, KnowMeBench, LoCoMo —
+hit in full. No LongMemEval number exists yet; this amendment is decided on
+the miss count alone, which is not an outcome.
+
+**The clause as registered was too broad.** "Any embedding cache miss
+invalidates the run" was written as if a miss changed the inputs of the whole
+run. It does not. A missed text is re-encoded under today's settings, and the
+arms then differ in the inputs of *that text*, which can move only the task
+that contains it. Voiding twenty-one clean tasks over 128 texts in one would
+discard the measurement this file exists to make.
+
+**The rule, narrowed from run to task.**
+
+- A task with any cache miss is published in the per-task table with its
+  missed-text count and a flag, and is **excluded from the paired judgement**:
+  the overall mean, the count of tasks that fell, and the five-point sentence.
+- A task with zero misses is judged exactly as registered above.
+- The overall mean is reported twice — over the clean tasks, and over all 22
+  with the flagged tasks included — each labelled as what it is. The verdict
+  is read from the clean set.
+- A flagged task is not lost: re-running it alone against the now-warm cache
+  yields a clean number, and the result section will say whether that was done.
+
+**Unchanged.** The accel self-check, the 22-task completion requirement and the
+regime check stand as written. One more disclosure: two other benchmark
+processes shared this machine's CPU during the run (a four-task probe of the
+autocut/gate regime, stopped at 09:14 after two tasks reproduced the second
+arm to the last digit, and the three-task test of the third arm). They share
+no database and no output; they cost wall-clock, so this run's latency fields
+are not representative and are not compared.
