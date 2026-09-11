@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:e039e6376e1f646f2cb3b690c7709edb6ab8ec42 -->
+<!-- i18n-source: docs/tools.md@blob:cb5b05cf928d9fbca4dcf4960fc75fd2b8e7b18b -->
 
 # ツール一覧
 
