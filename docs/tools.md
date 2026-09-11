@@ -14,6 +14,7 @@
 | `recall` | Retrieve memories through the three-layer hybrid search. **The last element is the best match** ([ordering contract](behavior-contracts.md#1-recall-return-order-last-is-best)) |
 | `recall_with_context` | Recall *and* merge with conversation history you pass in, deduplicated. Returns a **chronological** merge, not a score ordering |
 | `get_contents` | Expand preview refs (`mem:<id>` / `ep:<id>`) returned by recall into full text ([preview tier design](RECALL_PREVIEW_TIER_DESIGN.md)) |
+| `reconstruct` | Assemble **recall items** from the candidate rows a recall produces: select, order and assign roles, never compose. `count` is a ceiling, not a fill target and not a search depth; breadth (`top_k`, `max_hops`, `max_evidence`) is a separate set of bounds ([the exit](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit)) |
 | `archive_episode` | Store a session summary. Also moves the [episode boundary](behavior-contracts.md#3-episode-boundary-penalty), which down-weights everything written before it |
 | `update_memory` | Change the content of an existing memory. This — not a re-`store` with the same `msg_id` — is how you correct a stored fact |
 
@@ -128,8 +129,8 @@ without a `persisted` key at all.
 ## Isolation arguments
 
 The three isolation axes are not offered uniformly. `agent_id` is accepted by
-most tools (22); `project_id` by six; and `channel` by exactly four —
-`store`, `recall`, `recall_with_context` and `archive_episode`. They are
+most tools (23); `project_id` by seven; and `channel` by exactly five —
+`store`, `recall`, `recall_with_context`, `reconstruct` and `archive_episode`. They are
 independent axes rather than one nested hierarchy, and reads treat an empty
 value differently from an omitted one — see
 [isolation axes](architecture.md#isolation-axes).

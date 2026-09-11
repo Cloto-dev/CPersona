@@ -356,7 +356,7 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 
 | Group | Tools |
 |-------|-------|
-| Core read/write | `store`, `recall`, `recall_with_context`, `get_contents`, `list_memories`, `list_episodes` |
+| Core read/write | `store`, `recall`, `recall_with_context`, `reconstruct`, `get_contents`, `list_memories`, `list_episodes` |
 | Episodes / profile | `archive_episode`, `get_profile`, `update_profile` |
 | Editing / protection | `update_memory`, `lock_memory`, `unlock_memory`, `delete_memory`, `delete_episode`, `delete_agent_data` |
 | Recall tuning | `set_recall_precision`, `get_recall_precision`, `calibrate_threshold` |
@@ -434,7 +434,7 @@ and the backfill for rows written while the backend was down.
 
 ## Key facts
 
-- Schema v13 (auto-migrating) · ~23,738 LOC Python across focused modules · MIT.
+- Schema v13 (auto-migrating) · ~24,898 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 /absolute/path/cpersona.db ".backup 'backup.db'"`, substituting the

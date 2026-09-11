@@ -98,6 +98,7 @@ from cpersona.memory_handlers import (
     do_recall_with_context,
     do_store,
 )
+from cpersona.reconstruct import do_reconstruct
 from cpersona import checks as checks_module
 from cpersona.checks import HEALTH_CHECK_NAMES
 from cpersona.utils import CANONICAL_SOURCE_TYPES, error_response, source_type_alias_summary
@@ -402,6 +403,63 @@ async def do_recall_boundary(
         session_key=session_key,
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
+    return _oc_annotate(result, project_id, pid, warning)
+
+
+def _apply_reconstruct_preview(result: dict) -> dict:
+    """Trim recall-item content to the preview tier, as `_apply_preview` does.
+
+    Same layering as recall: the library layer returns full text (a bench or a
+    reranker wants it), and the MCP boundary shapes the agent-facing payload.
+    Section 7 says `content` is "cut as the preview tier cuts", and this is that
+    cut — a PURE prefix with content_len / content_truncated markers, expandable
+    through the head claim's `ref` via get_contents.
+    """
+    cap = config.RECALL_PREVIEW_CHARS
+    if cap <= 0:
+        return result
+    for item in result.get("items", []):
+        content = item.get("content")
+        if isinstance(content, str) and len(content) > cap:
+            item["content_len"] = len(content)
+            item["content"] = content[:cap]
+            item["content_truncated"] = True
+    return result
+
+
+async def do_reconstruct_boundary(
+    agent_id: str,
+    query: str,
+    count: int | None,
+    top_k: int | None,
+    max_hops: int | None,
+    max_evidence: int | None,
+    deep: bool,
+    channel: str,
+    project_id: str | None,
+    source_id: str,
+    session_key: str = "",
+) -> dict:
+    pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+    if error:
+        # Same reasoning as do_recall_boundary: `items` is the documented shape of
+        # every reconstruct response, so a refusal carries the empty collection
+        # rather than making one path KeyError.
+        return {**_oc_reject(error), "items": [], "returned_count": 0}
+    result = await do_reconstruct(
+        agent_id,
+        query,
+        count=count,
+        top_k=top_k,
+        max_hops=max_hops,
+        max_evidence=max_evidence,
+        deep=deep,
+        channel=channel,
+        project_id=pid,
+        source_id=source_id,
+        session_key=session_key,
+    )
+    result = _apply_reconstruct_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
 
 
@@ -1092,6 +1150,127 @@ registry.auto_tool(
     },
     do_get_contents,
     [("agent_id", str), ("refs", list, [])],
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+
+registry.auto_tool(
+    "reconstruct",
+    "Assemble recall ITEMS from the candidate rows a recall produces: units of memory, "
+    "each traceable to the canonical rows that support it. Reconstruction means select, "
+    "order and assign roles -- never compose. No model is called and nothing is "
+    "summarised: `content` is a verbatim excerpt of the item's head claim, cut the way "
+    "the recall preview tier cuts, and expandable through its `ref` via get_contents. "
+    "Stored rows are never modified. "
+    "COUNT IS A CEILING, NOT A FILL TARGET AND NOT A SEARCH DEPTH: "
+    "base = forced ?? requested ?? server default, effective = min(base, maximum), and "
+    "0 <= returned <= effective. Every response states requested_count / effective_count "
+    "/ returned_count and a count_policy {source, clamped, reason}, so a caller can see "
+    "what the server did with the request. Fewer items than the window is a NORMAL "
+    "result and carries `shortfall_reason` (no_relevant_evidence / "
+    "below_quality_threshold / exhausted_candidates); a shortfall is never padded with "
+    "duplicates, fragments, or a cluster split in two. "
+    "BREADTH IS SEPARATE FROM COUNT: `top_k` (candidate depth), `max_hops` (relation "
+    "hops) and `max_evidence` are declared independently and none is derived from "
+    "`count` -- changing `count` alone does not move the candidate id set. A cut against "
+    "any declared bound is reported in `bounds.truncated`. "
+    "ITEM SHAPE: `claims` carries one entry per row, newest first, each with `as_of` and "
+    "`roles`; `timeline` is chronological; `evidence[].why` names the key that admitted "
+    "each row; `independence_reason` says why this is a separate item; `conflicts` "
+    "appears only when two rows cannot be ordered. "
+    "ROLE DIRECTION: `roles[].role` names what the REFERENCED row is to this claim (the "
+    "ref is the subject, the claim is the object): the referenced episode SUPPORTS this "
+    "claim, the referenced newer row SUPERSEDES it. The vocabulary is fixed at supports / supersedes "
+    "/ corrects / qualifies / contradicts / temporal_predecessor and is filled in "
+    "stages; this version derives only `supersedes` (same message id, time order) and "
+    "`supports` (episode span containment). Ignore a role you do not know. "
+    "BUNDLING KEYS are deterministic and never semantic: same message id, containment in "
+    "a candidate episode's time span, and adjacent timestamps FROM THE SAME SOURCE "
+    "(source alone is not a key -- in a single-agent store it is constant and would fold "
+    "the whole pool into one item). "
+    "This tool is additive: the `recall` contract is untouched.",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent identifier"},
+            "query": {"type": "string", "description": "Search query (empty returns recent memories)"},
+            "count": {
+                "type": "integer",
+                "minimum": 0,
+                "description": (
+                    "Ceiling on recall items returned -- not a fill target, not a search depth. "
+                    "Omit to take the server default; an operator-forced value overrides both. "
+                    "Clamped to the server maximum, and the clamp is reported in count_policy "
+                    "rather than applied silently."
+                ),
+            },
+            "top_k": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": (
+                    "Candidate depth: how many rows the retrieval hands to bundling. This is the "
+                    "breadth knob; it is independent of `count` and is what to raise when items "
+                    "are missing evidence."
+                ),
+            },
+            "max_hops": {
+                "type": "integer",
+                "minimum": 0,
+                "description": (
+                    "Relation hops the bounded walk may follow. Declared and reported now; the "
+                    "walk is the identity until declared relations exist, so the value does not "
+                    "change results yet."
+                ),
+            },
+            "max_evidence": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Maximum evidence rows per item. A cut sets bounds.truncated.",
+            },
+            "deep": {
+                "type": "boolean",
+                "description": "Deep recall for the candidate stage -- same semantics as in `recall`.",
+            },
+            "channel": {"type": "string", "description": "Memory channel filter"},
+            "project_id": {
+                "type": "string",
+                "description": (
+                    "γ filter -- same semantics as in `recall`, including the '@auto' "
+                    "sentinel, which resolves this agent's default from the server's "
+                    "operating context and echoes the resolution as resolved_project_id. "
+                    "With no configured operating context the sentinel is NOT resolved: "
+                    "it is filtered as the literal project_id '@auto'. Read "
+                    "resolved_project_id before relying on the resolution."
+                ),
+            },
+            "source_id": {
+                "type": "string",
+                "description": "Per-user source filter -- same semantics as in `recall`.",
+            },
+            "session_key": {
+                "type": "string",
+                "description": (
+                    "Opaque session identity you declare: a partition hint, not authentication "
+                    "and not a data filter. Forwarded to the candidate recall."
+                ),
+            },
+        },
+        "required": ["agent_id", "query"],
+    },
+    do_reconstruct_boundary,
+    [
+        ("agent_id", str),
+        ("query", str),
+        ("count", int, None),
+        ("top_k", int, None),
+        ("max_hops", int, None),
+        ("max_evidence", int, None),
+        ("deep", bool, False),
+        ("channel", str, ""),
+        ("project_id", str, None),
+        ("source_id", str, ""),
+        ("session_key", str, ""),
+    ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
 
@@ -2963,6 +3142,11 @@ async def main():
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    # Section 7: a count configuration whose default or forced value exceeds the
+    # maximum is a startup error, not a silent clamp. Validated before anything
+    # expensive, with the same failure posture as the ACL table below.
+    config.validate_reconstruct_counts()
 
     # ACL mode (docs/ACL_DESIGN.md): load and validate the grant table before
     # anything expensive, failing closed on any defect — the server refuses to
