@@ -20,17 +20,17 @@ denied, never waved through.
 from __future__ import annotations
 
 import contextvars
-import hmac
 import json
 import logging
 import os
-import re
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from cpersona import config
 from cpersona.aliases import ALIAS_PREFIX
+from cpersona._vendored_mcp_common import identity
+from cpersona._vendored_mcp_common.identity import Principal, hmac  # noqa: F401 (compatibility exports)
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +57,6 @@ _SCOPE_KEYS = ("agent_id", "source_agent_id", "target_agent_id")
 # the same file; if absent, stdio calls are denied like any ungranted client.
 LOCAL_CLIENT_ID = "local"
 
-# Whole-string environment reference for token values: "${VAR}".
-_ENV_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
-
 _CLIENT_KEYS = {"client_id", "token", "grants", "per_subject"}
 
 # The self sentinel (docs/OAUTH_DESIGN.md §12): a caller behind a per-subject
@@ -71,23 +68,6 @@ SELF_SENTINEL = "@me"
 
 class AclConfigError(Exception):
     """Malformed ACL configuration — startup must fail, not degrade (§7)."""
-
-
-@dataclass(frozen=True)
-class Principal:
-    """An authenticated identity. The only thing enforcement consumes.
-
-    ``issuer`` and ``subject`` are filled only by a resolver that verified
-    them — the OAuth verifier, which checked both as signed claims. Static
-    resolvers leave them empty: a static token authenticates a client, and
-    pretending it names a person would give the per-subject boundary a value
-    nothing vouched for. Two kinds of identity, kept apart as fields rather
-    than mixed into one namespace (docs/OAUTH_DESIGN.md §9, §12).
-    """
-
-    client_id: str
-    issuer: str = ""
-    subject: str = ""
 
 
 @dataclass(frozen=True)
@@ -107,25 +87,10 @@ class AclConfig:
 
 
 def _resolve_token_value(raw: str, client_id: str) -> str:
-    ref = _ENV_REF.match(raw)
-    if not ref:
-        if "${" in raw:
-            # A partial reference ("pre${VAR}", "${VAR}x") would silently
-            # become a literal, guessable credential in a file operators
-            # commit more casually than a secret. Fail closed (§7).
-            raise AclConfigError(
-                f"ACL client {client_id!r}: token contains '${{' but is not a "
-                "whole-string ${ENV_VAR} reference; use a literal without '${' "
-                "or exactly \"${VAR}\""
-            )
-        return raw
-    value = os.environ.get(ref.group(1), "")
-    if not value:
-        raise AclConfigError(
-            f"ACL client {client_id!r}: token references ${{{ref.group(1)}}} but the "
-            "environment variable is unset or empty"
-        )
-    return value
+    try:
+        return identity.resolve_env_token(raw)
+    except identity.CredentialError as exc:
+        raise AclConfigError(f"ACL client {client_id!r}: {exc}") from exc
 
 
 def load_config(path: str) -> AclConfig:
@@ -160,7 +125,6 @@ def load_config(path: str) -> AclConfig:
 
     grants_by_client: dict[str, dict[str, int]] = {}
     token_entries: list[tuple[str, str]] = []
-    seen_tokens: set[str] = set()
     per_subject_clients: set[str] = set()
 
     for i, entry in enumerate(clients):
@@ -217,22 +181,6 @@ def load_config(path: str) -> AclConfig:
                     f"ACL client {client_id!r}: token must be a non-empty string"
                 )
             token = _resolve_token_value(token_raw, client_id)
-            if not token.isascii():
-                # RFC 6750 token68 is ASCII, and HTTP header decoding
-                # (latin-1) would mangle a non-ASCII token before the UTF-8
-                # comparison ever saw it — the client could present the right
-                # secret forever and never authenticate, with nothing
-                # diagnosing why. Fail loudly at load instead (§7).
-                raise AclConfigError(
-                    f"ACL client {client_id!r}: token contains non-ASCII "
-                    "characters; bearer tokens must be ASCII (RFC 6750)"
-                )
-            if token in seen_tokens:
-                # Which client is a presented token? must have exactly one answer.
-                raise AclConfigError(
-                    f"ACL client {client_id!r}: token duplicates another client's"
-                )
-            seen_tokens.add(token)
             token_entries.append((token, client_id))
 
         per_subject = entry.get("per_subject", False)
@@ -258,6 +206,11 @@ def load_config(path: str) -> AclConfig:
 
         grants_by_client[client_id] = grants
 
+    try:
+        identity.validate_token_entries(token_entries)
+    except identity.CredentialError as exc:
+        raise AclConfigError(str(exc)) from exc
+
     return AclConfig(
         grants_by_client=grants_by_client,
         token_entries=tuple(token_entries),
@@ -271,9 +224,7 @@ def load_config(path: str) -> AclConfig:
 
 _active_config: AclConfig | None = None
 
-_current_principal: contextvars.ContextVar[Principal | None] = contextvars.ContextVar(
-    "cpersona_acl_principal", default=None
-)
+_current_principal = identity.PrincipalContext("cpersona_acl_principal")
 
 
 def activate(config: AclConfig | None) -> None:
@@ -328,14 +279,7 @@ def resolve_token(acl_config: AclConfig, presented: str) -> Principal | None:
     raises on non-ASCII str input, and a header a remote caller controls must
     never turn a 401 into a 500 (bug-259).
     """
-    if not presented:
-        return None
-    presented_bytes = presented.encode("utf-8")
-    matched: str | None = None
-    for token, client_id in acl_config.token_entries:
-        if hmac.compare_digest(presented_bytes, token.encode("utf-8")):
-            matched = client_id
-    return Principal(matched) if matched is not None else None
+    return identity.resolve_token(acl_config.token_entries, presented)
 
 
 def effective_permission(grants: dict[str, int], agent_pattern: str) -> int:

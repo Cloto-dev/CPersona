@@ -7,6 +7,20 @@ implementation contract; deviations found during implementation go back to §9.
 capability. OAuth-based identity is a separate line that plugs into the seam
 defined here (§3.1) and is deliberately out of scope.
 
+**Implementation note**: `Principal`, static credential resolution and
+request context primitives are vendored from
+[`mcp_common.identity`](https://github.com/Cloto-dev/mgp-py/tree/main/packages/mcp-common/src/mcp_common/identity.py).
+`cpersona.acl.Principal` remains a compatibility export. ACL configuration,
+grants, per-subject policy, OAuth verification and enforcement remain in
+CPersona. Each consumer owns its context instance; sharing code does not share
+request state or grant tables.
+
+To update only this module from an upstream checkout, run
+`python scripts/sync-identity.py --target-package /path/to/cpersona/_vendored_mcp_common`,
+then repeat with `--check` and run CPersona's authentication/ACL tests.
+Independent repositories are not automatically synchronized. The existing
+full vendoring script also includes the module.
+
 ---
 
 ## 1. Problem

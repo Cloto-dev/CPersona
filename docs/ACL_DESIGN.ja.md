@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ACL_DESIGN.md@blob:92aa585e334b61f168bfbc4bfe10b44e971d2d03 -->
+<!-- i18n-source: docs/ACL_DESIGN.md@blob:54cb770b04828234b104a5228986fd09ca627b4f -->
 
 # クライアント別ケーパビリティ / ACL 設計
 
@@ -10,6 +10,20 @@
 **Scope**: クライアント別・エージェント別の read/write ケーパビリティを、サーバー
 側でハードに強制すること。OAuth ベースの identity はここで定義する継ぎ目 (§3.1)
 に差し込まれる別ラインであり、意図的に対象外です。
+
+**実装について**: `Principal`、静的資格情報の解決、リクエストコンテキストの
+プリミティブは
+[`mcp_common.identity`](https://github.com/Cloto-dev/mgp-py/tree/main/packages/mcp-common/src/mcp_common/identity.py)
+から vendor しています。`cpersona.acl.Principal` は互換用の公開名として残ります。
+ACL 設定、grants、subject ごとのポリシー、OAuth 検証、認可の強制は CPersona に
+残ります。各利用側が自身のコンテキストインスタンスを持つため、コードを共有しても
+リクエスト状態や grant テーブルは共有されません。
+
+upstream のチェックアウトからこのモジュールだけを更新するには、
+`python scripts/sync-identity.py --target-package /path/to/cpersona/_vendored_mcp_common`
+を実行し、続いて `--check` を付けて再実行して CPersona の認証・ACL テストを走らせます。
+独立したリポジトリ同士は自動同期されません。既存の一括 vendoring スクリプトも
+このモジュールを含みます。
 
 ---
 
