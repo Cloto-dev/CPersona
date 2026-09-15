@@ -169,6 +169,16 @@ VECTOR_FAR_LIMIT = max(0, _parse_int("CPERSONA_VECTOR_FAR_LIMIT", 0))
 # (bge-m3 LongMemEval 81.17 -> 48.98), which is why a bench that reaches it is
 # told so rather than left to read the damage off its own scores.
 RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", 10000))
+# 2.6: Recall Depth, separated from the response count. `limit` on the recall
+# tools is the number of rows that come back; the depth is the per-arm top-K the
+# fusion sees (vector near list, far list, episode FTS, memory keyword), and it
+# is `max(limit, RECALL_DEPTH_FLOOR)`, clamped to the library ceiling above.
+# Default 0 keeps the depth equal to the count -- the coupling the 2.5 line
+# shipped with, bit for bit -- so a caller who sets nothing gets the ranking
+# they got yesterday. The floor's default is decided by measurement (LMEB
+# depth sweep), not here: a number written before the sweep is a guess baked
+# into a default. See docs/RELIABLE_RECALL_2_6.md section 4.
+RECALL_DEPTH_FLOOR = max(0, _parse_int("CPERSONA_RECALL_DEPTH_FLOOR", 0))
 # How many embedding rows the fallback vector scan turns into a matrix at a
 # time. The scan reads `MAX_MEMORIES` rows of `(id, embedding)`; it used to
 # fetch all of them in one call and then join the blobs, which holds TWO copies
