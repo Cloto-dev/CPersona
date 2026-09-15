@@ -1462,6 +1462,13 @@ async def _(ctx):
 #       pre-scoring (empty-query volume-rule bypass, no-hits early return),
 #       so enabling confidence would only add noise.
 #
+# 2.6 moved what "no hits" looks like: the reservation (D1) appends the dense
+# arm's top rows, marked `fallback`, whenever the answer would be shorter than
+# ten, so `recall-no-hits` now records rows rather than an empty list. What it
+# still pins is the part that decides anything -- none of them is qualified, and
+# `recall_count` is untouched (the reservation earns no ranking credit, the same
+# rule the gate rescue follows).
+#
 # _install_confidence_on is preferred over env-poking because config.py reads
 # the env at import time and rebinds nothing after; memory_handlers imports
 # CONFIDENCE_ENABLED by value, so the patch is a module-attribute swap.
@@ -1523,7 +1530,7 @@ async def _(ctx):
 # FTS branch returns 0 rows for the nonsense trigram. Fused score is empty,
 # so `messages: []` and no recall_count bump. Default confidence: the empty-
 # result branch is what's under test, no need to enable scoring on it.
-@scenario("recall-no-hits", "store-recall-health", "recall: a query matching no row returns messages=[] and does not touch recall_count", seed=seed_corpus)
+@scenario("recall-no-hits", "store-recall-health", "recall: a query matching no row returns no qualified row — since 2.6 the reservation fills the answer with marked fallback rows (fallback_rows) — and does not touch recall_count", seed=seed_corpus)
 async def _(ctx):
     install_local(ctx)
     return await memory_handlers.do_recall("a1", "xyzzyxyzzy", 5)

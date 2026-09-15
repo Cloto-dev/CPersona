@@ -852,7 +852,11 @@ registry.auto_tool(
     "contributions present on that row. Unscored rows (cascade FTS/keyword) omit match_reason. "
     "A response carrying gate_fallback=true (absent otherwise) means every candidate fell below "
     "the quality gate and the below-gate lexical matches were returned instead of an empty "
-    "result — treat them as low-confidence.",
+    "result — treat them as low-confidence. 2.6 additive: when retrieval leaves the answer "
+    "shorter than ten rows, the dense arm's reserved top rows are appended, each marked "
+    "fallback=true, and fallback_rows (absent otherwise) counts them. A fallback row promises "
+    "no relevance — it is what there was, it never precedes a qualified row, and it earns no "
+    "recall_count credit.",
     {
         "type": "object",
         "properties": {
@@ -967,7 +971,9 @@ registry.auto_tool(
     "without it. CPERSONA_EXTERNAL_CONTEXT_MODE=reject refuses such a call instead. "
     "gate_fallback=true (absent otherwise) is forwarded from the underlying recall: every "
     "candidate fell below the quality gate and the below-gate lexical matches were returned "
-    "instead of an empty result — treat them as low-confidence.",
+    "instead of an empty result — treat them as low-confidence. So is the 2.6 reservation: "
+    "rows marked fallback=true, counted by fallback_rows, are what there was rather than "
+    "hits.",
     {
         "type": "object",
         "properties": {

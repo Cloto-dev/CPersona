@@ -231,8 +231,11 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
    you start with relevant past context. Use `recall_with_context` instead when
    you already hold conversation history (it de-dupes and merges automatically).
    Use `deep=true` when the first pass comes back thin: it halves the
-   quality gate, so weaker matches are admitted. It does not widen the
-   scan window (`CPERSONA_MAX_MEMORIES`).
+   quality gate, so weaker matches are admitted wherever a gate applies (a
+   calibrated gate, or confidence scoring). It does not widen the scan window
+   (`CPERSONA_MAX_MEMORIES`). Rows marked `fallback: true` are the server
+   saying "this is what there was" — they are not hits, and `fallback_rows`
+   counts them.
    *Skip for trivial one-shot questions.*
 
 2. **A decision / rule / preference / bug finding** → `store` it immediately.

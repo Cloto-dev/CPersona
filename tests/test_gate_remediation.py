@@ -439,14 +439,19 @@ async def test_gate_fallback_is_absent_on_an_ordinary_recall(monkeypatch, fake_e
 
 @pytest.mark.asyncio
 async def test_mixed_result_keeps_the_drop_and_stays_unflagged(monkeypatch, fake_embedding_client):
-    """DESIGNED BEHAVIOUR, pinned on purpose (bug-183 fix_note): with one row
-    above the gate and one lexical-only row below it, the weak row is DROPPED,
-    not demoted, and nothing is flagged.
+    """DESIGNED BEHAVIOUR, pinned on purpose: with one row above the gate and one
+    lexical-only row below it, the weak row never enters the RANKED set and
+    nothing is flagged as a rescue.
 
-    Demoting instead would readmit weak lexical rows to every ranked set — the
-    inversion bug-155's backfill exists to close — and would perturb the b2 soak
-    on every query. The membership-preserving redesign is 2.6.0 work; until then
-    this assertion is what makes that a decision rather than an accident.
+    2.6 is the redesign the earlier form of this test was waiting for. The weak
+    row is no longer absent from the response: the reservation appends it, marked
+    `fallback`, once the qualified rows have been placed. What the pin protects is
+    the property the drop was protecting — a below-gate row must not outrank, or
+    be presentable as, a qualified one — and it now has a stronger form than
+    absence, because the marker says so on the row itself.
+
+    Demoting it into the ranked set would readmit weak lexical rows to every
+    ranked order, which is the inversion bug-155's backfill exists to close.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
     await _insert_mem(content="apples orchard hit", blob=_pack_of("apples orchard hit"))
@@ -457,12 +462,24 @@ async def test_mixed_result_keeps_the_drop_and_stays_unflagged(monkeypatch, fake
     )
 
     out = await M.do_recall(AGENT, "apples", limit=5, deep=True)
-    contents = [m["content"] for m in out["messages"]]
+    qualified = [m["content"] for m in out["messages"] if not m.get("fallback")]
+    weak = [m for m in out["messages"] if m["content"] == "apples zzz yyy www"]
 
-    assert "apples orchard hit" in contents, "fixture regression: the strong hit was gated"
-    assert "apples zzz yyy www" not in contents, (
-        f"the below-gate lexical row was demoted into the result set instead of dropped: "
-        f"{contents!r}"
+    assert "apples orchard hit" in qualified, "fixture regression: the strong hit was gated"
+    assert "apples zzz yyy www" not in qualified, (
+        f"the below-gate lexical row was demoted into the ranked set instead of being "
+        f"held out of it: {out!r}"
+    )
+    assert weak and weak[0].get("fallback") is True, (
+        "the below-gate row should reach the caller as a marked reservation row -- "
+        f"either it vanished or it arrived unmarked: {out!r}"
+    )
+    # Return order is last-is-best, so a reservation row must sit before every
+    # qualified one. Reading the marker is not enough: a caller that ignores it
+    # still must not find a fallback row where the best answer belongs.
+    order = [bool(m.get("fallback")) for m in out["messages"]]
+    assert order == sorted(order, reverse=True), (
+        f"a reservation row was placed among the qualified rows: {out!r}"
     )
     assert "gate_fallback" not in out, (
         f"the rescue fired on a non-empty result: {out!r}"
@@ -514,8 +531,12 @@ async def test_a_native_cosine_row_is_not_rescued(monkeypatch, fake_embedding_cl
 
     out = await M.do_recall(AGENT, query, limit=10)
 
-    assert out["messages"] == [], (
-        f"a below-gate native-cosine row was resurrected by the bug-183 rescue: {out!r}"
+    # 2.6: the answer is no longer empty -- the reservation fills it. What this
+    # test is about is the RESCUE, so the question it asks is unchanged in
+    # substance and sharper in form: no row comes back as a qualified hit, and
+    # nothing is flagged `gate_fallback`.
+    assert [m for m in out["messages"] if not m.get("fallback")] == [], (
+        f"a below-gate native-cosine row was resurrected as a qualified hit: {out!r}"
     )
     assert "gate_fallback" not in out
 

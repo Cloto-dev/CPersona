@@ -1109,6 +1109,9 @@ async def _chunked_cosine_scan(
     query_dim: int,
     effective_min_sim: float,
     limit: int | None,
+    *,
+    reserve_out: list[tuple[int, int, float]] | None = None,
+    reserve_k: int = 0,
 ) -> list[tuple[int, int, float]]:
     """Cosine-rank a scan window without ever holding the window in memory.
 
@@ -1182,12 +1185,24 @@ async def _chunked_cosine_scan(
 
     `tests/test_chunked_exact_scan.py` measures each of these on the machine it
     runs on rather than trusting this note.
+
+    `reserve_out` is the reservation of the 2.6 adaptive-fusion design (D1): the
+    top `reserve_k` rows of the window BEFORE the floor is applied, so that a
+    threshold calibrated for a large corpus cannot leave a small eligible
+    universe with nothing. It reads the same similarities the survivors are cut
+    from -- it does not rescore, does not widen the read, and does not touch
+    `survivors`, so a caller that passes nothing computes exactly what it did
+    before. Its key is the survivors' key, so the two agree on ties.
     """
     survivors: list[tuple[int, int, float]] = []
     # (score, -ordinal, id): a min-heap of the best `limit` so far, so the row
     # popped is the lowest score and, among equal scores, the latest in scan
     # order -- the one `nlargest` on the same key would have dropped.
     best: list[tuple[float, int, int]] = []
+    # The same heap shape for the reservation, over every row rather than the
+    # rows that cleared the floor.
+    reserved: list[tuple[float, int, int]] = []
+    want_reserve = reserve_out is not None and reserve_k > 0
     width = query_dim * 4
     # Read at call time, not at import: a chunk size baked into a default
     # argument could not be turned down by a test or by the environment.
@@ -1236,7 +1251,30 @@ async def _chunked_cosine_scan(
                 for row_id, sim_val in zip(ids, _cosine_batch(query_vec, query_dim, blobs)):
                     position = ordinal
                     ordinal += 1
-                    if sim_val < effective_min_sim:
+                    # Written as "did it clear the floor" rather than "is it
+                    # below" because the two spellings differ on NaN, and a
+                    # non-finite embedding scores NaN. `<` says False there and
+                    # admits the row; `>=` says False too and refuses it.
+                    #
+                    # The index phase has always used the `>=` form, so through
+                    # 2.5 the two suppliers of this same list disagreed about
+                    # non-finite rows -- recorded, deliberately, rather than
+                    # decided. 2.6 decides it, and in the direction the index
+                    # already took, because a NaN is not a similarity: it defeats
+                    # every comparison it meets, so a row carrying one was never
+                    # admitted on its merits, and while it sits in the candidate
+                    # list it also perturbs `nlargest` around it -- displacing
+                    # real rows in an order that differs between platforms.
+                    # (Measured: one interpreter ranked a finite row third and
+                    # another sixth, on the same corpus and the same query.)
+                    # The reservation is taken BEFORE the floor -- that is the
+                    # whole of D1 -- and it takes the same NaN answer, by the same
+                    # test written the same way.
+                    if want_reserve and sim_val == sim_val:
+                        heapq.heappush(reserved, (float(sim_val), -position, row_id))
+                        if len(reserved) > reserve_k:
+                            heapq.heappop(reserved)
+                    if not (sim_val >= effective_min_sim):
                         continue
                     score = float(sim_val)
                     if limit is None:
@@ -1248,6 +1286,12 @@ async def _chunked_cosine_scan(
 
             batch = pending
 
+    if want_reserve:
+        # Scan order here too: the caller hydrates by id and re-reads the score,
+        # so the only thing this order has to preserve is the tie-break.
+        reserve_out.extend(
+            sorted((-neg_position, row_id, score) for score, neg_position, row_id in reserved)
+        )
     if limit is None:
         return survivors
     # Back into scan order, which is the order the caller's own tie-break reads.
@@ -1270,6 +1314,8 @@ async def _scan_memories_local(
     channel: str,
     source_id: str,
     scan_offset: int = 0,
+    reserve_out: list[tuple[float, dict]] | None = None,
+    reserve_k: int = 0,
     # bug-315 re-entry: skip the index supplier for one call, so a query the
     # index could not honour is answered by the scan instead of short.
     _index_disabled: bool = False,
@@ -1319,7 +1365,16 @@ async def _scan_memories_local(
     Rows whose embedding is a foreign width are skipped rather than reshaped: a
     mid-flight model swap leaves a mixed-dimension corpus behind, and one stale
     row must not take the whole scan down with a reshape error.
+
+    `reserve_out` / `reserve_k` are the 2.6 reservation (D1): the window's top
+    `reserve_k` rows by similarity WITHOUT the floor, hydrated alongside the
+    survivors and handed back separately. They are not candidates -- the caller
+    keeps them out of the fusion and appends them only if the answer would
+    otherwise be shorter than the reservation. The cost is bounded by
+    `reserve_k` rows of extra hydrate (none of them, when the floor admitted
+    them anyway), and a caller that passes nothing pays nothing.
     """
+    want_reserve = reserve_out is not None and reserve_k > 0
     # Phase 1 has two suppliers and one contract: `(ids, similarities)` in the
     # scan's order. The contiguous index answers when it can promise the same
     # rows; otherwise this is the read it has always been.
@@ -1334,11 +1389,20 @@ async def _scan_memories_local(
         scan_offset=scan_offset,
     )
     from_index = supplied is not None
+    # (id, score) pairs in scan order, floor-free: empty unless a caller asked.
+    reserved: list[tuple[int, float]] = []
     if supplied is not None:
         valid_ids, mat = supplied
         if not valid_ids:
             return []
         sims = _cosine_matrix(query_vec, mat)
+        if want_reserve:
+            # The survivors' key, over every row instead of the ones that cleared
+            # the floor: highest score first, earlier scan position wins a tie.
+            # NaN excluded for the reason the scan path excludes it.
+            finite = [i for i in range(len(sims)) if sims[i] == sims[i]]
+            picked = heapq.nlargest(reserve_k, finite, key=lambda i: (float(sims[i]), -i))
+            reserved = [(valid_ids[i], float(sims[i])) for i in sorted(picked)]
         # Survivors keep the scan's order (created_at DESC): heapq.nlargest in
         # _search_vector is stable, so this order is what breaks a tie between two
         # equally-similar rows, and nothing below may reorder them.
@@ -1378,6 +1442,7 @@ async def _scan_memories_local(
         # widening it (empty at offset 0, see _scan_offset_sql), so the chunked
         # read keeps bounding the peak by the chunk rather than by the reach.
         offset_clause, offset_params = _scan_offset_sql(scan_offset)
+        _reserved_rows: list[tuple[int, int, float]] = []
         survivors = [
             (row_id, score)
             for _, row_id, score in await _chunked_cosine_scan(
@@ -1392,10 +1457,17 @@ async def _scan_memories_local(
                 query_dim,
                 effective_min_sim,
                 limit,
+                reserve_out=_reserved_rows if want_reserve else None,
+                reserve_k=reserve_k,
             )
         ]
+        reserved = [(row_id, score) for _, row_id, score in _reserved_rows]
 
-    if not survivors:
+    # A reservation is an answer even when nothing cleared the floor -- that is
+    # the case it exists for, so the early return has to ask about both.
+    survivor_ids = {mem_id for mem_id, _ in survivors}
+    reserve_extra = [pair for pair in reserved if pair[0] not in survivor_ids]
+    if not survivors and not reserve_extra:
         return []
 
     # The hydrate re-applies the isolation axes and the source filter. That is
@@ -1408,7 +1480,7 @@ async def _scan_memories_local(
         db,
         f"SELECT id, msg_id, content, source, timestamp FROM memories WHERE id IN ({{ph}})"
         f"{iso.and_clause}{src_clause}",
-        [mem_id for mem_id, _ in survivors],
+        [mem_id for mem_id, _ in survivors] + [mem_id for mem_id, _ in reserve_extra],
         (*iso.params, *src_params),
     )
 
@@ -1420,7 +1492,11 @@ async def _scan_memories_local(
     # every query, until someone rebuilds. So take the branch this design already
     # has for an index that cannot promise the same rows, and hand the query back
     # to the scan. Costs one length comparison when nothing is missing.
-    if from_index and len(payload) < len(survivors):
+    if from_index and len(payload) < len(survivors) + len(reserve_extra):
+        if want_reserve:
+            # The re-entry recomputes the reservation from the scan; anything this
+            # attempt already appended would be counted twice.
+            del reserve_out[:]
         return await _scan_memories_local(
             db,
             iso,
@@ -1436,31 +1512,38 @@ async def _scan_memories_local(
             channel=channel,
             source_id=source_id,
             scan_offset=scan_offset,
+            reserve_out=reserve_out,
+            reserve_k=reserve_k,
             _index_disabled=True,
         )
 
-    candidates: list[tuple[float, dict]] = []
-    for mem_id, sim in survivors:
+    def _row_dict(mem_id: int, sim: float) -> dict | None:
         row = payload.get(mem_id)
         # A survivor with no row was deleted (or moved out of scope) between the
         # two statements. Skip it rather than emit a half-empty result -- the same
         # silent-skip the remote branch applies to a stale index hit.
         if row is None:
-            continue
-        candidates.append(
-            (
-                sim,
-                {
-                    "id": mem_id,
-                    "_rid": ("mem", mem_id),
-                    "_cosine": sim,
-                    "msg_id": row[1],
-                    "content": row[2],
-                    "source": row[3],
-                    "timestamp": row[4],
-                },
-            )
-        )
+            return None
+        return {
+            "id": mem_id,
+            "_rid": ("mem", mem_id),
+            "_cosine": sim,
+            "msg_id": row[1],
+            "content": row[2],
+            "source": row[3],
+            "timestamp": row[4],
+        }
+
+    candidates: list[tuple[float, dict]] = []
+    for mem_id, sim in survivors:
+        built = _row_dict(mem_id, sim)
+        if built is not None:
+            candidates.append((sim, built))
+    if want_reserve:
+        for mem_id, sim in reserve_extra:
+            built = _row_dict(mem_id, sim)
+            if built is not None:
+                reserve_out.append((sim, built))
     return candidates
 
 
@@ -1478,6 +1561,8 @@ async def _scan_episodes_local(
     agent_id: str = "",
     project_id: str | None = None,
     scan_offset: int = 0,
+    reserve_out: list[tuple[float, dict]] | None = None,
+    reserve_k: int = 0,
     # bug-315 re-entry: skip the index supplier for one call, so a query the
     # index could not honour is answered by the scan instead of short.
     _index_disabled: bool = False,
@@ -1518,10 +1603,15 @@ async def _scan_episodes_local(
     split at the same position when the far list exists. An episode table smaller
     than the near window simply has no far region, which is the empty answer and
     not a special case.
+
+    `reserve_out` / `reserve_k`: the 2.6 reservation, exactly as in the memory
+    scan. Episodes are part of the dense arm, so the reservation covers them --
+    an agent whose scope holds only episodes gets the same floor-free guarantee.
     """
     if src_like and not channel:
         return []
 
+    want_reserve = reserve_out is not None and reserve_k > 0
     supplied = None if _index_disabled else await _index_phase1(
         db,
         agent_id=agent_id,
@@ -1534,11 +1624,16 @@ async def _scan_episodes_local(
         scan_offset=scan_offset,
     )
     from_index = supplied is not None
+    reserved: list[tuple[int, float]] = []
     if supplied is not None:
         valid_ids, mat = supplied
         if not valid_ids:
             return []
         ep_sims = _cosine_matrix(query_vec, mat)
+        if want_reserve:
+            finite = [i for i in range(len(ep_sims)) if ep_sims[i] == ep_sims[i]]
+            picked = heapq.nlargest(reserve_k, finite, key=lambda i: (float(ep_sims[i]), -i))
+            reserved = [(valid_ids[i], float(ep_sims[i])) for i in sorted(picked)]
         # Survivors keep the scan's order, for the same reason as in the memory
         # scan: the caller's nlargest is stable, and this order is its tie-break.
         survivors = [
@@ -1558,6 +1653,7 @@ async def _scan_episodes_local(
         # helper honours by skipping the cut entirely. The offset is the far
         # list's, and episodes are split at the same position memories are.
         offset_clause, offset_params = _scan_offset_sql(scan_offset)
+        _reserved_rows: list[tuple[int, int, float]] = []
         survivors = [
             (row_id, score)
             for _, row_id, score in await _chunked_cosine_scan(
@@ -1572,17 +1668,22 @@ async def _scan_episodes_local(
                 query_dim,
                 effective_min_sim,
                 limit,
+                reserve_out=_reserved_rows if want_reserve else None,
+                reserve_k=reserve_k,
             )
         ]
+        reserved = [(row_id, score) for _, row_id, score in _reserved_rows]
 
-    if not survivors:
+    survivor_ids = {ep_id for ep_id, _ in survivors}
+    reserve_extra = [pair for pair in reserved if pair[0] not in survivor_ids]
+    if not survivors and not reserve_extra:
         return []
 
     payload = await _fetch_rows_by_id(
         db,
         f"SELECT id, summary, start_time, resolved, created_at FROM episodes WHERE id IN ({{ph}})"
         f"{iso.and_clause}",
-        [ep_id for ep_id, _ in survivors],
+        [ep_id for ep_id, _ in survivors] + [ep_id for ep_id, _ in reserve_extra],
         tuple(iso.params),
     )
 
@@ -1594,7 +1695,9 @@ async def _scan_episodes_local(
     # every query, until someone rebuilds. So take the branch this design already
     # has for an index that cannot promise the same rows, and hand the query back
     # to the scan. Costs one length comparison when nothing is missing.
-    if from_index and len(payload) < len(survivors):
+    if from_index and len(payload) < len(survivors) + len(reserve_extra):
+        if want_reserve:
+            del reserve_out[:]
         return await _scan_episodes_local(
             db,
             iso,
@@ -1608,30 +1711,37 @@ async def _scan_episodes_local(
             agent_id=agent_id,
             project_id=project_id,
             scan_offset=scan_offset,
+            reserve_out=reserve_out,
+            reserve_k=reserve_k,
             _index_disabled=True,
         )
 
-    candidates: list[tuple[float, dict]] = []
-    for ep_id, sim in survivors:
+    def _row_dict(ep_id: int, sim: float) -> dict | None:
         row = payload.get(ep_id)
         if row is None:
-            continue
+            return None
         _, summary, start_time, ep_resolved, ep_created_at = row
-        candidates.append(
-            (
-                sim,
-                {
-                    "id": ep_id,
-                    "_rid": ("ep", ep_id),
-                    "_cosine": sim,
-                    "content": f"[Episode] {summary}",
-                    "source": {"System": "episode"},
-                    # bug-213: start_time is nullable; created_at is not.
-                    "timestamp": episode_timestamp(start_time, ep_created_at),
-                    "_resolved": bool(ep_resolved),
-                },
-            )
-        )
+        return {
+            "id": ep_id,
+            "_rid": ("ep", ep_id),
+            "_cosine": sim,
+            "content": f"[Episode] {summary}",
+            "source": {"System": "episode"},
+            # bug-213: start_time is nullable; created_at is not.
+            "timestamp": episode_timestamp(start_time, ep_created_at),
+            "_resolved": bool(ep_resolved),
+        }
+
+    candidates: list[tuple[float, dict]] = []
+    for ep_id, sim in survivors:
+        built = _row_dict(ep_id, sim)
+        if built is not None:
+            candidates.append((sim, built))
+    if want_reserve:
+        for ep_id, sim in reserve_extra:
+            built = _row_dict(ep_id, sim)
+            if built is not None:
+                reserve_out.append((sim, built))
     return candidates
 
 
@@ -1725,6 +1835,8 @@ async def _search_vector(
     source_id: str = "",
     *,
     far_out: list[dict] | None = None,
+    reserve_out: list[dict] | None = None,
+    reserve_k: int = 0,
 ) -> list[dict]:
     """Search memories and episodes using vector cosine similarity.
 
@@ -1738,6 +1850,17 @@ async def _search_vector(
     `[MAX_MEMORIES, VECTOR_REACH)`, ranked the same way, for the caller to fuse
     as one more ranked list (`docs/SCAN_WINDOW_REACH_DESIGN.md`). It stays empty
     otherwise, and a caller that passes nothing pays for nothing.
+
+    `reserve_out`, when a caller passes a list and `reserve_k` is positive,
+    receives the RESERVATION of the 2.6 adaptive-fusion design (D1): the top
+    `reserve_k` rows of this arm ranked WITHOUT the admission floor, minus the
+    rows already returned. They are not retrieval results and carry no promise of
+    relevance -- their whole purpose is that a floor calibrated for a large
+    corpus cannot leave a small eligible universe with an empty answer, which was
+    measured to empty the top ten for a third of one benchmark's queries. The
+    caller decides what to do with them; this arm only guarantees they exist and
+    are ranked. On the remote branch the list stays empty, for the same reason
+    `far_out` does: the reservation is a property of the local ranking.
 
     An out-parameter rather than a `(near, far)` return, for two reasons that
     both outlive the taste question. The query must be embedded ONCE: a separate
@@ -1858,16 +1981,32 @@ async def _search_vector(
     # breaks a tie between a memory and an episode of equal similarity. The memory
     # scan already returns at most `limit` candidates (bug-249) -- it applies this
     # same cut, with this same tie-break, before paying to read their text.
+    want_reserve = reserve_out is not None and reserve_k > 0
+    reserved: list[tuple[float, dict]] = []
     candidates = await _scan_memories_local(
         db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim, effective_min_sim,
         agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
+        reserve_out=reserved if want_reserve else None, reserve_k=reserve_k,
     )
     candidates += await _scan_episodes_local(
         db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel,
         limit=limit, agent_id=agent_id, project_id=project_id,
+        reserve_out=reserved if want_reserve else None, reserve_k=reserve_k,
     )
 
     top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
+
+    if want_reserve:
+        # Memories then episodes, then `nlargest` on the score: the same merge,
+        # with the same stability breaking the same ties, that the answer above
+        # is built by. A reserved row that reached the answer anyway is dropped
+        # here, so the list the caller receives is only what it does not have.
+        returned = {row.get("_rid") for _score, row in top_k}
+        reserve_out.extend(
+            row
+            for _score, row in heapq.nlargest(reserve_k, reserved, key=lambda x: x[0])
+            if row.get("_rid") not in returned
+        )
 
     # The far list, and the one place "off" is decided on this path. Asked here
     # rather than only inside the call, so that at the default there is no call

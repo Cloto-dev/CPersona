@@ -39,6 +39,15 @@ async def clean_db():
     db = await get_db()
     for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
         await db.execute(f"DELETE FROM {table}")
+    # Rebuild the inverted index, because these tests measure a verdict rather
+    # than a row. `get_db()` is one process-wide connection, so the FTS5 shadow
+    # tables carry whatever every earlier file's inserts and deletes left there,
+    # and a corruption that arrived from outside is indistinguishable in the
+    # response from the one this file injects on purpose -- the residual
+    # `sqlite_integrity` scan reports both as one critical. Measured: adding an
+    # unrelated file ahead of this one turned `critical == 0` red while the
+    # injected corruption was repaired exactly as asserted.
+    await db.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
     await db.commit()
     return db
 

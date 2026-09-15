@@ -14,13 +14,39 @@ actually has, on frozen embeddings and frozen lexical scores:
                               pipeline stage)
     S3  after heuristic gate  _apply_quality_gate on S2 with the pool-size
                               min_score (FUSED_GATE off, AUTOCUT off = the
-                              Track B regime) == what do_recall returns
+                              Track B regime). This was what do_recall returned
+                              through 2.5; from 2.6 the shipped shape is S3g2
+                              below, and S3 is kept because the recorded Track B
+                              numbers were measured under it.
+
+Three further stages score the two structural decisions of the adaptive-fusion
+design (D1, D2) on the same frozen lists, so that a decision between two
+readings of the gate change is measured rather than argued:
+
+    S1r  S1 + reservation     the dense top-k (k = min(10, eligible)) is kept
+                              reachable across the admission floor and appended
+                              to the stage's output until it holds k rows. An
+                              identity by construction (admission is a prefix of
+                              the dense order, so the refilled top ten is S0's);
+                              counted as `d1_identity_mismatch` rather than
+                              assumed.
+    S3r  S3 + reservation     today's gate, then the same refill -- D1 alone.
+    S3g1 rank branch removed  the gate stops cutting lexical-only rows by rank;
+                              the cosine branch still applies min_score to rows
+                              with a dense vote. Plus the refill.
+    S3g2 no heuristic under   the pool-size heuristic applies to no fused row,
+         fusion               of either arm. Plus the refill. (== S2 + refill,
+                              which is what makes the comparison with S3g1 the
+                              measurement: how much of the gate loss the
+                              narrower reading leaves behind.)
 
 Every stage is scored with the harness's own compute_ndcg after the same
 candidate-subset filter the harness applies, so S3 must reproduce the recorded
 Track B number when the threshold is pinned to the recorded calibration, and
 S0 must reproduce Track A. Both identities are checked, and on a sample of
-queries S2 / S3 are compared row-for-row with the real _recall_rrf / do_recall.
+queries the fusion and the shipped shape are compared row-for-row with the real
+_recall_rrf and do_recall (the shipped comparison is skipped where a candidate
+subset applies -- see the identity block for why).
 
 Per query it also records the exact NDCG delta of each transition
 (the exact per-query NDCG delta of docs/research/adaptive-fusion-derivation.md), classifies how
@@ -242,12 +268,12 @@ async def main(args):
                 qemb = st_model.encode(qtexts, normalize_embeddings=True, show_progress_bar=False, **tb._QUERY_ENCODE_KW)
                 emb_client.preload(qtexts, qemb)
 
-                agg = {key: [] for key in ("s0", "s1", "s2", "s2nf", "s3")}
+                agg = {key: [] for key in ("s0", "s1", "s2", "s2nf", "s3", "s1r", "s3r", "s3g1", "s3g2")}
                 wagg = {w: [] for w in W_SWEEP}
                 cls = defaultdict(int)
                 harm_pos = harm_neg = 0.0
                 n_harm = n_help = n_same = 0
-                identity = {"checked": 0, "s2_mismatch": 0, "s3_mismatch": 0}
+                identity = {"checked": 0, "s2_mismatch": 0, "s3_mismatch": 0, "s3_skipped_subset": 0}
                 q_seen = 0
                 # deterministic subsample: every k-th query so every scene/subtask is covered
                 q_index = list(range(len(queries)))
@@ -351,10 +377,46 @@ async def main(args):
                             return (1.0 / (k + lex_rank[d] + 1)) >= rrf_gate
                         s3 = [d for d in s2 if gate_keep(d)]
 
+                        # D2, narrow reading: only the rank cut on lexical-only rows goes.
+                        def gate_keep_g1(d: str) -> bool:
+                            j = id_to_idx.get(d)
+                            if j is not None and int(rank_of[j]) < n_adm:
+                                return float(sims[j]) >= min_score
+                            return True
+                        s3g1 = [d for d in s2 if gate_keep_g1(d)]
+
+                        # D1: the dense top-k stays reachable across every stage and refills
+                        # the output. W_dense is the eligible dense order, so the reserved
+                        # rows are its prefix; appended, never reordered, never scored.
+                        k_reserve = min(10, len(W_dense))
+
+                        def d1_fill(ranked: list[str]) -> list[str]:
+                            if len(ranked) >= k_reserve:
+                                return ranked
+                            out = list(ranked)
+                            seen = set(out)
+                            for d_ in W_dense:
+                                if len(out) >= k_reserve:
+                                    break
+                                if d_ not in seen:
+                                    out.append(d_)
+                                    seen.add(d_)
+                            return out
+
+                        s1r, s3r, s3g1r, s3g2r = (d1_fill(dense_adm_W), d1_fill(s3),
+                                                  d1_fill(s3g1), d1_fill(s2))
+
                         f0, f1, f2, f2nf, f3 = (flt(dense_ids_W), flt(dense_adm_W), flt(s2), flt(s2nf), flt(s3))
                         n0, n1, n2, n2nf, n3 = (ndcg10(f0, gold), ndcg10(f1, gold), ndcg10(f2, gold),
                                                 ndcg10(f2nf, gold), ndcg10(f3, gold))
-                        for key, v in zip(("s0", "s1", "s2", "s2nf", "s3"), (n0, n1, n2, n2nf, n3)):
+                        n1r, n3r, n3g1, n3g2 = (ndcg10(flt(s1r), gold), ndcg10(flt(s3r), gold),
+                                                ndcg10(flt(s3g1r), gold), ndcg10(flt(s3g2r), gold))
+                        # The reservation claims S1 + D1 IS the dense order's top ten.
+                        # Checked per query rather than asserted once in prose.
+                        if abs(n1r - n0) > 1e-12:
+                            cls["d1_identity_mismatch"] += 1
+                        for key, v in zip(("s0", "s1", "s2", "s2nf", "s3", "s1r", "s3r", "s3g1", "s3g2"),
+                                          (n0, n1, n2, n2nf, n3, n1r, n3r, n3g1, n3g2)):
                             agg[key].append(v)
                         for w in W_SWEEP:
                             wagg[w].append(n2 if w == 1.0 else ndcg10(flt(fuse(n_adm, w)), gold))
@@ -405,17 +467,31 @@ async def main(args):
                                 if identity["s2_mismatch"] <= 3:
                                     logger.warning("S2 mismatch qid=%s first diff at %s", qid,
                                                    next((j for j, (a, b) in enumerate(zip(real2_ids, f2)) if a != b), None))
+                            # The live answer is the SHIPPED shape, which since 2.6
+                            # is S3g2 + the reservation -- so that is what it is
+                            # compared with. Skipped where a candidate subset
+                            # applies: there the harness filters after the recall, so
+                            # the server counts its ten rows over the whole corpus
+                            # while this model counts them inside the subset. Every
+                            # other stage still commutes with the filter (the fusion
+                            # keeps full-list ranks), which is why only this one is
+                            # skipped rather than the check abandoned.
                             real3 = await server_mod.do_recall(agent_id=tb.AGENT_ID, query=q["text"], limit=corpus_size)
                             real3_ids = flt([m_.get("id", "") for m_ in reversed(real3.get("messages", [])) if m_.get("id")])
-                            if real3_ids[:100] != f3[:100]:
-                                identity["s3_mismatch"] += 1
-                                if identity["s3_mismatch"] <= 3:
-                                    logger.warning("S3 mismatch qid=%s first diff at %s", qid,
-                                                   next((j for j, (a, b) in enumerate(zip(real3_ids, f3)) if a != b), None))
+                            if allowed is not None:
+                                identity["s3_skipped_subset"] += 1
+                            else:
+                                shipped = flt(s3g2r)
+                                if real3_ids[:100] != shipped[:100]:
+                                    identity["s3_mismatch"] += 1
+                                    if identity["s3_mismatch"] <= 3:
+                                        logger.warning("S3 mismatch qid=%s first diff at %s", qid,
+                                                       next((j for j, (a, b) in enumerate(zip(real3_ids, shipped)) if a != b), None))
 
                         per_query_fh.write(json.dumps({
                             "task": task_name, "subtask": st["name"], "qid": qid, "n_gold": len(gold),
                             "s0": round(n0, 4), "s1": round(n1, 4), "s2": round(n2, 4), "s2nf": round(n2nf, 4), "s3": round(n3, 4),
+                            "s1r": round(n1r, 4), "s3r": round(n3r, 4), "s3g1": round(n3g1, 4), "s3g2": round(n3g2, 4),
                             "n_dense_adm": n_adm, "n_lex": n_lex, "lex_like_fallback": lex_bm25_none,
                             "gold_below_floor": gold_below_floor, "gold_missing": gold_missing,
                             "n_eligible": n_eligible, "n_dense_adm_eligible": n_adm_eligible,
@@ -433,9 +509,14 @@ async def main(args):
                     "queries": q_seen,
                     "S0_dense": m(agg["s0"]), "S1_admitted": m(agg["s1"]), "S2_rrf": m(agg["s2"]),
                     "S2nf_rrf_nofloor": m(agg["s2nf"]), "S3_gated": m(agg["s3"]),
+                    "S1r_reserved": m(agg["s1r"]), "S3r_reserved": m(agg["s3r"]),
+                    "S3g1_no_rank_cut": m(agg["s3g1"]), "S3g2_no_heuristic": m(agg["s3g2"]),
                     "d_admission": round(m(agg["s1"]) - m(agg["s0"]), 3),
                     "d_fusion": round(m(agg["s2"]) - m(agg["s1"]), 3),
                     "d_gate": round(m(agg["s3"]) - m(agg["s2"]), 3),
+                    "d_gate_g1": round(m(agg["s3g1"]) - m(agg["s2"]), 3),
+                    "d_gate_g2": round(m(agg["s3g2"]) - m(agg["s2"]), 3),
+                    "d_d1_only": round(m(agg["s3r"]) - m(agg["s3"]), 3),
                     "d_fusion_nofloor_vs_dense": round(m(agg["s2nf"]) - m(agg["s0"]), 3),
                     "fusion_H": round(100.0 * harm_neg / max(q_seen, 1), 3),
                     "fusion_C": round(100.0 * harm_pos / max(q_seen, 1), 3),
@@ -445,9 +526,14 @@ async def main(args):
                     "identity": identity,
                 }
                 subtask_stage[st["name"]] = rec
-                logger.info("    %s: S0 %.2f | S1 %.2f | S2 %.2f | S3 %.2f  (adm %+.2f fus %+.2f gate %+.2f) H=%.2f C=%.2f harmed %d helped %d | id %s",
+                logger.info("    %s: S0 %.2f | S1 %.2f | S2 %.2f | S3 %.2f  (adm %+.2f fus %+.2f gate %+.2f) "
+                            "D1/D2: S3r %.2f S3g1 %.2f S3g2 %.2f (g1 %+.2f g2 %+.2f d1 %+.2f, d1_mismatch %d) "
+                            "H=%.2f C=%.2f harmed %d helped %d | id %s",
                             st["name"], rec["S0_dense"], rec["S1_admitted"], rec["S2_rrf"], rec["S3_gated"],
-                            rec["d_admission"], rec["d_fusion"], rec["d_gate"], rec["fusion_H"], rec["fusion_C"],
+                            rec["d_admission"], rec["d_fusion"], rec["d_gate"],
+                            rec["S3r_reserved"], rec["S3g1_no_rank_cut"], rec["S3g2_no_heuristic"],
+                            rec["d_gate_g1"], rec["d_gate_g2"], rec["d_d1_only"], cls.get("d1_identity_mismatch", 0),
+                            rec["fusion_H"], rec["fusion_C"],
                             n_harm, n_help, identity)
 
         await server_mod.do_delete_agent_data(tb.AGENT_ID)
@@ -462,11 +548,13 @@ async def main(args):
             "rrf_k": k, "threshold_factor": factor, "pin_from": args.pin_from,
             "time_s": round(time.time() - t_task, 1),
             "mean": {key: tmean(key) for key in ("S0_dense", "S1_admitted", "S2_rrf", "S2nf_rrf_nofloor", "S3_gated",
-                                                 "d_admission", "d_fusion", "d_gate", "d_fusion_nofloor_vs_dense",
+                                                 "S1r_reserved", "S3r_reserved", "S3g1_no_rank_cut", "S3g2_no_heuristic",
+                                                 "d_admission", "d_fusion", "d_gate", "d_gate_g1", "d_gate_g2",
+                                                 "d_d1_only", "d_fusion_nofloor_vs_dense",
                                                  "fusion_H", "fusion_C")},
             "w_sweep_mean": {str(w): round(float(np.mean([v["w_sweep"][str(w)] for v in subtask_stage.values()])), 3)
                              for w in W_SWEEP},
-            "identity": {kk: sum(v["identity"][kk] for v in subtask_stage.values()) for kk in ("checked", "s2_mismatch", "s3_mismatch")},
+            "identity": {kk: sum(v["identity"][kk] for v in subtask_stage.values()) for kk in ("checked", "s2_mismatch", "s3_mismatch", "s3_skipped_subset")},
             "groups": group_records,
             "subtasks": subtask_stage,
         }

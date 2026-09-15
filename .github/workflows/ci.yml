@@ -217,10 +217,15 @@ jobs:
     # adding signal.
     if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
-    # The script runs the suite up to ~13 times, but caught mutants fail fast (-x)
-    # and every test is bounded by the 60s per-test timeout; local wall time is
-    # ~12s. 15 minutes is a generous hang ceiling, matching the `test` job.
-    timeout-minutes: 15
+    # The cost is linear in the number of mutations: one baseline suite, then one
+    # suite per mutant. Caught mutants fail fast (-x) and every test is bounded by
+    # the 60s per-test timeout, so a mutant costs a fraction of a full run -- but
+    # the list grows, and the ceiling has to grow with it. Measured: at 28
+    # mutations the job was still running when the 15-minute ceiling cancelled it,
+    # which reads in the log exactly like a hang and is not one. 30 minutes is the
+    # hang ceiling at this size; the next time it is reached, read the count
+    # before raising it again.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install uv

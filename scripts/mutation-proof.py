@@ -71,6 +71,111 @@ class Mutation:
 # ---------------------------------------------------------------------------
 
 MUTATIONS: list[Mutation] = [
+    # ---------------------------------------------------------------------
+    # 2.6 structural decisions: the reservation (D1), the gate (D2) and the
+    # lexical weight (D3-now). Each entry breaks one claim the design makes, so
+    # a SURVIVED line here says the claim is unguarded rather than untrue.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="R01",
+        target="reservation: the refill itself",
+        file="cpersona/memory_handlers.py",
+        find="        target = min(RECALL_RESERVE_ROWS, limit)",
+        replace="        target = 0",
+        breaks="a starved recall goes back to answering short (D1's cardinality contract)",
+        expect="test_260a1_reservation_and_gate.py::test_reservation_fills_an_answer_the_floor_starved",
+    ),
+    Mutation(
+        id="R02",
+        target="reservation: the marker",
+        file="cpersona/memory_handlers.py",
+        find='            row["_reserved_fallback"] = True',
+        replace='            row["_reserved_fallback"] = False',
+        breaks="a below-floor row reaches the caller as an ordinary hit",
+        expect="test_260a1 (marker + ordering), test_gate_remediation (mixed result)",
+    ),
+    Mutation(
+        id="R03",
+        target="reservation: no ranking credit",
+        file="cpersona/memory_handlers.py",
+        find="            and r.get(\"id\") not in fallback_memory_ids",
+        replace="",
+        breaks="a fallback row raises its own recall_count, which lifts its future confidence floor",
+        expect="test_260a1_reservation_and_gate.py::test_reservation_earns_no_recall_count_credit",
+    ),
+    Mutation(
+        id="R04",
+        target="reservation: taken BEFORE the floor (scan path)",
+        file="cpersona/vector.py",
+        find="""                    if want_reserve and sim_val == sim_val:
+                        heapq.heappush(reserved, (float(sim_val), -position, row_id))
+                        if len(reserved) > reserve_k:
+                            heapq.heappop(reserved)
+                    if not (sim_val >= effective_min_sim):
+                        continue""",
+        replace="""                    if not (sim_val >= effective_min_sim):
+                        continue
+                    if want_reserve and sim_val == sim_val:
+                        heapq.heappush(reserved, (float(sim_val), -position, row_id))
+                        if len(reserved) > reserve_k:
+                            heapq.heappop(reserved)""",
+        breaks="the reservation only holds rows the floor already admitted, so it cannot fill a starved answer",
+        expect="test_260a1_reservation_and_gate.py::test_reservation_fills_an_answer_the_floor_starved",
+    ),
+    Mutation(
+        id="R05",
+        target="reservation: the index path computes one too",
+        file="cpersona/vector.py",
+        find="            reserved = [(valid_ids[i], float(sims[i])) for i in sorted(picked)]",
+        replace="            reserved = []",
+        breaks="a corpus answered by the contiguous index gets no reservation, so the two paths disagree",
+        expect="the index-path behaviour goldens (corpus-*-recall-index*)",
+    ),
+    Mutation(
+        id="R06",
+        target="gate: the heuristic stays off a fused order",
+        file="cpersona/memory_handlers.py",
+        find="        fused_order=fused_order,",
+        replace="        fused_order=False,",
+        breaks="the pool-size heuristic gates fused rows again (D2 reverted at the call site)",
+        expect="test_260a1 (D2 pair), test_audit_2500b3, test_docs_behavioural_claims",
+    ),
+    Mutation(
+        id="R08",
+        target="gate: no-threshold is not no-question",
+        file="cpersona/memory_handlers.py",
+        find="            if calibrated is None and fused_order and _is_a_number(cosine):",
+        replace="            if calibrated is None and fused_order:",
+        breaks="a NaN cosine is admitted because no threshold applies, and its rank is whatever the platform's NaN ordering says",
+        expect="test_260a1_reservation_and_gate.py::test_a_nan_score_is_not_admitted_by_the_absent_threshold",
+    ),
+    Mutation(
+        id="R09",
+        target="reservation: NaN is not a top row (scan path)",
+        file="cpersona/vector.py",
+        find="                    if want_reserve and sim_val == sim_val:",
+        replace="                    if want_reserve:",
+        breaks="a non-finite row enters the reservation and is ordered by accident",
+        expect="test_260a1_reservation_and_gate.py::test_a_nan_score_is_not_admitted_by_the_absent_threshold",
+    ),
+    Mutation(
+        id="R10",
+        target="the scan's floor test refuses NaN, as the index phase always has",
+        file="cpersona/vector.py",
+        find="                    if not (sim_val >= effective_min_sim):",
+        replace="                    if sim_val < effective_min_sim:",
+        breaks="the two suppliers of the dense list disagree about non-finite rows again, and a NaN in the candidate list reorders the finite rows around it",
+        expect="the non-finite behaviour goldens (corpus-nonfinite-recall-scan*)",
+    ),
+    Mutation(
+        id="R07",
+        target="lexical weight reaches the vote",
+        file="cpersona/memory_handlers.py",
+        find="    w_lex = config.RRF_LEXICAL_WEIGHT",
+        replace="    w_lex = 1.0",
+        breaks="CPERSONA_RRF_LEXICAL_WEIGHT is read and then ignored — the control arm measures the shipped fusion",
+        expect="test_260a1_reservation_and_gate.py::test_lexical_weight_scales_the_lexical_vote",
+    ),
     Mutation(
         id="M01",
         target="_search_vector remote payload",

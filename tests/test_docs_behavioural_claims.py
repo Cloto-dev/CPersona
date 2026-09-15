@@ -288,7 +288,13 @@ async def test_empty_agent_id_is_a_writable_bucket_not_an_impossible_value(clean
 # skills/cpersona-memory/SKILL.md, "Mandatory triggers" and the shipped policy block:
 #
 #   "Use `deep=true` when the first pass comes back thin: it halves the quality gate,
-#    so weaker matches are admitted. It does not widen the scan window."
+#    so weaker matches are admitted wherever a gate applies — a calibrated gate, or
+#    confidence scoring. It does not widen the scan window."
+#
+# The qualifier is 2.6's: on a fused order the pool-size heuristic no longer gates
+# (see _apply_quality_gate, D2), so on an install that has never been calibrated
+# there is no gate under `rrf`/`rsf` for `deep` to halve. The test therefore
+# installs a calibrated gate, which is the configuration the sentence is about.
 #
 # Both lines said the opposite until now — "dig past time decay" and "search the full
 # history without time decay". Time decay lives in `_compute_confidence`, and BOTH of
@@ -306,22 +312,36 @@ async def test_empty_agent_id_is_a_writable_bucket_not_an_impossible_value(clean
 
 @pytest.mark.asyncio
 async def test_deep_relaxes_the_quality_gate_rather_than_a_time_horizon(
-    clean_db, fake_embedding_client
+    clean_db, fake_embedding_client, monkeypatch
 ):
     """SKILL.md's `deep=true`: weaker matches, not an older horizon."""
+    from cpersona import vector
+
     for index in range(40):
         await memory_handlers.do_store(
             AGENT_A, {"content": f"filler row {index} gardening tools soil"}
         )
     await memory_handlers.do_store(AGENT_A, {"content": "quantum tunnelling diodes"})
 
+    # The gate is placed against a measured score rather than a guessed one, and on
+    # the branch the rows actually take. Qualified rows only: since 2.6 the answer is
+    # padded with reservation rows, and counting those would make `deep` look
+    # effective on an implementation where it does nothing.
+    probe = await memory_handlers.do_recall(AGENT_A, "quantum diodes tunnelling", limit=10)
+    scored = [m for m in probe["messages"] if m.get("match_reason") and not m.get("fallback")]
+    assert scored, f"nothing came back scored, so there is no gate score to sit above: {probe}"
+    target = scored[0]
+    gate_at = target["match_reason"]["score"] * 1.2
+    monkeypatch.setitem(vector._agent_fused_gates, AGENT_A, gate_at)
+    monkeypatch.setattr(vector, "_fused_gate_signal", target["match_reason"]["signal"])
+
     shallow = await memory_handlers.do_recall(AGENT_A, "quantum diodes tunnelling", limit=10)
     deep = await memory_handlers.do_recall(
         AGENT_A, "quantum diodes tunnelling", limit=10, deep=True
     )
 
-    shallow_contents = {m["content"] for m in shallow["messages"]}
-    deep_contents = {m["content"] for m in deep["messages"]}
+    shallow_contents = {m["content"] for m in shallow["messages"] if not m.get("fallback")}
+    deep_contents = {m["content"] for m in deep["messages"] if not m.get("fallback")}
 
     assert not any("confidence" in m for m in deep["messages"]), (
         "a `confidence` block came back on a default install, so time decay is live "
@@ -349,14 +369,17 @@ async def test_deep_relaxes_the_quality_gate_rather_than_a_time_horizon(
 # docs/operations.md ("Tuning recall") and docs/configuration.md, on
 # CPERSONA_FUSED_GATE_ENABLED=false:
 #
-#   "filtering falls back to the pool-size heuristic (`_adaptive_min_score`), which
-#    still rejects weak matches — it is a coarser gate, not an open door."
+#   "Under a fusion mode there is then nothing left between the admission floor and
+#    the caller: 2.6 stopped applying the pool-size heuristic to fused rows, so
+#    turning the gate off IS an open door there. Under `cascade` the heuristic still
+#    cuts."
 #
-# Both pages said "contamination passes through unfiltered", which would make turning
-# the gate off a very different decision than it is. `gate` becomes None and
-# _apply_quality_gate still applies `effective_min`, so the pool-size floor keeps
-# cutting. An operator who read the old sentence would either avoid a knob that is
-# safe to reach for, or reach for it expecting a diagnostic firehose and get one row.
+# The pages have now said both things. They said "contamination passes through
+# unfiltered", which was wrong while the heuristic still ran; they were corrected to
+# "a coarser gate, not an open door"; and 2.6's D2 made the first sentence true again
+# for fusion modes and left it false for `cascade`. An operator reading either
+# undivided version reaches for the knob with the wrong expectation in one of the two
+# modes, which is why both halves are pinned here.
 # --------------------------------------------------------------------------------------
 
 
@@ -364,7 +387,7 @@ async def test_deep_relaxes_the_quality_gate_rather_than_a_time_horizon(
 async def test_disabling_the_fused_gate_leaves_the_pool_size_floor(
     clean_db, fake_embedding_client, monkeypatch
 ):
-    """Turning off the fused gate is a coarser gate, not an open door."""
+    """Gate off: an open door under fusion, a coarser gate under cascade."""
     from cpersona import config
 
     for index in range(40):
@@ -374,14 +397,22 @@ async def test_disabling_the_fused_gate_leaves_the_pool_size_floor(
     await memory_handlers.do_store(AGENT_A, {"content": "quantum tunnelling diodes"})
 
     monkeypatch.setattr(config, "FUSED_GATE_ENABLED", False)
-    result = await memory_handlers.do_recall(AGENT_A, "quantum diodes tunnelling", limit=10)
+    fused = await memory_handlers.do_recall(AGENT_A, "quantum diodes tunnelling", limit=10)
 
-    contents = [m["content"] for m in result["messages"]]
-    assert not any("gardening" in c for c in contents), (
-        "with CPERSONA_FUSED_GATE_ENABLED=false the weak rows came back, so the pages "
-        "should go back to warning that contamination passes unfiltered. Right now "
-        "both operations.md and configuration.md tell the operator the pool-size "
-        f"heuristic still cuts. Returned: {contents}"
+    contents = [m["content"] for m in fused["messages"] if not m.get("fallback")]
+    assert any("gardening" in c for c in contents), (
+        "the weak rows were cut on a fused order with the calibrated gate off, so the "
+        "pool-size heuristic is gating fused rows again and both pages should go back "
+        f"to promising a coarser gate. Returned: {contents}"
+    )
+
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "cascade")
+    cascade = await memory_handlers.do_recall(AGENT_A, "quantum diodes tunnelling", limit=10)
+    cascade_contents = [m["content"] for m in cascade["messages"] if not m.get("fallback")]
+    assert not any("gardening" in c for c in cascade_contents), (
+        "with the gate off under `cascade` the weak rows came back too, so the pages "
+        "should stop distinguishing the modes -- the heuristic is meant to keep its "
+        f"role on a dense-only order. Returned: {cascade_contents}"
     )
 
 
@@ -518,16 +549,23 @@ async def test_gate_fallback_is_unreachable_with_confidence_off(
     # A calibrated agent whose vector arm demands a close match; the identifier row is
     # below it, so only FTS finds it.
     monkeypatch.setitem(vector._agent_thresholds, AGENT_A, 0.9)
-    # An impossible gate: above every branch's scale, so nothing survives it.
-    monkeypatch.setattr(memory_handlers, "_adaptive_min_score", lambda count: 5.0)
+    # An impossible gate: above every branch's scale, so nothing survives it. It is
+    # installed as a CALIBRATED gate rather than by moving the pool-size heuristic,
+    # because since 2.6 the heuristic does not gate a fused row at all -- forcing it
+    # would force nothing. The signal follows the branch each configuration produces,
+    # which is what a real calibration records (`rrf` with confidence off,
+    # `confidence` with it on).
+    monkeypatch.setitem(vector._agent_fused_gates, AGENT_A, 5.0)
 
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", False)
+    monkeypatch.setattr(vector, "_fused_gate_signal", "rrf")
     default = await memory_handlers.do_recall(AGENT_A, identifier, limit=10)
 
-    assert default["messages"] == [], (
-        "an all-below-gate recall returned rows under the shipped configuration. "
-        f"behavior-contracts.md §8 and architecture.md both promise an empty response "
-        f"there. Got: {[m['content'] for m in default['messages']]}"
+    assert [m for m in default["messages"] if not m.get("fallback")] == [], (
+        "an all-below-gate recall returned a QUALIFIED row under the shipped "
+        "configuration. behavior-contracts.md section 8 promises none there (the "
+        "reservation rows it may still carry are marked). Got: "
+        f"{[m['content'] for m in default['messages']]}"
     )
     assert "gate_fallback" not in default, (
         "`gate_fallback` appeared with CPERSONA_CONFIDENCE_ENABLED off. Both pages tell "
@@ -538,6 +576,7 @@ async def test_gate_fallback_is_unreachable_with_confidence_off(
     )
 
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(vector, "_fused_gate_signal", "confidence")
     rescued = await memory_handlers.do_recall(AGENT_A, identifier, limit=10)
 
     assert rescued.get("gate_fallback") is True, (
@@ -599,7 +638,9 @@ async def test_profile_injection_needs_fifty_rows_counting_episodes(
         return [m["content"] for m in result["messages"]]
 
     below = await _recall_with(memories=49, episodes=0)
-    assert below == [], (
+    # The reservation may fill the answer with unrelated rows since 2.6; the profile
+    # row is the only thing this claim is about.
+    assert not any(c.startswith("[Profile]") for c in below), (
         "the profile row was injected into a 49-row scope. architecture.md tells the "
         f"reader the gate drops it below 50, and behavior-contracts.md §7 sends anyone "
         f"who needs guaranteed presence to deterministic injection instead. Got: {below}"
