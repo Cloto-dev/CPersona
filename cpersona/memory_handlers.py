@@ -2170,6 +2170,12 @@ def _build_fts_query(query: str) -> str:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in dict.fromkeys(terms))
 
 
+def _build_fts_recall_query(query: str) -> str:
+    """Experimental edges policy; the literal FTS compiler stays unchanged."""
+    normalized = " ".join(token.strip("\"'`.,;:!?()[]{}") for token in query.split())
+    return _build_fts_query(normalized)
+
+
 async def _search_episodes_fts(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -2184,7 +2190,7 @@ async def _search_episodes_fts(
     exact-match filter on the episode's channel — empty means no channel
     filter (all channels), mirroring the memory search paths.
     """
-    fts_query = _build_fts_query(query)
+    fts_query = _build_fts_recall_query(query)
     if not fts_query:
         return []
     # isolation_where composes all three axes: exact agent, γ project,
@@ -2260,7 +2266,7 @@ async def _search_memories_keyword(
         return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows]
 
     if FTS_ENABLED:
-        fts_query = _build_fts_query(query)
+        fts_query = _build_fts_recall_query(query)
         if fts_query:
             try:
                 rows = await db.execute_fetchall(

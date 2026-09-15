@@ -27,13 +27,17 @@
     {
       "line": "2.4.x",
       "reason": "The 2.4.x branch carries no scripts/build-docs.sh and only two files under docs/, so there is no mkdocs tree for the assembler to build. The Stable line's documentation is its README, SUPPORT.md and the two design records on that branch; publishing it here would mean back-porting the documentation site to a frozen line."
+    },
+    {
+      "line": "2.6.x",
+      "reason": "The first Experimental release is being prepared. Its versioned documentation will be enabled after the first 2.6 tag exists; until then the published site continues to serve the 2.5 maintenance line."
     }
   ],
   "versions": [
     {
       "id": "2.5",
       "title": "2.5.x",
-      "branch": "master"
+      "branch": "2.5.x"
     }
   ]
 }
