@@ -6369,6 +6369,19 @@
       "status": "fixed",
       "category": "unchecked-pointer",
       "fix_note": "The verifier refuses a registry whose `$schema` is absent, is a URL or an absolute path, or does not resolve to a file inside the repository. Repo-relative is the only form it accepts, because a gate that must work offline cannot follow a URL -- and the URL form is exactly the one that rotted elsewhere. The root `version` is removed rather than given a meaning: with one producer and one consumer, both here and versioned together by git, there is no skew for it to describe. Per-entry `version` is untouched, being a fact about the defect rather than about the file. The schema document also stops claiming the sibling scripts are kept in sync with this one -- they are not, and saying so was what let four verifiers diverge in detection power while every registry still said \"1.0\"."
+    },
+    {
+      "id": "bug-434",
+      "summary": "(LOW) The version-selector gate's check that a selector row leads to a page that exists has no test. scripts/check-version-selector.py:211 reports a row whose target is not in the assembled tree, and that is one of the three questions the file's own docstring says are asked separately because each can fail while the other two pass. Making the branch unreachable leaves tests/test_docs_applies_to_banner.py entirely green -- measured alongside three other mutations of the same gate, each of which turned exactly one test red. The failure this branch is the only check for is a selector that renders, names the right line, and links to a tree the assembler never built: every row looks correct and one of them returns a 404.",
+      "severity": "LOW",
+      "discovered": "2026-09-16T08:00:00Z",
+      "version": "2.6.0a1",
+      "file": "scripts/check-version-selector.py",
+      "pattern": "if not target\\.is_file\\(\\):",
+      "expected": "present",
+      "status": "open",
+      "category": "test-coverage",
+      "note": "Found while repairing the positive control in the same test file, which had been red since a second version line was declared: the fixture published one line where the gate asks its question per line. That repair made the positive control assert the whole run is clean, so the tree it writes now exercises this branch in the passing direction -- a row pointing at a page that is not there would fail it. What is still missing is the negative: no test writes a tree whose selector points at a line the assembler did not build, so deleting the branch costs nothing. Left open rather than fixed with the repair, to keep a build-restoring change to the failure it restored."
     }
   ]
 }
