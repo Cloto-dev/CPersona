@@ -1,20 +1,24 @@
 # CPersona Documentation
 
-CPersona is an [MCP](https://modelcontextprotocol.io/) server that gives
-Claude — or any MCP-capable agent — **persistent memory across sessions**.
-Memories live in a single local SQLite file and are retrieved with a 3-layer
-hybrid search (vector + FTS5 + keyword, fused by rank or relative score). The
-server has **zero LLM dependency**: it never calls a generative model. Two
-caveats on what that buys you — embeddings can still cost money
-(`EMBEDDING_MODE=api` bills per request against an endpoint that defaults to
-OpenAI's; `http` mode against a local server does not), and recall is
-deterministic given a calibrated gate, but the gate itself is measured by
-sampling the corpus at random, so two installs on identical data can settle on
-different operating points.
+CPersona is an [MCP](https://modelcontextprotocol.io/) server. It gives
+Claude — or any MCP-capable agent — **memory that survives across sessions**.
 
-> **Applies to: CPersona {{ version_line }}.** This site is the canonical documentation —
-> when the README or the bundled skill disagrees with a page here, this site
-> wins, and the discrepancy is a bug worth
+Memories are kept in one local SQLite file. Recall searches them three ways
+(vector, FTS5, keyword) and fuses the results by rank or by relative score.
+
+The server has **zero LLM dependency**: it never calls a generative model. Two
+things that does not mean:
+
+- **It is not always free.** `EMBEDDING_MODE=api` bills every embedding request
+  against an endpoint that defaults to OpenAI's. `http` mode, pointed at an
+  embedding server you run, does not.
+- **It is not identical everywhere.** Recall is deterministic once the quality
+  gate is calibrated. Calibration samples your corpus at random, so two
+  installs holding the same data can settle on different gates.
+
+> **Applies to: CPersona {{ version_line }}.** This site is the canonical documentation.
+> If the README or the bundled skill disagrees with a page here, this site
+> wins, and the disagreement is a bug worth
 > [reporting](https://github.com/Cloto-dev/cpersona/issues/new?template=bug_report.yml).
 
 ## Where to go
@@ -25,8 +29,7 @@ different operating points.
 
     ---
 
-    Install it, register it with an MCP client, and verify the connection end
-    to end.
+    Install it, register it with an MCP client, and verify the connection.
 
     [:octicons-arrow-right-24: Getting Started](getting-started.md)
 
@@ -34,8 +37,8 @@ different operating points.
 
     ---
 
-    Storage layout, the three retrievers, and the fusion → gate → reverse
-    pipeline, drawn.
+    Where memories are stored, how the three retrievers search them, and what
+    the fusion → gate → reverse pipeline does. With diagrams.
 
     [:octicons-arrow-right-24: Architecture](architecture.md)
 
@@ -43,8 +46,8 @@ different operating points.
 
     ---
 
-    Every tool grouped by purpose, each linked to the contract it can
-    surprise you with.
+    Every tool, grouped by purpose. Tools that do not behave the way their
+    name suggests link to the contract that explains them.
 
     [:octicons-arrow-right-24: Tools](tools.md)
 
@@ -52,8 +55,7 @@ different operating points.
 
     ---
 
-    The behaviours you may rely on, stated so that changing one is a bug and
-    not a preference.
+    Behaviours you can rely on. We treat a change to any of them as a bug.
 
     [:octicons-arrow-right-24: Behavior Contracts](behavior-contracts.md)
 
@@ -61,8 +63,8 @@ different operating points.
 
     ---
 
-    Every environment variable with its default, and what the HTTP transport
-    requires before it will serve.
+    Every environment variable and its default, and what the HTTP transport
+    requires before it will answer.
 
     [:octicons-arrow-right-24: Configuration](configuration.md)
 
@@ -79,8 +81,8 @@ different operating points.
 
     ---
 
-    Short answers to the questions operators actually ask, each pointing at
-    the page that carries the detail.
+    Short answers to the questions operators ask most, each linking to the
+    page with the full detail.
 
     [:octicons-arrow-right-24: FAQ](faq.md)
 
@@ -97,97 +99,100 @@ different operating points.
 
 ## Design notes and standards
 
-Below the guides sit two kinds of page, and they answer different questions.
+Two kinds of page sit below the guides. They answer different questions.
 
-**Project standards** say what a release, an audit report or a generated policy
-block MUST look like. They are written to be adopted by projects other than
-this one.
+**Project standards** define what a release, an audit report, or a generated
+policy block must look like. Other projects can adopt them.
 
-- [Release lifecycle standard](RELEASE_LIFECYCLE_STANDARD.md) — tier definitions
-  (Stable / Current), the risk-triggered pre-release ladder, and support
-  windows. The instance this repository runs is
+- [Release lifecycle standard](RELEASE_LIFECYCLE_STANDARD.md) — tier
+  definitions (Stable / Current), the risk-triggered pre-release ladder, and
+  support windows. What this repository actually runs is in
   [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
-- [SuperAuditor standard](SUPERAUDITOR_STANDARD.md) — the pull contract for
-  reporting findings: severity vocabulary, cap semantics, and a deliberate
-  silence on what a server chooses to detect.
+- [SuperAuditor standard](SUPERAUDITOR_STANDARD.md) — how a client pulls
+  findings from a server: the severity vocabulary, and what a cap means. It
+  deliberately says nothing about which problems a server should detect.
 - [Policy block standard](CLAUDE_MD_POLICY_STANDARD.md) — how a project's
-  skill writes a marker-wrapped policy block into the file an agent loads every
-  session (`CLAUDE.md`, `AGENTS.md`, …), and why a skill alone cannot carry
-  that guarantee.
+  skill writes a marker-wrapped policy block into the file an agent loads
+  every session (`CLAUDE.md`, `AGENTS.md`, …), and why a skill alone cannot
+  guarantee the block is there.
 
 **Where it is going.** The [roadmap](roadmap.md) records what each release
 line is for, what it may break, and which measured problem each planned
-feature answers — across three axes (release lines, runtime and scale,
-support tiers). It is descriptive, not a delivery commitment; progress lives
-in the release notes and SUPPORT.md. The 2.6 line has its own page,
-[Reliable Recall](RELIABLE_RECALL_2_6.md): the recall process that iterates
-inside one call, the cue contract, the one prior function, the reconstruction
-exit and its count window, the failure taxonomy, and what "done" means.
+feature answers. It covers three axes: release lines, runtime and scale,
+support tiers. It describes intent, not delivery dates. What has shipped is in
+the release notes and SUPPORT.md.
 
-**Design notes** record how one behaviour was decided, the routes that were
-rejected included. They are point-in-time records: where a note and the guides
-above disagree, the guides win.
+The 2.6 line has its own page, [Reliable Recall](RELIABLE_RECALL_2_6.md): the
+recall loop that iterates inside a single call, the cue contract, the prior
+function, the reconstruction exit and its count window, the failure taxonomy,
+and what counts as done.
+
+**Design notes** record how one behaviour was decided, including the routes
+that were rejected. They are point-in-time records. Where a note and the
+guides disagree, the guides win.
 
 - [Per-client capabilities (ACL)](ACL_DESIGN.md) — named bearer tokens,
   per-agent read/write grants, deny-by-default.
-- [OAuth support](OAUTH_DESIGN.md) — resource-server metadata and token
-  verification, the three routes weighed, and the per-subject boundary.
-- [Server-served operating context](OPERATING_CONTEXT_DESIGN.md) — distributing
-  operator instructions to every connected MCP client.
+- [OAuth support](OAUTH_DESIGN.md) — resource-server metadata, token
+  verification, the three routes that were weighed, and where the per-subject
+  boundary falls.
+- [Server-served operating context](OPERATING_CONTEXT_DESIGN.md) —
+  distributing operator instructions to every connected MCP client.
 - [Declared session identity](SESSION_IDENTITY_DESIGN.md) — why one process is
-  not one session under streamable-HTTP, and which process-global state
-  `session_key` re-partitions.
+  not one session under streamable HTTP, and which process-global state
+  `session_key` splits apart.
 - [Recorded access origin](MEMORY_ORIGIN_DESIGN.md) — recording the observed
   caller on each stored row, for the paths where `agent_id` names nobody.
 - [Recall preview tier](RECALL_PREVIEW_TIER_DESIGN.md) — preview truncation and
   the `get_contents` expansion path.
 - [Contiguous embedding index](CONTIGUOUS_INDEX_DESIGN.md) — moving the vector
-  scan's read off SQLite rows onto a contiguous sidecar, bit-identically.
-- [Reach and recency in the scan window](SCAN_WINDOW_REACH_DESIGN.md) — why
-  widening the vector scan window loses recent answers, and the second ranked
-  list that lets reach move without removing the recency prior.
-- [Reach, recency and the far vote](REACH_AND_RECENCY_PLAN.md) — the three
-  measurements in one account, what they establish, and the plan for pricing
+  scan off SQLite rows and onto a contiguous sidecar file. The answers do not
+  change.
+- [Reach and recency in the scan window](SCAN_WINDOW_REACH_DESIGN.md) — why a
+  wider vector scan window loses recent answers, and the second ranked list
+  that widens it without giving up the recency preference.
+- [Reach, recency and the far vote](REACH_AND_RECENCY_PLAN.md) — three
+  measurements in one account, what each establishes, and the plan for pricing
   the far vote in the 2.6 line.
-- [Adaptive fusion](ADAPTIVE_FUSION_DESIGN.md) — a reservation invariant
-  across the recall path, the pool-size gate's rank cut removed, one measured
-  lexical-weight constant now and a conditional-evidence fusion mode later,
-  and the pre-registered comparison that decides between them.
+- [Adaptive fusion](ADAPTIVE_FUSION_DESIGN.md) — reserving each retriever a
+  share of the pool, removing the rank cut from the pool-size gate, and the
+  pre-registered comparison between a measured lexical weight now and a
+  conditional-evidence fusion mode later.
 - [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
   reports a dead embedding layer instead of quietly getting worse.
 
 ## Research notes
 
-What the design pages rest on — derivations, measurements and refutations,
-each written to be checked rather than trusted. The
+What the design pages rest on: derivations, measurements, and refutations,
+written to be checked rather than trusted. The
 [overview](research/index.md) explains the status vocabulary.
 
 - [Adaptive fusion, a derivation](research/adaptive-fusion-derivation.md) —
-  combining retrieval arms through their null exceedance probabilities; a
-  mixture rule with a closed-form per-row influence whose limit is today's
-  reciprocal rank fusion.
+  combines the retrieval arms through the probability that each score would be
+  exceeded by chance. The rule has a closed form for each row's influence, and
+  today's reciprocal rank fusion is its limiting case.
 - [Calibration and the admission floor](research/calibration-admission-floor-2026-09.md) —
-  three calibration methods on seven losing tasks: the floor is not the cause,
-  the null came from the wrong pair population, small corpora starve the
-  dense arm.
+  three calibration methods on seven tasks where recall was losing. The floor
+  is not the cause. The null distribution came from the wrong population of
+  pairs. Small corpora starve the dense arm.
 - [Where the loss is, a frozen-stage replay](research/frozen-stage-replay-2026-09.md) —
   every stage of the Track B path scored on frozen embeddings, three models,
-  pinned to the live pipeline: the pure-ranking losses are the fusion step,
-  Gorilla's is admission, EPBench's is the gate, QASPER's gain is replenishment.
+  pinned to the live pipeline. The pure-ranking tasks lose at fusion, Gorilla
+  at admission, EPBench at the gate. QASPER's gain comes from replenishment.
 - [Two arms, one decision](research/adaptive-fusion-identifiability.md) — what
-  a fusion rule must know to avoid those losses: not per-arm calibration but
-  the lexical evidence conditional on the dense score; a joint density ratio
-  that supplies it without a fitted weight; closed forms for starvation, gate
-  extinction and reservation.
+  a fusion rule must know to avoid those losses. Not per-arm calibration: how
+  much the lexical arm adds *given* the dense score. A joint density ratio
+  supplies that without a fitted weight, and the note derives closed forms for
+  starvation, gate extinction, and reservation.
 
 ## The three memory types
 
 - **Declarative** — individual facts, decisions, rules (`store` / `recall`).
 - **Episodic** — session summaries (`archive_episode`), which also drive the
   [episode boundary penalty](behavior-contracts.md#3-episode-boundary-penalty).
-- **Profile** — accumulated user/project attributes (`update_profile`), with
-  a [scoring caveat](behavior-contracts.md#7-profile-rows-carry-no-score)
-  worth knowing.
+- **Profile** — accumulated user/project attributes (`update_profile`), with a
+  [scoring caveat](behavior-contracts.md#7-profile-rows-carry-no-score) worth
+  knowing.
 
 ## For AI agents reading this site
 
@@ -199,7 +204,7 @@ back here for the canonical detail.
 
 ## :material-gift-outline: Sponsorship { #sponsorship }
 
-CPersona is MIT-licensed and stays that way regardless. If it has become useful
-and you want the work to continue, [sponsorship](sponsorship.md) explains what
-it does and does not buy — and the ways to help that cost nothing, which for a
-project this size matter more.
+CPersona is MIT-licensed and will stay that way. If it has become useful and
+you want the work to continue, the [sponsorship](sponsorship.md) page explains
+what sponsoring does and does not buy. It also lists the ways to help that
+cost nothing.

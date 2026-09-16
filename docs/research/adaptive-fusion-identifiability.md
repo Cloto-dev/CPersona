@@ -3,9 +3,10 @@
 Status: derivation. Written against the
 [frozen-stage replay](frozen-stage-replay-2026-09.md) of the hybrid pipeline,
 which located the benchmark losses in the fusion step and described how they
-arise; this note asks what a fusion rule would have to know to avoid them. It
-extends the [first derivation](adaptive-fusion-derivation.md) and corrects one
-sentence in it (section 2). Nothing here is behaviour. Every result is labelled
+arise. This note asks what a fusion rule would have to know to avoid them.
+
+It extends the [first derivation](adaptive-fusion-derivation.md), and corrects
+one sentence in it (section 2). Nothing here is behaviour. Every result is labelled
 *derived* (follows from the stated assumptions), *assumed* (a modelling choice
 that the named measurement would refute) or *illustrative* (a number computed
 to show a formula's shape, not a measurement of the server). The measurements
@@ -17,23 +18,25 @@ that decide between the constructions are listed in section 9.
    probability against that arm's own null — the rule class the first
    derivation proposed — **cannot decide when lexical evidence should override
    dense evidence.** Two worlds with identical nulls and identical observations
-   require opposite orders. This is an identifiability limit, not a weakness
-   of one formula.
+   require opposite orders. This is an identifiability limit, not a weakness of
+   one formula.
 2. What is missing is the **lexical evidence conditional on the dense score**,
    \(J(v,l)=\log f_1(l\mid v)/f_0(l\mid v)\). Null calibration fixes the
    denominator of \(J\) and says nothing about its numerator.
 3. One construction supplies it without a fitted weight: the **joint density
-   ratio** of the score pair over a fixed reference population against the
-   joint null, \(S^\star=\log h_q(v,l)/f_{0q}(v,l)\). Under lexical redundancy
-   it collapses to the dense order; under informative lexical evidence it keeps
-   the correction; reciprocal rank fusion is still its identifiable limit. Its
-   five assumptions are unverified.
+   ratio** of the score pair over a fixed reference population, against the
+   joint null, \(S^\star=\log h_q(v,l)/f_{0q}(v,l)\).
+
+    Under lexical redundancy it collapses to the dense order. Under informative
+    lexical evidence it keeps the correction. Reciprocal rank fusion is still
+    its identifiable limit. Its five assumptions are unverified.
 4. Two of the three measured loss mechanisms need no adaptivity at all. An
    absolute admission floor empties small candidate universes with a
    probability given in closed form, and the pool-size gate deletes every
-   lexical-only row exactly when the pool has thirty rows or fewer. Both are
-   removed by a **reservation invariant**: no stage may leave fewer than
-   \(\min(10,n)\) rows while eligible candidates exist.
+   lexical-only row exactly when the pool has thirty rows or fewer.
+
+    Both are removed by a **reservation invariant**: no stage may leave fewer
+    than \(\min(10,n)\) rows while eligible candidates exist.
 
 ## 1. Assumptions, each with its refutation
 
@@ -77,16 +80,17 @@ E_g=\frac{p_v^{-1/2}+p_l^{-1/2}}{4}\Big|_{(10^{-4},\,1)}=\frac{100+1}{4}=25.25,
 E_b=\frac{p_v^{-1/2}+p_l^{-1/2}}{4}\Big|_{(0.05,\,10^{-4})}=\frac{4.47+100}{4}=26.12 .
 \]
 
-The irrelevant row wins. Its own dense influence is \(\omega_v(g)=0.990\) and
-its own lexical influence \(\omega_l(b)=0.957\): both rows are dominated by
+The irrelevant row wins. Its own dense influence is \(\omega_v(g)=0.990\), and
+its own lexical influence \(\omega_l(b)=0.957\). Both rows are dominated by
 their best arm, and the cross-row order is still wrong. **The influence
 \(\omega_a\) is the derivative of one row's score with respect to one arm; it
-says nothing about which of two rows ranks higher.** The first derivation's
-sentence that the mixture "silences lexical votes when the dense arm is
-confident" must be read as a statement about a row's score, not about the
-order, and is corrected there. The e-value guarantee of that construction
-survives unchanged: an average of e-values is an e-value under any dependence,
-so \(\mathbb E_0 E\le1\) — a statement about the null, not about relevance.
+says nothing about which of two rows ranks higher.** The first derivation's sentence that the mixture "silences lexical votes when
+the dense arm is confident" must be read as a statement about a row's score,
+not about the order, and is corrected there.
+
+The e-value guarantee of that construction survives unchanged. An average of
+e-values is an e-value under any dependence, so \(\mathbb E_0 E\le1\) — a
+statement about the null, not about relevance.
 
 ## 3. No row-local rule is correct in every world
 
@@ -104,19 +108,21 @@ assumption 2:
 In \(\mathcal W_D\) the lexical arm carries no information beyond the dense
 arm (\(Y\perp P_l\mid P_v\)); the likelihood ratio is decreasing in \(p_v\)
 alone and the Bayes order is the dense order, which prefers \(g\) above. In
-\(\mathcal W_L\) the roles are swapped and the Bayes order prefers \(b\). A
-deterministic rule that sees only \((p_v,p_l)\) — or the raw scores, or the
+\(\mathcal W_L\) the roles are swapped and the Bayes order prefers \(b\). A deterministic rule that sees only \((p_v,p_l)\) — or the raw scores, or the
 null joint law, which is the same independent uniform in both worlds —
-receives identical inputs in both worlds and must return the same order. It is
-therefore wrong in one of them. Randomising the rule cannot make both
-decisions certain. Conditioning on there being exactly one relevant row among
-the pair changes nothing.
+receives identical inputs in both worlds, and must return the same order. It is
+therefore wrong in one of them.
+
+Randomising the rule cannot make both decisions certain, and conditioning on
+there being exactly one relevant row among the pair changes nothing.
 
 The consequence is not that every fixed asymmetric formula fails on a given
-finite benchmark — that is an empirical question the replay's per-query
-summaries cannot settle, because they do not carry paired row scores — but
-that **no distribution-free guarantee exists for the row-local class.** A
-rule in that class is a bet on a relevance law, and the bet should be stated.
+finite benchmark. That is an empirical question the replay's per-query
+summaries cannot settle, because they do not carry paired row scores.
+
+The consequence is that **no distribution-free guarantee exists for the
+row-local class.** A rule in that class is a bet on a relevance law, and the
+bet should be stated.
 
 ## 4. What the decision actually depends on
 
@@ -135,11 +141,13 @@ under relevance than under the null, given that the dense arm already said
 \(v\). If \(Y\perp L\mid V\) then \(J\equiv0\), and if \(A\) is monotone the
 fused order is exactly the dense order. A lexical correction happens when the
 difference in \(J\) between two rows exceeds the opposing difference in
-\(A\). Null calibration determines \(f_0(l\mid v)\), the denominator of
-\(J\); it cannot determine the numerator. Neither can the arms' null
-correlation, a copula of the nulls, the maximum dense score over the corpus,
-or separate marginal evidence profiles: all of them are functions of
-quantities that are identical in the two worlds of section 3.
+\(A\). Null calibration determines \(f_0(l\mid v)\), the denominator of \(J\). It
+cannot determine the numerator.
+
+Neither can the arms' null correlation, a copula of the nulls, the maximum
+dense score over the corpus, or separate marginal evidence profiles. All of
+them are functions of quantities that are identical in the two worlds of
+section 3.
 
 ## 5. A sufficient construction that fits no weight
 
@@ -165,10 +173,12 @@ orders rows exactly as the relevance likelihood ratio does, because
 \frac{h_q}{f_{0q}}=(1-\rho_q)+\rho_q\,\frac{f_{1q}}{f_{0q}} .
 \]
 
-The prevalence \(\rho_q\) is unknown and does not need to be fitted: it is a
-positive affine map of the likelihood ratio and changes neither the order nor
-the balance between the arms. This is a **joint density ratio**, not an
-arm-weight vector — there is no per-model or per-task constant in it. Under
+The prevalence \(\rho_q\) is unknown, and does not need to be fitted. It is a
+positive affine map of the likelihood ratio, and changes neither the order nor
+the balance between the arms.
+
+This is a **joint density ratio**, not an arm-weight vector: there is no
+per-model or per-task constant in it. Under
 conditional lexical redundancy, \(h_q(l\mid v)=f_{0q}(l\mid v)\), the lexical
 factor cancels and \(S^\star\) is the dense order; where lexical evidence is
 informative the factor stays. Reciprocal rank fusion remains the identifiable

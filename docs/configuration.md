@@ -35,17 +35,18 @@
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | Penalty floor (older memories are at most halved) |
 
 The generic aliases `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL`
-are also accepted (the `CPERSONA_`-prefixed form wins when both are set) — the
-marketplace catalog and the Quick Start use the generic names.
+are also accepted, and the `CPERSONA_`-prefixed form wins when both are set.
+The marketplace catalog and the Quick Start use the generic names.
 
 ## Corpus scale caps
 
 These bound work that grows with the corpus: index maintenance, health repair
-and calibration sampling. Each is an absolute row count that was sized against a
-corpus of roughly 10,000 rows, where it covered the whole thing — against a
-150,000-row corpus the same number is a sample. A cap that bites never raises an
-error, it returns a smaller answer, so raise these deliberately rather than
-waiting for a symptom.
+and calibration sampling.
+
+Each one is an absolute row count, sized against a corpus of roughly 10,000
+rows, where it covered the whole thing. Against a 150,000-row corpus the same
+number is a sample. A cap that bites never raises an error — it returns a
+smaller answer. Raise these deliberately rather than waiting for a symptom.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -59,8 +60,8 @@ waiting for a symptom.
 ## Remote (HTTP) transport
 
 The default transport is stdio, where the MCP client owns the process and no
-network is involved. Set `CPERSONA_TRANSPORT=streamable-http` to serve over HTTP
-instead — one server, several clients, reachable over a network.
+network is involved. Set `CPERSONA_TRANSPORT=streamable-http` to serve over
+HTTP instead: one server, several clients, reachable over a network.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -83,141 +84,174 @@ instead — one server, several clients, reachable over a network.
 
 **The body budget measures, it does not yet refuse.** Every other cap in this
 server — `CPERSONA_MAX_CONTENT_LENGTH` and the rest — is applied by a tool
-handler, which runs after the whole body has been received and parsed, so those
-caps bound what is stored and say nothing about what it costs to arrive.
-`CPERSONA_HTTP_MAX_BODY_BYTES` is counted where the bytes appear, summed across
-the chunks the server actually receives: a body sent in chunks with no
-`Content-Length`, and a body whose `Content-Length` understates it, are both
-measured by what arrived. The default of 4 MiB is roughly 29x the largest single
-`store` this server can accept and 10x a `recall_with_context` carrying 200
-conversation turns, so ordinary traffic is nowhere near it.
+handler, which runs after the whole body has been received and parsed. Those
+caps bound what is stored, and say nothing about what it costs to arrive.
 
-The default mode is `warn` on purpose: the request is served in full and the
-crossing is logged (at the 1st, 10th and 100th occurrence, so the line neither
-floods nor disappears). Nothing in this project knows what your payloads
-actually look like, and a limit that refuses before anyone has measured is a
-limit set by guessing — so run with the default, read the log, and set
-`CPERSONA_HTTP_BODY_LIMIT_MODE=reject` once you know the number fits your
-traffic. Both paths are tested; enabling enforcement changes a setting, not a
-code path.
+`CPERSONA_HTTP_MAX_BODY_BYTES` is counted where the bytes appear, summed across
+the chunks the server actually receives. A body sent in chunks with no
+`Content-Length`, and a body whose `Content-Length` understates it, are both
+measured by what arrived. The default of 4 MiB is roughly 29x the largest
+single `store` this server can accept, and 10x a `recall_with_context` carrying
+200 conversation turns, so ordinary traffic is nowhere near it.
+
+The default mode is `warn` on purpose. The request is served in full and the
+crossing is logged, at the 1st, 10th and 100th occurrence, so the line neither
+floods nor disappears.
+
+Nothing in this project knows what your payloads look like, and a limit that
+refuses before anyone has measured is a limit set by guessing. Run with the
+default, read the log, and set `CPERSONA_HTTP_BODY_LIMIT_MODE=reject` once you
+know the number fits your traffic. Both paths are tested: enabling enforcement
+changes a setting, not a code path.
 
 **A context entry states its shape now.** Each entry in
-`recall_with_context`'s `external_context` declares five string fields — `role`,
-`content`, `name`, `user_id` and `timestamp` — and until 2.5.12 the schema named
-only the first two. The other three were read all along, so a caller working from
-the schema had no way to know that a `timestamp` was consulted at all, and an
-entry sent without one merges into the undated group that sorts ahead of every
-dated message.
+`recall_with_context`'s `external_context` declares five string fields —
+`role`, `content`, `name`, `user_id` and `timestamp` — and until 2.5.12 the
+schema named only the first two. The other three were read all along, so a
+caller working from the schema had no way to know that a `timestamp` was
+consulted at all. An entry sent without one merges into the undated group that
+sorts ahead of every dated message.
 
-A field that is present but not a string names nothing the field can mean, so it
-is read as absent and the entry merges without it; the response then carries
-`context_field_issues` naming the entry's index and the fields, so nothing is
-absorbed silently. Set `CPERSONA_EXTERNAL_CONTEXT_MODE=reject` to refuse such a
-call instead — the default stays `warn` because no payload that works today
-should stop working in the release that first states the rule. Fields the schema
-does **not** declare are still accepted and ignored: a caller carrying its own
-bookkeeping alongside these keeps working.
+A field that is present but not a string names nothing the field can mean, so
+it is read as absent and the entry merges without it. The response then carries
+`context_field_issues`, naming the entry's index and the fields, so nothing is
+absorbed silently.
+
+Set `CPERSONA_EXTERNAL_CONTEXT_MODE=reject` to refuse such a call instead. The
+default stays `warn` because no payload that works today should stop working in
+the release that first states the rule. Fields the schema does **not** declare
+are still accepted and ignored, so a caller carrying its own bookkeeping
+alongside these keeps working.
 
 **A timestamp ahead of the clock is a claim, not a small error.** `store` takes
 the `timestamp` a caller supplies, and the confidence curve reads
-`max(0, now - timestamp)` — so a row stamped in the future is scored as one
-written this instant, and it never decays, because tomorrow it is still ahead.
-The larger half is what it does to its neighbours: the corpus span scales the
+`max(0, now - timestamp)`. A row stamped in the future is therefore scored as
+one written this instant, and it never decays, because tomorrow it is still
+ahead.
+
+The larger half is what it does to its neighbours. The corpus span scales the
 decay *rate*, so a single row stamped 2099 can widen a three-week corpus to
 seventy years and flatten the time axis for every other row in the scope.
 
 The allowance exists because a caller's clock is not this one. A stamp is
 generated on another host and arrives after a network hop, so a correct client
-can legitimately name a moment a little ahead of the moment the server reads it;
-`CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS` is what separates that from a stamp
-that is simply wrong. Exactly `now + allowance` is accepted — only what is past
-it is reported.
+can legitimately name a moment a little ahead of the moment the server reads
+it. `CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS` is what separates that from a
+stamp that is simply wrong. Exactly `now + allowance` is accepted; only what is
+past it is reported.
 
-The default mode is `warn` for the reason the body budget's is: the row is
-stored as it always has been, the write's answer carries
+The default mode is `warn`, for the same reason the body budget's is. The row
+is stored as it always has been, the write's answer carries
 `timestamp_ahead_of_clock`, and the log names the setting to change. Set
 `CPERSONA_FUTURE_TIMESTAMP_MODE=reject` to refuse such a write instead. Both
-paths are tested; enabling enforcement changes a setting, not a code path.
+paths are tested: enabling enforcement changes a setting, not a code path.
 
-Two things are deliberately outside this setting. A restore
-(`import_memories`) reports such rows and imports them anyway, in every mode —
-an export must be able to come back exactly as it left, and refusing here would
-make the round trip lossy for precisely the rows worth inspecting. And an
-unreadable stamp is not this finding's business: `invalid_timestamp` owns that
-row. For rows already stored, `check_health` reports `future_timestamp` and
+Two things are deliberately outside this setting.
+
+A restore (`import_memories`) reports such rows and imports them anyway, in
+every mode. An export must be able to come back exactly as it left, and
+refusing here would make the round trip lossy for precisely the rows worth
+inspecting.
+
+An unreadable stamp is not this finding's business either: `invalid_timestamp`
+owns that row.
+
+For rows already stored, `check_health` reports `future_timestamp`, and
 `fix=true` restores each one from its own `created_at` — the insertion time the
 row still carries honestly — leaving locked rows untouched.
 
-**Discovery is off until you turn it on.** A client that supports OAuth looks for RFC 9728
-metadata; finding none, it falls through to asking a human to type in a client id — correct
-behaviour for a client given nothing to discover, and easily misread as a broken credential.
-Setting `CPERSONA_OAUTH_RESOURCE` **and** at least one entry in
-`CPERSONA_OAUTH_AUTHORIZATION_SERVERS` publishes the metadata and puts `resource_metadata` and
-`scope` on the 401. With either unset the responses are byte-identical to a build without the
-feature, so enabling it is a deliberate act rather than an upgrade side effect.
+**Discovery is off until you turn it on.** A client that supports OAuth looks
+for RFC 9728 metadata. Finding none, it falls through to asking a human to type
+in a client id. That is correct behaviour for a client given nothing to
+discover, and it is easily misread as a broken credential.
 
-**The same two settings accept tokens, and that needs `CPERSONA_ACL_FILE`.** A token signed by a
-listed issuer and minted for exactly the configured resource resolves to the client identifier
-`oauth:<issuer>:<client_id>`, which is what you write grants against; a token for any other
-resource is refused, which is the check the MCP SDK leaves to the resource server. Verification
-requires ACL mode because a verified identity with no grant table behind it would reach every
-tool — with no ACL file the server logs that verification is staying off and keeps serving
-discovery, so clients still find the issuer and are then refused. Grants are per client: until
-someone adds the row, a newly connected client authenticates and every scoped tool refuses it,
-saying in `detail` that the grant table has no entry for it.
+Setting `CPERSONA_OAUTH_RESOURCE` **and** at least one entry in
+`CPERSONA_OAUTH_AUTHORIZATION_SERVERS` publishes the metadata and puts
+`resource_metadata` and `scope` on the 401. With either unset, the responses
+are byte-identical to a build without the feature, so enabling it is a
+deliberate act rather than an upgrade side effect.
+
+**The same two settings accept tokens, and that needs `CPERSONA_ACL_FILE`.** A
+token signed by a listed issuer and minted for exactly the configured resource
+resolves to the client identifier `oauth:<issuer>:<client_id>`, which is what
+you write grants against. A token for any other resource is refused, which is
+the check the MCP SDK leaves to the resource server.
+
+Verification requires ACL mode, because a verified identity with no grant table
+behind it would reach every tool. With no ACL file the server logs that
+verification is staying off and keeps serving discovery, so clients still find
+the issuer and are then refused.
+
+Grants are per client. Until someone adds the row, a newly connected client
+authenticates and every scoped tool refuses it, saying in `detail` that the
+grant table has no entry for it.
 
 **A loopback bind is not a security boundary.** Tunnels (cloudflared, ngrok),
-reverse proxies, `kubectl port-forward` and published container ports all forward
-to `127.0.0.1`, so binding there says nothing about who can reach the port. Every
-tool is exposed to whoever can — including `delete_agent_data` and the
-file-reading/writing `export_memories` / `import_memories`. Set
-`CPERSONA_AUTH_TOKEN` whenever the process is not something only you can talk to.
+reverse proxies, `kubectl port-forward` and published container ports all
+forward to `127.0.0.1`, so binding there says nothing about who can reach the
+port. Every tool is exposed to whoever can, including `delete_agent_data` and
+the file-reading and file-writing `export_memories` / `import_memories`. Set
+`CPERSONA_AUTH_TOKEN` whenever the process is not something only you can talk
+to.
 
-Since v2.5.3 the server enforces that: with `CPERSONA_TRANSPORT=streamable-http`
-and no `CPERSONA_AUTH_TOKEN`, it refuses to start. **If you are upgrading from
-2.5.2 or earlier and run the HTTP transport without a token, it will not start**
-— set `CPERSONA_AUTH_TOKEN`, or set `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true` to
-state that you really do want no authentication (local development only).
-Earlier versions allowed an unauthenticated loopback bind and logged that it was
-"bound to loopback only", which read as an all-clear and was not one.
+Since v2.5.3 the server enforces that. With
+`CPERSONA_TRANSPORT=streamable-http` and no `CPERSONA_AUTH_TOKEN`, it refuses
+to start.
 
-Setting `CPERSONA_ACL_FILE` satisfies the same requirement a different way:
-every request must then resolve to a named client, so the single-token check
-does not apply. In that mode `CPERSONA_AUTH_TOKEN` is **ignored** (with a
-startup warning) — credentials come from the ACL file only, and a client that
-should keep using the old token must be listed there explicitly. Grant model,
-file format and per-tool classification: [ACL design](ACL_DESIGN.md).
+**If you are upgrading from 2.5.2 or earlier and run the HTTP transport without
+a token, it will not start.** Set `CPERSONA_AUTH_TOKEN`, or set
+`CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true` to state that you really do want no
+authentication (local development only). Earlier versions allowed an
+unauthenticated loopback bind and logged that it was "bound to loopback only",
+which read as an all-clear and was not one.
+
+Setting `CPERSONA_ACL_FILE` satisfies the same requirement a different way.
+Every request must then resolve to a named client, so the single-token check
+does not apply.
+
+In that mode `CPERSONA_AUTH_TOKEN` is **ignored**, with a startup warning.
+Credentials come from the ACL file only, and a client that should keep using
+the old token must be listed there explicitly. For the grant model, file format
+and per-tool classification, see [ACL design](ACL_DESIGN.md).
 
 ## Recall fusion mode (`CPERSONA_RECALL_MODE`)
 
-- **`rrf`** (default) — Reciprocal Rank Fusion: merges the vector + FTS channels by
-  rank only. Robust and scale-free, but discards score magnitude.
-- **`rsf`** — Relative Score Fusion: per-query min-max-normalizes each channel's raw
-  score (cosine for vector, bm25 for keyword) and sums them, so the keyword channel's
-  bm25 magnitude survives the merge. **Recommended for topic-drift-prone or space-less
-  language (e.g. Japanese) contexts**, where that magnitude is the discriminating
-  signal `rrf` flattens away (≈ Weaviate's `relativeScoreFusion`; see the ClotoCore
-  `RECALL_CONTAMINATION_AB_2026-06-14` report §10–12). Note what the
-  normalization costs: it pins each channel's lowest-scoring row to 0.0, and a
-  channel that returns a single candidate pins that row to 1.0, so a fused score
-  places a row among the candidates retrieved with it rather than measuring its
-  similarity to the query. Autocut does not act on that pin — it fires only on
-  similarity-scale signals
+- **`rrf`** (default) — Reciprocal Rank Fusion. Merges the vector and FTS
+  channels by rank alone. Robust and scale-free, but it discards score
+  magnitude.
+- **`rsf`** — Relative Score Fusion. Min-max-normalizes each channel's raw
+  score per query (cosine for vector, bm25 for keyword) and sums them, so the
+  keyword channel's bm25 magnitude survives the merge. **Recommended for
+  topic-drift-prone or space-less language (e.g. Japanese) contexts**, where
+  that magnitude is the discriminating signal `rrf` flattens away (≈
+  Weaviate's `relativeScoreFusion`; see the ClotoCore
+  `RECALL_CONTAMINATION_AB_2026-06-14` report §10–12).
+
+  Note what the normalization costs. It pins each channel's lowest-scoring row
+  to 0.0, and a channel that returns a single candidate pins that row to 1.0.
+  A fused score therefore places a row among the candidates retrieved with it,
+  rather than measuring its similarity to the query.
+
+  Autocut does not act on that pin — it fires only on similarity-scale signals
   ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))
   — but the quality gate still compares the fused score against a cosine-scale
-  threshold. So with `CPERSONA_CONFIDENCE_ENABLED=false`, which is the default and
-  what the [CJK guidance](operations.md#japanese-and-cjk-corpora) assumes, a
-  strongly matching row can be dropped for being the weakest of a strong set, and
-  a weak lone match can pass. Turning confidence on moves the gate onto the
+  threshold. So with `CPERSONA_CONFIDENCE_ENABLED=false`, which is the default
+  and what the [CJK guidance](operations.md#japanese-and-cjk-corpora) assumes,
+  a strongly matching row can be dropped for being the weakest of a strong set,
+  and a weak lone match can pass. Turning confidence on moves the gate onto the
   confidence score and avoids this, at the cost described just below. `rrf`
   remains the default.
-- **`cascade`** — Sequential channel fill (legacy).
+- **`cascade`** — sequential channel fill (legacy).
 
-**With `CPERSONA_CONFIDENCE_ENABLED=true`, the fusion mode does not decide the order you
-get back.** Fusion selects which candidates enter the result set; confidence scoring then
-re-sorts that set, and the quality gate keys on the confidence score rather than on the
-fused one. Measured on a 1,545-document corpus with 394 queries: with confidence on,
-`rsf` and `rrf` returned the same rows in the same order for **all 394** queries; with it
-off, the two agreed on fewer than 10%. So if you set a fusion mode expecting a ranking
-change, either leave confidence off, or expect the mode to affect which memories are
-considered and not the order they come back in.
+**With `CPERSONA_CONFIDENCE_ENABLED=true`, the fusion mode does not decide the
+order you get back.** Fusion selects which candidates enter the result set.
+Confidence scoring then re-sorts that set, and the quality gate keys on the
+confidence score rather than on the fused one.
+
+Measured on a 1,545-document corpus with 394 queries: with confidence on, `rsf`
+and `rrf` returned the same rows in the same order for **all 394** queries;
+with it off, the two agreed on fewer than 10%.
+
+So if you set a fusion mode expecting a ranking change, either leave confidence
+off, or expect the mode to affect which memories are considered and not the
+order they come back in.

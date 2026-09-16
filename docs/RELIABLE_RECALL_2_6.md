@@ -16,9 +16,9 @@ this page says what it is.
 ## 0. Why this line exists
 
 The 2.5 line rebuilt the inside of the server without changing what a caller
-gets back: one connection seam, one isolation helper, a recorded golden of
-observed responses, mutation proof that the tests bite, and the first two rungs
-of the scale ladder. It stopped short of retrieval quality on purpose —
+gets back. It delivered one connection seam, one isolation helper, a recorded
+golden of observed responses, mutation proof that the tests bite, and the first
+two rungs of the scale ladder. It stopped short of retrieval quality on purpose —
 every change that alters ranking or reach was held, because a ranking change
 during a production soak cannot be told apart from a regression.
 
@@ -29,11 +29,11 @@ during a production soak cannot be told apart from a regression.
 > deterministically, and without spending the agent's tokens on it.
 
 Everything below is that thesis broken into parts that can be built and
-measured one at a time. The five things that never change on any line — the
-server never calls a model, one SQLite file the user owns, the schema only
-moves forward, degradation is reported, behaviour is pinned before it is
-changed — are stated once on the [roadmap](roadmap.md#what-never-changes) and
-are assumed here without restatement.
+measured one at a time. Five things never change on any line: the server never calls a model, one SQLite
+file the user owns, the schema only moves forward, degradation is reported, and
+behaviour is pinned before it is changed. They are stated once on the
+[roadmap](roadmap.md#what-never-changes), and assumed here without
+restatement.
 
 ## 1. Deliberative Recall — the recall process
 
@@ -61,7 +61,7 @@ reconstruct               (the exit — section 7)
 Four decisions make this a design rather than a metaphor.
 
 **The loop runs inside the server.** An agent that calls `recall` repeatedly,
-adjusting its query each time, is also running a loop — but every turn of it
+adjusting its query each time, is also running a loop. But every turn of it
 costs a tool round-trip, input tokens, output tokens and latency, and the total
 grows with the number of turns. That is the cost profile of an agentic memory
 loop, and it is the profile this line refuses. Deliberative Recall iterates
@@ -73,13 +73,11 @@ where other systems solve a retrieval problem with more model calls, this one
 solves it with structure.
 
 **Most iterations do not touch the index.** The expensive step is fetching a
-ranked list from the vector, lexical and keyword arms. Measured on a
-100 000-row corpus, the contiguous index answers a vector scan in tens of
-milliseconds; at a million rows the same scan is an order of magnitude slower,
-and a loop of thirty such scans is not a feature anyone would enable. So the
-loop fetches once or twice — the near list, and the far list beyond the scan
-window when the envelope asks for it — and every later iteration re-weights
-and re-filters the candidate pool it already holds. The lexical arm, whose cost
+ranked list from the vector, lexical and keyword arms. Measured on a 100,000-row corpus, the contiguous index answers a vector scan in
+tens of milliseconds. At a million rows the same scan is an order of magnitude
+slower, and a loop of thirty such scans is not a feature anyone would enable. So the loop fetches once or twice: the near list, and the far list beyond the
+scan window when the envelope asks for it. Every later iteration re-weights and
+re-filters the candidate pool it already holds. The lexical arm, whose cost
 grows with matched rows rather than corpus size and has not yet been measured
 at scale, is not re-queried per iteration. This is the same principle as the
 counterfactual replay in section 8: a change that only re-scores saved
@@ -87,21 +85,21 @@ candidates can be tried many times for the price of one retrieval.
 
 **Cue propagation is the substance of the loop.** An iteration that re-runs the
 same query against the same corpus with a slightly different threshold is a
-parameter sweep, and it is exhausted in a few turns. The loop earns its
-iterations only when each turn learns something the next can use: the
-timestamp of a strong hit narrows the temporal envelope; the episode, source
-or project it belongs to becomes a context cue; the overflow chain it sits in
-and the relations declared on it (section 6) name the places to look next.
+parameter sweep, and it is exhausted in a few turns. The loop earns its iterations only when each turn learns something the next can
+use. The timestamp of a strong hit narrows the temporal envelope. The episode,
+source or project it belongs to becomes a context cue. The overflow chain it
+sits in, and the relations declared on it (section 6), name the places to look
+next.
 This is spreading activation with every step deterministic and recorded. It is
 also what makes the associative layer and the overflow chains part of the
 recall process rather than features beside it — they are the fuel the loop
 follows.
 
 **The loop is bounded before it is judged.** Thinking has no natural ceiling;
-memory retrieval must. The loop stops on evidence sufficiency — score
-separation, gate outcome, candidate count, coverage of the cues the caller
-supplied, contradiction density — but the hard limits come first: a maximum
-number of stages, of candidates considered, of milliseconds spent. A loop that
+memory retrieval must. The loop stops on evidence sufficiency: score separation, gate outcome,
+candidate count, coverage of the cues the caller supplied, contradiction
+density. But the hard limits come first — a maximum number of stages, of
+candidates considered, and of milliseconds spent. A loop that
 hits a limit says so in its trace, as every other bounded operation in this
 server does.
 
@@ -178,10 +176,10 @@ measurements comparable. The plan's instrument already has identity controls
 at both ends of the far-vote sweep, and the temporal cue is one more parameter
 of the same function measured on the same corpus with the same strata.
 
-One decision precedes all three 2.6 rows. In production the confidence scorer
-is on, and when it is on the recall's last step re-sorts the whole fused list
-by a score the fusion order does not survive — two fusion modes that differ on
-a tenth of their rows with the scorer off agree on every row with it on. A
+One decision precedes all three 2.6 rows. In production the confidence scorer is on, and when it is on, the recall's last
+step re-sorts the whole fused list by a score the fusion order does not survive.
+Two fusion modes that differ on a tenth of their rows with the scorer off agree
+on every row with it on. A
 prior that only the fusion sees would be invisible in production. So the line
 either removes the final re-sort or makes the confidence score a function of
 the fused score, and it decides this before any prior is measured. The
@@ -193,10 +191,9 @@ than assuming the two regimes agree.
 Two numbers are conflated in the current `recall` tool, and the conflation
 measurably costs accuracy. `limit` is documented as a per-retriever search
 depth: it is the top-K each arm hands to the fusion, so asking for five results
-also fuses only five candidates per arm. Measured on the benchmark corpus, a
-fusion over the full candidate list scores far above the same fusion cut to a
-hundred, and a limit of five put rows structurally out of reach at every gate
-value.
+also fuses only five candidates per arm. Measured on the benchmark corpus, a fusion over the full candidate list scores
+far above the same fusion cut to a hundred. A limit of five put rows
+structurally out of reach at every gate value.
 
 The line separates them and gives each its name:
 
@@ -216,10 +213,9 @@ test red before the work is called done.
 
 ## 5. Adaptive fusion
 
-The three retrieval arms are fused by reciprocal rank with fixed weights. The
-benchmark record shows why that is the wrong constant: with a weak embedding
-model the lexical arms lift the score by six points and rescue whole task
-families; with a strong one the lift nearly vanishes and moves to different
+The three retrieval arms are fused by reciprocal rank with fixed weights. The benchmark record shows why that is the wrong constant. With a weak embedding
+model, the lexical arms lift the score by six points and rescue whole task
+families. With a strong one, the lift nearly vanishes and moves to different
 tasks. The fusion cannot tell which case it is in.
 
 The flagship of this line is a fusion whose behaviour follows the embedding
@@ -227,19 +223,18 @@ model, the corpus and the query rather than a constant. The candidate axes are
 an unsupervised estimate of each arm's reliability (the null-distribution
 machinery of threshold calibration is already there to reuse), a principled
 connection between rank fusion and similarity scale, and per-query arm
-selection. The success condition is stated up front so that it cannot be
-adjusted afterwards: the adaptive fusion must beat the raw embedding on
-*both* the weak and the strong model at once, on the same twenty-two-task
-benchmark that produced the record.
+selection. The success condition is stated up front so that it cannot be adjusted
+afterwards. The adaptive fusion must beat the raw embedding on *both* the weak
+and the strong model at once, on the same twenty-two-task benchmark that
+produced the record.
 
 This section is deliberately the shortest. Its content is a measurement
 programme, and this page only fixes what the programme must show.
 
-The programme has produced its first results and a design. The
-[frozen-stage replay](research/frozen-stage-replay-2026-09.md) located the
-losses: on the pure-ranking tasks they are the fusion step itself — dense rows
-lifted past relevant ones by lexical votes — while the remaining losses are an
-admission floor and a gate applied to universes too small for them. The
+The programme has produced its first results and a design. The [frozen-stage replay](research/frozen-stage-replay-2026-09.md) located the
+losses. On the pure-ranking tasks they are the fusion step itself: dense rows
+lifted past relevant ones by lexical votes. The remaining losses are an
+admission floor and a gate, applied to universes too small for them. The
 [identifiability note](research/adaptive-fusion-identifiability.md) shows that
 per-arm calibration cannot decide the fusion and names the quantity that can.
 The [design](ADAPTIVE_FUSION_DESIGN.md) that follows from both — a reservation
@@ -262,10 +257,10 @@ regression; an empty registry is a byte-identical no-op.
 
 **Overflow chains** answer a measured defect: the embedding window is shorter
 than the longest memory, so a long record's tail is invisible to vector search.
-Records past the window split, at store time and deterministically, into a
-chain of nodes that each carry their own embedding; a hit on a node returns the
-parent's preview, the node's position and a reference, and the agent fetches
-the rest if it wants it. The split is reported, never silent.
+Records past the window split, at store time and deterministically, into a chain
+of nodes that each carry their own embedding. A hit on a node returns the
+parent's preview, the node's position and a reference, and the agent fetches the
+rest if it wants it. The split is reported, never silent.
 
 In the recall process both are **cues**. A hit inside a chain names its
 siblings; a hit on a registered entity names the relations declared on it; the
@@ -334,10 +329,10 @@ says so when it cuts.
    same episode's time span, adjacent timestamps, same source, same overflow
    chain. These keys are the *ceiling* of what the server calls "the same
    memory"; semantic sameness is not judged here (see below).
-3. *Bounded relation walk* — follow only relations attached to the candidates,
-   to the hop limit: episode containment, explicit references in metadata,
-   stable ids cited in the content, and declared relations where the
-   associative layer is present. With no relations this stage is the identity.
+3. *Bounded relation walk*: follow only relations attached to the candidates, to
+the hop limit. Those are episode containment, explicit references in metadata,
+stable ids cited in the content, and declared relations where the associative
+layer is present. With no relations this stage is the identity.
 4. *Structuring* — order by time and by version; where two statements on the
    same subject disagree, keep both and mark the conflict. No summarising, no
    merging of text.
@@ -363,11 +358,10 @@ says so when it cuts.
   and a separate tool applies) exists for exactly that, and it is optional.
 - The **role vocabulary** is fixed now and filled in stages: `supports`,
   `supersedes`, `corrects`, `qualifies`, `contradicts`,
-  `temporal_predecessor`. In this line the server can derive `supersedes`
-  (message id and time order) and `supports` (episode containment);
-  `corrects` and `qualifies` need a source of truth the server does not have —
-  an in-place update leaves no history — and appear when declared relations
-  do. A reader ignores a role it does not know.
+  `temporal_predecessor`. In this line the server can derive `supersedes` (message id and time order) and
+`supports` (episode containment). `corrects` and `qualifies` need a source of
+truth the server does not have — an in-place update leaves no history — so they
+appear when declared relations do. A reader ignores a role it does not know.
 - Full text is never inlined; a `ref` expands through `get_contents`, as it
   does for the preview tier today.
 
@@ -458,10 +452,9 @@ defines what may.
 
 The recall process adds its own: `INTENT_MISLEADING`, `WINDOW_TOO_NARROW`,
 `WINDOW_TOO_WIDE`, `WIDENING_PREMATURE`, `WIDENING_INSUFFICIENT`,
-`PRIOR_DOMINANCE`, `PRIOR_IGNORED`, `INTENT_NORMALIZATION_ERROR`. Because the
-loop's policy is deterministic, these can be assigned mechanically by replaying
-the trace with one thing changed. `UNATTRIBUTED` is reported, not hidden —
-the rate at which failures can be attributed is itself a metric of this
+`PRIOR_DOMINANCE`, `PRIOR_IGNORED`, `INTENT_NORMALIZATION_ERROR`. Because the loop's policy is deterministic, these can be assigned mechanically,
+by replaying the trace with one thing changed. `UNATTRIBUTED` is reported, not
+hidden: the rate at which failures can be attributed is itself a metric of this
 section.
 
 **Counterfactual replay.** Take a failed recall and change one condition:
@@ -483,14 +476,14 @@ change. The isolated experiment is automated; the promotion is not.
 Three data sets are kept apart so that the loop cannot overfit the public
 benchmark: a development set for attribution and search, a validation set for
 choosing among fixes, and a frozen holdout that is not opened until the final
-decision, plus cross-benchmark checks and privacy-preserving replay of
-production-like cases.
+decision. Cross-benchmark checks and privacy-preserving replay of
+production-like cases sit alongside them.
 
 **The auditor profile.** The attribution above is a *profile* of the
-[SuperAuditor standard](SUPERAUDITOR_STANDARD.md): the standard fixes the
-shape of a finding, its severity and its delivery, and says nothing about what
-is detected; the profile fixes the trace, the taxonomy, the evidence for a
-cause and the replay outcome. The layering is deliberate. The core stays
+[SuperAuditor standard](SUPERAUDITOR_STANDARD.md). The standard fixes the shape
+of a finding, its severity and its delivery, and says nothing about what is
+detected. The profile fixes the trace, the taxonomy, the evidence for a cause,
+and the replay outcome. The layering is deliberate. The core stays
 small and general, the profile carries everything recall-specific, and a
 second memory system could implement the profile without adopting this
 server's internals. The profile is written once its second implementation
@@ -500,9 +493,9 @@ exists, as the standard itself was.
 
 Every claim on this page is a measurement waiting to happen, and the
 measurements share one rule: **the 2.5 baseline is frozen, and 2.6 is measured
-against it** — same corpus, queries, embedding, answer model, hardware and
-token budget; compared per task, per query type, per language, per memory
-scale and per failure slice, not only in aggregate; regressions and trade-offs
+against it.** Same corpus, queries, embedding, answer model, hardware and token
+budget. Compared per task, per query type, per language, per memory scale and
+per failure slice, not only in aggregate; regressions and trade-offs
 published beside improvements.
 
 **Retrieval quality** is measured on the twenty-two-task benchmark the record
@@ -516,10 +509,10 @@ variables and are never conflated.
 *evidence recall rises while the payload tokens and the end-to-end memory
 tokens stay unchanged*, because the loop spends none of the agent's tokens.
 The instrument is the long-memory corpus with its near/far strata and
-rotations that produced the reach measurements. The arms are a hint
-robustness pack — correct cue, approximate cue, wrong cue, no cue,
-contradictory cues — and the expected shape is: correct improves, approximate
-improves or is neutral, wrong recovers gracefully, none is identical to today.
+rotations that produced the reach measurements. The arms are a hint robustness pack: correct cue, approximate cue, wrong cue, no
+cue, contradictory cues. The expected shape is that a correct cue improves,
+an approximate one improves or is neutral, a wrong one recovers gracefully, and
+no cue is identical to today.
 If the loop does not move the evidence recall under those conditions, the loop
 is decoration and is not shipped.
 
@@ -536,10 +529,10 @@ removed; the forced and requested priorities swapped; the candidate limit
 re-coupled to the count; deduplication disabled; provenance dropped; the
 returned count always reported as the effective count.
 
-**Tokens** are measured as the [project direction](roadmap.md) defines them —
+**Tokens** are measured as the [project direction](roadmap.md) defines them:
 recall payload tokens, downstream input tokens, end-to-end memory tokens,
-amortised write tokens, tokens per correct answer — and reported with cached
-and uncached, input and output, and memory-attributable and total agent
+amortised write tokens, and tokens per correct answer. They are reported with
+cached and uncached, input and output, and memory-attributable and total agent
 tokens kept apart. Reducing a count is not a token-efficiency claim.
 
 **Scale** is measured at 1K, 10K, 100K and 1M rows, with quality, tokens,
