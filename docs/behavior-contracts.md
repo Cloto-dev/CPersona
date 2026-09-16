@@ -62,9 +62,11 @@ actually keyed for it.
 
 Rows that were never scored omit the key entirely. Those are the FTS and
 keyword rows a `cascade` recall fills with, and — with confidence off — the
-injected profile row. With confidence on, the profile row is scored like any
-other and carries `match_reason` too. Treat `match_reason` as
-present-or-absent, not as a field on every row.
+injected profile row.
+
+With confidence on, the profile row is scored like any other and carries
+`match_reason` too. Treat `match_reason` as present-or-absent, not as a field
+on every row.
 
 Note that confidence is **not match strength**. It blends cosine similarity,
 time decay, resolved status, and recall count into a separate quantity. An

@@ -133,8 +133,8 @@ dry-run を強制されて `repairs_skipped` を返し、`persisted` キー自�
 
 ## 分離のための引数 { #isolation-arguments }
 
-3 つの分離軸は一様には提供されていません。`agent_id` はほとんどのツール (22 個) が
-受け取り、`project_id` は 6 個、`channel` はちょうど 4 個 (`store` / `recall` /
+3 つの分離軸は一様には提供されていません。`agent_id` はほとんどのツール (22 個) が受け取り、
+`project_id` は 6 個、`channel` はちょうど 4 個 (`store` / `recall` /
 `recall_with_context` / `archive_episode`) だけです。
 
 これらは入れ子の階層ではなく独立した 3 軸であり、読み取り時に「空の値」と「省略」は
