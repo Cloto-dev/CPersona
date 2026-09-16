@@ -313,7 +313,7 @@ def apply_limit(session: Path, limit: int, seed: str) -> dict | None:
     return {
         "in_scope_total": len(specs),
         "executed": len(keep),
-        "changed_lines": len({(module_path, line) for _, module_path, line, _ in specs}),
+        "mutable_lines": len({(module_path, line) for _, module_path, line, _ in specs}),
         "rule": "one mutant per changed line first, least-used operator within a line, seeded hash for ties",
         "seed": seed,
     }
@@ -332,9 +332,20 @@ def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
         "not_executed": 0,
     }
     survivors: list[dict] = []
+    # #1531: how much of the diff a run actually measured. A mutable line is a
+    # changed line carrying at least one in-scope mutant (filtered mutants never
+    # were in scope); a measured line is one with a mutant that ran to a test
+    # verdict. Read after execution, so a mutant that was planned but produced no
+    # result does not count as measurement.
+    mutable_lines: set[tuple[str, int]] = set()
+    measured_lines: set[tuple[str, int]] = set()
     for module_path, line, operator, function, worker, test, output in _read_session(session):
         w = (worker or "").upper()
         t = (test or "").upper()
+        if not (w == "SKIPPED" and output != NOT_SAMPLED_OUTPUT):
+            mutable_lines.add((module_path, line))
+        if w == "NORMAL":
+            measured_lines.add((module_path, line))
         if worker is None:
             counts["not_executed"] += 1
         elif w == "SKIPPED" and output == NOT_SAMPLED_OUTPUT:
@@ -393,6 +404,11 @@ def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
             + counts["not_executed"]
         ),
         "survival_rate": survival_rate,
+        "line_coverage": {
+            "mutable_lines": len(mutable_lines),
+            "measured_lines": len(measured_lines),
+            "ratio": (len(measured_lines) / len(mutable_lines)) if mutable_lines else None,
+        },
         "survivors": survivors,
     }
 
@@ -409,7 +425,7 @@ def write_summary(report: dict, path: str | None) -> None:
     if sampling:
         lines += [
             f"**sampled:** {sampling['executed']} of {sampling['in_scope_total']} in-scope mutants executed "
-            f"across {sampling['changed_lines']} changed lines ({sampling['rule']}).",
+            f"across {sampling['mutable_lines']} mutable lines ({sampling['rule']}).",
             "",
             "_A sample: the survivors below are a lower bound, and mutants that were not run say nothing._",
             "",
@@ -437,6 +453,13 @@ def write_summary(report: dict, path: str | None) -> None:
             f"| {c.get('worker_error', 0)} | {rate_s} |",
             "",
         ]
+        cov = report.get("line_coverage") or {}
+        if cov.get("mutable_lines"):
+            lines += [
+                f"**lines measured:** {cov['measured_lines']} of {cov['mutable_lines']} changed lines that carry a "
+                f"mutant ({cov['ratio']:.0%})",
+                "",
+            ]
         wv = report.get("waivers", {})
         if wv:
             lines += [f"_waivers: {wv.get('active', 0)} active of {wv.get('registry_waivers', 0)} in registry_", ""]

@@ -128,7 +128,8 @@ def test_the_summary_says_it_was_a_sample(tmp_path):
         "reason": "r",
         "base": "origin/master",
         "changed_files": ["cpersona/x.py"],
-        "sampling": {"in_scope_total": 740, "executed": 60, "changed_lines": 312, "rule": "rule", "seed": SEED},
+        "sampling": {"in_scope_total": 740, "executed": 60, "mutable_lines": 312, "rule": "rule", "seed": SEED},
+        "line_coverage": {"mutable_lines": 312, "measured_lines": 55, "ratio": 55 / 312},
         "in_scope": 60,
         "counts": {"killed": 50, "survived": 10},
         "survival_rate": 10 / 60,
@@ -138,3 +139,41 @@ def test_the_summary_says_it_was_a_sample(tmp_path):
     text = out.read_text(encoding="utf-8")
     assert "60 of 740 in-scope mutants executed" in text
     assert "| 60 | 50 | 10 |" in text, "the counts table must still be printed for a sample"
+    assert "55 of 312 changed lines that carry a mutant (18%)" in text
+
+
+def _session_rows(tmp_path, rows):
+    """rows: (line, worker, test, output) — one mutant each, on cpersona/x.py."""
+    path = tmp_path / "cov-session"
+    con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE mutation_specs (job_id TEXT, module_path TEXT, "
+        "start_pos_row INTEGER, operator_name TEXT, definition_name TEXT)"
+    )
+    con.execute("CREATE TABLE work_results (job_id TEXT, worker_outcome TEXT, test_outcome TEXT, output TEXT)")
+    for i, (line, worker, test, output) in enumerate(rows):
+        con.execute("INSERT INTO mutation_specs VALUES (?,?,?,?,?)", (str(i), "cpersona/x.py", line, "op/A", "f"))
+        if worker is not None:
+            con.execute("INSERT INTO work_results VALUES (?,?,?,?)", (str(i), worker, test, output))
+    con.commit()
+    con.close()
+    return path
+
+
+def test_line_coverage_counts_only_lines_whose_mutant_reached_a_verdict(tmp_path):
+    rows = [
+        (1, "NORMAL", "KILLED", None),                        # measured
+        (1, "SKIPPED", None, lane.NOT_SAMPLED_OUTPUT),        # same line, left out: still measured via the kill
+        (2, "NORMAL", "SURVIVED", None),                      # measured
+        (3, "SKIPPED", None, lane.NOT_SAMPLED_OUTPUT),        # mutable, not measured
+        (4, None, None, None),                                # planned, no result: mutable, not measured
+        (5, "EXCEPTION", None, None),                         # ran but no verdict: mutable, not measured
+        (6, "SKIPPED", None, None),                           # removed by a filter: never in scope
+    ]
+    cov = lane.classify(_session_rows(tmp_path, rows), REPO, {})["line_coverage"]
+    assert cov == {"mutable_lines": 5, "measured_lines": 2, "ratio": 2 / 5}
+
+
+def test_line_coverage_is_empty_not_zero_when_nothing_was_in_scope(tmp_path):
+    cov = lane.classify(_session_rows(tmp_path, [(1, "SKIPPED", None, None)]), REPO, {})["line_coverage"]
+    assert cov == {"mutable_lines": 0, "measured_lines": 0, "ratio": None}

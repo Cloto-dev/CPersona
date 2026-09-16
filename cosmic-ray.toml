@@ -18,9 +18,11 @@
 
 [cosmic-ray]
 module-path = "cpersona"
-# Per-mutant test-command timeout (seconds). The suite is hermetic and finishes
-# in ~12s locally; pytest-timeout=60 bounds any single hung test first, so this
-# is only a coarse backstop against a mutant that wedges the whole run.
+# Per-mutant test-command timeout (seconds). A surviving mutant runs the whole
+# suite: about a minute locally and on CI (measured 2026-09-16; it was 86-94 s on
+# CI while one test slept a real 30 s retry delay, uncomfortably close to this
+# ceiling). pytest-timeout=60 bounds any single hung test first, so this is only a
+# coarse backstop against a mutant that wedges the whole run.
 timeout = 120.0
 # Subtracted via glob.glob(pattern, recursive=True). The vendored mcp_common
 # snapshot is upstream-owned (changes belong in mgp-py, see AGENTS.md), and the
