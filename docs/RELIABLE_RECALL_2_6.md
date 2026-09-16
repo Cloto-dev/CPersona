@@ -310,14 +310,66 @@ effective = min(base, max_count)
   that a caller can see what the server did with its request.
 - Fewer items than the window is a normal result and carries a reason: no
   relevant evidence, below the quality threshold, filtered by policy,
-  insufficient provenance, token budget exhausted, or system degraded. The
+  insufficient provenance, payload budget exhausted, or system degraded. The
   shortfall is never filled with duplicates, low-quality items or content the
   evidence does not support.
 - The unconfigured default is **one item**, a conservative call contract rather
   than a measured optimum. The maximum remains experimental until a sweep
-  over `count` on the long-memory benchmark compares answer and evidence
-  quality against payload tokens and latency. Any proposed change to the
-  default must be justified by that measurement.
+  over `count` and the payload budget on the long-memory benchmark compares
+  answer and evidence quality against payload tokens and latency. Any proposed
+  change to either default must be justified by that measurement.
+
+**Breadth before depth — the payload budget.** An item's size is not fixed.
+One item may be a single stored row; another may be a burst of turns or an
+episode with its supporting claims. Two limits therefore shape a response:
+
+- `count` bounds **breadth** — how many independent memories are returned.
+- The **payload budget** bounds **depth** — how much quoted text the items
+  carry between them.
+
+The two measure different things, but they spend the same resource: the
+reader's context. When the budget binds, keeping every item forces each to be
+thinner, and keeping every item whole forces fewer of them. One of the two
+must take precedence, and **breadth does**. A cut in depth is recoverable:
+every omitted claim keeps its `ref` and expands through `get_contents`. A cut
+in breadth is not: a memory that was never returned leaves nothing for the
+caller to expand, or even to know about.
+
+```text
+budget_base      = forced_budget ?? requested_budget ?? default_budget
+effective_budget = min(budget_base, max_budget)
+```
+
+- The budget is counted in **characters of quoted text** — `content` and the
+  `excerpts` below. Tokens are not used: the server does not know the
+  reader's tokenizer, and the preview tier and `get_contents` already bound
+  their payloads in characters. Refs, roles and timeline entries are not
+  counted; `max_evidence` bounds them.
+- A budget below one preview-tier excerpt, or a default or forced budget
+  above the maximum, is a startup error, not a silent clamp. The first item
+  therefore always fits. The default and the maximum budget have no value yet:
+  both are chosen by the sweep in section 9, and the figure in the example
+  below is illustrative.
+- An item carries its head claim in `content`, as before, and verbatim
+  excerpts of its other retained claims in `excerpts`, most relevant first.
+  Each excerpt is cut as the preview tier cuts. An excerpt only ever comes
+  from the item's own claims: an item grows because the memory has more
+  structure, never because a relevance score is high. Scores are not
+  calibrated across models and corpora, and growing an item beyond its bundle
+  would merge memories the bundling keys call independent.
+- **Allocation is one fixed sequence.** Order the quoted text as: the heads of
+  the selected items in item order; then each item's most relevant remaining
+  excerpt, in item order; then each item's next excerpt; and so on. The
+  response carries the longest prefix of that sequence that fits the budget.
+  An item whose head falls outside the prefix is not returned, and the
+  shortfall reason is `budget_exhausted`. An excerpt outside the prefix is
+  omitted, but its claim, ref and roles remain in the item.
+- Because the response is a prefix of a sequence the budget does not shape,
+  raising the budget alone never removes an item or an excerpt, and changing
+  it alone never changes the candidate pool, the clusters or the item order.
+- Every response states `requested_budget`, `effective_budget`, `used_budget`
+  and a `budget_policy` (`source`, `clamped`, `reason`), and each item states
+  `excerpts_omitted`, so a caller can tell whether breadth or depth was cut.
 
 The window sits fourth in a series this server already has: the embedding
 window (what gets indexed; a split is reported), the scan window (what gets
@@ -348,6 +400,8 @@ layer is present. With no relations this stage is the identity.
 { "items": [{
     "content": "…",            // a verbatim excerpt of the head claim, cut as the preview tier cuts
     "head_ref": "…",           // the claim that content quotes
+    "excerpts": [{ "ref": "…", "content": "…" }],      // other retained claims, most relevant first, within the budget
+    "excerpts_omitted": 0,     // retained claims whose text the budget did not carry
     "claims": [{ "ref": "mem:1693", "as_of": "…",
                  "roles": [{ "ref": "mem:1585", "role": "supersedes" },
                            { "ref": "ep:411",   "role": "supports" }] }],
@@ -356,6 +410,8 @@ layer is present. With no relations this stage is the identity.
     "independence_reason": "cluster:episode" }],                  // why it is a separate item
   "requested_count": null, "effective_count": 1, "returned_count": 1,
   "count_policy": { "source": "server_default", "clamped": false, "reason": "count_omitted" },
+  "requested_budget": null, "effective_budget": 4000, "used_budget": 1310,
+  "budget_policy": { "source": "server_default", "clamped": false, "reason": "budget_omitted" },
   "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "truncated": false } }
 ```
 
@@ -368,8 +424,9 @@ layer is present. With no relations this stage is the identity.
 `supports` (episode containment). `corrects` and `qualifies` need a source of
 truth the server does not have — an in-place update leaves no history — so they
 appear when declared relations do. A reader ignores a role it does not know.
-- Full text is never inlined; a `ref` expands through `get_contents`, as it
-  does for the preview tier today.
+- Full text is never inlined: `content` and every excerpt are cut as the
+  preview tier cuts, and a `ref` expands through `get_contents`, as it does
+  for the preview tier today.
 
 **Invariants.**
 
@@ -379,8 +436,9 @@ appear when declared relations do. A reader ignores a role it does not know.
    a quotation.
 3. Determinism — same database state, same query, same bounds, same output;
    ties are broken by a total order that is written down.
-4. Boundedness — nothing is scanned past the declared bounds; a cut is
-   reported in `bounds.truncated`.
+4. Boundedness — nothing is scanned past the declared bounds, and no response
+   quotes more than the effective payload budget; a cut is reported in
+   `bounds.truncated`, `excerpts_omitted` or the shortfall reason.
 5. Explainability — every element says why it is present.
 6. The existing `recall` contract is untouched.
 7. Count and breadth are decoupled — none of `candidate_limit`,
@@ -390,16 +448,24 @@ appear when declared relations do. A reader ignores a role it does not know.
 8. No padding — a paraphrase, a fragment of one record, or several pieces of
    evidence for one conclusion are not separate items; a conflict the keys
    cannot fold is shown inside one item.
+9. Breadth before depth — the payload budget omits excerpts before it omits
+   items, and the response is the longest prefix of a sequence the budget does
+   not shape. The test: raise the budget alone and no item or excerpt
+   disappears; change it alone and the candidate id set, the clusters and the
+   item order are unchanged.
 
 **What is deferred.** An adaptive default, per-query maxima, per-agent count
-policy, model-assisted independence judgement, statement-level provenance,
-and standardised export of count fields. Adaptation waits until a fixed
+and budget policy, a budget counted in the reader's tokens, model-assisted
+independence judgement, statement-level provenance, and standardised export of
+count fields. Adaptation waits until a fixed
 policy has a reproducible baseline and an audit contract.
 
 ### Reconstruction v1 implementation boundary
 
 The experimental v1 exit retains v0's four stages; the relation walk still
-has no edges to follow. It adds these concrete qualifications:
+has no edges to follow. It does not implement the payload budget: an item
+carries its head claim alone, and supporting claims are refs. It adds these
+concrete qualifications:
 
 - Time-based bundling requires the same project and channel. Adjacency also
   requires the same source role and id; the entire burst, rather than each
@@ -569,17 +635,23 @@ If the loop does not move the evidence recall under those conditions, the loop
 is decoration and is not shipped.
 
 **The exit** (section 7) is judged by a `count` sweep — 1, 2, 4, up to the
-maximum — reading answer quality and evidence quality separately against
-payload tokens and latency, and by seven ablation arms that separate retrieval
-failure from evidence-selection failure from reconstruction failure from
-agent-reasoning failure: the 2.5 flat recall; 2.6 retrieval alone; evidence
+maximum — crossed with a payload-budget sweep, reading answer quality and
+evidence quality separately against payload tokens and latency. The sweep
+runs on a corpus where bundling actually occurs — turns stored as rows with
+their session dates and speaker roles — and reports the share of items with
+more than one claim: on a corpus where every item is one row, the sweep
+measures ranked rows, not reconstruction. The exit is also judged by seven
+ablation arms that separate retrieval failure from evidence-selection failure
+from reconstruction failure from agent-reasoning failure: the 2.5 flat recall; 2.6 retrieval alone; evidence
 selection without reconstruction; reconstruction at `count = 1`; the sweep;
 the answer model given oracle evidence; the answer model given raw evidence
 instead of the reconstruction. Mutations that must fail before the exit is
 called done: the default changed from one to two; the minimum with the maximum
 removed; the forced and requested priorities swapped; the candidate limit
 re-coupled to the count; deduplication disabled; provenance dropped; the
-returned count always reported as the effective count.
+returned count always reported as the effective count; excerpts allocated
+before every head is placed; an excerpt taken from outside its item; the
+allocation sequence re-ordered by the budget.
 
 **Tokens** are measured as the [project direction](roadmap.md) defines them:
 recall payload tokens, downstream input tokens, end-to-end memory tokens,
@@ -608,8 +680,9 @@ The line closes when all of the following hold, in this order of importance:
 3. **Depth and count are separated** (section 4) with the coupling invariant
    under test.
 4. **Reconstructive Recall exists as a tool** with the count contract, the
-   role vocabulary, the eight invariants and the seven mutations of
-   section 7, and its default window was chosen by the sweep.
+   role vocabulary, the nine invariants of section 7 and the mutations of
+   section 9, and its default count and payload budget were chosen by the
+   sweep.
 5. **Adaptive fusion beats the raw embedding on both models** on the same
    benchmark, or the section records why it did not and what replaces it.
 6. **Every failure on the benchmark has a code and a replayable trace**, the

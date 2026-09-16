@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:53f01f43f43c8cb794255c2bc636a8c0426743b7 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:6c8990eef24dff8ecd86cee638ca8b048feb080a -->
 
 # Reliable Recall — 2.6 系
 
@@ -269,12 +269,54 @@ effective = min(base, max_count)
   `count_policy` (`source`、`clamped`、`reason`) を述べ、呼び出し側は自分の要求が
   サーバーでどう扱われたかを見られます。
 - 窓より少ない件数は正常な結果で、理由を伴います: 関連する証拠が無い、品質閾値未満、
-  policy によるフィルター、provenance 不足、token 予算の枯渇、システムの劣化。不足分は、
+  policy によるフィルター、provenance 不足、ペイロード予算の枯渇、システムの劣化。不足分は、
   重複や低品質の項目や、証拠が支えない内容で決して埋められません。
 - 未設定時の既定は **1 件**です。実測による最適値ではなく、控えめな呼び出し契約です。
-  最大値は、長期記憶ベンチマークで `count` を sweep し、回答と証拠の品質を
+  最大値は、長期記憶ベンチマークで `count` とペイロード予算を sweep し、回答と証拠の品質を
   ペイロードのトークン量・レイテンシと比較するまでは実験的な値です。
-  既定値の変更を提案する場合も、この計測による根拠を必要とします。
+  どちらの既定値の変更を提案する場合も、この計測による根拠を必要とします。
+
+**幅が先、深さが後 — ペイロード予算。** item の大きさは固定ではありません。ある item は
+保存された 1 行だけで、別の item は発話の連続や、支える claim を伴う episode です。
+したがって応答を形作る上限は 2 つあります。
+
+- `count` は**幅** — 独立した記憶をいくつ返すか — を制限します。
+- **ペイロード予算**は**深さ** — item 全体で引用テキストをどれだけ運ぶか — を制限します。
+
+2 つが測るものは別ですが、消費する資源は同じ、読み手のコンテキストです。予算が効くと、
+すべての item を残せば各 item を薄くするしかなく、各 item を丸ごと残せば数を減らすしか
+ありません。どちらかが優先しなければならず、**幅が優先します**。深さの削減は取り戻せます:
+省かれた claim はすべて `ref` を保ち、`get_contents` で展開できます。幅の削減は取り戻せません:
+返されなかった記憶は、呼び出し側が展開する手がかりも、存在を知る手がかりも残しません。
+
+```text
+budget_base      = forced_budget ?? requested_budget ?? default_budget
+effective_budget = min(budget_base, max_budget)
+```
+
+- 予算は**引用テキストの文字数** — `content` と下記の `excerpts` — で数えます。トークンは
+  使いません: サーバーは読み手のトークナイザを知らず、preview tier と `get_contents` も
+  既にペイロードを文字数で制限しているためです。ref、role、timeline の項目は数えず、
+  それらは `max_evidence` が制限します。
+- preview tier の抜粋 1 つ分に満たない予算、または最大を超える既定・強制の予算は起動時の
+  エラーであって、黙った clamp ではありません。したがって最初の item は必ず収まります。
+  既定と最大の予算にはまだ値がありません: どちらも第 9 節の sweep で選び、下の例の数値は
+  説明のためのものです。
+- item は従来どおり head claim を `content` に運び、保持した他の claim の原文抜粋を
+  `excerpts` に関連度の高い順で運びます。各抜粋は preview tier と同じ切り方です。抜粋は
+  必ずその item 自身の claim から取ります: item が大きくなるのは記憶の構造が大きいからであり、
+  関連度スコアが高いからではありません。スコアはモデルやコーパスをまたいで較正されておらず、
+  束ねを超えて item を膨らませると、束ねのキーが独立と判定した記憶を混ぜることになります。
+- **割り当ては 1 本の固定列です。** 引用テキストを次の順に並べます: 選ばれた item の head を
+  item 順に。次に各 item で最も関連度の高い残りの抜粋を item 順に。次に各 item の次の抜粋、
+  以下同様。応答は、その列のうち予算に収まる最長の先頭部分を運びます。head が先頭部分の外に
+  出た item は返さず、不足理由は `budget_exhausted` です。先頭部分の外に出た抜粋は省きますが、
+  その claim、ref、role は item に残ります。
+- 応答は予算が形を決めない列の先頭部分なので、予算だけを上げて item や抜粋が消えることは
+  なく、予算だけを変えて候補プール、クラスタ、item の順序が変わることもありません。
+- すべての応答は `requested_budget`、`effective_budget`、`used_budget`、そして
+  `budget_policy` (`source`、`clamped`、`reason`) を述べ、各 item は `excerpts_omitted` を
+  述べます。呼び出し側は、削られたのが幅か深さかを見分けられます。
 
 この窓は、このサーバーが既に持つ系列の 4 番目です: 埋め込み窓 (何が索引に載るか。分割は
 報告される)、走査窓 (何が走査されるか。gate fallback は報告される)、検索窓 (ループが
@@ -299,6 +341,8 @@ effective = min(base, max_count)
 { "items": [{
     "content": "…",            // head claim の原文抜粋。preview tier と同じ切り方
     "head_ref": "…",           // content が引用している claim
+    "excerpts": [{ "ref": "…", "content": "…" }],      // 保持した他の claim、関連度順、予算の内側
+    "excerpts_omitted": 0,     // 予算がテキストを運ばなかった保持 claim の数
     "claims": [{ "ref": "mem:1693", "as_of": "…",
                  "roles": [{ "ref": "mem:1585", "role": "supersedes" },
                            { "ref": "ep:411",   "role": "supports" }] }],
@@ -307,6 +351,8 @@ effective = min(base, max_count)
     "independence_reason": "cluster:episode" }],                  // なぜ別の item か
   "requested_count": null, "effective_count": 1, "returned_count": 1,
   "count_policy": { "source": "server_default", "clamped": false, "reason": "count_omitted" },
+  "requested_budget": null, "effective_budget": 4000, "used_budget": 1310,
+  "budget_policy": { "source": "server_default", "clamped": false, "reason": "budget_omitted" },
   "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "truncated": false } }
 ```
 
@@ -318,8 +364,8 @@ effective = min(base, max_count)
   `supersedes` (メッセージ id と時間順) と `supports` (episode の包含) です。`corrects` と
   `qualifies` にはサーバーが持たない真実の源が要り — in-place の更新は履歴を残しません —
   宣言された関係が入った時に現れます。読み手は知らない役割を無視します。
-- 本文全体は決して inline しません。`ref` は、今日の preview tier と同じく `get_contents`
-  で展開します。
+- 本文全体は決して inline しません。`content` とすべての抜粋は preview tier と同じ切り方で、
+  `ref` は、今日の preview tier と同じく `get_contents` で展開します。
 
 **不変条件。**
 
@@ -328,7 +374,8 @@ effective = min(base, max_count)
 2. モデルを呼ばない。埋め込みは可、生成は不可。`content` は引用。
 3. 決定性 — 同じ DB 状態、同じクエリ、同じ境界、同じ出力。同点は、書き下された全順序で
    解く。
-4. 有界性 — 宣言された境界の先は走査しない。切ったことは `bounds.truncated` で報告する。
+4. 有界性 — 宣言された境界の先は走査せず、有効なペイロード予算を超えて引用しない。切った
+   ことは `bounds.truncated`、`excerpts_omitted`、または不足理由で報告する。
 5. 説明可能性 — すべての要素が、なぜ存在するかを言う。
 6. 既存の `recall` 契約には触れない。
 7. 件数と探索幅は分離 — `candidate_limit`、`vector_top_k`、`fts_limit`、
@@ -336,14 +383,19 @@ effective = min(base, max_count)
    変えて候補 id の集合が不変。
 8. 水増ししない — 言い換え、1 レコードの断片、1 つの結論への複数の証拠は別の item ではない。
    キーで畳めない矛盾は 1 つの item の中に示す。
+9. 幅が先、深さが後 — ペイロード予算は item より先に抜粋を省き、応答は予算が形を決めない列の
+   最長の先頭部分である。テスト: 予算だけを上げて item も抜粋も消えない。予算だけを変えて
+   候補 id の集合、クラスタ、item の順序が不変。
 
-**先送りするもの。** 適応的な既定、クエリ単位の最大、エージェント別の count policy、
+**先送りするもの。** 適応的な既定、クエリ単位の最大、エージェント別の count と予算の policy、
+読み手のトークンで数える予算、
 モデル支援の独立性判定、statement 単位の provenance、count フィールドの標準化された
 export。適応化は、固定 policy が再現可能な baseline と監査契約を持ってからです。
 
 ### 再構成 v1 の実装範囲 { #reconstruction-v1-implementation-boundary }
 
 実験的な v1 の出口は v0 の 4 段階を維持します。関係の走査には、まだ辿る辺がありません。
+ペイロード予算は実装していません: item は head claim だけを運び、支える claim は ref です。
 以下の具体的な条件を追加します。
 
 - 時刻による束ねは project と channel の一致を必要とします。隣接時刻での束ねには
@@ -485,14 +537,18 @@ end-to-end の記憶トークンが不変のまま、evidence recall が上が�
 改善か中立、誤りなら graceful に回復、無しなら今日と同一。その条件で evidence recall が
 動かないなら、ループは飾りであり出荷しません。
 
-**出口** (第 7 節) は `count` の sweep — 1、2、4、最大まで — で、回答品質と証拠品質を
-別々にペイロードのトークンとレイテンシに対して読み、加えて、検索の失敗、証拠選択の失敗、
+**出口** (第 7 節) は `count` の sweep — 1、2、4、最大まで — とペイロード予算の sweep を
+掛け合わせ、回答品質と証拠品質を別々にペイロードのトークンとレイテンシに対して読んで
+判定します。sweep は束ねが実際に起きるコーパス — 発話を行として、セッションの日付と話者の
+役割付きで保存したもの — で走らせ、claim を 2 つ以上持つ item の割合を報告します: すべての
+item が 1 行のコーパスでは、sweep が測るのは順位付きの行であって再構成ではありません。加えて、検索の失敗、証拠選択の失敗、
 再構成の失敗、エージェントの推論の失敗を分離する 7 本の ablation で判定します: 2.5 の
 flat recall。2.6 の検索のみ。再構成なしの証拠選択。`count = 1` の再構成。sweep。oracle の
 証拠を与えた回答モデル。再構成でなく生の証拠を与えた回答モデル。出口を完了と呼ぶ前に
 失敗しなければならない変異: 既定を 1 から 2 に。最大との min を外す。forced と requested
 の優先順位を入れ替える。候補の上限を count に再結合する。重複排除を無効にする。provenance
-を落とす。返却数を常に有効数として報告する。
+を落とす。返却数を常に有効数として報告する。すべての head を置く前に抜粋を割り当てる。
+item の外から抜粋を取る。割り当ての列を予算によって並べ替える。
 
 **トークン**は[プロジェクトの方向](roadmap.md)が定義するとおりに測ります — recall
 payload tokens、downstream input tokens、end-to-end memory tokens、amortised write
@@ -515,8 +571,8 @@ tokens、tokens per correct answer — そして cached と uncached、入力と
 2. **最終再ソートが決定され** (第 3 節)、値段の付いた far の票と recency prior が 1 つの
    機構で、ベンチマーク記録が本番 regime で取り直されている。
 3. **深さと件数が分離され** (第 4 節)、結合の不変条件がテストの下にある。
-4. **再構成想起がツールとして存在し**、第 7 節の件数契約、役割の語彙、8 つの不変条件、
-   7 つの変異を持ち、その既定の窓が sweep で選ばれている。
+4. **再構成想起がツールとして存在し**、第 7 節の件数契約、役割の語彙、9 つの不変条件、
+   第 9 節の変異を持ち、その既定の件数とペイロード予算が sweep で選ばれている。
 5. **適応的融合が同じベンチマークで両方のモデルで生の埋め込みを上回っている**か、そうで
    なかった理由と何がそれに代わるかを節が記録している。
 6. **ベンチマーク上のすべての失敗がコードと再生可能な trace を持ち**、未帰属率が報告され
