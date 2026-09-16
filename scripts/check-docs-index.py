@@ -37,6 +37,10 @@ What is checked, in both directions:
   * those links use this site's `site_url` and the directory form mkdocs
     publishes (`.../page/`), so a rename of the site does not leave absolute
     links pointing into the old one
+  * a link in `llms.txt` may address a version line's subtree
+    (`.../<line>/page/`) when that line is declared in `docs-versions.json`.
+    It names the same page. Whether that line's tree actually serves it is
+    `check-site-urls.py`'s question, which resolves against the assembled site
 
 Exit 0 when the three lists agree; exit 1 with one line per violation.
 Run from the repository root: `python3 scripts/check-docs-index.py`.
@@ -44,6 +48,7 @@ Run from the repository root: `python3 scripts/check-docs-index.py`.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -52,6 +57,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 MKDOCS = ROOT / "mkdocs.yml"
 LLMS = DOCS / "llms.txt"
+VERSIONS = ROOT / "docs-versions.json"
 
 # Same parsing choice, and the same reason, as check-i18n-coverage.py:
 # mkdocs.yml carries tags a plain safe_load refuses, and depending on the
@@ -64,6 +70,10 @@ SITE_URL = re.compile(r"^site_url:\s*(?P<url>\S+)\s*$")
 # environment with the site's real root as the default. The links in llms.txt
 # are absolute links to that root, so it is the default that this check must
 # read, never whatever a particular build happened to pass in.
+#
+# A link may also go through a declared line's subtree. The development line
+# can carry pages the line served at the root does not, and a root link to one
+# of those is dead; the subtree is the only address that reaches it.
 SITE_URL_ENV = re.compile(
     r"^site_url:\s*!ENV\s*\[\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"
     r"[\"'](?P<url>[^\"']+)[\"']\s*\]\s*$"
@@ -122,9 +132,28 @@ def nav_pages() -> list[str]:
     return pages
 
 
+def line_ids() -> set[str]:
+    """The version lines docs-versions.json declares, each published under its id.
+
+    Empty when the map is missing or unreadable, so an unreadable map strips no
+    prefix and a subtree link is reported as a page that is not in nav -- the
+    loud direction.
+    """
+    try:
+        data = json.loads(VERSIONS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {
+        version["id"]
+        for version in data.get("versions", [])
+        if isinstance(version, dict) and isinstance(version.get("id"), str)
+    }
+
+
 def llms_links(base: str) -> dict[str, str]:
     """Site links in llms.txt, as {page path: url}, reporting the malformed ones."""
     text = LLMS.read_text()
+    lines = line_ids()
     found: dict[str, str] = {}
     for m in MD_LINK.finditer(text):
         url = m.group("url")
@@ -143,6 +172,11 @@ def llms_links(base: str) -> dict[str, str]:
         if not slug:
             fail(f"docs/llms.txt: {url} is the site root, which llms.txt already describes")
             continue
+        # Only a declared line's id is a subtree. Anything else is a directory
+        # of this tree, and stripping it would turn a dead link into a live one.
+        head, _, tail = slug.partition("/")
+        if tail and head in lines:
+            slug = tail
         # mkdocs publishes docs/<dir>/<page>.md at /<dir>/<page>/ and a
         # directory's index.md at /<dir>/, so the slug maps back to a page
         # path in one of those two forms; the second is tried only when the
