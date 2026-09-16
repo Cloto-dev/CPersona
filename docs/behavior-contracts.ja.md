@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:fefe6eeaef4b92ca7b2105a7ba598a71beea970a -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:934c7ba0639b154dc4319c37df2d7dc9e2f99b3b -->
 
 # 挙動契約 (Behavior Contracts)
 
