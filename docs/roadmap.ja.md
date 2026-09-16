@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/roadmap.md@blob:1a198417e2520e92a9c654ff782dc02a465ba66e -->
+<!-- i18n-source: docs/roadmap.md@blob:27decb5a6be272d211c799c889157017bd69d23e -->
 
 # ロードマップ
 
@@ -87,7 +87,7 @@ Stable として認証されるかされないかが決まります。機構は�
 
 **目的。** 2.5 が築いた土台の上で、*何が返ってくるか*を改善します。以下の各項目は
 ランキングか到達範囲を変えます。それが、どれも 2.5 で出荷しなかった理由です。
-このラインの正本は [Reliable Recall — 2.6 系](RELIABLE_RECALL_2_6.md) で、想起
+このラインの正本は [Reliable Recall — 2.6 系](https://cloto-dev.github.io/CPersona/2.6/ja/RELIABLE_RECALL_2_6/) で、想起
 プロセス・入力契約・出口・それぞれの測り方を扱います。この節はその索引です。
 
 **破ってよいもの。** 内部アーキテクチャとツール契約を、梯子を通して破ります。
@@ -142,7 +142,7 @@ MCP SDK 2.0 移行も載ります。(かつてここに載っていた埋め込�
 出荷済みです。)
 
 **「完了」の意味** — そして Go の索引サービスのように、意図して条件にしないもの — は
-[ラインのページ](RELIABLE_RECALL_2_6.md#10-what-done-means) に書いてあります。
+[ラインのページ](https://cloto-dev.github.io/CPersona/2.6/ja/RELIABLE_RECALL_2_6/#10-what-done-means) に書いてあります。
 
 ### 2.7 — 記憶の知性 { #27-memory-intelligence }
 

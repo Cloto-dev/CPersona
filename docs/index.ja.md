@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:2999c47485d5300fcde2c2f2357a0f687a1eade3 -->
+<!-- i18n-source: docs/index.md@blob:cbb4b7ddda5928b935fe5a3f7804fd50a31beabe -->
 
 # CPersona ドキュメント
 
@@ -122,7 +122,7 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 (リリースライン・ランタイムとスケール・サポート tier) です。これは意図の記述であって
 納期の約束ではありません。実際に出荷されたものはリリースノートと SUPPORT.md にあります。
 
-2.6 系には専用ページ [Reliable Recall](RELIABLE_RECALL_2_6.md) があります。1 回の
+2.6 系には専用ページ [Reliable Recall](https://cloto-dev.github.io/CPersona/2.6/ja/RELIABLE_RECALL_2_6/) があります。1 回の
 呼び出しの中で反復する想起ループ、手がかりの契約、prior 関数、再構成の出口とその
 件数の窓、失敗の分類、そして何をもって完了とするか。
 
@@ -147,9 +147,9 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 - [走査窓の到達範囲と新しさの優遇](SCAN_WINDOW_REACH_DESIGN.md) — ベクトル走査窓を
   広げると最近の答えを失う理由と、新しさの優遇を捨てずに窓を広げるための 2 本目の
   順位付きリスト。
-- [到達範囲・新しさ・far の票](REACH_AND_RECENCY_PLAN.md) — 3 つの計測を 1 つに
+- [到達範囲・新しさ・far の票](https://cloto-dev.github.io/CPersona/2.6/ja/REACH_AND_RECENCY_PLAN/) — 3 つの計測を 1 つに
   まとめ、それぞれ何を確立したか、そして 2.6 系で far の票に値段を付ける計画。
-- [適応的融合](ADAPTIVE_FUSION_DESIGN.md) — 各検索器にプールの取り分を確保すること、
+- [適応的融合](https://cloto-dev.github.io/CPersona/2.6/ja/ADAPTIVE_FUSION_DESIGN/) — 2.6 系の計画。各検索器にプールの取り分を確保すること、
   プールサイズ gate から順位カットを外すこと、そして「いま計測済みの lexical 重み」と
   「後の条件付き証拠の融合モード」のどちらを採るかを決める事前登録済みの比較。
 - [埋め込み劣化の通知](DEGRADED_ADVISORY_DESIGN.md) — 埋め込み層が死んだとき、
@@ -157,21 +157,22 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 
 ## 研究ノート { #research-notes }
 
-設計ページが拠って立つもの (導出・実測・反証) を、信じるのではなく検算できる形で
-置いた記録です。[概要](research/index.md) に status の語彙があります。
+2.6 系の設計ページが拠って立つもの (導出・実測・反証) を、信じるのではなく検算できる
+形で置いた記録です。ノートは 2.6 系のドキュメントに載っており、その
+[概要](https://cloto-dev.github.io/CPersona/2.6/ja/research/) に status の語彙があります。
 
-- [適応的融合の導出](research/adaptive-fusion-derivation.md) — 各検索アームを、
+- [適応的融合の導出](https://cloto-dev.github.io/CPersona/2.6/ja/research/adaptive-fusion-derivation/) — 各検索アームを、
   そのスコアが偶然で超えられる確率を通じて結合します。この規則は行ごとの影響度を
   閉じた形で持ち、現行の reciprocal rank fusion はその極限にあたります。
-- [較正と admission floor](research/calibration-admission-floor-2026-09.md) —
+- [較正と admission floor](https://cloto-dev.github.io/CPersona/2.6/ja/research/calibration-admission-floor-2026-09/) —
   recall が負けていた 7 タスクを 3 つの較正法で測りました。床は原因ではありません。
   null は誤ったペア母集団から取られていました。小さなコーパスでは dense アームが
   飢餓します。
-- [損失はどこにあるか、凍結段リプレイ](research/frozen-stage-replay-2026-09.md) —
+- [損失はどこにあるか、凍結段リプレイ](https://cloto-dev.github.io/CPersona/2.6/ja/research/frozen-stage-replay-2026-09/) —
   Track B 経路の全段を、凍結した埋め込みの上で 3 モデル分採点し、稼働中の pipeline に
   固定しました。純 ranking のタスクは融合段で、Gorilla は admission で、EPBench は
   gate で負けています。QASPER の利得は補充によるものです。
-- [2 本のアーム、1 つの決定](research/adaptive-fusion-identifiability.md) — その損失を
+- [2 本のアーム、1 つの決定](https://cloto-dev.github.io/CPersona/2.6/ja/research/adaptive-fusion-identifiability/) — その損失を
   避けるために融合則が知らねばならないもの。アームごとの較正ではなく、dense スコアを
   **与えたうえで** lexical がどれだけ情報を足すか、です。同時密度比はそれを、重みを
   当てはめずに供給します。飢餓・gate の全滅・予約の閉形式も導いています。

@@ -80,7 +80,6 @@ plugins:
             Getting Started: はじめに
             Architecture: アーキテクチャ
             Roadmap: ロードマップ
-            Reliable Recall (2.6): Reliable Recall (2.6 系)
             Behavior Contracts: 挙動契約
             Tools: ツール一覧
             Operations Runbook: 運用 Runbook
@@ -92,13 +91,6 @@ plugins:
             Project standards: プロジェクト標準
             Sponsorship: 支援について
             Design notes: 設計ノート
-            Research notes: 研究ノート
-            Overview: 概要
-            Adaptive fusion, a derivation: 適応的融合の導出
-            Calibration and the admission floor: 較正と admission floor
-            Where the loss is, a frozen-stage replay: 損失はどこにあるか、凍結段リプレイ
-            Two arms, one decision: 2 本のアーム、1 つの決定
-            Adaptive fusion: 適応的融合
             Access and identity: アクセスと同一性
             Retrieval and storage: 検索と保存
             Reliability: 信頼性
@@ -116,7 +108,6 @@ plugins:
             Recorded access origin: アクセス元の記録
             Contiguous embedding index: 埋め込み索引の連続配置
             Reach and recency in the scan window: 走査窓の到達範囲と新しさの優遇
-            Reach, recency and the far vote: 到達範囲・新しさ・far の票
             Policy block standard: ポリシーブロック標準
             SuperAuditor standard: SuperAuditor 標準
 
@@ -230,7 +221,6 @@ nav:
   - Getting Started: getting-started.md
   - Architecture: architecture.md
   - Roadmap: roadmap.md
-  - Reliable Recall (2.6): RELIABLE_RECALL_2_6.md
   - Using CPersona:
       - Tools: tools.md
       - Configuration: configuration.md
@@ -259,18 +249,8 @@ nav:
           - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
           - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
           - Reach and recency in the scan window: SCAN_WINDOW_REACH_DESIGN.md
-          - Reach, recency and the far vote: REACH_AND_RECENCY_PLAN.md
-          - Adaptive fusion: ADAPTIVE_FUSION_DESIGN.md
       - Reliability:
           - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md
-  # What the design pages rest on: derivations, measurements, refutations.
-  # A note never overrides a design page; a disagreement is the finding.
-  - Research notes:
-      - Overview: research/index.md
-      - Adaptive fusion, a derivation: research/adaptive-fusion-derivation.md
-      - Calibration and the admission floor: research/calibration-admission-floor-2026-09.md
-      - Where the loss is, a frozen-stage replay: research/frozen-stage-replay-2026-09.md
-      - Two arms, one decision: research/adaptive-fusion-identifiability.md
   # Last on purpose: it asks for something, and every page above answers
   # something. A reader looking for how the software works never has to
   # scroll past it.

@@ -122,7 +122,7 @@ feature answers. It covers three axes: release lines, runtime and scale,
 support tiers. It describes intent, not delivery dates. What has shipped is in
 the release notes and SUPPORT.md.
 
-The 2.6 line has its own page, [Reliable Recall](RELIABLE_RECALL_2_6.md): the
+The 2.6 line has its own page, [Reliable Recall](https://cloto-dev.github.io/CPersona/2.6/RELIABLE_RECALL_2_6/): the
 recall loop that iterates inside a single call, the cue contract, the prior
 function, the reconstruction exit and its count window, the failure taxonomy,
 and what counts as done.
@@ -151,11 +151,11 @@ guides disagree, the guides win.
 - [Reach and recency in the scan window](SCAN_WINDOW_REACH_DESIGN.md) — why a
   wider vector scan window loses recent answers, and the second ranked list
   that widens it without giving up the recency preference.
-- [Reach, recency and the far vote](REACH_AND_RECENCY_PLAN.md) — three
+- [Reach, recency and the far vote](https://cloto-dev.github.io/CPersona/2.6/REACH_AND_RECENCY_PLAN/) — three
   measurements in one account, what each establishes, and the plan for pricing
   the far vote in the 2.6 line.
-- [Adaptive fusion](ADAPTIVE_FUSION_DESIGN.md) — reserving each retriever a
-  share of the pool, removing the rank cut from the pool-size gate, and the
+- [Adaptive fusion](https://cloto-dev.github.io/CPersona/2.6/ADAPTIVE_FUSION_DESIGN/) — for the 2.6 line:
+  reserving each retriever a share of the pool, removing the rank cut from the pool-size gate, and the
   pre-registered comparison between a measured lexical weight now and a
   conditional-evidence fusion mode later.
 - [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
@@ -163,23 +163,23 @@ guides disagree, the guides win.
 
 ## Research notes
 
-What the design pages rest on: derivations, measurements, and refutations,
-written to be checked rather than trusted. The
-[overview](research/index.md) explains the status vocabulary.
+What the 2.6 design pages rest on: derivations, measurements, and refutations,
+written to be checked rather than trusted. The notes are published with the 2.6
+documentation, and its [overview](https://cloto-dev.github.io/CPersona/2.6/research/) explains the status vocabulary.
 
-- [Adaptive fusion, a derivation](research/adaptive-fusion-derivation.md) —
+- [Adaptive fusion, a derivation](https://cloto-dev.github.io/CPersona/2.6/research/adaptive-fusion-derivation/) —
   combines the retrieval arms through the probability that each score would be
   exceeded by chance. The rule has a closed form for each row's influence, and
   today's reciprocal rank fusion is its limiting case.
-- [Calibration and the admission floor](research/calibration-admission-floor-2026-09.md) —
+- [Calibration and the admission floor](https://cloto-dev.github.io/CPersona/2.6/research/calibration-admission-floor-2026-09/) —
   three calibration methods on seven tasks where recall was losing. The floor
   is not the cause. The null distribution came from the wrong population of
   pairs. Small corpora starve the dense arm.
-- [Where the loss is, a frozen-stage replay](research/frozen-stage-replay-2026-09.md) —
+- [Where the loss is, a frozen-stage replay](https://cloto-dev.github.io/CPersona/2.6/research/frozen-stage-replay-2026-09/) —
   every stage of the Track B path scored on frozen embeddings, three models,
   pinned to the live pipeline. The pure-ranking tasks lose at fusion, Gorilla
   at admission, EPBench at the gate. QASPER's gain comes from replenishment.
-- [Two arms, one decision](research/adaptive-fusion-identifiability.md) — what
+- [Two arms, one decision](https://cloto-dev.github.io/CPersona/2.6/research/adaptive-fusion-identifiability/) — what
   a fusion rule must know to avoid those losses. Not per-arm calibration: how
   much the lexical arm adds *given* the dense score. A joint density ratio
   supplies that without a fitted weight, and the note derives closed forms for

@@ -1,9 +1,9 @@
-<!-- i18n-source: docs/SCAN_WINDOW_REACH_DESIGN.md@blob:b72d44cd4f616b5776326842016adc8e8e77bf5f -->
+<!-- i18n-source: docs/SCAN_WINDOW_REACH_DESIGN.md@blob:c5905b2169000a5f3cd2a88f1258e361dc7c56ae -->
 
 # ベクトル走査窓の「到達範囲」と「新しさの優遇」
 
 Status: 2.5.x 系で出荷済、既定は off。計測済みだが、計測は通らなかった。結果と
-2.6 系の対応は `REACH_AND_RECENCY_PLAN.md` を参照。本ページは機構の参照として残る。
+2.6 系の対応は [到達範囲・新しさ・far の票](https://cloto-dev.github.io/CPersona/2.6/ja/REACH_AND_RECENCY_PLAN/) を参照。本ページは機構の参照として残る。
 
 `SCHEMA_VERSION` は 13 のまま、新しいランタイム依存も増えない。新設定が既定値の
 あいだは、現行の走査が返す答えとビット単位で一致する (類似度が等しい行の並びを含む)。

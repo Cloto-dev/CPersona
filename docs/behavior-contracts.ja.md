@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:934c7ba0639b154dc4319c37df2d7dc9e2f99b3b -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:55a0269769cf4175360f51788123e5ac4aca01c0 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -150,7 +150,7 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 
 **ウィンドウを上げることは、同じ動作で到達範囲を伸ばし、新しさの優遇を消します。**
 実測では、古い答えで 5 点を得る代わりに、最近の答えで NDCG@10 を 20 点失いました
-(`REACH_AND_RECENCY_PLAN.md`)。これは値段の付いたつまみであって、大きなコーパスに
+([到達範囲・新しさ・far の票](https://cloto-dev.github.io/CPersona/2.6/ja/REACH_AND_RECENCY_PLAN/))。これは値段の付いたつまみであって、大きなコーパスに
 対するサポートされた答えではありません。既定値は far の票に値段が付くまで
 動きません。
 

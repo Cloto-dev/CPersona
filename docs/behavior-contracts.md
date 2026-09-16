@@ -155,7 +155,7 @@ is scored.
 
 **Raising the window extends the reach and removes the prior in the same
 motion.** Measured, it cost 20 NDCG@10 points on recent answers to gain 5 on
-old ones (`REACH_AND_RECENCY_PLAN.md`). It is a knob with a price, not the
+old ones ([Reach, recency and the far vote](https://cloto-dev.github.io/CPersona/2.6/REACH_AND_RECENCY_PLAN/)). It is a knob with a price, not the
 supported answer for a larger corpus, and the default will not move until the
 far vote is priced.
 

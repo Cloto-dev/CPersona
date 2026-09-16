@@ -93,7 +93,7 @@ ranking change during a soak cannot be told apart from a regression.
 item below changes ranking or reach, which is why none of them shipped in 2.5.
 The canonical account of the line — the recall process, its input contract,
 the exit, and how each is measured — is
-[Reliable Recall — the 2.6 line](RELIABLE_RECALL_2_6.md). This section is the
+[Reliable Recall — the 2.6 line](https://cloto-dev.github.io/CPersona/2.6/RELIABLE_RECALL_2_6/). This section is the
 index of it.
 
 **What it may break.** Internal architecture and the tool contract, through
@@ -157,7 +157,7 @@ untouched.)
 
 **What "done" means** — and what is deliberately not a condition, such as the
 Go index service — is written down in the
-[line's page](RELIABLE_RECALL_2_6.md#10-what-done-means).
+[line's page](https://cloto-dev.github.io/CPersona/2.6/RELIABLE_RECALL_2_6/#10-what-done-means).
 
 ### 2.7 — memory intelligence
 

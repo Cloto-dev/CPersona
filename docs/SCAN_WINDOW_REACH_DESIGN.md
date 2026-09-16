@@ -1,7 +1,7 @@
 # Reach and Recency in the Vector Scan Window
 
 Status: shipped in the 2.5.x line, default off. It was measured, and the
-measurement did not pass — see `REACH_AND_RECENCY_PLAN.md` for the results and
+measurement did not pass — see [Reach, recency and the far vote](https://cloto-dev.github.io/CPersona/2.6/REACH_AND_RECENCY_PLAN/) for the results and
 what the 2.6 line does about them. This page stays the reference for the
 mechanism.
 
