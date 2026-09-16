@@ -234,7 +234,7 @@ lane = _load_lane()
 def _session(tmp_path, rows):
     """A cosmic-ray session holding the given (spec, result) pairs.
 
-    Only the two columns the lane reads are populated; a row whose result is None
+    Only the columns the lane reads are populated; a row whose result is None
     is the work item that produced no worker result.
     """
     path = tmp_path / "session"
@@ -244,7 +244,7 @@ def _session(tmp_path, rows):
         "start_pos_row INTEGER, operator_name TEXT, definition_name TEXT)"
     )
     con.execute(
-        "CREATE TABLE work_results (job_id TEXT, worker_outcome TEXT, test_outcome TEXT)"
+        "CREATE TABLE work_results (job_id TEXT, worker_outcome TEXT, test_outcome TEXT, output TEXT)"
     )
     for i, (worker, test) in enumerate(rows):
         con.execute(
@@ -252,7 +252,7 @@ def _session(tmp_path, rows):
             (str(i), "cpersona/isolation.py", 1 + i, "core/ReplaceTrueWithFalse", "foo"),
         )
         if worker is not None:
-            con.execute("INSERT INTO work_results VALUES (?,?,?)", (str(i), worker, test))
+            con.execute("INSERT INTO work_results VALUES (?,?,?,NULL)", (str(i), worker, test))
     con.commit()
     con.close()
     return path
