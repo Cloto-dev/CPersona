@@ -344,6 +344,7 @@ layer is present. With no relations this stage is the identity.
 ```jsonc
 { "items": [{
     "content": "…",            // a verbatim excerpt of the head claim, cut as the preview tier cuts
+    "head_ref": "…",           // the claim that content quotes
     "claims": [{ "ref": "mem:1693", "as_of": "…",
                  "roles": [{ "ref": "mem:1585", "role": "supersedes" },
                            { "ref": "ep:411",   "role": "supports" }] }],
@@ -405,9 +406,15 @@ has no edges to follow. It adds these concrete qualifications:
   stored project: equal IDs in different projects are independent records.
   Unknown context does not establish identity. This does not create history
   for in-place updates or infer semantic contradictions.
+- The head claim is the most relevant row in the item. If newer versions of
+  that record (the same message id in the same stored project) are in the item,
+  the head is their latest version. Newest is meaningful only within a version
+  chain; among distinct rows of one burst or episode it is merely the last
+  thing said. `head_ref` names the head; `claims` stay newest first.
 - `max_evidence` bounds the retained claims, timeline and role targets as
-  well as the evidence array. Truncation is reported; a role never points to
-  a claim discarded by this bound.
+  well as the evidence array. A cut keeps the head, then the most relevant
+  remaining rows. Truncation is reported; a role never points to a claim
+  discarded by this bound.
 - `reconstruction` reports the policy version, candidate count, cluster count,
   selected count and rows excluded for missing provenance. `trace=true` adds
   candidate refs and cluster membership, without full text. A caller can tell

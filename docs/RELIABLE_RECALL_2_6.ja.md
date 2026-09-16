@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:9e6d5391774b9dc626ed5d83c5d010e621911e5f -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:df8d1ed037e622218b128c03ae9e9be63936c550 -->
 
 # Reliable Recall — 2.6 系
 
@@ -296,6 +296,7 @@ effective = min(base, max_count)
 ```jsonc
 { "items": [{
     "content": "…",            // head claim の原文抜粋。preview tier と同じ切り方
+    "head_ref": "…",           // content が引用している claim
     "claims": [{ "ref": "mem:1693", "as_of": "…",
                  "roles": [{ "ref": "mem:1585", "role": "supersedes" },
                            { "ref": "ep:411",   "role": "supports" }] }],
@@ -350,8 +351,13 @@ export。適応化は、固定 policy が再現可能な baseline と監査契�
   メッセージ id による束ね・supersedes・競合の判定には、保存先 project の一致が必要です。
   別 project の同じ id は独立した記憶であり、文脈が不明な場合も同一性を認定しません。
   in-place 更新の履歴を作ったり、意味的な矛盾を推論したりはしません。
+- head claim は item 内で最も関連度の高い行です。その記憶の新しい版 (同じ保存先 project の
+  同じメッセージ id) が item 内にある場合は、その最新版が head になります。「最新」に意味が
+  あるのは版の連鎖の中だけで、1 つの発話の連続やエピソードに属する別々の行の間では、
+  最後に書かれた行にすぎません。`head_ref` が head を示し、`claims` は新しい順のままです。
 - `max_evidence` は evidence 配列に加え、保持する claims、timeline、role の参照先も
-  制限します。切り詰めを報告し、この制限で落ちた claim を role が参照することはありません。
+  制限します。切り詰める時は head を残し、残りは関連度の高い行から保持します。
+  切り詰めを報告し、この制限で落ちた claim を role が参照することはありません。
 - `reconstruction` は policy の版、候補数、クラスタ数、選択数、出典不足による除外数を
   報告します。`trace=true` は本文を含めずに候補 ref とクラスタ構成を追加します。
   呼び出し側は、count が出力を制限したのか、検索候補が足りなかったのかを確認できます。

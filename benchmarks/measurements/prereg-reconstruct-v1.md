@@ -62,3 +62,15 @@ identity. Same-namespace version ordering remains stage-tested because normal
 stores do not append versions. Real-store regressions cover sibling-project and
 project/global collisions. This corrects the fixed-scope statement above; no
 count replay or answer-quality measurement was repeated for this correction.
+
+## Head claim correction
+
+Review found that the head of a multi-row item was always its newest row. That
+is right for a version chain and wrong for distinct rows bundled by adjacency or
+episode span, where a later low-relevance row became the quoted content and an
+evidence cut discarded older relevant rows first. The head is now the most
+relevant row, resolved to the latest version of that record when newer versions
+are present; a cut keeps the head, then relevance decides. The count replay above
+is unaffected, because every replay item is a singleton. Any answer-reader
+measurement taken before this correction used the previous head rule and must be
+repeated before it is cited for the corrected implementation.

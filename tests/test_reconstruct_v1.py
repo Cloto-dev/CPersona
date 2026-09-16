@@ -133,7 +133,8 @@ async def test_evidence_ceiling_bounds_claims_timeline_and_resolvable_refs():
     expanded = await M.do_get_contents(AGENT, sorted(refs))
     assert expanded["missing"] == []
     contents = {row["ref"]: row["content"] for row in expanded["items"]}
-    assert contents[item["claims"][0]["ref"]] == item["content"]
+    assert item["head_ref"] in refs
+    assert contents[item["head_ref"]] == item["content"]
     assert out["bounds"]["truncated"] is True
 
 

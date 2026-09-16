@@ -355,7 +355,7 @@ async def test_8_no_padding():
     """One cluster is one item; a row never appears as the head of two items."""
     await _seed_unclustered()
     out = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K)
-    heads = [item["claims"][0]["ref"] for item in out["items"]]
+    heads = [item["head_ref"] for item in out["items"]]
     assert len(heads) == len(set(heads))
     all_refs = [e["ref"] for item in out["items"] for e in item["evidence"]]
     assert len(all_refs) == len(set(all_refs)), "a row was counted into two items"
@@ -504,4 +504,66 @@ async def test_items_are_ordered_by_relevance():
     recalled = await M.do_recall(AGENT, QUERY, limit=TOP_K)
     most_relevant = recalled["messages"][-1]["ref"]
     out = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=TOP_K)
-    assert out["items"][0]["claims"][0]["ref"] == most_relevant
+    assert out["items"][0]["head_ref"] == most_relevant
+
+
+# --------------------------------------------------------------------------
+# The head claim: latest version of a record, otherwise the most relevant row
+# --------------------------------------------------------------------------
+
+
+def _row(n: int, content: str, stamp: str, rank: int, msg_id: str = "") -> R._Candidate:
+    row = R._Candidate({"ref": f"mem:{n}", "id": msg_id, "content": content, "timestamp": stamp,
+                        "source": {"type": "User", "id": "u-head"}}, rank=rank)
+    row.context = ("same-project", "")
+    return row
+
+
+def _structure(rows: list[R._Candidate], max_evidence: int = 40) -> tuple[dict, bool]:
+    uf = R.bundle(rows, {})
+    assert len({uf.find(i) for i in range(len(rows))}) == 1, "fixture must form one cluster"
+    why = {rows[i].ref: key for i, key in uf.why.items()}
+    return R.structure(rows, why, {}, max_evidence)
+
+
+def test_head_of_distinct_rows_is_the_most_relevant_not_the_newest():
+    """A burst of distinct rows: the newest is only the last thing said."""
+    relevant = _row(1, "my dog is named Rex", "2026-02-01T09:00:00+00:00", rank=0)
+    later = _row(2, "ok thanks, see you", "2026-02-01T09:00:30+00:00", rank=5)
+    item, _ = _structure([relevant, later])
+    assert item["independence_reason"] == "cluster:adjacent"
+    assert item["content"] == "my dog is named Rex"
+    assert item["head_ref"] == relevant.ref
+    # Claims keep their documented order: newest first.
+    assert [c["ref"] for c in item["claims"]] == [later.ref, relevant.ref]
+
+
+def test_head_of_a_version_chain_is_its_latest_version_even_when_older_ranks_higher():
+    old = _row(1, "rollback pending", "2026-03-01T10:00:00+00:00", rank=0, msg_id="ticket-9")
+    new = _row(2, "rollback shipped", "2026-03-02T10:00:00+00:00", rank=4, msg_id="ticket-9")
+    item, _ = _structure([old, new])
+    assert item["content"] == "rollback shipped"
+    assert item["head_ref"] == new.ref
+
+
+def test_version_rule_applies_only_to_the_record_relevance_chose():
+    """A newer version of a LESS relevant record does not displace the most relevant row."""
+    lead = _row(1, "deploy window is friday", "2026-03-02T10:00:00+00:00", rank=0)
+    v1 = _row(2, "rollback pending", "2026-03-02T10:00:20+00:00", rank=1, msg_id="ticket-9")
+    v2 = _row(3, "rollback shipped", "2026-03-02T10:00:40+00:00", rank=2, msg_id="ticket-9")
+    item, _ = _structure([lead, v1, v2])
+    assert item["head_ref"] == lead.ref
+    assert item["content"] == "deploy window is friday"
+
+
+def test_an_evidence_cut_keeps_the_head_then_the_most_relevant_rows():
+    relevant = _row(1, "my dog is named Rex", "2026-02-01T09:00:00+00:00", rank=0)
+    second = _row(2, "he is a beagle", "2026-02-01T09:00:10+00:00", rank=1)
+    newest = _row(3, "ok thanks, see you", "2026-02-01T09:00:30+00:00", rank=7)
+    item, truncated = _structure([relevant, second, newest], max_evidence=1)
+    assert truncated is True
+    assert item["head_ref"] == relevant.ref
+    assert [c["ref"] for c in item["claims"]] == [relevant.ref]
+    item, _ = _structure([relevant, second, newest], max_evidence=2)
+    assert {e["ref"] for e in item["evidence"]} == {relevant.ref, second.ref}
+    assert [c["ref"] for c in item["claims"]] == [second.ref, relevant.ref]

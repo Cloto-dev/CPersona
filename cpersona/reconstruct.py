@@ -132,13 +132,14 @@ class _Candidate:
 
 
 def _order_key(c: _Candidate) -> tuple:
-    """The written-down total order (invariant 3).
+    """The written-down total order of `claims` (invariant 3).
 
-    Newest first, because the head of a cluster is its *current* statement — the
-    one a supersession chain ends at. Then memories before episodes (a memory is
-    a statement; an episode summary is context), then the relevance rank the
-    retrieval produced, then the row id. The last element makes the order total:
-    two rows cannot tie on all four.
+    Newest first, so a supersession chain reads from its current statement back.
+    Then memories before episodes (a memory is a statement; an episode summary is
+    context), then the relevance rank the retrieval produced, then the row id. The
+    last element makes the order total: two rows cannot tie on all four.
+
+    This orders claims; it does not choose the head. See `_head`.
     """
     return (
         1 if c.ts is None else 0,
@@ -152,6 +153,11 @@ def _order_key(c: _Candidate) -> tuple:
 def _timeline_key(c: _Candidate) -> tuple:
     """Chronological order for `timeline` — oldest first, total by (kind, id)."""
     return (c.ts.timestamp() if c.ts is not None else 0.0, c.kind, c.row_id)
+
+
+def _relevance_key(c: _Candidate) -> tuple:
+    """Most relevant first, total by row id."""
+    return (c.rank, c.kind, c.row_id)
 
 
 def _message_key(c: _Candidate) -> tuple[str, str] | None:
@@ -405,6 +411,24 @@ def _conflicts(members: list[_Candidate]) -> list[dict]:
     return out
 
 
+def _head(members: list[_Candidate]) -> _Candidate:
+    """The claim an item quotes.
+
+    A cluster is either versions of one record or distinct rows that belong
+    together (one conversational burst, one episode). Newest is only meaningful
+    for the first: the latest version is the current statement. Among distinct
+    rows, the newest is merely the last thing said, so the head is the row the
+    retrieval ranked highest. Both rules compose: take the most relevant row, then,
+    if newer versions of that same record are in the cluster, its latest version.
+    """
+    lead = min(members, key=_relevance_key)
+    identity = _message_key(lead)
+    if identity is None or lead.ts is None:
+        return lead
+    versions = [m for m in members if _message_key(m) == identity and m.ts is not None]
+    return min(versions, key=_order_key)
+
+
 def structure(
     members: list[_Candidate],
     why: dict[str, str],
@@ -414,13 +438,17 @@ def structure(
     """Stage 4 — one cluster becomes one recall item.
 
     Ordered by time and by version; conflicting rows are kept and marked. Nothing
-    is summarised and no text is merged: `content` is the head claim verbatim.
+    is summarised and no text is merged: `content` is the head claim verbatim, and
+    `head_ref` names it.
     """
-    ordered = sorted(members, key=_order_key)
+    head = _head(members)
     # Every emitted claim, role and timeline entry has a retained evidence row.
-    truncated = len(ordered) > max_evidence
-    ordered = ordered[:max_evidence]
-    head = ordered[0]
+    # A cut keeps the head, then the most relevant of the rest; age decides
+    # nothing about what survives.
+    truncated = len(members) > max_evidence
+    others = sorted((m for m in members if m is not head), key=_relevance_key)
+    retained = {id(m) for m in [head, *others][:max_evidence]}
+    ordered = sorted((m for m in members if id(m) in retained), key=_order_key)
 
     claims = [
         {
@@ -433,8 +461,7 @@ def structure(
 
     timeline = [{"at": m.timestamp, "ref": m.ref} for m in sorted(ordered, key=_timeline_key) if m.ts is not None]
 
-    evidence_rows = ordered
-    evidence = [{"ref": m.ref, "why": why.get(m.ref, "seed")} for m in evidence_rows[:max_evidence]]
+    evidence = [{"ref": m.ref, "why": why.get(m.ref, "seed")} for m in ordered]
 
     # The strongest key that formed this cluster answers "why is this a separate
     # item"; a row nothing linked to is independent because nothing claimed it.
@@ -443,6 +470,7 @@ def structure(
 
     item: dict = {
         "content": head.content,
+        "head_ref": head.ref,
         "claims": claims,
         "timeline": timeline,
         "evidence": evidence,
@@ -573,7 +601,7 @@ async def do_reconstruct(
         item, cut = structure(rows, why_by_ref, spans, bounds_max_evidence)
         evidence_truncated = evidence_truncated or cut
         # Most relevant cluster first; the head ref makes the order total.
-        assembled.append((min(r.rank for r in rows), item["claims"][0]["ref"], item))
+        assembled.append((min(r.rank for r in rows), item["head_ref"], item))
 
     assembled.sort(key=lambda t: (t[0], t[1]))
     items = [item for _, _, item in assembled[:effective_count]]

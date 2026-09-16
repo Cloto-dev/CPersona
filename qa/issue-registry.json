@@ -6424,6 +6424,20 @@
       "category": "reconstructive-recall",
       "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool.",
       "fix_note": "Resolve the effective candidate bound before retrieval; retain requested top_k and report effective_top_k when clamped. Mark a clamped bound even for empty or undersized pools, and compare returned rows against the effective bound."
+    },
+    {
+      "id": "bug-438",
+      "summary": "(MEDIUM) A multi-row recall item always quoted its newest row. That is correct for versions of one record but not for distinct rows bundled by adjacency or episode span: a relevant statement followed within the adjacency window by an unrelated remark returned the remark as the item's content, and an evidence cut dropped the older relevant rows first.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-16T12:00:00Z",
+      "version": "2.6.0a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "lead = min\\(members, key=_relevance_key\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "reconstructive-recall",
+      "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool. The design named a head claim without defining which row it is.",
+      "fix_note": "The head is the most relevant row, resolved to the latest version when newer versions of that record are in the item; head_ref names it and claims stay newest first. An evidence cut keeps the head, then the most relevant remaining rows."
     }
   ]
 }
