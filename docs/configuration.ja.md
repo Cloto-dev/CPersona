@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:e44312ac82c6cb5c6201b5a5d8962452fc956a46 -->
+<!-- i18n-source: docs/configuration.md@blob:8bc647d7079c1591c982871a99ea74faadcf19d3 -->
 
 # 設定リファレンス
 
@@ -29,6 +29,7 @@
 | `CPERSONA_MAX_MEMORIES` | `10000` | ベクトル検索の**走査ウィンドウ** (保存件数の上限ではありません) — 大きなコーパスでは引き上げてください ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_REACH` | `0` | ベクトル検索が走査ウィンドウの先をどこまで見てよいか (行数)。効果を持たせるには **`CPERSONA_MAX_MEMORIES` より大きくする必要があります**: 同値以下 (既定の `0` を含む) では遠方リストは存在せず、追加の処理は一切走りません。大きくすると、2 つの数値の間にある行が**第 2 のリスト**としてランク付けされ、第 1 のリストと並んで融合されます。つまりウィンドウは新しさの事前分布として働き続けたまま、到達距離だけを独立に伸ばせます。ローカルのベクトル検索と `rrf`/`rsf` の融合モードでのみ有効です ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_FAR_LIMIT` | `0` | その第 2 のリストのうち何行を融合層に渡すか。`0` (既定) は**応答の `limit` と同じ**という意味で、この設定なしで構築される第 2 のリストそのものです。正の値を与えると `min(limit, N)` 行に切り詰められます。これは候補件数の上限であり、行のスコア計算は一切変わりません。したがって残るのは、フル長のリストが先頭に並べていた行そのものです。`CPERSONA_VECTOR_REACH` が `CPERSONA_MAX_MEMORIES` より大きくない限り無関係で、第 1 のリスト側の打ち切りは `limit` のままです ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
+| `CPERSONA_RECALL_DEPTH_FLOOR` | `0` | 想起深度: 応答の `limit` にかかわらず、各検索経路が融合に渡す候補数の下限です。深度は `max(limit, この値)` で、`CPERSONA_RECALL_LIBRARY_MAX_LIMIT` が上限です。`0` では `limit` と等しく、2.5 系の結合を維持します。設定しない限り順位は変わりません。`limit` を超える場合、応答の `depth` で候補の深さを確認できます。融合モードのみ有効です。`cascade` は段階的に `limit` 件を埋めるため対象外です ([設計](RELIABLE_RECALL_2_6.md#4-depth-is-not-count)) |
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。autocut は類似度スケールのシグナル — confidence スコアリング下、あるいは `cascade` が作る生 cosine だけの均質なリスト — に対して発火し、`rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。したがってこのつまみが働くかどうかを決めるのは融合モードです |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | 融合後の品質ゲート。無効化は最終手段です: フィルタはプール規模のヒューリスティックにフォールバックし、粗くはなりますが弱い一致は依然として弾かれます — 失うのはこのコーパスに対して測定された動作点です |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | 埋め込みが利用不能な間、recall 応答に `advisory` を付ける ([runbook](operations.md#detecting-a-dead-embedding-server)) |
@@ -41,6 +42,24 @@
 汎用エイリアス `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL` も
 受理されます (両方設定されている場合は `CPERSONA_` 接頭辞つきが優先)。
 マーケットプレイスのカタログと Quick Start は汎用名を使っています。
+
+## 再構成の件数 { #reconstruction-count }
+
+`reconstruct` の呼び出しごとに `count` を宣言します。上限の対象は**束ねた想起単位**であり、
+保存行数や検索深度ではありません。設定と呼び出し引数のどちらにも指定がなければ、上限は **1** です。
+
+| 変数 | 既定 | 説明 |
+|----------|---------|-------------|
+| `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `1` | 呼び出し側が `count` を省略した時の上限 |
+| `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします。充足目標ではなく上限です |
+| `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | 絶対上限。超える要求は切り詰めて報告します。実験的な制限であり、実測で最適とされた件数ではありません |
+
+優先順位は `forced ?? requested ?? default` で、最大値で制限します。
+既定値や強制値が最大値を超える設定は、起動時エラーになります。
+`count=5` に対して有効な item が 2 件なら、`requested_count=5`、`effective_count=5`、
+`returned_count=2` と `shortfall_reason` を返します。件数を埋めるために item を複製したり、
+クラスタを分割したり、選択基準を緩めたりしません。強制値を設定しても、この規則は変わりません。
+束ねには確定的な出典キーを使い、任意の文章間の意味的同一性は判定しません。
 
 ## コーパス規模の上限 { #corpus-scale-caps }
 

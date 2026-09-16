@@ -6382,6 +6382,48 @@
       "status": "open",
       "category": "test-coverage",
       "note": "Found while repairing the positive control in the same test file, which had been red since a second version line was declared: the fixture published one line where the gate asks its question per line. That repair made the positive control assert the whole run is clean, so the tree it writes now exercises this branch in the passing direction -- a row pointing at a page that is not there would fail it. What is still missing is the negative: no test writes a tree whose selector points at a line the assembler did not build, so deleting the branch costs nothing. Left open rather than fixed with the repair, to keep a build-restoring change to the failure it restored."
+    },
+    {
+      "id": "bug-435",
+      "summary": "(HIGH) Message-ID reconstruction ignores the stored project namespace, merging unrelated records and fabricating supersession when multiple projects are visible. Reproduced with two successful stores of the same ID into sibling projects: two facts became one item.",
+      "severity": "HIGH",
+      "discovered": "2026-09-16T05:00:00Z",
+      "version": "2.6.0a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "bug-435:",
+      "expected": "present",
+      "status": "fixed",
+      "category": "reconstructive-recall",
+      "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool.",
+      "fix_note": "Use a shared project-scoped identity key for bundling, supersession and conflicts; unknown context cannot establish identity. Preserve positive same-namespace version and conflict assertions with explicit stage fixtures, and pin real-store sibling/global separation."
+    },
+    {
+      "id": "bug-436",
+      "summary": "(MEDIUM) Reconstruction consumes recall advisory and update notices, marking the session as informed, but does not return those fields. A later recall receives only the short degradation reminder or no update notice.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-16T05:00:00Z",
+      "version": "2.6.0a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "bug-436:",
+      "expected": "present",
+      "status": "fixed",
+      "category": "reconstructive-recall",
+      "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool.",
+      "fix_note": "Forward the advisory/update allowlist before empty-result returns. Tests exercise real per-session notice suppression for populated and empty responses, including count zero."
+    },
+    {
+      "id": "bug-437",
+      "summary": "(MEDIUM) Reconstruction compares returned candidates against requested top_k after recall clamps it to the library ceiling. With five records, requested20 and library ceiling2, it returns two with truncated false.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-16T05:00:00Z",
+      "version": "2.6.0a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "bug-437:",
+      "expected": "present",
+      "status": "fixed",
+      "category": "reconstructive-recall",
+      "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool.",
+      "fix_note": "Resolve the effective candidate bound before retrieval; retain requested top_k and report effective_top_k when clamped. Mark a clamped bound even for empty or undersized pools, and compare returned rows against the effective bound."
     }
   ]
 }

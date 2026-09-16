@@ -217,10 +217,10 @@ jobs:
     # adding signal.
     if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
-    # The script runs the suite up to ~13 times, but caught mutants fail fast (-x)
-    # and every test is bounded by the 60s per-test timeout; local wall time is
-    # ~12s. 15 minutes is a generous hang ceiling, matching the `test` job.
-    timeout-minutes: 15
+    # Reconstruction adds full-suite mutation runs. Caught mutants fail fast
+    # (-x), and each test remains bounded by its 60s timeout; allow 30 minutes
+    # for the expanded mutation set on the CI runner.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install uv

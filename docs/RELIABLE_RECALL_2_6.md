@@ -310,9 +310,11 @@ effective = min(base, max_count)
   insufficient provenance, token budget exhausted, or system degraded. The
   shortfall is never filled with duplicates, low-quality items or content the
   evidence does not support.
-- The default and the maximum are **measured before they are fixed**: a sweep
-  over `count` on the long-memory benchmark, reading answer and evidence
-  quality against payload tokens and latency, decides where the knee is.
+- The unconfigured default is **one item**, a conservative call contract rather
+  than a measured optimum. The maximum remains experimental until a sweep
+  over `count` on the long-memory benchmark compares answer and evidence
+  quality against payload tokens and latency. Any proposed change to the
+  default must be justified by that measurement.
 
 The window sits fourth in a series this server already has: the embedding
 window (what gets indexed; a split is reported), the scan window (what gets
@@ -389,6 +391,46 @@ appear when declared relations do. A reader ignores a role it does not know.
 policy, model-assisted independence judgement, statement-level provenance,
 and standardised export of count fields. Adaptation waits until a fixed
 policy has a reproducible baseline and an audit contract.
+
+### Reconstruction v1 implementation boundary
+
+The experimental v1 exit retains v0's four stages; the relation walk still
+has no edges to follow. It adds these concrete qualifications:
+
+- Time-based bundling requires the same project and channel. Adjacency also
+  requires the same source role and id; the entire burst, rather than each
+  successive gap, must fit within the configured adjacency interval.
+- Episode time containment is evidence only within the same project and
+  channel. Message-id bundling, supersession and conflicts require the same
+  stored project: equal IDs in different projects are independent records.
+  Unknown context does not establish identity. This does not create history
+  for in-place updates or infer semantic contradictions.
+- `max_evidence` bounds the retained claims, timeline and role targets as
+  well as the evidence array. Truncation is reported; a role never points to
+  a claim discarded by this bound.
+- `reconstruction` reports the policy version, candidate count, cluster count,
+  selected count and rows excluded for missing provenance. `trace=true` adds
+  candidate refs and cluster membership, without full text. A caller can tell
+  whether count limited the output or retrieval supplied too few candidates.
+- `gate_fallback` is preserved even when the requested count is filled.
+  An explicit zero count returns no items and states `count_zero`.
+- Retrieval `advisory` and `update` notices survive reconstruction, including
+  empty results, so consuming a per-session notice also delivers it.
+- `bounds.top_k` records the requested candidate bound. If the library ceiling
+  reduces it, `bounds.effective_top_k` records the applied bound and
+  `bounds.truncated` is true, including on an empty result. A shortfall describes
+  the retrieved pool; it does not establish that the whole corpus was exhausted.
+- Authenticated use requires the same per-agent read grant as `recall`.
+
+The call-level count defaults to one item by contract, with an optional
+operator-forced override. Neither is a fill target: requesting or forcing five
+returns two when only two valid items are available. The maximum of ten
+remains experimental; neither value claims an empirically optimal
+answer-quality/payload tradeoff. Qualification includes
+real-write conversation fixtures and a count replay over retained session
+rankings; that replay does not substitute for an answer-reader evaluation or
+production-depth retrieval. See the reconstruction qualification record in
+`benchmarks/measurements/`.
 
 ## 8. Recall Quality Engineering
 

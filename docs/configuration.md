@@ -25,6 +25,7 @@
 | `CPERSONA_MAX_MEMORIES` | `10000` | The vector retriever's **scan window** (not a storage cap) — raise it for large corpora ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_REACH` | `0` | How far past the scan window the vector retriever may look, in rows. It **must exceed `CPERSONA_MAX_MEMORIES` to have any effect**: at or below it (and at the default `0`) the far list does not exist and nothing extra runs. Above it, the rows between the two numbers are ranked as a **second list** and fused alongside the first, so the window keeps working as a recency prior while the reach extends independently. Local vector search and the `rrf`/`rsf` fusion modes only ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_FAR_LIMIT` | `0` | How many rows of that second list reach fusion. `0` (the default) means **the same as the response `limit`**, which is the second list exactly as it is built without this setting; a positive value cuts it to `min(limit, N)` rows. It bounds a candidate count and changes nothing about how a row is scored, so the rows it keeps are the ones the full-length list led with. Irrelevant unless `CPERSONA_VECTOR_REACH` is above `CPERSONA_MAX_MEMORIES`; the first list's own cut stays at `limit` ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
+| `CPERSONA_RECALL_DEPTH_FLOOR` | `0` | Recall Depth: the fewest candidates each retrieval arm hands to the fusion, whatever `limit` asks to receive. The depth is `max(limit, this)`, capped by `CPERSONA_RECALL_LIBRARY_MAX_LIMIT`; at `0` it equals `limit`, which is the coupling the 2.5 line shipped with — nothing in the ranking moves until you set it. When it exceeds `limit`, the response carries `depth`, so a caller can see that a 5-row answer was ranked over more than 5 candidates per arm. Fusion modes only: `cascade` fills `limit` slots stage by stage and has no list to deepen ([design](RELIABLE_RECALL_2_6.md#4-depth-is-not-count)) |
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | Result sets smaller than this are never autocut. Autocut fires on similarity-scale signals — under confidence scoring, or on the homogeneous raw-cosine list `cascade` produces — and is deliberately inert under `rsf`/`rrf` ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)), so the fusion mode decides whether this knob does anything |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | The post-fusion quality gate. Disabling it is a last resort: filtering falls back to the pool-size heuristic, which is coarser but still rejects weak matches — what you lose is the operating point measured for this corpus |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | Attach an `advisory` to recall responses while embeddings are unavailable ([runbook](operations.md#detecting-a-dead-embedding-server)) |
@@ -37,6 +38,27 @@
 The generic aliases `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL`
 are also accepted, and the `CPERSONA_`-prefixed form wins when both are set.
 The marketplace catalog and the Quick Start use the generic names.
+
+## Reconstruction count
+
+Declare `count` on each `reconstruct` call. It limits **assembled recall items**,
+not stored rows or retrieval depth. With no count configuration or call argument,
+the ceiling is **1**.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `1` | Ceiling used when the caller omits `count` |
+| `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(unset)* | Override the caller's count and the default for every call; still a ceiling, never a fill target |
+| `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | Absolute ceiling; requests above it are clamped and reported. This is an experimental limit, not an empirically optimal count |
+
+Precedence is `forced ?? requested ?? default`, capped by the maximum.
+A default or forced value above the maximum is a startup error.
+If `count=5` produces only two valid items, return two, with
+`requested_count=5`, `effective_count=5`, `returned_count=2` and a
+`shortfall_reason`. Do not duplicate items, split a cluster or relax selection
+to fill the window. Forcing a count does not change this rule.
+Bundling uses deterministic provenance keys; it does not establish semantic
+equivalence between arbitrary texts.
 
 ## Corpus scale caps
 

@@ -441,7 +441,7 @@ async def test_profile_injection_shared_across_recall_strategies(
     )
     await clean_db.commit()
 
-    results = await strategy(clean_db, agent_id, query, limit=10, deep=False)
+    results = await strategy(clean_db, agent_id, query, 10, False)
 
     assert any(
         row["id"] == -1 and row["content"].startswith("[Profile] ") for row in results
