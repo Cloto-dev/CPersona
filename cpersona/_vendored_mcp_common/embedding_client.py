@@ -97,6 +97,74 @@ def _safe_endpoint(url: str) -> str:
     return urlunsplit((parts.scheme, host, parts.path, "", "")) or "<unset>"
 
 
+@dataclass(frozen=True)
+class TokenInfo:
+    """Where the backend's embedding window closes on one text.
+
+    - ``count`` — tokens in the whole text, special tokens included.
+    - ``window`` — tokens the backend embeds, special tokens included.
+    - ``truncated`` — the text runs past the window.
+    - ``window_end_char`` — ``text[:window_end_char]`` is what the vector
+      represents; equal to ``len(text)`` when nothing was cut.
+    """
+
+    count: int
+    window: int
+    truncated: bool
+    window_end_char: int
+
+
+def _count_tokens_url(embed_url: str) -> str | None:
+    """The ``/count_tokens`` route beside a configured ``/embed`` URL, keeping its query."""
+    try:
+        parts = urlsplit(embed_url)
+    except ValueError:
+        return None
+    path = parts.path.rstrip("/")
+    if not path.endswith("/embed"):
+        return None
+    return urlunsplit(parts._replace(path=path[: -len("embed")] + "count_tokens"))
+
+
+def _is_int(value: object) -> bool:
+    # bool is a subclass of int; JSON `true` is not a count.
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_token_info(raw: object, texts: list[str]) -> list[TokenInfo]:
+    """Refuse a report that is malformed or contradicts itself.
+
+    The report decides where a caller splits stored text, so a wrong offset does not
+    fail loudly — it silently places the tail of a record outside every node. Each
+    entry therefore has to agree with its own text and with itself.
+    """
+    if not isinstance(raw, list):
+        raise EmbeddingResponseError(f"token_info is {_describe(raw)}, expected a list")
+    if len(raw) != len(texts):
+        raise EmbeddingResponseError(f"token_info has {len(raw)} entries for {len(texts)} texts")
+    out = []
+    for position, (entry, text) in enumerate(zip(raw, texts)):
+        if not isinstance(entry, dict):
+            raise EmbeddingResponseError(
+                f"token_info[{position}] is {_describe(entry)}, expected an object"
+            )
+        count, window, truncated, end = (
+            entry.get("count"),
+            entry.get("window"),
+            entry.get("truncated"),
+            entry.get("window_end_char"),
+        )
+        typed = _is_int(count) and _is_int(window) and _is_int(end)
+        if not (typed and isinstance(truncated, bool)):
+            raise EmbeddingResponseError(f"token_info[{position}] has a missing or mistyped field")
+        if count < 0 or window < 1 or not 0 <= end <= len(text):
+            raise EmbeddingResponseError(f"token_info[{position}] is out of range")
+        if truncated != (count > window) or (not truncated and end != len(text)):
+            raise EmbeddingResponseError(f"token_info[{position}] contradicts itself")
+        out.append(TokenInfo(count=count, window=window, truncated=truncated, window_end_char=end))
+    return out
+
+
 def _describe(value: object) -> str:
     """Name a rejected value by type without quoting it back into the message."""
     return type(value).__name__
@@ -201,6 +269,73 @@ class EmbeddingClient:
         """
         result, _ = await self.embed_with_outcome(texts)
         return result
+
+    async def count_tokens(self, texts: list[str]) -> list[TokenInfo] | None:
+        """How much of each text the backend's embedding window covers.
+
+        Returns one :class:`TokenInfo` per text, or ``None`` when that is not known:
+        no backend, a backend that cannot see its own tokens, a backend that predates
+        the report, or a failed request. ``None`` means unknown and must never be read
+        as "the text fits". :meth:`count_tokens_with_outcome` says which case it was.
+        """
+        result, _ = await self.count_tokens_with_outcome(texts)
+        return result
+
+    async def count_tokens_with_outcome(
+        self, texts: list[str]
+    ) -> tuple[list[TokenInfo] | None, EmbedOutcome]:
+        """:meth:`count_tokens`, plus what happened.
+
+        ``ok`` is true only when a report came back. The report comes from the
+        server's ``/count_tokens`` route, next to ``/embed`` on the same host; only
+        ``mode=http`` has one. It runs no model, so a caller can ask before deciding
+        how to store a long text without paying for an embedding.
+        """
+        if self.mode != "http" or not self._client:
+            unsupported = self.mode != "none" and self._client
+            error = f"mode={self.mode} has no token report" if unsupported else None
+            return None, EmbedOutcome(attempted=False, ok=False, error=error)
+        url = _count_tokens_url(self._http_url)
+        if url is None:
+            return None, EmbedOutcome(
+                attempted=False,
+                ok=False,
+                error=f"mode=http / {_safe_endpoint(self._http_url)} does not end in /embed, "
+                "so the token report route cannot be derived from it",
+            )
+        try:
+            response = await self._client.post(url, json={"texts": texts})
+            response.raise_for_status()
+            data = self._parse_within_budget(response)
+            if not isinstance(data, dict):
+                raise EmbeddingResponseError(
+                    f"token report is {_describe(data)}, expected an object"
+                )
+            raw = data.get("token_info")
+            if raw is None:
+                return None, EmbedOutcome(
+                    attempted=True,
+                    ok=False,
+                    error=(
+                        f"mode=http / POST {_safe_endpoint(url)} reports that its provider "
+                        "cannot see its tokens"
+                    ),
+                )
+            return _validate_token_info(raw, texts), EmbedOutcome(attempted=True, ok=True)
+        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError) as e:
+            safe = _safe_endpoint(url)
+            # Either configured form of the URL can appear in the exception text, and
+            # both carry the same userinfo and query string. The log gets the cleaned
+            # line too: httpx puts the request URL in its own message.
+            detail = (
+                str(e).replace(url, safe).replace(self._http_url, _safe_endpoint(self._http_url))
+            )
+            hint = ""
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
+                hint = " (the server predates the token report)"
+            evidence = f"mode=http / POST {safe} failed: {type(e).__name__}: {detail}{hint}"
+            logger.warning("Token count request failed: %s", evidence)
+            return None, EmbedOutcome(attempted=True, ok=False, error=evidence)
 
     async def embed_with_outcome(
         self, texts: list[str]
@@ -404,9 +539,7 @@ class EmbeddingClient:
                     f"embedding {position}[{index}] does not fit in float64"
                 ) from None
             if not math.isfinite(number):
-                raise EmbeddingResponseError(
-                    f"embedding {position}[{index}] is not finite"
-                )
+                raise EmbeddingResponseError(f"embedding {position}[{index}] is not finite")
             # Finite in float64 is not enough: these are stored as float32, where
             # 1e300 becomes inf. `pack_embedding` is the packer that will run, so
             # ask it rather than a constant — and it raises OverflowError, which is
@@ -503,8 +636,7 @@ class EmbeddingClient:
             # bool is an int subclass, so JSON `true` would otherwise index slot 1.
             if isinstance(slot, bool) or not isinstance(slot, int):
                 raise EmbeddingResponseError(
-                    f"embedding {position} has index {_describe(slot)}, "
-                    f"expected an integer"
+                    f"embedding {position} has index {_describe(slot)}, expected an integer"
                 )
             if not 0 <= slot < len(items) or slot in claimed:
                 raise EmbeddingResponseError(
