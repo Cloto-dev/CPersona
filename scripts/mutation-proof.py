@@ -62,6 +62,11 @@ class Mutation:
     # They are kept because "this guard is not the one holding the invariant up"
     # is exactly the kind of thing a refactor needs to know.
     equivalent: bool = False
+    # Test files that catch this mutant, run BEFORE the full suite. Only a
+    # shortcut: a red subset is a red suite, so it can shorten a CAUGHT verdict
+    # but never produce one the full suite would not. A green subset (a stale
+    # list) falls through to the full suite, which stays the authority.
+    tests: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +78,7 @@ class Mutation:
 MUTATIONS: list[Mutation] = [
     Mutation(
         id="M01",
+        tests=("tests/test_v2438_hardening.py",),
         target="_search_vector remote payload",
         file="cpersona/vector.py",
         find='"min_similarity": effective_min_sim,',
@@ -82,6 +88,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M02",
+        tests=("tests/test_v2438_hardening.py",),
         target="_search_vector remote timeout",
         file="cpersona/vector.py",
         find="timeout=REMOTE_SEARCH_TIMEOUT_SECS,",
@@ -91,12 +98,13 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M03",
+        tests=("tests/test_refactor_seams_252.py", "tests/test_equivalence_252.py"),
         target="_search_vector remote isolation",
         file="cpersona/vector.py",
         find="iso_fetch = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)",
         replace="iso_fetch = isolation_where(agent_id=agent_id, project_id=None, channel='')",
         breaks="remote by-id fetch loses the γ axes; another project's row can surface (bug-046/075/100)",
-        expect="tests/test_isolation.py",
+        expect="test_refactor_seams_252.py::test_remote_by_id_fetch_refuses_rows_outside_the_isolation_axes, test_equivalence_252.py[sv-remote-isolation-miss]",
     ),
     # ---------------------------------------------------------------------
     # do_import_memories (admin_handlers.py) — the highest-value split target
@@ -110,6 +118,7 @@ MUTATIONS: list[Mutation] = [
     # path can afford to lose is often the only one a preview has.
     Mutation(
         id="M04",
+        tests=("tests/test_equivalence_252.py",),
         target="do_import_memories msg_id pre-check — load-bearing on the dry_run path",
         file="cpersona/admin_handlers.py",
         find="if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):",
@@ -128,6 +137,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M05",
+        tests=("tests/test_audit_2500b1.py",),
         target="do_import_memories header validation",
         file="cpersona/admin_handlers.py",
         # _validate_file_header guards with an early return, so disabling the
@@ -182,6 +192,7 @@ MUTATIONS: list[Mutation] = [
     # The load-bearing layers the two equivalent mutants sit above.
     Mutation(
         id="M10",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_import_memories dry_run read seam",
         file="cpersona/admin_handlers.py",
         # Both import and merge use this idiom; anchor on the import one via the
@@ -207,6 +218,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M12",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_merge_memories dry_run read seam",
         file="cpersona/admin_handlers.py",
         find="""    # exit and auto-rolls-back on fault. dry_run does no writes → read seam.
@@ -230,6 +242,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M11",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_import_memories collision semantics",
         file="cpersona/admin_handlers.py",
         # Two INSERT OR IGNORE sites (import at :1617, merge at :1902); anchor on
@@ -250,6 +263,7 @@ MUTATIONS: list[Mutation] = [
     # ---------------------------------------------------------------------
     Mutation(
         id="M07",
+        tests=("tests/test_audit_2500b1.py",),
         target="do_merge_memories move semantics",
         file="cpersona/admin_handlers.py",
         find='if mode == "move" and not dry_run:',
@@ -262,15 +276,17 @@ MUTATIONS: list[Mutation] = [
     # ---------------------------------------------------------------------
     Mutation(
         id="M08",
+        tests=("tests/test_refactor_seams_252.py", "tests/test_equivalence_252.py"),
         target="do_calibrate_threshold sample floor",
         file="cpersona/admin_handlers.py",
         find="if len(vecs) < 10:",
         replace="if len(vecs) < 0:",
         breaks="calibrates a threshold from a handful of vectors; the null distribution is noise",
-        expect="test_calibrate_threshold_insufficient_embeddings",
+        expect="test_refactor_seams_252.py::test_calibrate_rejects_when_dim_filter_drops_below_the_floor, test_equivalence_252.py[calibrate-ragged]",
     ),
     Mutation(
         id="M09",
+        tests=("tests/test_v2438_hardening.py",),
         target="do_calibrate_threshold dim filter",
         file="cpersona/admin_handlers.py",
         find="vecs = [v for v in vecs if v.shape[0] == target_dim]",
@@ -285,6 +301,7 @@ MUTATIONS: list[Mutation] = [
     # -----------------------------------------------------------------------
     Mutation(
         id="M13",
+        tests=("tests/test_257_session_key_stage2.py",),
         target="queue attribution reconcile",
         file="cpersona/tasks.py",
         find="await self._forget_vanished_rows()",
@@ -294,6 +311,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M14",
+        tests=("tests/test_bug287_temporal_merge_order.py",),
         target="recall_with_context temporal merge order",
         file="cpersona/memory_handlers.py",
         find="""    parsed = _parse_timestamp_utc(m.get("timestamp", "") or "")
@@ -304,6 +322,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03a",
+        tests=("tests/test_future_timestamp.py", "tests/test_equivalence_252.py"),
         target="the write seam's verdict on a timestamp ahead of the clock (bug-293)",
         file="cpersona/utils.py",
         # The detector goes blind: every stamp reads as inside the allowance. This
@@ -321,6 +340,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03b",
+        tests=("tests/test_future_timestamp.py", "tests/test_255_repairable_contract.py", "tests/test_equivalence_252.py"),
         target="the health check's boundary — the rows already stored (bug-293)",
         file="cpersona/checks.py",
         # A boundary nothing can reach. The check still runs, still reports zero,
@@ -339,6 +359,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03c",
+        tests=("tests/test_future_timestamp.py",),
         target="the restore seam's report — faithful, but not silent (bug-293)",
         file="cpersona/admin_handlers.py",
         find='    if future_timestamp_issue(record.get("timestamp", "")):\n        tally.future_timestamps += 1',
@@ -348,6 +369,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N04",
+        tests=("tests/test_unicode_identity.py", "tests/test_equivalence_252.py"),
         target="the Unicode identity detector (bug-295)",
         file="cpersona/checks.py",
         # Compare the row against itself instead of against its normal form: the
@@ -372,6 +394,7 @@ MUTATIONS: list[Mutation] = [
     # ---------------------------------------------------------------------
     Mutation(
         id="M15",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 7 — count and breadth are decoupled",
         file="cpersona/reconstruct.py",
         find="bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))",
@@ -381,6 +404,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M16",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 8 — one cluster is one item",
         file="cpersona/reconstruct.py",
         find="    clusters = [sorted(members) for _, members in sorted(grouped.items())]",
@@ -390,6 +414,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M17",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 3 — the written-down total order",
         file="cpersona/reconstruct.py",
         find="        -c.ts.timestamp() if c.ts is not None else 0.0,",
@@ -399,6 +424,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M18",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 2 — content is a quotation",
         file="cpersona/reconstruct.py",
         find='        "content": head.content,',
@@ -408,6 +434,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M19",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 4 — a cut is reported",
         file="cpersona/reconstruct.py",
         find='    bounds["truncated"] = bool(evidence_truncated or walk_truncated or pool_truncated)',
@@ -417,6 +444,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M20",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 5 — every element says why it is present",
         file="cpersona/reconstruct.py",
         find='    evidence = [{"ref": m.ref, "why": why.get(m.ref, "seed")} for m in ordered]',
@@ -426,6 +454,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M21",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct — the Reconstruction Window's ceiling",
         file="cpersona/reconstruct.py",
         find="    effective = min(base, maximum)",
@@ -435,6 +464,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M22",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct stage 2 — 'adjacent timestamps, same source' is ONE key",
         file="cpersona/reconstruct.py",
         find="""                gap = candidates[right].ts.timestamp() - candidates[anchor].ts.timestamp()
@@ -448,6 +478,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M23",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 1 — stored rows are never modified",
         file="cpersona/reconstruct.py",
         find="    uf = bundle(candidates, spans)",
@@ -462,6 +493,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M24",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct head claim — the most relevant row, not the newest",
         file="cpersona/reconstruct.py",
         find="    lead = min(members, key=_relevance_key)",
@@ -471,6 +503,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M25",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct head claim — a version chain resolves to its latest version",
         file="cpersona/reconstruct.py",
         find="    return min(versions, key=_order_key)",
@@ -480,6 +513,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M26",
+        tests=("tests/test_reconstruct.py",),
         target="reconstruct evidence cut — keeps the head, then relevance decides",
         file="cpersona/reconstruct.py",
         find="    others = sorted((m for m in members if m is not head), key=_relevance_key)",
@@ -529,6 +563,31 @@ def apply_mutation(m: Mutation) -> str:
     return original
 
 
+# pytest exit codes a TARGETED run may count as caught: tests failed (1), or the
+# run was interrupted, which is how a mutant that breaks an import surfaces (2).
+# "No tests collected" (5), internal (3) and usage (4) errors say nothing about
+# the mutant, so they fall through to the full suite instead of becoming CAUGHT.
+TARGETED_CAUGHT_CODES = frozenset({1, 2})
+
+
+def verdict(m: Mutation, run_tests) -> tuple[bool, str]:
+    """Whether the test suite catches the applied mutant, and which run decided.
+
+    `run_tests(paths)` runs pytest over `paths` (all tests when empty) and returns
+    its exit code. The full suite decides unless the mutant's own test files
+    are already red: an equivalent mutant must survive the WHOLE suite, so it
+    never takes the shortcut.
+    """
+    if m.tests and not m.equivalent:
+        if run_tests(list(m.tests)) in TARGETED_CAUGHT_CODES:
+            return True, "targeted"
+    return run_tests([]) != 0, "full"
+
+
+def missing_test_files(selected: list[Mutation]) -> list[str]:
+    return sorted({f"{m.id}: {t}" for m in selected for t in m.tests if not (REPO / t).is_file()})
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--id", help="run a single mutation by id")
@@ -539,6 +598,13 @@ def main() -> int:
         raise SystemExit(f"no mutation matches --id {args.id}")
 
     if not tree_is_clean({m.file for m in selected}):
+        return 2
+
+    missing = missing_test_files(selected)
+    if missing:
+        print("!! mutation test files do not exist — update the `tests` field:")
+        for line in missing:
+            print(f"   {line}")
         return 2
 
     print(f"Baseline: running the suite unmutated ({len(selected)} mutations queued)...")
@@ -554,11 +620,12 @@ def main() -> int:
         original = apply_mutation(m)
         try:
             # -x: the first failure is enough to prove the mutant is caught.
-            result = run(["uv", "run", "pytest", "-q", "-x"])
+            caught, decided_by = verdict(
+                m, lambda paths: run(["uv", "run", "pytest", "-q", "-x", *paths]).returncode
+            )
         finally:
             (REPO / m.file).write_text(original)
 
-        caught = result.returncode != 0
         if m.equivalent:
             # Inverted expectation: an equivalent mutant that gets CAUGHT means a
             # test is asserting the redundant layer itself, which will break the
@@ -568,6 +635,7 @@ def main() -> int:
             status = "CAUGHT     " if caught else "SURVIVED   "
         print(f"[{status}] {m.id}  {m.target}")
         print(f"           {m.breaks}")
+        print(f"           decided by: {decided_by} run")
         if not caught and not m.equivalent:
             survived.append(m)
             print(f"           !! no test failed. Expected pin: {m.expect}")
