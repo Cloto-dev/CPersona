@@ -1342,18 +1342,30 @@ def _collect_enqueue_calls(tree):
     ]
 
 
-def test_background_queue_has_no_production_call_site():
-    """Gate: the shipped package never enqueues, which is what the docs promise."""
+#: The modules allowed to enqueue, which is what the architecture page names. The
+#: overflow tree's node construction is the one producer (docs/OVERFLOW_TREE_DESIGN.md §3).
+_QUEUE_PRODUCERS = {"nodes.py"}
+
+
+def test_background_queue_has_only_the_documented_producers():
+    """Gate: the package enqueues only from the producers the docs name."""
     hits = []
     for path in _iter_module_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        hits.extend(f"{path.name}:{lineno}" for lineno in _collect_enqueue_calls(tree))
+        hits.extend((path.name, lineno) for lineno in _collect_enqueue_calls(tree))
 
-    assert not hits, (
-        f"{_QUEUE_CLAIM_DOC} states that nothing enqueues onto pending_memory_tasks and "
-        f"reads an empty queue as healthy, but the package calls enqueue() at {hits}. "
+    undocumented = [f"{name}:{lineno}" for name, lineno in hits if name not in _QUEUE_PRODUCERS]
+    assert not undocumented, (
+        f"{_QUEUE_CLAIM_DOC} names node construction as the only thing that enqueues onto "
+        f"pending_memory_tasks, but the package also calls enqueue() at {undocumented}. "
         "Either the wiring is unintended, or the claim is now stale — update the section "
-        "(and the drain-only framing around it) rather than relaxing the gate."
+        "(and _QUEUE_PRODUCERS with it) rather than relaxing the gate."
+    )
+    # The other direction: a producer the page names that no longer enqueues leaves the
+    # page describing a queue depth nothing can cause.
+    assert {name for name, _ in hits} == _QUEUE_PRODUCERS, (
+        f"{_QUEUE_CLAIM_DOC} names {sorted(_QUEUE_PRODUCERS)} as producers, but only "
+        f"{sorted({name for name, _ in hits})} enqueue."
     )
 
     # The claim is only worth guarding while the queue it describes still exists.

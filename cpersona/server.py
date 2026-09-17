@@ -753,7 +753,10 @@ registry.auto_tool(
     "'stored' (a new row was written; {ok:true, result:'stored', id:<row-id>, "
     "embedded:<bool>}, embedded true iff a local blob was persisted or the remote "
     "index push succeeded — false under EMBEDDING_MODE=none; the response also "
-    "carries truncated:true when content exceeded the length cap and was shortened), "
+    "carries truncated:true when content exceeded the length cap and was shortened, "
+    "and nodes:{status:'queued'} when the text runs past the embedding window and its "
+    "overflow-tree nodes were queued for construction — absent when it fits, when the "
+    "embedding server cannot report tokens, or with the task queue disabled), "
     "'skipped' (nothing written and nothing wrong: {ok:true, result:'skipped', "
     "reason:...}; the msg_id / content dedup branches echo the pre-existing row's id, "
     "the OR IGNORE fallback reason='duplicate (unique index)' omits id by design — "
@@ -1341,7 +1344,8 @@ registry.auto_tool(
 registry.auto_tool(
     "archive_episode",
     "Archive a conversation episode with pre-computed summary, keywords, and resolved status. "
-    "All LLM processing is performed by the caller.",
+    "All LLM processing is performed by the caller. A summary that runs past the embedding "
+    "window adds nodes:{status:'queued'} to the response, as on store.",
     {
         "type": "object",
         "properties": {
@@ -1630,7 +1634,8 @@ registry.auto_tool(
     "agent_id provided. The new content passes through the same sanitizer as store: "
     "it is capped at the content length limit (the response carries truncated:true "
     "when the cap bit) and [Memory from ...] annotations are stripped, so content "
-    "consisting only of those is refused rather than written as an empty row.",
+    "consisting only of those is refused rather than written as an empty row. A new "
+    "text that runs past the embedding window gets nodes:{status:'queued'}, as on store.",
     {
         "type": "object",
         "properties": {

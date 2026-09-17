@@ -9,6 +9,7 @@ lazy queue dispatch.
 Accesses `vector._embedding_client` as a module attribute (set by server.main()).
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -22,6 +23,7 @@ from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import health
+from cpersona import nodes
 from cpersona import scope_stats
 from cpersona import session
 from cpersona import update_check
@@ -269,6 +271,13 @@ async def do_store(
             # v2.5.2 additive: same id echo as the msg_id branch above.
             return _store_skipped("duplicate content", existing[0][0])
 
+    # Overflow tree (docs/OVERFLOW_TREE_DESIGN.md §3): whether this text runs past
+    # the embedding window decides whether its nodes are queued. Asked alongside the
+    # embedding rather than after it, so the write waits for the slower of the two
+    # requests instead of their sum. The probe never raises, so a result nobody
+    # collects (a duplicate below, or a raise out of the insert) leaves nothing to log.
+    window_probe = asyncio.ensure_future(nodes.runs_past_window(content)) if nodes.building_enabled() else None
+
     embedding_blob = None
     if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
@@ -369,6 +378,10 @@ async def do_store(
         result["truncated"] = True
     if future_timestamp and future_mode == "warn":
         result["timestamp_ahead_of_clock"] = future_timestamp
+    if window_probe is not None and await window_probe:
+        queued = await nodes.queue_build("mem", mem_id, agent_id, key)
+        if queued:
+            result["nodes"] = queued
     return result
 
 
@@ -2400,6 +2413,12 @@ async def do_archive_episode(
         agent_id, [{"id": f"ep:{episode_id}", "text": row[2]}]
     )
     result = {"ok": True, "episode_id": episode_id}
+    # Overflow tree (§3). Measured on row[2] for the same reason as the index push:
+    # the stored summary is the text the nodes will span.
+    if await nodes.runs_past_window(row[2]):
+        queued = await nodes.queue_build("ep", episode_id, agent_id, key)
+        if queued:
+            result["nodes"] = queued
     # Same signal do_store gives for capped content — and, since bug-175, the same
     # definition: the flag reports whether the cap CUT, not whether the caller's
     # raw string (annotation included) happened to exceed it.

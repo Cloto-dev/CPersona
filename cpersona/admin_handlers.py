@@ -24,6 +24,7 @@ from cpersona.isolation import isolation_where
 
 from cpersona import config
 from cpersona import fileperms
+from cpersona import nodes
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
@@ -549,6 +550,12 @@ async def do_update_memory(
     result = {"ok": True, "updated_id": memory_id}
     if truncated:
         result["truncated"] = True
+    # Overflow tree (§4): the UPDATE's trigger removed the nodes of the old text; a
+    # new text that runs past the window gets new ones queued.
+    if await nodes.runs_past_window(content):
+        queued = await nodes.queue_build("mem", memory_id, row[1], key)
+        if queued:
+            result["nodes"] = queued
     return result
 
 

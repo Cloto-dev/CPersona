@@ -202,15 +202,24 @@ worker that drains it at startup and retries failed tasks on a fixed delay
 (`CPERSONA_TASK_RETRY_DELAY`). Because it lives in the database rather than in
 memory, a crash or a restart resumes the work instead of losing it.
 
-**In the current line, nothing enqueues onto it.** The queue existed for
-server-side episode summarisation, which was removed before v2.4.10. Today
-`archive_episode` requires a pre-computed summary and writes the row directly,
-and profile updates are synchronous too.
+**One thing enqueues onto it: building the nodes of a long record.** When
+`store`, `archive_episode` or `update_memory` writes a text that runs past the
+embedding window, the response carries `nodes: {"status": "queued"}` and a
+`build_nodes` task divides the record and embeds each span
+([overflow tree](OVERFLOW_TREE_DESIGN.md)). The write itself does not wait for
+it. With the queue disabled (`CPERSONA_TASK_QUEUE_ENABLED=false`), or with an
+embedding server that cannot report tokens, nothing is queued and a long record
+is quoted from its start.
 
-What remains is the drain side. Rows left behind by an older version, or by a
-run that was interrupted mid-task, are still completed correctly.
-`get_queue_status` reports depth and retries, and on a healthy modern instance
-it reports an empty queue. That is the expected reading, not a symptom.
+The queue first existed for server-side episode summarisation, which was
+removed before v2.4.10; `archive_episode` still requires a pre-computed summary
+and writes the row directly, and profile updates are synchronous. Rows left
+behind by an older version are still completed correctly.
+
+`get_queue_status` reports depth and retries. Depth rises briefly after a long
+write and returns to zero once its nodes are built; a depth that stays up means
+the builds are failing and retrying, usually because the embedding server is
+unreachable.
 
 ## Transports
 

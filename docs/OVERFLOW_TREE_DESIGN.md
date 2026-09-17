@@ -79,8 +79,11 @@ The rule, applied to the remaining text until nothing remains:
    (`window_end_char`). If the remaining text fits, it is the last node.
 2. Cut at the last boundary at or before that position, taking boundary classes
    in this order: a blank line (paragraph), a line break (line or list item), a
-   sentence end (`。` `．` `.` `!` `?` followed by whitespace or end of text),
-   whitespace.
+   sentence end, whitespace. A full-width `。` `．` `！` `？` ends a sentence
+   wherever it stands, because Japanese and Chinese prose puts the next sentence
+   directly after it; a half-width `.` `!` `?` counts only before whitespace or
+   the end of the text, so a decimal point or a file extension is not a sentence
+   end.
 3. A boundary that would leave the node shorter than half of `window_end_char`
    is not taken; the next class is tried. This keeps a stray early paragraph
    break from producing a node of a few words.
