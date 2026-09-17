@@ -66,7 +66,9 @@ survive in the stored text.
 Eighteen questions by three arms: 54 reader calls and 54 judge calls, order
 shuffled with seed 20260918, one call at a time, no wrapper retries, 300-second
 timeout, a reader run without a logged `search` call is a failed run and stops the
-study. It pauses before a new call once reported input tokens pass 6,000,000.
+study. It pauses before a new call once reported input tokens pass 9,000,000 (registered as
+6,000,000 and raised before the first reader call of this study, once the first
+study had shown a reader run costs about 100,000 input tokens on average, not 50,000).
 
 ## Measures and what may be claimed
 

@@ -141,3 +141,17 @@ results will say so. Per-type results are reported but decide nothing.
   deliberately wrong answer (must be incorrect) for two questions.
 - Removing the tool layer's log line must make the zero-tool-call check fail a
   run that did call tools (the check reads the log, so it must notice its absence).
+
+## Amendments
+
+Both were made without reading any arm's results into the rule.
+
+- **Smoke.** The first smoke run exited 0 with an answer while the harness had
+  refused both of the reader's `search` calls ("MCP tool call requires approval,
+  but approval policy is never"). The zero-tool-call check failed the run, as
+  registered. The tool server is now pre-approved in the run's own configuration
+  and the smoke was repeated; the failed run is kept and is not in the cohort.
+- **Pause.** The run paused as registered at 4,075,754 reported input tokens, 29
+  of 42 reader calls in. A reader searches far more often than the estimate
+  assumed (up to 52 times in one run). The remaining calls were authorised and the
+  threshold raised to 8,000,000; no question, arm, measure or rule changed.
