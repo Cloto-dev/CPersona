@@ -46,7 +46,7 @@ def run(rankings, corpus, qrels_root):
             relevant = gold[(row["subtask"], row["query_id"])]
             for count in (1, 2, 4, 8, 10):
                 selected = [item for _, item in items[:count]]
-                retained = {refs[e["ref"]] for item in selected for e in item["evidence"]}
+                retained = {refs[e["ref"]] for item in selected for e in item["claims"]}
                 expected = set(ids[:count])
                 if retained != expected:
                     raise AssertionError("singleton evidence disagrees with frozen ranks")

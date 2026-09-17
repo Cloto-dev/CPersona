@@ -1231,7 +1231,8 @@ registry.auto_tool(
     "`content` and its `excerpts` -- where `count` bounds how many items. The quoted text is "
     "one fixed sequence: every head in item order, then each item's most relevant remaining "
     "excerpt, then the next, and the response is its longest prefix that fits. An excerpt the "
-    "budget cannot carry is omitted (counted in `excerpts_omitted`; its claim and ref stay); "
+    "budget cannot carry is omitted (counted in `excerpts_omitted`, absent when zero; its "
+    "claim and ref stay); "
     "an item is dropped only when its head does not fit, with shortfall_reason "
     "budget_exhausted. Raising the budget alone never removes an item or an excerpt. Every "
     "response states requested_budget / effective_budget / used_budget and budget_policy. "
@@ -1244,9 +1245,10 @@ registry.auto_tool(
     "expanding the whole record, pass get_contents a range: {ref, node: [index - 1, "
     "index + 1]}. Nodes are read after items are chosen, so "
     "they never change which items come back or their order. No relevance score is returned. "
-    "ITEM SHAPE: `claims` carries one entry per row, newest first, each with `as_of` and "
-    "`roles`; `timeline` is chronological; `evidence[].why` names the key that admitted "
-    "each row; `reconstruction` reports policy, candidate/cluster/selected counts and "
+    "ITEM SHAPE (the same for every item): `claims` carries one entry per retained row, "
+    "newest first, each with `ref`, `as_of`, `why` (the key that admitted the row) and "
+    "`roles` when it has any -- sort by `as_of` for a chronological view. `excerpts` and "
+    "`excerpts_omitted` are absent when empty. `reconstruction` reports policy, candidate/cluster/selected counts and "
     "missing-provenance exclusions; `trace=true` adds candidate refs and clusters. "
     "Gate fallback remains visible even when count is filled; zero count states count_zero. "
     "Retrieval degradation and update notices are delivered unchanged. If the library "
@@ -1306,7 +1308,7 @@ registry.auto_tool(
             "max_evidence": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Maximum retained rows per item, including claims, timeline and role targets. A cut sets bounds.truncated.",
+                "description": "Maximum retained rows per item, bounding its claims and role targets. A cut sets bounds.truncated.",
             },
             "deep": {
                 "type": "boolean",

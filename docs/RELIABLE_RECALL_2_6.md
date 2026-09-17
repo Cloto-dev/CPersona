@@ -343,7 +343,7 @@ effective_budget = min(budget_base, max_budget)
 - The budget is counted in **characters of quoted text** — `content` and the
   `excerpts` below. Tokens are not used: the server does not know the
   reader's tokenizer, and the preview tier and `get_contents` already bound
-  their payloads in characters. Refs, roles and timeline entries are not
+  their payloads in characters. Refs, times, reasons and roles are not
   counted; `max_evidence` bounds them.
 - A budget below one preview-tier excerpt, or a default or forced budget
   above the maximum, is a startup error, not a silent clamp. The first item
@@ -368,8 +368,9 @@ effective_budget = min(budget_base, max_budget)
   raising the budget alone never removes an item or an excerpt, and changing
   it alone never changes the candidate pool, the clusters or the item order.
 - Every response states `requested_budget`, `effective_budget`, `used_budget`
-  and a `budget_policy` (`source`, `clamped`, `reason`), and each item states
-  `excerpts_omitted`, so a caller can tell whether breadth or depth was cut.
+  and a `budget_policy` (`source`, `clamped`, `reason`), and an item whose
+  excerpts were cut states `excerpts_omitted`, so a caller can tell whether
+  breadth or depth was cut.
 
 The window sits fourth in a series this server already has: the embedding
 window (what gets indexed; a split is reported), the scan window (what gets
@@ -400,13 +401,12 @@ layer is present. With no relations this stage is the identity.
 { "items": [{
     "content": "…",            // a verbatim excerpt of the head claim, cut as the preview tier cuts
     "head_ref": "…",           // the claim that content quotes
-    "excerpts": [{ "ref": "…", "content": "…" }],      // other retained claims, most relevant first, within the budget
-    "excerpts_omitted": 0,     // retained claims whose text the budget did not carry
-    "claims": [{ "ref": "mem:1693", "as_of": "…",
-                 "roles": [{ "ref": "mem:1585", "role": "supersedes" },
-                           { "ref": "ep:411",   "role": "supports" }] }],
-    "timeline": [{ "at": "…", "ref": "ep:411" }],
-    "evidence": [{ "ref": "mem:1693", "why": "cluster:chain" }],   // why it is here, always
+    "excerpts": [{ "ref": "…", "content": "…" }],      // other retained claims, most relevant first, within the budget; absent when none
+    "excerpts_omitted": 1,     // retained claims whose text the budget did not carry; absent when zero
+    "claims": [{ "ref": "mem:…", "as_of": "…",         // one entry per retained row, newest first
+                 "why": "cluster:chain",               // why it is here, always
+                 "roles": [{ "ref": "mem:…", "role": "supersedes" },
+                           { "ref": "ep:…",  "role": "supports" }] }],  // absent when the row has none
     "independence_reason": "cluster:episode" }],                  // why it is a separate item
   "requested_count": null, "effective_count": 1, "returned_count": 1,
   "count_policy": { "source": "server_default", "clamped": false, "reason": "count_omitted" },
@@ -492,8 +492,13 @@ these concrete qualifications:
   the head is their latest version. Newest is meaningful only within a version
   chain; among distinct rows of one burst or episode it is merely the last
   thing said. `head_ref` names the head; `claims` stay newest first.
-- `max_evidence` bounds the retained claims, timeline and role targets as
-  well as the evidence array. A cut keeps the head, then the most relevant
+- Every item has the same shape. A row's ref, time and reason appear once, in
+  its claim: there is no separate timeline (sort `claims` by `as_of`) or
+  evidence array, and `roles`, `excerpts` and `excerpts_omitted` are absent
+  when empty. A one-row item carries about half the metadata characters the
+  parallel arrays cost.
+- `max_evidence` bounds the retained claims and their role targets. A cut
+  keeps the head, then the most relevant
   remaining rows. Truncation is reported; a role never points to a claim
   discarded by this bound.
 - `reconstruction` reports the policy version, candidate count, cluster count,

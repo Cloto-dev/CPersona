@@ -154,7 +154,7 @@ def _order_key(c: _Candidate) -> tuple:
 
 
 def _timeline_key(c: _Candidate) -> tuple:
-    """Chronological order for `timeline` — oldest first, total by (kind, id)."""
+    """Chronological order — oldest first, total by (kind, id)."""
     return (c.ts.timestamp() if c.ts is not None else 0.0, c.kind, c.row_id)
 
 
@@ -472,26 +472,27 @@ def structure(
     `head_ref` names it.
     """
     head = _head(members)
-    # Every emitted claim, role and timeline entry has a retained evidence row.
-    # A cut keeps the head, then the most relevant of the rest; age decides
-    # nothing about what survives.
+    # Every emitted claim and role target is a retained row. A cut keeps the
+    # head, then the most relevant of the rest; age decides nothing about what
+    # survives.
     truncated = len(members) > max_evidence
     others = sorted((m for m in members if m is not head), key=_relevance_key)
     retained = {id(m) for m in [head, *others][:max_evidence]}
     ordered = sorted((m for m in members if id(m) in retained), key=_order_key)
 
-    claims = [
-        {
-            "ref": m.ref,
-            "as_of": m.timestamp,
-            "roles": _roles_for(m, ordered, spans),
-        }
-        for m in ordered
-    ]
-
-    timeline = [{"at": m.timestamp, "ref": m.ref} for m in sorted(ordered, key=_timeline_key) if m.ts is not None]
-
-    evidence = [{"ref": m.ref, "why": why.get(m.ref, "seed")} for m in ordered]
+    # One entry per retained row carries everything the item says about that row:
+    # when it holds, why it is here, and how it relates to the others. The earlier
+    # shape repeated each ref in parallel `timeline` and `evidence` arrays, which
+    # for a one-row item cost more characters than the refs and reasons it carried;
+    # a chronological view is `as_of` sorted, and `why` is the evidence. An empty
+    # `roles` is omitted rather than sent as [].
+    claims = []
+    for m in ordered:
+        claim: dict = {"ref": m.ref, "as_of": m.timestamp, "why": why.get(m.ref, "seed")}
+        roles = _roles_for(m, ordered, spans)
+        if roles:
+            claim["roles"] = roles
+        claims.append(claim)
 
     # The strongest key that formed this cluster answers "why is this a separate
     # item"; a row nothing linked to is independent because nothing claimed it.
@@ -502,8 +503,6 @@ def structure(
         "content": head.content,
         "head_ref": head.ref,
         "claims": claims,
-        "timeline": timeline,
-        "evidence": evidence,
         "independence_reason": independence,
     }
     conflicts = _conflicts(ordered)
@@ -689,8 +688,11 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
         for key in ("content_len", "content_truncated", "node"):
             if key in head:
                 item[key] = head[key]
-        item["excerpts"] = others[:n]
-        item["excerpts_omitted"] = len(others) - n
+        # Both are omitted when empty: no excerpts carried, none withheld.
+        if n:
+            item["excerpts"] = others[:n]
+        if len(others) - n:
+            item["excerpts_omitted"] = len(others) - n
         items.append(item)
     return items, used, heads < len(entries)
 

@@ -71,8 +71,9 @@ def test_heads_come_before_any_excerpt():
     items, used, cut = allocate(_entries([(10, [5, 5]), (10, [5])]), budget=25)
     # sequence: h0(10) h1(10) e00(5) e10(5) e01(5) -> prefix within 25 is h0 h1 e00
     assert [i["head_ref"] for i in items] == ["mem:0", "mem:1"]
-    assert [len(i["excerpts"]) for i in items] == [1, 0]
+    assert [len(i.get("excerpts", [])) for i in items] == [1, 0]
     assert [i["excerpts_omitted"] for i in items] == [1, 1]
+    assert "excerpts" not in items[1]  # nothing carried: absent, not []
     assert (used, cut) == (25, False)
 
 
@@ -80,13 +81,15 @@ def test_excerpts_are_taken_round_robin_in_item_order():
     items, used, _ = allocate(_entries([(1, [1, 1, 1]), (1, [1])]), budget=5)
     # h0 h1 e00 e10 e01 | e02
     assert [len(i["excerpts"]) for i in items] == [2, 1]
+    assert [i.get("excerpts_omitted") for i in items] == [1, None]  # nothing withheld: absent, not 0
     assert used == 5
 
 
 def test_the_response_is_a_prefix_so_a_later_smaller_excerpt_does_not_jump_the_queue():
     items, used, _ = allocate(_entries([(10, [20, 1]), (10, [])]), budget=25)
     # h0 h1 then e00 (20) does not fit; e01 (1) would, but is after it in the sequence
-    assert [len(i["excerpts"]) for i in items] == [0, 0]
+    assert ["excerpts" in i for i in items] == [False, False]
+    assert [i.get("excerpts_omitted") for i in items] == [2, None]
     assert used == 20
 
 
@@ -105,7 +108,7 @@ def test_raising_the_budget_alone_never_removes_an_item_or_an_excerpt():
     previous = None
     for budget in range(1, 120):
         items, _, _ = allocate(_entries(spec), budget)
-        shape = [(i["head_ref"], [e["ref"] for e in i["excerpts"]]) for i in items]
+        shape = [(i["head_ref"], [e["ref"] for e in i.get("excerpts", [])]) for i in items]
         if previous is not None:
             assert len(shape) >= len(previous)
             for (ref, excerpts), (old_ref, old_excerpts) in zip(shape, previous):
@@ -260,10 +263,10 @@ async def test_other_claims_come_back_as_excerpts_and_the_budget_omits_them_befo
         wide = await reconstruct.do_reconstruct(AGENT, "deploy", count=5, budget=20000, trace=True, deep=True)
         assert wide["returned_count"] == 2
         burst = next(i for i in wide["items"] if len(i["claims"]) == 3)
-        assert len(burst["excerpts"]) == 2 and burst["excerpts_omitted"] == 0
+        assert len(burst["excerpts"]) == 2 and "excerpts_omitted" not in burst
         assert {e["ref"] for e in burst["excerpts"]} == {c["ref"] for c in burst["claims"]} - {burst["head_ref"]}
         assert wide["used_budget"] == sum(
-            len(i["content"]) + sum(len(e["content"]) for e in i["excerpts"]) for i in wide["items"]
+            len(i["content"]) + sum(len(e["content"]) for e in i.get("excerpts", [])) for i in wide["items"]
         )
 
         # Quotes cut to 20 characters and a budget of 50: both heads (40) fit, the
@@ -274,7 +277,7 @@ async def test_other_claims_come_back_as_excerpts_and_the_budget_omits_them_befo
         assert tight["trace"] == wide["trace"]  # the budget never moves the pool or the clusters
         assert tight["used_budget"] == 40 <= tight["effective_budget"] == 50
         tight_burst = next(i for i in tight["items"] if len(i["claims"]) == 3)
-        assert tight_burst["excerpts"] == [] and tight_burst["excerpts_omitted"] == 2
+        assert "excerpts" not in tight_burst and tight_burst["excerpts_omitted"] == 2
         assert "shortfall_reason" not in tight or tight["shortfall_reason"] != "budget_exhausted"
 
 
@@ -299,3 +302,21 @@ async def test_the_mcp_boundary_forwards_the_budget(windowed):
         )
         assert result["requested_budget"] == 777 and result["effective_budget"] == 777
         assert result["budget_policy"]["source"] == "caller"
+
+
+@pytest.mark.asyncio
+async def test_a_one_row_item_carries_its_row_once(windowed):
+    # Item metadata is compressed: the ref, time and reason of a row appear in its
+    # claim and nowhere else, and fields with nothing to say are absent.
+    async with _TempDB():
+        stored = await memory_handlers.do_store(
+            AGENT, {"content": "deploy on friday", "timestamp": "2026-09-17T10:00:00+00:00"}
+        )
+        (item,) = (await reconstruct.do_reconstruct(AGENT, "deploy", count=3, deep=True))["items"]
+        ref = f"mem:{stored['id']}"
+        assert item == {
+            "content": "deploy on friday",
+            "head_ref": ref,
+            "claims": [{"ref": ref, "as_of": "2026-09-17T10:00:00+00:00", "why": "seed"}],
+            "independence_reason": "singleton",
+        }

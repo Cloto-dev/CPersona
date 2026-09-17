@@ -116,20 +116,18 @@ async def test_episode_in_other_channel_is_not_supporting_evidence():
     assert any(ref.startswith("ep:") for ref in refs)
     assert any(ref.startswith("mem:") for ref in refs)
     assert out["returned_count"] == 2
-    assert not any(claim["roles"] for item in out["items"] for claim in item["claims"])
+    assert not any("roles" in claim for item in out["items"] for claim in item["claims"])
 
 
 @pytest.mark.asyncio
-async def test_evidence_ceiling_bounds_claims_timeline_and_resolvable_refs():
+async def test_evidence_ceiling_bounds_claims_and_resolvable_refs():
     for i in range(4):
         await store(i, second=i * 10)
     out = await R.do_reconstruct(AGENT, "", count=1, top_k=20, max_evidence=2)
     item = out["items"][0]
-    refs = {row["ref"] for row in item["evidence"]}
-    assert len(refs) == len(item["claims"]) == len(item["timeline"]) == 2
-    assert {row["ref"] for row in item["claims"]} == refs
-    assert {row["ref"] for row in item["timeline"]} == refs
-    assert all(role["ref"] in refs for claim in item["claims"] for role in claim["roles"])
+    refs = {row["ref"] for row in item["claims"]}
+    assert len(refs) == len(item["claims"]) == 2
+    assert all(role["ref"] in refs for claim in item["claims"] for role in claim.get("roles", []))
     expanded = await M.do_get_contents(AGENT, sorted(refs))
     assert expanded["missing"] == []
     contents = {row["ref"]: row["content"] for row in expanded["items"]}

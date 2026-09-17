@@ -324,7 +324,7 @@ async def test_4b_evidence_cut_sets_truncated():
     await _seed_burst()
     out = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=TOP_K, max_evidence=2)
     assert out["items"][0]["independence_reason"] == "cluster:adjacent"
-    assert len(out["items"][0]["evidence"]) == 2
+    assert len(out["items"][0]["claims"]) == 2
     assert out["bounds"]["truncated"] is True
 
 
@@ -335,8 +335,11 @@ async def test_5_every_element_says_why():
     assert set(out["count_policy"]) == {"source", "clamped", "reason"}
     for item in out["items"]:
         assert item["independence_reason"]
-        assert item["evidence"] and all(e["why"] for e in item["evidence"])
-        assert all(set(e) == {"ref", "why"} for e in item["evidence"])
+        assert item["claims"] and all(c["why"] for c in item["claims"])
+        # one entry per row carries ref, time and reason; roles only when there are any
+        assert all(set(c) - {"roles"} == {"ref", "as_of", "why"} for c in item["claims"])
+        assert all(c["roles"] for c in item["claims"] if "roles" in c)
+        assert "evidence" not in item and "timeline" not in item
 
 
 @pytest.mark.asyncio
@@ -357,7 +360,7 @@ async def test_8_no_padding():
     out = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K)
     heads = [item["head_ref"] for item in out["items"]]
     assert len(heads) == len(set(heads))
-    all_refs = [e["ref"] for item in out["items"] for e in item["evidence"]]
+    all_refs = [c["ref"] for item in out["items"] for c in item["claims"]]
     assert len(all_refs) == len(set(all_refs)), "a row was counted into two items"
 
 
@@ -379,11 +382,11 @@ async def test_msg_id_bundles_and_derives_supersedes():
     assert item["content"] == "rollback shipped"
     # The role hangs off the row that was superseded and points at its successor:
     # `role` names what the REFERENCED row is to this claim.
-    assert item["claims"][0]["roles"] == []
+    assert "roles" not in item["claims"][0]
     assert item["claims"][1]["roles"] == [{"ref": new, "role": "supersedes"}]
-    assert item["timeline"] == [
-        {"at": "2026-03-01T10:00:00+00:00", "ref": old},
-        {"at": "2026-03-02T10:00:00+00:00", "ref": new},
+    assert [(c["ref"], c["as_of"]) for c in item["claims"]] == [
+        (new, "2026-03-02T10:00:00+00:00"),
+        (old, "2026-03-01T10:00:00+00:00"),
     ]
 
 
@@ -474,7 +477,7 @@ async def test_only_v0_roles_are_emitted():
     await _store_scoped_record("ticket-7", "rollback v1", "2026-06-01T10:00:00+00:00", "p1")
     await _store_scoped_record("ticket-7", "rollback v2", "2026-06-02T10:00:00+00:00", "")
     out = await R.do_reconstruct(AGENT, QUERY, count=10, top_k=TOP_K, project_id="p1")
-    emitted = {r["role"] for item in out["items"] for c in item["claims"] for r in c["roles"]}
+    emitted = {r["role"] for item in out["items"] for c in item["claims"] for r in c.get("roles", [])}
     assert emitted <= R.V0_DERIVED_ROLES, emitted
 
 
@@ -565,5 +568,5 @@ def test_an_evidence_cut_keeps_the_head_then_the_most_relevant_rows():
     assert item["head_ref"] == relevant.ref
     assert [c["ref"] for c in item["claims"]] == [relevant.ref]
     item, _ = _structure([relevant, second, newest], max_evidence=2)
-    assert {e["ref"] for e in item["evidence"]} == {relevant.ref, second.ref}
+    assert {c["ref"] for c in item["claims"]} == {relevant.ref, second.ref}
     assert [c["ref"] for c in item["claims"]] == [second.ref, relevant.ref]

@@ -447,9 +447,9 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 5 — every element says why it is present",
         file="cpersona/reconstruct.py",
-        find='    evidence = [{"ref": m.ref, "why": why.get(m.ref, "seed")} for m in ordered]',
-        replace='    evidence = [{"ref": m.ref, "why": ""} for m in ordered]',
-        breaks="evidence stops naming the key that admitted it, so an item cannot be audited back to a reason",
+        find='        claim: dict = {"ref": m.ref, "as_of": m.timestamp, "why": why.get(m.ref, "seed")}',
+        replace='        claim: dict = {"ref": m.ref, "as_of": m.timestamp, "why": ""}',
+        breaks="a claim stops naming the key that admitted it, so an item cannot be audited back to a reason",
         expect="test_reconstruct.py::test_5_every_element_says_why",
     ),
     Mutation(

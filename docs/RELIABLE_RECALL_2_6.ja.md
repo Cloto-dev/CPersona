@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:035dd0557c16c641c41fa9a5bbc877c739e3cb0f -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:4a6336030a87ad7e67e210f0202eb16ef7bddd37 -->
 
 # Reliable Recall — 2.6 系
 
@@ -296,7 +296,7 @@ effective_budget = min(budget_base, max_budget)
 
 - 予算は**引用テキストの文字数** — `content` と下記の `excerpts` — で数えます。トークンは
   使いません: サーバーは読み手のトークナイザを知らず、preview tier と `get_contents` も
-  既にペイロードを文字数で制限しているためです。ref、role、timeline の項目は数えず、
+  既にペイロードを文字数で制限しているためです。ref、時刻、理由、role は数えず、
   それらは `max_evidence` が制限します。
 - preview tier の抜粋 1 つ分に満たない予算、または最大を超える既定・強制の予算は起動時の
   エラーであって、黙った clamp ではありません。したがって最初の item は必ず収まります。
@@ -315,8 +315,8 @@ effective_budget = min(budget_base, max_budget)
 - 応答は予算が形を決めない列の先頭部分なので、予算だけを上げて item や抜粋が消えることは
   なく、予算だけを変えて候補プール、クラスタ、item の順序が変わることもありません。
 - すべての応答は `requested_budget`、`effective_budget`、`used_budget`、そして
-  `budget_policy` (`source`、`clamped`、`reason`) を述べ、各 item は `excerpts_omitted` を
-  述べます。呼び出し側は、削られたのが幅か深さかを見分けられます。
+  `budget_policy` (`source`、`clamped`、`reason`) を述べ、抜粋を削られた item は
+  `excerpts_omitted` を述べます。呼び出し側は、削られたのが幅か深さかを見分けられます。
 
 この窓は、このサーバーが既に持つ系列の 4 番目です: 埋め込み窓 (何が索引に載るか。分割は
 報告される)、走査窓 (何が走査されるか。gate fallback は報告される)、検索窓 (ループが
@@ -341,13 +341,12 @@ effective_budget = min(budget_base, max_budget)
 { "items": [{
     "content": "…",            // head claim の原文抜粋。preview tier と同じ切り方
     "head_ref": "…",           // content が引用している claim
-    "excerpts": [{ "ref": "…", "content": "…" }],      // 保持した他の claim、関連度順、予算の内側
-    "excerpts_omitted": 0,     // 予算がテキストを運ばなかった保持 claim の数
-    "claims": [{ "ref": "mem:1693", "as_of": "…",
-                 "roles": [{ "ref": "mem:1585", "role": "supersedes" },
-                           { "ref": "ep:411",   "role": "supports" }] }],
-    "timeline": [{ "at": "…", "ref": "ep:411" }],
-    "evidence": [{ "ref": "mem:1693", "why": "cluster:chain" }],   // なぜここにあるか、常に
+    "excerpts": [{ "ref": "…", "content": "…" }],      // 保持した他の claim、関連度順、予算の内側。無ければ省略
+    "excerpts_omitted": 1,     // 予算がテキストを運ばなかった保持 claim の数。0 なら省略
+    "claims": [{ "ref": "mem:…", "as_of": "…",         // 保持した行ごとに 1 つ、新しい順
+                 "why": "cluster:chain",               // なぜここにあるか、常に
+                 "roles": [{ "ref": "mem:…", "role": "supersedes" },
+                           { "ref": "ep:…",  "role": "supports" }] }],  // その行に無ければ省略
     "independence_reason": "cluster:episode" }],                  // なぜ別の item か
   "requested_count": null, "effective_count": 1, "returned_count": 1,
   "count_policy": { "source": "server_default", "clamped": false, "reason": "count_omitted" },
@@ -417,8 +416,11 @@ v1.1 からペイロード予算を上記のとおり実装しています。既
   同じメッセージ id) が item 内にある場合は、その最新版が head になります。「最新」に意味が
   あるのは版の連鎖の中だけで、1 つの発話の連続やエピソードに属する別々の行の間では、
   最後に書かれた行にすぎません。`head_ref` が head を示し、`claims` は新しい順のままです。
-- `max_evidence` は evidence 配列に加え、保持する claims、timeline、role の参照先も
-  制限します。切り詰める時は head を残し、残りは関連度の高い行から保持します。
+- すべての item は同じ形です。行の ref、時刻、理由はその claim に 1 回だけ現れます:
+  別立ての timeline (時系列は `claims` を `as_of` で並べ替える) や evidence 配列はなく、
+  `roles`、`excerpts`、`excerpts_omitted` は空なら省略します。1 行だけの item では、
+  並列の配列が払っていた付帯情報の文字数がおよそ半分になります。
+- `max_evidence` は保持する claims とその role の参照先を制限します。切り詰める時は head を残し、残りは関連度の高い行から保持します。
   切り詰めを報告し、この制限で落ちた claim を role が参照することはありません。
 - `reconstruction` は policy の版、候補数、クラスタ数、選択数、出典不足による除外数を
   報告します。`trace=true` は本文を含めずに候補 ref とクラスタ構成を追加します。

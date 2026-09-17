@@ -52,7 +52,7 @@ async def test_same_message_id_in_distinct_projects_stays_independent(projects):
     assert out["returned_count"] == 2
     assert {item["claims"][0]["ref"] for item in out["items"]} == refs
     assert all(len(item["claims"]) == 1 for item in out["items"])
-    assert all(not claim["roles"] for item in out["items"] for claim in item["claims"])
+    assert all("roles" not in claim for item in out["items"] for claim in item["claims"])
     assert all("conflicts" not in item for item in out["items"])
 
 
