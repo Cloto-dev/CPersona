@@ -463,8 +463,17 @@ policy has a reproducible baseline and an audit contract.
 ### Reconstruction v1 implementation boundary
 
 The experimental v1 exit retains v0's four stages; the relation walk still
-has no edges to follow. It does not implement the payload budget: an item
-carries its head claim alone, and supporting claims are refs. It adds these
+has no edges to follow. Since v1.1 it implements the payload budget as
+described above, with a provisional default of 4,000 and maximum of 20,000
+characters until the section 9 sweep chooses them; a caller's budget below one
+preview-tier excerpt is raised to it and `budget_policy` says so. A claim whose
+record has a current overflow-tree node set is quoted from the node that best
+matches the query: nodes are ranked by cosine to the query embedding and by
+shared character trigrams, the two ranks are fused by reciprocal rank with
+equal values sharing a rank, and ties go to the earlier node. The quote then
+carries `node` (index, node count and character span in the stored text). Nodes
+are read after the items and their order are fixed, so they never change which
+items come back ([overflow tree](OVERFLOW_TREE_DESIGN.md)). It adds these
 concrete qualifications:
 
 - Time-based bundling requires the same project and channel. Adjacency also

@@ -440,6 +440,7 @@ async def do_reconstruct_boundary(
     source_id: str,
     session_key: str = "",
     trace: bool = False,
+    budget: int | None = None,
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -460,6 +461,7 @@ async def do_reconstruct_boundary(
         source_id=source_id,
         session_key=session_key,
         trace=trace,
+        budget=budget,
     )
     result = _apply_reconstruct_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -1182,6 +1184,21 @@ registry.auto_tool(
     "hops) and `max_evidence` are declared independently and none is derived from "
     "`count` -- changing `count` alone does not move the candidate id set. A cut against "
     "any declared bound is reported in `bounds.truncated`. "
+    "BREADTH BEFORE DEPTH: `budget` bounds the characters of quoted text -- each item's "
+    "`content` and its `excerpts` -- where `count` bounds how many items. The quoted text is "
+    "one fixed sequence: every head in item order, then each item's most relevant remaining "
+    "excerpt, then the next, and the response is its longest prefix that fits. An excerpt the "
+    "budget cannot carry is omitted (counted in `excerpts_omitted`; its claim and ref stay); "
+    "an item is dropped only when its head does not fit, with shortfall_reason "
+    "budget_exhausted. Raising the budget alone never removes an item or an excerpt. Every "
+    "response states requested_budget / effective_budget / used_budget and budget_policy. "
+    "QUOTES: `content` quotes the head claim and each `excerpts[]` entry quotes another "
+    "retained claim, most relevant first; all are verbatim and cut as the preview tier cuts. "
+    "A long record with overflow-tree nodes is quoted from the node that best matches the "
+    "query (rank by embedding similarity and by shared character trigrams, fused), and "
+    "`node` gives its index, node count and character span in the stored text; a record "
+    "without nodes is quoted from its start. Nodes are read after items are chosen, so "
+    "they never change which items come back or their order. No relevance score is returned. "
     "ITEM SHAPE: `claims` carries one entry per row, newest first, each with `as_of` and "
     "`roles`; `timeline` is chronological; `evidence[].why` names the key that admitted "
     "each row; `reconstruction` reports policy, candidate/cluster/selected counts and "
@@ -1267,6 +1284,17 @@ registry.auto_tool(
                 "description": "Per-user source filter -- same semantics as in `recall`.",
             },
             "trace": {"type": "boolean", "description": "Include candidate refs and cluster membership for local diagnosis; no full text is added."},
+            "budget": {
+                "type": "integer",
+                "minimum": 1,
+                "description": (
+                    "Payload budget: characters of quoted text (item `content` plus `excerpts`) "
+                    "the response may carry. Bounds depth, where `count` bounds breadth, and "
+                    "breadth wins: excerpts are omitted before any item is. Omit for the server "
+                    "default; an operator-forced value overrides both; clamped to the server "
+                    "maximum and raised to one preview-tier excerpt, and budget_policy says which."
+                ),
+            },
             "session_key": {
                 "type": "string",
                 "description": (
@@ -1291,6 +1319,7 @@ registry.auto_tool(
         ("source_id", str, ""),
         ("session_key", str, ""),
         ("trace", bool, False),
+        ("budget", int, None),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:8bc647d7079c1591c982871a99ea74faadcf19d3 -->
+<!-- i18n-source: docs/configuration.md@blob:e2b0f911df2bc3688a807c1cd49aeda6a6a659a6 -->
 
 # 設定リファレンス
 
@@ -53,6 +53,9 @@
 | `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `1` | 呼び出し側が `count` を省略した時の上限 |
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします。充足目標ではなく上限です |
 | `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | 絶対上限。超える要求は切り詰めて報告します。実験的な制限であり、実測で最適とされた件数ではありません |
+| `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` | `4000` | 呼び出し側が `budget` を省略した時のペイロード予算 (引用本文の文字数)。件数と予算の掃引で選ぶまでの暫定値です |
+| `CPERSONA_RECONSTRUCT_FORCED_BUDGET` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします |
+| `CPERSONA_RECONSTRUCT_MAX_BUDGET` | `20000` | 予算の絶対上限。超える要求は切り詰めて報告します。既定値・強制値がこれを超える場合、または設定値がプレビュー層の抜粋 1 つ分に満たない場合は起動時に停止します |
 
 優先順位は `forced ?? requested ?? default` で、最大値で制限します。
 既定値や強制値が最大値を超える設定は、起動時エラーになります。

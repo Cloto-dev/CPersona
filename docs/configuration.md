@@ -50,6 +50,9 @@ the ceiling is **1**.
 | `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `1` | Ceiling used when the caller omits `count` |
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(unset)* | Override the caller's count and the default for every call; still a ceiling, never a fill target |
 | `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | Absolute ceiling; requests above it are clamped and reported. This is an experimental limit, not an empirically optimal count |
+| `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` | `4000` | Payload budget in characters of quoted text when the caller omits `budget`. Provisional until the count and budget sweep chooses it |
+| `CPERSONA_RECONSTRUCT_FORCED_BUDGET` | *(unset)* | Override the caller's budget and the default for every call |
+| `CPERSONA_RECONSTRUCT_MAX_BUDGET` | `20000` | Absolute budget ceiling; requests above it are clamped and reported. A default or forced value above it, or any configured value below one preview-tier excerpt, stops the server at startup |
 
 Precedence is `forced ?? requested ?? default`, capped by the maximum.
 A default or forced value above the maximum is a startup error.

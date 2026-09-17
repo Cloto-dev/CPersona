@@ -60,7 +60,9 @@ from __future__ import annotations
 
 import logging
 
-from . import config
+import numpy as np
+
+from . import config, nodes, vector
 from .database import connection
 from .utils import _parse_timestamp_utc
 
@@ -98,6 +100,7 @@ CLUSTER_KEYS: tuple[str, ...] = (
 SHORTFALL_NO_RELEVANT_EVIDENCE = "no_relevant_evidence"
 SHORTFALL_BELOW_QUALITY_THRESHOLD = "below_quality_threshold"
 SHORTFALL_EXHAUSTED_CANDIDATES = "exhausted_candidates"
+SHORTFALL_BUDGET_EXHAUSTED = "budget_exhausted"
 
 
 class _Candidate:
@@ -194,6 +197,33 @@ def resolve_count(requested: int | None) -> tuple[int, dict]:
     base = max(0, int(base))
     effective = min(base, maximum)
     return effective, {"source": source, "clamped": effective < base, "reason": reason}
+
+
+def resolve_budget(requested: int | None) -> tuple[int, dict]:
+    """The payload budget (section 7, "Breadth before depth").
+
+        budget_base      = forced_budget ?? requested_budget ?? default_budget
+        effective_budget = min(budget_base, max_budget)
+
+    Counted in characters of quoted text. A caller's request below one
+    preview-tier excerpt is raised to it, because the first item must always fit;
+    configured values below it are refused at startup instead
+    (config.validate_reconstruct_counts). Returns `(effective, budget_policy)`.
+    """
+    maximum = config.RECONSTRUCT_MAX_BUDGET
+    forced = config.RECONSTRUCT_FORCED_BUDGET
+    if forced is not None:
+        base, source, reason = forced, "operator_forced", "forced_budget_set"
+    elif requested is not None:
+        base, source, reason = requested, "caller", "budget_requested"
+    else:
+        base, source, reason = config.RECONSTRUCT_DEFAULT_BUDGET, "server_default", "budget_omitted"
+    base = int(base)
+    effective = min(base, maximum)
+    floor = max(config.RECALL_PREVIEW_CHARS, 1)
+    if effective < floor:
+        effective, reason = floor, "raised_to_one_excerpt"
+    return effective, {"source": source, "clamped": effective != base, "reason": reason}
 
 
 class _Union:
@@ -482,6 +512,189 @@ def structure(
     return item, truncated
 
 
+# ------------------------------------------------------------------------------------
+# Quoting: which part of a claim's record the item carries
+# ------------------------------------------------------------------------------------
+#
+# A claim is quoted from the node of its record that best matches the query when
+# the record has a current node set (docs/OVERFLOW_TREE_DESIGN.md section 6), and
+# from the start of the record otherwise, as before. Nodes are read only here, after
+# retrieval, bundling and item order are settled, so they cannot change which items
+# come back or in what order (tree invariant 1).
+#
+# Within one record, nodes are ranked twice -- by cosine to the query embedding and
+# by how many of the query's character trigrams they contain, the unit the keyword
+# index matches on -- and the two ranks are fused the way recall fuses its arms
+# (reciprocal rank, CPERSONA_RRF_K). Equal values share a rank, so a query with no
+# literal match leaves the choice to the embedding rather than to node order. Ties
+# go to the earlier node. No score is reported: it is not calibrated across
+# records, models or corpora.
+
+
+def _trigrams(text: str) -> set[str]:
+    folded = text.lower()
+    if len(folded) < 3:
+        return {folded} if folded else set()
+    return {folded[i : i + 3] for i in range(len(folded) - 2)}
+
+
+def _shared_ranks(values: list[float]) -> list[int]:
+    """Rank by value, highest first; equal values share a rank (0 = best)."""
+    distinct = sorted(set(values), reverse=True)
+    position = {v: i for i, v in enumerate(distinct)}
+    return [position[v] for v in values]
+
+
+def best_node(text: str, node_rows: list[tuple], query_vec, query_grams: set[str]) -> tuple:
+    """The node of `text` to quote. `node_rows` are (index, start, end, blob) in order."""
+    lexical = [float(len(query_grams & _trigrams(text[start:end]))) for _, start, end, _ in node_rows]
+    ranks = [_shared_ranks(lexical)]
+    if query_vec is not None:
+        cosines = []
+        for _, _, _, blob in node_rows:
+            vec = np.frombuffer(blob, dtype=np.float32)
+            if vec.shape != query_vec.shape:
+                cosines = None
+                break
+            norm = float(np.linalg.norm(vec)) * float(np.linalg.norm(query_vec))
+            cosines.append(float(vec @ query_vec) / norm if norm else 0.0)
+        if cosines is not None:
+            ranks.append(_shared_ranks(cosines))
+    k = config.RRF_K
+    fused = [sum(1.0 / (k + 1 + r[i]) for r in ranks) for i in range(len(node_rows))]
+    best = min(range(len(node_rows)), key=lambda i: (-fused[i], node_rows[i][0]))
+    return node_rows[best]
+
+
+async def _current_node_sets(agent_id: str, claims: list[_Candidate]) -> dict[str, tuple[str, list[tuple]]]:
+    """`ref -> (stored text, nodes)` for the claims whose record has a current node set.
+
+    Current means complete over the stored text and built by the embedding model this
+    server runs; anything else is quoted from the record's start, which is exactly
+    what a record without nodes gets. Reads are keyed on refs retrieval already
+    scoped to this agent.
+    """
+    model = config.EMBEDDING_MODEL
+    out: dict[str, tuple[str, list[tuple]]] = {}
+    async with connection() as db:
+        for kind, (table, column) in nodes.PARENT_TEXT.items():
+            ids = sorted({c.row_id for c in claims if c.kind == kind and c.row_id > 0})
+            for offset in range(0, len(ids), 500):
+                batch = ids[offset : offset + 500]
+                marks = ",".join("?" for _ in batch)
+                texts = dict(
+                    await db.execute_fetchall(
+                        f"SELECT id, {column} FROM {table} WHERE agent_id = ? AND id IN ({marks})",
+                        [agent_id, *batch],
+                    )
+                )
+                rows = await db.execute_fetchall(
+                    "SELECT parent_id, node_index, start_char, end_char, embedding, embedding_model "
+                    f"FROM record_nodes WHERE parent_kind = ? AND parent_id IN ({marks}) "
+                    "ORDER BY parent_id, node_index",
+                    [kind, *batch],
+                )
+                grouped: dict[int, list] = {}
+                for parent_id, index, start, end, blob, node_model in rows:
+                    grouped.setdefault(parent_id, []).append((index, start, end, blob, node_model))
+                for parent_id, group in grouped.items():
+                    text = texts.get(parent_id)
+                    if text is None:
+                        continue
+                    contiguous = all(a[2] == b[1] for a, b in zip(group, group[1:]))
+                    complete = group[0][1] == 0 and group[-1][2] == len(text) and contiguous
+                    if complete and all(g[4] == model and g[3] is not None for g in group):
+                        out[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
+    return out
+
+
+async def _query_vector(query: str):
+    client = vector._embedding_client
+    if client is None or not query:
+        return None
+    try:
+        vectors = await client.embed([query])
+    except Exception:  # an excerpt choice is not worth failing the read over
+        return None
+    if not vectors:
+        return None
+    return np.asarray(vectors[0], dtype=np.float32)
+
+
+def _quote(claim: _Candidate, node_sets: dict, query_vec, query_grams: set[str], cap: int) -> dict:
+    """The quoted text for one claim, cut as the preview tier cuts."""
+    entry = node_sets.get(claim.ref)
+    if entry is None:
+        quote: dict = {"content": claim.content}
+    else:
+        text, node_rows = entry
+        index, start, end, _ = best_node(text, node_rows, query_vec, query_grams)
+        quote = {"content": text[start:end], "node": {"index": index, "of": len(node_rows), "span": [start, end]}}
+    content = quote["content"]
+    if cap > 0 and len(content) > cap:
+        quote["content_len"] = len(content)
+        quote["content"] = content[:cap]
+        quote["content_truncated"] = True
+        if "node" in quote:
+            start = quote["node"]["span"][0]
+            quote["node"]["span"] = [start, start + cap]
+    return quote
+
+
+def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple[list[dict], int, bool]:
+    """Section 7's one fixed sequence, cut to the budget.
+
+    `entries` are (item, head quote, other quotes most relevant first), in item
+    order. The sequence is every head in item order, then each item's first
+    remaining excerpt in item order, then each item's second, and so on. The
+    response carries the longest prefix of it that fits `budget`: an item whose
+    head falls outside is not returned, and an excerpt outside is omitted while its
+    claim and ref stay. Because the budget only chooses the prefix length, raising it
+    alone never removes an item or an excerpt (invariant 9).
+
+    The first head is always admitted. A budget is never below one preview-tier
+    excerpt, so it fits whenever the preview tier is on; with the tier disabled the
+    first item is still returned whole rather than returning nothing.
+
+    Returns (items, used characters, whether a head was cut).
+    """
+    used = 0
+    heads = 0
+    for position, (_, head, _) in enumerate(entries):
+        cost = len(head["content"])
+        if position and used + cost > budget:
+            break
+        used += cost
+        heads += 1
+    admitted = entries[:heads]
+    taken = [0] * heads
+    stopped = heads < len(entries)
+    rounds = max((len(others) for _, _, others in admitted), default=0)
+    for r in range(rounds):
+        if stopped:
+            break
+        for i, (_, _, others) in enumerate(admitted):
+            if r >= len(others):
+                continue
+            cost = len(others[r]["content"])
+            if used + cost > budget:
+                stopped = True
+                break
+            used += cost
+            taken[i] += 1
+    items = []
+    for (item, head, others), n in zip(admitted, taken):
+        item = dict(item)
+        item["content"] = head["content"]
+        for key in ("content_len", "content_truncated", "node"):
+            if key in head:
+                item[key] = head[key]
+        item["excerpts"] = others[:n]
+        item["excerpts_omitted"] = len(others) - n
+        items.append(item)
+    return items, used, heads < len(entries)
+
+
 async def do_reconstruct(
     agent_id: str,
     query: str,
@@ -495,6 +708,7 @@ async def do_reconstruct(
     source_id: str = "",
     session_key: str = "",
     trace: bool = False,
+    budget: int | None = None,
 ) -> dict:
     """Assemble recall items from the candidate pool the recall process produced.
 
@@ -510,6 +724,7 @@ async def do_reconstruct(
     from .memory_handlers import RECALL_LIBRARY_MAX_LIMIT, do_recall
 
     effective_count, count_policy = resolve_count(count)
+    effective_budget, budget_policy = resolve_budget(budget)
     bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))
     # bug-437: report the effective retrieval bound, not only the larger request.
     effective_top_k = min(bounds_top_k, RECALL_LIBRARY_MAX_LIMIT)
@@ -552,6 +767,10 @@ async def do_reconstruct(
         "effective_count": effective_count,
         "returned_count": 0,
         "count_policy": count_policy,
+        "requested_budget": budget,
+        "effective_budget": effective_budget,
+        "used_budget": 0,
+        "budget_policy": budget_policy,
         "bounds": bounds,
     }
 
@@ -604,7 +823,31 @@ async def do_reconstruct(
         assembled.append((min(r.rank for r in rows), item["head_ref"], item))
 
     assembled.sort(key=lambda t: (t[0], t[1]))
-    items = [item for _, _, item in assembled[:effective_count]]
+    selected = [item for _, _, item in assembled[:effective_count]]
+
+    # Quote the selected items. Nodes are read only now, after the items and their
+    # order are fixed, so the tree cannot change what comes back.
+    by_ref = {c.ref: c for c in candidates}
+    entries_claims = []
+    for item in selected:
+        head = by_ref[item["head_ref"]]
+        others = sorted(
+            (by_ref[claim["ref"]] for claim in item["claims"] if claim["ref"] != item["head_ref"]),
+            key=_relevance_key,
+        )
+        entries_claims.append((item, head, others))
+    all_claims = [c for _, head, others in entries_claims for c in (head, *others)]
+    node_sets = await _current_node_sets(agent_id, all_claims) if all_claims else {}
+    query_vec = await _query_vector(query) if node_sets else None
+    query_grams = _trigrams(query)
+    cap = config.RECALL_PREVIEW_CHARS
+    entries = []
+    for item, head, others in entries_claims:
+        head_quote = _quote(head, node_sets, query_vec, query_grams, cap)
+        other_quotes = [{"ref": c.ref, **_quote(c, node_sets, query_vec, query_grams, cap)} for c in others]
+        entries.append((item, head_quote, other_quotes))
+    items, used_budget, budget_cut = allocate(entries, effective_budget)
+    response["used_budget"] = used_budget
 
     # The retrieval was cut if it returned exactly as many rows as it was allowed
     # to; the tool cannot tell a full pool from a cut one, and says so rather than
@@ -619,7 +862,9 @@ async def do_reconstruct(
         response["shortfall_reason"] = "count_zero"
     if len(items) < effective_count:
         response["shortfall_reason"] = (
-            SHORTFALL_BELOW_QUALITY_THRESHOLD
+            SHORTFALL_BUDGET_EXHAUSTED
+            if budget_cut
+            else SHORTFALL_BELOW_QUALITY_THRESHOLD
             if recall_result.get("gate_fallback")
             else SHORTFALL_EXHAUSTED_CANDIDATES
         )

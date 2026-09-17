@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:6c8990eef24dff8ecd86cee638ca8b048feb080a -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:c9c09f4278f735c8edff0f46f5c64efb36f686f9 -->
 
 # Reliable Recall — 2.6 系
 
@@ -395,8 +395,14 @@ export。適応化は、固定 policy が再現可能な baseline と監査契�
 ### 再構成 v1 の実装範囲 { #reconstruction-v1-implementation-boundary }
 
 実験的な v1 の出口は v0 の 4 段階を維持します。関係の走査には、まだ辿る辺がありません。
-ペイロード予算は実装していません: item は head claim だけを運び、支える claim は ref です。
-以下の具体的な条件を追加します。
+v1.1 からペイロード予算を上記のとおり実装しています。既定値 4,000 字と最大値 20,000 字は、
+§9 の掃引が選ぶまでの暫定値です。呼び出し側の予算がプレビュー層の抜粋 1 つ分に満たない場合は
+その分まで引き上げ、`budget_policy` で申告します。レコードが現行の overflow tree ノードを
+完全に持つ claim は、クエリに最も合うノードから引用します: ノードをクエリ埋め込みとの
+コサインと、共有する文字 3-gram の数でそれぞれ順位付けし (同じ値は同じ順位)、相互順位融合で
+合わせ、同点は前のノードを取ります。引用には `node` (番号、ノード数、保存本文内の文字範囲) が
+付きます。ノードは item とその順序が確定した後に読むので、どの item が返るかは変えません
+([overflow tree](OVERFLOW_TREE_DESIGN.md))。以下の具体的な条件を追加します。
 
 - 時刻による束ねは project と channel の一致を必要とします。隣接時刻での束ねには
   source の役割と id の一致も必要です。連続する各間隔だけでなく、まとまり全体が

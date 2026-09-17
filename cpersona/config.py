@@ -211,6 +211,25 @@ RECONSTRUCT_MAX_EVIDENCE = max(1, _parse_int("CPERSONA_RECONSTRUCT_MAX_EVIDENCE"
 # "adjacent timestamps, same source" -- source alone is not a bundling key (in a
 # single-agent store it is constant, and would fold the whole pool into one item).
 RECONSTRUCT_ADJACENCY_SECONDS = max(0, _parse_int("CPERSONA_RECONSTRUCT_ADJACENCY_SECONDS", 60))
+# The payload budget (section 7, "Breadth before depth"): characters of quoted text
+# -- item `content` and `excerpts` -- a response may carry. `count` bounds breadth,
+# this bounds depth, and breadth takes precedence when the two compete.
+#
+#     budget_base      = forced_budget ?? requested_budget ?? default_budget
+#     effective_budget = min(budget_base, max_budget)
+#
+# Section 9's sweep chooses the default and the maximum; until it runs these are
+# provisional. The default matches the design's worked example and the maximum
+# is five times it. A default or forced budget above the maximum, or one below a
+# single preview-tier excerpt, is a startup error (validate_reconstruct_counts).
+RECONSTRUCT_DEFAULT_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", 4000)
+RECONSTRUCT_MAX_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_MAX_BUDGET", 20000)
+_forced_budget_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_BUDGET")
+RECONSTRUCT_FORCED_BUDGET = (
+    _parse_int("CPERSONA_RECONSTRUCT_FORCED_BUDGET", RECONSTRUCT_DEFAULT_BUDGET)
+    if _forced_budget_raw not in (None, "")
+    else None
+)
 
 
 def validate_reconstruct_counts() -> None:
@@ -230,6 +249,29 @@ def validate_reconstruct_counts() -> None:
         raise ValueError(
             f"CPERSONA_RECONSTRUCT_FORCED_COUNT={RECONSTRUCT_FORCED_COUNT} exceeds "
             f"CPERSONA_RECONSTRUCT_MAX_COUNT={RECONSTRUCT_MAX_COUNT}"
+        )
+    # The budget has the same rule, plus a floor: below one preview-tier excerpt
+    # the first item could not fit, and section 7 guarantees that it does.
+    floor = RECALL_PREVIEW_CHARS if RECALL_PREVIEW_CHARS > 0 else 1
+    for name, value in (
+        ("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", RECONSTRUCT_DEFAULT_BUDGET),
+        ("CPERSONA_RECONSTRUCT_MAX_BUDGET", RECONSTRUCT_MAX_BUDGET),
+        ("CPERSONA_RECONSTRUCT_FORCED_BUDGET", RECONSTRUCT_FORCED_BUDGET),
+    ):
+        if value is not None and value < floor:
+            raise ValueError(
+                f"{name}={value} is below one preview-tier excerpt "
+                f"(CPERSONA_RECALL_PREVIEW_CHARS={RECALL_PREVIEW_CHARS})"
+            )
+    if RECONSTRUCT_DEFAULT_BUDGET > RECONSTRUCT_MAX_BUDGET:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_DEFAULT_BUDGET={RECONSTRUCT_DEFAULT_BUDGET} exceeds "
+            f"CPERSONA_RECONSTRUCT_MAX_BUDGET={RECONSTRUCT_MAX_BUDGET}"
+        )
+    if RECONSTRUCT_FORCED_BUDGET is not None and RECONSTRUCT_FORCED_BUDGET > RECONSTRUCT_MAX_BUDGET:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_FORCED_BUDGET={RECONSTRUCT_FORCED_BUDGET} exceeds "
+            f"CPERSONA_RECONSTRUCT_MAX_BUDGET={RECONSTRUCT_MAX_BUDGET}"
         )
 # How many embedding rows the fallback vector scan turns into a matrix at a
 # time. The scan reads `MAX_MEMORIES` rows of `(id, embedding)`; it used to
