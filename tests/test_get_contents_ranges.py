@@ -104,6 +104,27 @@ async def test_the_last_node_is_served_and_one_past_it_is_refused(windowed):
         out = await do_get_contents(AGENT, [{"ref": ref, "node": last}, {"ref": ref, "node": [last, last + 1]}])
         assert [i["content"] for i in out["items"]] == [LONG[rows[last][1] :]]
         assert out["unresolved"] == [{"ref": ref, "reason": "node_out_of_range"}]
+        far = await do_get_contents(AGENT, [{"ref": ref, "node": last + 7}])
+        assert far["items"] == [] and far["unresolved"] == [{"ref": ref, "reason": "node_out_of_range"}]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_range_does_not_stop_the_rest_of_the_batch(windowed):
+    async with _TempDB() as tmp:
+        ref, rows = await _long_memory(tmp)
+        out = await do_get_contents(
+            AGENT, [{"ref": ref, "node": [2, 1]}, {"ref": ref, "node": 99}, {"ref": ref, "node": 0}, ref]
+        )
+        assert [i.get("range", {}).get("node") for i in out["items"]] == [[0, 0], None]
+        assert [u["reason"] for u in out["unresolved"]] == ["invalid_range", "node_out_of_range"]
+
+
+@pytest.mark.asyncio
+async def test_an_object_without_a_string_ref_is_missing_not_an_error(windowed):
+    async with _TempDB():
+        out = await do_get_contents(AGENT, [{"ref": 5, "node": 0}, {"node": 0}, {"ref": None}])
+        assert out["items"] == [] and "unresolved" not in out
+        assert out["missing"] == ["5", "None", "None"]
 
 
 @pytest.mark.asyncio
@@ -261,5 +282,13 @@ def test_the_mcp_schema_admits_range_objects_and_strings():
     tools = {t.name: t for t in server.registry._tools}
     items = tools["get_contents"].inputSchema["properties"]["refs"]["items"]
     assert [branch["type"] for branch in items["anyOf"]] == ["string", "object"]
-    obj = items["anyOf"][1]
-    assert obj["required"] == ["ref"] and set(obj["properties"]) == {"ref", "node", "span"}
+    pair = {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2}
+    assert items["anyOf"][1] == {
+        "type": "object",
+        "properties": {
+            "ref": {"type": "string"},
+            "node": {"anyOf": [{"type": "integer", "minimum": 0}, pair]},
+            "span": pair,
+        },
+        "required": ["ref"],
+    }

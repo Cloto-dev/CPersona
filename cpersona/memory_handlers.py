@@ -2211,6 +2211,7 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     missing.append(ref)
                     continue
                 msg_id, content, source, timestamp = rows[0]
+                text = content
                 # Mirror the recall message shape so callers can splice items in.
                 item: dict = {"ref": ref, "content": content}
                 if source:
@@ -2229,6 +2230,7 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     missing.append(ref)
                     continue
                 summary, start_time, resolved, created_at = rows[0]
+                text = summary
                 item = {
                     "ref": ref,
                     "content": f"[Episode] {summary}",
@@ -2246,7 +2248,6 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                 unresolved.append({"ref": ref, "reason": invalid})
                 continue
             if request is not None:
-                text = content if kind == "mem" else summary
                 served, reason = await _resolve_range(db, kind, row_id, text, request)
                 if served is None:
                     unresolved.append({"ref": ref, "reason": reason})
