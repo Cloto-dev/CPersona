@@ -219,11 +219,11 @@ def resolve_budget(requested: int | None) -> tuple[int, dict]:
     else:
         base, source, reason = config.RECONSTRUCT_DEFAULT_BUDGET, "server_default", "budget_omitted"
     base = int(base)
-    effective = min(base, maximum)
+    budget = min(base, maximum)
     floor = max(config.RECALL_PREVIEW_CHARS, 1)
-    if effective < floor:
-        effective, reason = floor, "raised_to_one_excerpt"
-    return effective, {"source": source, "clamped": effective != base, "reason": reason}
+    if budget < floor:
+        budget, reason = floor, "raised_to_one_excerpt"
+    return budget, {"source": source, "clamped": budget != base, "reason": reason}
 
 
 class _Union:

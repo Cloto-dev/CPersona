@@ -463,6 +463,16 @@ MUTATIONS: list[Mutation] = [
         expect="test_reconstruct.py::test_count_window_arithmetic",
     ),
     Mutation(
+        id="M21b",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — the payload budget's ceiling",
+        file="cpersona/reconstruct.py",
+        find="    budget = min(base, maximum)",
+        replace="    budget = base",
+        breaks="the server maximum stops bounding the payload budget, so a caller's number is the only limit on quoted text",
+        expect="test_reconstruct_excerpts.py::test_budget_default_request_force_and_clamps",
+    ),
+    Mutation(
         id="M22",
         tests=("tests/test_reconstruct.py",),
         target="reconstruct stage 2 — 'adjacent timestamps, same source' is ONE key",
