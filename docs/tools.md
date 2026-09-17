@@ -13,7 +13,7 @@
 | `store` | Write one message to memory. Branch on `result` — `stored` / `skipped` / `rejected` — not on `ok` ([dedup contract](behavior-contracts.md#5-dedup-semantics-skip-not-upsert)) |
 | `recall` | Retrieve memories through the three-layer hybrid search. **The last element is the best match** ([ordering contract](behavior-contracts.md#1-recall-return-order-last-is-best)) |
 | `recall_with_context` | Recall *and* merge with conversation history you pass in, deduplicated. Returns a **chronological** merge, not a score ordering |
-| `get_contents` | Expand preview refs (`mem:<id>` / `ep:<id>`) returned by recall into full text ([preview tier design](RECALL_PREVIEW_TIER_DESIGN.md)) |
+| `get_contents` | Expand preview refs (`mem:<id>` / `ep:<id>`) returned by recall into full text ([preview tier design](RECALL_PREVIEW_TIER_DESIGN.md)). A ref can also name part of its record — overflow-tree nodes or a character span — so a `reconstruct` quote expands to its neighbours rather than the whole record |
 | `reconstruct` | Assemble **recall items** from the candidate rows a recall produces: select, order and assign roles, never compose. `count` is a ceiling, not a fill target and not a search depth; breadth (`top_k`, `max_hops`, `max_evidence`) is a separate set of bounds ([the exit](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit)) |
 | `archive_episode` | Store a session summary. Also moves the [episode boundary](behavior-contracts.md#3-episode-boundary-penalty), which down-weights everything written before it |
 | `update_memory` | Correct the content of an existing memory. Use this, not a re-`store` with the same `msg_id` |

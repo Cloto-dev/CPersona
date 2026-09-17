@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:c9c09f4278f735c8edff0f46f5c64efb36f686f9 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:035dd0557c16c641c41fa9a5bbc877c739e3cb0f -->
 
 # Reliable Recall — 2.6 系
 
@@ -402,7 +402,9 @@ v1.1 からペイロード予算を上記のとおり実装しています。既
 コサインと、共有する文字 3-gram の数でそれぞれ順位付けし (同じ値は同じ順位)、相互順位融合で
 合わせ、同点は前のノードを取ります。引用には `node` (番号、ノード数、保存本文内の文字範囲) が
 付きます。ノードは item とその順序が確定した後に読むので、どの item が返るかは変えません
-([overflow tree](OVERFLOW_TREE_DESIGN.md))。以下の具体的な条件を追加します。
+([overflow tree](OVERFLOW_TREE_DESIGN.md))。引用の前後をレコードの残りなしで読むために、
+`get_contents` は保存本文内のノード範囲または文字範囲を指定した ref を受け付けます。正確に
+返せない範囲は `unresolved` で申告し、行全体へ広げることはしません。以下の具体的な条件を追加します。
 
 - 時刻による束ねは project と channel の一致を必要とします。隣接時刻での束ねには
   source の役割と id の一致も必要です。連続する各間隔だけでなく、まとまり全体が

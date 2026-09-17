@@ -473,8 +473,11 @@ shared character trigrams, the two ranks are fused by reciprocal rank with
 equal values sharing a rank, and ties go to the earlier node. The quote then
 carries `node` (index, node count and character span in the stored text). Nodes
 are read after the items and their order are fixed, so they never change which
-items come back ([overflow tree](OVERFLOW_TREE_DESIGN.md)). It adds these
-concrete qualifications:
+items come back ([overflow tree](OVERFLOW_TREE_DESIGN.md)). To read around a
+quote without the rest of its record, `get_contents` accepts a ref that names a
+node range or a character span in the stored text; a range it cannot serve
+exactly is reported in `unresolved`, never widened to the whole row. It adds
+these concrete qualifications:
 
 - Time-based bundling requires the same project and channel. Adjacency also
   requires the same source role and id; the entire burst, rather than each
