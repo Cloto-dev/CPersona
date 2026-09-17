@@ -691,8 +691,9 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
         # Both are omitted when empty: no excerpts carried, none withheld.
         if n:
             item["excerpts"] = others[:n]
-        if len(others) - n:
-            item["excerpts_omitted"] = len(others) - n
+        omitted = len(others) - n
+        if omitted:
+            item["excerpts_omitted"] = omitted
         items.append(item)
     return items, used, heads < len(entries)
 
