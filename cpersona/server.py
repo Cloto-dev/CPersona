@@ -1249,7 +1249,10 @@ registry.auto_tool(
     "budget cannot carry is omitted (counted in `excerpts_omitted`, absent when zero; its "
     "claim and ref stay); "
     "an item is dropped only when its head does not fit, with shortfall_reason "
-    "budget_exhausted. Raising the budget alone never removes an item or an excerpt. "
+    "budget_exhausted. Raising the budget alone never removes an item or an excerpt. When "
+    "`budget` is omitted the default is the configured default or one quote per item of the "
+    "window, whichever is more, so a count you name is not cut by a budget you did not set; a "
+    "budget you do name is taken as given. "
     "QUOTES: `content` quotes the head claim and each `excerpts[]` entry quotes another "
     "retained claim, most relevant first; all are verbatim and cut as the preview tier cuts. "
     "A long record with overflow-tree nodes is quoted from the node that best matches the "
@@ -1357,7 +1360,8 @@ registry.auto_tool(
                     "Payload budget: characters of quoted text (item `content` plus `excerpts`) "
                     "the response may carry. Bounds depth, where `count` bounds breadth, and "
                     "breadth wins: excerpts are omitted before any item is. Omit for the server "
-                    "default; an operator-forced value overrides both; clamped to the server "
+                    "default, which is never less than one quote per item of the window; "
+                    "an operator-forced value overrides both; clamped to the server "
                     "maximum and raised to one preview-tier excerpt, and budget_policy says which."
                 ),
             },

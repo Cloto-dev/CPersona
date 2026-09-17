@@ -267,11 +267,19 @@ def resolve_count(requested: int | None) -> tuple[int, dict]:
     return effective, {"source": source, "clamped": effective < base, "reason": reason}
 
 
-def resolve_budget(requested: int | None) -> tuple[int, dict]:
+def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
     """The payload budget (section 7, "Breadth before depth").
 
-        budget_base      = forced_budget ?? requested_budget ?? default_budget
+        budget_base      = forced_budget ?? requested_budget ?? default_budget(count)
         effective_budget = min(budget_base, max_budget)
+
+    The default is the configured default, or one preview-tier quote per item of
+    the window when that is more. A caller that names a count and leaves the budget
+    alone used to get at most default / preview = 8 items however many it asked for:
+    a default it never set cut the breadth it did set, which is the wrong way round
+    when breadth comes before depth. Only the default moves. A budget the caller or
+    an operator names is taken as given, and a window of eight or fewer resolves
+    exactly as before.
 
     Counted in characters of quoted text. A caller's request below one
     preview-tier excerpt is raised to it, because the first item must always fit;
@@ -286,6 +294,9 @@ def resolve_budget(requested: int | None) -> tuple[int, dict]:
         base, source, reason = requested, "caller", "budget_requested"
     else:
         base, source, reason = config.RECONSTRUCT_DEFAULT_BUDGET, "server_default", "budget_omitted"
+        heads = int(count) * max(config.RECALL_PREVIEW_CHARS, 0)
+        if heads > base:
+            base, reason = heads, "default_fits_the_window"
     base = int(base)
     budget = min(base, maximum)
     floor = max(config.RECALL_PREVIEW_CHARS, 1)
@@ -826,7 +837,7 @@ async def do_reconstruct(
     from .memory_handlers import RECALL_LIBRARY_MAX_LIMIT, do_recall
 
     effective_count, count_policy = resolve_count(count)
-    effective_budget, budget_policy = resolve_budget(budget)
+    effective_budget, budget_policy = resolve_budget(budget, effective_count)
     bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))
     # bug-437: report the effective retrieval bound, not only the larger request.
     effective_top_k = min(bounds_top_k, RECALL_LIBRARY_MAX_LIMIT)

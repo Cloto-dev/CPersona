@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:67ea577cd4f809aeb82e8928ad4ba455fe5821a9 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d8bd89dd3b5c79c260365121bf86701e8c2f7890 -->
 
 # Reliable Recall — 2.6 系
 
@@ -293,10 +293,15 @@ effective = min(base, max_count)
 返されなかった記憶は、呼び出し側が展開する手がかりも、存在を知る手がかりも残しません。
 
 ```text
-budget_base      = forced_budget ?? requested_budget ?? default_budget
+budget_base      = forced_budget ?? requested_budget ?? default_budget(count)
 effective_budget = min(budget_base, max_budget)
 ```
 
+- 既定値は、設定された既定値か、窓の item 1 件につき preview tier の引用 1 つ分のうち、
+  大きい方です。件数を指定して予算を指定しなかった呼び出し側が、自分で決めていない既定値に
+  幅を削られてはなりません: 既定 4,000・引用 500 字では、件数 10 の窓が 8 件しか返しません
+  でした。動くのは既定値だけです。呼び出し側や運用者が指定した予算はそのまま使い、
+  件数 8 以下の窓はこれまでと同じ値になります。
 - 予算は**引用テキストの文字数** — `content` と下記の `excerpts` — で数えます。トークンは
   使いません: サーバーは読み手のトークナイザを知らず、preview tier と `get_contents` も
   既にペイロードを文字数で制限しているためです。ref、時刻、理由、role は数えず、

@@ -37,6 +37,13 @@ def test_budget_default_request_force_and_clamps(monkeypatch):
     assert resolve_budget(9000) == (9000, {"source": "caller", "clamped": False, "reason": "budget_requested"})
     assert resolve_budget(99999) == (20000, {"source": "caller", "clamped": True, "reason": "budget_requested"})
     assert resolve_budget(10) == (500, {"source": "caller", "clamped": True, "reason": "raised_to_one_excerpt"})
+    # The default grows to one quote per item of the window, and only the default:
+    assert resolve_budget(None, 8) == (4000, {"source": "server_default", "clamped": False, "reason": "budget_omitted"})
+    assert resolve_budget(None, 10) == (5000, {"source": "server_default", "clamped": False, "reason": "default_fits_the_window"})
+    assert resolve_budget(4000, 10) == (4000, {"source": "caller", "clamped": False, "reason": "budget_requested"})
+    monkeypatch.setattr(config, "RECONSTRUCT_MAX_BUDGET", 4500)
+    assert resolve_budget(None, 10) == (4500, {"source": "server_default", "clamped": True, "reason": "default_fits_the_window"})
+    monkeypatch.setattr(config, "RECONSTRUCT_MAX_BUDGET", 20000)
 
     monkeypatch.setattr(config, "RECONSTRUCT_FORCED_BUDGET", 1234)
     assert resolve_budget(9000) == (1234, {"source": "operator_forced", "clamped": False, "reason": "forced_budget_set"})
@@ -403,3 +410,18 @@ async def test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_i
         (more,) = (await memory_handlers.do_get_contents(AGENT, [item["expand"]]))["items"]
         assert more["content"].startswith(item["content"]) and "7431" in more["content"]
         assert len(more["content"]) < len(LONG) / 2
+
+
+@pytest.mark.asyncio
+async def test_a_count_the_caller_named_is_not_cut_by_a_budget_it_never_set(windowed):
+    # Ten one-row items whose quotes are each cut at the preview width cost 10 x 500
+    # characters of heads. The configured default carries eight.
+    async with _TempDB():
+        for i in range(10):
+            await memory_handlers.do_store(AGENT, {"content": f"deploy note {i:02d} " + "x" * 600})
+        asked = await reconstruct.do_reconstruct(AGENT, "deploy note", count=10, top_k=20, deep=True)
+        assert asked["returned_count"] == asked["effective_count"] == 10 and "shortfall_reason" not in asked
+        # ...while a budget the caller does name is taken as given, and says what it cost.
+        named = await reconstruct.do_reconstruct(AGENT, "deploy note", count=10, top_k=20, budget=4000, deep=True)
+        assert named["returned_count"] == 8 and named["shortfall_reason"] == "budget_exhausted"
+        assert [i["head_ref"] for i in named["items"]] == [i["head_ref"] for i in asked["items"]][:8]

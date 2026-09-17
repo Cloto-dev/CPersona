@@ -340,10 +340,16 @@ in breadth is not: a memory that was never returned leaves nothing for the
 caller to expand, or even to know about.
 
 ```text
-budget_base      = forced_budget ?? requested_budget ?? default_budget
+budget_base      = forced_budget ?? requested_budget ?? default_budget(count)
 effective_budget = min(budget_base, max_budget)
 ```
 
+- The default is the configured default, or one preview-tier quote for each
+  item of the window when that is more. A caller that names a count and leaves
+  the budget alone must not lose breadth to a default it never set: with a
+  default of 4,000 and quotes of 500 characters, a window of ten used to return
+  eight. Only the default moves. A budget the caller or an operator names is
+  taken as given, and a window of eight or fewer resolves as before.
 - The budget is counted in **characters of quoted text** — `content` and the
   `excerpts` below. Tokens are not used: the server does not know the
   reader's tokenizer, and the preview tier and `get_contents` already bound
