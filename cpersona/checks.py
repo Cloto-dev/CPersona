@@ -1144,6 +1144,36 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "INSERT INTO episodes_fts(rowid, summary, keywords) "
         "VALUES (new.id, new.summary, new.keywords); END",
     },
+    # v14 (see RECORD_NODES_SQL in database.py). Critical: without one of these a
+    # delete or a text change leaves nodes that quote spans of a record that no
+    # longer exists, or no longer says that. Not FTS-gated — nodes exist whether
+    # or not the keyword index does.
+    "record_nodes_memories_ad": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_nodes_memories_ad AFTER DELETE ON memories BEGIN "
+        "DELETE FROM record_nodes WHERE parent_kind = 'mem' AND parent_id = old.id; END",
+    },
+    "record_nodes_memories_au": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_nodes_memories_au AFTER UPDATE OF content ON memories "
+        "WHEN old.content <> new.content BEGIN "
+        "DELETE FROM record_nodes WHERE parent_kind = 'mem' AND parent_id = old.id; END",
+    },
+    "record_nodes_episodes_ad": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_nodes_episodes_ad AFTER DELETE ON episodes BEGIN "
+        "DELETE FROM record_nodes WHERE parent_kind = 'ep' AND parent_id = old.id; END",
+    },
+    "record_nodes_episodes_au": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_nodes_episodes_au AFTER UPDATE OF summary ON episodes "
+        "WHEN old.summary <> new.summary BEGIN "
+        "DELETE FROM record_nodes WHERE parent_kind = 'ep' AND parent_id = old.id; END",
+    },
     "idx_memories_isolation": {
         "kind": "index",
         "severity": "warn",

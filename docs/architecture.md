@@ -39,10 +39,12 @@ Two things follow from this shape:
 ## Storage
 
 One SQLite database in WAL mode (`CPERSONA_DB_PATH`), currently **schema
-v13**, migrated forward automatically on startup. It holds four data tables —
+v14**, migrated forward automatically on startup. It holds four data tables —
 `memories`, `episodes`, `profiles`, `pending_memory_tasks` — plus a
 `schema_version` bookkeeping table and two FTS5 virtual tables that triggers
-keep in step.
+keep in step. A fifth table, `record_nodes`, holds only offsets into the text of
+long memories and episodes ([overflow tree](OVERFLOW_TREE_DESIGN.md)); triggers
+delete a record's nodes when the record is deleted or its text changes.
 
 The FTS5 indexes use the **trigram** tokenizer. That is what makes CPersona
 work on Japanese and other space-less scripts at all. A word-boundary

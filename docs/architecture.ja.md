@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:4349920b1af8a8adb757aedfd4460cb92b8797d0 -->
+<!-- i18n-source: docs/architecture.md@blob:6afbef6a9255d1699280d1e3fff386a6e98b5a1d -->
 
 # アーキテクチャ
 
@@ -41,10 +41,12 @@ flowchart TB
 ## ストレージ { #storage }
 
 WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在の
-**schema v13** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
+**schema v14** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
 `memories` / `episodes` / `profiles` / `pending_memory_tasks` の 4 つです。加えて
 記録用の `schema_version` テーブルと、トリガーで同期される FTS5 仮想テーブルが
-2 つあります。
+2 つあります。5 つ目のテーブル `record_nodes` は、長い記憶とエピソードの本文への
+オフセットだけを持ちます ([overflow tree](OVERFLOW_TREE_DESIGN.md))。記録が削除
+されるか本文が変わると、トリガーがその記録のノードを削除します。
 
 FTS5 索引は **trigram** トークナイザを使います。これが、CPersona が日本語や
 その他の分かち書きしない文字体系で機能する理由です。単語境界ベースの
