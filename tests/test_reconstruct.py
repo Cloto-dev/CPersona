@@ -312,7 +312,11 @@ async def test_4_bounds_are_declared_and_a_cut_is_reported():
     # A depth the corpus cannot fill is not a cut by the depth. (What recall's own
     # quality gate drops is recall's to report, and it is why this returns fewer
     # rows than the depth allows rather than exactly SEEDED.)
+    # ...and a response where no bound acted does not restate the bounds it was given;
+    # the full audit is one flag away.
     out = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=SEEDED + 50, max_evidence=40)
+    assert "bounds" not in out
+    out = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=SEEDED + 50, max_evidence=40, trace=True)
     assert out["bounds"] == {"top_k": SEEDED + 50, "max_hops": 2, "max_evidence": 40}
 
 
@@ -335,15 +339,15 @@ async def test_4c_a_cut_in_an_item_that_is_not_returned_is_not_reported():
     await _seed_unclustered()
     await _seed_burst()
     out = await R.do_reconstruct(AGENT, QUERY, count=0, top_k=TOP_K, max_evidence=2)
-    assert out["items"] == [] and "omitted" not in out["bounds"]
+    assert out["items"] == [] and "omitted" not in out.get("bounds", {})
     whole = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=TOP_K, max_evidence=40)
-    assert "omitted" not in whole["bounds"] and "claims_omitted" not in whole["items"][0]
+    assert "omitted" not in whole.get("bounds", {}) and "claims_omitted" not in whole["items"][0]
 
 
 @pytest.mark.asyncio
 async def test_5_every_element_says_why():
     await _seed_unclustered()
-    out = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K)
+    out = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K, trace=True)
     assert set(out["count_policy"]) == {"source", "clamped", "reason"}
     for item in out["items"]:
         assert item["independence_reason"]

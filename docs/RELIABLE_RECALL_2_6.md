@@ -305,9 +305,13 @@ effective = min(base, max_count)
   base for every call and is null unless set. A configuration in which the
   default or the forced value exceeds the maximum is a startup error, not a
   silent clamp.
-- Every response states `requested_count`, `effective_count`,
-  `returned_count` and a `count_policy` (`source`, `clamped`, `reason`) so
-  that a caller can see what the server did with its request.
+- Every response states `effective_count` and `returned_count`. When the server
+  did something other than what was asked — it clamped the count, or an operator
+  forced it — the response adds `requested_count` and a `count_policy` (`source`,
+  `clamped`, `reason`), so a caller can see what the server did with its request.
+  A request honoured as asked is not restated: an agent searches several times
+  per question, and an audit repeated on every call is paid for every time.
+  `trace=true` returns the full audit on any call.
 - Fewer items than the window is a normal result and carries a reason: no
   relevant evidence, below the quality threshold, filtered by policy,
   insufficient provenance, payload budget exhausted, or system degraded. The
@@ -367,10 +371,12 @@ effective_budget = min(budget_base, max_budget)
 - Because the response is a prefix of a sequence the budget does not shape,
   raising the budget alone never removes an item or an excerpt, and changing
   it alone never changes the candidate pool, the clusters or the item order.
-- Every response states `requested_budget`, `effective_budget`, `used_budget`
-  and a `budget_policy` (`source`, `clamped`, `reason`), and an item whose
-  excerpts were cut states `excerpts_omitted`, so a caller can tell whether
-  breadth or depth was cut.
+- A response states `requested_budget` and a `budget_policy` (`source`,
+  `clamped`, `reason`) when the budget was clamped, raised or forced, and
+  `effective_budget` and `used_budget` when the budget withheld an item or an
+  excerpt; an item whose excerpts were cut states `excerpts_omitted`. A caller
+  can therefore tell whether breadth or depth was cut, and a response the budget
+  never touched says nothing about it.
 
 The window sits fourth in a series this server already has: the embedding
 window (what gets indexed; a split is reported), the scan window (what gets
@@ -408,11 +414,10 @@ layer is present. With no relations this stage is the identity.
                  "roles": [{ "ref": "mem:…", "role": "supersedes" },
                            { "ref": "ep:…",  "role": "supports" }] }],  // absent when the row has none
     "independence_reason": "cluster:episode" }],                  // why it is a separate item
-  "requested_count": null, "effective_count": 1, "returned_count": 1,
-  "count_policy": { "source": "server_default", "clamped": false, "reason": "count_omitted" },
-  "requested_budget": null, "effective_budget": 4000, "used_budget": 1310,
-  "budget_policy": { "source": "server_default", "clamped": false, "reason": "budget_omitted" },
-  "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"] } }
+  "effective_count": 1, "returned_count": 1,                      // always
+  // the rest appears only when it has something to say, or under trace=true:
+  "effective_budget": 4000, "used_budget": 3980,                  // the budget withheld an item or an excerpt
+  "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"] } }  // a bound acted
 ```
 
 - `content` is a quotation. If an agent wants a composed sentence, the
@@ -522,8 +527,19 @@ these concrete qualifications:
   the same message id and timestamp. The exit reports what it did; deciding
   whether the evidence suffices belongs to the recall process of section 1,
   inside the server, and is not delegated to the caller through these fields.
-- `reconstruction` reports the policy version, candidate count, cluster count,
-  selected count and rows excluded for missing provenance. `trace=true` adds
+- The response is compact by default. Measured with an answer reader, a search
+  that did what it was asked spent about 500 characters restating its policy,
+  bounds and pool counts, where the rows themselves cost what recall's rows cost;
+  that envelope is now stated only when it has something to say (the count and
+  budget rules above; `bounds` when a bound dropped rows, was reached or was
+  lowered by the library ceiling; `reconstruction.excluded_without_provenance`
+  when rows were excluded).
+- An item whose node quote was cut carries `expand`, the argument `get_contents`
+  takes to return the rest of that node. A node is several times a quote and a
+  record is many times a node, so the smallest next read is handed over ready to
+  use: the node first, its neighbours next, the whole record last.
+- `trace=true` adds `reconstruction` (the policy version, candidate count, cluster
+  count, selected count and rows excluded for missing provenance),
   candidate refs and cluster membership, without full text, and `node_order`:
   for each record quoted by node, its best few node indices, best first. That
   is an order, not a confidence, and it stays in the trace until an

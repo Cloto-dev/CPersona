@@ -129,7 +129,83 @@ async def test_library_ceiling_reports_requested_and_effective_candidate_bounds(
 async def test_unclamped_candidate_bound_retains_the_existing_shape():
     for i in range(5):
         await stored(i)
-    out = await R.do_reconstruct(AGENT, "", count=5, top_k=20)
+    out = await R.do_reconstruct(AGENT, "", count=5, top_k=20, trace=True)
     assert out["reconstruction"]["candidate_count"] == out["returned_count"] == 5
     assert out["bounds"] == {"top_k": 20, "max_hops": config.RECONSTRUCT_MAX_HOPS,
                              "max_evidence": config.RECONSTRUCT_MAX_EVIDENCE}
+
+
+# --------------------------------------------------------------------------------------
+# The envelope: a search that did what it was asked says so in two integers
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_request_honoured_as_asked_is_not_restated():
+    for i in range(3):
+        await stored(i)
+    out = await R.do_reconstruct(AGENT, "", count=3, top_k=20, budget=5000)
+    # (`advisory` is recall's once-per-session notice that embeddings are off here; it is forwarded, not part of the envelope)
+    assert set(out) - {"advisory"} == {"items", "effective_count", "returned_count"}
+    assert out["effective_count"] == out["returned_count"] == 3
+    # The full audit is unchanged, and carries exactly what the compact form dropped.
+    full = await R.do_reconstruct(AGENT, "", count=3, top_k=20, budget=5000, trace=True)
+    assert set(full) - set(out) == {
+        "requested_count", "count_policy", "requested_budget", "effective_budget", "used_budget",
+        "budget_policy", "bounds", "reconstruction", "trace",
+    }
+    assert full["items"] == out["items"]
+
+
+@pytest.mark.asyncio
+async def test_a_short_return_still_says_why():
+    await stored(0)
+    out = await R.do_reconstruct(AGENT, "", count=5, top_k=20)
+    assert out["returned_count"] == 1 and out["shortfall_reason"] == R.SHORTFALL_EXHAUSTED_CANDIDATES
+    empty = await R.do_reconstruct("nobody", "", count=5, top_k=20)
+    assert set(empty) - {"advisory"} == {"items", "effective_count", "returned_count", "shortfall_reason"}
+
+
+@pytest.mark.asyncio
+async def test_a_clamped_count_states_its_policy_and_a_clamped_budget_its_own(monkeypatch):
+    await stored(0)
+    out = await R.do_reconstruct(AGENT, "", count=config.RECONSTRUCT_MAX_COUNT + 5, top_k=20)
+    assert out["requested_count"] == config.RECONSTRUCT_MAX_COUNT + 5 and out["count_policy"]["clamped"] is True
+    assert "budget_policy" not in out  # each policy is stated for its own reason
+    out = await R.do_reconstruct(AGENT, "", count=1, top_k=20, budget=config.RECONSTRUCT_MAX_BUDGET + 1)
+    assert out["requested_budget"] == config.RECONSTRUCT_MAX_BUDGET + 1 and out["budget_policy"]["clamped"] is True
+    assert "count_policy" not in out
+    raised = await R.do_reconstruct(AGENT, "", count=1, top_k=20, budget=1)
+    assert raised["budget_policy"]["reason"] == "raised_to_one_excerpt"
+
+
+@pytest.mark.asyncio
+async def test_a_lowered_ceiling_and_a_reached_depth_keep_their_bounds(monkeypatch):
+    for i in range(3):
+        await stored(i)
+    monkeypatch.setattr(M, "RECALL_LIBRARY_MAX_LIMIT", 2)
+    out = await R.do_reconstruct(AGENT, "", count=5, top_k=20)
+    assert out["bounds"]["effective_top_k"] == 2 and out["bounds"]["reached"] == ["top_k"]
+
+
+@pytest.mark.asyncio
+async def test_a_lowered_ceiling_is_stated_even_when_the_pool_never_met_it(monkeypatch):
+    await stored(0)
+    monkeypatch.setattr(M, "RECALL_LIBRARY_MAX_LIMIT", 2)
+    out = await R.do_reconstruct(AGENT, "", count=5, top_k=20)
+    assert out["bounds"]["effective_top_k"] == 2 and "reached" not in out["bounds"]
+
+
+@pytest.mark.asyncio
+async def test_rows_excluded_for_missing_provenance_are_counted_without_a_trace(monkeypatch):
+    await stored(0)
+    real = M.do_recall
+
+    async def with_a_refless_row(*args, **kwargs):
+        result = await real(*args, **kwargs)
+        result["messages"] = [{"content": "profile", "id": "-1"}, *result["messages"]]
+        return result
+
+    monkeypatch.setattr(M, "do_recall", with_a_refless_row)
+    out = await R.do_reconstruct(AGENT, "", count=1, top_k=20)
+    assert out["reconstruction"] == {"excluded_without_provenance": 1}

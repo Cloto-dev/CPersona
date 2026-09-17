@@ -119,6 +119,47 @@ QUOTE_LEXICAL_ONLY = "lexical_only"  # no query embedding: nodes ranked by trigr
 NODES_NONE = "no_nodes"  # the record has no nodes; its cut quote is simply its start
 NODES_NOT_CURRENT = "not_current"  # nodes exist but are partial or another model's
 
+# The envelope. A search that did what it was asked says so in two integers.
+#
+# Every response used to restate its whole policy -- requested / effective /
+# returned, both policies, the bounds it was given, the pool counts -- about 500
+# characters on a call where nothing happened, against none on the recall it sits
+# beside. An agent searches several times per question, so that was paid several
+# times, and it is where reconstruct's search response outgrew recall's: the rows
+# themselves cost the same. The rule now: state `effective_count` and
+# `returned_count` always, and the rest only when the server did something other
+# than what was asked or withheld something the caller could act on --
+#
+# * `requested_count` + `count_policy`: the count was clamped or operator-forced;
+# * `requested_budget` + `budget_policy`: the budget was clamped, raised or forced;
+# * `effective_budget` + `used_budget`: the budget cut something (an item or an excerpt);
+# * `bounds`: a bound dropped rows, was reached, or was lowered by the library ceiling;
+# * `reconstruction.excluded_without_provenance`: rows were excluded.
+#
+# `trace=true` returns the full audit as before, including the pool counts.
+_ASKED = ("caller", "server_default")
+
+
+def _compact(response: dict) -> dict:
+    out = dict(response)
+    count_policy, budget_policy = out["count_policy"], out["budget_policy"]
+    if not count_policy["clamped"] and count_policy["source"] in _ASKED:
+        del out["requested_count"], out["count_policy"]
+    if not budget_policy["clamped"] and budget_policy["source"] in _ASKED:
+        del out["requested_budget"], out["budget_policy"]
+    budget_cut = out.get("shortfall_reason") == SHORTFALL_BUDGET_EXHAUSTED or any(
+        "excerpts_omitted" in item for item in out["items"]
+    )
+    if not budget_cut:
+        del out["effective_budget"], out["used_budget"]
+    if not any(key in out["bounds"] for key in ("omitted", "reached", "effective_top_k")):
+        del out["bounds"]
+    excluded = out.pop("reconstruction")["excluded_without_provenance"]
+    if excluded:
+        out["reconstruction"] = {"excluded_without_provenance": excluded}
+    return out
+
+
 # How many of a quoted record's nodes the trace lists, best first.
 TRACE_NODE_ORDER = 3
 
@@ -689,6 +730,10 @@ def _quote(
         if "node" in quote:
             start = quote["node"]["span"][0]
             quote["node"]["span"] = [start, start + cap]
+            # The quote is the start of a node several times its length. Reading the
+            # rest of that node is the cheapest next step, so it is handed over as the
+            # argument get_contents takes, rather than left to be assembled from `node`.
+            quote["expand"] = {"ref": claim.ref, "node": quote["node"]["index"]}
         else:
             quote["node_unavailable"] = NODES_NOT_CURRENT if claim.ref in not_current else NODES_NONE
     return quote
@@ -739,7 +784,7 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
     for (item, head, others), n in zip(admitted, taken):
         item = dict(item)
         item["content"] = head["content"]
-        for key in ("content_len", "content_truncated", "node", "node_unavailable"):
+        for key in ("content_len", "content_truncated", "node", "node_unavailable", "expand"):
             if key in head:
                 item[key] = head[key]
         # Both are omitted when empty: no excerpts carried, none withheld.
@@ -852,7 +897,7 @@ async def do_reconstruct(
                 else SHORTFALL_NO_RELEVANT_EVIDENCE
             )
         )
-        return response
+        return response if trace else _compact(response)
 
     await _candidate_context(agent_id, candidates)
     spans = await _episode_spans(agent_id, [c.row_id for c in candidates if c.kind == "ep" and c.row_id > 0])
@@ -941,4 +986,4 @@ async def do_reconstruct(
             if recall_result.get("gate_fallback")
             else SHORTFALL_EXHAUSTED_CANDIDATES
         )
-    return response
+    return response if trace else _compact(response)

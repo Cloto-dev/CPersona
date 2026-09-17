@@ -605,6 +605,26 @@ MUTATIONS: list[Mutation] = [
         breaks="the first 500 characters of a long record pass for the part that matched the query, which is the failure v1.1 exists to remove",
         expect="test_reconstruct_excerpts.py::test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_do_not_move",
     ),
+    Mutation(
+        id="M33",
+        tests=("tests/test_reconstruct_review.py",),
+        target="reconstruct — a compact response still says when the server overrode the request",
+        file="cpersona/reconstruct.py",
+        find='    if not count_policy["clamped"] and count_policy["source"] in _ASKED:',
+        replace='    if count_policy["source"] in _ASKED:',
+        breaks="a clamped count is served without its policy, so the compact envelope hides exactly the case it exists to keep: the server doing something other than what was asked",
+        expect="test_reconstruct_review.py::test_a_clamped_count_states_its_policy_and_a_clamped_budget_its_own",
+    ),
+    Mutation(
+        id="M34",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — a cut node quote hands over the read that continues it",
+        file="cpersona/reconstruct.py",
+        find='quote["expand"] = {"ref": claim.ref, "node": quote["node"]["index"]}',
+        replace='quote["expand"] = {"ref": claim.ref, "node": 0}',
+        breaks="the ready-made argument reads the start of the record instead of the node that matched, so the cheapest next read returns the wrong text",
+        expect="test_reconstruct_excerpts.py::test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_its_node",
+    ),
 ]
 
 

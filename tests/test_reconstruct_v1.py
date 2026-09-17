@@ -64,6 +64,10 @@ async def test_requested_and_forced_five_return_only_two_available_items(monkeyp
     for requested, forced, source in ((5, None, "caller"), (1, 5, "operator_forced")):
         monkeypatch.setattr(config, "RECONSTRUCT_FORCED_COUNT", forced)
         out = await R.do_reconstruct(AGENT, "", count=requested, top_k=20)
+        # A forced count is the server overriding the caller, so the policy is stated;
+        # a request honoured as asked is not restated.
+        assert ("count_policy" in out) == ("requested_count" in out) == (forced is not None)
+        out = await R.do_reconstruct(AGENT, "", count=requested, top_k=20, trace=True)
         assert out["requested_count"] == requested
         assert out["effective_count"] == 5
         assert out["returned_count"] == len(out["items"]) == 2

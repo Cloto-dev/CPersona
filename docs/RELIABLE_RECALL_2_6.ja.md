@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:43429da416a1f4294b8651039cd58d0b28bca1fa -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:67ea577cd4f809aeb82e8928ad4ba455fe5821a9 -->
 
 # Reliable Recall — 2.6 系
 
@@ -265,9 +265,12 @@ effective = min(base, max_count)
   上限、`forced_count` は運用者がすべての呼び出しの base を固定できる設定で、設定しない
   限り null です。既定または強制値が最大を超える構成は起動時のエラーであって、黙った
   clamp ではありません。
-- すべての応答は `requested_count`、`effective_count`、`returned_count`、そして
-  `count_policy` (`source`、`clamped`、`reason`) を述べ、呼び出し側は自分の要求が
-  サーバーでどう扱われたかを見られます。
+- すべての応答は `effective_count` と `returned_count` を述べます。サーバーが要求と違うことを
+  した時 — 件数を上限で丸めた、または運用者が強制した — には `requested_count` と
+  `count_policy` (`source`、`clamped`、`reason`) を加え、呼び出し側は自分の要求が
+  サーバーでどう扱われたかを見られます。要求どおりに処理した時は繰り返しません:
+  エージェントは 1 つの問いで何度も検索するので、毎回繰り返す監査情報は毎回の費用になります。
+  `trace=true` は、どの呼び出しでも監査情報をすべて返します。
 - 窓より少ない件数は正常な結果で、理由を伴います: 関連する証拠が無い、品質閾値未満、
   policy によるフィルター、provenance 不足、ペイロード予算の枯渇、システムの劣化。不足分は、
   重複や低品質の項目や、証拠が支えない内容で決して埋められません。
@@ -314,9 +317,10 @@ effective_budget = min(budget_base, max_budget)
   その claim、ref、role は item に残ります。
 - 応答は予算が形を決めない列の先頭部分なので、予算だけを上げて item や抜粋が消えることは
   なく、予算だけを変えて候補プール、クラスタ、item の順序が変わることもありません。
-- すべての応答は `requested_budget`、`effective_budget`、`used_budget`、そして
-  `budget_policy` (`source`、`clamped`、`reason`) を述べ、抜粋を削られた item は
-  `excerpts_omitted` を述べます。呼び出し側は、削られたのが幅か深さかを見分けられます。
+- 予算を丸めた・引き上げた・強制した時は `requested_budget` と `budget_policy` (`source`、
+  `clamped`、`reason`) を、予算が item か抜粋を運べなかった時は `effective_budget` と
+  `used_budget` を述べ、抜粋を削られた item は `excerpts_omitted` を述べます。呼び出し側は、
+  削られたのが幅か深さかを見分けられます。予算が何も削らなかった応答は、予算について何も述べません。
 
 この窓は、このサーバーが既に持つ系列の 4 番目です: 埋め込み窓 (何が索引に載るか。分割は
 報告される)、走査窓 (何が走査されるか。gate fallback は報告される)、検索窓 (ループが
@@ -348,11 +352,10 @@ effective_budget = min(budget_base, max_budget)
                  "roles": [{ "ref": "mem:…", "role": "supersedes" },
                            { "ref": "ep:…",  "role": "supports" }] }],  // その行に無ければ省略
     "independence_reason": "cluster:episode" }],                  // なぜ別の item か
-  "requested_count": null, "effective_count": 1, "returned_count": 1,
-  "count_policy": { "source": "server_default", "clamped": false, "reason": "count_omitted" },
-  "requested_budget": null, "effective_budget": 4000, "used_budget": 1310,
-  "budget_policy": { "source": "server_default", "clamped": false, "reason": "budget_omitted" },
-  "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"] } }
+  "effective_count": 1, "returned_count": 1,                      // 常に
+  // 以下は述べることがある時、または trace=true の時だけ:
+  "effective_budget": 4000, "used_budget": 3980,                  // 予算が item か抜粋を運べなかった
+  "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"] } }  // 境界が作用した
 ```
 
 - `content` は引用です。エージェントが合成された文を望むなら、委託経路 (サーバーが
@@ -439,8 +442,17 @@ v1.1 からペイロード予算を上記のとおり実装しています。既
   `conflicts` が検出するのは、同じ message id で同じ時刻の行だけです。出口は自分が行った
   ことを報告します。証拠が十分かの判断は第 1 節の想起プロセス (サーバー内部) の役割で、
   これらの項目を通じて呼び出し側へ委ねるものではありません。
-- `reconstruction` は policy の版、候補数、クラスタ数、選択数、出典不足による除外数を
-  報告します。`trace=true` は本文を含めずに候補 ref とクラスタ構成、および `node_order` を追加します:
+- 応答は既定で小さくします。回答の読み手で計測したところ、要求どおりに処理した検索が、
+  方針・境界・候補数の言い直しに約 500 字を使っていました。行そのものの費用は recall の行と
+  同じでした。この外枠は、述べることがある時だけ返します (上の件数と予算の規則、境界が行を
+  落とした・到達した・ライブラリ上限で引き下げられた時の `bounds`、行を除外した時の
+  `reconstruction.excluded_without_provenance`)。
+- ノード引用を切り詰めた item は `expand` を持ちます。`get_contents` にそのまま渡すと、
+  そのノードの残りが返る引数です。ノードは引用の数倍、記録はノードの何倍もあるので、
+  次に読む最小の単位をそのまま使える形で渡します: まずそのノード、次に前後のノード、
+  記録全体は最後です。
+- `trace=true` は `reconstruction` (policy の版、候補数、クラスタ数、選択数、出典不足による除外数)、
+  本文を含めない候補 ref とクラスタ構成、および `node_order` を追加します:
   ノードから引用した記録ごとの、上位数個のノード番号 (合う順)。これは順序であって確信度
   ではなく、回答計測で読み手が使うと示されるまで trace に留めます。
   呼び出し側は、count が出力を制限したのか、検索候補が足りなかったのかを確認できます。

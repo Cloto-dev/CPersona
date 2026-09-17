@@ -214,6 +214,8 @@ async def test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_
         start, end = item["node"]["span"]
         assert LONG[start:end] == item["content"]
         assert item["node"]["of"] > 1 and item["node"]["index"] == item["node"]["of"] - 1
+        # A quote that carries its whole node has nothing more to hand over.
+        assert "content_truncated" not in item and "expand" not in item
         # tree invariant 1 for this tool: nodes change the quote, never the items
         assert _shape(after) == _shape(before)
         assert "node_unavailable" not in item and "quote_selection" not in after
@@ -264,7 +266,7 @@ async def test_a_record_quoted_whole_says_nothing_about_nodes(windowed):
         await memory_handlers.do_store(AGENT, {"content": "the vault combination is 7431"})
         result = await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True)
         (item,) = result["items"]
-        assert "content_truncated" not in item and "node_unavailable" not in item
+        assert "content_truncated" not in item and "node_unavailable" not in item and "expand" not in item
         assert "quote_selection" not in result
 
 
@@ -334,6 +336,14 @@ async def test_other_claims_come_back_as_excerpts_and_the_budget_omits_them_befo
         assert tight["used_budget"] == 40 <= tight["effective_budget"] == 50
         tight_burst = next(i for i in tight["items"] if len(i["claims"]) == 3)
         assert "excerpts" not in tight_burst and tight_burst["excerpts_omitted"] == 2
+        # The budget withheld text, so the compact response keeps the figures that say so;
+        # a response the budget never touched does not carry them.
+        plain = await reconstruct.do_reconstruct(AGENT, "deploy", count=5, budget=50, deep=True)
+        assert (plain["effective_budget"], plain["used_budget"]) == (50, 40)
+        assert plain["shortfall_reason"] != "budget_exhausted"  # excerpts were withheld, no item was
+        monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 500)
+        roomy = await reconstruct.do_reconstruct(AGENT, "deploy", count=5, budget=20000, deep=True)
+        assert "effective_budget" not in roomy and "used_budget" not in roomy
         assert "shortfall_reason" not in tight or tight["shortfall_reason"] != "budget_exhausted"
 
 
@@ -354,7 +364,7 @@ async def test_the_mcp_boundary_forwards_the_budget(windowed):
     async with _TempDB():
         await memory_handlers.do_store(AGENT, {"content": "deploy on friday"})
         result = await server.do_reconstruct_boundary(
-            AGENT, "deploy", None, None, None, None, False, "", None, "", budget=777
+            AGENT, "deploy", None, None, None, None, False, "", None, "", trace=True, budget=777
         )
         assert result["requested_budget"] == 777 and result["effective_budget"] == 777
         assert result["budget_policy"]["source"] == "caller"
@@ -376,3 +386,20 @@ async def test_a_one_row_item_carries_its_row_once(windowed):
             "claims": [{"ref": ref, "as_of": "2026-09-17T10:00:00+00:00", "why": "seed"}],
             "independence_reason": "singleton",
         }
+
+
+@pytest.mark.asyncio
+async def test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_its_node(windowed, monkeypatch):
+    # The node that matches is several times the preview width, so its quote is cut
+    # and the answer lies beyond the cut -- the case a reader used to meet by
+    # expanding the whole record.
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 10)
+    async with _TempDB() as tmp:
+        await memory_handlers.do_store(AGENT, {"content": LONG})
+        await tmp.drain()
+        (item,) = (await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True))["items"]
+        assert item["content_truncated"] and "7431" not in item["content"]
+        assert item["expand"] == {"ref": item["head_ref"], "node": item["node"]["index"]}
+        (more,) = (await memory_handlers.do_get_contents(AGENT, [item["expand"]]))["items"]
+        assert more["content"].startswith(item["content"]) and "7431" in more["content"]
+        assert len(more["content"]) < len(LONG) / 2
