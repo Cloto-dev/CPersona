@@ -84,7 +84,7 @@ import re
 import sqlite3
 import stat
 
-from cpersona import config, fileperms, health, operating_context, vector
+from cpersona import config, fileperms, health, nodes, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
@@ -95,7 +95,7 @@ from cpersona.config import (
     VECTOR_SEARCH_MODE,
     local_blobs_stored,
 )
-from cpersona.database import FTS_TABLE_SQL, SCHEMA_VERSION, release_read_probe_transaction
+from cpersona.database import FTS_TABLE_SQL, SCHEMA_VERSION, connection, release_read_probe_transaction
 from cpersona.utils import (
     SCORING_VERSION,
     _MEMORY_ANNOTATION_PATTERN,
@@ -2674,6 +2674,120 @@ async def check_file_permissions(db, agent_id: str = "", fix: bool = False) -> l
     return issues
 
 
+#: Records one fix run builds nodes for. Building is one token report per node plus
+#: the node embeddings, all done before the write lock is taken, so the cap bounds
+#: how long a fix run spends on the network rather than how long it holds the lock.
+#: A corpus with more records past the window converges over successive runs.
+NODE_REPAIR_RECORD_CAP = 50
+
+
+def _node_report_available() -> bool:
+    client = vector._embedding_client
+    return client is not None and callable(getattr(client, "count_tokens", None))
+
+
+async def _scan_missing_nodes(candidates: list, prepare: bool) -> dict:
+    """Which candidates run past the window; optionally build the first cap of them.
+
+    Network I/O only. Returns {"unknown": bool} when the report did not come back --
+    true when one was expected (an http backend), false when this transport never
+    has one. Otherwise {"missing": [...], "prepared": [...], "failed": n}, where
+    ``prepared`` holds divisions for at most NODE_REPAIR_RECORD_CAP records.
+    """
+    missing = await nodes.overflowing(candidates)
+    if missing is None:
+        return {"unknown": getattr(vector._embedding_client, "mode", "") == "http"}
+    prepared, failed = [], 0
+    if prepare:
+        for kind, row_id, text in missing[:NODE_REPAIR_RECORD_CAP]:
+            try:
+                built = await nodes.prepare_nodes(kind, row_id, text)
+            except Exception as e:  # one record's failure must not cost the rest
+                logger.warning("node build failed for %s:%s: %s", kind, row_id, e)
+                failed += 1
+                continue
+            if built is not None:
+                prepared.append(built)
+    return {"missing": missing, "prepared": prepared, "failed": failed}
+
+
+async def prefetch_missing_nodes(agent_id: str = "") -> dict | None:
+    """The fix run's scan, with the network I/O outside any lock (bug-072's rule).
+
+    The candidate query holds a read connection for its own statement only; the token
+    report and the node embeddings run after it is released. None when this
+    configuration has no token report to ask.
+    """
+    if not _node_report_available():
+        return None
+    async with connection() as db:
+        candidates = await nodes.records_without_current_nodes(db, isolation_where(agent_id=agent_id or None))
+    return await _scan_missing_nodes(candidates, prepare=True)
+
+
+async def check_missing_nodes(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
+    """Records past the embedding window whose overflow-tree nodes are missing.
+
+    docs/OVERFLOW_TREE_DESIGN.md §3: the write path queues node construction, and
+    this check is how everything else gets nodes -- records written before the
+    feature, writes made with the queue disabled, builds that failed, and nodes left
+    from another embedding model. The repair builds nodes and never modifies a record.
+
+    Locked records are repaired too. The locked invariant (bug-098) is that a locked
+    record is not rewritten or deleted; nodes are derived from its text and leave it
+    untouched, and a locked record is the kind worth quoting well.
+
+    Info, not warn: a record without nodes returns the same answers, quoted from its
+    start instead of from its most relevant part.
+    """
+    if embedding_cache is not None and "nodes" in embedding_cache:
+        scan = embedding_cache["nodes"]
+    elif not _node_report_available():
+        scan = None
+    else:
+        # No prefetch (a report-only run, or the checkup CLI): scan live on this connection.
+        candidates = await nodes.records_without_current_nodes(db, isolation_where(agent_id=agent_id or None))
+        scan = await _scan_missing_nodes(candidates, prepare=fix)
+    if scan is None:
+        return []
+    if "missing" not in scan:
+        if not scan["unknown"]:
+            return []
+        return [
+            {
+                "type": "missing_nodes",
+                "count": None,
+                "repairable": 0,
+                "hint": (
+                    "the embedding server did not report tokens, so records past its "
+                    "window cannot be found; a server older than the token report "
+                    "(CEmbedding 0.8.0) answers this way"
+                ),
+            }
+        ]
+    missing = scan["missing"]
+    if not missing:
+        return []
+    issue = {
+        "type": "missing_nodes",
+        "count": len(missing),
+        "memories": sum(1 for kind, _, _ in missing if kind == "mem"),
+        "episodes": sum(1 for kind, _, _ in missing if kind == "ep"),
+        # Bounded by one run's reach, like null_embedding: the rest converge on later runs.
+        "repairable": min(len(missing), NODE_REPAIR_RECORD_CAP),
+    }
+    if fix:
+        built = 0
+        for prepared in scan["prepared"]:
+            if await nodes.write_nodes(db, prepared):
+                built += 1
+        # Zero is an outcome under fix (bug-379), so the key is always present then.
+        issue["built"] = built
+        if scan["failed"]:
+            issue["build_failed"] = scan["failed"]
+    return [issue]
+
+
 class Check:
     """A registered health check: metadata + runner (see module docstring)."""
 
@@ -2754,6 +2868,7 @@ HEALTH_CHECKS: list[Check] = [
     Check("operating_context_parse", "warn", False, check_operating_context_parse),
     Check("operating_context_size", "info", False, check_operating_context_size),
     Check("file_permissions", "warn", True, check_file_permissions),
+    Check("missing_nodes", "info", True, check_missing_nodes),
 ]
 
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]
@@ -2814,6 +2929,8 @@ _EMBEDDING_CHECKS = {
     # Reads expected_dim to tell an unreachable backend from an unprobed run;
     # without the cache it cannot, and says so rather than assuming health.
     "embedding_backend",
+    # Reads the node divisions prefetched outside the write lock.
+    "missing_nodes",
 }
 
 

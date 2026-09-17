@@ -222,6 +222,71 @@ async def _nodes_current(db, kind: str, parent_id: int, text_len: int, model: st
     return bool(count) and first == 0 and last == text_len and current == count
 
 
+@dataclass(frozen=True)
+class PreparedNodes:
+    """One record's division and embeddings, computed outside any write lock."""
+
+    kind: str
+    parent_id: int
+    text: str
+    spans: list[Span]
+    blobs: list[bytes]
+    model: str
+
+
+async def prepare_nodes(kind: str, parent_id: int, text: str) -> PreparedNodes | None:
+    """Divide ``text`` and embed each span. None when the text fits the window.
+
+    Network I/O only: nothing is read from or written to the database, so a caller
+    holding no lock can run it and hand the result to ``write_nodes`` later.
+    Raises ``TokensUnknown`` or ``RuntimeError`` when the report or the embedding fails.
+    """
+    client = vector._embedding_client
+    if client is None or not callable(getattr(client, "count_tokens", None)):
+        raise TokensUnknown("no embedding client with a token report")
+    spans = await divide(text, _client_measure(client))
+    if len(spans) == 1:
+        # The record fits: it is its own only span and has no nodes (§2).
+        return None
+    blobs: list[bytes] = []
+    for start in range(0, len(spans), _EMBED_BATCH):
+        batch = spans[start : start + _EMBED_BATCH]
+        vectors = await client.embed([text[s.start : s.end] for s in batch])
+        if not vectors or len(vectors) != len(batch):
+            raise RuntimeError("embedding request returned no vectors for the node spans")
+        for v in vectors:
+            blob = vector.pack_for_storage(v)
+            if blob is None:
+                raise RuntimeError("embedding for a node span was refused for storage")
+            blobs.append(blob)
+    return PreparedNodes(kind, parent_id, text, spans, blobs, config.EMBEDDING_MODEL)
+
+
+async def write_nodes(db, prepared: PreparedNodes) -> bool:
+    """Replace a record's nodes inside the caller's open transaction. False if stale.
+
+    The division was computed without a lock; the text may have changed or the
+    record may be gone since. The triggers only remove nodes that already existed
+    at that moment, so a stale set written now would survive. This comparison is
+    what keeps invariant 6 across the unlocked window.
+    """
+    if await _parent_text(db, prepared.kind, prepared.parent_id) != prepared.text:
+        return False
+    await db.execute(
+        "DELETE FROM record_nodes WHERE parent_kind = ? AND parent_id = ?",
+        (prepared.kind, prepared.parent_id),
+    )
+    await db.executemany(
+        "INSERT INTO record_nodes (parent_kind, parent_id, node_index, start_char, end_char, "
+        "token_count, window, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (prepared.kind, prepared.parent_id, i, s.start, s.end, s.token_count, s.window, blob, prepared.model)
+            for i, (s, blob) in enumerate(zip(prepared.spans, prepared.blobs))
+        ],
+    )
+    return True
+
+
 async def build_nodes(payload: dict) -> str:
     """Build the nodes of one record. Returns what happened, for the queue's log.
 
@@ -234,51 +299,70 @@ async def build_nodes(payload: dict) -> str:
     parent_id = payload.get("id") if isinstance(payload, dict) else None
     if kind not in PARENT_TEXT or not isinstance(parent_id, int) or isinstance(parent_id, bool):
         return "malformed payload, discarded"
-    client = vector._embedding_client
-    if client is None or not callable(getattr(client, "count_tokens", None)):
-        raise TokensUnknown("no embedding client with a token report")
-    model = config.EMBEDDING_MODEL
 
     async with connection() as db:
         text = await _parent_text(db, kind, parent_id)
         if text is None:
             return "parent gone"
-        if await _nodes_current(db, kind, parent_id, len(text), model):
+        if await _nodes_current(db, kind, parent_id, len(text), config.EMBEDDING_MODEL):
             return "nodes already current"
 
-    spans = await divide(text, _client_measure(client))
-    if len(spans) == 1:
-        # The record fits: it is its own only span and has no nodes (§2).
+    prepared = await prepare_nodes(kind, parent_id, text)
+    if prepared is None:
         return "fits the window"
-
-    blobs: list[bytes] = []
-    for start in range(0, len(spans), _EMBED_BATCH):
-        batch = spans[start : start + _EMBED_BATCH]
-        vectors = await client.embed([text[s.start : s.end] for s in batch])
-        if not vectors or len(vectors) != len(batch):
-            raise RuntimeError("embedding request returned no vectors for the node spans")
-        for v in vectors:
-            blob = vector.pack_for_storage(v)
-            if blob is None:
-                raise RuntimeError("embedding for a node span was refused for storage")
-            blobs.append(blob)
-
     async with transaction() as db:
-        # Divided and embedded outside the lock; the text may have changed or the
-        # record may be gone since. The triggers only remove nodes that already
-        # existed at that moment, so a stale set written now would survive. This
-        # comparison is what keeps invariant 6 across the unlocked window.
-        if await _parent_text(db, kind, parent_id) != text:
+        if not await write_nodes(db, prepared):
             return "parent changed during the build, discarded"
-        await db.execute(
-            "DELETE FROM record_nodes WHERE parent_kind = ? AND parent_id = ?", (kind, parent_id)
+    return f"built {len(prepared.spans)} nodes"
+
+
+# --------------------------------------------------------------------------------------
+# the health check's half: finding records whose nodes are missing
+# --------------------------------------------------------------------------------------
+
+#: Texts per token-report request while scanning for records without nodes. The
+#: report runs no model, so the batch is bounded by request size, not compute.
+_COUNT_BATCH = 64
+
+
+def _current(count, first, last, current, text_len) -> bool:
+    return bool(count) and first == 0 and last == text_len and current == count
+
+
+async def records_without_current_nodes(db, iso) -> list[tuple[str, int, str]]:
+    """Every record in scope whose node set is absent, incomplete or from another model.
+
+    Includes records that fit the window (they have no nodes by design); the caller
+    tells them apart with the token report, which this function does not ask for.
+    Locked records are included: building nodes never modifies the record.
+    """
+    model = config.EMBEDDING_MODEL
+    out: list[tuple[str, int, str]] = []
+    for kind, (table, column) in PARENT_TEXT.items():
+        rows = await db.execute_fetchall(
+            f"SELECT r.id, r.{column}, n.cnt, n.first, n.last, n.cur FROM {table} r "
+            "LEFT JOIN (SELECT parent_id, COUNT(*) AS cnt, MIN(start_char) AS first, "
+            "MAX(end_char) AS last, SUM(embedding_model = ?) AS cur FROM record_nodes "
+            "WHERE parent_kind = ? GROUP BY parent_id) n ON n.parent_id = r.id "
+            f"WHERE 1=1{iso.and_clause} ORDER BY r.id",
+            (model, kind, *iso.params),
         )
-        await db.executemany(
-            "INSERT INTO record_nodes (parent_kind, parent_id, node_index, start_char, end_char, "
-            "token_count, window, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (kind, parent_id, i, s.start, s.end, s.token_count, s.window, blob, model)
-                for i, (s, blob) in enumerate(zip(spans, blobs))
-            ],
-        )
-    return f"built {len(spans)} nodes"
+        for row_id, text, count, first, last, current in rows:
+            if text and not _current(count, first, last, current, len(text)):
+                out.append((kind, row_id, text))
+    return out
+
+
+async def overflowing(records: list[tuple[str, int, str]]) -> list[tuple[str, int, str]] | None:
+    """The records whose text runs past the window. None when the report is unavailable."""
+    client = vector._embedding_client
+    if client is None or not callable(getattr(client, "count_tokens", None)):
+        return None
+    out = []
+    for start in range(0, len(records), _COUNT_BATCH):
+        chunk = records[start : start + _COUNT_BATCH]
+        infos = await client.count_tokens([text for _, _, text in chunk])
+        if not infos:
+            return None
+        out.extend(record for record, info in zip(chunk, infos) if info.truncated)
+    return out

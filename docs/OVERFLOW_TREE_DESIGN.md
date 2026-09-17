@@ -115,9 +115,13 @@ would add seconds to a call that returns in milliseconds today.
 - Until its nodes exist, a record is quoted from its start. Pending nodes never
   make a read fail or wait.
 - With the task queue disabled, nodes are not built at write time. A health
-  check reports long records without nodes, and its repair builds them. That
-  check is also how records written before this feature get nodes: the repair
-  adds nodes and never modifies the record.
+  check (`check_health`, `missing_nodes`) reports long records without nodes,
+  and its repair builds them. That check is also how records written before
+  this feature get nodes, how a failed build is retried, and how nodes from a
+  previous embedding model are replaced: the repair adds nodes and never
+  modifies the record, so it covers locked records too. One run builds at most
+  50 records, divided and embedded before the write lock is taken; a larger
+  backlog converges over successive runs.
 
 ## 4. Keeping nodes true to their parent
 
