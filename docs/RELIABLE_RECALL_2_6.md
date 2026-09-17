@@ -412,7 +412,7 @@ layer is present. With no relations this stage is the identity.
   "count_policy": { "source": "server_default", "clamped": false, "reason": "count_omitted" },
   "requested_budget": null, "effective_budget": 4000, "used_budget": 1310,
   "budget_policy": { "source": "server_default", "clamped": false, "reason": "budget_omitted" },
-  "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "truncated": false } }
+  "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"] } }
 ```
 
 - `content` is a quotation. If an agent wants a composed sentence, the
@@ -437,8 +437,9 @@ appear when declared relations do. A reader ignores a role it does not know.
 3. Determinism — same database state, same query, same bounds, same output;
    ties are broken by a total order that is written down.
 4. Boundedness — nothing is scanned past the declared bounds, and no response
-   quotes more than the effective payload budget; a cut is reported in
-   `bounds.truncated`, `excerpts_omitted` or the shortfall reason.
+   quotes more than the effective payload budget; rows a bound dropped are
+   reported in `bounds.omitted`, `claims_omitted`, `excerpts_omitted` or the
+   shortfall reason, and a bound that was only met in `bounds.reached`.
 5. Explainability — every element says why it is present.
 6. The existing `recall` contract is untouched.
 7. Count and breadth are decoupled — none of `candidate_limit`,
@@ -499,19 +500,42 @@ these concrete qualifications:
   parallel arrays cost.
 - `max_evidence` bounds the retained claims and their role targets. A cut
   keeps the head, then the most relevant
-  remaining rows. Truncation is reported; a role never points to a claim
-  discarded by this bound.
+  remaining rows. The item counts the dropped rows in `claims_omitted`; a role
+  never points to a claim discarded by this bound.
+- **What the response admits.** Two facts are kept apart. `bounds.omitted`
+  names a bound that dropped rows the tool held: `max_evidence` (for an item
+  that was returned) or `max_hops`. `bounds.reached` names a bound that was
+  only met: `top_k`, when retrieval returned exactly as many rows as it was
+  allowed. Whether more lay beyond is not known, so it is never called a cut.
+  A pool that fills its depth is the common case on a large store, and a
+  single flag that was true for both facts distinguished nothing there. Both
+  fields are absent when empty.
+- A quote chosen in a degraded way says so. `quote_selection: lexical_only`
+  means no query embedding was available and nodes were ranked by shared
+  trigrams alone. An item whose cut quote did not come from a node carries
+  `node_unavailable`: `no_nodes`, or `not_current` when nodes exist but are
+  partial or built by another model. Such a quote is the start of the record,
+  not the part that matched; a span passed to `get_contents` reads further.
+- **Absence is not a verdict.** A response without these fields does not say
+  that its items suffice to answer, that the whole store was searched, or that
+  the rows were checked for contradiction: `conflicts` detects only rows with
+  the same message id and timestamp. The exit reports what it did; deciding
+  whether the evidence suffices belongs to the recall process of section 1,
+  inside the server, and is not delegated to the caller through these fields.
 - `reconstruction` reports the policy version, candidate count, cluster count,
   selected count and rows excluded for missing provenance. `trace=true` adds
-  candidate refs and cluster membership, without full text. A caller can tell
+  candidate refs and cluster membership, without full text, and `node_order`:
+  for each record quoted by node, its best few node indices, best first. That
+  is an order, not a confidence, and it stays in the trace until an
+  answer-reader evaluation shows a reader uses it. A caller can tell
   whether count limited the output or retrieval supplied too few candidates.
 - `gate_fallback` is preserved even when the requested count is filled.
   An explicit zero count returns no items and states `count_zero`.
 - Retrieval `advisory` and `update` notices survive reconstruction, including
   empty results, so consuming a per-session notice also delivers it.
 - `bounds.top_k` records the requested candidate bound. If the library ceiling
-  reduces it, `bounds.effective_top_k` records the applied bound and
-  `bounds.truncated` is true, including on an empty result. A shortfall describes
+  reduces it, `bounds.effective_top_k` records the applied bound, including on
+  an empty result. A shortfall describes
   the retrieved pool; it does not establish that the whole corpus was exhausted.
 - Authenticated use requires the same per-agent read grant as `recall`.
 

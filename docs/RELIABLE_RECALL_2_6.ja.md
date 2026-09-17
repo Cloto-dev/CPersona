@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:4a6336030a87ad7e67e210f0202eb16ef7bddd37 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:43429da416a1f4294b8651039cd58d0b28bca1fa -->
 
 # Reliable Recall — 2.6 系
 
@@ -352,7 +352,7 @@ effective_budget = min(budget_base, max_budget)
   "count_policy": { "source": "server_default", "clamped": false, "reason": "count_omitted" },
   "requested_budget": null, "effective_budget": 4000, "used_budget": 1310,
   "budget_policy": { "source": "server_default", "clamped": false, "reason": "budget_omitted" },
-  "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "truncated": false } }
+  "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"] } }
 ```
 
 - `content` は引用です。エージェントが合成された文を望むなら、委託経路 (サーバーが
@@ -373,8 +373,9 @@ effective_budget = min(budget_base, max_budget)
 2. モデルを呼ばない。埋め込みは可、生成は不可。`content` は引用。
 3. 決定性 — 同じ DB 状態、同じクエリ、同じ境界、同じ出力。同点は、書き下された全順序で
    解く。
-4. 有界性 — 宣言された境界の先は走査せず、有効なペイロード予算を超えて引用しない。切った
-   ことは `bounds.truncated`、`excerpts_omitted`、または不足理由で報告する。
+4. 有界性 — 宣言された境界の先は走査せず、有効なペイロード予算を超えて引用しない。境界が
+   落とした行は `bounds.omitted`、`claims_omitted`、`excerpts_omitted`、または不足理由で、
+   到達しただけの境界は `bounds.reached` で報告する。
 5. 説明可能性 — すべての要素が、なぜ存在するかを言う。
 6. 既存の `recall` 契約には触れない。
 7. 件数と探索幅は分離 — `candidate_limit`、`vector_top_k`、`fts_limit`、
@@ -421,16 +422,34 @@ v1.1 からペイロード予算を上記のとおり実装しています。既
   `roles`、`excerpts`、`excerpts_omitted` は空なら省略します。1 行だけの item では、
   並列の配列が払っていた付帯情報の文字数がおよそ半分になります。
 - `max_evidence` は保持する claims とその role の参照先を制限します。切り詰める時は head を残し、残りは関連度の高い行から保持します。
-  切り詰めを報告し、この制限で落ちた claim を role が参照することはありません。
+  落とした行数は item の `claims_omitted` に入り、この制限で落ちた claim を role が参照することはありません。
+- **応答が申告すること。** 2 つの事実を分けます。`bounds.omitted` は、手元にあった行を
+  落とした境界の名前です: `max_evidence` (返した item について) か `max_hops`。
+  `bounds.reached` は、到達しただけの境界の名前です: 検索が許された数ちょうどの行を
+  返した時の `top_k`。その先に行があったかは分からないので、切ったとは言いません。
+  大きな記憶では候補が深さを埋めるのが普通で、両方の事実で true になる 1 つのフラグは
+  そこで何も区別しませんでした。どちらも空なら省略します。
+- 縮退した方法で選んだ引用は、そう申告します。`quote_selection: lexical_only` は、
+  クエリの埋め込みが得られず、ノードを文字 3-gram の一致だけで順位付けしたことを示します。
+  切り詰めた引用がノード由来でない item は `node_unavailable` を持ちます: `no_nodes`、
+  またはノードはあるが不完全か別モデル製の場合の `not_current`。この引用は記録の先頭で
+  あって、クエリに合った箇所ではありません。続きは `get_contents` に span を渡して読みます。
+- **項目が無いことは判定ではありません。** これらの項目が無い応答は、item が回答に
+  十分であること、記憶全体を探索したこと、行の矛盾を検査したことのいずれも意味しません:
+  `conflicts` が検出するのは、同じ message id で同じ時刻の行だけです。出口は自分が行った
+  ことを報告します。証拠が十分かの判断は第 1 節の想起プロセス (サーバー内部) の役割で、
+  これらの項目を通じて呼び出し側へ委ねるものではありません。
 - `reconstruction` は policy の版、候補数、クラスタ数、選択数、出典不足による除外数を
-  報告します。`trace=true` は本文を含めずに候補 ref とクラスタ構成を追加します。
+  報告します。`trace=true` は本文を含めずに候補 ref とクラスタ構成、および `node_order` を追加します:
+  ノードから引用した記録ごとの、上位数個のノード番号 (合う順)。これは順序であって確信度
+  ではなく、回答計測で読み手が使うと示されるまで trace に留めます。
   呼び出し側は、count が出力を制限したのか、検索候補が足りなかったのかを確認できます。
 - 指定した件数を返せた場合も `gate_fallback` を保持します。明示的な count 0 は
   item を返さず、`count_zero` を報告します。
 - 検索が生成した `advisory` と `update` は、空の結果でも返します。
   セッション単位の通知を消費した時は、その呼び出し元へ届けます。
 - `bounds.top_k` は要求した候補上限です。ライブラリ上限で制限された場合は
-  `bounds.effective_top_k` に実効値を返し、空の結果でも `bounds.truncated` を true にします。
+  `bounds.effective_top_k` に実効値を返します (空の結果でも)。
   件数不足は取得した候補の状態を示し、コーパス全体を探し尽くした保証にはなりません。
 - 認証下での利用には、`recall` と同じエージェント単位の読み取り権限が必要です。
 

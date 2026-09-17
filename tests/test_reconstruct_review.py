@@ -118,7 +118,9 @@ async def test_library_ceiling_reports_requested_and_effective_candidate_bounds(
     out = await R.do_reconstruct(AGENT, "", count=5, top_k=20, trace=True)
     assert out["bounds"]["top_k"] == 20
     assert out["bounds"]["effective_top_k"] == 2
-    assert out["bounds"]["truncated"] is True
+    # The lowered ceiling is a fact of every call; "reached" only of one that met it.
+    assert out["bounds"].get("reached") == (["top_k"] if n >= 2 else None)
+    assert "omitted" not in out["bounds"]
     assert out["reconstruction"]["candidate_count"] == min(n, 2)
     assert out["returned_count"] == min(n, 2)
 
@@ -130,4 +132,4 @@ async def test_unclamped_candidate_bound_retains_the_existing_shape():
     out = await R.do_reconstruct(AGENT, "", count=5, top_k=20)
     assert out["reconstruction"]["candidate_count"] == out["returned_count"] == 5
     assert out["bounds"] == {"top_k": 20, "max_hops": config.RECONSTRUCT_MAX_HOPS,
-                             "max_evidence": config.RECONSTRUCT_MAX_EVIDENCE, "truncated": False}
+                             "max_evidence": config.RECONSTRUCT_MAX_EVIDENCE}

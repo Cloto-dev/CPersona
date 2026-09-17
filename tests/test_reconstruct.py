@@ -136,8 +136,8 @@ def _structured_versions(msg_id: str, contents: tuple[str, str], stamps: tuple[s
     union = R.bundle(rows, {})
     assert union.find(0) == union.find(1), "same-namespace versions must bundle"
     why = {row.ref: union.why[i] for i, row in enumerate(rows)}
-    item, truncated = R.structure(rows, why, {}, 40)
-    assert truncated is False
+    item, dropped = R.structure(rows, why, {}, 40)
+    assert dropped == 0 and "claims_omitted" not in item
     return {"items": [item]}, rows[0].ref, rows[1].ref
 
 
@@ -303,29 +303,41 @@ async def test_3_determinism():
 @pytest.mark.asyncio
 async def test_4_bounds_are_declared_and_a_cut_is_reported():
     await _seed_unclustered()
-    # A depth the retrieval fills is a possible cut, and the tool cannot tell a
-    # full pool from a cut one — so it says so rather than implying it saw
-    # everything. 10 is below what this corpus returns; the depth is the binding
-    # constraint.
+    # A depth the retrieval fills was MET, and the tool cannot tell a full pool from
+    # a cut one — so it says "reached", never that rows were dropped. 10 is below
+    # what this corpus returns; the depth is the binding constraint.
     out = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=10, max_hops=2, max_evidence=40)
-    assert out["bounds"] == {"top_k": 10, "max_hops": 2, "max_evidence": 40, "truncated": True}
+    assert out["bounds"] == {"top_k": 10, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"]}
 
     # A depth the corpus cannot fill is not a cut by the depth. (What recall's own
     # quality gate drops is recall's to report, and it is why this returns fewer
     # rows than the depth allows rather than exactly SEEDED.)
     out = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=SEEDED + 50, max_evidence=40)
-    assert out["bounds"]["truncated"] is False
+    assert out["bounds"] == {"top_k": SEEDED + 50, "max_hops": 2, "max_evidence": 40}
 
 
 @pytest.mark.asyncio
-async def test_4b_evidence_cut_sets_truncated():
-    """A cluster with more evidence than the bound reports the cut."""
+async def test_4b_evidence_cut_names_the_bound_and_counts_the_rows():
+    """A cluster with more evidence than the bound says which bound dropped rows, and how many."""
     await _seed_unclustered()  # a corpus, so the adaptive quality gate is not the subject
     await _seed_burst()
     out = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=TOP_K, max_evidence=2)
     assert out["items"][0]["independence_reason"] == "cluster:adjacent"
     assert len(out["items"][0]["claims"]) == 2
-    assert out["bounds"]["truncated"] is True
+    assert out["bounds"]["omitted"] == ["max_evidence"]
+    assert out["items"][0]["claims_omitted"] == 1
+    assert "truncated" not in out["bounds"]
+
+
+@pytest.mark.asyncio
+async def test_4c_a_cut_in_an_item_that_is_not_returned_is_not_reported():
+    """`omitted` describes this response: a cluster the window left out withheld nothing from its reader."""
+    await _seed_unclustered()
+    await _seed_burst()
+    out = await R.do_reconstruct(AGENT, QUERY, count=0, top_k=TOP_K, max_evidence=2)
+    assert out["items"] == [] and "omitted" not in out["bounds"]
+    whole = await R.do_reconstruct(AGENT, QUERY, count=1, top_k=TOP_K, max_evidence=40)
+    assert "omitted" not in whole["bounds"] and "claims_omitted" not in whole["items"][0]
 
 
 @pytest.mark.asyncio
@@ -563,8 +575,8 @@ def test_an_evidence_cut_keeps_the_head_then_the_most_relevant_rows():
     relevant = _row(1, "my dog is named Rex", "2026-02-01T09:00:00+00:00", rank=0)
     second = _row(2, "he is a beagle", "2026-02-01T09:00:10+00:00", rank=1)
     newest = _row(3, "ok thanks, see you", "2026-02-01T09:00:30+00:00", rank=7)
-    item, truncated = _structure([relevant, second, newest], max_evidence=1)
-    assert truncated is True
+    item, dropped = _structure([relevant, second, newest], max_evidence=1)
+    assert dropped == 2 and item["claims_omitted"] == 2
     assert item["head_ref"] == relevant.ref
     assert [c["ref"] for c in item["claims"]] == [relevant.ref]
     item, _ = _structure([relevant, second, newest], max_evidence=2)

@@ -133,7 +133,8 @@ async def test_evidence_ceiling_bounds_claims_and_resolvable_refs():
     contents = {row["ref"]: row["content"] for row in expanded["items"]}
     assert item["head_ref"] in refs
     assert contents[item["head_ref"]] == item["content"]
-    assert out["bounds"]["truncated"] is True
+    assert out["bounds"]["omitted"] == ["max_evidence"]
+    assert item["claims_omitted"] == 2
 
 
 @pytest.mark.asyncio

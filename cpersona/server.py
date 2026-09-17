@@ -1225,8 +1225,17 @@ registry.auto_tool(
     "duplicates, fragments, or a cluster split in two. "
     "BREADTH IS SEPARATE FROM COUNT: `top_k` (candidate depth), `max_hops` (relation "
     "hops) and `max_evidence` are declared independently and none is derived from "
-    "`count` -- changing `count` alone does not move the candidate id set. A cut against "
-    "any declared bound is reported in `bounds.truncated`. "
+    "`count` -- changing `count` alone does not move the candidate id set. "
+    "WHAT THE RESPONSE ADMITS: `bounds.omitted` names a bound that DROPPED rows the tool held "
+    "(`max_evidence` -- each cut item also counts them in `claims_omitted` -- or `max_hops`); "
+    "`bounds.reached` names a bound that was only MET (`top_k`: retrieval returned as many rows "
+    "as it was allowed, and whether more lay beyond is not known). Both are absent when empty. "
+    "`quote_selection: lexical_only` appears when no query embedding was available and nodes "
+    "were ranked by shared trigrams alone; an item whose cut quote is merely the start of its "
+    "record carries `node_unavailable` (`no_nodes`, or `not_current` when nodes exist but are "
+    "partial or another model's). ABSENCE IS NOT A VERDICT: a response without these fields "
+    "does not say its items suffice to answer, that the whole store was searched, or that the "
+    "rows were checked for contradiction -- `conflicts` detects one narrow case only. "
     "BREADTH BEFORE DEPTH: `budget` bounds the characters of quoted text -- each item's "
     "`content` and its `excerpts` -- where `count` bounds how many items. The quoted text is "
     "one fixed sequence: every head in item order, then each item's most relevant remaining "
@@ -1249,11 +1258,13 @@ registry.auto_tool(
     "newest first, each with `ref`, `as_of`, `why` (the key that admitted the row) and "
     "`roles` when it has any -- sort by `as_of` for a chronological view. `excerpts` and "
     "`excerpts_omitted` are absent when empty. `reconstruction` reports policy, candidate/cluster/selected counts and "
-    "missing-provenance exclusions; `trace=true` adds candidate refs and clusters. "
+    "missing-provenance exclusions; `trace=true` adds candidate refs, clusters and, for each "
+    "record quoted by node, `node_order` -- its best few node indices, best first, as places to "
+    "read next (an order, not a confidence). "
     "Gate fallback remains visible even when count is filled; zero count states count_zero. "
     "Retrieval degradation and update notices are delivered unchanged. If the library "
-    "ceiling clamps top_k, bounds.effective_top_k reports the applied bound and "
-    "bounds.truncated is true, including when the candidate pool is empty. "
+    "ceiling clamps top_k, bounds.effective_top_k reports the applied bound, including when "
+    "the candidate pool is empty. "
     "`independence_reason` says why this is a separate item; `conflicts` "
     "appears only when two rows cannot be ordered. "
     "ROLE DIRECTION: `roles[].role` names what the REFERENCED row is to this claim (the "
@@ -1308,7 +1319,7 @@ registry.auto_tool(
             "max_evidence": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Maximum retained rows per item, bounding its claims and role targets. A cut sets bounds.truncated.",
+                "description": "Maximum retained rows per item, bounding its claims and role targets. A cut is named in bounds.omitted and counted in the item's claims_omitted.",
             },
             "deep": {
                 "type": "boolean",

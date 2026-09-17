@@ -6,6 +6,7 @@ and tested directly; the end-to-end tests build real nodes through the task queu
 the conftest token-report double.
 """
 
+import json
 import os
 import tempfile
 
@@ -201,6 +202,9 @@ async def test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_
         (item,) = before["items"]
         assert "vault" not in item["content"]  # no nodes yet: quoted from the start
         assert "node" not in item
+        # ...and the item says its cut quote is only the start, and why
+        assert item["content_truncated"] and item["node_unavailable"] == "no_nodes"
+        assert "node_order" not in before["trace"]
 
         await tmp.drain()
         after = await reconstruct.do_reconstruct(AGENT, "vault combination", count=3, trace=True, deep=True)
@@ -212,7 +216,17 @@ async def test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_
         assert item["node"]["of"] > 1 and item["node"]["index"] == item["node"]["of"] - 1
         # tree invariant 1 for this tool: nodes change the quote, never the items
         assert _shape(after) == _shape(before)
+        assert "node_unavailable" not in item and "quote_selection" not in after
+        # The trace lists the best few nodes of the quoted record, by index, best first:
+        # the runner-up is a place to read next. It adds nothing else to the trace.
+        order = after["trace"].pop("node_order")
+        assert list(order) == [item["head_ref"]]
+        assert order[item["head_ref"]][0] == item["node"]["index"]
+        assert len(order[item["head_ref"]]) == reconstruct.TRACE_NODE_ORDER < item["node"]["of"]
+        assert len(set(order[item["head_ref"]])) == reconstruct.TRACE_NODE_ORDER
         assert after["trace"] == before["trace"]
+        plain = await reconstruct.do_reconstruct(AGENT, "vault combination", count=3, deep=True)
+        assert "trace" not in plain and "node_order" not in json.dumps(plain)
         assert stored["id"] == int(item["head_ref"].split(":")[1])
 
 
@@ -224,6 +238,7 @@ async def test_nodes_from_another_model_are_not_quoted(windowed, monkeypatch):
         monkeypatch.setattr(config, "EMBEDDING_MODEL", "a-newer-model")
         (item,) = (await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True))["items"]
         assert "node" not in item and "vault" not in item["content"]
+        assert item["node_unavailable"] == "not_current"
 
 
 @pytest.mark.asyncio
@@ -240,6 +255,47 @@ async def test_an_incomplete_node_set_is_not_quoted(windowed):
         await db.commit()
         (item,) = (await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True))["items"]
         assert "node" not in item
+        assert item["node_unavailable"] == "not_current"
+
+
+@pytest.mark.asyncio
+async def test_a_record_quoted_whole_says_nothing_about_nodes(windowed):
+    async with _TempDB():
+        await memory_handlers.do_store(AGENT, {"content": "the vault combination is 7431"})
+        result = await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True)
+        (item,) = result["items"]
+        assert "content_truncated" not in item and "node_unavailable" not in item
+        assert "quote_selection" not in result
+
+
+@pytest.mark.asyncio
+async def test_nodes_ranked_without_a_query_embedding_say_so(windowed, monkeypatch):
+    """The embedding server going away must not silently turn node choice into trigram matching."""
+    async with _TempDB() as tmp:
+        await memory_handlers.do_store(AGENT, {"content": LONG})
+        await tmp.drain()
+
+        async def down(texts):
+            return []  # what the real client answers when the server is unreachable
+
+        monkeypatch.setattr(windowed, "embed", down)
+        result = await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True)
+        (item,) = result["items"]
+        assert result["quote_selection"] == "lexical_only"
+        assert "vault combination is 7431" in item["content"] and "node_unavailable" not in item
+
+
+@pytest.mark.asyncio
+async def test_no_query_embedding_is_not_reported_when_no_node_was_ranked(windowed, monkeypatch):
+    async with _TempDB():
+        await memory_handlers.do_store(AGENT, {"content": LONG})  # never drained: no nodes
+
+        async def down(texts):
+            return []  # what the real client answers when the server is unreachable
+
+        monkeypatch.setattr(windowed, "embed", down)
+        result = await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True)
+        assert result["returned_count"] == 1 and "quote_selection" not in result
 
 
 async def _burst(texts, source_id="u1"):

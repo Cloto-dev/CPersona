@@ -45,8 +45,9 @@ Invariants this module holds (section 7, numbered as the doc numbers them):
    is not. ``content`` is a quotation.
 3. Determinism — same database state, same query, same bounds, same output. Ties
    are broken by a total order that is written down (``_order_key``).
-4. Boundedness — nothing is scanned past the declared bounds; a cut is reported
-   in ``bounds.truncated``.
+4. Boundedness — nothing is scanned past the declared bounds; rows a bound
+   dropped are named in ``bounds.omitted`` and a bound that was merely met in
+   ``bounds.reached`` (see "What the response admits" below).
 5. Explainability — every element says why it is present (``evidence[].why``,
    ``independence_reason``, ``count_policy``, ``shortfall_reason``).
 6. The existing ``recall`` contract is untouched.
@@ -94,6 +95,32 @@ CLUSTER_KEYS: tuple[str, ...] = (
     "cluster:adjacent",
     "cluster:chain",  # reserved for the overflow chain; no chain exists yet, so it never fires
 )
+
+# What the response admits about its own limits. Two different facts used to share
+# one boolean (`bounds.truncated`), and on a pool that fills its depth -- every
+# measured call -- it was always true, so it told a caller nothing:
+#
+# * `bounds.omitted` names a bound that DROPPED rows the tool held: the evidence
+#   bound cut a cluster (each cut item also says how many in `claims_omitted`), or
+#   the relation walk stopped at its hop limit.
+# * `bounds.reached` names a bound that was MET without the tool knowing whether
+#   anything lay beyond it: retrieval returned exactly as many rows as it was
+#   allowed. Deeper rows may or may not exist.
+#
+# Both are absent when empty, and absence is not a verdict: it does not say the
+# items suffice to answer, that the whole store was searched, or that the rows were
+# checked for contradiction (`conflicts` sees only one narrow case).
+BOUND_EVIDENCE = "max_evidence"
+BOUND_HOPS = "max_hops"
+BOUND_TOP_K = "top_k"
+
+# How a quote was chosen when it was not chosen the intended way. Absent otherwise.
+QUOTE_LEXICAL_ONLY = "lexical_only"  # no query embedding: nodes ranked by trigrams alone
+NODES_NONE = "no_nodes"  # the record has no nodes; its cut quote is simply its start
+NODES_NOT_CURRENT = "not_current"  # nodes exist but are partial or another model's
+
+# How many of a quoted record's nodes the trace lists, best first.
+TRACE_NODE_ORDER = 3
 
 # Why a response carried fewer items than the window allowed. A short return is a
 # normal result, but it is never silent: section 7 requires a reason.
@@ -464,7 +491,7 @@ def structure(
     why: dict[str, str],
     spans: dict,
     max_evidence: int,
-) -> tuple[dict, bool]:
+) -> tuple[dict, int]:
     """Stage 4 — one cluster becomes one recall item.
 
     Ordered by time and by version; conflicting rows are kept and marked. Nothing
@@ -475,7 +502,7 @@ def structure(
     # Every emitted claim and role target is a retained row. A cut keeps the
     # head, then the most relevant of the rest; age decides nothing about what
     # survives.
-    truncated = len(members) > max_evidence
+    dropped = max(0, len(members) - max_evidence)
     others = sorted((m for m in members if m is not head), key=_relevance_key)
     retained = {id(m) for m in [head, *others][:max_evidence]}
     ordered = sorted((m for m in members if id(m) in retained), key=_order_key)
@@ -508,7 +535,9 @@ def structure(
     conflicts = _conflicts(ordered)
     if conflicts:
         item["conflicts"] = conflicts
-    return item, truncated
+    if dropped:
+        item["claims_omitted"] = dropped
+    return item, dropped
 
 
 # ------------------------------------------------------------------------------------
@@ -544,8 +573,8 @@ def _shared_ranks(values: list[float]) -> list[int]:
     return [position[v] for v in values]
 
 
-def best_node(text: str, node_rows: list[tuple], query_vec, query_grams: set[str]) -> tuple:
-    """The node of `text` to quote. `node_rows` are (index, start, end, blob) in order."""
+def rank_nodes(text: str, node_rows: list[tuple], query_vec, query_grams: set[str]) -> list[tuple]:
+    """The nodes of `text`, best match first. `node_rows` are (index, start, end, blob) in order."""
     lexical = [float(len(query_grams & _trigrams(text[start:end]))) for _, start, end, _ in node_rows]
     ranks = [_shared_ranks(lexical)]
     if query_vec is not None:
@@ -561,12 +590,20 @@ def best_node(text: str, node_rows: list[tuple], query_vec, query_grams: set[str
             ranks.append(_shared_ranks(cosines))
     k = config.RRF_K
     fused = [sum(1.0 / (k + 1 + r[i]) for r in ranks) for i in range(len(node_rows))]
-    best = min(range(len(node_rows)), key=lambda i: (-fused[i], node_rows[i][0]))
-    return node_rows[best]
+    order = sorted(range(len(node_rows)), key=lambda i: (-fused[i], node_rows[i][0]))
+    return [node_rows[i] for i in order]
 
 
-async def _current_node_sets(agent_id: str, claims: list[_Candidate]) -> dict[str, tuple[str, list[tuple]]]:
-    """`ref -> (stored text, nodes)` for the claims whose record has a current node set.
+def best_node(text: str, node_rows: list[tuple], query_vec, query_grams: set[str]) -> tuple:
+    """The node of `text` to quote."""
+    return rank_nodes(text, node_rows, query_vec, query_grams)[0]
+
+
+async def _current_node_sets(
+    agent_id: str, claims: list[_Candidate]
+) -> tuple[dict[str, tuple[str, list[tuple]]], set[str]]:
+    """`ref -> (stored text, nodes)` for the claims whose record has a current node set,
+    and the refs whose record has nodes that are not current.
 
     Current means complete over the stored text and built by the embedding model this
     server runs; anything else is quoted from the record's start, which is exactly
@@ -575,6 +612,7 @@ async def _current_node_sets(agent_id: str, claims: list[_Candidate]) -> dict[st
     """
     model = config.EMBEDDING_MODEL
     out: dict[str, tuple[str, list[tuple]]] = {}
+    not_current: set[str] = set()
     async with connection() as db:
         for kind, (table, column) in nodes.PARENT_TEXT.items():
             ids = sorted({c.row_id for c in claims if c.kind == kind and c.row_id > 0})
@@ -604,7 +642,9 @@ async def _current_node_sets(agent_id: str, claims: list[_Candidate]) -> dict[st
                     complete = group[0][1] == 0 and group[-1][2] == len(text) and contiguous
                     if complete and all(g[4] == model and g[3] is not None for g in group):
                         out[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
-    return out
+                    else:
+                        not_current.add(f"{kind}:{parent_id}")
+    return out, not_current
 
 
 async def _query_vector(query: str):
@@ -620,14 +660,26 @@ async def _query_vector(query: str):
     return np.asarray(vectors[0], dtype=np.float32)
 
 
-def _quote(claim: _Candidate, node_sets: dict, query_vec, query_grams: set[str], cap: int) -> dict:
-    """The quoted text for one claim, cut as the preview tier cuts."""
+def _quote(
+    claim: _Candidate, node_sets: dict, query_vec, query_grams: set[str], cap: int,
+    not_current: frozenset[str] | set[str] = frozenset(),
+    node_orders: dict[str, list[int]] | None = None,
+) -> dict:
+    """The quoted text for one claim, cut as the preview tier cuts.
+
+    A quote that is cut and did not come from a node is only the record's start,
+    not the part that matched; `node_unavailable` says so and why. A record quoted
+    whole needs no such note, whether or not it has nodes.
+    """
     entry = node_sets.get(claim.ref)
     if entry is None:
         quote: dict = {"content": claim.content}
     else:
         text, node_rows = entry
-        index, start, end, _ = best_node(text, node_rows, query_vec, query_grams)
+        ranked = rank_nodes(text, node_rows, query_vec, query_grams)
+        index, start, end, _ = ranked[0]
+        if node_orders is not None:
+            node_orders[claim.ref] = [row[0] for row in ranked[:TRACE_NODE_ORDER]]
         quote = {"content": text[start:end], "node": {"index": index, "of": len(node_rows), "span": [start, end]}}
     content = quote["content"]
     if cap > 0 and len(content) > cap:
@@ -637,6 +689,8 @@ def _quote(claim: _Candidate, node_sets: dict, query_vec, query_grams: set[str],
         if "node" in quote:
             start = quote["node"]["span"][0]
             quote["node"]["span"] = [start, start + cap]
+        else:
+            quote["node_unavailable"] = NODES_NOT_CURRENT if claim.ref in not_current else NODES_NONE
     return quote
 
 
@@ -685,7 +739,7 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
     for (item, head, others), n in zip(admitted, taken):
         item = dict(item)
         item["content"] = head["content"]
-        for key in ("content_len", "content_truncated", "node"):
+        for key in ("content_len", "content_truncated", "node", "node_unavailable"):
             if key in head:
                 item[key] = head[key]
         # Both are omitted when empty: no excerpts carried, none withheld.
@@ -756,14 +810,13 @@ async def do_reconstruct(
         if isinstance(m.get("ref"), str) and ":" in m["ref"]
     ]
 
-    bounds = {
-        "top_k": bounds_top_k,
-        "max_hops": bounds_max_hops,
-        "max_evidence": bounds_max_evidence,
-        "truncated": candidate_bound_clamped,
-    }
+    bounds: dict = {"top_k": bounds_top_k, "max_hops": bounds_max_hops, "max_evidence": bounds_max_evidence}
     if candidate_bound_clamped:
         bounds["effective_top_k"] = effective_top_k
+    # Retrieval handed back exactly as many rows as it was allowed to. Whether more
+    # lay beyond is not known here, so this is "reached", never "omitted".
+    if total >= effective_top_k:
+        bounds["reached"] = [BOUND_TOP_K]
     response: dict = {
         "items": [],
         "requested_count": count,
@@ -817,11 +870,9 @@ async def do_reconstruct(
     why_by_ref = {candidates[i].ref: uf.why[i] for i in uf.why}
 
     assembled = []
-    evidence_truncated = False
     for members in clusters:
         rows = [candidates[i] for i in members]
-        item, cut = structure(rows, why_by_ref, spans, bounds_max_evidence)
-        evidence_truncated = evidence_truncated or cut
+        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence)
         # Most relevant cluster first; the head ref makes the order total.
         assembled.append((min(r.rank for r in rows), item["head_ref"], item))
 
@@ -840,23 +891,42 @@ async def do_reconstruct(
         )
         entries_claims.append((item, head, others))
     all_claims = [c for _, head, others in entries_claims for c in (head, *others)]
-    node_sets = await _current_node_sets(agent_id, all_claims) if all_claims else {}
+    node_sets, not_current = await _current_node_sets(agent_id, all_claims) if all_claims else ({}, set())
     query_vec = await _query_vector(query) if node_sets else None
+    if node_sets and query_vec is None:
+        response["quote_selection"] = QUOTE_LEXICAL_ONLY
     query_grams = _trigrams(query)
     cap = config.RECALL_PREVIEW_CHARS
     entries = []
+    # Unmeasured facts stay in the trace until an answer-reader evaluation shows a
+    # reader uses them: the order the nodes of each quoted record ranked in (the best
+    # few indices only -- the fused values are not calibrated across records), so the runner-up
+    # is a place to read next, not a confidence.
+    node_orders: dict[str, list[int]] | None = {} if trace else None
     for item, head, others in entries_claims:
-        head_quote = _quote(head, node_sets, query_vec, query_grams, cap)
-        other_quotes = [{"ref": c.ref, **_quote(c, node_sets, query_vec, query_grams, cap)} for c in others]
+        head_quote = _quote(head, node_sets, query_vec, query_grams, cap, not_current, node_orders)
+        other_quotes = [
+            {"ref": c.ref, **_quote(c, node_sets, query_vec, query_grams, cap, not_current, node_orders)}
+            for c in others
+        ]
         entries.append((item, head_quote, other_quotes))
     items, used_budget, budget_cut = allocate(entries, effective_budget)
+    if node_orders:
+        response["trace"]["node_order"] = node_orders
     response["used_budget"] = used_budget
 
-    # The retrieval was cut if it returned exactly as many rows as it was allowed
-    # to; the tool cannot tell a full pool from a cut one, and says so rather than
-    # implying it saw everything.
-    pool_truncated = candidate_bound_clamped or total >= effective_top_k
-    bounds["truncated"] = bool(evidence_truncated or walk_truncated or pool_truncated)
+    # Only items that are returned count: a cut inside an item the window or the
+    # budget left out is not something this response withheld from its reader.
+    omitted = [
+        name
+        for name, cut in (
+            (BOUND_EVIDENCE, any("claims_omitted" in item for item in items)),
+            (BOUND_HOPS, walk_truncated),
+        )
+        if cut
+    ]
+    if omitted:
+        bounds["omitted"] = omitted
 
     response["items"] = items
     response["returned_count"] = len(items)
