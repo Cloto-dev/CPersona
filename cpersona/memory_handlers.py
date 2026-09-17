@@ -2070,6 +2070,96 @@ def _item_budget_cost(item: dict) -> int:
     return cost
 
 
+# Range expansion (reconstruction v1.1). A ref may name part of its record
+# instead of the whole row: {"ref": ..., "node": i | [first, last]} for overflow-tree
+# nodes, or {"ref": ..., "span": [start, end]} for characters. Offsets are in the
+# stored text -- a memory's content, an episode's summary -- which is what a
+# reconstruct quote's node span is measured in, so a quote's span expands as given.
+#
+# A range the server cannot serve exactly is reported, never widened: returning
+# the whole row for a node that does not exist would hand back the payload the
+# caller asked to avoid, with nothing saying the request was not honoured.
+RANGE_INVALID = "invalid_range"
+RANGE_NO_CURRENT_NODES = "no_current_nodes"
+RANGE_NODE_OUT_OF_RANGE = "node_out_of_range"
+RANGE_SPAN_OUT_OF_RANGE = "span_out_of_range"
+
+
+def _is_index(value) -> bool:
+    # bool is an int subclass; `True` is not a position.
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _parse_ref_entry(entry) -> tuple[str, dict | None, str | None]:
+    """`entry` -> (ref, range request or None, invalid-range reason or None).
+
+    A string is a whole-row ref, as before. An object carries `ref` and at most one
+    of `node` / `span`; an object with neither is a whole-row ref too. The range is
+    only checked for shape here -- whether it fits the record needs the record.
+    """
+    if not isinstance(entry, dict):
+        return str(entry), None, None
+    ref = entry.get("ref")
+    ref = ref if isinstance(ref, str) else str(ref)
+    has_node, has_span = "node" in entry, "span" in entry
+    if has_node and has_span:
+        return ref, None, RANGE_INVALID
+    if has_node:
+        node = entry["node"]
+        if _is_index(node):
+            first = last = node
+        elif isinstance(node, list) and len(node) == 2 and all(_is_index(v) for v in node):
+            first, last = node
+        else:
+            return ref, None, RANGE_INVALID
+        if first < 0 or last < first:
+            return ref, None, RANGE_INVALID
+        return ref, {"node": (first, last)}, None
+    if has_span:
+        span = entry["span"]
+        if not (isinstance(span, list) and len(span) == 2 and all(_is_index(v) for v in span)):
+            return ref, None, RANGE_INVALID
+        start, end = span
+        if start < 0 or end <= start:
+            return ref, None, RANGE_INVALID
+        return ref, {"span": (start, end)}, None
+    return ref, None, None
+
+
+async def _resolve_range(db, kind: str, row_id: int, text: str, request: dict) -> tuple[dict | None, str | None]:
+    """The characters a range request names in `text`: ({"span": [s, e], ...}, None) or (None, reason).
+
+    A node range needs the record's node set to partition the text as it is stored
+    now (tree invariant 4). The embedding model is not required to be current: the
+    offsets depend on the text alone, and the triggers delete every node of a text
+    that changed. A span's end past the text is clamped, and the span actually
+    served is reported; a start at or past the end of the text serves nothing.
+    """
+    if "span" in request:
+        start, end = request["span"]
+        if start >= len(text):
+            return None, RANGE_SPAN_OUT_OF_RANGE
+        return {"span": [start, min(end, len(text))]}, None
+    rows = await db.execute_fetchall(
+        "SELECT node_index, start_char, end_char FROM record_nodes "
+        "WHERE parent_kind = ? AND parent_id = ? ORDER BY node_index",
+        (kind, row_id),
+    )
+    partition = (
+        bool(rows)
+        and [r[0] for r in rows] == list(range(len(rows)))
+        and rows[0][1] == 0
+        and rows[-1][2] == len(text)
+        and all(a[2] == b[1] for a, b in zip(rows, rows[1:]))
+    )
+    if not partition:
+        return None, RANGE_NO_CURRENT_NODES
+    first, last = request["node"]
+    if last >= len(rows):
+        return None, RANGE_NODE_OUT_OF_RANGE
+    return {"span": [rows[first][1], rows[last][2]], "node": [first, last], "of": len(rows)}, None
+
+
 async def do_get_contents(agent_id: str, refs: list) -> dict:
     """Resolve recall preview refs back to full, untrimmed rows (2.5.0).
 
@@ -2081,27 +2171,36 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
     so a ref belonging to another agent lands in ``missing``, never in a leak.
     Malformed refs also land in ``missing`` (fail-soft: one bad ref must not
     abort the batch).
+
+    A ref may be an object naming part of its record (reconstruction v1.1):
+    ``{"ref", "node": i | [first, last]}`` or ``{"ref", "span": [start, end]}``.
+    The item then carries that slice as ``content`` and a ``range`` object with
+    the span served, the node range and node count when nodes were named, and
+    the stored text's full length. A range that cannot be served exactly lands
+    in ``unresolved`` with a reason, and is never widened to the whole row.
     """
     if not agent_id:
         return error_response("agent_id is required")
     if not isinstance(refs, list) or not refs:
-        return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' strings")
+        return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' refs or range objects")
     if len(refs) > GET_CONTENTS_MAX_REFS:
         return error_response(f"too many refs ({len(refs)}; max {GET_CONTENTS_MAX_REFS}) — split the fetch")
 
     items: list[dict] = []
     missing: list[str] = []
-    deferred: list[str] = []
+    unresolved: list[dict] = []
+    deferred: list = []
     used = 0
     async with connection() as db:
-        for position, ref in enumerate(refs):
-            kind, _, raw = str(ref).partition(":")
+        for position, entry in enumerate(refs):
+            ref, request, invalid = _parse_ref_entry(entry)
+            kind, _, raw = ref.partition(":")
             try:
                 row_id = int(raw)
             except (TypeError, ValueError):
                 row_id = -1
             if kind not in ("mem", "ep") or row_id <= 0:
-                missing.append(str(ref))
+                missing.append(ref)
                 continue
             if kind == "mem":
                 rows = await db.execute_fetchall(
@@ -2140,6 +2239,21 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     "timestamp": episode_timestamp(start_time, created_at),
                     "resolved": bool(resolved),
                 }
+            # Checked after the ownership read, so a range on another agent's row
+            # lands in `missing` like any other foreign ref and says nothing about
+            # whether that row has nodes.
+            if invalid is not None:
+                unresolved.append({"ref": ref, "reason": invalid})
+                continue
+            if request is not None:
+                text = content if kind == "mem" else summary
+                served, reason = await _resolve_range(db, kind, row_id, text, request)
+                if served is None:
+                    unresolved.append({"ref": ref, "reason": reason})
+                    continue
+                start, end = served["span"]
+                item["content"] = text[start:end]
+                item["range"] = dict(served, content_len=len(text))
             # Whole rows only — the budget never cuts a content
             # string. get_contents is the ONLY path back to full text, so a
             # trimmed answer here would be indistinguishable from the preview it
@@ -2159,11 +2273,17 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
             # transport spells the object.
             cost = _item_budget_cost(item)
             if items and used + cost > GET_CONTENTS_MAX_CHARS:
-                deferred = [str(r) for r in refs[position:]]
+                # Deferred entries are echoed as they were sent, range objects
+                # included, so the re-fetch is the same request.
+                deferred = [r if isinstance(r, dict) else str(r) for r in refs[position:]]
                 break
             used += cost
             items.append(item)
     result: dict = {"items": items, "missing": missing, "count": len(items)}
+    if unresolved:
+        # Absent unless a range was refused, so a caller that sends only string
+        # refs sees the response shape it always has.
+        result["unresolved"] = unresolved
     if deferred:
         # Absent unless the budget actually stopped the batch: a caller that
         # never meets it sees the same response shape as before.

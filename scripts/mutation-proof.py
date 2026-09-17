@@ -531,6 +531,50 @@ MUTATIONS: list[Mutation] = [
         breaks="a bounded item keeps the newest rows and drops the ones that made it relevant",
         expect="test_reconstruct.py::test_an_evidence_cut_keeps_the_head_then_the_most_relevant_rows",
     ),
+    # ---------------------------------------------------------------------
+    # get_contents ranges (memory_handlers.py) — reconstruction v1.1 expansion.
+    # A range is served exactly or refused; it is never widened to the row.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M27",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — a range the server cannot serve is refused, not widened",
+        file="cpersona/memory_handlers.py",
+        find='''                if served is None:
+                    unresolved.append({"ref": ref, "reason": reason})
+                    continue''',
+        replace='''                if served is None:
+                    served = {"span": [0, len(text)]}''',
+        breaks="a node that does not exist comes back as the whole record, the payload the caller asked to avoid, with nothing saying so",
+        expect="test_get_contents_ranges.py::test_the_last_node_is_served_and_one_past_it_is_refused, ::test_a_node_range_on_a_record_without_a_complete_node_set_is_refused_not_widened",
+    ),
+    Mutation(
+        id="M28",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — nodes are served only from a partition of the stored text",
+        file="cpersona/memory_handlers.py",
+        find="        and all(a[2] == b[1] for a, b in zip(rows, rows[1:]))",
+        replace="        and True",
+        breaks="a node set with a gap or an overlap is served by offset, so a node range returns characters that are not the nodes it names",
+        expect="test_get_contents_ranges.py::test_nodes_that_overlap_or_leave_a_gap_are_not_a_partition",
+    ),
+    Mutation(
+        id="M29",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — a range is checked after ownership",
+        file="cpersona/memory_handlers.py",
+        find='''            if kind == "mem":
+                rows = await db.execute_fetchall(
+                    "SELECT msg_id''',
+        replace='''            if invalid is not None:
+                unresolved.append({"ref": ref, "reason": invalid})
+                continue
+            if kind == "mem":
+                rows = await db.execute_fetchall(
+                    "SELECT msg_id''',
+        breaks="a malformed range on a ref the caller does not own is answered as unresolved, so `missing` stops meaning 'not yours or not there' and `unresolved` stops meaning 'yours, but not servable'",
+        expect="test_get_contents_ranges.py::test_a_range_on_another_agents_row_is_missing_and_says_nothing_about_its_nodes",
+    ),
 ]
 
 

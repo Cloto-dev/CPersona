@@ -1138,7 +1138,19 @@ registry.auto_tool(
     "is spent the remaining refs come back in `deferred` (absent otherwise) "
     "alongside `budget_chars`; re-fetch them in a second call. A single row larger "
     "than the budget is still returned in full, because this tool is the only path "
-    "back to a row's complete text.",
+    "back to a row's complete text. "
+    "RANGES: a ref may instead be an object that names part of its record -- "
+    "{ref, node: i} or {ref, node: [first, last]} (inclusive) for overflow-tree nodes, "
+    "e.g. the `node.index` of a reconstruct quote and its neighbours, or {ref, span: "
+    "[start, end]} for characters. Offsets are in the stored text (a memory's content, "
+    "an episode's summary without the '[Episode] ' label). The item then carries that "
+    "slice as `content` and `range` = {span, content_len, and node + of when nodes "
+    "were named}; a span end past the text is clamped and `range.span` says what was "
+    "served. A range that cannot be served exactly is never widened to the whole row: "
+    "it comes back in `unresolved` (absent otherwise) as {ref, reason}, reason one of "
+    "invalid_range, no_current_nodes (the record has no complete node set -- short "
+    "records have none, and a new long one gets them shortly after store), "
+    "node_out_of_range, span_out_of_range. Only the slice counts against the budget.",
     {
         "type": "object",
         "properties": {
@@ -1148,9 +1160,40 @@ registry.auto_tool(
             },
             "refs": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {
+                            "type": "object",
+                            "properties": {
+                                "ref": {"type": "string"},
+                                "node": {
+                                    "anyOf": [
+                                        {"type": "integer", "minimum": 0},
+                                        {
+                                            "type": "array",
+                                            "items": {"type": "integer", "minimum": 0},
+                                            "minItems": 2,
+                                            "maxItems": 2,
+                                        },
+                                    ]
+                                },
+                                "span": {
+                                    "type": "array",
+                                    "items": {"type": "integer", "minimum": 0},
+                                    "minItems": 2,
+                                    "maxItems": 2,
+                                },
+                            },
+                            "required": ["ref"],
+                        },
+                    ]
+                },
                 "maxItems": 20,
-                "description": "Refs from recall messages, e.g. ['mem:123', 'ep:45'] (max 20 per call)",
+                "description": (
+                    "Refs from recall messages ('mem:<id>' / 'ep:<id>'), or range objects such as "
+                    "{'ref': 'mem:<id>', 'node': [2, 3]} / {'ref': 'ep:<id>', 'span': [0, 800]} (max 20 per call)"
+                ),
             },
         },
         "required": ["agent_id", "refs"],
@@ -1197,7 +1240,9 @@ registry.auto_tool(
     "A long record with overflow-tree nodes is quoted from the node that best matches the "
     "query (rank by embedding similarity and by shared character trigrams, fused), and "
     "`node` gives its index, node count and character span in the stored text; a record "
-    "without nodes is quoted from its start. Nodes are read after items are chosen, so "
+    "without nodes is quoted from its start. To read around a node quote without "
+    "expanding the whole record, pass get_contents a range: {ref, node: [index - 1, "
+    "index + 1]}. Nodes are read after items are chosen, so "
     "they never change which items come back or their order. No relevance score is returned. "
     "ITEM SHAPE: `claims` carries one entry per row, newest first, each with `as_of` and "
     "`roles`; `timeline` is chronological; `evidence[].why` names the key that admitted "
