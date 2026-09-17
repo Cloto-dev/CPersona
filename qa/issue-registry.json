@@ -6438,6 +6438,20 @@
       "category": "reconstructive-recall",
       "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool. The design named a head claim without defining which row it is.",
       "fix_note": "The head is the most relevant row, resolved to the latest version when newer versions of that record are in the item; head_ref names it and claims stay newest first. An evidence cut keeps the head, then the most relevant remaining rows."
+    },
+    {
+      "id": "bug-439",
+      "summary": "(MEDIUM) check_sqlite_integrity reported critical FTS5 corruption for an intact index. FTS5 caches each table's segment structure on the connection that last read it and PRAGMA quick_check verifies the index against that cache; on the long-lived shared read connection, a merge or optimize made by the write connection left the cache stale, and quick_check reported 'malformed inverted index' while every other connection read the index as intact.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-17T02:30:00Z",
+      "version": "2.6.0a2",
+      "file": "cpersona/checks.py",
+      "pattern": "confirmed = await _quick_check_on_a_fresh_connection\\(\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "note": "Surfaced as an order-dependent test failure: enough FTS writes in earlier test files moved the index under the read connection's cache. Reproduced before the overflow-tree work, so it was not introduced by it.",
+      "fix_note": "A quick_check finding is confirmed on a read-only connection opened for it, which has no cached structure. A healthy run pays nothing; a genuine corruption is on disk and the fresh connection reports it too."
     }
   ]
 }

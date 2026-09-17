@@ -84,6 +84,8 @@ import re
 import sqlite3
 import stat
 
+import aiosqlite
+
 from cpersona import config, fileperms, health, nodes, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
@@ -1442,6 +1444,32 @@ async def check_dedup_msg_id_index(db, agent_id: str, fix: bool) -> list[dict]:
     return [issue]
 
 
+async def _quick_check_on_a_fresh_connection() -> list[str] | None:
+    """PRAGMA quick_check on a connection opened for it, or None when one cannot be.
+
+    bug-439: FTS5 keeps each table's segment structure cached on the connection
+    that last read it. quick_check verifies the FTS5 index against that cache, so a
+    long-lived connection whose cache predates another connection's merge or
+    optimize reports "malformed inverted index" for an index that is intact -- the
+    shared read connection this check runs on is exactly that connection. A
+    connection opened here has no cache to be stale.
+    """
+    from cpersona import database
+
+    path = database.DB_PATH
+    try:
+        conn = await aiosqlite.connect(f"file:{path}?mode=ro", uri=True)
+    except Exception:
+        return None
+    try:
+        await conn.execute("PRAGMA busy_timeout=5000")
+        return [r[0] for r in await conn.execute_fetchall("PRAGMA quick_check")]
+    except Exception:
+        return None
+    finally:
+        await conn.close()
+
+
 async def check_sqlite_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     """PRAGMA quick_check — file-level corruption. Report-only: there is no
     safe automatic repair for a damaged database file; restore from backup."""
@@ -1452,6 +1480,14 @@ async def check_sqlite_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     messages = [r[0] for r in rows]
     if messages == ["ok"]:
         return []
+    # bug-439: confirm on a connection with no cached FTS5 structure before calling
+    # the file corrupt. Only a finding reaches here, so a healthy run pays nothing;
+    # a genuine corruption is on disk and the fresh connection reports it as well.
+    confirmed = await _quick_check_on_a_fresh_connection()
+    if confirmed == ["ok"]:
+        return []
+    if confirmed:
+        messages = confirmed
     return [
         {
             "type": "sqlite_integrity_failure",
