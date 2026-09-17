@@ -257,10 +257,13 @@ regression; an empty registry is a byte-identical no-op.
 
 **Overflow chains** answer a measured defect: the embedding window is shorter
 than the longest memory, so a long record's tail is invisible to vector search.
-Records past the window split, at store time and deterministically, into a chain
-of nodes that each carry their own embedding. A hit on a node returns the
-parent's preview, the node's position and a reference, and the agent fetches the
-rest if it wants it. The split is reported, never silent.
+Records past the window split, deterministically and against the window the
+embedding server reports, into a chain of nodes that each carry their own
+embedding. The split is reported, never silent. The first step keeps nodes out
+of the search index: they let a returned record be quoted by its most relevant
+part, and the records recall returns are unchanged. Whether nodes also become
+search candidates is decided on its own measurement. Schema, division rule and
+invariants are in the [overflow tree design](OVERFLOW_TREE_DESIGN.md).
 
 In the recall process both are **cues**. A hit inside a chain names its
 siblings; a hit on a registered entity names the relations declared on it; the

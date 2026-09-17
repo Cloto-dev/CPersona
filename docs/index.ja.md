@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:2999c47485d5300fcde2c2f2357a0f687a1eade3 -->
+<!-- i18n-source: docs/index.md@blob:385a7657028c066c7cb4b34d0179fd2595e5f1b3 -->
 
 # CPersona ドキュメント
 
@@ -152,6 +152,8 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 - [適応的融合](ADAPTIVE_FUSION_DESIGN.md) — 各検索器にプールの取り分を確保すること、
   プールサイズ gate から順位カットを外すこと、そして「いま計測済みの lexical 重み」と
   「後の条件付き証拠の融合モード」のどちらを採るかを決める事前登録済みの比較。
+- [溢れ分の tree](OVERFLOW_TREE_DESIGN.md) — 長いレコードを埋め込みの窓に収まる区間に分け、
+  recall が返すものを変えずに、返されたレコードを関連する部分で引用できるようにすること。
 - [埋め込み劣化の通知](DEGRADED_ADVISORY_DESIGN.md) — 埋め込み層が死んだとき、
   静かに質を落とすのではなく recall がそれを報告する仕組み。
 

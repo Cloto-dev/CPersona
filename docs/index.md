@@ -158,6 +158,9 @@ guides disagree, the guides win.
   share of the pool, removing the rank cut from the pool-size gate, and the
   pre-registered comparison between a measured lexical weight now and a
   conditional-evidence fusion mode later.
+- [Overflow tree](OVERFLOW_TREE_DESIGN.md) — dividing a long record into
+  spans that each fit the embedding window, so a returned record can be quoted
+  by the part that matters, without changing what recall returns.
 - [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
   reports a dead embedding layer instead of quietly getting worse.
 
