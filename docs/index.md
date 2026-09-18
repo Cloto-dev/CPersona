@@ -161,6 +161,9 @@ guides disagree, the guides win.
 - [Overflow tree](OVERFLOW_TREE_DESIGN.md) — dividing a long record into
   spans that each fit the embedding window, so a returned record can be quoted
   by the part that matters, without changing what recall returns.
+- [Associative memory](ASSOCIATIVE_MEMORY_DESIGN.md) — a declared graph of
+  entities, aliases and relations that reconstructive recall follows as cues,
+  bundling keys, evidence and roles; nothing declared, nothing changed.
 - [Embedding degradation advisory](DEGRADED_ADVISORY_DESIGN.md) — how recall
   reports a dead embedding layer instead of quietly getting worse.
 

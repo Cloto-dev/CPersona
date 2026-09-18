@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:385a7657028c066c7cb4b34d0179fd2595e5f1b3 -->
+<!-- i18n-source: docs/index.md@blob:35dd1fe6645160a6b1bcd2b81994f00b46cfd843 -->
 
 # CPersona ドキュメント
 
@@ -154,6 +154,8 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
   「後の条件付き証拠の融合モード」のどちらを採るかを決める事前登録済みの比較。
 - [溢れ分の tree](OVERFLOW_TREE_DESIGN.md) — 長いレコードを埋め込みの窓に収まる区間に分け、
   recall が返すものを変えずに、返されたレコードを関連する部分で引用できるようにすること。
+- [連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md) — entity・別名・関係の宣言されたグラフ。
+  再構成想起が cue・束ねキー・根拠・roles として辿る。宣言が無ければ何も変わらない。
 - [埋め込み劣化の通知](DEGRADED_ADVISORY_DESIGN.md) — 埋め込み層が死んだとき、
   静かに質を落とすのではなく recall がそれを報告する仕組み。
 
