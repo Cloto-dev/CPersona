@@ -69,8 +69,10 @@ CREATE TABLE entity_aliases (
     normalized  TEXT NOT NULL,
     PRIMARY KEY (entity_id, normalized)
 );
--- one normalized alias resolves to at most one entity within a scope:
-CREATE UNIQUE INDEX entity_aliases_scope ON entity_aliases (normalized, entity_id);
+-- One normalized alias resolves to at most one entity within a scope. The
+-- table carries no scope columns, so that rule is enforced by the declare
+-- handler, not by a constraint; the index only serves the lookup.
+CREATE INDEX idx_entity_aliases_normalized ON entity_aliases (normalized);
 
 CREATE TABLE entity_mentions (
     entity_id   INTEGER NOT NULL,

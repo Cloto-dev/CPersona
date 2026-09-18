@@ -1176,6 +1176,64 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "WHEN old.summary <> new.summary BEGIN "
         "DELETE FROM record_nodes WHERE parent_kind = 'ep' AND parent_id = old.id; END",
     },
+    # v15 (see ASSOCIATIONS_SQL in database.py). Critical: without one of these
+    # a deleted entity or record leaves aliases, mentions and relations that
+    # point at rows which no longer exist (design invariant 8), and a walk
+    # would follow them to nothing.
+    "associations_entities_ad": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER associations_entities_ad AFTER DELETE ON entities BEGIN "
+        "DELETE FROM entity_aliases WHERE entity_id = old.id; "
+        "DELETE FROM entity_mentions WHERE entity_id = old.id; "
+        "DELETE FROM relations WHERE (subject_kind = 'entity' AND subject_id = old.id) "
+        "OR (object_kind = 'entity' AND object_id = old.id); END",
+    },
+    "associations_memories_ad": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER associations_memories_ad AFTER DELETE ON memories BEGIN "
+        "DELETE FROM entity_mentions WHERE ref = 'mem:' || old.id; "
+        "DELETE FROM relations WHERE (subject_kind = 'mem' AND subject_id = old.id) "
+        "OR (object_kind = 'mem' AND object_id = old.id) "
+        "OR anchor_ref = 'mem:' || old.id; END",
+    },
+    "associations_episodes_ad": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER associations_episodes_ad AFTER DELETE ON episodes BEGIN "
+        "DELETE FROM entity_mentions WHERE ref = 'ep:' || old.id; "
+        "DELETE FROM relations WHERE (subject_kind = 'ep' AND subject_id = old.id) "
+        "OR (object_kind = 'ep' AND object_id = old.id) "
+        "OR anchor_ref = 'ep:' || old.id; END",
+    },
+    # The graph's lookup indexes. Losing one costs a scan on alias matching,
+    # on the walk, or on the delete triggers above — latency, never an answer.
+    "idx_entity_aliases_normalized": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_entity_aliases_normalized ON entity_aliases(normalized)",
+    },
+    "idx_entity_mentions_ref": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_entity_mentions_ref ON entity_mentions(ref)",
+    },
+    "idx_relations_subject": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_relations_subject ON relations(subject_kind, subject_id)",
+    },
+    "idx_relations_object": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_relations_object ON relations(object_kind, object_id)",
+    },
+    "idx_relations_anchor": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_relations_anchor ON relations(anchor_ref)",
+    },
     "idx_memories_isolation": {
         "kind": "index",
         "severity": "warn",

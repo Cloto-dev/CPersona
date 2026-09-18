@@ -102,9 +102,13 @@ async def _schema_version(db) -> int:
 # --------------------------------------------------------------------------
 
 
-def test_schema_version_constant_is_14():
-    """v14 = record_nodes (docs/OVERFLOW_TREE_DESIGN.md)."""
-    assert SCHEMA_VERSION == 14
+def test_schema_version_is_at_least_14():
+    """v14 = record_nodes (docs/OVERFLOW_TREE_DESIGN.md); later steps build on it.
+
+    The exact current value is pinned by the newest schema test file, so that
+    each step's file states its own number and this one need not chase it.
+    """
+    assert SCHEMA_VERSION >= 14
 
 
 @pytest.mark.asyncio
@@ -131,7 +135,7 @@ async def test_fresh_database_has_the_designed_table():
             )
         }
         assert set(_NODE_TRIGGERS) <= triggers
-        assert await _schema_version(db) == 14
+        assert await _schema_version(db) == SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
@@ -180,7 +184,7 @@ async def test_v13_database_migrates_forward_without_touching_other_objects():
 
         db = await _reboot()
 
-        assert await _schema_version(db) == 14
+        assert await _schema_version(db) == SCHEMA_VERSION
         assert await db.execute_fetchall("SELECT COUNT(*) FROM record_nodes") == [(0,)]
         assert await _objects_outside_nodes(db) == before
         assert (

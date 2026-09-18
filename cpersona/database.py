@@ -13,7 +13,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -487,6 +487,102 @@ WHEN old.summary <> new.summary BEGIN
 END;
 """
 
+# v15: the declared graph of docs/ASSOCIATIVE_MEMORY_DESIGN.md §1 — entities
+# with aliases, the records that mention them, and subject–predicate–object
+# relations. Nothing in `memories` or `episodes` changes, and nothing here is
+# read on the `recall` path (design invariant 1).
+#
+# The same trigger discipline as the nodes above (invariant 8: no declaration
+# outlives its endpoints). Deleting an entity takes its aliases, mentions and
+# relations; deleting a memory or episode takes its mentions and every
+# relation that names it as an endpoint or as its anchor. A relation whose
+# evidence is gone is gone with it — the alternative, keeping the assertion
+# with the anchor cleared, was considered and not taken (design §7).
+#
+# A text change does NOT touch the graph: a mention is a declaration about the
+# record, not a derivation from its wording, so a rewrite leaves it true.
+#
+# Run on every boot, like RECORD_NODES_SQL (bug-118). check_schema_objects
+# watches the three triggers.
+#
+# Uniqueness of a normalized alias within a scope cannot be a table constraint
+# here — entity_aliases carries no scope columns — so the declare handler
+# enforces it, and the index only serves the lookup.
+ASSOCIATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS entities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT    NOT NULL,
+    project_id  TEXT    NOT NULL DEFAULT '',
+    channel     TEXT    NOT NULL DEFAULT '',
+    name        TEXT    NOT NULL,
+    normalized  TEXT    NOT NULL,
+    declared_by TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    UNIQUE (agent_id, project_id, channel, normalized)
+);
+
+CREATE TABLE IF NOT EXISTS entity_aliases (
+    entity_id   INTEGER NOT NULL,
+    alias       TEXT    NOT NULL,
+    normalized  TEXT    NOT NULL,
+    PRIMARY KEY (entity_id, normalized)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_normalized ON entity_aliases(normalized);
+
+CREATE TABLE IF NOT EXISTS entity_mentions (
+    entity_id   INTEGER NOT NULL,
+    ref         TEXT    NOT NULL,
+    declared_by TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    PRIMARY KEY (entity_id, ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_mentions_ref ON entity_mentions(ref);
+
+CREATE TABLE IF NOT EXISTS relations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id     TEXT    NOT NULL,
+    project_id   TEXT    NOT NULL DEFAULT '',
+    channel      TEXT    NOT NULL DEFAULT '',
+    subject_kind TEXT    NOT NULL,
+    subject_id   INTEGER NOT NULL,
+    predicate    TEXT    NOT NULL,
+    object_kind  TEXT    NOT NULL,
+    object_id    INTEGER NOT NULL,
+    anchor_ref   TEXT    NOT NULL DEFAULT '',
+    declared_by  TEXT    NOT NULL,
+    declared_at  TEXT    NOT NULL,
+    UNIQUE (agent_id, project_id, channel,
+            subject_kind, subject_id, predicate, object_kind, object_id, anchor_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_relations_subject ON relations(subject_kind, subject_id);
+CREATE INDEX IF NOT EXISTS idx_relations_object ON relations(object_kind, object_id);
+CREATE INDEX IF NOT EXISTS idx_relations_anchor ON relations(anchor_ref);
+
+CREATE TRIGGER IF NOT EXISTS associations_entities_ad AFTER DELETE ON entities BEGIN
+    DELETE FROM entity_aliases WHERE entity_id = old.id;
+    DELETE FROM entity_mentions WHERE entity_id = old.id;
+    DELETE FROM relations WHERE (subject_kind = 'entity' AND subject_id = old.id)
+                            OR (object_kind = 'entity' AND object_id = old.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS associations_memories_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM entity_mentions WHERE ref = 'mem:' || old.id;
+    DELETE FROM relations WHERE (subject_kind = 'mem' AND subject_id = old.id)
+                            OR (object_kind = 'mem' AND object_id = old.id)
+                            OR anchor_ref = 'mem:' || old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS associations_episodes_ad AFTER DELETE ON episodes BEGIN
+    DELETE FROM entity_mentions WHERE ref = 'ep:' || old.id;
+    DELETE FROM relations WHERE (subject_kind = 'ep' AND subject_id = old.id)
+                            OR (object_kind = 'ep' AND object_id = old.id)
+                            OR anchor_ref = 'ep:' || old.id;
+END;
+"""
+
 _db: aiosqlite.Connection | None = None
 _read_db: aiosqlite.Connection | None = None
 # bug-105: maintenance CLIs (checkup without --fix) set this before first DB
@@ -704,6 +800,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
 
     await db.executescript(SCHEMA_SQL)
     await db.executescript(RECORD_NODES_SQL)
+    await db.executescript(ASSOCIATIONS_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on
     # THIS boot (a DB originally created with CPERSONA_FTS_ENABLED=false, now

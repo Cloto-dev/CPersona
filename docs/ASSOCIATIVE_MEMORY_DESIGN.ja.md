@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:84cb606da881ccc01c7723381356298315b4c55f -->
+<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:e28f3ca78dec52fdc3d73b4da6bb9c0631b0467f -->
 # 連想記憶 — 設計 { #associative-memory-design }
 
 状態: 2.6 系の設計であって、挙動ではありません。このページは宣言されたグラフ層 —
@@ -61,8 +61,10 @@ CREATE TABLE entity_aliases (
     normalized  TEXT NOT NULL,
     PRIMARY KEY (entity_id, normalized)
 );
--- 正規化した別名 1 つは、1 スコープ内で高々 1 つの entity に解決する:
-CREATE UNIQUE INDEX entity_aliases_scope ON entity_aliases (normalized, entity_id);
+-- 正規化した別名 1 つは、1 スコープ内で高々 1 つの entity に解決する。この表は
+-- スコープ列を持たないので、その規則は制約でなく宣言ハンドラが強制する。
+-- 索引は照合のためだけにある。
+CREATE INDEX idx_entity_aliases_normalized ON entity_aliases (normalized);
 
 CREATE TABLE entity_mentions (
     entity_id   INTEGER NOT NULL,

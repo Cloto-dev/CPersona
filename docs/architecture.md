@@ -39,12 +39,16 @@ Two things follow from this shape:
 ## Storage
 
 One SQLite database in WAL mode (`CPERSONA_DB_PATH`), currently **schema
-v14**, migrated forward automatically on startup. It holds four data tables —
+v15**, migrated forward automatically on startup. It holds four data tables —
 `memories`, `episodes`, `profiles`, `pending_memory_tasks` — plus a
 `schema_version` bookkeeping table and two FTS5 virtual tables that triggers
 keep in step. A fifth table, `record_nodes`, holds only offsets into the text of
 long memories and episodes ([overflow tree](OVERFLOW_TREE_DESIGN.md)); triggers
-delete a record's nodes when the record is deleted or its text changes.
+delete a record's nodes when the record is deleted or its text changes. Four
+more — `entities`, `entity_aliases`, `entity_mentions`, `relations` — hold the
+declared graph of [associative memory](ASSOCIATIVE_MEMORY_DESIGN.md); triggers
+remove every alias, mention and relation that depended on a deleted entity or
+record, so nothing in the graph ever points at a row that is gone.
 
 The FTS5 indexes use the **trigram** tokenizer. That is what makes CPersona
 work on Japanese and other space-less scripts at all. A word-boundary

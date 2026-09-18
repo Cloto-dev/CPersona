@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:7635d56310acb8a58427601a3b3f2900d06c57d9 -->
+<!-- i18n-source: docs/architecture.md@blob:f8712096ee5b26e1f7a7e31230b6bc06b57989c6 -->
 
 # アーキテクチャ
 
@@ -41,12 +41,16 @@ flowchart TB
 ## ストレージ { #storage }
 
 WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在の
-**schema v14** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
+**schema v15** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
 `memories` / `episodes` / `profiles` / `pending_memory_tasks` の 4 つです。加えて
 記録用の `schema_version` テーブルと、トリガーで同期される FTS5 仮想テーブルが
 2 つあります。5 つ目のテーブル `record_nodes` は、長い記憶とエピソードの本文への
 オフセットだけを持ちます ([overflow tree](OVERFLOW_TREE_DESIGN.md))。記録が削除
-されるか本文が変わると、トリガーがその記録のノードを削除します。
+されるか本文が変わると、トリガーがその記録のノードを削除します。さらに 4 つ —
+`entities` / `entity_aliases` / `entity_mentions` / `relations` — が
+[連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md) の宣言されたグラフを持ちます。entity や
+記録が削除されると、それに依存していた別名・言及・関係をトリガーがすべて取り除くので、
+グラフの中に消えた行を指すものは残りません。
 
 FTS5 索引は **trigram** トークナイザを使います。これが、CPersona が日本語や
 その他の分かち書きしない文字体系で機能する理由です。単語境界ベースの

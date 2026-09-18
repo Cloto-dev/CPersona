@@ -621,6 +621,13 @@ async def _delete_agent_rows(db, agent_id: str) -> dict:
     task_cursor = await db.execute(
         "DELETE FROM pending_memory_tasks WHERE agent_id = ?", (agent_id,)
     )
+    # The declared graph (schema v15). Deleting the records above already took
+    # their mentions and anchored relations through the triggers; what remains
+    # is the agent's entities (their aliases and mentions follow by trigger)
+    # and any relation that names no record at all — an agent-level assertion
+    # only the agent axis can reach.
+    await db.execute("DELETE FROM entities WHERE agent_id = ?", (agent_id,))
+    await db.execute("DELETE FROM relations WHERE agent_id = ?", (agent_id,))
     return {
         "deleted_memories": mem_cursor.rowcount,
         "deleted_profiles": prof_cursor.rowcount,
