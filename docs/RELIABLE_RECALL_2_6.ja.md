@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d8bd89dd3b5c79c260365121bf86701e8c2f7890 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d252278a32e5a80a4439be0cd00a73a4a7119100 -->
 
 # Reliable Recall — 2.6 系
 
@@ -252,7 +252,9 @@ admission floor と gate です。[識別可能性ノート](research/adaptive-f
 **入力。** 想起プロセスが作った候補プール、そのままの分離軸、任意の時間の手がかり、必須の
 境界の集合 — 候補の深さ、関係の hop、証拠の数 — そして任意の `count`。
 
-**再構成窓 (Reconstruction Window)。** `count` は返す想起単位の数の*上限*です。充足目標
+### 再構成窓 (Reconstruction Window) { #the-reconstruction-window }
+
+`count` は返す想起単位の数の*上限*です。充足目標
 ではなく、検索深度でもありません。
 
 ```text
@@ -279,7 +281,9 @@ effective = min(base, max_count)
   ペイロードのトークン量・レイテンシと比較するまでは実験的な値です。
   どちらの既定値の変更を提案する場合も、この計測による根拠を必要とします。
 
-**幅が先、深さが後 — ペイロード予算。** item の大きさは固定ではありません。ある item は
+### 幅が先、深さが後 — ペイロード予算 { #breadth-before-depth-the-payload-budget }
+
+item の大きさは固定ではありません。ある item は
 保存された 1 行だけで、別の item は発話の連続や、支える claim を伴う episode です。
 したがって応答を形作る上限は 2 つあります。
 
@@ -332,6 +336,8 @@ effective_budget = min(budget_base, max_budget)
 どこを見るか。widening は報告される)、そして再構成窓 (何がエージェントに届くか。短い
 返却は報告される)。それぞれが有界の開口で、それぞれが切る時にそう言います。
 
+### 処理と出力 { #processing-and-output }
+
 **処理 — 4 段、すべて SQL と純関数。**
 
 1. *候補* — 想起プロセスからのプール、無改変。深さは第 4 節のノブ。
@@ -374,7 +380,7 @@ effective_budget = min(budget_base, max_budget)
 - 本文全体は決して inline しません。`content` とすべての抜粋は preview tier と同じ切り方で、
   `ref` は、今日の preview tier と同じく `get_contents` で展開します。
 
-**不変条件。**
+### 不変条件 { #invariants }
 
 1. 保存された記憶は決して変更されない — これは read path で、唯一の書き込みは既存の
    recall カウンターです。

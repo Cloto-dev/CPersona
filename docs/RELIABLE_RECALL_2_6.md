@@ -291,7 +291,9 @@ ladder is triggered by a tool that did not exist before.
 as they are, an optional temporal cue, a mandatory set of bounds — candidate
 depth, relation hops, evidence count — and an optional `count`.
 
-**The Reconstruction Window.** `count` is the *ceiling* on the number of
+### The Reconstruction Window
+
+`count` is the *ceiling* on the number of
 recall items returned. It is not a fill target, and it is not a search depth.
 
 ```text
@@ -323,7 +325,9 @@ effective = min(base, max_count)
   answer and evidence quality against payload tokens and latency. Any proposed
   change to either default must be justified by that measurement.
 
-**Breadth before depth — the payload budget.** An item's size is not fixed.
+### Breadth before depth — the payload budget
+
+An item's size is not fixed.
 One item may be a single stored row; another may be a burst of turns or an
 episode with its supporting claims. Two limits therefore shape a response:
 
@@ -391,6 +395,8 @@ looks; the widening is reported) and the Reconstruction Window (what reaches
 the agent; a short return is reported). Each is a bounded aperture, and each
 says so when it cuts.
 
+### Processing and output
+
 **Processing — four stages, all SQL and pure functions.**
 
 1. *Candidates* — the pool from the recall process, unchanged; depth is the
@@ -439,7 +445,7 @@ appear when declared relations do. A reader ignores a role it does not know.
   preview tier cuts, and a `ref` expands through `get_contents`, as it does
   for the preview tier today.
 
-**Invariants.**
+### Invariants
 
 1. Stored memories are never modified — this is a read path; the only writes
    are the existing recall counters.
