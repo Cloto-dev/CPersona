@@ -507,6 +507,7 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     "list_episodes": _scoped(PERM_READ),
     # Per-agent writes.
     "store": _scoped(PERM_WRITE),
+    "declare_associations": _scoped(PERM_WRITE),
     "update_profile": _scoped(PERM_WRITE),
     "archive_episode": _scoped(PERM_WRITE),
     "update_memory": _scoped(PERM_WRITE),

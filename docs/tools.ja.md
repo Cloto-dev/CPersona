@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:c1e7ee5d4b1d65a406881a024db69b3ca394b131 -->
+<!-- i18n-source: docs/tools.md@blob:96f21af14f925c84142a6c8e1672c4e7ad11379f -->
 
 # ツール一覧
 
@@ -20,6 +20,7 @@
 | `reconstruct` | recall の候補行から**想起単位**を構成します。選択・整列・役割付与であり、文章の合成はしません。`count` は上限であって充足目標や検索深度ではありません。探索幅 (`top_k`、`max_hops`、`max_evidence`) は独立した境界です ([出口の設計](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit)) |
 | `archive_episode` | セッション要約を保存します。同時に [エピソード境界](behavior-contracts.md#3-episode-boundary-penalty) を動かし、それ以前に書かれたものを減点します |
 | `update_memory` | 既存の記憶の内容を変更します。保存済みの事実を訂正する方法はこれであって、同じ `msg_id` での再 `store` ではありません |
+| `declare_associations` | 連想記憶を後から宣言します — 別名付きの entity と主語–述語–目的語の関係を、名指した記録に anchor して。`retract` で宣言を取り消します。同じオブジェクトは `store` の `associations` にも相乗りできます。verbatim に保存され `reconstruct` が読みます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md)) |
 
 ## プロフィールと運用者コンテキスト { #profile-and-operator-context }
 
@@ -134,8 +135,8 @@ dry-run を強制されて `repairs_skipped` を返し、`persisted` キー自�
 
 ## 分離のための引数 { #isolation-arguments }
 
-3 つの分離軸は一様には提供されていません。`agent_id` はほとんどのツール (23 個) が受け取り、
-`project_id` は 7 個、`channel` はちょうど 5 個 (`store` / `recall` /
+3 つの分離軸は一様には提供されていません。`agent_id` はほとんどのツール (24 個) が受け取り、
+`project_id` は 8 個、`channel` はちょうど 6 個 (`store` / `declare_associations` / `recall` /
 `recall_with_context` / `reconstruct` / `archive_episode`) だけです。
 
 これらは入れ子の階層ではなく独立した 3 軸であり、読み取り時に「空の値」と「省略」は

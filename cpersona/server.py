@@ -34,6 +34,7 @@ from pydantic import AnyHttpUrl, ValidationError
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 from cpersona import acl
+from cpersona import associations as associations_module
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
@@ -203,6 +204,7 @@ async def do_store_boundary(
     channel: str = "",
     project_id: str = "",
     session_key: str = "",
+    associations: dict | None = None,
 ) -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
@@ -214,6 +216,57 @@ async def do_store_boundary(
     result = await do_store(
         agent_id, message, channel=channel, project_id=resolved, session_key=session_key
     )
+    # The associative-memory rider (docs/ASSOCIATIVE_MEMORY_DESIGN.md §2). It
+    # is declared against whichever row the store resolved to — a new row, or
+    # the pre-existing one a dedup branch echoed — because the declaration is
+    # about that memory either way. A paused or rejected store resolved to no
+    # row, so there is nothing to anchor and the rider is not recorded.
+    if associations is not None and isinstance(result.get("id"), int) and result["id"] > 0:
+        result["associations"] = await associations_module.declare(
+            agent_id,
+            associations,
+            project_id=resolved,
+            channel=channel,
+            anchor_ref=f"mem:{result['id']}",
+        )
+    return _oc_annotate(result, project_id, resolved, warning)
+
+
+async def do_declare_associations_boundary(
+    agent_id: str,
+    associations: dict | None = None,
+    anchor_ref: str = "",
+    retract: dict | None = None,
+    channel: str = "",
+    project_id: str = "",
+    session_key: str = "",
+) -> dict:
+    resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
+    if error:
+        return {**_oc_reject(error), "entities": [], "mentions": 0, "relations": [], "dropped": []}
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "result": "skipped", "entities": [], "mentions": 0, "relations": [], "dropped": []},
+            "declare_associations",
+            key,
+        )
+    result: dict = {"ok": True, "result": "declared"}
+    if associations is not None:
+        result.update(await associations_module.declare(
+            agent_id, associations, project_id=resolved, channel=channel, anchor_ref=anchor_ref
+        ))
+    else:
+        result.update({"entities": [], "mentions": 0, "relations": [], "dropped": []})
+    if retract is not None:
+        if isinstance(retract, dict):
+            retracted = await associations_module.retract(
+                agent_id, relations=retract.get("relations"), mentions=retract.get("mentions")
+            )
+            result["dropped"].extend(retracted.pop("dropped"))
+            result["retracted"] = retracted
+        else:
+            result["dropped"].append({"item": "retract", "reason": "must be an object"})
     return _oc_annotate(result, project_id, resolved, warning)
 
 
@@ -566,6 +619,51 @@ _SESSION_KEY_PROPERTY_SHORT = {
     "default": "",
 }
 
+# The associative-memory declaration (docs/ASSOCIATIVE_MEMORY_DESIGN.md §2),
+# shared by the `store` rider and `declare_associations`.
+_ASSOCIATIONS_PROPERTY = {
+    "type": "object",
+    "description": (
+        "Associative memory to declare alongside this call: entities the text mentions, "
+        "with their aliases, and subject–predicate–object relations. Stored verbatim; the "
+        "server extracts nothing and infers nothing. On store, the stored memory is "
+        "recorded as mentioning every entity named here and anchors every relation. "
+        "Malformed items are reported in the response's associations.dropped and skipped; "
+        "the memory is stored regardless. Optional."
+    ),
+    "properties": {
+        "entities": {
+            "type": "array",
+            "description": "Entities to register (if new) and mark as mentioned. Names are compared after normalization (NFKC, case-folded, whitespace collapsed).",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The canonical name, kept as written."},
+                    "aliases": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Other names for the same entity. An alias resolves to at most one entity per scope; a second claim on it is dropped.",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+        "relations": {
+            "type": "array",
+            "description": "Declared relations. subject / object are entity names (registered if new) or record refs 'mem:<id>' / 'ep:<id>' of this agent; predicate is free text, normalized. A predicate from the role vocabulary (supports, supersedes, corrects, qualifies, contradicts, temporal_predecessor) on a record → record relation is read by reconstruct as that role.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "object": {"type": "string"},
+                },
+                "required": ["subject", "predicate", "object"],
+            },
+        },
+    },
+}
+
 # Session no-persist controls — registered first for discoverability.
 async def do_pause_persistence(
     ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS, session_key: str = ""
@@ -610,8 +708,8 @@ registry.auto_tool(
     # `persisted: false` is the one field every skipped write carries, so it is
     # the field to branch on; the id sentinel and the dry-run downgrade are
     # per-tool details, stated here as such rather than as a blanket rule.
-    "paused, every write tool — store, archive_episode, update_memory, delete_memory, "
-    "delete_episode, delete_agent_data, lock_memory, unlock_memory, update_profile, "
+    "paused, every write tool — store, declare_associations, archive_episode, update_memory, "
+    "delete_memory, delete_episode, delete_agent_data, lock_memory, unlock_memory, update_profile, "
     "import_memories, merge_memories, calibrate_threshold, set_recall_precision — "
     "returns a no-op response carrying `persisted: false`, `dry_run: true` and a "
     "`reason` (with the TTL remaining) instead of writing to the database. "
@@ -889,6 +987,7 @@ registry.auto_tool(
                 ),
             },
             "session_key": _SESSION_KEY_PROPERTY_SHORT,
+            "associations": _ASSOCIATIONS_PROPERTY,
         },
         "required": ["agent_id", "message"],
     },
@@ -896,6 +995,74 @@ registry.auto_tool(
     [
         ("agent_id", str),
         ("message", dict),
+        ("channel", str, ""),
+        ("project_id", str, ""),
+        ("session_key", str, ""),
+        ("associations", dict, None),
+    ],
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+)
+
+registry.auto_tool(
+    "declare_associations",
+    "Declare associative memory after the fact: entities with aliases, and "
+    "subject–predicate–object relations, recorded verbatim and walked by "
+    "reconstruct. The server extracts nothing and infers nothing — coverage is "
+    "exactly what was declared. Names, aliases and predicates are compared after "
+    "normalization (NFKC, case-folded, whitespace collapsed), so two declarations "
+    "that normalize alike are one entity. An alias resolves to at most one entity "
+    "per scope; a second claim on it is dropped. `anchor_ref` names the record "
+    "(`mem:<id>` / `ep:<id>`) the declaration is evidenced by: every entity named "
+    "is recorded as mentioned by it and every relation carries it. A relation's "
+    "endpoint is an entity name (registered if new) or a record ref of this agent. "
+    "Malformed items are reported in `dropped` and skipped; nothing else in the call "
+    "is refused for them. `retract` removes relations by id and mentions by "
+    "{entity, ref} — the only way a declaration leaves the store. "
+    "Response: {ok, result:'declared', entities:[{id, name, created}], mentions, "
+    "relations:[ids], dropped:[{item, reason}], retracted?:{relations, mentions}}. "
+    "Under pause_persistence nothing is written (result:'skipped', persisted:false).",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent identifier"},
+            "associations": _ASSOCIATIONS_PROPERTY,
+            "anchor_ref": {
+                "type": "string",
+                "description": "The record this declaration is evidenced by: 'mem:<id>' or 'ep:<id>' of this agent. Optional.",
+                "default": "",
+            },
+            "retract": {
+                "type": "object",
+                "description": "Declarations to remove: {relations: [relation ids], mentions: [{entity: <entity id>, ref: 'mem:<id>'}]}. Only this agent's rows are touched.",
+                "properties": {
+                    "relations": {"type": "array", "items": {"type": "integer"}},
+                    "mentions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"entity": {"type": "integer"}, "ref": {"type": "string"}},
+                        },
+                    },
+                },
+            },
+            "channel": {
+                "type": "string",
+                "description": "Memory channel the declaration belongs to. Default: '' (shared).",
+            },
+            "project_id": {
+                "type": "string",
+                "description": "Project the declaration belongs to. Optional — omit or pass '' for the global pool. " + _AUTO_PROJECT_ID_CLAUSE,
+            },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
+        },
+        "required": ["agent_id"],
+    },
+    do_declare_associations_boundary,
+    [
+        ("agent_id", str),
+        ("associations", dict, None),
+        ("anchor_ref", str, ""),
+        ("retract", dict, None),
         ("channel", str, ""),
         ("project_id", str, ""),
         ("session_key", str, ""),
