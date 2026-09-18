@@ -322,3 +322,40 @@ async def test_a_paused_session_declares_nothing(clean_db):
         session.reset_pauses_for_tests()
     assert res["result"] == "skipped" and res["persisted"] is False, res
     assert await _entities(clean_db) == {}
+
+
+# --------------------------------------------------------------------------
+# through the registered handler — the path an MCP client takes
+# --------------------------------------------------------------------------
+#
+# The MCP argument validator hands an omitted object argument over as {}, not
+# None. The boundary functions default to None, so a test that calls them
+# directly never sees what a client sends; these go through the handler.
+
+
+@pytest.mark.asyncio
+async def test_a_store_without_associations_declares_nothing_and_says_nothing(clean_db):
+    out = await server.registry._handlers["store"]({"agent_id": AGENT, "message": {"content": "plain memory"}})
+    assert out["result"] == "stored"
+    assert "associations" not in out, out
+    assert await _entities(clean_db) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_store_with_associations_still_declares_through_the_handler(clean_db):
+    out = await server.registry._handlers["store"](
+        {"agent_id": AGENT, "message": {"content": "mizeye note"},
+         "associations": {"entities": [{"name": "MizEye"}]}}
+    )
+    assert out["associations"]["entities"][0]["name"] == "MizEye"
+    assert set(await _entities(clean_db)) == {"MizEye"}
+
+
+@pytest.mark.asyncio
+async def test_declare_associations_without_retract_reports_no_retraction(clean_db):
+    out = await server.registry._handlers["declare_associations"](
+        {"agent_id": AGENT, "associations": {"entities": [{"name": "MizEye"}]}}
+    )
+    assert out["result"] == "declared" and "retracted" not in out, out
+    empty = await server.registry._handlers["declare_associations"]({"agent_id": AGENT})
+    assert empty["entities"] == [] and "retracted" not in empty, empty
