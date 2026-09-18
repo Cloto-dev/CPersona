@@ -270,6 +270,24 @@ async def do_declare_associations_boundary(
     return _oc_annotate(result, project_id, resolved, warning)
 
 
+async def do_traverse_boundary(
+    agent_id: str,
+    entity: str,
+    max_hops: int = 1,
+    limit: int = 20,
+    channel: str = "",
+    project_id: str | None = None,
+    source_id: str = "",
+) -> dict:
+    pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+    if error:
+        return {**_oc_reject(error), "entity": entity, "entities": [], "relations": []}
+    result = await associations_module.traverse(
+        agent_id, entity, max_hops=max_hops, limit=limit, project_id=pid, channel=channel, source_id=source_id
+    )
+    return _oc_annotate(result, project_id, pid, warning)
+
+
 async def do_archive_episode_boundary(
     agent_id: str,
     history: list,
@@ -1068,6 +1086,69 @@ registry.auto_tool(
         ("session_key", str, ""),
     ],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+)
+
+registry.auto_tool(
+    "traverse",
+    "The neighbourhood of a declared entity, as a graph: the entity named, its aliases, "
+    "the entity -> entity relations declared on it and on what they reach, up to `max_hops` "
+    "in either direction, and the refs of the records that mention each entity. Only what "
+    "was declared (declare_associations, or `associations` on store); nothing is inferred. "
+    "No record text: expand a ref with get_contents. "
+    "`entity` is a name or an alias, compared after normalization; when it names more than "
+    "one entity this call can read (a project's and the global pool's), all are starts. "
+    "ORDER: entities by hops, then by the most recently declared relation that reached them, "
+    "then by id; mentions by record id; relations most recently declared first. "
+    "`limit` bounds both the entities returned and the refs listed per entity. "
+    "Response: {entity, max_hops, limit, entities:[{id, name, hops, aliases?, mentions?, "
+    "mentions_omitted?}], relations:[{id, subject, predicate, object, declared_by, "
+    "declared_at, anchor_ref?}] (subject/object are entity ids from `entities`; a relation "
+    "is listed when both ends are), entities_omitted?, bounds?:{omitted:[max_hops | limit]}, "
+    "reason?:'no_such_entity'}. Relation ids are what declare_associations' `retract` takes. "
+    "Records are listed only when this call could read them: the project, channel and "
+    "source_id filters apply as in recall.",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent identifier"},
+            "entity": {"type": "string", "description": "A declared entity name or alias."},
+            "max_hops": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 5,
+                "default": 1,
+                "description": "Relations to follow from the entity, in either direction. 0 returns the entity alone.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 20,
+                "description": "Maximum entities returned, and maximum mentioning refs listed per entity.",
+            },
+            "channel": {"type": "string", "description": "Memory channel filter -- same semantics as in `recall`."},
+            "project_id": {
+                "type": "string",
+                "description": "γ filter -- same semantics as in `recall`. " + _AUTO_PROJECT_ID_CLAUSE,
+            },
+            "source_id": {
+                "type": "string",
+                "description": "Per-user source filter on the mentioning records -- same semantics as in `recall`.",
+            },
+        },
+        "required": ["agent_id", "entity"],
+    },
+    do_traverse_boundary,
+    [
+        ("agent_id", str),
+        ("entity", str),
+        ("max_hops", int, 1),
+        ("limit", int, 20),
+        ("channel", str, ""),
+        ("project_id", str, None),
+        ("source_id", str, ""),
+    ],
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 
 registry.auto_tool(

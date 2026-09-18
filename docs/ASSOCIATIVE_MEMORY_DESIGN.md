@@ -1,8 +1,8 @@
 # Associative Memory — design
 
-Status: the 2.6 line. Declaring (§1–2) and the reconstruct stages of §3 are
-implemented; `traverse` (§4) is not yet, and §9 records what the implementation
-had to decide. This page fixes a declared
+Status: the 2.6 line. Declaring (§1–2), the reconstruct stages of §3 and
+`traverse` (§4) are implemented; §9 records what the implementation had to
+decide. This page fixes a declared
 graph layer — registered terms with aliases, and relations an agent asserts —
 and the one place that reads it first: [Reconstructive
 Recall](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit). It does not
@@ -212,6 +212,16 @@ to the hop bound, the entities those reach, and the refs of the records that
 mention each — as a graph, deterministic in order and bounded by `limit`.
 It is the query tool for the graph itself. It returns no record text; a ref
 expands through `get_contents` as it does everywhere.
+
+As implemented: `entity` is a name or an alias, and when it names more than one
+entity the call can read (a project's and the global pool's), all of them are
+starts. Entities come in the order the reconstruct walk cuts by — hops, then
+the most recently declared relation that reached them, then id — and `limit`
+bounds both how many entities are returned and how many refs each lists; what
+it cut is counted. A relation is listed when both of its ends are returned. A
+record is listed only when the call could read it, under the project, channel
+and source filters recall applies. `max_hops` defaults to one and is capped at
+five; `limit` defaults to 20 and is capped at 100.
 
 ## 5. Invariants
 

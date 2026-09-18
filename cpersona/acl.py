@@ -499,6 +499,7 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     # Per-agent reads.
     "recall": _scoped(PERM_READ),
     "reconstruct": _scoped(PERM_READ),
+    "traverse": _scoped(PERM_READ),
     "recall_with_context": _scoped(PERM_READ),
     "get_contents": _scoped(PERM_READ),
     "get_profile": _scoped(PERM_READ),

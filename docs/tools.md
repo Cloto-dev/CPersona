@@ -18,6 +18,7 @@
 | `archive_episode` | Store a session summary. Also moves the [episode boundary](behavior-contracts.md#3-episode-boundary-penalty), which down-weights everything written before it |
 | `update_memory` | Correct the content of an existing memory. Use this, not a re-`store` with the same `msg_id` |
 | `declare_associations` | Declare associative memory after the fact — entities with aliases, and subject–predicate–object relations — anchored to a record you name; `retract` removes declarations. The same object rides on `store` as `associations`. Stored verbatim and read by `reconstruct` ([associative memory design](ASSOCIATIVE_MEMORY_DESIGN.md)) |
+| `traverse` | The neighbourhood of a declared entity, as a graph: its aliases, the relations declared on it and on what they reach up to `max_hops`, and the refs of the records that mention each entity. No record text; `limit` bounds entities and refs per entity ([associative memory design](ASSOCIATIVE_MEMORY_DESIGN.md#4-traverse)) |
 
 ## Profile and operator context
 
@@ -135,9 +136,9 @@ with no `persisted` key at all.
 ## Isolation arguments
 
 The three isolation axes are not offered uniformly. `agent_id` is accepted by
-most tools (24), `project_id` by eight, and `channel` by exactly six: `store`,
-`declare_associations`, `recall`, `recall_with_context`, `reconstruct` and
-`archive_episode`.
+most tools (25), `project_id` by nine, and `channel` by exactly seven: `store`,
+`declare_associations`, `recall`, `recall_with_context`, `reconstruct`,
+`traverse` and `archive_episode`.
 
 They are independent axes rather than one nested hierarchy, and reads treat an
 empty value differently from an omitted one. See

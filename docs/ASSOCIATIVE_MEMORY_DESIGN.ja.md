@@ -1,7 +1,7 @@
-<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:cd9eee42107ceb3133b68a49b85a245c135f3fd5 -->
+<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:28ba03d9ce4df3d63e7b68848321aed3b98cbff3 -->
 # 連想記憶 — 設計 { #associative-memory-design }
 
-状態: 2.6 系。宣言 (§1–2) と §3 の再構成の段は実装済みで、`traverse` (§4) はまだです。
+状態: 2.6 系。宣言 (§1–2)、§3 の再構成の段、`traverse` (§4) は実装済みです。
 実装が決める必要のあった点は §9 に記録します。このページは宣言されたグラフ層 —
 別名を持つ登録語と、エージェントが主張する関係 — と、それを最初に読む 1 箇所
 ([再構成想起](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit)) を固定します。
@@ -182,6 +182,13 @@ walk は 1 つの関数 — 候補プールとスコープ内の関係が入り�
 宣言された関係をホップ上限まで、それが到達する entity、各々を言及する記録の ref — を、
 順序が決定論的で `limit` に有界なグラフとして返します。グラフそのものの照会ツールです。
 記録のテキストは返しません; ref は他と同じく `get_contents` で展開します。
+
+実装では: `entity` は名前か別名で、呼び出しが読める entity を複数名指す時 (プロジェクトのものと
+グローバルプールのもの) は、そのすべてが起点です。entity は再構成の walk が切り詰めに使う順序 —
+ホップ数、次にそこへ到達した最も新しく宣言された関係、次に id — で並び、`limit` は返す entity の数と
+entity ごとに挙げる ref の数の両方を抑えます; 切ったものは数で示します。関係は両端が返される時に
+挙げます。記録は、recall と同じプロジェクト・チャンネル・source の絞り込みの下で呼び出しが読める時
+だけ挙げます。`max_hops` の既定は 1、上限は 5; `limit` の既定は 20、上限は 100 です。
 
 ## 5. 不変条件 { #5-invariants }
 
