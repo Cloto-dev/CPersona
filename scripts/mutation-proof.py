@@ -28,12 +28,14 @@ included — a mutant applied over a staged change describes a tree nobody is
 shipping, and that run still goes green. Each mutation is
 applied by exact string replacement and reverted in a finally block; the run
 ends by asserting `git diff --quiet` so a crash can never leave a mutant on
-disk. Mutants are never committed.
+disk. Mutants are never committed. Every write — mutant and restore — also
+removes the file's cached bytecode (see `forget_bytecode`).
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -819,6 +821,30 @@ def tree_is_clean(files: set[str]) -> bool:
     return True
 
 
+def forget_bytecode(path: Path) -> None:
+    """Remove every cached bytecode file for `path`, whatever the interpreter.
+
+    Python trusts a cached .pyc while the source's size and mtime match what the
+    .pyc recorded, and the mtime is kept in whole seconds. A mutant is usually
+    one token wide, so two mutants of one file -- or a mutant and the restored
+    original -- are often the same size, and a targeted run can finish inside a
+    second. The next run then imports the bytecode of the PREVIOUS text: a
+    mutant is judged by code it did not contain, and a CAUGHT can belong to the
+    mutant before it. Measured on a hand-run harness of this shape: two
+    one-digit mutants reported each other's failing assertion.
+    """
+    cached = Path(importlib.util.cache_from_source(str(path)))
+    for pyc in cached.parent.glob(f"{path.stem}.*.pyc"):
+        pyc.unlink(missing_ok=True)
+
+
+def restore_mutation(m: Mutation, original: str) -> None:
+    """Write the original text back, and forget the mutant's bytecode with it."""
+    path = REPO / m.file
+    path.write_text(original)
+    forget_bytecode(path)
+
+
 def apply_mutation(m: Mutation) -> str:
     """Write the mutant, returning the original text for restoration."""
     path = REPO / m.file
@@ -836,6 +862,7 @@ def apply_mutation(m: Mutation) -> str:
             )
         text = text.replace(find, replace)
     path.write_text(text)
+    forget_bytecode(path)
     return original
 
 
@@ -900,7 +927,7 @@ def main() -> int:
                 m, lambda paths: run(["uv", "run", "pytest", "-q", "-x", *paths]).returncode
             )
         finally:
-            (REPO / m.file).write_text(original)
+            restore_mutation(m, original)
 
         if m.equivalent:
             # Inverted expectation: an equivalent mutant that gets CAUGHT means a
