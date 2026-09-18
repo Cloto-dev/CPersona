@@ -193,3 +193,49 @@ async def test_the_tool_answers_through_the_mcp_boundary():
     out = await server.do_traverse_boundary(AGENT, "ミズアイ", 1, 5, "", None, "")
     assert [e["name"] for e in out["entities"]] == ["MizEye", "Kirari"]
     assert out["relations"][0]["id"] == seeded["rels"]["maintains"]
+
+
+async def _episode(summary: str, **kw) -> str:
+    out = await M.do_archive_episode(AGENT, [{"role": "user", "content": summary}], summary=summary,
+                                     keywords="", **kw)
+    assert out.get("episode_id"), out
+    return f"ep:{out['episode_id']}"
+
+
+@pytest.mark.asyncio
+async def test_episodes_are_listed_and_counted_like_memories():
+    """An episode that mentions the entity is a ref like a memory, and counts toward the cut.
+
+    Episodes are readable only where recall would return one: without a source
+    filter, or with a channel.
+    """
+    mem = await _mem("mizeye shipped")
+    eps = [await _episode(f"viewer planning session {i}") for i in range(3)]
+    for ref in (mem, *eps):
+        await _declare(entities=[{"name": "MizEye"}], anchor=ref)
+    whole = await associations.traverse(AGENT, "MizEye", max_hops=0, limit=10)
+    # Lowest id first; a memory and an episode can share an id, and then the kind orders them.
+    by_id = sorted([mem, *eps], key=lambda r: (int(r.split(":")[1]), r.split(":")[0]))
+    assert _by_name(whole)["MizEye"]["mentions"] == by_id
+    cut = await associations.traverse(AGENT, "MizEye", max_hops=0, limit=2)
+    assert len(_by_name(cut)["MizEye"]["mentions"]) == 2
+    assert _by_name(cut)["MizEye"].get("mentions_omitted") == 2
+    by_source = await associations.traverse(AGENT, "MizEye", max_hops=0, limit=10, source_id="u-main")
+    assert _by_name(by_source)["MizEye"]["mentions"] == [mem]
+    assert "mentions_omitted" not in _by_name(by_source)["MizEye"]
+    with_channel = await associations.traverse(AGENT, "MizEye", max_hops=0, limit=10, source_id="u-main", channel="c")
+    assert set(_by_name(with_channel)["MizEye"]["mentions"]) == {mem, *eps}
+
+
+def test_the_schema_states_the_bounds_the_library_enforces():
+    """The advertised maximum and default are the ones the code applies."""
+    import inspect
+
+    props = next(t for t in server.registry._tools if t.name == "traverse").inputSchema["properties"]
+    assert props["max_hops"]["maximum"] == associations.TRAVERSE_MAX_HOPS
+    assert props["limit"]["maximum"] == associations.TRAVERSE_MAX_LIMIT
+    assert props["max_hops"]["minimum"] == 0 and props["limit"]["minimum"] == 1
+    boundary = inspect.signature(server.do_traverse_boundary).parameters
+    library = inspect.signature(associations.traverse).parameters
+    for name in ("max_hops", "limit"):
+        assert props[name]["default"] == boundary[name].default == library[name].default, name

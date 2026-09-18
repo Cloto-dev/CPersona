@@ -672,3 +672,36 @@ def test_the_walk_starts_from_each_items_own_candidates_and_skips_their_own_enti
     rows = [R._Candidate({"ref": ref, "content": "x"}, rank=i) for i, ref in enumerate((_ref(1), _ref(2)))]
     reached, _ = R.walk([[0], [1]], rows, graph, max_hops=1)
     assert reached == [[(_ref(12), "relation:p1", 1)], [(_ref(13), "relation:p3", 1)]]
+
+
+@pytest.mark.asyncio
+async def test_the_walk_reaches_episodes_where_recall_would_return_them():
+    """An episode that mentions a reached entity is evidence like a memory -- quoted,
+    with `why` and `hops` -- and, as in recall, only without a source filter or with
+    a channel."""
+    direct = await _mem("rollback of the billing deploy", 0)
+    out = await M.do_archive_episode(
+        AGENT, [{"role": "user", "content": "payments sync", "timestamp": "2026-02-01T00:00:00+00:00"}],
+        summary="payments team weekly sync", keywords="",
+    )
+    episode = f"ep:{out['episode_id']}"
+    # Archived in February, before every memory here. The episode boundary is the
+    # latest episode's archive time, and a boundary of "now" would down-weight the
+    # March-dated candidate this walks from until the gate dropped it.
+    db = await get_db()
+    await db.execute("UPDATE episodes SET created_at = '2026-02-01 00:00:00' WHERE id = ?", (out["episode_id"],))
+    await db.commit()
+    scope_stats.clear()
+    await _mention(direct, "Billing")
+    await _mention(episode, "Payments")
+    await _relate("Billing", "owned_by", "Payments")
+    walked = await _reconstruct(count=1, max_hops=1)
+    _assert_not_candidates(walked, episode)
+    claim = _claims(walked["items"][0]).get(episode)
+    assert claim is not None and claim["why"] == "relation:owned_by" and claim["hops"] == 1
+    assert any(e["ref"] == episode and e["content"].startswith("[Episode]") for e in walked["items"][0]["excerpts"])
+    by_source = await _reconstruct(count=1, max_hops=1, source_id="u-main")
+    assert episode not in _claims(by_source["items"][0])
+    with_channel = await _reconstruct(count=1, max_hops=1, source_id="u-main", channel="c")
+    assert episode in _claims(with_channel["items"][0])
+

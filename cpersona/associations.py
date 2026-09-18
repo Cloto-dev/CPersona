@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where, source_id_where
-from cpersona.utils import _try_parse_json, episode_timestamp
+from cpersona.utils import episode_timestamp
 
 # Bounds on one call. A declaration that names more is cut at the bound and
 # says so, item by item, in `dropped`.
@@ -538,9 +538,10 @@ async def _mentioning_records(
     Readable means the call could read the record directly: this agent's, in the
     call's project and channel, matching `source_id`, and an episode only where
     recall would return one (no `source_id`, or a `channel`). Returns
-    `[(id, kind, ref, row)]` -- `row` in the shape a recall row has, with
-    `context` -- and, when `count` is set, how many readable records there are
-    in all.
+    `[(id, kind, ref, row)]` -- `row` carries what a walked claim reads (ref,
+    content, timestamp, `context`) -- and, when `count` is set, how many readable
+    records there are in all. No message id: versions of one record cannot share
+    a project (the dedup index), so it would never order a walked row.
     """
     excl_marks = ",".join("?" for _ in excluded) or "''"
     iso_m = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="t")
@@ -560,17 +561,13 @@ async def _mentioning_records(
     episodes_readable = not source_id or bool(channel)
 
     found: list[tuple[int, str, str, dict]] = []
-    for row_id, msg_id, content, source, stamp, project, chan in await db.execute_fetchall(
-        "SELECT t.id, t.msg_id, t.content, t.source, t.timestamp, t.project_id, t.channel "
+    for row_id, content, stamp, project, chan in await db.execute_fetchall(
+        "SELECT t.id, t.content, t.timestamp, t.project_id, t.channel "
         f"{mem_where} ORDER BY t.id LIMIT ?",
         (*mem_params, limit),
     ):
-        row: dict = {"ref": f"mem:{row_id}", "content": content or "", "timestamp": stamp or "",
-                     "context": (project or "", chan or "")}
-        if source:
-            row["source"] = source if isinstance(source, dict) else _try_parse_json(source)
-        if msg_id:
-            row["id"] = msg_id
+        row = {"ref": f"mem:{row_id}", "content": content or "", "timestamp": stamp or "",
+               "context": (project or "", chan or "")}
         found.append((row_id, "mem", row["ref"], row))
     if episodes_readable:
         for row_id, summary, start, created, project, chan in await db.execute_fetchall(
@@ -578,7 +575,7 @@ async def _mentioning_records(
             f"{ep_where} ORDER BY t.id LIMIT ?",
             (*ep_params, limit),
         ):
-            row = {"ref": f"ep:{row_id}", "content": f"[Episode] {summary}", "source": {"System": "episode"},
+            row = {"ref": f"ep:{row_id}", "content": f"[Episode] {summary}",
                    "timestamp": episode_timestamp(start, created), "context": (project or "", chan or "")}
             found.append((row_id, "ep", row["ref"], row))
     found.sort(key=lambda f: (f[0], f[1]))
