@@ -173,15 +173,17 @@ The block (keep it verbatim apart from the substitution — it is budgeted at
 is chosen to change behavior the agent would *not* show by default):
 
 ```markdown
-<!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v3 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
 
-**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
-the first substantive action. Prefer `recall_with_context` when conversation history is already
-at hand; add `deep=true` when the first pass comes back thin. Skip only for trivial one-shot
-questions.
+**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before the
+first substantive action; `recall_with_context` when conversation history is at hand, `deep=true`
+when the first pass comes back thin. Skip only for trivial one-shot questions.
+
+**Past context mid-session** → `reconstruct(agent_id, query, count=<items you need>)`, not `recall`:
+`count` caps the items without shrinking the search. No score comes back; read an item to judge it.
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
 "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
@@ -201,9 +203,8 @@ turns>, summary=…, keywords=…, resolved=…)`, computing `summary` and `keyw
 **Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
 and follow its runbook. Never quietly serve keyword-only recall.
 
-**Quality** — if recall feels off, `set_recall_precision` (strict/balanced/lenient) is the one
-policy knob; run `calibrate_threshold(agent_id)` after the corpus changes substantially.
-Monthly: `check_health(agent_id, fix=true)`.
+**Quality** — recall feels off → `set_recall_precision` (strict/balanced/lenient), the one policy
+knob; after large corpus changes `calibrate_threshold(agent_id)`; monthly `check_health(agent_id, fix=true)`.
 
 **If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
 as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that
@@ -288,12 +289,71 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
   low-confidence: likely for identifier/hash lookups whose exact match is
   semantically distant from the query.
 
+### Reading past context with `reconstruct`
+
+`recall` returns rows; `reconstruct` returns **items** — the rows that belong
+together (versions of one record, one conversational burst, an episode and what
+it covers) bundled, each quoted verbatim with the rows behind it in `claims`.
+
+- **Use it mid-session**, when you go back for context. `count` caps the items
+  returned and nothing else: the search depth (`top_k`, 20 by default) does not
+  shrink with it, whereas `recall`'s `limit` is also each retriever's depth.
+  Session start stays `recall`, as does any call that needs `exclude_contents`
+  or the raw rows.
+- **No score comes back.** An item being returned is not evidence that it is
+  relevant: with `count=3`, two unrelated items is a normal answer. Read them.
+- **Read further smallest first.** A cut quote from a long record carries
+  `expand` — pass it to `get_contents` as it is — then the neighbouring nodes,
+  then the bare ref (the whole record) last.
+- **Fields that read wrong at first sight.** `node.span` is the range the quote
+  covers, which is the whole node only when the quote was not cut; the
+  record's length is `content_len`.
+  `node_unavailable: no_nodes` on a record that fits one embedding window is
+  normal — there is nothing to split. `bounds.reached: ["top_k"]` on a store of
+  thousands means the search used its depth, not that something is missing.
+- **After upgrading to 2.6.0a3 or later**, records stored earlier have no
+  nodes, so a long one is quoted from its start. Build them with
+  `check_health(agent_id, checks=["missing_nodes"], fix=true)`, once per
+  `agent_id` (an empty one needs write access to every agent when permissions
+  are configured), repeated until the finding disappears — a run builds at most
+  50 records. `count: null` in that finding means the embedding server predates
+  the token report (CEmbedding 0.8.0): upgrade it; null is not zero.
+
+### Associative memory
+
+Entities with aliases, and relations between them, that **you declare** — the
+server extracts nothing and infers nothing. Declare with `associations` on
+`store` (the stored memory becomes the evidence) or with `declare_associations`
+afterwards.
+
+- **Declare when a memory names something you will ask about by another name
+  or through something else**: a product and its code name, a project and who
+  owns it. `{"entities": [{"name": "MizEye", "aliases": ["ミズアイ"]}],
+  "relations": [{"subject": "Kirari", "predicate": "maintains", "object": "MizEye"}]}`.
+- **Only `reconstruct` and `traverse` read it.** `recall` is unchanged, and with
+  nothing declared so is `reconstruct`. In `reconstruct`, an alias in your query
+  adds the entity's other names to the keyword search — a vote, not a pass: a
+  record found only that way is still judged against your query as written. A
+  relation between two records bundles them into one item; a relation between
+  entities adds records about related entities as evidence inside the item
+  (`why: "relation:<predicate>"`, `hops`), never as items of their own.
+- **Relate records with a role word** — `corrects`, `supersedes`, `qualifies`,
+  `contradicts`, `supports`, `temporal_predecessor` — with the record that plays
+  the role as subject (the correction, the newer version, the support, the
+  predecessor), and `reconstruct` labels it as that role.
+- **`traverse(entity)`** shows what is declared around a name: aliases,
+  relations and the refs that mention each entity. A wrong declaration stays
+  until you remove it with `declare_associations(retract=…)`, using the relation
+  ids `traverse` returns.
+
 ### Memory types
 
 - **Declarative** — individual facts/decisions/rules via `store`.
 - **Episodic** — conversation summaries via `archive_episode`.
 - **Profile** — accumulated user/project attributes via `update_profile` /
   `get_profile`.
+- **Associative** — declared entities, aliases and relations, via
+  `associations` on `store` or `declare_associations`.
 
 ### Maintenance (low frequency)
 

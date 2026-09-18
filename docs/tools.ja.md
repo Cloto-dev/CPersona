@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:0119e24d4101d916674381667cbd6401bba47643 -->
+<!-- i18n-source: docs/tools.md@blob:8f6887766cde3e57eb7afc3e213458bcfb4c6282 -->
 
 # ツール一覧
 
@@ -17,7 +17,7 @@
 | `recall` | 3 層ハイブリッド検索で記憶を取り出します。**末尾の要素が最良のマッチ**です ([順序の契約](behavior-contracts.md#1-recall-return-order-last-is-best)) |
 | `recall_with_context` | 想起 *と同時に*、渡した会話履歴と重複排除しつつ統合します。返るのはスコア順ではなく**時系列**の統合です |
 | `get_contents` | recall が返したプレビュー参照 (`mem:<id>` / `ep:<id>`) を全文に展開します ([プレビュー階層の設計](RECALL_PREVIEW_TIER_DESIGN.md))。ref でレコードの一部 (overflow tree のノードまたは文字範囲) を指定することもでき、`reconstruct` の引用をレコード全体でなく前後のノードだけに展開できます |
-| `reconstruct` | recall の候補行から**想起単位**を構成します。選択・整列・役割付与であり、文章の合成はしません。`count` は上限であって充足目標や検索深度ではありません。探索幅 (`top_k`、`max_hops`、`max_evidence`) は独立した境界です ([出口の設計](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit)) |
+| `reconstruct` | recall の候補行から**想起単位**を構成します。選択・整列・役割付与であり、文章の合成はしません。`count` は上限であって充足目標や検索深度ではありません。探索幅 (`top_k`、`max_hops`、`max_evidence`) は独立した境界です ([出口の設計](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit))。宣言された連想は、キーワード検索への別名の手がかり、関係した記録の束ね、item 内側への辿った根拠を足します ([契約](behavior-contracts.md#11-declared-associations-are-read-by-reconstruct-and-traverse-only)) |
 | `archive_episode` | セッション要約を保存します。同時に [エピソード境界](behavior-contracts.md#3-episode-boundary-penalty) を動かし、それ以前に書かれたものを減点します |
 | `update_memory` | 既存の記憶の内容を変更します。保存済みの事実を訂正する方法はこれであって、同じ `msg_id` での再 `store` ではありません |
 | `declare_associations` | 連想記憶を後から宣言します — 別名付きの entity と主語–述語–目的語の関係を、名指した記録に anchor して。`retract` で宣言を取り消します。同じオブジェクトは `store` の `associations` にも相乗りできます。verbatim に保存され `reconstruct` が読みます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md)) |

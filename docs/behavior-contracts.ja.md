@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:934c7ba0639b154dc4319c37df2d7dc9e2f99b3b -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:9d998e74594085ef736f27553ccd8b527ba260a6 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -295,3 +295,24 @@ recall の応答が `gate_fallback: true` を伴う場合 (伴わないときは
 
 どちらも上の規則で覆われます。規則を「`ok` を確認する」ではなく「`error` を伴う
 応答は失敗として扱う」と述べているのは、そのためです。
+
+## 11. 宣言された連想は `reconstruct` と `traverse` だけが読む { #11-declared-associations-are-read-by-reconstruct-and-traverse-only }
+
+エージェントが宣言したもの — entity、別名、関係 — は `recall` の応答を 1 つも変えず、
+何も宣言されていなければ `reconstruct` の応答も変えません: どちらもテーブルの無いストアと
+byte-identical です。`reconstruct` がそれを読む場所は次のとおりです:
+
+- **別名が足すのは票であって、通過ではありません。** 問いが宣言された entity を名指すと、
+  その他の名前がキーワード検索にだけ追加されます; 埋め込み検索・採点・品質ゲートは書かれたとおりの
+  問いを見続けます。別名を通じてだけ見つかった記録はその問いに対して判定され、別名が無い時と
+  まったく同じくゲートの下に留まります。別名がするのは、もう一方の検索が既に票を入れた記録を
+  押し上げることです。
+- **2 つの記録の間の関係はそれらを束ねます** — 両方が候補である時に 1 つの item へ。述語が role 語なら
+  主語をその role として示します。entity の共有は決して束ねません。
+- **entity 間の関係は根拠を足し、item は足しません。** item の候補から到達した entity を言及する
+  記録は、その item の内側に `why: "relation:<predicate>"` と `hops` を伴って、ホップ数の少ない順に
+  加わります。item にはならず、返る item やその順序を変えず、1 つの応答に 2 度現れもしません。
+
+対象は宣言されたものちょうどです: サーバは何も抽出せず何も推論せず、誤った宣言は取り消される
+まで残ります。[連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md) を、実装が確定させた規則は §9 を
+参照してください。

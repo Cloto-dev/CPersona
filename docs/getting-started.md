@@ -414,15 +414,17 @@ standard](CLAUDE_MD_POLICY_STANDARD.md). The block itself is maintained in the
 skill, and this copy is checked against it in CI.
 
 ```markdown
-<!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v3 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
 
-**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
-the first substantive action. Prefer `recall_with_context` when conversation history is already
-at hand; add `deep=true` when the first pass comes back thin. Skip only for trivial one-shot
-questions.
+**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before the
+first substantive action; `recall_with_context` when conversation history is at hand, `deep=true`
+when the first pass comes back thin. Skip only for trivial one-shot questions.
+
+**Past context mid-session** → `reconstruct(agent_id, query, count=<items you need>)`, not `recall`:
+`count` caps the items without shrinking the search. No score comes back; read an item to judge it.
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
 "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
@@ -442,9 +444,8 @@ turns>, summary=…, keywords=…, resolved=…)`, computing `summary` and `keyw
 **Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
 and follow its runbook. Never quietly serve keyword-only recall.
 
-**Quality** — if recall feels off, `set_recall_precision` (strict/balanced/lenient) is the one
-policy knob; run `calibrate_threshold(agent_id)` after the corpus changes substantially.
-Monthly: `check_health(agent_id, fix=true)`.
+**Quality** — recall feels off → `set_recall_precision` (strict/balanced/lenient), the one policy
+knob; after large corpus changes `calibrate_threshold(agent_id)`; monthly `check_health(agent_id, fix=true)`.
 
 **If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
 as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that

@@ -300,3 +300,30 @@ Two shapes stay outside that rule, and always did:
 
 Both are covered by the rule above. That is why the rule is phrased as "treat
 a response carrying `error` as a failure" rather than "check `ok`".
+
+## 11. Declared associations are read by `reconstruct` and `traverse` only
+
+What an agent declares — entities, aliases, relations — changes no `recall`
+response, and with nothing declared it changes no `reconstruct` response
+either: both are byte-identical to a store without the tables. Where
+`reconstruct` does read it:
+
+- **An alias adds a vote, not a pass.** When the query names a declared entity,
+  its other names are added to the keyword search only; the embedding search,
+  the scoring and the quality gate still see the query as written. A record
+  found only through the alias is judged against that query and stays below the
+  gate exactly as it would without the alias. What the alias does is lift a
+  record the other search already voted for.
+- **A relation between two records bundles them** into one item when both are
+  candidates, and a role word as predicate labels the subject as that role. A
+  shared entity never bundles.
+- **A relation between entities adds evidence, never items.** Records that
+  mention an entity reached from an item's candidates are added inside that
+  item with `why: "relation:<predicate>"` and `hops`, fewest hops first. They do
+  not become items, do not change which items are returned or their order, and
+  do not appear twice in one response.
+
+Coverage is exactly what was declared: the server extracts nothing and infers
+nothing, and a wrong declaration stays until it is retracted. See the
+[associative memory design](ASSOCIATIVE_MEMORY_DESIGN.md), §9 for the rules the
+implementation fixed.
