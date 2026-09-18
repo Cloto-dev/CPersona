@@ -480,8 +480,9 @@ policy has a reproducible baseline and an audit contract.
 
 ### Reconstruction v1 implementation boundary
 
-The experimental v1 exit retains v0's four stages; the relation walk still
-has no edges to follow. Since v1.1 it implements the payload budget as
+The experimental v1 exit retains v0's four stages; the relation walk follows
+declared relations ([associative memory](ASSOCIATIVE_MEMORY_DESIGN.md#3-where-the-graph-is-read-reconstructive-recall))
+and is the identity where none are declared. Since v1.1 it implements the payload budget as
 described above, with a provisional default of 4,000 and maximum of 20,000
 characters until the section 9 sweep chooses them; a caller's budget below one
 preview-tier excerpt is raised to it and `budget_policy` says so. A claim whose

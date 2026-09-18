@@ -1400,9 +1400,11 @@ registry.auto_tool(
     "hops) and `max_evidence` are declared independently and none is derived from "
     "`count` -- changing `count` alone does not move the candidate id set. "
     "WHAT THE RESPONSE ADMITS: `bounds.omitted` names a bound that DROPPED rows the tool held "
-    "(`max_evidence` -- each cut item also counts them in `claims_omitted` -- or `max_hops`); "
+    "(`max_evidence` -- each cut item also counts them in `claims_omitted` -- or `max_hops`: a "
+    "declared relation was left unfollowed); "
     "`bounds.reached` names a bound that was only MET (`top_k`: retrieval returned as many rows "
-    "as it was allowed, and whether more lay beyond is not known). Both are absent when empty. "
+    "as it was allowed; `max_evidence`: an entity the walk reached is mentioned by more records "
+    "than were read -- whether more lay beyond is not known). Both are absent when empty. "
     "`quote_selection: lexical_only` appears when no query embedding was available and nodes "
     "were ranked by shared trigrams alone; an item whose cut quote is merely the start of its "
     "record carries `node_unavailable` (`no_nodes`, or `not_current` when nodes exist but are "
@@ -1433,8 +1435,9 @@ registry.auto_tool(
     "tens of times a node. Nodes are read after items are chosen, so "
     "they never change which items come back or their order. No relevance score is returned. "
     "ITEM SHAPE (the same for every item): `claims` carries one entry per retained row, "
-    "newest first, each with `ref`, `as_of`, `why` (the key that admitted the row) and "
-    "`roles` when it has any -- sort by `as_of` for a chronological view. `excerpts` and "
+    "newest first, each with `ref`, `as_of`, `why` (the key that admitted the row; "
+    "`relation:<predicate>` when a declared relation did), `hops` when the relation walk reached "
+    "the row, and `roles` when it has any -- sort by `as_of` for a chronological view. `excerpts` and "
     "`excerpts_omitted` are absent when empty. `trace=true` adds `reconstruction` (policy, "
     "candidate / cluster / selected counts), candidate refs, clusters and, for each "
     "record quoted by node, `node_order` -- its best few node indices, best first, as places to "
@@ -1448,15 +1451,25 @@ registry.auto_tool(
     "ROLE DIRECTION: `roles[].role` names what the REFERENCED row is to this claim (the "
     "ref is the subject, the claim is the object): the referenced episode SUPPORTS this "
     "claim, the referenced newer row SUPERSEDES it. The vocabulary is fixed at supports / supersedes "
-    "/ corrects / qualifies / contradicts / temporal_predecessor and is filled in "
-    "stages; this version derives only `supersedes` (same message id, time order) and "
-    "`supports` (episode span containment). Ignore a role you do not know. "
+    "/ corrects / qualifies / contradicts / temporal_predecessor. The server derives `supersedes` "
+    "(same message id, time order) and `supports` (episode span containment); any role word can "
+    "also be DECLARED as a record -> record relation (declare_associations), whose subject is the "
+    "ref. Ignore a role you do not know. "
     "BUNDLING KEYS are deterministic and never semantic: same message id within the "
     "same stored project (unknown project context cannot establish identity), containment in "
     "a candidate episode's time span, and adjacent timestamps FROM THE SAME SOURCE "
     "within the same project and channel, with the entire burst bounded by the time window "
     "(source alone is not a key -- in a single-agent store it is constant and would fold "
-    "the whole pool into one item). "
+    "the whole pool into one item), and a declared record -> record relation between two "
+    "candidates. Sharing a declared entity does not bundle. "
+    "DECLARED ASSOCIATIONS (declare_associations, or `associations` on store) are read here and "
+    "nowhere else, and change nothing when none apply: the names and aliases of entities the "
+    "query mentions are added to the LEXICAL search only (the query's meaning, and so the vector "
+    "search, is unchanged; the extra match is a vote, not a pass through the quality gate); and "
+    "from each item's candidates the relation walk follows declared entity -> entity relations, "
+    "either direction, up to `max_hops`, adding records that mention an entity it reached as "
+    "evidence inside that item -- never as an item, never twice in one response, kept fewest hops "
+    "first, then most recently declared relation, then lowest record id. "
     "This tool is additive: the `recall` contract is untouched.",
     {
         "type": "object",
@@ -1489,9 +1502,9 @@ registry.auto_tool(
                 "type": "integer",
                 "minimum": 0,
                 "description": (
-                    "Relation hops the bounded walk may follow. Declared and reported now; the "
-                    "walk is the identity until declared relations exist, so the value does not "
-                    "change results yet."
+                    "Relation hops the walk may follow from an item's candidates through declared "
+                    "entity -> entity relations. 0 adds no walked evidence. A relation left "
+                    "unfollowed at the bound is named in bounds.omitted."
                 ),
             },
             "max_evidence": {

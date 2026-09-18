@@ -1,6 +1,8 @@
 # Associative Memory — design
 
-Status: design for the 2.6 line, not behaviour. This page fixes a declared
+Status: the 2.6 line. Declaring (§1–2) and the reconstruct stages of §3 are
+implemented; `traverse` (§4) is not yet, and §9 records what the implementation
+had to decide. This page fixes a declared
 graph layer — registered terms with aliases, and relations an agent asserts —
 and the one place that reads it first: [Reconstructive
 Recall](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit). It does not
@@ -38,7 +40,7 @@ The first step is deliberately narrow:
 
 Reconstructive recall was chosen as the first reader because its contract
 already has the seats: a bundling key for rows joined by a declared relation, a
-bounded relation walk that is the identity today, and a role vocabulary of
+bounded relation walk that was the identity, and a role vocabulary of
 which four words wait for declared relations. Nothing in that contract changes;
 stages that were identity maps start doing work.
 
@@ -177,8 +179,8 @@ that a declared record → record relation connects. It sits after
 bundle: every memory that mentions the project's name would otherwise fold
 into one item, which is the contamination this layer must not reintroduce.
 
-**Stage 3 — the bounded relation walk.** Today the identity. Now, from each
-candidate that retrieval surfaced directly, the walk follows: the entities the
+**Stage 3 — the bounded relation walk.** From each candidate that retrieval
+surfaced directly, the walk follows: the entities the
 candidate mentions; the entity → entity relations declared on them, up to
 `max_hops`; and the records that mention the entities reached. Records the
 walk reaches become **evidence inside the item** whose direct candidate led to
@@ -301,3 +303,34 @@ merely surrounded it.
 
 Before that measurement, the step ships on invariants 1–8, each with a test and
 a named mutation that turns it red.
+
+## 9. Readings the first implementation fixed
+
+§3 left six points to the implementation. Each is decided as follows, and each
+has a test and a mutation that turns it red.
+
+- **Direction.** The walk follows an entity → entity relation from either end.
+  Association is reach: *Kirari maintains MizEye* relates the two whichever of
+  them the query names. The predicate is reported as declared.
+- **Hops start at one.** A record is evidence only through at least one
+  declared relation. A record that mentions the same entity as the candidate is
+  not: sharing an entity is not a relation, as it is not a bundling key.
+- **One row, one place.** A record already in the candidate pool stays where
+  retrieval put it, and a record two items reach belongs to the earlier item.
+  The walk runs on the items the count window holds, in item order, so what it
+  adds to an item does not depend on `count`.
+- **Reading is bounded too.** For each entity reached, at most `max_evidence`
+  records are read, lowest id first — the order the cut already uses within one
+  relation. When an entity has more, the response names `max_evidence` in
+  `bounds.reached`: the bound was met, and what lay beyond is not known.
+- **`why` and independence.** A row a declared relation bundled carries
+  `why: "relation:<predicate>"` and no `hops`; a row the walk reached carries
+  the same with `hops`. A cluster a relation formed has
+  `independence_reason: "cluster:relation"`.
+- **Stage 1 adds a vote, not an admission.** The extra terms give a record a
+  lexical match the query's words could not. The fused row still has to clear
+  recall's quality gate, which scores it against the unchanged query, so a
+  record found by the lexical arm alone stays below the gate exactly as it
+  would without the alias. The gate is recall's and this step does not change
+  it. Whether a match on a declared name should be admitted on its own is a
+  separate decision.

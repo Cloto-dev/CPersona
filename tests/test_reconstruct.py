@@ -498,11 +498,20 @@ async def test_only_v0_roles_are_emitted():
 
 
 @pytest.mark.asyncio
-async def test_stage_3_is_the_identity_and_says_so():
-    """The hop bound is declared and reported before the walk follows any edge."""
+async def test_stage_3_is_the_identity_when_nothing_is_declared():
+    """With no declared graph the walk reaches nothing and cuts nothing.
+
+    The walk itself is tested against declared graphs in
+    tests/test_associations_reconstruct.py; this pins the empty case the rest of
+    this file runs under.
+    """
+    from cpersona import associations
+
+    rows = [R._Candidate({"ref": f"mem:{i}", "content": "x"}, rank=i) for i in range(3)]
     clusters = [[0, 1], [2]]
-    out, truncated = R.walk(clusters, max_hops=2)
-    assert out == clusters and truncated is False
+    for graph in (None, associations.WalkGraph()):
+        reached, cuts = R.walk(clusters, rows, graph, max_hops=2)
+        assert reached == [[], []] and cuts == [set(), set()]
 
 
 # --------------------------------------------------------------------------

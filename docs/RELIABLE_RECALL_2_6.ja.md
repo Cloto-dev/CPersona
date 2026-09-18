@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d252278a32e5a80a4439be0cd00a73a4a7119100 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:912f636c85ba284b33368896a7470a5b662c4372 -->
 
 # Reliable Recall — 2.6 系
 
@@ -408,7 +408,9 @@ export。適応化は、固定 policy が再現可能な baseline と監査契�
 
 ### 再構成 v1 の実装範囲 { #reconstruction-v1-implementation-boundary }
 
-実験的な v1 の出口は v0 の 4 段階を維持します。関係の走査には、まだ辿る辺がありません。
+実験的な v1 の出口は v0 の 4 段階を維持します。関係の走査は宣言された関係を辿り
+([連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md#3-where-the-graph-is-read-reconstructive-recall))、
+宣言が無ければ恒等です。
 v1.1 からペイロード予算を上記のとおり実装しています。既定値 4,000 字と最大値 20,000 字は、
 §9 の掃引が選ぶまでの暫定値です。呼び出し側の予算がプレビュー層の抜粋 1 つ分に満たない場合は
 その分まで引き上げ、`budget_policy` で申告します。レコードが現行の overflow tree ノードを

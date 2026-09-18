@@ -438,6 +438,7 @@ async def _recall_cascade(
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
 ) -> list[dict]:
     """Original cascading recall: stages fill remaining slots sequentially.
 
@@ -468,7 +469,7 @@ async def _recall_cascade(
     # source_id set.
     if FTS_ENABLED and query.strip() and (not source_id or channel):
         fts_results = await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
+            db, agent_id, query, limit, channel=channel, project_id=project_id, extra_terms=lexical_terms
         )
         for row in fts_results:
             rid = ("ep", row["id"])
@@ -481,7 +482,8 @@ async def _recall_cascade(
     remaining = max(0, limit - len(results))
     if remaining > 0:
         memory_rows = await _search_memories_keyword(
-            db, agent_id, query, remaining, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, remaining, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
         )
         for row in memory_rows:
             rid = ("mem", row["id"])
@@ -502,6 +504,7 @@ async def _recall_rrf(
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
 ) -> list[dict]:
     """v2.4 RRF recall: run vector and FTS5 independently, merge with
     Reciprocal Rank Fusion. Avoids cascade's positional bias.
@@ -556,7 +559,7 @@ async def _recall_rrf(
     # one channel and is allowed even with source_id set (grounding path).
     if FTS_ENABLED and (not source_id or channel):
         fts_ep_results = await _search_episodes_fts(
-            db, agent_id, query, depth, channel=channel, project_id=project_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
         )
         for rank, row in enumerate(fts_ep_results):
             rid = ("ep", row["id"])
@@ -566,7 +569,8 @@ async def _recall_rrf(
 
     if FTS_ENABLED:
         fts_mem_results = await _search_memories_keyword(
-            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
         )
         for rank, row in enumerate(fts_mem_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -617,6 +621,7 @@ async def _recall_rsf(
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
 ) -> list[dict]:
     """Relative-Score-Fusion recall: like RRF but fuse the per-query min-max
     normalized *raw* score of each channel (cosine for vector, -bm25 for FTS)
@@ -681,7 +686,7 @@ async def _recall_rsf(
     # Episodes lack per-user source tagging (mirrors _recall_rrf gating).
     if FTS_ENABLED and (not source_id or channel):
         for row in await _search_episodes_fts(
-            db, agent_id, query, depth, channel=channel, project_id=project_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
         ):
             rid = ("ep", row["id"])
             doc_map.setdefault(rid, row)
@@ -690,7 +695,8 @@ async def _recall_rsf(
 
     if FTS_ENABLED:
         for row in await _search_memories_keyword(
-            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
         ):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -1381,6 +1387,7 @@ async def do_recall(
     project_id: str | None = None,
     source_id: str = "",
     session_key: str = "",
+    lexical_terms: list[str] | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1399,6 +1406,13 @@ async def do_recall(
     ``source_id`` is non-empty — unless a ``channel`` filter (v2.4.22) is also
     set, in which case channel-scoped episodes are still recalled (the
     session-start grounding path).
+
+    lexical_terms (2.6): additional terms for the two lexical arms ONLY -- the
+    episode FTS and the memory keyword search. The vector arm, the scoring and
+    the gate see ``query`` unchanged. Reconstructive recall passes the declared
+    names and aliases of the entities a query mentions here
+    (docs/ASSOCIATIVE_MEMORY_DESIGN.md §3); the ``recall`` tool never does, and
+    with ``None`` or an empty list every statement is the one it was before.
     """
     # bug-032: clamp the caller-supplied limit like the list handlers do. A
     # negative limit otherwise flows to SQLite as `LIMIT -1` (unbounded full-corpus
@@ -1449,21 +1463,24 @@ async def do_recall(
     if exclude_contents:
         exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
 
+    # Passed only when there are terms, so a recall without them calls each
+    # fusion path exactly as it always did.
+    lexical = {"lexical_terms": lexical_terms} if lexical_terms else {}
     async with connection() as db:
         if RECALL_MODE == "rrf" and query.strip():
             results = await _recall_rrf(
                 db, agent_id, query, depth, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                project_id=project_id, source_id=source_id, **lexical,
             )
         elif RECALL_MODE == "rsf" and query.strip():
             results = await _recall_rsf(
                 db, agent_id, query, depth, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                project_id=project_id, source_id=source_id, **lexical,
             )
         else:
             results = await _recall_cascade(
                 db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                project_id=project_id, source_id=source_id, **lexical,
             )
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
@@ -2339,10 +2356,21 @@ def _build_fts_query(query: str) -> str:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in dict.fromkeys(terms))
 
 
-def _build_fts_recall_query(query: str) -> str:
-    """Experimental edges policy; the literal FTS compiler stays unchanged."""
+def _build_fts_recall_query(query: str, extra_terms: list[str] | None = None) -> str:
+    """Experimental edges policy; the literal FTS compiler stays unchanged.
+
+    ``extra_terms`` (2.6, associative memory stage 1) are OR-ed in as whole
+    phrases: a declared alias names one thing, so ``Miz Eye`` must not match a
+    row that merely contains ``Eye``. A phrase shorter than a trigram cannot
+    match the index and is left to the LIKE fallback, as short query terms are.
+    Without extra terms the expression is exactly the one it always was.
+    """
     normalized = " ".join(token.strip("\"'`.,;:!?()[]{}") for token in query.split())
-    return _build_fts_query(normalized)
+    expression = _build_fts_query(normalized)
+    phrases = ['"' + t.replace('"', '""') + '"' for t in dict.fromkeys(extra_terms or ()) if len(t) >= 3]
+    if not phrases:
+        return expression
+    return " OR ".join([expression, *phrases] if expression else phrases)
 
 
 async def _search_episodes_fts(
@@ -2352,6 +2380,7 @@ async def _search_episodes_fts(
     limit: int,
     channel: str = "",
     project_id: str | None = None,
+    extra_terms: list[str] | None = None,
 ) -> list[dict]:
     """Search episodes using FTS5.
 
@@ -2359,7 +2388,7 @@ async def _search_episodes_fts(
     exact-match filter on the episode's channel — empty means no channel
     filter (all channels), mirroring the memory search paths.
     """
-    fts_query = _build_fts_recall_query(query)
+    fts_query = _build_fts_recall_query(query, extra_terms)
     if not fts_query:
         return []
     # isolation_where composes all three axes: exact agent, γ project,
@@ -2403,11 +2432,14 @@ async def _search_memories_keyword(
     channel: str = "",
     project_id: str | None = None,
     source_id: str = "",
+    extra_terms: list[str] | None = None,
 ) -> list[dict]:
     """Search memories using FTS5 (preferred) or LIKE fallback.
 
     project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
     source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
+    extra_terms (2.6) are matched as well as the query, by FTS phrase and by the
+    LIKE fallback; see ``_build_fts_recall_query``.
     """
     # isolation_where composes all three axes: exact agent, γ project,
     # and the knob2 v2 channel contract (stored channel '' matches every
@@ -2435,7 +2467,7 @@ async def _search_memories_keyword(
         return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows]
 
     if FTS_ENABLED:
-        fts_query = _build_fts_recall_query(query)
+        fts_query = _build_fts_recall_query(query, extra_terms)
         if fts_query:
             try:
                 rows = await db.execute_fetchall(
@@ -2465,14 +2497,19 @@ async def _search_memories_keyword(
     # so it caps how many *matching* rows are fetched (always >= limit; the
     # return slices to limit). Old rows stay reachable; no decoupling needed.
     scan_limit = min(MAX_MEMORIES, max(limit * 5, 50))
+    patterns = [_like_escape_contains(query)]
+    patterns += [_like_escape_contains(t) for t in dict.fromkeys(extra_terms or ()) if t.strip() and t != query]
+    like_clause = " OR ".join("content LIKE ? ESCAPE '\\'" for _ in patterns)
+    if len(patterns) > 1:
+        like_clause = f"({like_clause})"
     rows = await db.execute_fetchall(
         f"""SELECT id, msg_id, content, source, timestamp
            FROM memories
            WHERE {iso.clause}{src_clause_bare}
-           AND content LIKE ? ESCAPE '\\'
+           AND {like_clause}
            ORDER BY created_at DESC
            LIMIT ?""",
-        (*iso.params, *src_params_bare, _like_escape_contains(query), scan_limit),
+        (*iso.params, *src_params_bare, *patterns, scan_limit),
     )
     return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows[:limit]]
 

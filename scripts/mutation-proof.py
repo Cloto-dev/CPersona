@@ -491,13 +491,13 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 1 — stored rows are never modified",
         file="cpersona/reconstruct.py",
-        find="    uf = bundle(candidates, spans)",
+        find="    uf = bundle(candidates, spans, links)",
         replace="""    async with connection() as _mutant_db:
         await _mutant_db.execute(
             "UPDATE memories SET content = content || ' (touched)' WHERE agent_id = ?", (agent_id,)
         )
         await _mutant_db.commit()
-    uf = bundle(candidates, spans)""",
+    uf = bundle(candidates, spans, links)""",
         breaks="the read path writes to the rows it read — an injected defect, because an invariant of absence cannot be broken by deletion",
         expect="test_reconstruct.py::test_1_stored_rows_are_not_modified",
     ),
@@ -624,6 +624,138 @@ MUTATIONS: list[Mutation] = [
         replace='quote["expand"] = {"ref": claim.ref, "node": 0}',
         breaks="the ready-made argument reads the start of the record instead of the node that matched, so the cheapest next read returns the wrong text",
         expect="test_reconstruct_excerpts.py::test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_its_node",
+    ),
+    # ---------------------------------------------------------------------
+    # associative memory read by reconstruct (associations.py, reconstruct.py) —
+    # docs/ASSOCIATIVE_MEMORY_DESIGN.md §3 and §5. The loader and the pure walk
+    # both bound the walk; each entry below breaks the one it names, and the
+    # tests it expects reach that layer directly.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M35",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 1 — declared names reach the lexical arm only",
+        file="cpersona/reconstruct.py",
+        find="        query,\n        effective_top_k,  # the candidate depth",
+        replace="        (query + ' ' + ' '.join(cue_terms)).strip(),\n        effective_top_k,  # the candidate depth",
+        breaks="an alias is appended to the query the vector arm embeds, so expanding a name moves what the query means",
+        expect="test_associations_reconstruct.py::test_the_vector_arm_sees_the_query_unchanged",
+    ),
+    Mutation(
+        id="M36",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 1 — recall does not read the graph",
+        file="cpersona/memory_handlers.py",
+        find="    exclude_set: set[str] = set()\n    if exclude_contents:",
+        replace=(
+            "    if lexical_terms is None:\n"
+            "        from cpersona import associations as _a\n"
+            "        lexical_terms = (await _a.query_terms(agent_id, query, project_id=project_id, channel=channel))[0] or None\n"
+            "    exclude_set: set[str] = set()\n    if exclude_contents:"
+        ),
+        breaks="recall expands declared aliases on its own, so the flat contract changes with every declaration",
+        expect="test_associations_reconstruct.py::test_recall_is_unchanged_by_a_populated_graph",
+    ),
+    Mutation(
+        id="M37",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 2 — a graph the query does not name is not read",
+        file="cpersona/associations.py",
+        find="        if not matched:\n            return [], {}\n        marks",
+        replace=(
+            "        matched = sorted({r[0] for r in await db.execute_fetchall("
+            "f'SELECT e.id FROM entities e WHERE {iso.clause}', iso.params)})\n"
+            "        if not matched:\n            return [], {}\n        marks"
+        ),
+        breaks="every entity in scope counts as named by every query, so a store with any declaration answers differently from one without",
+        expect="test_associations_reconstruct.py::test_a_graph_that_does_not_apply_changes_nothing",
+    ),
+    Mutation(
+        id="M38",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 2 — a declared record relation bundles its endpoints",
+        file="cpersona/reconstruct.py",
+        find='            uf.union(index[subject], index[obj], "cluster:relation", WHY_RELATION + predicate)',
+        replace="            pass",
+        breaks="two candidates an agent declared as one correction of the other come back as separate items",
+        expect="test_associations_reconstruct.py::test_a_record_relation_merges_items_without_reordering_the_rest",
+    ),
+    Mutation(
+        id="M39",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative roles — the referenced row is the subject",
+        file="cpersona/reconstruct.py",
+        find='''        if obj == claim.ref and subject in retained and predicate in ROLE_VOCABULARY:
+            role = {"ref": subject, "role": predicate}''',
+        replace='''        if subject == claim.ref and obj in retained and predicate in ROLE_VOCABULARY:
+            role = {"ref": obj, "role": predicate}''',
+        breaks="a declared correction is emitted on the correcting row, so the reader is told the new statement is what was corrected",
+        expect="test_associations_reconstruct.py::test_each_role_word_is_emitted_in_the_vocabulary_direction",
+    ),
+    Mutation(
+        id="M40",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 5 — the walk stops at max_hops by itself",
+        file="cpersona/reconstruct.py",
+        find="        for hop in range(1, max_hops + 1):\n            step",
+        replace="        for hop in range(1, max_hops + 2):\n            step",
+        breaks="the walk follows one relation more than the caller allowed whenever the graph holds it",
+        expect="test_associations_reconstruct.py::test_the_walk_stops_at_its_hop_bound_even_when_the_graph_holds_more",
+    ),
+    Mutation(
+        id="M41",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 3 — sharing an entity is not a relation",
+        file="cpersona/reconstruct.py",
+        find="            if hops == 0:\n                continue\n            if entity in graph.records_cut:\n                cuts[position].add(BOUND_EVIDENCE)\n            recency, predicate = via[entity]",
+        replace="            if entity in graph.records_cut:\n                cuts[position].add(BOUND_EVIDENCE)\n            recency, predicate = via.get(entity, (0, 'mentions'))",
+        breaks="every record that mentions the candidate's own entity becomes evidence, which is the contamination bundling by entity was refused for",
+        expect="test_associations_reconstruct.py::test_the_walk_starts_from_each_items_own_candidates_and_skips_their_own_entities",
+    ),
+    Mutation(
+        id="M42",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 5 — the written order of the evidence cut",
+        file="cpersona/associations.py",
+        find="newest_first = sorted(edges, key=lambda r: (edges[r][3], -r), reverse=True)",
+        replace="newest_first = sorted(edges, key=lambda r: (edges[r][3], -r))",
+        breaks="an item bounded by max_evidence keeps what an old relation reached and drops what the latest declaration reached",
+        expect="test_associations_reconstruct.py::test_the_evidence_cut_follows_hops_then_recency_then_record_id",
+    ),
+    Mutation(
+        id="M43",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 3 — a reached record is never an item",
+        file="cpersona/reconstruct.py",
+        find="        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)\n        selected.append(item)",
+        replace=(
+            "        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, (), links)\n"
+            "        selected.append(item)\n"
+            "        for row, label, hops in extra:\n"
+            "            selected.append(structure([row], {}, spans, bounds_max_evidence)[0])"
+        ),
+        breaks="records the walk reached become items of their own, so a declaration reorders and pads the window",
+        expect="test_associations_reconstruct.py::test_entity_relations_leave_item_heads_and_order_unchanged",
+    ),
+    Mutation(
+        id="M44",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 7 — the walk reads this agent's relations only",
+        file="cpersona/associations.py",
+        find='    iso_r = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="r")\n    iso_s',
+        replace='    iso_r = isolation_where(agent_id=None, project_id="", channel=channel, alias="r")\n    iso_s',
+        breaks="a relation another agent's row holds is followed, so one agent's declarations shape another's evidence",
+        expect="test_associations_reconstruct.py::test_rows_that_cross_agents_are_not_read_even_when_they_exist",
+    ),
+    Mutation(
+        id="M45",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 7 — a reached record is one the call could read",
+        file="cpersona/associations.py",
+        find='        iso_m = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="t")',
+        replace='        iso_m = isolation_where(agent_id=agent_id, project_id=None, channel=channel, alias="t")',
+        breaks="a record in a project the call does not read is quoted as evidence, through a relation declared in one it does",
+        expect="test_associations_reconstruct.py::test_a_record_the_call_could_not_read_is_not_reached",
     ),
 ]
 

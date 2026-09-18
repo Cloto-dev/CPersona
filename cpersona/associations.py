@@ -26,16 +26,25 @@ A malformed item is reported in `dropped` and skipped, never a reason to
 refuse the rest of the call, and never a reason to lose the memory a `store`
 carried it on. The whole call is bounded (`MAX_ITEMS`) so a declaration cannot
 become an unbounded write.
+
+The second half of this module reads the graph for reconstructive recall (§3):
+the lexical cue terms of stage 1, the record → record links of stage 2 and the
+entity neighbourhood the walk of stage 3 follows. Every read is scoped the way
+the call that reads it is scoped, and with nothing declared every read returns
+empty, which is what keeps an empty graph a no-op (invariant 2).
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
-from cpersona.database import transaction
+from cpersona.database import connection, transaction
+from cpersona.isolation import isolation_where, source_id_where
+from cpersona.utils import _try_parse_json, episode_timestamp
 
 # Bounds on one call. A declaration that names more is cut at the bound and
 # says so, item by item, in `dropped`.
@@ -302,3 +311,292 @@ async def retract(
             )
             report["mentions"] += cur.rowcount
     return report
+
+
+# ------------------------------------------------------------------------------------
+# Reading the graph — reconstructive recall (§3)
+# ------------------------------------------------------------------------------------
+#
+# Reads only: SQL here, and the walk itself is a pure function in reconstruct.py.
+# Each read carries the scope of the call it serves -- the agent exactly, project_id
+# and channel with the read semantics of recall -- so a relation is never followed
+# into a scope the call could not read directly (invariant 7).
+
+# Stage 1 bounds: declared terms one query may match, and terms the lexical arm is
+# handed. The cut is by length, longest first, then by term and entity id.
+MAX_QUERY_MATCHES = 64
+MAX_EXPANSION_TERMS = 32
+
+
+async def query_terms(
+    agent_id: str, query: str, *, project_id: str | None = None, channel: str = ""
+) -> tuple[list[str], dict]:
+    """Stage 1 — the additional terms the lexical arm receives for `query`.
+
+    The query is matched against the names and aliases in scope by normalized
+    substring, longest first; a shorter term inside a span a longer one already
+    claimed does not count, so `eye` inside `mizeye` does not name a second
+    entity. For each entity the query names, its declared name and its other
+    aliases are returned as written -- except those the query already contains.
+
+    Returns `([], {})` when nothing matches, and in particular for an empty
+    graph, so the caller hands retrieval exactly what it handed it before. The
+    report names the entities matched and any terms the bound cut.
+    """
+    folded = normalize(query)
+    if not folded:
+        return [], {}
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
+    async with connection() as db:
+        rows = await db.execute_fetchall(
+            "SELECT id, term FROM ("
+            f"SELECT e.id AS id, e.normalized AS term FROM entities e WHERE {iso.clause} "
+            "AND e.normalized != '' AND instr(?, e.normalized) > 0 "
+            "UNION "
+            "SELECT e.id AS id, a.normalized AS term FROM entity_aliases a JOIN entities e ON e.id = a.entity_id "
+            f"WHERE {iso.clause} AND a.normalized != '' AND instr(?, a.normalized) > 0"
+            ") ORDER BY length(term) DESC, term, id LIMIT ?",
+            (*iso.params, folded, *iso.params, folded, MAX_QUERY_MATCHES),
+        )
+        claimed: list[tuple[int, int]] = []
+        found_terms: set[str] = set()
+        matched: list[int] = []
+        for entity_id, term in rows:
+            found = term in found_terms
+            start = folded.find(term)
+            while not found and start != -1:
+                end = start + len(term)
+                if all(end <= s or start >= e for s, e in claimed):
+                    claimed.append((start, end))
+                    found = True
+                start = folded.find(term, start + 1)
+            if found:
+                found_terms.add(term)
+                if entity_id not in matched:
+                    matched.append(entity_id)
+        if not matched:
+            return [], {}
+        marks = ",".join("?" for _ in matched)
+        names = {
+            r[0]: (r[1], r[2])
+            for r in await db.execute_fetchall(
+                f"SELECT id, name, normalized FROM entities WHERE id IN ({marks})", matched
+            )
+        }
+        aliases: dict[int, list[tuple[str, str]]] = {}
+        for entity_id, alias, normalized in await db.execute_fetchall(
+            f"SELECT entity_id, alias, normalized FROM entity_aliases WHERE entity_id IN ({marks}) "
+            "ORDER BY entity_id, normalized",
+            matched,
+        ):
+            aliases.setdefault(entity_id, []).append((alias, normalized))
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    cut = 0
+    for entity_id in matched:
+        for written, normalized in [names[entity_id], *aliases.get(entity_id, [])]:
+            if normalized in seen or normalized in folded:
+                continue
+            seen.add(normalized)
+            if len(terms) >= MAX_EXPANSION_TERMS:
+                cut += 1
+                continue
+            terms.append(written)
+    report: dict = {"entities": [names[e][0] for e in matched]}
+    if terms:
+        report["terms"] = terms
+    if cut:
+        report["terms_omitted"] = cut
+    return terms, report
+
+
+async def record_links(
+    agent_id: str, refs: list[str], *, project_id: str | None = None, channel: str = ""
+) -> list[tuple[str, str, str]]:
+    """Stage 2 — declared record → record relations with BOTH endpoints in `refs`.
+
+    `(subject_ref, predicate, object_ref)`, sorted, so the bundling that reads
+    them is deterministic. A relation with one endpoint outside the pool is not
+    returned: bundling joins candidates, it does not add rows.
+    """
+    pool = set(refs)
+    by_kind: dict[str, list[int]] = {}
+    for ref in refs:
+        parsed = parse_ref(ref)
+        if parsed is not None:
+            by_kind.setdefault(parsed[0], []).append(parsed[1])
+    if not by_kind:
+        return []
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="r")
+    links: set[tuple[str, str, str]] = set()
+    async with connection() as db:
+        for kind, ids in sorted(by_kind.items()):
+            for offset in range(0, len(ids), 500):
+                batch = ids[offset:offset + 500]
+                marks = ",".join("?" for _ in batch)
+                rows = await db.execute_fetchall(
+                    "SELECT r.subject_kind, r.subject_id, r.predicate, r.object_kind, r.object_id "
+                    f"FROM relations r WHERE {iso.clause} AND r.subject_kind = ? AND r.subject_id IN ({marks}) "
+                    "AND r.object_kind IN ('mem', 'ep')",
+                    (*iso.params, kind, *batch),
+                )
+                for s_kind, s_id, predicate, o_kind, o_id in rows:
+                    subject, obj = f"{s_kind}:{s_id}", f"{o_kind}:{o_id}"
+                    if obj in pool and obj != subject:
+                        links.add((subject, predicate, obj))
+    return sorted(links)
+
+
+@dataclass
+class WalkGraph:
+    """The part of the graph one reconstruction's walk may follow.
+
+    `mentions` maps a direct candidate's ref to the entities it mentions.
+    `adjacency` maps an entity to its declared entity → entity relations in both
+    directions, `(recency, relation id, other entity, predicate)`, where recency 0
+    is the most recently declared relation of the whole set. `records` maps an
+    entity reached through at least one relation to the refs of readable records
+    that mention it, lowest id first, excluding the candidate pool; `rows` holds
+    those records in the shape a recall row has, with `context`.
+    """
+
+    mentions: dict[str, list[int]] = field(default_factory=dict)
+    adjacency: dict[int, list[tuple[int, int, int, str]]] = field(default_factory=dict)
+    records: dict[int, list[str]] = field(default_factory=dict)
+    rows: dict[str, dict] = field(default_factory=dict)
+    # Entities whose `records` list was cut by the fetch bound.
+    records_cut: set[int] = field(default_factory=set)
+
+
+async def walk_graph(
+    agent_id: str,
+    start_refs: list[str],
+    pool_refs: list[str],
+    *,
+    max_hops: int,
+    per_entity: int,
+    project_id: str | None = None,
+    channel: str = "",
+    source_id: str = "",
+) -> WalkGraph:
+    """Load what the walk from `start_refs` can follow within `max_hops`.
+
+    Breadth first over the union of the starts: the adjacency of every entity
+    within `max_hops` of any start is loaded, which is a superset of what the
+    walk from one item needs, and the adjacency of entities one hop further is
+    not. Records are fetched per reached entity, at most `per_entity + 1` --
+    the `+ 1` is how a cut is known to have happened. A record is readable when
+    the call could read it directly: this agent's, in the call's project and
+    channel, matching `source_id`, and an episode only where recall would
+    return one (no `source_id`, or a `channel`).
+    """
+    graph = WalkGraph()
+    starts = sorted({r for r in start_refs if parse_ref(r) is not None})
+    if not starts:
+        return graph
+    iso_e = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
+    iso_r = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="r")
+    iso_s = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="s")
+    iso_o = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="o")
+    async with connection() as db:
+        for offset in range(0, len(starts), 500):
+            batch = starts[offset:offset + 500]
+            marks = ",".join("?" for _ in batch)
+            for ref, entity_id in await db.execute_fetchall(
+                "SELECT m.ref, m.entity_id FROM entity_mentions m JOIN entities e ON e.id = m.entity_id "
+                f"WHERE {iso_e.clause} AND m.ref IN ({marks}) ORDER BY m.ref, m.entity_id",
+                (*iso_e.params, *batch),
+            ):
+                graph.mentions.setdefault(ref, []).append(entity_id)
+        if not graph.mentions:
+            return graph
+
+        edges: dict[int, tuple[int, int, str, str]] = {}  # relation id -> (subject, object, predicate, declared_at)
+        distance = {e: 0 for ids in graph.mentions.values() for e in ids}
+        frontier = sorted(distance)
+        for hop in range(max_hops + 1):
+            if not frontier:
+                break
+            nxt: set[int] = set()
+            for offset in range(0, len(frontier), 250):
+                batch = frontier[offset:offset + 250]
+                marks = ",".join("?" for _ in batch)
+                for rel_id, subject, obj, predicate, declared_at in await db.execute_fetchall(
+                    "SELECT r.id, r.subject_id, r.object_id, r.predicate, r.declared_at FROM relations r "
+                    "JOIN entities s ON s.id = r.subject_id JOIN entities o ON o.id = r.object_id "
+                    f"WHERE {iso_r.clause} AND {iso_s.clause} AND {iso_o.clause} "
+                    "AND r.subject_kind = 'entity' AND r.object_kind = 'entity' "
+                    f"AND (r.subject_id IN ({marks}) OR r.object_id IN ({marks}))",
+                    (*iso_r.params, *iso_s.params, *iso_o.params, *batch, *batch),
+                ):
+                    edges[rel_id] = (subject, obj, predicate, declared_at)
+                    for end in (subject, obj):
+                        if end not in distance:
+                            nxt.add(end)
+            if hop == max_hops:
+                break  # entities one hop past the bound are known, their edges are not needed
+            for e in nxt:
+                distance[e] = hop + 1
+            frontier = sorted(nxt)
+
+        # Recency is one written order over the loaded relations: most recently
+        # declared first, then the lower relation id.
+        newest_first = sorted(edges, key=lambda r: (edges[r][3], -r), reverse=True)
+        recency = {rel_id: position for position, rel_id in enumerate(newest_first)}
+        for rel_id, (subject, obj, predicate, _) in edges.items():
+            if subject == obj:
+                continue
+            graph.adjacency.setdefault(subject, []).append((recency[rel_id], rel_id, obj, predicate))
+            graph.adjacency.setdefault(obj, []).append((recency[rel_id], rel_id, subject, predicate))
+        for entries in graph.adjacency.values():
+            entries.sort()
+
+        reached = sorted(e for e, d in distance.items() if d >= 1)
+        excluded = sorted(set(pool_refs))
+        excl_marks = ",".join("?" for _ in excluded) or "''"
+        iso_m = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="t")
+        src = source_id_where(source_id, alias="t")
+        for entity_id in reached:
+            found: list[tuple[int, str, str]] = []
+            memory_rows = await db.execute_fetchall(
+                "SELECT t.id, t.msg_id, t.content, t.source, t.timestamp, t.project_id, t.channel "
+                "FROM entity_mentions m JOIN memories t ON t.id = CAST(substr(m.ref, 5) AS INTEGER) "
+                f"WHERE m.entity_id = ? AND m.ref LIKE 'mem:%' AND m.ref NOT IN ({excl_marks}) "
+                f"AND {iso_m.clause}{src.and_clause} ORDER BY t.id LIMIT ?",
+                (entity_id, *excluded, *iso_m.params, *src.params, per_entity + 1),
+            )
+            for row_id, msg_id, content, source, stamp, project, chan in memory_rows:
+                ref = f"mem:{row_id}"
+                found.append((row_id, "mem", ref))
+                row: dict = {"ref": ref, "content": content or "", "timestamp": stamp or "",
+                             "context": (project or "", chan or "")}
+                if source:
+                    row["source"] = source if isinstance(source, dict) else _try_parse_json(source)
+                if msg_id:
+                    row["id"] = msg_id
+                graph.rows[ref] = row
+            if not source_id or channel:
+                episode_rows = await db.execute_fetchall(
+                    "SELECT t.id, t.summary, t.start_time, t.created_at, t.project_id, t.channel "
+                    "FROM entity_mentions m JOIN episodes t ON t.id = CAST(substr(m.ref, 4) AS INTEGER) "
+                    f"WHERE m.entity_id = ? AND m.ref LIKE 'ep:%' AND m.ref NOT IN ({excl_marks}) "
+                    f"AND {iso_m.clause} ORDER BY t.id LIMIT ?",
+                    (entity_id, *excluded, *iso_m.params, per_entity + 1),
+                )
+                for row_id, summary, start, created, project, chan in episode_rows:
+                    ref = f"ep:{row_id}"
+                    found.append((row_id, "ep", ref))
+                    graph.rows[ref] = {
+                        "ref": ref,
+                        "content": f"[Episode] {summary}",
+                        "source": {"System": "episode"},
+                        "timestamp": episode_timestamp(start, created),
+                        "context": (project or "", chan or ""),
+                    }
+            found.sort()
+            if len(found) > per_entity:
+                graph.records_cut.add(entity_id)
+            if found:
+                graph.records[entity_id] = [ref for _, _, ref in found[:per_entity + 1]]
+    return graph

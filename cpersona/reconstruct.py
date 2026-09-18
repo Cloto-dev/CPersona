@@ -15,10 +15,12 @@ Processing is four stages, all SQL and pure functions:
 1. *Candidates* — the pool the recall process produced, unchanged. Its depth is
    the section 4 knob (``top_k``), never derived from ``count``.
 2. *Bundling* — cluster candidates by deterministic keys (below).
-3. *Bounded relation walk* — the identity here: there is no relation table to
-   walk yet, and neither is the overflow chain that will feed it. The hop bound
-   is declared and reported anyway, so the contract does not change when the
-   stage stops being the identity.
+3. *Bounded relation walk* — from each item's direct candidates, through the
+   entities they are declared to mention and the entity → entity relations
+   declared on those, up to ``max_hops``, to the records that mention the
+   entities reached. Those records become evidence inside the item, never an
+   item (docs/ASSOCIATIVE_MEMORY_DESIGN.md §3). With nothing declared it is the
+   identity.
 4. *Structuring* — order by time and by version; where two rows on the same
    subject cannot be ordered, keep both and mark the conflict. No summarising,
    no merging of text.
@@ -63,7 +65,7 @@ import logging
 
 import numpy as np
 
-from . import config, nodes, vector
+from . import associations, config, nodes, vector
 from .database import connection
 from .utils import _parse_timestamp_utc
 
@@ -74,8 +76,9 @@ logger = logging.getLogger(__name__)
 # derives the two the stored rows can justify without a relation table:
 # `supersedes` (same msg_id + time order) and `supports` (episode containment).
 # `corrects` / `qualifies` / `contradicts` need a source of truth the server does
-# not have — an in-place update leaves no history — and appear when declared
-# relations do. A reader ignores a role it does not know.
+# not have — an in-place update leaves no history — so they come only from a
+# declared record → record relation whose predicate is the role word. Any role
+# may be declared that way. A reader ignores a role it does not know.
 ROLE_VOCABULARY: tuple[str, ...] = (
     "supports",
     "supersedes",
@@ -93,8 +96,13 @@ CLUSTER_KEYS: tuple[str, ...] = (
     "cluster:msg_id",
     "cluster:episode",
     "cluster:adjacent",
+    "cluster:relation",  # a declared record -> record relation joins its two endpoints
     "cluster:chain",  # reserved for the overflow chain; no chain exists yet, so it never fires
 )
+
+# `why` of a row a declared relation admitted: `relation:<predicate>`. A row the
+# bundling joined carries it with no `hops`; a row the walk reached carries `hops`.
+WHY_RELATION = "relation:"
 
 # What the response admits about its own limits. Two different facts used to share
 # one boolean (`bounds.truncated`), and on a pool that fills its depth -- every
@@ -326,7 +334,7 @@ class _Union:
             i = self._parent[i]
         return i
 
-    def union(self, a: int, b: int, key: str) -> None:
+    def union(self, a: int, b: int, key: str, why: str | None = None) -> None:
         ra, rb = self.find(a), self.find(b)
         if ra == rb:
             return
@@ -336,9 +344,10 @@ class _Union:
         self.keys_used.add(key)
         # The row that JOINED gets the why. Both endpoints may already carry one
         # from a stronger key; first key wins, which is why CLUSTER_KEYS is
-        # ordered and iterated rather than applied as a set.
+        # ordered and iterated rather than applied as a set. A declared relation
+        # says which predicate joined the rows, so its why is more than its key.
         for idx in (a, b):
-            self.why.setdefault(idx, key)
+            self.why.setdefault(idx, why or key)
 
 
 async def _episode_spans(agent_id: str, episode_ids: list[int]) -> dict[int, tuple[object, object]]:
@@ -388,12 +397,17 @@ async def _candidate_context(agent_id: str, candidates: list[_Candidate]) -> Non
                     by_id[row_id].context = (project or "", channel or "")
 
 
-def bundle(candidates: list[_Candidate], spans: dict[int, tuple[object, object]]) -> _Union:
+def bundle(
+    candidates: list[_Candidate],
+    spans: dict[int, tuple[object, object]],
+    links: list[tuple[str, str, str]] = (),
+) -> _Union:
     """Stage 2 — cluster by deterministic keys.
 
     These keys are the CEILING of what the server calls "the same memory".
     Semantic sameness is not judged here; nothing below looks at what a row says,
-    only at the identifiers and timestamps it was stored with.
+    only at the identifiers and timestamps it was stored with, and at the
+    record → record relations an agent declared between them (`links`).
     """
     uf = _Union(len(candidates))
 
@@ -443,6 +457,14 @@ def bundle(candidates: list[_Candidate], spans: dict[int, tuple[object, object]]
                 else:
                     anchor = right
 
+    # cluster:relation — a declared record -> record relation joins its endpoints
+    # when both are candidates. Sharing a mentioned ENTITY does not: every record
+    # that mentions the project's name would fold into one item.
+    index = {c.ref: i for i, c in enumerate(candidates)}
+    for subject, predicate, obj in links:
+        if subject in index and obj in index:
+            uf.union(index[subject], index[obj], "cluster:relation", WHY_RELATION + predicate)
+
     # cluster:chain — reserved. An overflow chain is the natural evidence cluster
     # for a record split across nodes, and it plugs in here with no change to the
     # contract. There is no chain column in this schema, so the key is declared
@@ -451,24 +473,83 @@ def bundle(candidates: list[_Candidate], spans: dict[int, tuple[object, object]]
     return uf
 
 
-def walk(clusters: list[list[int]], max_hops: int) -> tuple[list[list[int]], bool]:
-    """Stage 3 — bounded relation walk. The identity in v0.
+def walk(
+    clusters: list[list[int]],
+    candidates: list[_Candidate],
+    graph: associations.WalkGraph | None,
+    max_hops: int,
+) -> tuple[list[list[tuple[str, str, int]]], list[set[str]]]:
+    """Stage 3 — the bounded relation walk. A pure function of the pool and the graph.
 
-    With no relation table and no overflow chain there is nothing to follow, so
-    this returns its input and reports that it cut nothing.
-    It exists as a named stage because the bound is part of the contract now: a
-    caller that reads `bounds.max_hops` today gets the same field when the stage
-    starts following edges, rather than a new one.
+    For each cluster, in the order given (item order): start from the entities
+    its candidates are declared to mention, follow entity → entity relations in
+    either direction up to `max_hops`, and collect the records that mention an
+    entity reached through at least one relation. Sharing an entity with a
+    candidate is not a reason to be evidence; a declared relation is. Returns, per
+    cluster, `(ref, why, hops)` in the written order -- fewer hops first, then the
+    more recently declared relation, then the lower record id -- and, per cluster,
+    the bounds that cut it: `max_hops` when a relation was left unfollowed at the
+    hop bound, `max_evidence` when a reached entity had more records than the
+    graph read held (see `associations.walk_graph`).
+
+    A reached record is never an item and never repeated: one already in the
+    candidate pool is left where retrieval put it, and one an earlier item
+    reached is not added to a later one.
     """
-    del max_hops  # no edges to bound yet; the declared bound is reported as given
-    return clusters, False
+    reached_by_cluster: list[list[tuple[str, str, int]]] = [[] for _ in clusters]
+    cuts: list[set[str]] = [set() for _ in clusters]
+    if graph is None or not graph.mentions:
+        return reached_by_cluster, cuts
+    pool = {c.ref for c in candidates}
+    taken: set[str] = set()
+    for position, members in enumerate(clusters):
+        distance: dict[int, int] = {}
+        via: dict[int, tuple[int, str]] = {}  # entity -> (recency, predicate) of the edge that reached it
+        for i in members:
+            for entity in graph.mentions.get(candidates[i].ref, ()):
+                distance[entity] = 0
+        frontier = sorted(distance)
+        for hop in range(1, max_hops + 1):
+            step: dict[int, tuple[int, str]] = {}
+            for entity in frontier:
+                for recency, _, other, predicate in graph.adjacency.get(entity, ()):
+                    if other not in distance and (other not in step or recency < step[other][0]):
+                        step[other] = (recency, predicate)
+            for other, edge in step.items():
+                distance[other] = hop
+                via[other] = edge
+            frontier = sorted(step)
+        if any(other not in distance for entity in frontier for _, _, other, _ in graph.adjacency.get(entity, ())):
+            cuts[position].add(BOUND_HOPS)
+        best: dict[str, tuple] = {}
+        for entity, hops in distance.items():
+            if hops == 0:
+                continue
+            if entity in graph.records_cut:
+                cuts[position].add(BOUND_EVIDENCE)
+            recency, predicate = via[entity]
+            for ref in graph.records.get(entity, ()):
+                if ref in pool or ref in taken:
+                    continue
+                kind, _, raw = ref.partition(":")
+                key = (hops, recency, int(raw), kind, predicate)
+                if ref not in best or key < best[ref]:
+                    best[ref] = key
+        ordered = sorted(best.items(), key=lambda kv: kv[1])
+        reached_by_cluster[position] = [(ref, WHY_RELATION + key[4], key[0]) for ref, key in ordered]
+        taken.update(best)
+    return reached_by_cluster, cuts
 
 
-def _roles_for(claim: _Candidate, members: list[_Candidate], spans: dict) -> list[dict]:
-    """The roles v0 can derive from stored rows alone.
+def _roles_for(
+    claim: _Candidate, members: list[_Candidate], spans: dict, links: list[tuple[str, str, str]] = ()
+) -> list[dict]:
+    """The roles of one claim: derived from stored rows, then declared.
 
     `roles[].role` names what the referenced row is TO this claim (the ref is the
-    subject) — see the module docstring.
+    subject) — see the module docstring. A declared record -> record relation whose
+    predicate is a role word says the same thing in the same direction: its subject
+    is the ref, its object is the claim.
     """
     roles: list[dict] = []
 
@@ -497,7 +578,21 @@ def _roles_for(claim: _Candidate, members: list[_Candidate], spans: dict) -> lis
                     and start is not None and end is not None and start <= claim.ts <= end):
                 roles.append({"ref": m.ref, "role": "supports"})
 
+    retained = {m.ref for m in members}
+    for subject, predicate, obj in links:
+        if obj == claim.ref and subject in retained and predicate in ROLE_VOCABULARY:
+            role = {"ref": subject, "role": predicate}
+            if role not in roles:
+                roles.append(role)
+
     return roles
+
+
+def _key_of(why: str | None) -> str | None:
+    """The cluster key a bundled row's `why` names."""
+    if why is not None and why.startswith(WHY_RELATION):
+        return "cluster:relation"
+    return why
 
 
 def _conflicts(members: list[_Candidate]) -> list[dict]:
@@ -543,21 +638,26 @@ def structure(
     why: dict[str, str],
     spans: dict,
     max_evidence: int,
+    reached: list[tuple[_Candidate, str, int]] = (),
+    links: list[tuple[str, str, str]] = (),
 ) -> tuple[dict, int]:
     """Stage 4 — one cluster becomes one recall item.
 
     Ordered by time and by version; conflicting rows are kept and marked. Nothing
     is summarised and no text is merged: `content` is the head claim verbatim, and
-    `head_ref` names it.
+    `head_ref` names it. `reached` are the rows the walk added, in its written
+    order; they are evidence, never the head.
     """
     head = _head(members)
     # Every emitted claim and role target is a retained row. A cut keeps the
-    # head, then the most relevant of the rest; age decides nothing about what
-    # survives.
-    dropped = max(0, len(members) - max_evidence)
+    # head, then the most relevant of the rest, then what the walk reached in the
+    # walk's order; age decides nothing about what survives.
+    walked = [row for row, _, _ in reached]
+    dropped = max(0, len(members) + len(walked) - max_evidence)
     others = sorted((m for m in members if m is not head), key=_relevance_key)
-    retained = {id(m) for m in [head, *others][:max_evidence]}
-    ordered = sorted((m for m in members if id(m) in retained), key=_order_key)
+    retained = {id(m) for m in [head, *others, *walked][:max_evidence]}
+    ordered = sorted((m for m in [*members, *walked] if id(m) in retained), key=_order_key)
+    walk_why = {row.ref: (label, hops) for row, label, hops in reached}
 
     # One entry per retained row carries everything the item says about that row:
     # when it holds, why it is here, and how it relates to the others. The earlier
@@ -568,14 +668,17 @@ def structure(
     claims = []
     for m in ordered:
         claim: dict = {"ref": m.ref, "as_of": m.timestamp, "why": why.get(m.ref, "seed")}
-        roles = _roles_for(m, ordered, spans)
+        if m.ref in walk_why:
+            claim["why"], claim["hops"] = walk_why[m.ref]
+        roles = _roles_for(m, ordered, spans, links)
         if roles:
             claim["roles"] = roles
         claims.append(claim)
 
     # The strongest key that formed this cluster answers "why is this a separate
     # item"; a row nothing linked to is independent because nothing claimed it.
-    present = {why.get(m.ref) for m in members} - {None, "seed"}
+    # What the walk reached did not form the cluster and is not counted.
+    present = {_key_of(why.get(m.ref)) for m in members} - {None, "seed"}
     independence = next((k for k in CLUSTER_KEYS if k in present), "singleton")
 
     item: dict = {
@@ -845,6 +948,11 @@ async def do_reconstruct(
     bounds_max_hops = config.RECONSTRUCT_MAX_HOPS if max_hops is None else max(0, int(max_hops))
     bounds_max_evidence = config.RECONSTRUCT_MAX_EVIDENCE if max_evidence is None else max(1, int(max_evidence))
 
+    # Stage 1: the declared names and aliases of the entities the query mentions go
+    # to the lexical arm only. With none, retrieval is called exactly as before.
+    cue_terms, cue_report = await associations.query_terms(
+        agent_id, query, project_id=project_id, channel=channel
+    )
     recall_result = await do_recall(
         agent_id,
         query,
@@ -854,6 +962,7 @@ async def do_reconstruct(
         project_id=project_id,
         source_id=source_id,
         session_key=session_key,
+        **({"lexical_terms": cue_terms} if cue_terms else {}),
     )
     messages = recall_result.get("messages", [])
 
@@ -900,6 +1009,8 @@ async def do_reconstruct(
         response["gate_fallback"] = True
     if trace:
         response["trace"] = {"candidate_refs": [c.ref for c in candidates], "clusters": []}
+        if cue_report:
+            response["trace"]["cues"] = cue_report
     if not candidates:
         response["shortfall_reason"] = (
             "count_zero" if effective_count == 0 else (
@@ -913,31 +1024,51 @@ async def do_reconstruct(
     await _candidate_context(agent_id, candidates)
     spans = await _episode_spans(agent_id, [c.row_id for c in candidates if c.kind == "ep" and c.row_id > 0])
 
-    uf = bundle(candidates, spans)
+    pool_refs = [c.ref for c in candidates]
+    links = await associations.record_links(agent_id, pool_refs, project_id=project_id, channel=channel)
+    uf = bundle(candidates, spans, links)
     grouped: dict[int, list[int]] = {}
     for i in range(len(candidates)):
         grouped.setdefault(uf.find(i), []).append(i)
     clusters = [sorted(members) for _, members in sorted(grouped.items())]
-    clusters, walk_truncated = walk(clusters, bounds_max_hops)
     response["reconstruction"]["cluster_count"] = len(clusters)
     if trace:
         response["trace"]["clusters"] = [[candidates[i].ref for i in group] for group in clusters]
 
     why_by_ref = {candidates[i].ref: uf.why[i] for i in uf.why}
 
-    assembled = []
-    for members in clusters:
-        rows = [candidates[i] for i in members]
-        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence)
-        # Most relevant cluster first; the head ref makes the order total.
-        assembled.append((min(r.rank for r in rows), item["head_ref"], item))
+    # Item order is fixed before the walk: most relevant cluster first. Ranks are
+    # distinct, so the order is total. The walk runs on the items the window
+    # holds, in that order, so what it adds to an item does not depend on `count`
+    # (an earlier item is always in the window when a later one is).
+    chosen = sorted(clusters, key=lambda group: min(candidates[i].rank for i in group))[:effective_count]
+    graph = await associations.walk_graph(
+        agent_id,
+        [candidates[i].ref for group in chosen for i in group],
+        pool_refs,
+        max_hops=bounds_max_hops,
+        per_entity=bounds_max_evidence,
+        project_id=project_id,
+        channel=channel,
+        source_id=source_id,
+    )
+    reached, walk_cuts = walk(chosen, candidates, graph, bounds_max_hops)
 
-    assembled.sort(key=lambda t: (t[0], t[1]))
-    selected = [item for _, _, item in assembled[:effective_count]]
+    by_ref = {c.ref: c for c in candidates}
+    selected = []
+    for members, walked in zip(chosen, reached):
+        rows = [candidates[i] for i in members]
+        extra = []
+        for ref, label, hops in walked:
+            row = _Candidate(graph.rows[ref], rank=len(by_ref))
+            row.context = graph.rows[ref]["context"]
+            by_ref[row.ref] = row
+            extra.append((row, label, hops))
+        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)
+        selected.append(item)
 
     # Quote the selected items. Nodes are read only now, after the items and their
     # order are fixed, so the tree cannot change what comes back.
-    by_ref = {c.ref: c for c in candidates}
     entries_claims = []
     for item in selected:
         head = by_ref[item["head_ref"]]
@@ -973,16 +1104,21 @@ async def do_reconstruct(
 
     # Only items that are returned count: a cut inside an item the window or the
     # budget left out is not something this response withheld from its reader.
+    returned_cuts = set().union(*walk_cuts[:len(items)])
     omitted = [
         name
         for name, cut in (
             (BOUND_EVIDENCE, any("claims_omitted" in item for item in items)),
-            (BOUND_HOPS, walk_truncated),
+            (BOUND_HOPS, BOUND_HOPS in returned_cuts),
         )
         if cut
     ]
     if omitted:
         bounds["omitted"] = omitted
+    # The graph read holds a bounded number of records per reached entity. When
+    # one had more, the evidence bound was met without knowing what lay beyond.
+    if BOUND_EVIDENCE in returned_cuts and BOUND_EVIDENCE not in bounds.get("reached", []):
+        bounds.setdefault("reached", []).append(BOUND_EVIDENCE)
 
     response["items"] = items
     response["returned_count"] = len(items)
