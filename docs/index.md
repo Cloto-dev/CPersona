@@ -125,7 +125,11 @@ the release notes and SUPPORT.md.
 The 2.6 line has its own page, [Reliable Recall](RELIABLE_RECALL_2_6.md): the
 recall loop that iterates inside a single call, the cue contract, the prior
 function, the reconstruction exit and its count window, the failure taxonomy,
-and what counts as done.
+and what counts as done. The line after it has one too,
+[Memory Intelligence](MEMORY_INTELLIGENCE_2_7.md) (2.7): correction and
+contradiction, temporal state, evidence-weighted confidence, retention policy
+and recall feedback — design only, with the undecided questions marked as
+open.
 
 **Design notes** record how one behaviour was decided, including the routes
 that were rejected. They are point-in-time records. Where a note and the

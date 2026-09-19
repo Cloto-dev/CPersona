@@ -168,13 +168,14 @@ handling, temporal state and history, forgetting and retention policy,
 feedback on what a recall was used for, and control of quality degradation as
 the corpus grows.
 
-Each of these becomes a cue the recall process can follow. Bounded, opt-in
-remediation — a conformer that applies a reviewed repair and re-audits,
-separated from the auditor that only observes — is also placed here.
+Each of these becomes a cue the recall process can follow. The canonical
+account of the line — the five items, the design question in each, what is
+still open, and what "done" means — is
+[Memory Intelligence — the 2.7 line](MEMORY_INTELLIGENCE_2_7.md). This section
+is the index of it.
 
-Nothing in this entry is designed or measured yet. It names the subject so
-that 2.6 does not absorb it. The details will move to a page like 2.6's when
-the line opens.
+Nothing in this line is implemented or measured yet. Its page is design, and
+says so where a question is undecided.
 
 ### 2.8 — a candidate, not a line
 
@@ -182,7 +183,10 @@ the line opens.
 environment and keep it healthy. That covers auditor profiles maturing into an
 ecosystem, health, warnings, update awareness and configuration diagnosis,
 re-audit before and after a change, policy and permission boundaries around
-repair, and rollback. The number is provisional. What matters is the
+repair, and rollback. Bounded, opt-in remediation — a conformer that applies a
+reviewed repair and re-audits, separated from the auditor that only observes —
+belongs with those boundaries and is placed here; it was first listed under
+2.7. The number is provisional. What matters is the
 capability boundary, and it may be re-cut.
 
 ### 3.0 — persistent identity, and what remains of the graph plan
@@ -201,7 +205,7 @@ sub-phases. Sorted against what has since moved:
 | Earlier 3.0 item | Where it stands now |
 | --- | --- |
 | Graph memory (entities, edges, mentions) | Brought forward to 2.6 as associative memory — and redesigned: declared relations and alias canonicalisation instead of model-driven entity extraction. |
-| Bi-temporal edges (`valid_from` / `valid_to`, temporal queries) | Stays a 3.0 candidate. The old design had the model extract dates; under the no-model rule the agent asserts validity and the server stores and queries it. |
+| Bi-temporal edges (`valid_from` / `valid_to`, temporal queries) | Brought forward to 2.7 as [temporal state and history](MEMORY_INTELLIGENCE_2_7.md#22-temporal-state-and-history). The old design had the model extract dates; under the no-model rule the agent asserts validity and the server stores and queries it. |
 | Full memory evolution (retroactive edge updates, pruning, strengthening) | Open. The model-driven form is out. What remains is whichever deterministic consolidation the 2.6 delegation route and maintenance tools do not already cover. |
 | Sub-phasing (alpha → beta → final by feature) | Superseded by the line structure on this page. |
 
