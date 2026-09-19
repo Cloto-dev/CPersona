@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:61bd6fea2931cbe1469de3b4796750b83325ed19 -->
+<!-- i18n-source: docs/index.md@blob:8114f335ba2ddaf66b44e8458f16c0cb8af41bc5 -->
 
 # CPersona ドキュメント
 
@@ -124,7 +124,8 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 
 2.6 系には専用ページ [Reliable Recall](RELIABLE_RECALL_2_6.md) があります。1 回の
 呼び出しの中で反復する想起ループ、手がかりの契約、prior 関数、再構成の出口とその
-件数の窓、失敗の分類、そして何をもって完了とするか。その次のラインにも専用ページ
+件数の窓、失敗の分類、そして何をもって完了とするか。その完了条件の一つ一つを証拠と
+突き合わせたページが [2.6 系の進捗](PROGRESS_2_6.md) です。その次のラインにも専用ページ
 [Memory Intelligence](MEMORY_INTELLIGENCE_2_7.md) (2.7 系) があります。訂正と矛盾、
 時間状態、証拠で重み付けした確信度、保持の方針、想起のフィードバック — 設計のみで、
 決まっていない問いは未決定と明記してあります。

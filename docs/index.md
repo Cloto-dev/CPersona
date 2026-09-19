@@ -125,7 +125,8 @@ the release notes and SUPPORT.md.
 The 2.6 line has its own page, [Reliable Recall](RELIABLE_RECALL_2_6.md): the
 recall loop that iterates inside a single call, the cue contract, the prior
 function, the reconstruction exit and its count window, the failure taxonomy,
-and what counts as done. The line after it has one too,
+and what counts as done; [where the line stands](PROGRESS_2_6.md) tracks each
+of those conditions against its evidence. The line after it has one too,
 [Memory Intelligence](MEMORY_INTELLIGENCE_2_7.md) (2.7): correction and
 contradiction, temporal state, evidence-weighted confidence, retention policy
 and recall feedback — design only, with the undecided questions marked as

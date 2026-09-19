@@ -157,7 +157,8 @@ untouched.)
 
 **What "done" means** — and what is deliberately not a condition, such as the
 Go index service — is written down in the
-[line's page](RELIABLE_RECALL_2_6.md#10-what-done-means).
+[line's page](RELIABLE_RECALL_2_6.md#10-what-done-means); how far each
+condition has come is on [its progress page](PROGRESS_2_6.md).
 
 ### 2.7 — memory intelligence
 

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/roadmap.md@blob:5bf0a9fbee3b0562bb55a4f3e7e02f32775d414f -->
+<!-- i18n-source: docs/roadmap.md@blob:12ebc75a55ef8ec2191cc2cb46cd8a77321c9627 -->
 
 # ロードマップ
 
@@ -142,7 +142,8 @@ MCP SDK 2.0 移行も載ります。(かつてここに載っていた埋め込�
 出荷済みです。)
 
 **「完了」の意味** — そして Go の索引サービスのように、意図して条件にしないもの — は
-[ラインのページ](RELIABLE_RECALL_2_6.md#10-what-done-means) に書いてあります。
+[ラインのページ](RELIABLE_RECALL_2_6.md#10-what-done-means) に書いてあります。各条件が
+どこまで進んだかは [進捗のページ](PROGRESS_2_6.md) にあります。
 
 ### 2.7 — 記憶の知性 { #27-memory-intelligence }
 
