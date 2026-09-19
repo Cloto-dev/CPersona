@@ -1,11 +1,11 @@
-<!-- i18n-source: docs/tools.md@blob:e039e6376e1f646f2cb3b690c7709edb6ab8ec42 -->
+<!-- i18n-source: docs/tools.md@blob:8f6887766cde3e57eb7afc3e213458bcfb4c6282 -->
 
 # ツール一覧
 
 > **対象: CPersona {{ version_line }}。** 各引数の権威ある説明は、そのツール自身の MCP
-> description です — あなたのクライアントがそれを読み、あなたが動かしている版と
-> 一緒に配布されます。このページは **すべてのツール**を「何のために手を伸ばすか」で
-> グループ分けし、名前から想像できない挙動を持つものは契約へリンクします。
+> description です。あなたのクライアントがそれを読み、いま動かしている版と一緒に
+> 配布されます。このページは**すべてのツール**を「何に使うか」でグループ分けし、
+> 名前から想像できない挙動を持つものは契約へリンクします。
 >
 > **翻訳について**: 正本は英語版です。日本語版が古い場合は英語版を参照してください。
 
@@ -16,9 +16,12 @@
 | `store` | メッセージ 1 件を記憶に書きます。分岐は `ok` ではなく `result` — `stored` / `skipped` / `rejected` — で行ってください ([重複排除の契約](behavior-contracts.md#5-dedup-semantics-skip-not-upsert)) |
 | `recall` | 3 層ハイブリッド検索で記憶を取り出します。**末尾の要素が最良のマッチ**です ([順序の契約](behavior-contracts.md#1-recall-return-order-last-is-best)) |
 | `recall_with_context` | 想起 *と同時に*、渡した会話履歴と重複排除しつつ統合します。返るのはスコア順ではなく**時系列**の統合です |
-| `get_contents` | recall が返したプレビュー参照 (`mem:<id>` / `ep:<id>`) を全文に展開します ([プレビュー階層の設計](RECALL_PREVIEW_TIER_DESIGN.md)) |
+| `get_contents` | recall が返したプレビュー参照 (`mem:<id>` / `ep:<id>`) を全文に展開します ([プレビュー階層の設計](RECALL_PREVIEW_TIER_DESIGN.md))。ref でレコードの一部 (overflow tree のノードまたは文字範囲) を指定することもでき、`reconstruct` の引用をレコード全体でなく前後のノードだけに展開できます |
+| `reconstruct` | recall の候補行から**想起単位**を構成します。選択・整列・役割付与であり、文章の合成はしません。`count` は上限であって充足目標や検索深度ではありません。探索幅 (`top_k`、`max_hops`、`max_evidence`) は独立した境界です ([出口の設計](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit))。宣言された連想は、キーワード検索への別名の手がかり、関係した記録の束ね、item 内側への辿った根拠を足します ([契約](behavior-contracts.md#11-declared-associations-are-read-by-reconstruct-and-traverse-only)) |
 | `archive_episode` | セッション要約を保存します。同時に [エピソード境界](behavior-contracts.md#3-episode-boundary-penalty) を動かし、それ以前に書かれたものを減点します |
 | `update_memory` | 既存の記憶の内容を変更します。保存済みの事実を訂正する方法はこれであって、同じ `msg_id` での再 `store` ではありません |
+| `declare_associations` | 連想記憶を後から宣言します — 別名付きの entity と主語–述語–目的語の関係を、名指した記録に anchor して。`retract` で宣言を取り消します。同じオブジェクトは `store` の `associations` にも相乗りできます。verbatim に保存され `reconstruct` が読みます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md)) |
+| `traverse` | 宣言された entity の近傍をグラフとして返します: 別名、その entity とそこから到達した entity に宣言された関係を `max_hops` まで、各 entity を言及する記録の ref。記録のテキストは返しません。`limit` は entity 数と entity ごとの ref 数を抑えます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md#4-traverse)) |
 
 ## プロフィールと運用者コンテキスト { #profile-and-operator-context }
 
@@ -29,7 +32,7 @@
 | `get_operating_context` | 接続中の全クライアントへ配られる運用者所有の指示を読みます。MCP 越しでは読み取り専用で、編集はファイルシステム上で行います ([設計](OPERATING_CONTEXT_DESIGN.md)) |
 
 プロフィール行は recall 応答に注入されますが
-[スコアを持ちません](behavior-contracts.md#7-profile-rows-carry-no-score) —
+[スコアを持ちません](behavior-contracts.md#7-profile-rows-carry-no-score)。
 `limit` を絞るときに効いてくる違いです。
 
 ## 一覧の閲覧 { #browsing }
@@ -75,8 +78,8 @@
 | `deep_check` | 意味的なデータ品質の検査: 匿名ソース、短すぎる内容、古いプロフィール、孤児エピソード |
 | `get_session_findings` | 同じ検出結果を、必要な時に引く形で受け取ります — SuperAuditor の pull 契約 ([規格](SUPERAUDITOR_STANDARD.md))。設計上データベース全体が対象 (agent / project で絞りません)、読み取り専用で、`per_kind_limit` を超えた kind は `capped_kinds` に名指しされます。例外を起こした検査は呼び出し全体を失敗させず、kind `check_crashed` の finding として現れます |
 
-`check_health` と `deep_check` は MCP の外から `python -m cpersona.checkup` としても実行でき、CI ではこの
-形を使ってください。実行頻度の指針は
+`check_health` と `deep_check` は MCP の外から `python -m cpersona.checkup` として
+も実行できます。CI ではこの形を使ってください。実行頻度の指針は
 [運用 runbook](operations.md#maintenance-cadence) にあります。
 
 ## サーバーのバージョン { #server-version }
@@ -85,19 +88,24 @@
 |---|---|
 | `check_update` | サーバー自身の新しいリリースがあるか — あるいは今動いているリリースが PyPI で**撤回 (yank) された**か。後者はインストール済みのサーバーが他の手段では知りようのない事実です。検査はプロセス起動ごとに 1 回走り 24 時間キャッシュされます。このツールはその判定を読み、`refresh=true` で取得し直し、`apply=true` で更新を実行します (pip とソースチェックアウトのみ) |
 
-同じ判定は `recall` 応答に `update` キーとして乗り (セッションごとに 1 回、伝えることが
-なければキー自体が付きません)、`check_health` では `update_available` (info) または
-`version_yanked` (warn) の検出項目として現れます。副作用として更新が行われることは
-ありません: インストールするのは `apply=true` だけで、その後は**必ず再起動が必要**
-です — インストールを実行したプロセス自身は古いコードのまま動いているからです。
-`uvx` の場合はインストールを拒否し、理由を伝えます: 実行環境は起動引数をキーとする
-キャッシュエントリなので、変更すべきは MCP クライアント側の設定です
-(`uvx cpersona@latest`)。**ブランチ上にない**ソースチェックアウト — リリースタグに
-留め置いたクローンで、配備の仕方としては普通のものです — も同じように拒否されます:
+同じ判定は `recall` 応答に `update` キーとして乗ります (セッションごとに 1 回、
+伝えることがなければキー自体が付きません)。`check_health` でも `update_available`
+(info) または `version_yanked` (warn) の検出項目として現れます。
+
+副作用として更新が行われることはありません。インストールするのは `apply=true` だけ
+で、その後は**必ず再起動が必要**です。インストールを実行したプロセス自身が、
+古いコードのまま動いているからです。
+
+拒否される構成が 2 つあり、それぞれ理由があります。`uvx` では実行環境が起動引数を
+キーとするキャッシュエントリなので、変更すべきは MCP クライアント側の設定です
+(`uvx cpersona@latest`)。**ブランチ上にない**ソースチェックアウト (リリースタグに
+留め置いたクローンで、配備の仕方としては普通のものです) も同じように拒否されます。
 detached `HEAD` からは `git pull` が fast-forward する先を持たないため、ツールは何も
 実行する前に拒み、代わりに使うべき `git fetch --tags && git checkout <tag>` の形を
-答えます。`CPERSONA_UPDATE_CHECK=false` は、唯一の外向きリクエストを
-含めて機能全体を無効化します ([何を送るか](architecture.md#transports))。
+答えます。
+
+`CPERSONA_UPDATE_CHECK=false` は、唯一の外向きリクエストを含めて機能全体を
+無効化します ([何を送るか](architecture.md#transports))。
 
 ## セッション制御 { #session-controls }
 
@@ -108,27 +116,29 @@ detached `HEAD` からは `git pull` が fast-forward する先を持たない�
 | `persistence_status` | 書き込みが停止中か、残り TTL はどれだけかを返します |
 
 ベンチマークや、コーパスに残したくない使い捨ての探索に使ってください。
+
 **影響範囲は `session_key` に従います。** 3 つのツールはいずれもそれを `scope` として
 返します。停止と、それが覆うべき書き込み呼び出しに同じキーを宣言すれば、停止はその
-キーだけを覆います (`scope: "session"`) — 別のキーを送るセッションは、それによって
-黙らされることも、それを解除することもありません。キーは比較されるだけで検証されない
-ので、分割されるのは呼び出し元ではなくキーです。同じ文字列を送る者は誰でも同じ停止を
-共有します。
+キーだけを覆います (`scope: "session"`)。別のキーを送るセッションは、それによって
+黙らされることも、それを解除することもありません。キーは比較されるだけで検証され
+ないので、分割されるのは呼び出し元ではなくキーです。同じ文字列を送る者は誰でも同じ
+停止を共有します。
 
 キーを省略すると、キーを持たない全呼び出し元が共有するバケットを止めます
 (`scope: "process"`)。クライアントが自分のプロセスを所有する stdio では、その
 バケットがセッションそのものです。streamable-HTTP の配備では 1 プロセスが全
 クライアントに応じるため、キーなしの停止は他のキーなしセッション全員の書き込みを
-黙らせます — しかもそれらのセッションには何も伝わりません。
+黙らせます。しかも、それらのセッションには何も伝わりません。
 
-`persisted: false` の形に収まらない経路が 2 つあります: `check_health` と
-`deep_check` はブロックされず `fix=false` に降格し、`migrate_channel_axis` は
+`persisted: false` の形に収まらない経路が 2 つあります。`check_health` と
+`deep_check` はブロックされず `fix=false` に降格します。`migrate_channel_axis` は
 dry-run を強制されて `repairs_skipped` を返し、`persisted` キー自体を持ちません。
 
 ## 分離のための引数 { #isolation-arguments }
 
-3 つの分離軸は一様には提供されていません。`agent_id` はほとんどのツール
-(22 個) が受け取り、`project_id` は 6 個、`channel` はちょうど 4 個 — `store` /
-`recall` / `recall_with_context` / `archive_episode` — だけです。これらは入れ子の
-階層ではなく独立した 3 軸であり、読み取り時に「空の値」と「省略」は異なる意味を
-持ちます — [分離軸](architecture.md#isolation-axes) を参照してください。
+3 つの分離軸は一様には提供されていません。`agent_id` はほとんどのツール (25 個) が受け取り、
+`project_id` は 9 個、`channel` はちょうど 7 個 (`store` / `declare_associations` / `recall` /
+`recall_with_context` / `reconstruct` / `traverse` / `archive_episode`) だけです。
+
+これらは入れ子の階層ではなく独立した 3 軸であり、読み取り時に「空の値」と「省略」は
+異なる意味を持ちます。[分離軸](architecture.md#isolation-axes) を参照してください。

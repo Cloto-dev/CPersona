@@ -24,6 +24,7 @@ from cpersona.isolation import isolation_where
 
 from cpersona import config
 from cpersona import fileperms
+from cpersona import nodes
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
@@ -549,6 +550,12 @@ async def do_update_memory(
     result = {"ok": True, "updated_id": memory_id}
     if truncated:
         result["truncated"] = True
+    # Overflow tree (§4): the UPDATE's trigger removed the nodes of the old text; a
+    # new text that runs past the window gets new ones queued.
+    if await nodes.runs_past_window(content):
+        queued = await nodes.queue_build("mem", memory_id, row[1], key)
+        if queued:
+            result["nodes"] = queued
     return result
 
 
@@ -614,6 +621,13 @@ async def _delete_agent_rows(db, agent_id: str) -> dict:
     task_cursor = await db.execute(
         "DELETE FROM pending_memory_tasks WHERE agent_id = ?", (agent_id,)
     )
+    # The declared graph (schema v15). Deleting the records above already took
+    # their mentions and anchored relations through the triggers; what remains
+    # is the agent's entities (their aliases and mentions follow by trigger)
+    # and any relation that names no record at all — an agent-level assertion
+    # only the agent axis can reach.
+    await db.execute("DELETE FROM entities WHERE agent_id = ?", (agent_id,))
+    await db.execute("DELETE FROM relations WHERE agent_id = ?", (agent_id,))
     return {
         "deleted_memories": mem_cursor.rowcount,
         "deleted_profiles": prof_cursor.rowcount,

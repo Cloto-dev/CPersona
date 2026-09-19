@@ -13,7 +13,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 15
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -434,6 +434,155 @@ WHEN old.content <> new.content BEGIN
 END;
 """
 
+# v14 (docs/OVERFLOW_TREE_DESIGN.md §1, §4): the spans a long record is divided
+# into so each can be embedded whole. A node stores offsets into its parent's
+# text, never text, and lives in its own table so none of the queries that read
+# `memories` or `episodes` has to learn to exclude it.
+#
+# The triggers are what keep a node true to its parent. The package has a dozen
+# statements that delete a memory or an episode and two that rewrite a memory's
+# text; a trigger covers all of them, and every one written later,
+# where a call-site cleanup covers only the sites someone remembered. The package
+# declares no foreign keys, so ON DELETE CASCADE would not fire either.
+#
+# The UPDATE triggers are column-scoped and guarded on a real change for the
+# same reason as the FTS triggers (bug-012): an update that rewrites the text
+# with itself leaves every node valid. Queueing the rebuild belongs to the
+# write path, not here — a trigger cannot reach the embedding server.
+#
+# Run on every boot, not only on the step to v14: CREATE ... IF NOT EXISTS is a
+# no-op once the objects exist, and a version-gated CREATE is the shape that
+# left FTS triggers permanently missing on a database stamped past its step
+# (bug-118). check_schema_objects watches the four triggers.
+RECORD_NODES_SQL = """
+CREATE TABLE IF NOT EXISTS record_nodes (
+    parent_kind     TEXT    NOT NULL,
+    parent_id       INTEGER NOT NULL,
+    node_index      INTEGER NOT NULL,
+    start_char      INTEGER NOT NULL,
+    end_char        INTEGER NOT NULL,
+    token_count     INTEGER NOT NULL,
+    window          INTEGER NOT NULL,
+    embedding       BLOB,
+    embedding_model TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (parent_kind, parent_id, node_index)
+);
+
+CREATE TRIGGER IF NOT EXISTS record_nodes_memories_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM record_nodes WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_nodes_memories_au AFTER UPDATE OF content ON memories
+WHEN old.content <> new.content BEGIN
+    DELETE FROM record_nodes WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_nodes_episodes_ad AFTER DELETE ON episodes BEGIN
+    DELETE FROM record_nodes WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_nodes_episodes_au AFTER UPDATE OF summary ON episodes
+WHEN old.summary <> new.summary BEGIN
+    DELETE FROM record_nodes WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+"""
+
+# v15: the declared graph of docs/ASSOCIATIVE_MEMORY_DESIGN.md §1 — entities
+# with aliases, the records that mention them, and subject–predicate–object
+# relations. Nothing in `memories` or `episodes` changes, and nothing here is
+# read on the `recall` path (design invariant 1).
+#
+# The same trigger discipline as the nodes above (invariant 8: no declaration
+# outlives its endpoints). Deleting an entity takes its aliases, mentions and
+# relations; deleting a memory or episode takes its mentions and every
+# relation that names it as an endpoint or as its anchor. A relation whose
+# evidence is gone is gone with it — the alternative, keeping the assertion
+# with the anchor cleared, was considered and not taken (design §7).
+#
+# A text change does NOT touch the graph: a mention is a declaration about the
+# record, not a derivation from its wording, so a rewrite leaves it true.
+#
+# Run on every boot, like RECORD_NODES_SQL (bug-118). check_schema_objects
+# watches the three triggers.
+#
+# Uniqueness of a normalized alias within a scope cannot be a table constraint
+# here — entity_aliases carries no scope columns — so the declare handler
+# enforces it, and the index only serves the lookup.
+ASSOCIATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS entities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT    NOT NULL,
+    project_id  TEXT    NOT NULL DEFAULT '',
+    channel     TEXT    NOT NULL DEFAULT '',
+    name        TEXT    NOT NULL,
+    normalized  TEXT    NOT NULL,
+    declared_by TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    UNIQUE (agent_id, project_id, channel, normalized)
+);
+
+CREATE TABLE IF NOT EXISTS entity_aliases (
+    entity_id   INTEGER NOT NULL,
+    alias       TEXT    NOT NULL,
+    normalized  TEXT    NOT NULL,
+    PRIMARY KEY (entity_id, normalized)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_normalized ON entity_aliases(normalized);
+
+CREATE TABLE IF NOT EXISTS entity_mentions (
+    entity_id   INTEGER NOT NULL,
+    ref         TEXT    NOT NULL,
+    declared_by TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    PRIMARY KEY (entity_id, ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_mentions_ref ON entity_mentions(ref);
+
+CREATE TABLE IF NOT EXISTS relations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id     TEXT    NOT NULL,
+    project_id   TEXT    NOT NULL DEFAULT '',
+    channel      TEXT    NOT NULL DEFAULT '',
+    subject_kind TEXT    NOT NULL,
+    subject_id   INTEGER NOT NULL,
+    predicate    TEXT    NOT NULL,
+    object_kind  TEXT    NOT NULL,
+    object_id    INTEGER NOT NULL,
+    anchor_ref   TEXT    NOT NULL DEFAULT '',
+    declared_by  TEXT    NOT NULL,
+    declared_at  TEXT    NOT NULL,
+    UNIQUE (agent_id, project_id, channel,
+            subject_kind, subject_id, predicate, object_kind, object_id, anchor_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_relations_subject ON relations(subject_kind, subject_id);
+CREATE INDEX IF NOT EXISTS idx_relations_object ON relations(object_kind, object_id);
+CREATE INDEX IF NOT EXISTS idx_relations_anchor ON relations(anchor_ref);
+
+CREATE TRIGGER IF NOT EXISTS associations_entities_ad AFTER DELETE ON entities BEGIN
+    DELETE FROM entity_aliases WHERE entity_id = old.id;
+    DELETE FROM entity_mentions WHERE entity_id = old.id;
+    DELETE FROM relations WHERE (subject_kind = 'entity' AND subject_id = old.id)
+                            OR (object_kind = 'entity' AND object_id = old.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS associations_memories_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM entity_mentions WHERE ref = 'mem:' || old.id;
+    DELETE FROM relations WHERE (subject_kind = 'mem' AND subject_id = old.id)
+                            OR (object_kind = 'mem' AND object_id = old.id)
+                            OR anchor_ref = 'mem:' || old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS associations_episodes_ad AFTER DELETE ON episodes BEGIN
+    DELETE FROM entity_mentions WHERE ref = 'ep:' || old.id;
+    DELETE FROM relations WHERE (subject_kind = 'ep' AND subject_id = old.id)
+                            OR (object_kind = 'ep' AND object_id = old.id)
+                            OR anchor_ref = 'ep:' || old.id;
+END;
+"""
+
 _db: aiosqlite.Connection | None = None
 _read_db: aiosqlite.Connection | None = None
 # bug-105: maintenance CLIs (checkup without --fix) set this before first DB
@@ -650,6 +799,8 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
     await db.execute("PRAGMA busy_timeout=5000")
 
     await db.executescript(SCHEMA_SQL)
+    await db.executescript(RECORD_NODES_SQL)
+    await db.executescript(ASSOCIATIONS_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on
     # THIS boot (a DB originally created with CPERSONA_FTS_ENABLED=false, now

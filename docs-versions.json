@@ -33,6 +33,11 @@
     {
       "id": "2.5",
       "title": "2.5.x",
+      "branch": "2.5.x"
+    },
+    {
+      "id": "2.6",
+      "title": "2.6.x",
       "branch": "master"
     }
   ]

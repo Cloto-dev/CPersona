@@ -52,6 +52,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -88,6 +89,14 @@ EXCLUDED_PATHSPECS = (
 SURVIVOR_CLASSIFICATIONS = mutation_waivers.CLASSIFICATIONS
 
 ENGINE_VERSION = "8.4.6"
+
+# Over the limit, the lane runs a deterministic sample instead of nothing
+# (#383). Mutants left out are recorded as SKIPPED results carrying this output,
+# so `cosmic-ray exec` never starts them and `classify` can tell them from the
+# ones a filter removed. The seed only breaks ties; the same diff yields the
+# same sample, so a re-run of the same commit measures the same mutants.
+NOT_SAMPLED_OUTPUT = "mutation-diff: not sampled (over the mutant limit)"
+DEFAULT_SEED = "cpersona-mutation-diff"
 
 
 def run(cmd: list[str], *, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess:
@@ -155,7 +164,7 @@ def production_diff_files(base: str) -> list[str]:
 
 
 def _read_session(session: Path) -> list[tuple]:
-    """(module_path, line, operator, function, worker_outcome, test_outcome) per
+    """(module_path, line, operator, function, worker_outcome, test_outcome, output) per
     mutant, read straight from the cosmic-ray session SQLite.
 
     We bypass `cosmic-ray dump` on purpose: in 8.4.6 it raises AttributeError on
@@ -169,7 +178,7 @@ def _read_session(session: Path) -> list[tuple]:
     try:
         return con.execute(
             "SELECT ms.module_path, ms.start_pos_row, ms.operator_name, "
-            "       ms.definition_name, wr.worker_outcome, wr.test_outcome "
+            "       ms.definition_name, wr.worker_outcome, wr.test_outcome, wr.output "
             "FROM mutation_specs ms "
             "LEFT JOIN work_results wr ON wr.job_id = ms.job_id"
         ).fetchall()
@@ -224,9 +233,96 @@ def count_pending(session: Path) -> int:
         con.close()
 
 
+def pending_specs(session: Path) -> list[tuple[str, str, int, str]]:
+    """(job_id, module_path, line, operator) for every work item with no result yet."""
+    con = sqlite3.connect(str(session))
+    try:
+        return con.execute(
+            "SELECT ms.job_id, ms.module_path, ms.start_pos_row, ms.operator_name "
+            "FROM mutation_specs ms "
+            "LEFT JOIN work_results wr ON wr.job_id = ms.job_id "
+            "WHERE wr.job_id IS NULL"
+        ).fetchall()
+    finally:
+        con.close()
+
+
+def _tiebreak(seed: str, *parts: object) -> str:
+    return hashlib.sha256("\x1f".join([seed, *map(str, parts)]).encode("utf-8")).hexdigest()
+
+
+def choose_sample(specs: list[tuple[str, str, int, str]], limit: int, seed: str) -> list[str]:
+    """The job ids to execute when there are more mutants than the lane can run.
+
+    Breadth first: every changed line gets one mutant before any line gets a
+    second, so a large diff is measured across its whole surface rather than
+    spent on the first file's lines. Within a line, the operator used least so
+    far is taken next, so one operator family cannot fill the sample. Everything
+    else is ordered by a hash of the seed, which makes the choice deterministic
+    without favouring files by name or position.
+    """
+    if limit <= 0:
+        return []
+    if len(specs) <= limit:
+        return [job_id for job_id, *_ in specs]
+    by_line: dict[tuple[str, int], list[tuple[str, str]]] = {}
+    for job_id, module_path, line, operator in specs:
+        by_line.setdefault((module_path, line), []).append((job_id, operator))
+    lines = sorted(by_line, key=lambda key: _tiebreak(seed, *key))
+    operator_use: dict[str, int] = {}
+    chosen: list[str] = []
+    while len(chosen) < limit:
+        progressed = False
+        for key in lines:
+            queue = by_line[key]
+            if not queue:
+                continue
+            pick = min(queue, key=lambda item: (operator_use.get(item[1], 0), _tiebreak(seed, item[0])))
+            queue.remove(pick)
+            operator_use[pick[1]] = operator_use.get(pick[1], 0) + 1
+            chosen.append(pick[0])
+            progressed = True
+            if len(chosen) == limit:
+                break
+        if not progressed:
+            break
+    return chosen
+
+
+def mark_not_sampled(session: Path, job_ids: list[str]) -> None:
+    """Record the left-out mutants as SKIPPED so `cosmic-ray exec` never runs them."""
+    con = sqlite3.connect(str(session))
+    try:
+        con.executemany(
+            "INSERT INTO work_results (job_id, worker_outcome, output) VALUES (?, 'SKIPPED', ?)",
+            [(job_id, NOT_SAMPLED_OUTPUT) for job_id in job_ids],
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def apply_limit(session: Path, limit: int, seed: str) -> dict | None:
+    """Reduce the pending work to at most `limit` mutants. Returns the sampling
+    record when anything was left out, None when everything fits."""
+    specs = pending_specs(session)
+    if len(specs) <= limit:
+        return None
+    keep = set(choose_sample(specs, limit, seed))
+    mark_not_sampled(session, [job_id for job_id, *_ in specs if job_id not in keep])
+    return {
+        "in_scope_total": len(specs),
+        "executed": len(keep),
+        "mutable_lines": len({(module_path, line) for _, module_path, line, _ in specs}),
+        "rule": "one mutant per changed line first, least-used operator within a line, seeded hash for ties",
+        "seed": seed,
+    }
+
+
 def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
     counts = {
         "skipped_by_filter": 0,
+        "not_sampled": 0,
         "killed": 0,
         "survived": 0,
         "survived_waived": 0,
@@ -236,11 +332,24 @@ def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
         "not_executed": 0,
     }
     survivors: list[dict] = []
-    for module_path, line, operator, function, worker, test in _read_session(session):
+    # #1531: how much of the diff a run actually measured. A mutable line is a
+    # changed line carrying at least one in-scope mutant (filtered mutants never
+    # were in scope); a measured line is one with a mutant that ran to a test
+    # verdict. Read after execution, so a mutant that was planned but produced no
+    # result does not count as measurement.
+    mutable_lines: set[tuple[str, int]] = set()
+    measured_lines: set[tuple[str, int]] = set()
+    for module_path, line, operator, function, worker, test, output in _read_session(session):
         w = (worker or "").upper()
         t = (test or "").upper()
+        if not (w == "SKIPPED" and output != NOT_SAMPLED_OUTPUT):
+            mutable_lines.add((module_path, line))
+        if w == "NORMAL":
+            measured_lines.add((module_path, line))
         if worker is None:
             counts["not_executed"] += 1
+        elif w == "SKIPPED" and output == NOT_SAMPLED_OUTPUT:
+            counts["not_sampled"] += 1
         elif w == "SKIPPED":
             counts["skipped_by_filter"] += 1
         elif w != "NORMAL":
@@ -295,6 +404,11 @@ def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
             + counts["not_executed"]
         ),
         "survival_rate": survival_rate,
+        "line_coverage": {
+            "mutable_lines": len(mutable_lines),
+            "measured_lines": len(measured_lines),
+            "ratio": (len(measured_lines) / len(mutable_lines)) if mutable_lines else None,
+        },
         "survivors": survivors,
     }
 
@@ -307,6 +421,15 @@ def write_summary(report: dict, path: str | None) -> None:
     status = report["status"]
     if status != "ok":
         lines += [f"**status:** `{status}` — {report.get('reason', '')}", ""]
+    sampling = report.get("sampling")
+    if sampling:
+        lines += [
+            f"**sampled:** {sampling['executed']} of {sampling['in_scope_total']} in-scope mutants executed "
+            f"across {sampling['mutable_lines']} mutable lines ({sampling['rule']}).",
+            "",
+            "_A sample: the survivors below are a lower bound, and mutants that were not run say nothing._",
+            "",
+        ]
     if report.get("changed_files"):
         lines += [f"**base:** `{report['base']}` · **changed files:** {len(report['changed_files'])}", ""]
     if status == "capped" and report.get("mutant_seconds"):
@@ -318,7 +441,7 @@ def write_summary(report: dict, path: str | None) -> None:
             "_Not executed. A priced refusal is a measurement; a run killed by the job ceiling is not._",
             "",
         ]
-    if status in ("ok", "capped", "incomplete"):
+    if status in ("ok", "sampled", "capped", "incomplete"):
         c = report.get("counts", {})
         rate = report.get("survival_rate")
         rate_s = f"{rate:.1%}" if isinstance(rate, float) else "n/a"
@@ -330,6 +453,13 @@ def write_summary(report: dict, path: str | None) -> None:
             f"| {c.get('worker_error', 0)} | {rate_s} |",
             "",
         ]
+        cov = report.get("line_coverage") or {}
+        if cov.get("mutable_lines"):
+            lines += [
+                f"**lines measured:** {cov['measured_lines']} of {cov['mutable_lines']} changed lines that carry a "
+                f"mutant ({cov['ratio']:.0%})",
+                "",
+            ]
         wv = report.get("waivers", {})
         if wv:
             lines += [f"_waivers: {wv.get('active', 0)} active of {wv.get('registry_waivers', 0)} in registry_", ""]
@@ -377,6 +507,11 @@ def main(argv: list[str] | None = None) -> int:
             "unmutated suite, converts the budget into a mutant count, and reports 'capped' rather than "
             "starting work it cannot finish. Default 900 leaves headroom under the job's 20-minute ceiling."
         ),
+    )
+    parser.add_argument(
+        "--seed",
+        default=os.environ.get("MUTATION_DIFF_SEED", DEFAULT_SEED),
+        help="Tie-break seed for the sample taken when the in-scope mutants exceed the limit.",
     )
     parser.add_argument(
         "--session-dir",
@@ -461,27 +596,11 @@ def main(argv: list[str] | None = None) -> int:
     run(["cr-filter-operators", str(session), str(config_path)], check=False)
 
     pending = count_pending(session)
-    if pending > args.cap:
-        emit(
-            {
-                **base_report,
-                "status": "capped",
-                "reason": f"{pending} in-scope mutants exceed cap={args.cap}; not executed to bound CI time",
-                "in_scope": pending,
-                "counts": {},
-                "survivors": [],
-            },
-            args.json_out,
-            summary_path,
-        )
-        return 0
 
-    # bug-284: price the work before starting it. The count cap above is a guess about how
-    # long a mutant takes; this is a measurement of it. A count that fits the cap
-    # can still exceed the job's ceiling — that is what happened on 2026-09-01,
-    # where a run inside the cap was killed at 20 minutes and reported nothing at
-    # all, so "the measurement did not happen" and "nothing to report" looked the
-    # same to the reader.
+    # bug-284: price the work before starting it. A count that fits a limit can
+    # still exceed the job's ceiling — on 2026-09-01 a run inside the count cap
+    # was killed at 20 minutes and reported nothing at all, so "the measurement
+    # did not happen" and "nothing to report" looked the same to the reader.
     unit_seconds, unit_note = measure_mutant_cost(config_path)
     if unit_seconds is None:
         emit(
@@ -499,20 +618,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     affordable = int(args.budget_seconds // unit_seconds) if unit_seconds > 0 else pending
-    if pending > affordable:
+    limit = min(args.cap, affordable)
+    base_report = {
+        **base_report,
+        "budget_seconds": args.budget_seconds,
+        "mutant_seconds": round(unit_seconds, 1),
+        "affordable": affordable,
+    }
+    if pending and limit <= 0:
         emit(
             {
                 **base_report,
                 "status": "capped",
                 "reason": (
-                    f"{pending} in-scope mutants need up to {pending * unit_seconds / 60:.0f} min "
-                    f"({unit_note}); the budget is {args.budget_seconds / 60:.0f} min, which affords "
-                    f"{affordable}. Not executed — reporting the price beats being killed mid-run."
+                    f"{pending} in-scope mutants, but one mutant costs up to {unit_seconds / 60:.0f} min "
+                    f"({unit_note}) and the budget is {args.budget_seconds / 60:.0f} min. Not executed."
                 ),
                 "in_scope": pending,
-                "budget_seconds": args.budget_seconds,
-                "mutant_seconds": round(unit_seconds, 1),
-                "affordable": affordable,
                 "counts": {},
                 "survivors": [],
             },
@@ -520,7 +642,13 @@ def main(argv: list[str] | None = None) -> int:
             summary_path,
         )
         return 0
-    base_report = {**base_report, "budget_seconds": args.budget_seconds, "mutant_seconds": round(unit_seconds, 1)}
+
+    # #383: over the limit, run a deterministic sample rather than nothing. The
+    # old behaviour skipped every mutant, so the larger the diff the less it was
+    # measured, while the check still read as green.
+    sampling = apply_limit(session, limit, args.seed)
+    if sampling:
+        base_report = {**base_report, "sampling": sampling}
 
     run(["cosmic-ray", "exec", str(config_path), str(session)])
     result = classify(session, REPO, active)
@@ -528,13 +656,24 @@ def main(argv: list[str] | None = None) -> int:
     # complete measurement. The counts table is still worth printing -- what is
     # wrong is only the word on top of it.
     unexecuted = result["counts"]["not_executed"]
-    status = {"status": "ok"} if not unexecuted else {
-        "status": "incomplete",
-        "reason": (
-            f"{unexecuted} mutant(s) produced no worker result, so this run measured "
-            "less than it took on; treat the figures below as a lower bound"
-        ),
-    }
+    if unexecuted:
+        status = {
+            "status": "incomplete",
+            "reason": (
+                f"{unexecuted} mutant(s) produced no worker result, so this run measured "
+                "less than it took on; treat the figures below as a lower bound"
+            ),
+        }
+    elif sampling:
+        status = {
+            "status": "sampled",
+            "reason": (
+                f"{sampling['in_scope_total']} in-scope mutants exceed the limit of {limit} "
+                f"(cap={args.cap}, budget affords {affordable}); executed {sampling['executed']}"
+            ),
+        }
+    else:
+        status = {"status": "ok"}
     emit({**base_report, **status, **result}, args.json_out, summary_path)
     return 0
 

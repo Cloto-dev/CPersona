@@ -9,6 +9,7 @@ lazy queue dispatch.
 Accesses `vector._embedding_client` as a module attribute (set by server.main()).
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -22,6 +23,7 @@ from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import health
+from cpersona import nodes
 from cpersona import scope_stats
 from cpersona import session
 from cpersona import update_check
@@ -269,6 +271,13 @@ async def do_store(
             # v2.5.2 additive: same id echo as the msg_id branch above.
             return _store_skipped("duplicate content", existing[0][0])
 
+    # Overflow tree (docs/OVERFLOW_TREE_DESIGN.md §3): whether this text runs past
+    # the embedding window decides whether its nodes are queued. Asked alongside the
+    # embedding rather than after it, so the write waits for the slower of the two
+    # requests instead of their sum. The probe never raises, so a result nobody
+    # collects (a duplicate below, or a raise out of the insert) leaves nothing to log.
+    window_probe = asyncio.ensure_future(nodes.runs_past_window(content)) if nodes.building_enabled() else None
+
     embedding_blob = None
     if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
@@ -369,6 +378,10 @@ async def do_store(
         result["truncated"] = True
     if future_timestamp and future_mode == "warn":
         result["timestamp_ahead_of_clock"] = future_timestamp
+    if window_probe is not None and await window_probe:
+        queued = await nodes.queue_build("mem", mem_id, agent_id, key)
+        if queued:
+            result["nodes"] = queued
     return result
 
 
@@ -425,6 +438,7 @@ async def _recall_cascade(
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
 ) -> list[dict]:
     """Original cascading recall: stages fill remaining slots sequentially.
 
@@ -455,7 +469,7 @@ async def _recall_cascade(
     # source_id set.
     if FTS_ENABLED and query.strip() and (not source_id or channel):
         fts_results = await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
+            db, agent_id, query, limit, channel=channel, project_id=project_id, extra_terms=lexical_terms
         )
         for row in fts_results:
             rid = ("ep", row["id"])
@@ -468,7 +482,8 @@ async def _recall_cascade(
     remaining = max(0, limit - len(results))
     if remaining > 0:
         memory_rows = await _search_memories_keyword(
-            db, agent_id, query, remaining, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, remaining, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
         )
         for row in memory_rows:
             rid = ("mem", row["id"])
@@ -483,15 +498,21 @@ async def _recall_rrf(
     db,
     agent_id: str,
     query: str,
-    limit: int,
+    depth: int,
     deep: bool,
     channel: str = "",
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
 ) -> list[dict]:
     """v2.4 RRF recall: run vector and FTS5 independently, merge with
     Reciprocal Rank Fusion. Avoids cascade's positional bias.
+
+    `depth` is the Recall Depth (2.6): the top-K each arm hands to the fusion.
+    It is not the response count -- `do_recall` cuts the fused list to `limit`
+    afterwards -- so the fusion may consider more rows than the caller receives.
+    The fused list is returned whole; nothing here knows the count.
     """
     k = RRF_K
     doc_map: dict[tuple, dict] = {}
@@ -505,7 +526,7 @@ async def _recall_rrf(
         # the scan window, and stays empty otherwise.
         far_results: list[dict] = []
         vector_results = await _search_vector(
-            db, agent_id, query, limit, min_similarity=rrf_min_sim,
+            db, agent_id, query, depth, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
             far_out=far_results,
         )
@@ -538,7 +559,7 @@ async def _recall_rrf(
     # one channel and is allowed even with source_id set (grounding path).
     if FTS_ENABLED and (not source_id or channel):
         fts_ep_results = await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
         )
         for rank, row in enumerate(fts_ep_results):
             rid = ("ep", row["id"])
@@ -548,7 +569,8 @@ async def _recall_rrf(
 
     if FTS_ENABLED:
         fts_mem_results = await _search_memories_keyword(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
         )
         for rank, row in enumerate(fts_mem_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -593,16 +615,18 @@ async def _recall_rsf(
     db,
     agent_id: str,
     query: str,
-    limit: int,
+    depth: int,
     deep: bool,
     channel: str = "",
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
 ) -> list[dict]:
     """Relative-Score-Fusion recall: like RRF but fuse the per-query min-max
     normalized *raw* score of each channel (cosine for vector, -bm25 for FTS)
-    instead of rank.
+    instead of rank. `depth` is the Recall Depth, as in `_recall_rrf`: the
+    per-arm top-K, not the response count.
 
     RRF's rank-only fusion crushes large score margins — a rank-1 vs rank-4
     bm25 gap collapses to ~5% at K=60 — so a near-tie vector channel can
@@ -631,7 +655,7 @@ async def _recall_rsf(
     if vector._embedding_client:
         far_rows: list[dict] = []
         near_rows = await _search_vector(
-            db, agent_id, query, limit, min_similarity=rsf_min_sim,
+            db, agent_id, query, depth, min_similarity=rsf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
             far_out=far_rows,
         )
@@ -662,7 +686,7 @@ async def _recall_rsf(
     # Episodes lack per-user source tagging (mirrors _recall_rrf gating).
     if FTS_ENABLED and (not source_id or channel):
         for row in await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
         ):
             rid = ("ep", row["id"])
             doc_map.setdefault(rid, row)
@@ -671,7 +695,8 @@ async def _recall_rsf(
 
     if FTS_ENABLED:
         for row in await _search_memories_keyword(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
         ):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -1340,6 +1365,18 @@ async def _apply_recall_scoring(
     return results, time_range_hours, recall_counts, newest_age_hours
 
 
+def _recall_depth(limit: int) -> int:
+    """Recall Depth for a response count of `limit` (2.6, "Depth is not count").
+
+    `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)`, clamped to the library ceiling.
+    Read from `config` at call time so a process can be pointed at a floor
+    without a restart of the module graph (tests do this; an operator changes
+    the env and restarts). The floor never lowers the depth below the count:
+    a caller asking for 200 rows still gets a fusion at least 200 deep.
+    """
+    return _clamp_limit(max(limit, config.RECALL_DEPTH_FLOOR), RECALL_LIBRARY_MAX_LIMIT)
+
+
 async def do_recall(
     agent_id: str,
     query: str,
@@ -1350,6 +1387,7 @@ async def do_recall(
     project_id: str | None = None,
     source_id: str = "",
     session_key: str = "",
+    lexical_terms: list[str] | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1368,6 +1406,13 @@ async def do_recall(
     ``source_id`` is non-empty — unless a ``channel`` filter (v2.4.22) is also
     set, in which case channel-scoped episodes are still recalled (the
     session-start grounding path).
+
+    lexical_terms (2.6): additional terms for the two lexical arms ONLY -- the
+    episode FTS and the memory keyword search. The vector arm, the scoring and
+    the gate see ``query`` unchanged. Reconstructive recall passes the declared
+    names and aliases of the entities a query mentions here
+    (docs/ASSOCIATIVE_MEMORY_DESIGN.md §3); the ``recall`` tool never does, and
+    with ``None`` or an empty list every statement is the one it was before.
     """
     # bug-032: clamp the caller-supplied limit like the list handlers do. A
     # negative limit otherwise flows to SQLite as `LIMIT -1` (unbounded full-corpus
@@ -1400,6 +1445,16 @@ async def do_recall(
             limit,
         )
 
+    # 2.6 (Depth is not count): `limit` is how many rows come back; `depth` is
+    # how far the fusion digs -- the per-arm top-K. They were one number, and the
+    # coupling cost accuracy in a measurable way (a limit of 5 put rows
+    # structurally out of reach at every gate value, see Goal-level notes in
+    # docs/RELIABLE_RECALL_2_6.md section 4). At the default floor the two are
+    # still equal, so nothing about today's ranking moves until the floor does.
+    # The cascade path is untouched: it fills `limit` slots stage by stage and
+    # fuses nothing, so a depth has no list to deepen there.
+    depth = _recall_depth(limit) if RECALL_MODE in {"rrf", "rsf"} and query.strip() else limit
+
     # Detect the static degraded case (mode=none) before dispatch; the runtime fault case
     # is observed at the embedding boundary in vector._search_vector. See health.py.
     health.observe_config()
@@ -1408,21 +1463,24 @@ async def do_recall(
     if exclude_contents:
         exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
 
+    # Passed only when there are terms, so a recall without them calls each
+    # fusion path exactly as it always did.
+    lexical = {"lexical_terms": lexical_terms} if lexical_terms else {}
     async with connection() as db:
         if RECALL_MODE == "rrf" and query.strip():
             results = await _recall_rrf(
-                db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                db, agent_id, query, depth, deep, channel, exclude_set,
+                project_id=project_id, source_id=source_id, **lexical,
             )
         elif RECALL_MODE == "rsf" and query.strip():
             results = await _recall_rsf(
-                db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                db, agent_id, query, depth, deep, channel, exclude_set,
+                project_id=project_id, source_id=source_id, **lexical,
             )
         else:
             results = await _recall_cascade(
                 db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
+                project_id=project_id, source_id=source_id, **lexical,
             )
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
@@ -1665,6 +1723,13 @@ async def do_recall(
                 logger.warning("recall_count bump failed (non-fatal): %s", e)
 
     result: dict = {"messages": messages}
+    # 2.6: say how deep the fusion looked, but only when that is not the count
+    # the caller already knows. At the default floor the two are equal and the
+    # key is absent, so every response recorded before the depth existed is
+    # unchanged byte for byte; once a floor is set, the caller can see that the
+    # ranking behind a 5-row answer considered more than 5 candidates per arm.
+    if depth != limit:
+        result["depth"] = depth
     # bug-183: present ONLY when the rescue fired. A `false` on every other recall would
     # change the payload of the whole surface (and every recorded golden) to say nothing.
     if gate_fallback:
@@ -2022,6 +2087,96 @@ def _item_budget_cost(item: dict) -> int:
     return cost
 
 
+# Range expansion (reconstruction v1.1). A ref may name part of its record
+# instead of the whole row: {"ref": ..., "node": i | [first, last]} for overflow-tree
+# nodes, or {"ref": ..., "span": [start, end]} for characters. Offsets are in the
+# stored text -- a memory's content, an episode's summary -- which is what a
+# reconstruct quote's node span is measured in, so a quote's span expands as given.
+#
+# A range the server cannot serve exactly is reported, never widened: returning
+# the whole row for a node that does not exist would hand back the payload the
+# caller asked to avoid, with nothing saying the request was not honoured.
+RANGE_INVALID = "invalid_range"
+RANGE_NO_CURRENT_NODES = "no_current_nodes"
+RANGE_NODE_OUT_OF_RANGE = "node_out_of_range"
+RANGE_SPAN_OUT_OF_RANGE = "span_out_of_range"
+
+
+def _is_index(value) -> bool:
+    # bool is an int subclass; `True` is not a position.
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _parse_ref_entry(entry) -> tuple[str, dict | None, str | None]:
+    """`entry` -> (ref, range request or None, invalid-range reason or None).
+
+    A string is a whole-row ref, as before. An object carries `ref` and at most one
+    of `node` / `span`; an object with neither is a whole-row ref too. The range is
+    only checked for shape here -- whether it fits the record needs the record.
+    """
+    if not isinstance(entry, dict):
+        return str(entry), None, None
+    ref = entry.get("ref")
+    ref = ref if isinstance(ref, str) else str(ref)
+    has_node, has_span = "node" in entry, "span" in entry
+    if has_node and has_span:
+        return ref, None, RANGE_INVALID
+    if has_node:
+        node = entry["node"]
+        if _is_index(node):
+            first = last = node
+        elif isinstance(node, list) and len(node) == 2 and all(_is_index(v) for v in node):
+            first, last = node
+        else:
+            return ref, None, RANGE_INVALID
+        if first < 0 or last < first:
+            return ref, None, RANGE_INVALID
+        return ref, {"node": (first, last)}, None
+    if has_span:
+        span = entry["span"]
+        if not (isinstance(span, list) and len(span) == 2 and all(_is_index(v) for v in span)):
+            return ref, None, RANGE_INVALID
+        start, end = span
+        if start < 0 or end <= start:
+            return ref, None, RANGE_INVALID
+        return ref, {"span": (start, end)}, None
+    return ref, None, None
+
+
+async def _resolve_range(db, kind: str, row_id: int, text: str, request: dict) -> tuple[dict | None, str | None]:
+    """The characters a range request names in `text`: ({"span": [s, e], ...}, None) or (None, reason).
+
+    A node range needs the record's node set to partition the text as it is stored
+    now (tree invariant 4). The embedding model is not required to be current: the
+    offsets depend on the text alone, and the triggers delete every node of a text
+    that changed. A span's end past the text is clamped, and the span actually
+    served is reported; a start at or past the end of the text serves nothing.
+    """
+    if "span" in request:
+        start, end = request["span"]
+        if start >= len(text):
+            return None, RANGE_SPAN_OUT_OF_RANGE
+        return {"span": [start, min(end, len(text))]}, None
+    rows = await db.execute_fetchall(
+        "SELECT node_index, start_char, end_char FROM record_nodes "
+        "WHERE parent_kind = ? AND parent_id = ? ORDER BY node_index",
+        (kind, row_id),
+    )
+    partition = (
+        bool(rows)
+        and [r[0] for r in rows] == list(range(len(rows)))
+        and rows[0][1] == 0
+        and rows[-1][2] == len(text)
+        and all(a[2] == b[1] for a, b in zip(rows, rows[1:]))
+    )
+    if not partition:
+        return None, RANGE_NO_CURRENT_NODES
+    first, last = request["node"]
+    if last >= len(rows):
+        return None, RANGE_NODE_OUT_OF_RANGE
+    return {"span": [rows[first][1], rows[last][2]], "node": [first, last], "of": len(rows)}, None
+
+
 async def do_get_contents(agent_id: str, refs: list) -> dict:
     """Resolve recall preview refs back to full, untrimmed rows (2.5.0).
 
@@ -2033,27 +2188,36 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
     so a ref belonging to another agent lands in ``missing``, never in a leak.
     Malformed refs also land in ``missing`` (fail-soft: one bad ref must not
     abort the batch).
+
+    A ref may be an object naming part of its record (reconstruction v1.1):
+    ``{"ref", "node": i | [first, last]}`` or ``{"ref", "span": [start, end]}``.
+    The item then carries that slice as ``content`` and a ``range`` object with
+    the span served, the node range and node count when nodes were named, and
+    the stored text's full length. A range that cannot be served exactly lands
+    in ``unresolved`` with a reason, and is never widened to the whole row.
     """
     if not agent_id:
         return error_response("agent_id is required")
     if not isinstance(refs, list) or not refs:
-        return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' strings")
+        return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' refs or range objects")
     if len(refs) > GET_CONTENTS_MAX_REFS:
         return error_response(f"too many refs ({len(refs)}; max {GET_CONTENTS_MAX_REFS}) — split the fetch")
 
     items: list[dict] = []
     missing: list[str] = []
-    deferred: list[str] = []
+    unresolved: list[dict] = []
+    deferred: list = []
     used = 0
     async with connection() as db:
-        for position, ref in enumerate(refs):
-            kind, _, raw = str(ref).partition(":")
+        for position, entry in enumerate(refs):
+            ref, request, invalid = _parse_ref_entry(entry)
+            kind, _, raw = ref.partition(":")
             try:
                 row_id = int(raw)
             except (TypeError, ValueError):
                 row_id = -1
             if kind not in ("mem", "ep") or row_id <= 0:
-                missing.append(str(ref))
+                missing.append(ref)
                 continue
             if kind == "mem":
                 rows = await db.execute_fetchall(
@@ -2064,6 +2228,7 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     missing.append(ref)
                     continue
                 msg_id, content, source, timestamp = rows[0]
+                text = content
                 # Mirror the recall message shape so callers can splice items in.
                 item: dict = {"ref": ref, "content": content}
                 if source:
@@ -2082,6 +2247,7 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     missing.append(ref)
                     continue
                 summary, start_time, resolved, created_at = rows[0]
+                text = summary
                 item = {
                     "ref": ref,
                     "content": f"[Episode] {summary}",
@@ -2092,6 +2258,20 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     "timestamp": episode_timestamp(start_time, created_at),
                     "resolved": bool(resolved),
                 }
+            # Checked after the ownership read, so a range on another agent's row
+            # lands in `missing` like any other foreign ref and says nothing about
+            # whether that row has nodes.
+            if invalid is not None:
+                unresolved.append({"ref": ref, "reason": invalid})
+                continue
+            if request is not None:
+                served, reason = await _resolve_range(db, kind, row_id, text, request)
+                if served is None:
+                    unresolved.append({"ref": ref, "reason": reason})
+                    continue
+                start, end = served["span"]
+                item["content"] = text[start:end]
+                item["range"] = dict(served, content_len=len(text))
             # Whole rows only — the budget never cuts a content
             # string. get_contents is the ONLY path back to full text, so a
             # trimmed answer here would be indistinguishable from the preview it
@@ -2111,11 +2291,17 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
             # transport spells the object.
             cost = _item_budget_cost(item)
             if items and used + cost > GET_CONTENTS_MAX_CHARS:
-                deferred = [str(r) for r in refs[position:]]
+                # Deferred entries are echoed as they were sent, range objects
+                # included, so the re-fetch is the same request.
+                deferred = [r if isinstance(r, dict) else str(r) for r in refs[position:]]
                 break
             used += cost
             items.append(item)
     result: dict = {"items": items, "missing": missing, "count": len(items)}
+    if unresolved:
+        # Absent unless a range was refused, so a caller that sends only string
+        # refs sees the response shape it always has.
+        result["unresolved"] = unresolved
     if deferred:
         # Absent unless the budget actually stopped the batch: a caller that
         # never meets it sees the same response shape as before.
@@ -2170,6 +2356,23 @@ def _build_fts_query(query: str) -> str:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in dict.fromkeys(terms))
 
 
+def _build_fts_recall_query(query: str, extra_terms: list[str] | None = None) -> str:
+    """Experimental edges policy; the literal FTS compiler stays unchanged.
+
+    ``extra_terms`` (2.6, associative memory stage 1) are OR-ed in as whole
+    phrases: a declared alias names one thing, so ``Miz Eye`` must not match a
+    row that merely contains ``Eye``. A phrase shorter than a trigram cannot
+    match the index and is left to the LIKE fallback, as short query terms are.
+    Without extra terms the expression is exactly the one it always was.
+    """
+    normalized = " ".join(token.strip("\"'`.,;:!?()[]{}") for token in query.split())
+    expression = _build_fts_query(normalized)
+    phrases = ['"' + t.replace('"', '""') + '"' for t in dict.fromkeys(extra_terms or ()) if len(t) >= 3]
+    if not phrases:
+        return expression
+    return " OR ".join([expression, *phrases] if expression else phrases)
+
+
 async def _search_episodes_fts(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -2177,6 +2380,7 @@ async def _search_episodes_fts(
     limit: int,
     channel: str = "",
     project_id: str | None = None,
+    extra_terms: list[str] | None = None,
 ) -> list[dict]:
     """Search episodes using FTS5.
 
@@ -2184,7 +2388,7 @@ async def _search_episodes_fts(
     exact-match filter on the episode's channel — empty means no channel
     filter (all channels), mirroring the memory search paths.
     """
-    fts_query = _build_fts_query(query)
+    fts_query = _build_fts_recall_query(query, extra_terms)
     if not fts_query:
         return []
     # isolation_where composes all three axes: exact agent, γ project,
@@ -2228,11 +2432,14 @@ async def _search_memories_keyword(
     channel: str = "",
     project_id: str | None = None,
     source_id: str = "",
+    extra_terms: list[str] | None = None,
 ) -> list[dict]:
     """Search memories using FTS5 (preferred) or LIKE fallback.
 
     project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
     source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
+    extra_terms (2.6) are matched as well as the query, by FTS phrase and by the
+    LIKE fallback; see ``_build_fts_recall_query``.
     """
     # isolation_where composes all three axes: exact agent, γ project,
     # and the knob2 v2 channel contract (stored channel '' matches every
@@ -2260,7 +2467,7 @@ async def _search_memories_keyword(
         return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows]
 
     if FTS_ENABLED:
-        fts_query = _build_fts_query(query)
+        fts_query = _build_fts_recall_query(query, extra_terms)
         if fts_query:
             try:
                 rows = await db.execute_fetchall(
@@ -2290,14 +2497,19 @@ async def _search_memories_keyword(
     # so it caps how many *matching* rows are fetched (always >= limit; the
     # return slices to limit). Old rows stay reachable; no decoupling needed.
     scan_limit = min(MAX_MEMORIES, max(limit * 5, 50))
+    patterns = [_like_escape_contains(query)]
+    patterns += [_like_escape_contains(t) for t in dict.fromkeys(extra_terms or ()) if t.strip() and t != query]
+    like_clause = " OR ".join("content LIKE ? ESCAPE '\\'" for _ in patterns)
+    if len(patterns) > 1:
+        like_clause = f"({like_clause})"
     rows = await db.execute_fetchall(
         f"""SELECT id, msg_id, content, source, timestamp
            FROM memories
            WHERE {iso.clause}{src_clause_bare}
-           AND content LIKE ? ESCAPE '\\'
+           AND {like_clause}
            ORDER BY created_at DESC
            LIMIT ?""",
-        (*iso.params, *src_params_bare, _like_escape_contains(query), scan_limit),
+        (*iso.params, *src_params_bare, *patterns, scan_limit),
     )
     return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows[:limit]]
 
@@ -2359,6 +2571,12 @@ async def do_archive_episode(
         agent_id, [{"id": f"ep:{episode_id}", "text": row[2]}]
     )
     result = {"ok": True, "episode_id": episode_id}
+    # Overflow tree (§3). Measured on row[2] for the same reason as the index push:
+    # the stored summary is the text the nodes will span.
+    if await nodes.runs_past_window(row[2]):
+        queued = await nodes.queue_build("ep", episode_id, agent_id, key)
+        if queued:
+            result["nodes"] = queued
     # Same signal do_store gives for capped content — and, since bug-175, the same
     # definition: the flag reports whether the cap CUT, not whether the caller's
     # raw string (annotation included) happened to exceed it.

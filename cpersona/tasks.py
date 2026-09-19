@@ -199,21 +199,25 @@ class MemoryTaskQueue:
         # propagates (preserves v2.4.10 monolith-era test patchability).
         from cpersona import admin_handlers
         from cpersona import memory_handlers
+        from cpersona import nodes
 
         while self._running:
             await self._event.wait()
             self._event.clear()
 
             try:
-                await self._drain(admin_handlers, memory_handlers)
+                await self._drain(admin_handlers, memory_handlers, nodes)
             except Exception as e:
                 # Never let an unexpected error (e.g. a transient DB fault in
                 # _fetch_next) terminate the loop — that would silently stop all
                 # future processing (bug-005). Log and wait for the next signal.
                 logger.error("MemoryTaskQueue: drain aborted, re-arming: %s", e, exc_info=e)
 
-    async def _drain(self, admin_handlers, memory_handlers):
+    async def _drain(self, admin_handlers, memory_handlers, nodes=None):
         """Drain all currently-pending tasks in FIFO order."""
+        if nodes is None:
+            # Same lazy import as _loop: nodes imports this module for _task_queue.
+            from cpersona import nodes
         try:
             while self._running:
                 task = await self._fetch_next()
@@ -296,6 +300,14 @@ class MemoryTaskQueue:
                                     "(agent wiped) — skipping insert",
                                     task_id,
                                 )
+                    elif task_type == nodes.TASK_TYPE:
+                        # Idempotent: build_nodes replaces a record's nodes whole and
+                        # re-checks the parent's text inside its own transaction, so a
+                        # crash between that commit and this delete only repeats a
+                        # build that then finds the nodes current.
+                        outcome = await nodes.build_nodes(payload)
+                        logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
+                        await self._delete_task(task_id)
                     else:
                         logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
                         await self._delete_task(task_id)

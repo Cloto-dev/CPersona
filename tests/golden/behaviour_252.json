@@ -3842,7 +3842,8 @@
         "vector_index",
         "operating_context_parse",
         "operating_context_size",
-        "file_permissions"
+        "file_permissions",
+        "missing_nodes"
       ],
       "fixed": false,
       "issues": [
@@ -4594,7 +4595,8 @@
         "vector_index",
         "operating_context_parse",
         "operating_context_size",
-        "file_permissions"
+        "file_permissions",
+        "missing_nodes"
       ],
       "fixed": false,
       "issues": [
@@ -5220,7 +5222,8 @@
         "vector_index",
         "operating_context_parse",
         "operating_context_size",
-        "file_permissions"
+        "file_permissions",
+        "missing_nodes"
       ],
       "fixed": false,
       "issues": [
@@ -9533,7 +9536,8 @@
         "vector_index",
         "operating_context_parse",
         "operating_context_size",
-        "file_permissions"
+        "file_permissions",
+        "missing_nodes"
       ],
       "fixed": false,
       "issues": [],
@@ -11996,7 +12000,8 @@
           "vector_index",
           "operating_context_parse",
           "operating_context_size",
-          "file_permissions"
+          "file_permissions",
+          "missing_nodes"
         ],
         "fixed": false,
         "issues": [
@@ -12129,7 +12134,8 @@
           "vector_index",
           "operating_context_parse",
           "operating_context_size",
-          "file_permissions"
+          "file_permissions",
+          "missing_nodes"
         ],
         "fixed": false,
         "issues": [],

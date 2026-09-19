@@ -3155,7 +3155,7 @@
       "status": "fixed",
       "category": "retrieval-membership",
       "fixed_in": "2.5.5",
-      "fix_note": "Punctuation is no longer stripped; tokens are whitespace-split and only the FTS5 phrase quote is neutralised by doubling. The trigram tokenizer indexes punctuation as ordinary characters, so 'CVE-2024-3094' only matches with hyphens intact. The LIKE fallback cannot compensate: it fires only on ZERO FTS rows, so any other matching term hid the loss. Known trade-offs, accepted and pinned by test: trailing punctuation now rides along in a term ('deploy?' no longer matches 'deploy'; OR-joined multi-word queries still retrieve), and full-width punctuation inside a CJK run splits the run instead of being deleted, so cross-punctuation trigrams are no longer generated — a retrieval-behaviour change the bench resumption should measure."
+      "fix_note": "Punctuation is no longer stripped; tokens are whitespace-split and only the FTS5 phrase quote is neutralised by doubling. The trigram tokenizer indexes punctuation as ordinary characters, so 'CVE-2024-3094' only matches with hyphens intact. The LIKE fallback cannot compensate: it fires only on ZERO FTS rows, so any other matching term hid the loss. Known trade-offs, accepted and pinned by test: trailing punctuation now rides along in a term ('deploy?' no longer matches 'deploy'; OR-joined multi-word queries still retrieve), and full-width punctuation inside a CJK run splits the run instead of being deleted, so cross-punctuation trigrams are no longer generated — a retrieval-behaviour change the bench resumption should measure. In 2.6.0a1, both recall FTS readers apply a separate edge-delimiter policy before this unchanged literal compiler: strip ASCII sentence delimiters only at whitespace-token edges, preserving internal identifier punctuation. The 24 retrieval cases include unrelated FTS matches so LIKE fallback cannot hide a missing target. This mitigates the trailing-punctuation trade-off; short tokens, Unicode sentence marks and meaningful edge punctuation remain Experimental acceptance limits."
     },
     {
       "id": "bug-216",
@@ -6369,6 +6369,89 @@
       "status": "fixed",
       "category": "unchecked-pointer",
       "fix_note": "The verifier refuses a registry whose `$schema` is absent, is a URL or an absolute path, or does not resolve to a file inside the repository. Repo-relative is the only form it accepts, because a gate that must work offline cannot follow a URL -- and the URL form is exactly the one that rotted elsewhere. The root `version` is removed rather than given a meaning: with one producer and one consumer, both here and versioned together by git, there is no skew for it to describe. Per-entry `version` is untouched, being a fact about the defect rather than about the file. The schema document also stops claiming the sibling scripts are kept in sync with this one -- they are not, and saying so was what let four verifiers diverge in detection power while every registry still said \"1.0\"."
+    },
+    {
+      "id": "bug-434",
+      "summary": "(LOW) The version-selector gate's check that a selector row leads to a page that exists has no test. scripts/check-version-selector.py:211 reports a row whose target is not in the assembled tree, and that is one of the three questions the file's own docstring says are asked separately because each can fail while the other two pass. Making the branch unreachable leaves tests/test_docs_applies_to_banner.py entirely green -- measured alongside three other mutations of the same gate, each of which turned exactly one test red. The failure this branch is the only check for is a selector that renders, names the right line, and links to a tree the assembler never built: every row looks correct and one of them returns a 404.",
+      "severity": "LOW",
+      "discovered": "2026-09-16T08:00:00Z",
+      "version": "2.6.0a1",
+      "file": "scripts/check-version-selector.py",
+      "pattern": "if not target\\.is_file\\(\\):",
+      "expected": "present",
+      "status": "open",
+      "category": "test-coverage",
+      "note": "Found while repairing the positive control in the same test file, which had been red since a second version line was declared: the fixture published one line where the gate asks its question per line. That repair made the positive control assert the whole run is clean, so the tree it writes now exercises this branch in the passing direction -- a row pointing at a page that is not there would fail it. What is still missing is the negative: no test writes a tree whose selector points at a line the assembler did not build, so deleting the branch costs nothing. Left open rather than fixed with the repair, to keep a build-restoring change to the failure it restored."
+    },
+    {
+      "id": "bug-435",
+      "summary": "(HIGH) Message-ID reconstruction ignores the stored project namespace, merging unrelated records and fabricating supersession when multiple projects are visible. Reproduced with two successful stores of the same ID into sibling projects: two facts became one item.",
+      "severity": "HIGH",
+      "discovered": "2026-09-16T05:00:00Z",
+      "version": "2.6.0a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "bug-435:",
+      "expected": "present",
+      "status": "fixed",
+      "category": "reconstructive-recall",
+      "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool.",
+      "fix_note": "Use a shared project-scoped identity key for bundling, supersession and conflicts; unknown context cannot establish identity. Preserve positive same-namespace version and conflict assertions with explicit stage fixtures, and pin real-store sibling/global separation."
+    },
+    {
+      "id": "bug-436",
+      "summary": "(MEDIUM) Reconstruction consumes recall advisory and update notices, marking the session as informed, but does not return those fields. A later recall receives only the short degradation reminder or no update notice.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-16T05:00:00Z",
+      "version": "2.6.0a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "bug-436:",
+      "expected": "present",
+      "status": "fixed",
+      "category": "reconstructive-recall",
+      "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool.",
+      "fix_note": "Forward the advisory/update allowlist before empty-result returns. Tests exercise real per-session notice suppression for populated and empty responses, including count zero."
+    },
+    {
+      "id": "bug-437",
+      "summary": "(MEDIUM) Reconstruction compares returned candidates against requested top_k after recall clamps it to the library ceiling. With five records, requested20 and library ceiling2, it returns two with truncated false.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-16T05:00:00Z",
+      "version": "2.6.0a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "bug-437:",
+      "expected": "present",
+      "status": "fixed",
+      "category": "reconstructive-recall",
+      "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool.",
+      "fix_note": "Resolve the effective candidate bound before retrieval; retain requested top_k and report effective_top_k when clamped. Mark a clamped bound even for empty or undersized pools, and compare returned rows against the effective bound."
+    },
+    {
+      "id": "bug-438",
+      "summary": "(MEDIUM) A multi-row recall item always quoted its newest row. That is correct for versions of one record but not for distinct rows bundled by adjacency or episode span: a relevant statement followed within the adjacency window by an unrelated remark returned the remark as the item's content, and an evidence cut dropped the older relevant rows first.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-16T12:00:00Z",
+      "version": "2.6.0a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "lead = min\\(members, key=_relevance_key\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "reconstructive-recall",
+      "note": "Found in the reconstruction candidate built on the first 2.6 alpha, before release; the published alpha does not include this reconstruction tool. The design named a head claim without defining which row it is.",
+      "fix_note": "The head is the most relevant row, resolved to the latest version when newer versions of that record are in the item; head_ref names it and claims stay newest first. An evidence cut keeps the head, then the most relevant remaining rows."
+    },
+    {
+      "id": "bug-439",
+      "summary": "(MEDIUM) check_sqlite_integrity reported critical FTS5 corruption for an intact index. FTS5 caches each table's segment structure on the connection that last read it and PRAGMA quick_check verifies the index against that cache; on the long-lived shared read connection, a merge or optimize made by the write connection left the cache stale, and quick_check reported 'malformed inverted index' while every other connection read the index as intact.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-17T02:30:00Z",
+      "version": "2.6.0a2",
+      "file": "cpersona/checks.py",
+      "pattern": "confirmed = await _quick_check_on_a_fresh_connection\\(\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check",
+      "note": "Surfaced as an order-dependent test failure: enough FTS writes in earlier test files moved the index under the read connection's cache. Reproduced before the overflow-tree work, so it was not introduced by it.",
+      "fix_note": "A quick_check finding is confirmed on a read-only connection opened for it, which has no cached structure. A healthy run pays nothing; a genuine corruption is on disk and the fresh connection reports it too."
     }
   ]
 }

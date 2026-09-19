@@ -1,10 +1,10 @@
 # Recorded Access Origin (`origin`)
 
-Status: proposed for a 2.5.x pre-release line. Additive to the tool contract —
-no tool grows an argument, and no existing response changes shape. It does add
-a database column, so it is not rollback-free by the release standard's
-definition and takes the pre-release ladder (`RELEASE_LIFECYCLE_STANDARD.md`
-§2.1).
+Status: proposed for a 2.5.x pre-release line. It is additive to the tool
+contract — no tool grows an argument, and no existing response changes shape.
+It does add a database column, so it is not rollback-free by the release
+standard's definition, and it takes the pre-release ladder
+(`RELEASE_LIFECYCLE_STANDARD.md` §2.1).
 
 ## 1. The problem: `agent_id` does not carry origin
 
@@ -18,7 +18,7 @@ whose origin is unrecoverable:
   to each other. Once they are, the only thing distinguishing the writers is
   `source`, which the writer declares about itself.
 - **Unscoped writes.** `do_store` accepts an empty `agent_id` and writes a row
-  with `agent_id = ''`. That behavior is a deliberate injected-trust seam, not
+  with `agent_id = ''`. That behaviour is a deliberate injected-trust seam, not
   an accident (bug-137), but the row it leaves behind names nobody.
 - **`import_memories`.** Imported rows take the importing side's `agent_id` and
   the exporting side's `source` verbatim. Who performed the import, and when,
@@ -37,13 +37,14 @@ then discarded. This document is about keeping it.
 **It is a measurement, not a claim.** The value is written by the server from
 what the server resolved. No tool accepts it as an argument. That single rule
 is the whole reason the column is worth adding: a field a caller can write is
-already `source`, and a second one would carry no more evidence than the first.
+already `source`, and a second one would carry no more evidence than the
+first.
 
 **It is not an isolation axis.** `agent_id`, `project_id` and `channel` select
-whose rows a query reads. `origin` selects nothing. No recall is filtered by it,
-no row becomes reachable or unreachable because of it. Filtering memory by the
-identity that wrote it would make memory unreadable across the boundary it
-exists to cross — the same rule `session.py` states for the declared session
+whose rows a query reads. `origin` selects nothing: no recall is filtered by
+it, and no row becomes reachable or unreachable because of it. Filtering memory
+by the identity that wrote it would make memory unreadable across the boundary
+it exists to cross — the same rule `session.py` states for the declared session
 key, and for the same reason.
 
 **It is not an authorization input.** Access decisions belong to the ACL layer,
@@ -57,15 +58,17 @@ opaque alias, never the raw `sub` claim. See §5.
 
 `source` is a JSON column with no schema enforcement, so a sub-key could be
 added there with no migration at all. That route was measured and rejected. Two
-properties of the existing field defeat it, and both are load-bearing where they
-are:
+properties of the existing field defeat it, and both are load-bearing where
+they are.
 
 **`source` is caller-written, and the write path preserves unknown keys.**
 `normalize_source` exists to fold legacy shapes into the canonical contract
 *without inventing anything*, because fabricating a discriminator would falsify
 attribution and defeat the anonymous-source detector. It therefore has no key
-whitelist anywhere. The reachable path is not the lenient branch for unknown
-shapes — it is the canonical fast path taken by every current producer:
+whitelist anywhere.
+
+The reachable path is not the lenient branch for unknown shapes. It is the
+canonical fast path taken by every current producer:
 
 ```python
 # (1) Already canonical — the fast path used by every 2.5.x producer.
@@ -75,17 +78,17 @@ if isinstance(raw_type, str) and raw_type in CANONICAL_SOURCE_TYPES:
 ```
 
 A caller sending `{"type": "Agent", "id": "...", "origin": {...}}` has its dict
-returned unchanged and serialized as-is by the write seam. Because `type` is
-valid, `check_health(invalid_source_type)` does not flag it either: a forged
-origin would not appear anywhere as an anomaly. Closing that would mean adding a
-stripping step, ahead of the preserve-verbatim contract, inside the one function
-written to leave the caller's value alone.
+returned unchanged, and serialized as-is by the write seam. Because `type` is
+valid, `check_health(invalid_source_type)` does not flag it either, so a forged
+origin would not appear anywhere as an anomaly. Closing that would mean adding
+a stripping step, ahead of the preserve-verbatim contract, inside the one
+function written to leave the caller's value alone.
 
 **`source` is returned by recall.** Every scored row carries it back to the
 model. An origin living there would put client identifiers, subject aliases and
-session keys into the context window on every recall — paid for in tokens on the
-hot path, and read by a model that has no use for them. Keeping it out would
-mean stripping the sub-key on the read path.
+session keys into the context window on every recall — paid for in tokens on
+the hot path, and read by a model that has no use for them. Keeping it out
+would mean stripping the sub-key on the read path.
 
 Those two repairs are the observed/declared split and the admin-only read
 surface, written in a worse place. A separate column obtains both by
@@ -98,7 +101,7 @@ One helper resolves the value, called from the write path of `store` and
 `archive_episode`:
 
 - **client** — `Principal.client_id`. Under stdio and the local principal this
-  is the local client constant; under a provider-issued token it is the
+  is the local client constant. Under a provider-issued token it is the
   issuer-namespaced identifier (`oauth:<issuer>:<client_id>`) the ACL layer
   already uses, so a row and a grant row read the same.
 - **subject alias** — present only when the principal carries a verified
@@ -112,7 +115,7 @@ One helper resolves the value, called from the write path of `store` and
 Resolution failures are not errors. A principal that is absent, a subject with
 no alias, a transport that cannot be determined: each omits its key. An empty
 object is a truthful record of a call that carried no resolvable origin, and it
-is also what every pre-existing row holds, so the two are deliberately
+is also what every pre-existing row holds. The two are deliberately
 indistinguishable — see §7.
 
 ## 5. Observed and declared never share a bag
@@ -130,28 +133,31 @@ indistinguishable — see §7.
 ```
 
 The nesting is the point. `observed` holds what the server resolved; for the
-OAuth path those fields descend from signed claims that were verified before the
-handler ran, which is what entitles a reader to treat them as evidence.
+OAuth path those fields descend from signed claims that were verified before
+the handler ran, which is what entitles a reader to treat them as evidence.
+
 `declared` holds what the caller said about itself. The declared session key is
 compared, never verified — any caller can send any string, including one
 belonging to another session — so it is recorded where its trust level is
-legible rather than in the same object as a verified subject.
+legible, rather than in the same object as a verified subject.
 
-A flat blob would be smaller and would lose exactly the property the column is
+A flat blob would be smaller, and would lose exactly the property the column is
 for. Someone auditing a bad row a year from now reads a field; nothing else in
 the row tells them which half was measured.
 
 **The alias, not the subject.** The name a subject's memory lives under is
 already an opaque server-issued alias, with the `(issuer, subject) → alias` map
-in a ledger the operator can edit, precisely so that a provider migration or a
-switch to pairwise identifiers is one file to repair rather than orphaned data
-(`OAUTH_DESIGN.md` §12). Writing the raw `sub` into a memory row would reproduce
-that orphaning per row, in a column no ledger edit can reach — and would put a
-person's provider identifier into a surface that gets exported and recalled.
+in a ledger the operator can edit. That is precisely so a provider migration,
+or a switch to pairwise identifiers, is one file to repair rather than orphaned
+data (`OAUTH_DESIGN.md` §12).
+
+Writing the raw `sub` into a memory row would reproduce that orphaning per row,
+in a column no ledger edit can reach — and would put a person's provider
+identifier into a surface that gets exported and recalled.
 
 ## 6. The read surface
 
-Phase one exposes `origin` on the inspection tools only — the per-row admin
+Phase one exposes `origin` on the inspection tools only: the per-row admin
 reads and the health surface. It is **not** added to `recall` or
 `recall_with_context`.
 
@@ -161,10 +167,10 @@ keeps the choice open, and the operator-facing question this column answers
 ("which caller wrote this row") is not a question a model answers mid-recall.
 
 For the same reason, no recall filter is proposed. `source_id` already filters
-on declared attribution; an `origin`-shaped filter is a different feature with
-its own decision to make, and it would sit uncomfortably close to the per-subject
-boundary, which is restrictive by construction and must not acquire a second,
-additive path through it.
+on declared attribution. An `origin`-shaped filter is a different feature with
+its own decision to make, and it would sit uncomfortably close to the
+per-subject boundary, which is restrictive by construction and must not acquire
+a second, additive path through it.
 
 ## 7. What this cannot tell you
 
@@ -177,14 +183,14 @@ Stated here rather than discovered later:
   should expect no information from it.
 - **It is not retroactive.** Every row written before the migration holds `{}`,
   and so does every row written afterwards by a call with no resolvable origin.
-  The column cannot say which — "written before this shipped" and "written by an
+  The column cannot say which. "Written before this shipped" and "written by an
   unidentifiable caller" are the same value by design, because inventing a
   distinction would mean writing a claim about rows nobody measured.
 - **Import records the importer.** An imported row's origin names who performed
-  the import, not who originally wrote the content — that is unknowable, and the
+  the import, not who originally wrote the content. That is unknowable, and the
   exporting side's value must not be carried across as though it had been
-  measured here. Anything else would make the column a forgery surface, which is
-  the failure mode §3 rejected `source` for.
+  measured here. Anything else would make the column a forgery surface, which
+  is the failure mode §3 rejected `source` for.
 
 ## 8. Schema and compatibility
 
@@ -202,21 +208,22 @@ Older builds tolerate the column, and this was checked rather than assumed:
   (bug-138), so a downgrade degrades rather than refusing to boot.
 
 Rolling back therefore leaves the column in place and unread. That makes the
-change rollback-*tolerant*, which is not the same as rollback-free: it is still a
-schema migration, and the release standard sends those through the pre-release
-ladder regardless of how gentle they look.
+change rollback-*tolerant*, which is not the same as rollback-free: it is still
+a schema migration, and the release standard sends those through the
+pre-release ladder regardless of how gentle they look.
 
 ## 9. Tests
 
-The claims above are worth only as much as the checks that hold them:
+The claims above are worth only as much as the checks that hold them.
 
 1. A caller that sends an `origin` key inside `source` does not influence the
-   stored `origin` column — the forgery path §3 measured, asserted directly.
+   stored `origin` column. This is the forgery path §3 measured, asserted
+   directly.
 2. A call with a resolvable principal records the client; a call with none
    records `{}`.
-3. A verified subject records its alias and never the raw claim value — asserted
-   by matching the alias, and separately by asserting the raw subject string is
-   absent from the serialized row.
+3. A verified subject records its alias and never the raw claim value. This is
+   asserted by matching the alias, and separately by asserting the raw subject
+   string is absent from the serialized row.
 4. `recall` and `recall_with_context` responses contain no `origin` key, so §6
    is a gate and not a convention.
 5. Import writes the importing caller's origin, not the value in the imported

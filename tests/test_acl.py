@@ -258,6 +258,21 @@ def test_every_registered_tool_is_classified_and_no_row_is_stale():
     )
 
 
+@pytest.mark.asyncio
+async def test_reconstruct_accepts_a_scoped_reader_and_denies_other_agents(tmp_path):
+    acl.activate(_load(tmp_path))
+    token = acl.set_principal(acl.Principal("reader"))
+    try:
+        guarded = acl._wrap("reconstruct", _stub_handler)
+        allowed = await guarded({"agent_id": "beta"})
+        denied = await guarded({"agent_id": "alpha"})
+    finally:
+        acl.reset_principal(token)
+    assert allowed == {"ok": True, "echo": {"agent_id": "beta"}}
+    assert denied["error"] == "permission_denied"
+    assert denied["agent_id"] == "alpha"
+
+
 def test_every_served_handler_carries_the_guard():
     unwrapped = [
         name

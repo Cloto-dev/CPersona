@@ -10,11 +10,11 @@ version is in
 
 ## Audit-gated releases
 
-Before a release is cut, the codebase goes through comprehensive multi-agent
-audit rounds: independent finders per dimension, each finding then verified
-adversarially from several lenses so that a plausible-but-wrong report does not
-survive into a fix. v2.4.39 shipped after three such rounds — 43 fixes, every
-one re-verified against the tree it landed on.
+Before a release is cut, the codebase goes through several multi-agent audit
+rounds. Independent finders work one dimension each, and every finding is then
+verified adversarially from several lenses, so that a plausible-but-wrong
+report does not survive into a fix. v2.4.39 shipped after three such rounds:
+43 fixes, every one re-verified against the tree it landed on.
 
 An audit produces findings, not fixes. Each survivor becomes a numbered entry
 in the bug ledger before anything is edited, so the commit and the ledger agree
@@ -28,37 +28,41 @@ with a machine-checkable code pattern: what the defect was, what reproduces it,
 and what closed it.
 
 [`scripts/verify-issues.sh`](https://github.com/Cloto-dev/cpersona/blob/master/scripts/verify-issues.sh)
-checks the ledger against the tree and fails loudly if a fix marker disappears
-or a removed defect returns. It is read-only infrastructure: it verifies the
-ledger, and is not edited to make a check pass.
+checks the ledger against the tree, and fails loudly if a fix marker
+disappears or a removed defect returns. It is read-only infrastructure: it
+verifies the ledger, and is not edited to make a check pass.
 
 ## Structural CI gates
 
 Some invariants cannot be expressed as an ordinary test, because they are
-properties of *every* call site rather than of one behaviour. Those are enforced
-by AST- and behaviour-level gates in the pytest suite, run on Python 3.11 and
-3.13:
+properties of *every* call site rather than of one behaviour. Those are
+enforced by AST- and behaviour-level gates in the pytest suite, run on Python
+3.11 and 3.13:
 
 - every writer holds the shared write lock;
 - agent-scoped SQL carries its isolation predicates;
 - identity and dedup probes carry the project and channel axes;
 - `check_health` performs no embedding network I/O while holding the lock.
 
-A gate of this kind fails on the call site that forgot the rule, which is what
+A gate of this kind fails on the call site that forgot the rule. That is what
 separates it from a test that happens to cover today's call sites.
 
 ## Documented facts are gated too
 
-Hand-written numbers rot. The schema version and environment-variable
-defaults stated in the docs are checked against the source that defines them,
-so a doc that disagrees with the code fails CI rather than misleading a reader.
-A total tool count is not allowed to appear at all: it was correct on every page
-the check could reach and stale on the surfaces it could not, so the check now
-fails on the claim itself. Version claims are checked against the release tags. The
-Japanese pages are checked against the English content they were translated
-from, so a translation cannot silently fall behind its source — and every page
-and nav label must either carry a translation or declare that it stays English,
-so a new page cannot quietly sit outside the translated site.
+Hand-written numbers rot. The schema version and environment-variable defaults
+stated in the docs are checked against the source that defines them, so a doc
+that disagrees with the code fails CI rather than misleading a reader.
+
+A total tool count is not allowed to appear at all. It was correct on every
+page the check could reach, and stale on the surfaces it could not, so the
+check now fails on the claim itself. Version claims are checked against the
+release tags.
+
+The Japanese pages are checked against the English content they were translated
+from, so a translation cannot fall behind its source unnoticed. Every page and
+nav label must also either carry a translation or declare that it stays
+English, so a new page cannot end up outside the translated site without anyone
+seeing it.
 
 The gates live in
 [`scripts/`](https://github.com/Cloto-dev/cpersona/tree/master/scripts):
@@ -67,10 +71,11 @@ The gates live in
 
 ## Mutation proof
 
-A green suite proves the tests ran, not that they would have noticed. The seams
-that carry the isolation and locking invariants are mutated deliberately in CI,
-and the proof requires that the suite goes red for each mutation. A gate that
-stays green under a mutation is reported as a gap in the gate, not as a pass.
+A green suite proves the tests ran, not that they would have noticed anything.
+The seams that carry the isolation and locking invariants are mutated
+deliberately in CI, and the proof requires that the suite goes red for each
+mutation. A gate that stays green under a mutation is reported as a gap in the
+gate, not as a pass.
 
 ## Release lifecycle
 
@@ -82,13 +87,14 @@ and how long a line keeps receiving fixes, is
 
 ## By the numbers
 
-- **~24,096 LOC** Python across focused modules, plus a 3,701-line vendored MCP
+- **~27,378 LOC** Python across focused modules, plus a 3,927-line vendored MCP
   common snapshot
-- **~1,862 test functions** across ~136 test modules — ~2,370 cases once the
-  behavioural matrix is parametrised (~54,953 LOC, more test code than server
+- **~2,092 test functions** across ~156 test modules — ~2,667 cases once the
+  behavioural matrix is parametrised (~59,790 LOC, more test code than server
   code), including the structural-enforcement gates above
-- **Schema v13** (auto-migrating)
+- **Schema v15** (auto-migrating)
 - **MIT License**
 
-These counts are approximations on purpose, and are themselves gated: they are
-re-measured from the tree in CI and fail once they drift far enough to mislead.
+These counts are approximations on purpose, and they are themselves gated.
+They are re-measured from the tree in CI, and fail once they drift far enough
+to mislead.

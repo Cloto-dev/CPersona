@@ -63,7 +63,10 @@ vector-search layer). Running without an embedding backend is supported as a
 fallback — CPersona then serves FTS5 + keyword only — but it is not
 recommended for normal operation.
 
-**Prerequisites:** Python 3.11+ (Git only for from-source installs).
+**Prerequisites:** Python 3.11+ (Git only for from-source installs). No Python
+on the machine? Install [uv](https://docs.astral.sh/uv/) first — `uvx` and
+`uv tool install` fetch a suitable interpreter on their own, without touching
+the system.
 
 ### 1. Install CPersona
 
@@ -102,6 +105,17 @@ and the provider are not optional here any more than in the recipe above; a
 server started without them serves a different backend than the one just
 downloaded.
 
+**Keep its stdin open.** The reference server runs an MCP session on stdio and
+serves `/embed` from a background task, so its lifetime is bound to stdin.
+Started with stdin closed — `nohup … </dev/null`, a service manager, or your
+own background shell — it binds the port and exits within the same second with
+status 0, leaving CPersona pointed at a URL nothing answers. Hold the pipe:
+`sleep infinity | cembedding` (with the same `EMBEDDING_PROVIDER` as above).
+In an interactive terminal the terminal already does this. `uvx` runs the
+package out of uv's cache; for a server that has to come back after a reboot,
+`uv tool install "cembedding[onnx]"` gives a persistent install with
+`cembedding` on PATH.
+
 > CEmbedding is the reference and recommended backend; any other server
 > satisfying the contract above is equally supported and equally recommended.
 >
@@ -134,8 +148,14 @@ key names differ.
 > venv's python. **ClotoCore users:** install from the in-app marketplace
 > ([ClotoHub](https://hub.cloto.dev)) instead.
 
+**Choose the `agent_id` now** — one stable id for this user and client (e.g.
+`"claude-code"`, `"claude-desktop"`), reused on every call from here on. Recall
+is scoped to an exact `agent_id`: a later session that guesses a different one
+gets an empty result, not an error.
+
 After restarting the client, confirm the `cpersona` server is connected, then
-ask Claude to `store` a fact and `recall` it.
+`store` a fact under that `agent_id` and `recall` it **from a new session** —
+a recall inside the session that stored it proves nothing about persistence.
 
 ### 4. Persist the policy into the always-loaded file (recommended)
 
@@ -173,15 +193,17 @@ The block (keep it verbatim apart from the substitution — it is budgeted at
 is chosen to change behavior the agent would *not* show by default):
 
 ```markdown
-<!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v3 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
 
-**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
-the first substantive action. Prefer `recall_with_context` when conversation history is already
-at hand; add `deep=true` when the first pass comes back thin. Skip only for trivial one-shot
-questions.
+**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before the
+first substantive action; `recall_with_context` when conversation history is at hand, `deep=true`
+when the first pass comes back thin. Skip only for trivial one-shot questions.
+
+**Past context mid-session** → `reconstruct(agent_id, query, count=<items you need>)`, not `recall`:
+`count` caps the items without shrinking the search. No score comes back; read an item to judge it.
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
 "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
@@ -201,9 +223,8 @@ turns>, summary=…, keywords=…, resolved=…)`, computing `summary` and `keyw
 **Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
 and follow its runbook. Never quietly serve keyword-only recall.
 
-**Quality** — if recall feels off, `set_recall_precision` (strict/balanced/lenient) is the one
-policy knob; run `calibrate_threshold(agent_id)` after the corpus changes substantially.
-Monthly: `check_health(agent_id, fix=true)`.
+**Quality** — recall feels off → `set_recall_precision` (strict/balanced/lenient), the one policy
+knob; after large corpus changes `calibrate_threshold(agent_id)`; monthly `check_health(agent_id, fix=true)`.
 
 **If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
 as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that
@@ -216,13 +237,27 @@ Details, setup, and troubleshooting: the `cpersona-memory` skill.
 <!-- END cpersona-policy -->
 ```
 
+### 5. Done means
+
+Setup is finished when all of these hold — report each one to the user rather
+than a general "it works":
+
+- The MCP client lists `cpersona` as connected, and `CPERSONA_DB_PATH` is an
+  absolute path you can name.
+- `check_health` reports no critical issue.
+- A `store` came back `embedded: true` (or you have told the user that recall
+  is running without the vector layer, and why).
+- A **new** session recalled what an earlier session stored.
+- The policy block from step 4 is in the always-loaded file with the chosen
+  `agent_id` — or the user declined it, and knows that without it the next
+  session has no way to learn which `agent_id` to use.
+
 ---
 
 ## Usage
 
 Once connected, follow these triggers **proactively** — do not wait to be asked.
-Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
-`"claude-code"`) and reuse it on every call.
+Use the `agent_id` chosen at setup (step 3) on every call.
 
 ### Mandatory triggers
 
@@ -288,12 +323,71 @@ Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
   low-confidence: likely for identifier/hash lookups whose exact match is
   semantically distant from the query.
 
+### Reading past context with `reconstruct`
+
+`recall` returns rows; `reconstruct` returns **items** — the rows that belong
+together (versions of one record, one conversational burst, an episode and what
+it covers) bundled, each quoted verbatim with the rows behind it in `claims`.
+
+- **Use it mid-session**, when you go back for context. `count` caps the items
+  returned and nothing else: the search depth (`top_k`, 20 by default) does not
+  shrink with it, whereas `recall`'s `limit` is also each retriever's depth.
+  Session start stays `recall`, as does any call that needs `exclude_contents`
+  or the raw rows.
+- **No score comes back.** An item being returned is not evidence that it is
+  relevant: with `count=3`, two unrelated items is a normal answer. Read them.
+- **Read further smallest first.** A cut quote from a long record carries
+  `expand` — pass it to `get_contents` as it is — then the neighbouring nodes,
+  then the bare ref (the whole record) last.
+- **Fields that read wrong at first sight.** `node.span` is the range the quote
+  covers, which is the whole node only when the quote was not cut; the
+  record's length is `content_len`.
+  `node_unavailable: no_nodes` on a record that fits one embedding window is
+  normal — there is nothing to split. `bounds.reached: ["top_k"]` on a store of
+  thousands means the search used its depth, not that something is missing.
+- **After upgrading to 2.6.0a3 or later**, records stored earlier have no
+  nodes, so a long one is quoted from its start. Build them with
+  `check_health(agent_id, checks=["missing_nodes"], fix=true)`, once per
+  `agent_id` (an empty one needs write access to every agent when permissions
+  are configured), repeated until the finding disappears — a run builds at most
+  50 records. `count: null` in that finding means the embedding server predates
+  the token report (CEmbedding 0.8.0): upgrade it; null is not zero.
+
+### Associative memory
+
+Entities with aliases, and relations between them, that **you declare** — the
+server extracts nothing and infers nothing. Declare with `associations` on
+`store` (the stored memory becomes the evidence) or with `declare_associations`
+afterwards.
+
+- **Declare when a memory names something you will ask about by another name
+  or through something else**: a product and its code name, a project and who
+  owns it. `{"entities": [{"name": "MizEye", "aliases": ["ミズアイ"]}],
+  "relations": [{"subject": "Kirari", "predicate": "maintains", "object": "MizEye"}]}`.
+- **Only `reconstruct` and `traverse` read it.** `recall` is unchanged, and with
+  nothing declared so is `reconstruct`. In `reconstruct`, an alias in your query
+  adds the entity's other names to the keyword search — a vote, not a pass: a
+  record found only that way is still judged against your query as written. A
+  relation between two records bundles them into one item; a relation between
+  entities adds records about related entities as evidence inside the item
+  (`why: "relation:<predicate>"`, `hops`), never as items of their own.
+- **Relate records with a role word** — `corrects`, `supersedes`, `qualifies`,
+  `contradicts`, `supports`, `temporal_predecessor` — with the record that plays
+  the role as subject (the correction, the newer version, the support, the
+  predecessor), and `reconstruct` labels it as that role.
+- **`traverse(entity)`** shows what is declared around a name: aliases,
+  relations and the refs that mention each entity. A wrong declaration stays
+  until you remove it with `declare_associations(retract=…)`, using the relation
+  ids `traverse` returns.
+
 ### Memory types
 
 - **Declarative** — individual facts/decisions/rules via `store`.
 - **Episodic** — conversation summaries via `archive_episode`.
 - **Profile** — accumulated user/project attributes via `update_profile` /
   `get_profile`.
+- **Associative** — declared entities, aliases and relations, via
+  `associations` on `store` or `declare_associations`.
 
 ### Maintenance (low frequency)
 
@@ -356,7 +450,7 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 
 | Group | Tools |
 |-------|-------|
-| Core read/write | `store`, `recall`, `recall_with_context`, `get_contents`, `list_memories`, `list_episodes` |
+| Core read/write | `store`, `declare_associations`, `recall`, `recall_with_context`, `reconstruct`, `traverse`, `get_contents`, `list_memories`, `list_episodes` |
 | Episodes / profile | `archive_episode`, `get_profile`, `update_profile` |
 | Editing / protection | `update_memory`, `lock_memory`, `unlock_memory`, `delete_memory`, `delete_episode`, `delete_agent_data` |
 | Recall tuning | `set_recall_precision`, `get_recall_precision`, `calibrate_threshold` |
@@ -434,7 +528,7 @@ and the backfill for rows written while the backend was down.
 
 ## Key facts
 
-- Schema v13 (auto-migrating) · ~23,738 LOC Python across focused modules · MIT.
+- Schema v15 (auto-migrating) · ~27,378 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 /absolute/path/cpersona.db ".backup 'backup.db'"`, substituting the

@@ -1,16 +1,16 @@
 # Behavior Contracts
 
 > **Applies to: CPersona {{ version_line }}.** Statements here are verified against the
-> source of the current release line. Behaviors documented on this page are
-> **contracts**: callers may rely on them, and a change goes through the
-> pre-release ladder and release notes
-> (see [RELEASE_LIFECYCLE_STANDARD](RELEASE_LIFECYCLE_STANDARD.md)) — it will
-> not change silently.
+> source of the current release line. The behaviours on this page are
+> **contracts**: callers may rely on them, and any change goes through the
+> pre-release ladder and the release notes (see
+> [RELEASE_LIFECYCLE_STANDARD](RELEASE_LIFECYCLE_STANDARD.md)). Nothing here
+> changes silently.
 
-This page collects the behaviors that are easy to assume wrong from the tool
-names alone. Several of them were surfaced by production operators measuring
-CPersona from the outside; where a behavior looks surprising, the rationale is
-stated next to it.
+This page collects the behaviours that are easy to guess wrong from the tool
+names alone. Several of them were found by production operators measuring
+CPersona from the outside. Where a behaviour looks surprising, the reason for
+it is stated next to it.
 
 ---
 
@@ -28,15 +28,19 @@ Consequences:
 
 - **Evaluation**: if you measure hit@k against a recall response, index from
   the **tail**. Measuring from the head inverts the result.
-- **`recall_with_context` has a different contract**: it merges recalled
-  memories with the conversation history you pass in and returns a
-  **chronological** merge, not a score ordering. Chronological means the
-  **instant** each timestamp names, not the text it is written in: a stamp in
-  any UTC offset — and a naive one, which is read as UTC — lands where it
-  belongs against every other stamp, whichever side of the merge wrote it. A
-  message whose timestamp is missing or unparseable names no instant, so it is
-  placed **ahead of every dated message**, in the order it was merged in; the
-  end of the list is reserved for what is genuinely most recent.
+- **`recall_with_context` has a different contract.** It merges recalled
+  memories with the conversation history you pass in, and returns a
+  **chronological** merge rather than a score ordering.
+
+  Chronological means the **instant** each timestamp names, not the text it is
+  written in. A stamp in any UTC offset lands where it belongs against every
+  other stamp, whichever side of the merge wrote it. A naive stamp is read as
+  UTC and treated the same way.
+
+  A message whose timestamp is missing or unparseable names no instant. Those
+  are placed **ahead of every dated message**, in the order they were merged
+  in, so that the end of the list is reserved for what is genuinely most
+  recent.
 
 ## 2. Confidence scoring overrides the fusion mode
 
@@ -47,20 +51,24 @@ With it **on**:
 - the quality gate keys on confidence instead of the fused score.
 
 The fusion mode (`CPERSONA_RECALL_MODE=rrf|rsf|cascade`) still selects *which
-candidates enter* the result set, but no longer decides the order you get
+candidates enter* the result set, but it no longer decides the order you get
 back. Measured on a 1,545-document corpus with 394 queries: with confidence
 on, `rsf` and `rrf` returned identical rows in identical order for all 394
 queries; with it off, they agreed on fewer than 10%.
 
-The ranking / gate signal priority chain is: **confidence > rsf > cosine >
-rrf** — a scored row's `match_reason.signal` reports which branch actually keyed
-for it. Rows that were never scored omit the key entirely: the FTS / keyword
-rows a `cascade` recall fills with, and — with confidence off — the injected
-profile row. With confidence on, the profile row is scored like any other and
-carries `match_reason` too. Treat `match_reason` as present-or-absent, not as a
-field on every row.
+The ranking and gate signal follows a priority chain: **confidence > rsf >
+cosine > rrf**. A scored row's `match_reason.signal` reports which branch
+actually keyed for it.
 
-Note that confidence is **not match strength**: it blends cosine similarity,
+Rows that were never scored omit the key entirely. Those are the FTS and
+keyword rows a `cascade` recall fills with, and — with confidence off — the
+injected profile row.
+
+With confidence on, the profile row is scored like any other and carries
+`match_reason` too. Treat `match_reason` as present-or-absent, not as a field
+on every row.
+
+Note that confidence is **not match strength**. It blends cosine similarity,
 time decay, resolved status, and recall count into a separate quantity. An
 exact-match row can legitimately score below a paraphrase row on this scale.
 
@@ -80,20 +88,19 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 | Floor | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` |
 
 - The **boundary is the latest episode's `created_at`**, scoped to the same
-  isolation axes (agent / project / channel) as the query — an unrelated
+  isolation axes (agent / project / channel) as the query. An unrelated
   bucket's episode does not move your boundary.
 - Memories at or after the boundary (the current session) are untouched
   (factor 1.0).
 - With the defaults, the factor reaches the floor after **~69 hours**
-  (`ln 2 / 0.01`); everything older than ~3 days is uniformly halved. The
+  (`ln 2 / 0.01`), so everything older than ~3 days is uniformly halved. The
   mechanism is a *soft preference for the current session*, not a fine-grained
-  recency ranking — ordering decisions *within* the last few days are outside
-  its resolution. (`RATE=0.002` stretches the ramp to ~2 weeks if you want a
-  slower curve.)
+  recency ranking: ordering decisions *within* the last few days are below its
+  resolution. Set `RATE=0.002` to stretch the ramp to ~2 weeks.
 
-**Bulk-import hazard**: the boundary is simply the newest episode row. If you
+**Bulk-import hazard.** The boundary is simply the newest episode row. If you
 backfill historical conversations with `archive_episode`, the *import time*
-becomes the boundary and every pre-existing memory falls into the penalized
+becomes the boundary, and every pre-existing memory falls into the penalized
 region. Either do not backfill episodes, or set
 `CPERSONA_EPISODE_PENALTY_ENABLED=false` for the import.
 
@@ -101,152 +108,169 @@ region. Either do not backfill episodes, or set
 
 `CPERSONA_MAX_MEMORIES` (default `10000`) is **not a storage cap**. It is the
 **vector retriever's scan window**: vector search considers the most recent N
-rows (memories and episodes are each scanned under the window). Rows older
-than the window are invisible to vector search — but remain reachable through
+rows, and memories and episodes are each scanned under the window. Rows older
+than the window are invisible to vector search. They remain reachable through
 the FTS and keyword channels, which are not window-limited.
 
-**The window is also a recency prior.** By keeping only the newest rows it
-hands every recent memory a candidate field of N instead of the whole corpus,
-and that is worth accuracy rather than costing it. Measured on 237,654 stored
-documents, widening the window from 10,000 to 200,000 gained 4.93 NDCG@10 where
-the answer lay below the window and lost 20.19 where it lay inside it, with no
-result truncated. The loss is rank displacement: the vector retriever hands the
-fusion its top `limit` rows, so a recent answer that ranked third among 10,000
-candidates and thirtieth among 200,000 is not lower on that list, it is *off*
-it, and its vote is gone. **So raising this number is not a pure relaxation** —
-it extends the reach by removing the prior.
+**The window is also a recency prior.** By keeping only the newest rows, it
+hands every recent memory a candidate field of N instead of the whole corpus.
+That buys accuracy rather than costing it.
 
-`CPERSONA_VECTOR_REACH` (default `0`) separates the two. It must be set **above**
-`CPERSONA_MAX_MEMORIES` to do anything; at or below it, nothing changes and no
-extra work runs. Above it, the rows between the window and the reach are ranked
-as a **second list** — same threshold, same cut, same tie-break — and handed to
-the fusion as one more ranked list. The window keeps its width, so every row
-that places today keeps the vote it has today and older rows can only be added.
-Two limits on where it applies: **fusion only** (`CPERSONA_RECALL_MODE=rrf` or
-`rsf`; `cascade` concatenates stages rather than fusing lists, so it ignores the
-setting), and **local vector search only** (with `CPERSONA_VECTOR_SEARCH_MODE=remote`
-the service ranks under its own window). Under `rsf` the far list is fused as a
-fourth channel, which lowers every fused score against the cosine-scale
-`min_score` because the sum is divided by the number of active channels; the
-setting's measurement is registered for `rrf`, and no claim is made about `rsf`.
+Measured on 237,654 stored documents, widening the window from 10,000 to
+200,000 gained 4.93 NDCG@10 where the answer lay below the window, and lost
+20.19 where it lay inside it, with no result truncated.
+
+The loss is rank displacement. The vector retriever hands the fusion its top
+`limit` rows. A recent answer that ranked third among 10,000 candidates and
+thirtieth among 200,000 is not lower on that list — it is *off* it, and its
+vote is gone. **So raising this number is not a pure relaxation.** It extends
+the reach by removing the prior.
+
+`CPERSONA_VECTOR_REACH` (default `0`) separates the two. It must be set
+**above** `CPERSONA_MAX_MEMORIES` to do anything; at or below it, nothing
+changes and no extra work runs.
+
+Above it, the rows between the window and the reach are ranked as a **second
+list** — same threshold, same cut, same tie-break — and handed to the fusion
+as one more ranked list. The window keeps its width, so every row that places
+today keeps the vote it has today, and older rows can only be added.
+
+Two limits apply to where it works. It is **fusion only**
+(`CPERSONA_RECALL_MODE=rrf` or `rsf`; `cascade` concatenates stages rather
+than fusing lists, so it ignores the setting), and it is **local vector search
+only** (with `CPERSONA_VECTOR_SEARCH_MODE=remote` the service ranks under its
+own window).
+
+Under `rsf` the far list is fused as a fourth channel. That lowers every fused
+score against the cosine-scale `min_score`, because the sum is divided by the
+number of active channels. The setting's measurement is registered for `rrf`,
+and no claim is made about `rsf`.
 
 `CPERSONA_VECTOR_FAR_LIMIT` (default `0`) bounds how many rows of that second
-list are handed to the fusion — at the default, the response `limit`, which is
-the list the reach produces on its own; above `0`, the smaller of that and the
-number given, taken from the head of the same list, so it decides how many far
-rows may vote and nothing about how any row is scored.
+list are handed to the fusion. At the default, the bound is the response
+`limit`, which is the list the reach produces on its own. Above `0`, it is the
+smaller of that and the number you gave, taken from the head of the same list.
+It therefore decides how many far rows may vote, and nothing about how any row
+is scored.
 
 **Raising the window extends the reach and removes the prior in the same
-motion** — measured, it cost 20 NDCG@10 points on recent answers for 5 on old
-ones (`REACH_AND_RECENCY_PLAN.md`), so it is a knob with a price rather than
-the supported answer for a larger corpus, and the default does not move until
-the far vote is priced. Cost estimate: a
-768-dimension float32 embedding is ~3 KB/row, so a 10,000-row window reads up
-to ~60 MB per recall in the worst case (memories + episodes). Turning the reach
-on costs the same way, per row: a recall reads `CPERSONA_VECTOR_REACH` −
-`CPERSONA_MAX_MEMORIES` more embedding rows than it does today. With the
-contiguous vector index built that read is the index's fast path; without one it
-is the chunked table scan, whose latency at a reach of 200,000 on a 237,654-row
-corpus was roughly double the default's, with the keyword channel as the floor
-in both cases. Memory does not grow with either number beyond the chunk the scan
-holds and the index file it maps. No archival or thinning routine is required:
-the long-term model is *no physical deletion — old rows sink via windows and
-decay*.
+motion.** Measured, it cost 20 NDCG@10 points on recent answers to gain 5 on
+old ones (`REACH_AND_RECENCY_PLAN.md`). It is a knob with a price, not the
+supported answer for a larger corpus, and the default will not move until the
+far vote is priced.
+
+The cost in I/O: a 768-dimension float32 embedding is ~3 KB per row, so a
+10,000-row window reads up to ~60 MB per recall in the worst case (memories
+plus episodes). Turning the reach on costs the same way, per row — a recall
+reads `CPERSONA_VECTOR_REACH` minus `CPERSONA_MAX_MEMORIES` more embedding
+rows than it does today.
+
+With the contiguous vector index built, that read is the index's fast path.
+Without one, it is the chunked table scan, whose latency at a reach of 200,000
+on a 237,654-row corpus was roughly double the default's, with the keyword
+channel as the floor in both cases. Memory does not grow with either number
+beyond the chunk the scan holds and the index file it maps.
+
+No archival or thinning routine is required. The long-term model is *no
+physical deletion — old rows sink via windows and decay*.
 
 ## 5. Dedup semantics: skip, not upsert
 
 `store` deduplicates two ways, and the two are scoped differently:
 
-- **`msg_id` dedup** — a `store` carrying a `msg_id` that already exists is
+- **`msg_id` dedup.** A `store` carrying a `msg_id` that already exists is
   **skipped** (`result: "skipped"`, echoing the existing row's id). This probe
-  spans agent and project but **not `channel`**: the same `msg_id` written to a
-  second channel is skipped against the first channel's row.
-- **Content dedup** — an identical content string is likewise skipped, scoped to
-  agent, project and channel. A unique index backs it, but only within an exact
-  bucket (`agent_id, project_id, channel, content`), while the probe that runs
-  first also sees the global pool. Two writers racing into *different* project
-  buckets can therefore both land.
+  spans agent and project but **not `channel`**: the same `msg_id` written to
+  a second channel is skipped against the first channel's row.
+- **Content dedup.** An identical content string is likewise skipped, scoped
+  to agent, project and channel. A unique index backs it, but only within an
+  exact bucket (`agent_id, project_id, channel, content`), while the probe
+  that runs first also sees the global pool. Two writers racing into
+  *different* project buckets can therefore both land.
 
-The critical consequence: **there is no upsert**. Re-storing a *changed*
+The critical consequence: **there is no upsert.** Re-storing *changed*
 content under the *same* `msg_id` does **not** update the stored row — it is
-skipped. To change a stored memory, use `update_memory` (re-embeds
-automatically), or `delete_memory` + `store`.
+skipped. To change a stored memory, use `update_memory` (which re-embeds
+automatically), or `delete_memory` followed by `store`.
 
-The flip side is a guarantee you can lean on: re-submitting **unchanged**
-content is harmless by construction, which makes naive full re-submission of
-a corpus safe. See the
-[corpus indexing patterns](operations.md#corpus-indexing-and-sync-patterns) for
-how to run a document index on top of these semantics.
+That cuts the other way, and gives you a guarantee to lean on: re-submitting
+**unchanged** content is harmless by construction, which makes naive full
+re-submission of a corpus safe. The
+[corpus indexing patterns](operations.md#corpus-indexing-and-sync-patterns)
+show how to run a document index on top of these semantics.
 
 A `store` that reaches the handler carries `result`: `stored` (row written),
 `skipped` (dedup hit or persistence paused — nothing wrong), or `rejected`
-(refused, with `reason`). One layer sits above that and answers in the generic
-shape instead: with an ACL configured, a call the client is not permitted to
-make returns `{ok: false, error: "permission_denied", tool, client_id}` and no
-`result`. Branch on `ok is false` first, then on `result`.
+(refused, with `reason`).
+
+One layer sits above that and answers in the generic shape instead. With an
+ACL configured, a call the client is not permitted to make returns
+`{ok: false, error: "permission_denied", tool, client_id}` and no `result`.
+Branch on `ok is false` first, then on `result`.
 
 ## 6. Autocut fires only on similarity-scale signals
 
 Autocut (largest-score-gap truncation) assumes score gaps encode relevance
 breaks. That is only true of similarity-scale signals:
 
-- **Fires**: under confidence scoring, or on a homogeneous raw-cosine list
+- **Fires** under confidence scoring, or on a homogeneous raw-cosine list
   where every row carries the signal.
-- **Deliberately inert**: under `rsf` and `rrf` ordering. Rank-fusion scores
-  decay hyperbolically by construction — their gaps encode retriever overlap,
-  not relevance breaks. Fusion-ordered results rely on the fused quality gate
-  for contamination control instead.
+- **Deliberately inert** under `rsf` and `rrf` ordering. Rank-fusion scores
+  decay hyperbolically by construction, so their gaps encode retriever
+  overlap, not relevance breaks. Fusion-ordered results rely on the fused
+  quality gate for contamination control instead.
 
 So in the default configuration (confidence off, `rrf` or `rsf`), tuning
 `CPERSONA_AUTOCUT_MIN_RESULTS` **has no effect on recall size**. The knob that
-does move the gate under fusion modes is `set_recall_precision` — see the
+does move the gate under fusion modes is `set_recall_precision`. See the
 [tuning runbook](operations.md#tuning-recall).
 
 ## 7. Profile rows carry no score
 
-The `update_profile` row is appended to recall responses as an injection row —
-it does not participate in scoring. There is at most one: `profiles` is unique
+The `update_profile` row is appended to recall responses as an injection row:
+it does not participate in scoring. There is at most one. `profiles` is unique
 on `(agent_id, user_id)` and every write path binds `user_id` to `''`, so a
 second `update_profile` replaces the first rather than accumulating.
 
 - The row is dropped **before any scoring branch** on a pool of fewer than 50
   rows, with confidence on or off. The pool is the summed memories + episodes
   count for the recall's isolation scope, so a small or narrowly scoped corpus
-  gets no profile row however the rest of the recall is configured. Measured on
-  a 30-row pool with a query no stored row answers — so `limit` cuts nothing —
-  a confidence-on recall returned no messages at all, while the 50-row control
-  in the same run returned the profile.
-- Above that threshold, with **confidence off** (the default), profile rows have
-  no score, sort last, and are **cut by `limit`** when the scored results
+  gets no profile row however the rest of the recall is configured. Measured
+  on a 30-row pool with a query no stored row answers — so `limit` cuts
+  nothing — a confidence-on recall returned no messages at all, while the
+  50-row control in the same run returned the profile.
+- Above that threshold, with **confidence off** (the default), profile rows
+  have no score, sort last, and are **cut by `limit`** when the scored results
   already fill it. Measured under `rsf` with `limit=10` on a full corpus:
   **0 profile rows survived**.
 - Above that threshold, with **confidence on**, profile rows receive a high
   confidence score and reliably surface near the top.
 
 Do not treat the profile as a guaranteed always-injected channel unless you
-run with confidence enabled. For *must-always-be-present* facts, the correct
-mechanism is deterministic injection (your `CLAUDE.md` / system prompt), not
-probabilistic recall — see [When not to use recall](operations.md#when-not-to-rely-on-recall).
+run with confidence enabled. For facts that *must always be present*, the
+correct mechanism is deterministic injection — your `CLAUDE.md` or system
+prompt — not probabilistic recall. See
+[When not to use recall](operations.md#when-not-to-rely-on-recall).
 
 ## 8. `gate_fallback` responses are low-confidence
 
 A recall response carrying `gate_fallback: true` (absent otherwise) means
 **every candidate fell below the quality gate**, and the below-gate lexical
 matches were returned instead of an empty result. Treat these rows as
-low-confidence — typical for identifier/hash lookups whose exact match is
-semantically distant from the query text.
+low-confidence. They are typical of identifier and hash lookups, where the
+exact match is semantically distant from the query text.
 
 **The rescue path exists only under confidence scoring.** The rows it returns
 are marked by the same backfill that runs when `CPERSONA_CONFIDENCE_ENABLED`
-is on, so in the default configuration `gate_fallback` can never appear: an
-all-below-gate recall simply returns nothing.
+is on. In the default configuration `gate_fallback` can therefore never
+appear: an all-below-gate recall simply returns nothing.
 
 ## 9. `lock_memory` protects; it does not boost
 
-`lock_memory` protects a row from deletion and editing. It does **not**
-affect ranking — a locked memory can still lose a recall. If the requirement
-is "must never be *lost*", lock it. If the requirement is "must always be *in
-context*", use deterministic injection (and see §7 for the profile caveat).
+`lock_memory` protects a row from deletion and editing. It does **not** affect
+ranking, so a locked memory can still lose a recall. If the requirement is
+"must never be *lost*", lock it. If the requirement is "must always be *in
+context*", use deterministic injection — and see §7 for the profile caveat.
 
 ## 10. Response shapes: how to tell success from failure
 
@@ -263,7 +287,7 @@ failure readable as a success:
   `healthy` boolean.
 - **Every tool-level failure a handler returns now carries `ok: false`.** Most
   used to return `error` alone, with no `ok` to branch on. The explanation
-  still travels in `error` — except on `store`, which puts it in `reason`.
+  still travels in `error`, except on `store`, which puts it in `reason`.
 
 Two shapes stay outside that rule, and always did:
 
@@ -274,5 +298,32 @@ Two shapes stay outside that rule, and always did:
 - **A successful read** (`get_contents`, `list_memories`, `list_episodes`,
   `get_profile`) returns its payload with no `ok` either.
 
-Both are covered by the rule above, which is why the rule is phrased as "treat
+Both are covered by the rule above. That is why the rule is phrased as "treat
 a response carrying `error` as a failure" rather than "check `ok`".
+
+## 11. Declared associations are read by `reconstruct` and `traverse` only
+
+What an agent declares — entities, aliases, relations — changes no `recall`
+response, and with nothing declared it changes no `reconstruct` response
+either: both are byte-identical to a store without the tables. Where
+`reconstruct` does read it:
+
+- **An alias adds a vote, not a pass.** When the query names a declared entity,
+  its other names are added to the keyword search only; the embedding search,
+  the scoring and the quality gate still see the query as written. A record
+  found only through the alias is judged against that query and stays below the
+  gate exactly as it would without the alias. What the alias does is lift a
+  record the other search already voted for.
+- **A relation between two records bundles them** into one item when both are
+  candidates, and a role word as predicate labels the subject as that role. A
+  shared entity never bundles.
+- **A relation between entities adds evidence, never items.** Records that
+  mention an entity reached from an item's candidates are added inside that
+  item with `why: "relation:<predicate>"` and `hops`, fewest hops first. They do
+  not become items, do not change which items are returned or their order, and
+  do not appear twice in one response.
+
+Coverage is exactly what was declared: the server extracts nothing and infers
+nothing, and a wrong declaration stays until it is retracted. See the
+[associative memory design](ASSOCIATIVE_MEMORY_DESIGN.md), §9 for the rules the
+implementation fixed.

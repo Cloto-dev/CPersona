@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:6468a01632946dfac1d5f318dc657a7bea992445 -->
+<!-- i18n-source: docs/getting-started.md@blob:2cd10710f961831817a39f5b9dc589f1e62abbc3 -->
 
 # はじめに
 
@@ -21,11 +21,10 @@ MCP クライアントを向ければ、クライアントのエージェント�
 
 ## エージェントに任せる (Claude Code) { #let-the-agent-do-it-claude-code }
 
-このリポジトリ — および公開されている wheel — には
+このリポジトリと、公開されている wheel の両方に
 [Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
-が同梱されています。インストール全体を Claude Code に案内させるだけでなく、
-より重要なこととして、その後 *いつ* store / recall / archive すべきかを教えます。
-skill を入れるのが最短経路です:
+が同梱されています。この skill は Claude Code にインストール手順を案内し、その後
+*いつ* store / recall / archive すべきかを教えます。これが最短経路です:
 
 ```bash
 # PyPI からインストール済みなら、skill は wheel の中にあります (clone 不要):
@@ -37,9 +36,9 @@ mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claud
 ```
 
 あとは Claude Code にこう言うだけです: *「CPersona をセットアップして。永続記憶が
-ほしい」*。以下の手動手順は、それ以外のクライアント向け、および手で設定したい人
-向けです — 手順 5 は本来 skill が代行する部分で、トリガーを頼まれずに発火させる
-ところです。
+ほしい」*。以下の手動手順は、それ以外のクライアント向け、および手で設定したい人向けです。
+手順 5 は本来 skill が代行する部分です。記憶のトリガーを、頼まれなくても発火させる
+ための設定にあたります。
 
 ## 1. CPersona をインストールする { #1-install-cpersona }
 
@@ -77,24 +76,23 @@ docker run -d --name cpersona -p 8402:8402 \
   -v cpersona-data:/data cpersona
 ```
 
-イメージは公開していないので、ビルドはあなたの手元で行います (配布物はリポジトリ
-そのものです)。動かす前に知っておく価値があるのは 3 点です:
+イメージは公開していないので、ビルドは手元で行ってください。動かす前に知っておく
+ことが 3 点あります:
 
 - **このイメージが提供するのは Streamable HTTP トランスポート** (8402) です。
   MCP クライアントがサブプロセスとして起動する stdio の形にするには、`-i` を付けて
   明示します: `docker run -i --rm -e CPERSONA_TRANSPORT=stdio -v
   cpersona-data:/data cpersona`。
-- **`CPERSONA_AUTH_TOKEN` が無いと起動しません。** これはイメージが厳しいのでは
-  ありません — 公開したコンテナポートはプロセスがバインドした先へそのまま転送する
-  ので、コンテナ内でバインドしていることは「コンテナ外から届かない」ことの根拠に
-  なりません。
-- **記憶はコンテナではなくボリュームに載ります。** データベースの置き場所は `/data`
-  で、そこにボリュームを持たないコンテナは「置き換えると忘れる記憶サーバー」です。
+- **`CPERSONA_AUTH_TOKEN` が無いと起動しません。** 公開したコンテナポートは、
+  プロセスがバインドした先へそのまま転送します。コンテナ内でバインドしていても、
+  コンテナ外から届かないことにはなりません。
+- **記憶はコンテナではなくボリュームに載ります。** データベースの置き場所は `/data` です。
+  ここに何もマウントしないと、コンテナを置き換えた時点で記憶はすべて失われます。
   名前付きボリューム (上記) はそのまま動きます。ホストのディレクトリを bind mount
   する場合は所有権が引き継がれないので、uid `10001` が書ける状態にするか、
   `--user "$(id -u)"` を渡してください。
 
-embedding backend を与えるまで recall は keyword/FTS のみです — 次の節を参照し、
+embedding backend を与えるまで recall は keyword/FTS のみです。次の節を参照し、
 用意できたら `-e CPERSONA_EMBEDDING_MODE=http -e
 CPERSONA_EMBEDDING_URL=http://<host>:8401/embed` を渡してください。
 </details>
@@ -111,38 +109,36 @@ docker compose run --rm embedding cembedding-download-model --model jina-v5-nano
 docker compose up -d
 ```
 
-真ん中の行は事務手続きではありません。放っておくと embedding サーバーは最初の
-リクエストで重みを取りに行き (このモデルで約 800 MB)、その間ポートは接続を受け
-付けるのに応答できません。先にボリュームへ落としておくと、それは「診断すべき
-タイムアウト」ではなく「見ていればよい 1 ステップ」になります。
+真ん中の行は飛ばさないでください。これが無いと、embedding サーバーは最初の
+リクエストで重み (このモデルで約 800 MB) を取りに行きます。その間ポートは接続を
+受け付けますが、応答はできません。先にボリュームへ落としておけば、原因の分からない
+タイムアウトではなく、待っていればよい 1 ステップになります。
 
 embedding のポートは公開しません。CPersona は compose が作るネットワーク越しに
-到達し、それが読み手のすべてです。イメージはどちらも手元でビルドし、embedding
-サーバーはリビジョンで固定してあるので、後日ビルドしても同じ組になります。
+到達し、それ以外から到達する必要はありません。イメージはどちらも手元でビルドし、
+embedding サーバーはリビジョンで固定してあるので、後日ビルドしても同じ組になります。
 
 記憶は `cpersona-data` ボリューム、モデルは `embedding-model` に載ります。
 `docker compose down` はどちらも残し、`down -v` は消します。
 </details>
 
-サーバーは起動時に pypi.org へ新しいリリースの有無を問い合わせ、結果を `recall`
-(および `check_health`) を通じて呼び出し側のエージェントに伝えます。必要なときは
-`check_update` で照会できます。`CPERSONA_UPDATE_CHECK=false` で無効化できます。
-更新が自動で行われることはありません — 明示的な `check_update(apply=true)` と
-再起動が必要です。
+サーバーは起動時に pypi.org へ新しいリリースの有無を問い合わせます。結果は `recall`
+と `check_health` を通じて呼び出し側のエージェントに伝わり、`check_update` でも
+照会できます。確認自体を止めるには `CPERSONA_UPDATE_CHECK=false` を設定します。
+更新が自動で行われることはありません。明示的な `check_update(apply=true)` と再起動が
+必要です。
 
 ## 2. 埋め込みサーバーを立てる (推奨) { #2-set-up-an-embedding-server-recommended }
 
-CPersona は、契約を満たす埋め込みサーバーへの接続を強く推奨します。埋め込み
-バックエンド無しでの実行はサポートされる fallback 構成ですが、通常運用では
-推奨されません。
+契約を満たす埋め込みサーバーに接続してください。埋め込みバックエンド無しでの実行は
+fallback としてサポートされますが、通常運用では推奨されません。
 
 ベクトル検索は 3 つの検索層の中で最も強く、外部プロセスを必要とする唯一の層です。
-無くても CPersona は動き — FTS5 + キーワード検索で — かつ
+無くても CPersona は FTS5 + キーワード検索で動き、
 [その旨を毎回の recall で伝えます](operations.md#detecting-a-dead-embedding-server)。
 
-CEmbedding は参照実装であり第一推奨のバックエンドです。下記の契約を満たす他の
-埋め込みサーバーも同等にサポートされ、同等に推奨されます — バックエンドの選択は
-利用者に委ねられています。
+CEmbedding は参照実装のバックエンドです。下記の契約を満たす他の埋め込みサーバーも
+同等にサポートされます。どれを選ぶかは利用者の自由です。
 
 ### 契約 { #the-contract }
 
@@ -155,10 +151,10 @@ POST /embed
 レスポンス: { "embeddings": [[float, ...], ...], "dimensions": <int> }
 ```
 
-CPersona が読むのは **`embeddings`** だけです — `dimensions` はリファレンス
-サーバーの応答に含まれますがクライアントは無視するため、返さないバックエンドでも
-動きます。CPersona が 1 リクエストで送るのは最大 **32 件**、リファレンス実装が
-受け付ける上限は 100 件なので、この範囲のバッチ上限は考慮する必要がありません。
+CPersona が読むのは **`embeddings`** だけです。`dimensions` はリファレンス
+サーバーの応答に含まれますが、クライアントは無視します。返さないバックエンドでも
+動きます。CPersona が 1 リクエストで送るのは最大 **32 件**で、リファレンス実装が
+受け付ける上限は 100 件です。この範囲のバッチ上限は考慮する必要がありません。
 
 見落としやすく、いずれも**ランキングを静かに劣化させる**要件が 3 つあります:
 
@@ -166,21 +162,23 @@ CPersona が読むのは **`embeddings`** だけです — `dimensions` はリ�
   内積で計算するため、正規化されていないベクトルを返すバックエンドは、ベクトルの
   大きさでランキングを歪めます。サポート対象のバックエンド (クライアントの `api`
   モードと全 CEmbedding プロバイダ) はすべて正規化済みです。
-- **契約はロールを持ちません。** クエリと文書は同じ呼び出しで、指示プレフィックス
-  なしに埋め込まれます。プレフィックス前提のモデル (e5 系、prompted bge) はこの
-  契約の下では性能が出ません。対称型または retrieval 統合型のモデル
+- **契約はロールを持ちません。** クエリと文書は同じ呼び出しを通り、指示
+  プレフィックスは付きません。プレフィックス前提のモデル (e5 系、prompted bge) は
+  この契約の下では性能が出ません。対称型または retrieval 統合型のモデル
   (jina-v5-nano、bge-m3、MiniLM) が想定される適合先です。
-- **同じ URL の裏でモデルを差し替えるとコーパスが無効化されます。** CPersona は
-  バックエンドを埋め込みの*次元*だけで指紋認証します — 契約はモデル同一性を
-  運びません — そのため同じ次元での差し替えは検出できません。しかもこれは修復
-  ツールが届かないケースです: `check_health(fix=true)` が再埋め込みするのは blob が
-  NULL の行で、次元チェックは*長さ*の違う blob だけを NULL 化します。したがって
-  同一次元での差し替え後は全 blob が期待どおりの大きさであり、何も NULL 化されず、
+- **同じ URL の裏でモデルを差し替えるとコーパスが無効化されます。** 契約はモデル
+  同一性を運ばないため、CPersona はバックエンドを埋め込みの*次元*だけで識別します。
+  同じ次元の別モデルへの差し替えは検出できません。
+
+  修復ツールもここには届きません。`check_health(fix=true)` が再埋め込みするのは
+  blob が NULL の行で、次元チェックは*長さ*の違う blob だけを NULL 化します。
+  同一次元での差し替え後は全 blob が期待どおりの大きさなので、何も NULL 化されず、
   何も再埋め込みされません。既に blob を持つ行を強制的に再埋め込みするツールは
-  ありません。復旧手段はコーパスの再構築です — `delete_agent_data` してから再
-  `store` する
-  [再構築パターン](operations.md#corpus-indexing-and-sync-patterns) を使い、その後に
-  `calibrate_threshold` を実行してください。
+  ありません。
+
+  復旧手段はコーパスの再構築です。`delete_agent_data` の後、
+  [再構築パターン](operations.md#corpus-indexing-and-sync-patterns) のとおりに再
+  `store` し、最後に `calibrate_threshold` を実行してください。
 
 ### リファレンス実装 { #the-reference-server }
 
@@ -216,34 +214,35 @@ CPersona の既定値は jina-v5-nano (768 次元) に合わせて調整され�
 [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md)
 にあります。
 
-CPersona が必要とするのは URL だけです — ただし**参照サーバーをどう監視下で動かすか
+CPersona が必要とするのは URL だけです。ただし**参照サーバーをどう監視下で動かすか
 は重要**で、素直なやり方では動きません。
 
-これはただの HTTP プロセスではなく MCP サーバーです。既定のトランスポートでは前景で
-stdio の MCP セッションを回し、REST `/embed` エンドポイントはバックグラウンドタスク
-として提供します。つまり**プロセスの寿命は stdin に縛られています**: EOF でセッション
-が終わり、`finally` 節が HTTP タスクを cancel します。サービスマネージャが普通に起動
-する形 — stdin が `/dev/null` — で立ち上げると、ポートを bind し
-`HTTP embedding endpoint started` をログに出したうえで、**同じ秒のうちに終了コード 0
-で終了します**。監視側は正常終了を見て、CPersona は誰も応答しない URL を向いたまま
-残ります。
+これはただの HTTP プロセスではなく MCP サーバーです。既定のトランスポートでは
+前景で stdio の MCP セッションを回し、REST `/embed` エンドポイントはバックグラウンド
+タスクとして提供します。つまり**プロセスの寿命は stdin に縛られています**。EOF で
+セッションが終わり、`finally` 節が HTTP タスクを cancel します。
 
-stdin を開いたままにしてください。サービスマネージャの下ではパイプを保持する何かを
-挟むことになります (例:
-`ExecStart=/bin/sh -c 'sleep infinity | cembedding'`)。ターミナルでは端末が既にその
-役割を果たしています。
+サービスマネージャは stdin を `/dev/null` にしてプロセスを起動します。その形で
+立ち上げると、サーバーはポートを bind し `HTTP embedding endpoint started` を
+ログに出したうえで、**同じ秒のうちに終了コード 0 で終了します**。監視側は正常終了を
+見て、CPersona は誰も応答しない URL を向いたまま残ります。
 
-`EMBEDDING_TRANSPORT=streamable-http` は stdin を読まないという意味では監視に向いた
-代替ですが、REST `/embed` の**代わりに** MCP エンドポイントを提供します — したがって
+stdin を開いたままにしてください。サービスマネージャの下では、パイプを保持する何かを
+挟みます: `ExecStart=/bin/sh -c 'sleep infinity | cembedding'`。ターミナルでは端末が
+既にその役割を果たしています。
+
+`EMBEDDING_TRANSPORT=streamable-http` は stdin を読まないので、監視下では素直に
+動きます。ただし REST `/embed` の**代わりに** MCP エンドポイントを提供するため、
 `/embed` に POST する CPersona の `http` モードでは選択肢になりません。
 
 ## 3. MCP クライアントに登録する { #3-register-cpersona-with-your-mcp-client }
 
-どのクライアントも起動するプロセスは同じです — コマンド `uvx`、引数 `cpersona`、
-そして下に示す環境変数 — 違うのは、どのファイルを読み、キーを何と呼ぶかだけです。
+どのクライアントも起動するプロセスは同じです。コマンド `uvx`、引数 `cpersona`、
+そして下に示す環境変数。違うのは、どのファイルを読み、キーを何と呼ぶかだけです。
+
 先に絶対パスの `CPERSONA_DB_PATH` を決めてください。例が
-`/home/you/.claude/cpersona.db` を使っているのは Claude 利用者ならそのディレクトリが
-既にあるからで、絶対パスなら何でも構いません。
+`/home/you/.claude/cpersona.db` を使っているのは、Claude 利用者ならそのディレクトリが
+既にあるからです。絶対パスなら何でも構いません。
 
 | クライアント | エントリの置き場所 | 形 | ここで確認 |
 | --- | --- | --- | --- |
@@ -254,11 +253,11 @@ stdin を開いたままにしてください。サービスマネージャの�
 | VS Code (Copilot) | `.vscode/mcp.json` (ワークスペース) またはユーザーの `mcp.json` | JSON、`servers` | ベンダー docs |
 | その他の MCP ホスト | その stdio サーバー設定 | 同じ command / args / env の 3 つ組 | ベンダー docs |
 
-「済」は、このページを書いた時点でメンテナのマシン上、そのクライアント自身の
-ツールでエントリを書き、読み戻して確認したことを意味します。「ベンダー docs」は
-クライアントのドキュメントから形を転記したもので、ここでは実行していません —
-あなたのクライアントが受け付けるものと食い違ったら正しいのはクライアントの方で、
-報告を歓迎します。
+「済」は、このページを書いた時点でメンテナのマシン上、そのクライアント自身のツ
+ールでエントリを書き、読み戻して確認したことを意味します。「ベンダーdocs」はク
+ライアントのドキュメントから形を転記したもので、ここでは実行していません。あな
+たのクライアントが受け付けるものと食い違ったら、正しいのはクライアントの方です。
+報告してください。
 
 **Claude Desktop** — `claude_desktop_config.json` に追加:
 
@@ -302,8 +301,8 @@ EMBEDDING_MODE = "http"
 ```
 
 Codex はサーバーごとにツールを拒否リストにできます (同じテーブルの
-`disabled_tools = ["delete_memory", …]`)。エージェントに読み取り中心のアクセスを
-渡すクライアント側の方法です。全クライアントに一度に効くサーバー側の同等物は
+`disabled_tools = ["delete_memory", …]`)。これはエージェントに読み取り中心の
+アクセスを渡す、クライアント側の方法です。全クライアントに一度に効くサーバー側の同等物は
 [クライアント別ケイパビリティ層](ACL_DESIGN.md) です。
 
 **Cursor** — `~/.cursor/mcp.json`、またはプロジェクト内の `.cursor/mcp.json`。
@@ -345,27 +344,27 @@ Codex はサーバーごとにツールを拒否リストにできます (同じ
 }
 ```
 
-問い合わせ 1 往復を節約できる注意点:
+セットアップでつまずく原因は、たいてい次の 3 点です:
 
-- **`CPERSONA_DB_PATH` は絶対パスにしてください。** 既定値
-  `data/cpersona.db` は*クライアントの*作業ディレクトリからの相対です —
-  別の場所から起動されたクライアントは、別の空のデータベースを開きます。
-  Windows では `C:/Users/you/.claude/cpersona.db` の形で書きます。
+- **`CPERSONA_DB_PATH` は絶対パスにしてください。** 既定値 `data/cpersona.db` は
+  *クライアントの*作業ディレクトリからの相対です。別の場所から起動された
+  クライアントは、別の空のデータベースを開きます。Windows では
+  `C:/Users/you/.claude/cpersona.db` の形で書きます。
 - **まだ埋め込みサーバーが無い?** `EMBEDDING_*` の 2 行を消す (または
   `EMBEDDING_MODE=none` を設定する) だけです。CPersona は FTS5 + キーワードで
   動作し、劣化している旨を報告します。
 - `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` は `CPERSONA_EMBEDDING_MODE` /
   `CPERSONA_EMBEDDING_URL` の汎用エイリアスです。両方設定された場合は接頭辞つきが
-  優先されます。[設定リファレンス](configuration.md) は手を伸ばしそうな設定を
-  網羅していますが、完全な一覧ではありません — いくつかの変数
-  (`CPERSONA_STORE_BLOB`、`CPERSONA_FTS_ENABLED`、`CPERSONA_EMBEDDING_API_KEY`、
-  `CPERSONA_CALIBRATE_*` の 2 つ、ほか数個) はサーバーが読むにもかかわらずそこに
-  載っていません。完全な一覧は `cpersona/config.py` です。
+  優先されます。[設定リファレンス](configuration.md) は手を伸ばしそうな設定を扱っていますが、
+  完全な一覧ではありません。いくつかの変数 (`CPERSONA_STORE_BLOB`、
+  `CPERSONA_FTS_ENABLED`、`CPERSONA_EMBEDDING_API_KEY`、`CPERSONA_CALIBRATE_*` の
+  2 つ、ほか数個) は、サーバーが読むにもかかわらずそこに載っていません。完全な
+  一覧は `cpersona/config.py` です。
 
 ## 4. 動作を確認する { #4-verify-it-works }
 
-エージェントに何かを保存させ、それを想起させてください — できれば*新しい*
-セッションで。セッション境界を越えることこそが目的だからです:
+エージェントに何かを保存させ、*新しい*セッションでそれを想起させてください。
+セッション境界を越えることこそが目的です:
 
 > 「これを保存して: デプロイ手順は ops/deploy.md にある」
 >
@@ -376,19 +375,19 @@ Codex はサーバーごとにツールを拒否リストにできます (同じ
 - `check_health` — レジストリ駆動のヘルスチェック。判定は `status`、検出項目は
   重大度つき (`critical` / `warn` / `info`) で、`check_health(fix=true)` が機械的な
   ものを修復します。
-- recall 応答に `advisory` フィールドが出ていないか。これはベクトル検索が寄与して
-  いないことの報告で、重大度が理由を区別します: `hint` は埋め込みが単に未設定
-  (`mode=none`) であることを、fault は設定済みのエンドポイントが応答しなくなった
-  ことを意味します —
+- recall 応答に `advisory` フィールドが出ていないか。これはベクトル検索が寄与
+  していないという報告です。理由は重大度が区別します。`hint` は埋め込みが未設定
+  (`mode=none`) であること、fault は設定済みのエンドポイントが応答しなくなった
+  ことを意味します。
   [埋め込みサーバーの死活検知](operations.md#detecting-a-dead-embedding-server)
   を参照してください。
 
 ## 5. 記憶のトリガーを毎セッション発火させる { #5-make-the-memory-triggers-fire-in-every-session }
 
 登録はエージェントにツールを与えますが、頼まれなくても*使う*ようにはしません。
-セッション開始時の recall、決定時の store、セッション終了時の archive — これらは、
-会話がたまたま一致したときだけ発火する skill ではなく、クライアントが**毎**
-セッション読み込むものの中に置く必要があります。どのクライアントにもそのファイルが
+セッション開始時の recall、決定時の store、セッション終了時の archive。これらは、
+会話がたまたま一致したときだけ発火する skill ではなく、クライアントが**毎**セッション
+読み込むファイルの中に置く必要があります。どのクライアントにもそのファイルが
 あります:
 
 | クライアント | 常時ロードされるファイル (ユーザーレベルの既定) | プロジェクトレベルの代替 |
@@ -398,25 +397,31 @@ Codex はサーバーごとにツールを拒否リストにできます (同じ
 | Cursor | User Rules (*Customize → Rules* — ファイルではなく設定) | `alwaysApply: true` の `.cursor/rules/cpersona.mdc`、または `./AGENTS.md` |
 | VS Code (Copilot) | クライアントの custom-instructions ドキュメントを参照 | `.github/copilot-instructions.md`、または `chat.useAgentsMdFile` を有効にした `./AGENTS.md` |
 
-下のブロックをそのファイルに貼り付け、`<AGENT_ID>` をエージェントが毎回の呼び出しで
-使う安定した識別子 1 つ (`"claude-code"`、`"codex"`、…) に置き換えてください。
-マーカーは残します: 後の版のブロックが 2 つ目のコピーを積み重ねる代わりに、
-このブロックを見つけて置き換えるための手がかりだからです。Claude Code では
-`cpersona-memory` skill があなたの承認を得てこれを代行します。それ以外では
-貼り付けです。ブロックが従う規則 — 同意、配置、冪等性、40 行の予算、クライアント
-中立 — は[ポリシーブロック標準](CLAUDE_MD_POLICY_STANDARD.md) にあります。
-ブロックの正本は skill 側で、このコピーは CI でそれと照合されます。
+下のブロックをそのファイルに貼り付けてください。`<AGENT_ID>` は、エージェントが
+毎回の呼び出しで使う安定した識別子 1 つ (`"claude-code"`、`"codex"`、…) に
+置き換えます。
+
+マーカーは残してください。後の版のブロックは、これを手がかりに 2 つ目のコピーを
+積み重ねるのではなく、このブロックを見つけて置き換えます。Claude Code では
+`cpersona-memory` skill が承認を得て貼り付けを代行します。それ以外では手で
+貼り付けます。
+
+ブロックが従う規則 (同意、配置、冪等性、40 行の予算、クライアント中立) は
+[ポリシーブロック標準](CLAUDE_MD_POLICY_STANDARD.md) にあります。ブロックの正本は
+skill 側にあり、このコピーは CI でそれと照合されます。
 
 ```markdown
-<!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v3 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
 
-**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before
-the first substantive action. Prefer `recall_with_context` when conversation history is already
-at hand; add `deep=true` when the first pass comes back thin. Skip only for trivial one-shot
-questions.
+**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before the
+first substantive action; `recall_with_context` when conversation history is at hand, `deep=true`
+when the first pass comes back thin. Skip only for trivial one-shot questions.
+
+**Past context mid-session** → `reconstruct(agent_id, query, count=<items you need>)`, not `recall`:
+`count` caps the items without shrinking the search. No score comes back; read an item to judge it.
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
 "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
@@ -436,9 +441,8 @@ turns>, summary=…, keywords=…, resolved=…)`, computing `summary` and `keyw
 **Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
 and follow its runbook. Never quietly serve keyword-only recall.
 
-**Quality** — if recall feels off, `set_recall_precision` (strict/balanced/lenient) is the one
-policy knob; run `calibrate_threshold(agent_id)` after the corpus changes substantially.
-Monthly: `check_health(agent_id, fix=true)`.
+**Quality** — recall feels off → `set_recall_precision` (strict/balanced/lenient), the one policy
+knob; after large corpus changes `calibrate_threshold(agent_id)`; monthly `check_health(agent_id, fix=true)`.
 
 **If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
 as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that

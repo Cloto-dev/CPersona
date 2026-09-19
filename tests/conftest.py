@@ -85,6 +85,35 @@ class FakeEmbeddingClient:
             error=None if result else "test double produced no embeddings",
         )
 
+    #: The embedding window in tokens, special tokens included, for ``count_tokens``.
+    #: None (the default) answers "unknown", which is what every non-http client
+    #: answers, so a test that does not opt in sees no token report at all.
+    token_window: int | None = None
+
+    async def count_tokens(self, texts: list[str]):
+        """A deterministic token report shaped like CEmbedding's ``/count_tokens``.
+
+        Tokens are runs of up to three word characters, or one other non-space
+        character, plus two special tokens -- so text without spaces (Japanese)
+        still has tokens, and a prefix never tokenizes into more tokens than the
+        text it was cut from. ``window_end_char`` is where the last token that fits
+        ends, as the real report defines it.
+        """
+        import re
+
+        from cpersona._vendored_mcp_common.embedding_client import TokenInfo
+
+        if self.token_window is None:
+            return None
+        out = []
+        for text in texts:
+            tokens = list(re.finditer(r"\w{1,3}|[^\w\s]", text))
+            count = len(tokens) + 2
+            truncated = count > self.token_window
+            end = tokens[self.token_window - 3].end() if truncated else len(text)
+            out.append(TokenInfo(count=count, window=self.token_window, truncated=truncated, window_end_char=end))
+        return out
+
     @staticmethod
     def pack_embedding(embedding: list[float]) -> bytes:
         """Little-endian float32 packing, byte-identical to the real client, so the

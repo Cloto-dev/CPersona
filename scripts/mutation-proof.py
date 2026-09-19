@@ -28,12 +28,14 @@ included — a mutant applied over a staged change describes a tree nobody is
 shipping, and that run still goes green. Each mutation is
 applied by exact string replacement and reverted in a finally block; the run
 ends by asserting `git diff --quiet` so a crash can never leave a mutant on
-disk. Mutants are never committed.
+disk. Mutants are never committed. Every write — mutant and restore — also
+removes the file's cached bytecode (see `forget_bytecode`).
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -62,6 +64,11 @@ class Mutation:
     # They are kept because "this guard is not the one holding the invariant up"
     # is exactly the kind of thing a refactor needs to know.
     equivalent: bool = False
+    # Test files that catch this mutant, run BEFORE the full suite. Only a
+    # shortcut: a red subset is a red suite, so it can shorten a CAUGHT verdict
+    # but never produce one the full suite would not. A green subset (a stale
+    # list) falls through to the full suite, which stays the authority.
+    tests: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +80,7 @@ class Mutation:
 MUTATIONS: list[Mutation] = [
     Mutation(
         id="M01",
+        tests=("tests/test_v2438_hardening.py",),
         target="_search_vector remote payload",
         file="cpersona/vector.py",
         find='"min_similarity": effective_min_sim,',
@@ -82,6 +90,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M02",
+        tests=("tests/test_v2438_hardening.py",),
         target="_search_vector remote timeout",
         file="cpersona/vector.py",
         find="timeout=REMOTE_SEARCH_TIMEOUT_SECS,",
@@ -91,12 +100,13 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M03",
+        tests=("tests/test_refactor_seams_252.py", "tests/test_equivalence_252.py"),
         target="_search_vector remote isolation",
         file="cpersona/vector.py",
         find="iso_fetch = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)",
         replace="iso_fetch = isolation_where(agent_id=agent_id, project_id=None, channel='')",
         breaks="remote by-id fetch loses the γ axes; another project's row can surface (bug-046/075/100)",
-        expect="tests/test_isolation.py",
+        expect="test_refactor_seams_252.py::test_remote_by_id_fetch_refuses_rows_outside_the_isolation_axes, test_equivalence_252.py[sv-remote-isolation-miss]",
     ),
     # ---------------------------------------------------------------------
     # do_import_memories (admin_handlers.py) — the highest-value split target
@@ -110,6 +120,7 @@ MUTATIONS: list[Mutation] = [
     # path can afford to lose is often the only one a preview has.
     Mutation(
         id="M04",
+        tests=("tests/test_equivalence_252.py",),
         target="do_import_memories msg_id pre-check — load-bearing on the dry_run path",
         file="cpersona/admin_handlers.py",
         find="if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):",
@@ -128,6 +139,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M05",
+        tests=("tests/test_audit_2500b1.py",),
         target="do_import_memories header validation",
         file="cpersona/admin_handlers.py",
         # _validate_file_header guards with an early return, so disabling the
@@ -182,6 +194,7 @@ MUTATIONS: list[Mutation] = [
     # The load-bearing layers the two equivalent mutants sit above.
     Mutation(
         id="M10",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_import_memories dry_run read seam",
         file="cpersona/admin_handlers.py",
         # Both import and merge use this idiom; anchor on the import one via the
@@ -207,6 +220,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M12",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_merge_memories dry_run read seam",
         file="cpersona/admin_handlers.py",
         find="""    # exit and auto-rolls-back on fault. dry_run does no writes → read seam.
@@ -230,6 +244,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M11",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_import_memories collision semantics",
         file="cpersona/admin_handlers.py",
         # Two INSERT OR IGNORE sites (import at :1617, merge at :1902); anchor on
@@ -250,6 +265,7 @@ MUTATIONS: list[Mutation] = [
     # ---------------------------------------------------------------------
     Mutation(
         id="M07",
+        tests=("tests/test_audit_2500b1.py",),
         target="do_merge_memories move semantics",
         file="cpersona/admin_handlers.py",
         find='if mode == "move" and not dry_run:',
@@ -262,15 +278,17 @@ MUTATIONS: list[Mutation] = [
     # ---------------------------------------------------------------------
     Mutation(
         id="M08",
+        tests=("tests/test_refactor_seams_252.py", "tests/test_equivalence_252.py"),
         target="do_calibrate_threshold sample floor",
         file="cpersona/admin_handlers.py",
         find="if len(vecs) < 10:",
         replace="if len(vecs) < 0:",
         breaks="calibrates a threshold from a handful of vectors; the null distribution is noise",
-        expect="test_calibrate_threshold_insufficient_embeddings",
+        expect="test_refactor_seams_252.py::test_calibrate_rejects_when_dim_filter_drops_below_the_floor, test_equivalence_252.py[calibrate-ragged]",
     ),
     Mutation(
         id="M09",
+        tests=("tests/test_v2438_hardening.py",),
         target="do_calibrate_threshold dim filter",
         file="cpersona/admin_handlers.py",
         find="vecs = [v for v in vecs if v.shape[0] == target_dim]",
@@ -285,6 +303,7 @@ MUTATIONS: list[Mutation] = [
     # -----------------------------------------------------------------------
     Mutation(
         id="M13",
+        tests=("tests/test_257_session_key_stage2.py",),
         target="queue attribution reconcile",
         file="cpersona/tasks.py",
         find="await self._forget_vanished_rows()",
@@ -294,6 +313,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M14",
+        tests=("tests/test_bug287_temporal_merge_order.py",),
         target="recall_with_context temporal merge order",
         file="cpersona/memory_handlers.py",
         find="""    parsed = _parse_timestamp_utc(m.get("timestamp", "") or "")
@@ -304,6 +324,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03a",
+        tests=("tests/test_future_timestamp.py", "tests/test_equivalence_252.py"),
         target="the write seam's verdict on a timestamp ahead of the clock (bug-293)",
         file="cpersona/utils.py",
         # The detector goes blind: every stamp reads as inside the allowance. This
@@ -321,6 +342,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03b",
+        tests=("tests/test_future_timestamp.py", "tests/test_255_repairable_contract.py", "tests/test_equivalence_252.py"),
         target="the health check's boundary — the rows already stored (bug-293)",
         file="cpersona/checks.py",
         # A boundary nothing can reach. The check still runs, still reports zero,
@@ -339,6 +361,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03c",
+        tests=("tests/test_future_timestamp.py",),
         target="the restore seam's report — faithful, but not silent (bug-293)",
         file="cpersona/admin_handlers.py",
         find='    if future_timestamp_issue(record.get("timestamp", "")):\n        tally.future_timestamps += 1',
@@ -348,6 +371,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N04",
+        tests=("tests/test_unicode_identity.py", "tests/test_equivalence_252.py"),
         target="the Unicode identity detector (bug-295)",
         file="cpersona/checks.py",
         # Compare the row against itself instead of against its normal form: the
@@ -363,6 +387,417 @@ MUTATIONS: list[Mutation] = [
             "::test_the_half_voiced_mark_is_found_too, "
             "test_equivalence_252.py[corpus-unnormalized-deep-check]"
         ),
+    ),
+    # ---------------------------------------------------------------------
+    # reconstruct (reconstruct.py) — the reconstructive recall exit.
+    # The design states eight invariants and a count window. Each entry below
+    # destroys exactly one of them; a SURVIVED line here means an invariant is
+    # written down but not held.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M15",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 7 — count and breadth are decoupled",
+        file="cpersona/reconstruct.py",
+        find="bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))",
+        replace="bounds_top_k = effective_count",
+        breaks="the candidate depth is derived from the response count again, so asking for fewer items also searches less deeply",
+        expect="test_reconstruct.py::test_count_alone_does_not_move_the_pool",
+    ),
+    Mutation(
+        id="M16",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 8 — one cluster is one item",
+        file="cpersona/reconstruct.py",
+        find="    clusters = [sorted(members) for _, members in sorted(grouped.items())]",
+        replace="    clusters = [[i] for i in range(len(candidates))]",
+        breaks="a bundled record is split back into one item per row, so the window is padded with fragments of one memory",
+        expect="test_reconstruct.py::test_msg_id_bundles_and_derives_supersedes, ::test_4b_evidence_cut_sets_truncated",
+    ),
+    Mutation(
+        id="M17",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 3 — the written-down total order",
+        file="cpersona/reconstruct.py",
+        find="        -c.ts.timestamp() if c.ts is not None else 0.0,",
+        replace="        0.0,",
+        breaks="claims stop reading newest first, so a supersession chain no longer starts from its current statement",
+        expect="test_reconstruct.py::test_msg_id_bundles_and_derives_supersedes",
+    ),
+    Mutation(
+        id="M18",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 2 — content is a quotation",
+        file="cpersona/reconstruct.py",
+        find='        "content": head.content,',
+        replace='        "content": f"summary of {len(ordered)} rows",',
+        breaks="the server writes a sentence it did not store — the one thing a zero-model read path must never do",
+        expect="test_reconstruct.py::test_2_content_is_a_quotation",
+    ),
+    Mutation(
+        id="M19",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 4 — dropped rows are named",
+        file="cpersona/reconstruct.py",
+        find='    if omitted:\n        bounds["omitted"] = omitted',
+        replace='    if False:\n        bounds["omitted"] = omitted',
+        breaks="an item cut by the evidence bound looks whole, so a caller cannot tell it holds only part of the cluster",
+        expect="test_reconstruct.py::test_4b_evidence_cut_names_the_bound_and_counts_the_rows",
+    ),
+    Mutation(
+        id="M20",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 5 — every element says why it is present",
+        file="cpersona/reconstruct.py",
+        find='        claim: dict = {"ref": m.ref, "as_of": m.timestamp, "why": why.get(m.ref, "seed")}',
+        replace='        claim: dict = {"ref": m.ref, "as_of": m.timestamp, "why": ""}',
+        breaks="a claim stops naming the key that admitted it, so an item cannot be audited back to a reason",
+        expect="test_reconstruct.py::test_5_every_element_says_why",
+    ),
+    Mutation(
+        id="M21",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct — the Reconstruction Window's ceiling",
+        file="cpersona/reconstruct.py",
+        find="    effective = min(base, maximum)",
+        replace="    effective = base",
+        breaks="the server maximum stops bounding the window, so a caller's number is the only limit on payload size",
+        expect="test_reconstruct.py::test_count_window_arithmetic",
+    ),
+    Mutation(
+        id="M21b",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — the payload budget's ceiling",
+        file="cpersona/reconstruct.py",
+        find="    budget = min(base, maximum)",
+        replace="    budget = base",
+        breaks="the server maximum stops bounding the payload budget, so a caller's number is the only limit on quoted text",
+        expect="test_reconstruct_excerpts.py::test_budget_default_request_force_and_clamps",
+    ),
+    Mutation(
+        id="M22",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct stage 2 — 'adjacent timestamps, same source' is ONE key",
+        file="cpersona/reconstruct.py",
+        find="""                gap = candidates[right].ts.timestamp() - candidates[anchor].ts.timestamp()
+                if gap <= window:
+                    uf.union(anchor, right, "cluster:adjacent")""",
+        replace="""                gap = 0
+                if gap <= window:
+                    uf.union(anchor, right, "cluster:adjacent")""",
+        breaks="source alone bundles, so in a single-agent store every candidate folds into one item on every call",
+        expect="test_reconstruct.py::test_source_alone_does_not_bundle",
+    ),
+    Mutation(
+        id="M23",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 1 — stored rows are never modified",
+        file="cpersona/reconstruct.py",
+        find="    uf = bundle(candidates, spans, links)",
+        replace="""    async with connection() as _mutant_db:
+        await _mutant_db.execute(
+            "UPDATE memories SET content = content || ' (touched)' WHERE agent_id = ?", (agent_id,)
+        )
+        await _mutant_db.commit()
+    uf = bundle(candidates, spans, links)""",
+        breaks="the read path writes to the rows it read — an injected defect, because an invariant of absence cannot be broken by deletion",
+        expect="test_reconstruct.py::test_1_stored_rows_are_not_modified",
+    ),
+    Mutation(
+        id="M24",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct head claim — the most relevant row, not the newest",
+        file="cpersona/reconstruct.py",
+        find="    lead = min(members, key=_relevance_key)",
+        replace="    lead = min(members, key=_order_key)",
+        breaks="an item quotes the last thing said in a burst instead of the row the retrieval ranked highest",
+        expect="test_reconstruct.py::test_head_of_distinct_rows_is_the_most_relevant_not_the_newest",
+    ),
+    Mutation(
+        id="M25",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct head claim — a version chain resolves to its latest version",
+        file="cpersona/reconstruct.py",
+        find="    return min(versions, key=_order_key)",
+        replace="    return min(versions, key=_relevance_key)",
+        breaks="an item quotes a superseded version as current because the older version ranked higher",
+        expect="test_reconstruct.py::test_head_of_a_version_chain_is_its_latest_version_even_when_older_ranks_higher",
+    ),
+    Mutation(
+        id="M26",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct evidence cut — keeps the head, then relevance decides",
+        file="cpersona/reconstruct.py",
+        find="    others = sorted((m for m in members if m is not head), key=_relevance_key)",
+        replace="    others = sorted((m for m in members if m is not head), key=_order_key)",
+        breaks="a bounded item keeps the newest rows and drops the ones that made it relevant",
+        expect="test_reconstruct.py::test_an_evidence_cut_keeps_the_head_then_the_most_relevant_rows",
+    ),
+    # ---------------------------------------------------------------------
+    # get_contents ranges (memory_handlers.py) — reconstruction v1.1 expansion.
+    # A range is served exactly or refused; it is never widened to the row.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M27",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — a range the server cannot serve is refused, not widened",
+        file="cpersona/memory_handlers.py",
+        find='''                if served is None:
+                    unresolved.append({"ref": ref, "reason": reason})
+                    continue''',
+        replace='''                if served is None:
+                    served = {"span": [0, len(text)]}''',
+        breaks="a node that does not exist comes back as the whole record, the payload the caller asked to avoid, with nothing saying so",
+        expect="test_get_contents_ranges.py::test_the_last_node_is_served_and_one_past_it_is_refused, ::test_a_node_range_on_a_record_without_a_complete_node_set_is_refused_not_widened",
+    ),
+    Mutation(
+        id="M28",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — nodes are served only from a partition of the stored text",
+        file="cpersona/memory_handlers.py",
+        find="        and all(a[2] == b[1] for a, b in zip(rows, rows[1:]))",
+        replace="        and True",
+        breaks="a node set with a gap or an overlap is served by offset, so a node range returns characters that are not the nodes it names",
+        expect="test_get_contents_ranges.py::test_nodes_that_overlap_or_leave_a_gap_are_not_a_partition",
+    ),
+    Mutation(
+        id="M29",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — a range is checked after ownership",
+        file="cpersona/memory_handlers.py",
+        find='''            if kind == "mem":
+                rows = await db.execute_fetchall(
+                    "SELECT msg_id''',
+        replace='''            if invalid is not None:
+                unresolved.append({"ref": ref, "reason": invalid})
+                continue
+            if kind == "mem":
+                rows = await db.execute_fetchall(
+                    "SELECT msg_id''',
+        breaks="a malformed range on a ref the caller does not own is answered as unresolved, so `missing` stops meaning 'not yours or not there' and `unresolved` stops meaning 'yours, but not servable'",
+        expect="test_get_contents_ranges.py::test_a_range_on_another_agents_row_is_missing_and_says_nothing_about_its_nodes",
+    ),
+    Mutation(
+        id="M30",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct — a bound that was met is not a bound that dropped rows",
+        file="cpersona/reconstruct.py",
+        find='BOUND_EVIDENCE = "max_evidence"',
+        replace='BOUND_EVIDENCE = "top_k"',
+        breaks="rows the evidence bound dropped are reported under the depth's name, the one bound the tool cannot tell was a cut, so `omitted` stops meaning 'these rows exist and were withheld'",
+        expect="test_reconstruct.py::test_4b_evidence_cut_names_the_bound_and_counts_the_rows",
+    ),
+    Mutation(
+        id="M31",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — node choice without a query embedding is admitted",
+        file="cpersona/reconstruct.py",
+        find="    if node_sets and query_vec is None:\n",
+        replace="    if False:\n",
+        breaks="an unreachable embedding server silently turns node choice into trigram matching, and the quote looks as considered as any other",
+        expect="test_reconstruct_excerpts.py::test_nodes_ranked_without_a_query_embedding_say_so",
+    ),
+    Mutation(
+        id="M32",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — a cut quote that is only the record's start says so",
+        file="cpersona/reconstruct.py",
+        find='("content_len", "content_truncated", "node", "node_unavailable", "expand")',
+        replace='("content_len", "content_truncated", "node", "expand")',
+        breaks="the first 500 characters of a long record pass for the part that matched the query, which is the failure v1.1 exists to remove",
+        expect="test_reconstruct_excerpts.py::test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_do_not_move",
+    ),
+    Mutation(
+        id="M33",
+        tests=("tests/test_reconstruct_review.py",),
+        target="reconstruct — a compact response still says when the server overrode the request",
+        file="cpersona/reconstruct.py",
+        find='    if not count_policy["clamped"] and count_policy["source"] in _ASKED:',
+        replace='    if count_policy["source"] in _ASKED:',
+        breaks="a clamped count is served without its policy, so the compact envelope hides exactly the case it exists to keep: the server doing something other than what was asked",
+        expect="test_reconstruct_review.py::test_a_clamped_count_states_its_policy_and_a_clamped_budget_its_own",
+    ),
+    Mutation(
+        id="M34",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — a cut node quote hands over the read that continues it",
+        file="cpersona/reconstruct.py",
+        find='quote["expand"] = {"ref": claim.ref, "node": quote["node"]["index"]}',
+        replace='quote["expand"] = {"ref": claim.ref, "node": 0}',
+        breaks="the ready-made argument reads the start of the record instead of the node that matched, so the cheapest next read returns the wrong text",
+        expect="test_reconstruct_excerpts.py::test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_its_node",
+    ),
+    # ---------------------------------------------------------------------
+    # associative memory read by reconstruct (associations.py, reconstruct.py) —
+    # docs/ASSOCIATIVE_MEMORY_DESIGN.md §3 and §5. The loader and the pure walk
+    # both bound the walk; each entry below breaks the one it names, and the
+    # tests it expects reach that layer directly.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M35",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 1 — declared names reach the lexical arm only",
+        file="cpersona/reconstruct.py",
+        find="        query,\n        effective_top_k,  # the candidate depth",
+        replace="        (query + ' ' + ' '.join(cue_terms)).strip(),\n        effective_top_k,  # the candidate depth",
+        breaks="an alias is appended to the query the vector arm embeds, so expanding a name moves what the query means",
+        expect="test_associations_reconstruct.py::test_the_vector_arm_sees_the_query_unchanged",
+    ),
+    Mutation(
+        id="M36",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 1 — recall does not read the graph",
+        file="cpersona/memory_handlers.py",
+        find="    exclude_set: set[str] = set()\n    if exclude_contents:",
+        replace=(
+            "    if lexical_terms is None:\n"
+            "        from cpersona import associations as _a\n"
+            "        lexical_terms = (await _a.query_terms(agent_id, query, project_id=project_id, channel=channel))[0] or None\n"
+            "    exclude_set: set[str] = set()\n    if exclude_contents:"
+        ),
+        breaks="recall expands declared aliases on its own, so the flat contract changes with every declaration",
+        expect="test_associations_reconstruct.py::test_recall_is_unchanged_by_a_populated_graph",
+    ),
+    Mutation(
+        id="M37",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 2 — a graph the query does not name is not read",
+        file="cpersona/associations.py",
+        find="        if not matched:\n            return [], {}\n        marks",
+        replace=(
+            "        matched = sorted({r[0] for r in await db.execute_fetchall("
+            "f'SELECT e.id FROM entities e WHERE {iso.clause}', iso.params)})\n"
+            "        if not matched:\n            return [], {}\n        marks"
+        ),
+        breaks="every entity in scope counts as named by every query, so a store with any declaration answers differently from one without",
+        expect="test_associations_reconstruct.py::test_a_graph_that_does_not_apply_changes_nothing",
+    ),
+    Mutation(
+        id="M38",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 2 — a declared record relation bundles its endpoints",
+        file="cpersona/reconstruct.py",
+        find='            uf.union(index[subject], index[obj], "cluster:relation", WHY_RELATION + predicate)',
+        replace="            pass",
+        breaks="two candidates an agent declared as one correction of the other come back as separate items",
+        expect="test_associations_reconstruct.py::test_a_record_relation_merges_items_without_reordering_the_rest",
+    ),
+    Mutation(
+        id="M39",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative roles — the referenced row is the subject",
+        file="cpersona/reconstruct.py",
+        find='''        if obj == claim.ref and subject in retained and predicate in ROLE_VOCABULARY:
+            role = {"ref": subject, "role": predicate}''',
+        replace='''        if subject == claim.ref and obj in retained and predicate in ROLE_VOCABULARY:
+            role = {"ref": obj, "role": predicate}''',
+        breaks="a declared correction is emitted on the correcting row, so the reader is told the new statement is what was corrected",
+        expect="test_associations_reconstruct.py::test_each_role_word_is_emitted_in_the_vocabulary_direction",
+    ),
+    Mutation(
+        id="M40",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 5 — the walk stops at max_hops by itself",
+        file="cpersona/reconstruct.py",
+        find="        for hop in range(1, max_hops + 1):\n            step",
+        replace="        for hop in range(1, max_hops + 2):\n            step",
+        breaks="the walk follows one relation more than the caller allowed whenever the graph holds it",
+        expect="test_associations_reconstruct.py::test_the_walk_stops_at_its_hop_bound_even_when_the_graph_holds_more",
+    ),
+    Mutation(
+        id="M41",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 3 — sharing an entity is not a relation",
+        file="cpersona/reconstruct.py",
+        find="            if hops == 0:\n                continue\n            if entity in graph.records_cut:\n                cuts[position].add(BOUND_EVIDENCE)\n            recency, predicate = via[entity]",
+        replace="            if entity in graph.records_cut:\n                cuts[position].add(BOUND_EVIDENCE)\n            recency, predicate = via.get(entity, (0, 'mentions'))",
+        breaks="every record that mentions the candidate's own entity becomes evidence, which is the contamination bundling by entity was refused for",
+        expect="test_associations_reconstruct.py::test_the_walk_starts_from_each_items_own_candidates_and_skips_their_own_entities",
+    ),
+    Mutation(
+        id="M42",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 5 — the written order of the evidence cut",
+        file="cpersona/associations.py",
+        find="newest_first = sorted(edges, key=lambda r: (edges[r][3], -r), reverse=True)",
+        replace="newest_first = sorted(edges, key=lambda r: (edges[r][3], -r))",
+        breaks="an item bounded by max_evidence keeps what an old relation reached and drops what the latest declaration reached",
+        expect="test_associations_reconstruct.py::test_the_evidence_cut_follows_hops_then_recency_then_record_id",
+    ),
+    Mutation(
+        id="M43",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 3 — a reached record is never an item",
+        file="cpersona/reconstruct.py",
+        find="        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)\n        selected.append(item)",
+        replace=(
+            "        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, (), links)\n"
+            "        selected.append(item)\n"
+            "        for row, label, hops in extra:\n"
+            "            selected.append(structure([row], {}, spans, bounds_max_evidence)[0])"
+        ),
+        breaks="records the walk reached become items of their own, so a declaration reorders and pads the window",
+        expect="test_associations_reconstruct.py::test_entity_relations_leave_item_heads_and_order_unchanged",
+    ),
+    Mutation(
+        id="M44",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 7 — the walk reads this agent's relations only",
+        file="cpersona/associations.py",
+        find='    iso_r = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="r")\n    iso_s',
+        replace='    iso_r = isolation_where(agent_id=None, project_id="", channel=channel, alias="r")\n    iso_s',
+        breaks="a relation another agent's row holds is followed, so one agent's declarations shape another's evidence",
+        expect="test_associations_reconstruct.py::test_rows_that_cross_agents_are_not_read_even_when_they_exist",
+    ),
+    Mutation(
+        id="M45",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 7 — a reached record is one the call could read",
+        file="cpersona/associations.py",
+        find='    iso_m = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="t")',
+        replace='    iso_m = isolation_where(agent_id=agent_id, project_id=None, channel=channel, alias="t")',
+        breaks="a record in a project the call does not read is quoted as evidence, through a relation declared in one it does",
+        expect="test_associations_reconstruct.py::test_a_record_the_call_could_not_read_is_not_reached",
+    ),
+    Mutation(
+        id="M46",
+        tests=("tests/test_associations_traverse.py", "tests/test_associations_reconstruct.py"),
+        target="associative graph reads — relations are followed from either end",
+        file="cpersona/associations.py",
+        find='f"AND (r.subject_id IN ({marks}) OR r.object_id IN ({marks}))",',
+        replace='f"AND (r.subject_id IN ({marks}) AND r.object_id IN ({marks}))",',
+        breaks="an entity named as a relation's object reaches nothing through it, so traverse and the reconstruct walk see half the graph",
+        expect="test_associations_traverse.py::test_the_neighbourhood_to_the_hop_bound, test_associations_reconstruct.py::test_relations_are_followed_in_both_directions",
+    ),
+    Mutation(
+        id="M47",
+        tests=("tests/test_associations_traverse.py",),
+        target="traverse — limit bounds the entities returned",
+        file="cpersona/associations.py",
+        find="        kept = order[:limit]\n",
+        replace="        kept = order\n",
+        breaks="a hub entity returns its whole neighbourhood whatever the caller asked for",
+        expect="test_associations_traverse.py::test_limit_bounds_entities_and_mentions_and_says_so",
+    ),
+    Mutation(
+        id="M48",
+        tests=("tests/test_associations_traverse.py",),
+        target="traverse — refs only, never record text",
+        file="cpersona/associations.py",
+        find='                entry["mentions"] = [ref for _, _, ref, _ in found]',
+        replace='                entry["mentions"] = [row["content"] for _, _, _, row in found]',
+        breaks="the graph query returns stored text, so its payload grows with the records and bypasses the preview tier",
+        expect="test_associations_traverse.py::test_no_record_text_is_returned",
+    ),
+    Mutation(
+        id="M49",
+        tests=("tests/test_associations_traverse.py",),
+        target="traverse — the named entity is one this agent declared",
+        file="cpersona/associations.py",
+        find='    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")\n    async with connection() as db:\n        starts',
+        replace='    iso = isolation_where(agent_id=None, project_id=project_id, channel=channel, alias="e")\n    async with connection() as db:\n        starts',
+        breaks="another agent's entity of the same name becomes a start, and its identity shows in this agent's answer",
+        expect="test_associations_traverse.py::test_isolation_agent_project_and_readable_records",
     ),
 ]
 
@@ -386,6 +821,30 @@ def tree_is_clean(files: set[str]) -> bool:
     return True
 
 
+def forget_bytecode(path: Path) -> None:
+    """Remove every cached bytecode file for `path`, whatever the interpreter.
+
+    Python trusts a cached .pyc while the source's size and mtime match what the
+    .pyc recorded, and the mtime is kept in whole seconds. A mutant is usually
+    one token wide, so two mutants of one file -- or a mutant and the restored
+    original -- are often the same size, and a targeted run can finish inside a
+    second. The next run then imports the bytecode of the PREVIOUS text: a
+    mutant is judged by code it did not contain, and a CAUGHT can belong to the
+    mutant before it. Measured on a hand-run harness of this shape: two
+    one-digit mutants reported each other's failing assertion.
+    """
+    cached = Path(importlib.util.cache_from_source(str(path)))
+    for pyc in cached.parent.glob(f"{path.stem}.*.pyc"):
+        pyc.unlink(missing_ok=True)
+
+
+def restore_mutation(m: Mutation, original: str) -> None:
+    """Write the original text back, and forget the mutant's bytecode with it."""
+    path = REPO / m.file
+    path.write_text(original)
+    forget_bytecode(path)
+
+
 def apply_mutation(m: Mutation) -> str:
     """Write the mutant, returning the original text for restoration."""
     path = REPO / m.file
@@ -403,7 +862,33 @@ def apply_mutation(m: Mutation) -> str:
             )
         text = text.replace(find, replace)
     path.write_text(text)
+    forget_bytecode(path)
     return original
+
+
+# pytest exit codes a TARGETED run may count as caught: tests failed (1), or the
+# run was interrupted, which is how a mutant that breaks an import surfaces (2).
+# "No tests collected" (5), internal (3) and usage (4) errors say nothing about
+# the mutant, so they fall through to the full suite instead of becoming CAUGHT.
+TARGETED_CAUGHT_CODES = frozenset({1, 2})
+
+
+def verdict(m: Mutation, run_tests) -> tuple[bool, str]:
+    """Whether the test suite catches the applied mutant, and which run decided.
+
+    `run_tests(paths)` runs pytest over `paths` (all tests when empty) and returns
+    its exit code. The full suite decides unless the mutant's own test files
+    are already red: an equivalent mutant must survive the WHOLE suite, so it
+    never takes the shortcut.
+    """
+    if m.tests and not m.equivalent:
+        if run_tests(list(m.tests)) in TARGETED_CAUGHT_CODES:
+            return True, "targeted"
+    return run_tests([]) != 0, "full"
+
+
+def missing_test_files(selected: list[Mutation]) -> list[str]:
+    return sorted({f"{m.id}: {t}" for m in selected for t in m.tests if not (REPO / t).is_file()})
 
 
 def main() -> int:
@@ -416,6 +901,13 @@ def main() -> int:
         raise SystemExit(f"no mutation matches --id {args.id}")
 
     if not tree_is_clean({m.file for m in selected}):
+        return 2
+
+    missing = missing_test_files(selected)
+    if missing:
+        print("!! mutation test files do not exist — update the `tests` field:")
+        for line in missing:
+            print(f"   {line}")
         return 2
 
     print(f"Baseline: running the suite unmutated ({len(selected)} mutations queued)...")
@@ -431,11 +923,12 @@ def main() -> int:
         original = apply_mutation(m)
         try:
             # -x: the first failure is enough to prove the mutant is caught.
-            result = run(["uv", "run", "pytest", "-q", "-x"])
+            caught, decided_by = verdict(
+                m, lambda paths: run(["uv", "run", "pytest", "-q", "-x", *paths]).returncode
+            )
         finally:
-            (REPO / m.file).write_text(original)
+            restore_mutation(m, original)
 
-        caught = result.returncode != 0
         if m.equivalent:
             # Inverted expectation: an equivalent mutant that gets CAUGHT means a
             # test is asserting the redundant layer itself, which will break the
@@ -445,6 +938,7 @@ def main() -> int:
             status = "CAUGHT     " if caught else "SURVIVED   "
         print(f"[{status}] {m.id}  {m.target}")
         print(f"           {m.breaks}")
+        print(f"           decided by: {decided_by} run")
         if not caught and not m.equivalent:
             survived.append(m)
             print(f"           !! no test failed. Expected pin: {m.expect}")

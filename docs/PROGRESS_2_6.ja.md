@@ -1,0 +1,64 @@
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:fdecd83627bacd01535e9c362850d5376c7422b4 -->
+
+# 2.6 系はいまどこまで来ているか
+
+> **翻訳について**: 正本は英語版です。この日本語版は参照用の翻訳で、内容が食い違う場合は英語版が優先されます。
+
+更新日: 2026-09-19。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
+示します。このラインが何を建て、何をもって完了とするかは
+[ラインのページ](RELIABLE_RECALL_2_6.md) が、各リリースに何が入っているかは
+[リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
+リリースが食い違う場合、正しいのはリリースです。
+
+2.6 系は pre-release のラインです。リリースは `2.6.0aN` として PyPI にあり、`--pre` を
+付けて導入します。最新の final リリースは 2.5 系にあります
+([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
+
+## 4 つの状態 { #the-four-states }
+
+以下の各行は、このうち 1 つだけを持ちます。設計が機能として読まれないように、分けて
+あります。
+
+| 状態 | 意味 |
+| --- | --- |
+| **リリース済み** | 公開された pre-release に入っている。誰でも導入して呼び出せる。 |
+| **開発中** | `master` にコードはあるが、未リリースか、既定を決める測定がまだ無いままリリースされている。 |
+| **研究中** | 仮説、実験、設計の比較の段階。サーバーのコードはまだ無い。 |
+| **不採用・修正中** | 測って退けたか、誤りが見つかって設計し直している。これらの行はページに残します。 |
+
+## ラインの完了条件に対して { #against-the-lines-completion-conditions }
+
+番号は [「完了」の意味](RELIABLE_RECALL_2_6.md#10-what-done-means) に従います。
+
+| # | 条件 | 状態 | 証拠 |
+| --- | --- | --- | --- |
+| 1 | 想起プロセスと Cued Recall がゲートの背後で出荷される | **研究中** | [§1](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process) と [§2](RELIABLE_RECALL_2_6.md#2-cued-recall-the-input-contract) に設計があります。`master` に実装はありません。 |
+| 2 | 最後の再ソートの扱いが決まっている | **研究中** | 何を決めるのか、なぜそれがどの prior よりも先なのかは [§3](RELIABLE_RECALL_2_6.md#3-one-prior-function) にあります。未決定です。 |
+| 3 | 深さと件数が分離されている | 2.6.0a2 で **リリース済み** | [#274](https://github.com/Cloto-dev/cpersona/pull/274)。`CPERSONA_RECALL_DEPTH_FLOOR` の既定は `0` で、測定で深さが選ばれるまで 2.5 系の結合を保ちます。 |
+| 4 | 再構成想起がツールとして存在する | 2.6.0a2 で **リリース済み**、a3 で拡張 | ツール本体: [#274](https://github.com/Cloto-dev/cpersona/pull/274)。深さより広さ、payload の予算: [#280](https://github.com/Cloto-dev/cpersona/pull/280)、[#286](https://github.com/Cloto-dev/cpersona/pull/286)。item の形の統一と、何を落としたかを言う応答: [#288](https://github.com/Cloto-dev/cpersona/pull/288)、[#289](https://github.com/Cloto-dev/cpersona/pull/289)、[#290](https://github.com/Cloto-dev/cpersona/pull/290)。これまでの測定: 上限 1〜10 の [count replay](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1-count-replay.md) (記録自身が「既定を選ぶものではない」と述べています) と、事前登録した [reader study](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1_1-reader.md)。後者は 1 回目では reader が受け取る量が減らず、2 つの変更の後の再測定が、18 問で登録済みの判定則を満たしました。既定の件数は今も契約上の選択であり、測定された最適値ではありません。 |
+| 5 | 適応的融合が両方のモデルで素の embedding を上回る | **研究中** | 設計と、その根拠である段ごとの損失の分析: [#260](https://github.com/Cloto-dev/cpersona/pull/260)、[#261](https://github.com/Cloto-dev/cpersona/pull/261)、[設計記録](ADAPTIVE_FUSION_DESIGN.md)。サーバーのコードはありません。 |
+| 6 | ベンチマーク上のすべての失敗にコードと再生できる trace がある | **研究中** | 分類は [§8](RELIABLE_RECALL_2_6.md#8-recall-quality-engineering) にあります。ベンチマークの harness には replay がありますが、サーバーはまだ trace を記録しません。 |
+| 7 | 精度・トークン・遅延・メモリのフロンティアが動いた | **研究中** | 未測定です。凍結した 2.5 の baseline に対して、最後に測ります。 |
+| 8 | 2.5 の baseline が抱える品質上の負債が、閉じられたか理由つきで持ち越された | **開発中** | ベンチマークの走行がどの較正の下で測られたかを、走行と一緒に記録するようになりました: [#258](https://github.com/Cloto-dev/cpersona/pull/258)。他の項目は未着手です。 |
+
+## 完了条件の外で、このラインがリリースしたもの { #released-in-this-line-beyond-the-conditions }
+
+| リリース | 追加したもの | 証拠 |
+| --- | --- | --- |
+| 2.6.0a1 | 識別子を検索できるまま保つ全文検索の正規化 | [#271](https://github.com/Cloto-dev/cpersona/pull/271) |
+| 2.6.0a3 | 長いレコードを node に分け、検索索引の外に保つ。reconstruct の引用は最良の node から取る。レコードの一部を `get_contents` で展開する | [#282](https://github.com/Cloto-dev/cpersona/pull/282)–[#287](https://github.com/Cloto-dev/cpersona/pull/287)、[設計記録](OVERFLOW_TREE_DESIGN.md) |
+| 2.6.0a4 | 宣言された連想記憶: エージェントが述べるエンティティ・別名・関係。`reconstruct` はそれを手がかりとして読み、有界にたどる。`traverse` は宣言された近傍を返す | [#291](https://github.com/Cloto-dev/cpersona/pull/291)–[#295](https://github.com/Cloto-dev/cpersona/pull/295)、[設計記録](ASSOCIATIVE_MEMORY_DESIGN.md) |
+
+連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
+ますが、その結果はまだ記録されていません。
+
+## 不採用・修正中 { #withdrawn-or-reworked }
+
+| 何が | 何が起きたか | 証拠 |
+| --- | --- | --- |
+| 適応的融合の reference panel (最初の仕様) | null を特定できませんでした。指定した 2 つの密度が同じ分布だったため、定義した証拠では、混合をそれ自身の null から区別できませんでした。この定義の上にコードが書かれる前に、定義を置き換えました。 | [#262](https://github.com/Cloto-dev/cpersona/pull/262) |
+
+## このページに無いもの { #what-is-not-on-this-page }
+
+日付です。[ロードマップ](roadmap.md) は記述的な文書で、このページもそれに従います。
+行が動くのは、日付が来た時ではなく、証拠ができた時です。

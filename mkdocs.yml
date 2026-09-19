@@ -81,6 +81,8 @@ plugins:
             Architecture: アーキテクチャ
             Roadmap: ロードマップ
             Reliable Recall (2.6): Reliable Recall (2.6 系)
+            Memory Intelligence (2.7): Memory Intelligence (2.7 系)
+            Progress of 2.6: 2.6 系の進捗
             Behavior Contracts: 挙動契約
             Tools: ツール一覧
             Operations Runbook: 運用 Runbook
@@ -99,6 +101,8 @@ plugins:
             Where the loss is, a frozen-stage replay: 損失はどこにあるか、凍結段リプレイ
             Two arms, one decision: 2 本のアーム、1 つの決定
             Adaptive fusion: 適応的融合
+            Overflow tree: 溢れ分の tree
+            Associative memory: 連想記憶
             Access and identity: アクセスと同一性
             Retrieval and storage: 検索と保存
             Reliability: 信頼性
@@ -231,6 +235,8 @@ nav:
   - Architecture: architecture.md
   - Roadmap: roadmap.md
   - Reliable Recall (2.6): RELIABLE_RECALL_2_6.md
+  - Memory Intelligence (2.7): MEMORY_INTELLIGENCE_2_7.md
+  - Progress of 2.6: PROGRESS_2_6.md
   - Using CPersona:
       - Tools: tools.md
       - Configuration: configuration.md
@@ -261,6 +267,8 @@ nav:
           - Reach and recency in the scan window: SCAN_WINDOW_REACH_DESIGN.md
           - Reach, recency and the far vote: REACH_AND_RECENCY_PLAN.md
           - Adaptive fusion: ADAPTIVE_FUSION_DESIGN.md
+          - Overflow tree: OVERFLOW_TREE_DESIGN.md
+          - Associative memory: ASSOCIATIVE_MEMORY_DESIGN.md
       - Reliability:
           - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md
   # What the design pages rest on: derivations, measurements, refutations.

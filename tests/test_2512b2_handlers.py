@@ -1676,19 +1676,28 @@ class _RecordingExecute:
 
 @pytest.mark.asyncio
 async def test_short_content_repair_survives_a_corpus_past_the_variable_ceiling():
-    """The measured failure: 32,767 rows against the native ceiling of 32,766."""
+    """Every repair row stays short while exceeding the native bind ceiling."""
     session.reset_pauses_for_tests()
     db = await get_db()
     agent = "b328.ceiling"
     ceiling = await db._execute(db._conn.getlimit, sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
     count = ceiling + 1
+    # Decimal content stops being short at 100000 on higher-ceiling SQLite builds.
+    # The repair spans this agent's channels; use that axis for dedup uniqueness
+    # while keeping every row eligible for the five-character content predicate.
     await db.executemany(
-        "INSERT INTO memories (agent_id, content, source, timestamp) "
-        "VALUES (?, ?, '{}', '2026-01-01T00:00:00+00:00')",
+        "INSERT INTO memories (agent_id, channel, content, source, timestamp) "
+        "VALUES (?, ?, 'short', '{}', '2026-01-01T00:00:00+00:00')",
         [(agent, str(i)) for i in range(count)],
     )
     await db.commit()
     try:
+        seeded, min_length, max_length = (await db.execute_fetchall(
+            "SELECT COUNT(*), MIN(LENGTH(TRIM(content))), MAX(LENGTH(TRIM(content))) "
+            "FROM memories WHERE agent_id = ?", (agent,),
+        ))[0]
+        assert seeded == count > ceiling
+        assert min_length == max_length == 5
         result = await checks.deep_short_content(db, agent, fix=True)
         await db.commit()
         remaining = (

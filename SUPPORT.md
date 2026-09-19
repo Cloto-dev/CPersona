@@ -99,6 +99,7 @@ discretion and must not be relied upon.
 | --- | --- | --- | --- | --- |
 | 2.4.x | **Stable** | — | certified (before v1.4 of the standard; no record) | The marketplace serves this line by default. Enters Grace 30 days after a successor line is certified Stable. |
 | 2.5.x | **Current** | not yet | — | Latest release: 2.5.11. Passed the full release gate (test suite, lint, issue-registry verification, audits); all fixes land here. Not yet frozen; certification has not started. |
+| 2.6.x | **Experimental** | — | — | Opt-in alpha releases. The first increment improves FTS query punctuation handling; the second adds the experimental `reconstruct` tool and separates recall depth from the response count; the third quotes long records from the part that matches the query, expands part of a record, and was measured with an answer reader; the fourth adds declared associative memory — entities, aliases and relations an agent declares, read by `reconstruct` and the new `traverse` tool. None is the complete 2.6 roadmap. The 2.5.x maintenance branch and production soak remain separate. |
 
 Freeze, decision, certification and EOL dates — and the link to each
 certification record — are recorded in this table as they occur.
@@ -241,4 +242,4 @@ diagnosis already exists and may already be fixed in a later release.
 **Security vulnerabilities are the exception.** Do not open a public issue for
 them; follow [SECURITY.md](SECURITY.md) instead.
 
-*Last updated: 2026-08-25*
+*Last updated: 2026-09-18*
