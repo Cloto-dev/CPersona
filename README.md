@@ -46,10 +46,16 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 
 ## Quick Start
 
-> **Claude Code? Let the agent do the setup.** The wheel ships an
+> **Setting this up as an AI agent?** Read the
 > [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/skills/cpersona-memory/SKILL.md)
-> that installs everything *and* teaches Claude when to store, recall and
-> archive. Copy it in, then say *"Set up CPersona."*
+> — `skills/cpersona-memory/SKILL.md` in a clone of this repository — and follow
+> it end to end. It is the complete procedure: install, embedding server,
+> registration, **and the two steps a quick start tends to skip** — verifying
+> from a *new* session, and persisting the memory policy so the next session
+> knows which `agent_id` holds the memories.
+>
+> **Using Claude Code yourself?** The same skill ships inside the wheel. Once
+> `cpersona` is installed, copy it in and say *"Set up CPersona."*
 >
 > ```bash
 > python -c "import cpersona,pathlib,shutil; s=pathlib.Path(cpersona.__file__).parent/'skills'/'cpersona-memory'; shutil.copytree(s, pathlib.Path.home()/'.claude/skills/cpersona-memory', dirs_exist_ok=True)"
@@ -69,6 +75,8 @@ uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
 EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
 ```
 
+The reference server's lifetime is bound to its stdin. Started with stdin closed — by a service manager, by `nohup … </dev/null`, or from an agent's background shell — it binds the port and exits within the same second with status 0. Give it a stdin that stays open (`sleep infinity | cembedding`); [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/#the-reference-server) has the details.
+
 Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/CPersona/getting-started/#the-contract) works and is equally recommended; CEmbedding is the reference implementation. The choice of backend is yours — the recommendation is to connect one, not to connect that one.
 
 **Without a backend, cpersona still runs** — FTS5 + keyword search, and it says on every recall that it is degraded rather than quietly returning less. That is a supported fallback, not a recommended way to run: recall then matches on shared words, so a memory phrased differently from your question can be missed, and so can an older one.
@@ -79,7 +87,9 @@ Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/C
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
 
-That's it. Ask Claude to `store` something and `recall` it in a later session.
+**4. Verify from a new session** — ask the agent to `store` something, then `recall` it in a *fresh* session. Surviving the session boundary is the whole point.
+
+**5. Make it stick** — registration gives the agent the tools. It does not tell the next session to use them, or which `agent_id` holds the memories: recall is scoped to an exact `agent_id`, so a session that guesses the wrong one gets nothing back. Persist the short policy block into the file your client loads every session (`~/.claude/CLAUDE.md`, `AGENTS.md`, …) — [Getting Started §5](https://cloto-dev.github.io/CPersona/getting-started/#5-make-the-memory-triggers-fire-in-every-session).
 
 At startup the server asks pypi.org whether a newer release exists and tells the
 calling agent through `recall`; set `CPERSONA_UPDATE_CHECK=false` to turn that

@@ -63,7 +63,10 @@ vector-search layer). Running without an embedding backend is supported as a
 fallback — CPersona then serves FTS5 + keyword only — but it is not
 recommended for normal operation.
 
-**Prerequisites:** Python 3.11+ (Git only for from-source installs).
+**Prerequisites:** Python 3.11+ (Git only for from-source installs). No Python
+on the machine? Install [uv](https://docs.astral.sh/uv/) first — `uvx` and
+`uv tool install` fetch a suitable interpreter on their own, without touching
+the system.
 
 ### 1. Install CPersona
 
@@ -102,6 +105,17 @@ and the provider are not optional here any more than in the recipe above; a
 server started without them serves a different backend than the one just
 downloaded.
 
+**Keep its stdin open.** The reference server runs an MCP session on stdio and
+serves `/embed` from a background task, so its lifetime is bound to stdin.
+Started with stdin closed — `nohup … </dev/null`, a service manager, or your
+own background shell — it binds the port and exits within the same second with
+status 0, leaving CPersona pointed at a URL nothing answers. Hold the pipe:
+`sleep infinity | cembedding` (with the same `EMBEDDING_PROVIDER` as above).
+In an interactive terminal the terminal already does this. `uvx` runs the
+package out of uv's cache; for a server that has to come back after a reboot,
+`uv tool install "cembedding[onnx]"` gives a persistent install with
+`cembedding` on PATH.
+
 > CEmbedding is the reference and recommended backend; any other server
 > satisfying the contract above is equally supported and equally recommended.
 >
@@ -134,8 +148,14 @@ key names differ.
 > venv's python. **ClotoCore users:** install from the in-app marketplace
 > ([ClotoHub](https://hub.cloto.dev)) instead.
 
+**Choose the `agent_id` now** — one stable id for this user and client (e.g.
+`"claude-code"`, `"claude-desktop"`), reused on every call from here on. Recall
+is scoped to an exact `agent_id`: a later session that guesses a different one
+gets an empty result, not an error.
+
 After restarting the client, confirm the `cpersona` server is connected, then
-ask Claude to `store` a fact and `recall` it.
+`store` a fact under that `agent_id` and `recall` it **from a new session** —
+a recall inside the session that stored it proves nothing about persistence.
 
 ### 4. Persist the policy into the always-loaded file (recommended)
 
@@ -217,13 +237,27 @@ Details, setup, and troubleshooting: the `cpersona-memory` skill.
 <!-- END cpersona-policy -->
 ```
 
+### 5. Done means
+
+Setup is finished when all of these hold — report each one to the user rather
+than a general "it works":
+
+- The MCP client lists `cpersona` as connected, and `CPERSONA_DB_PATH` is an
+  absolute path you can name.
+- `check_health` reports no critical issue.
+- A `store` came back `embedded: true` (or you have told the user that recall
+  is running without the vector layer, and why).
+- A **new** session recalled what an earlier session stored.
+- The policy block from step 4 is in the always-loaded file with the chosen
+  `agent_id` — or the user declined it, and knows that without it the next
+  session has no way to learn which `agent_id` to use.
+
 ---
 
 ## Usage
 
 Once connected, follow these triggers **proactively** — do not wait to be asked.
-Pick a stable `agent_id` for the user (e.g. `"claude-desktop"` or
-`"claude-code"`) and reuse it on every call.
+Use the `agent_id` chosen at setup (step 3) on every call.
 
 ### Mandatory triggers
 
