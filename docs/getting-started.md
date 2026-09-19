@@ -413,6 +413,22 @@ budget, client neutrality — are the [policy block
 standard](CLAUDE_MD_POLICY_STANDARD.md). The block itself is maintained in the
 skill, and this copy is checked against it in CI.
 
+The package also installs the paste as a command, for anyone who would rather not
+do it by hand — and for the case where the client refuses to let an agent write
+into a file it loads as instructions:
+
+```bash
+cpersona-policy --agent-id claude-code --install
+# through uvx: uvx --from cpersona cpersona-policy --agent-id claude-code --install
+```
+
+It prints the block and writes nothing until `--install` is given, it picks the
+user-level file of whichever client it finds (`--client claude-code|codex` or
+`--target PATH` to say which file instead), and on a file that already holds a
+block it replaces the span between the markers and leaves every other byte as it
+was. Markers that do not form one well-formed block are reported rather than
+repaired. `--dry-run` says what would change.
+
 ```markdown
 <!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:49bb1409d7c764d191f33179ae1a1c4473752d67 -->
+<!-- i18n-source: docs/getting-started.md@blob:c8547654210ed90fd9c0d642697c7ed521ff69af -->
 
 # はじめに
 
@@ -409,6 +409,21 @@ Codex はサーバーごとにツールを拒否リストにできます (同じ
 ブロックが従う規則 (同意、配置、冪等性、40 行の予算、クライアント中立) は
 [ポリシーブロック標準](CLAUDE_MD_POLICY_STANDARD.md) にあります。ブロックの正本は
 skill 側にあり、このコピーは CI でそれと照合されます。
+
+この貼り付けはコマンドとしても同梱されています。手で貼り付けたくない場合、そして
+クライアントが「指示として毎セッション読み込むファイル」へのエージェントの書き込みを
+拒否する場合のためです:
+
+```bash
+cpersona-policy --agent-id claude-code --install
+# uvx 経由の場合: uvx --from cpersona cpersona-policy --agent-id claude-code --install
+```
+
+`--install` を付けるまではブロックを表示するだけで何も書き込みません。書き込み先は
+見つかったクライアントのユーザーレベルのファイルです (どのファイルかを指定するなら
+`--client claude-code|codex` または `--target PATH`)。既にブロックがあるファイルでは
+マーカーの間だけを置き換え、それ以外のバイトは元のまま残します。1 つの正しいブロックに
+なっていないマーカーは、修復せず報告します。`--dry-run` は何が変わるかを表示します。
 
 ```markdown
 <!-- BEGIN cpersona-policy v2 (managed by the cpersona-memory skill; re-run the skill to update) -->

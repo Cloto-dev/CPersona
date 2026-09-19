@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:12ed003670a687418c91de3309f37935a0f656ba -->
+<!-- i18n-source: docs/tools.md@blob:a5059a461419375f7f7adf83f9bd7118b993be11 -->
 
 # ツール一覧
 
@@ -78,6 +78,12 @@
 `check_health` と `deep_check` は MCP の外から `python -m cpersona.checkup` として
 も実行できます。CI ではこの形を使ってください。実行頻度の指針は
 [運用 runbook](operations.md#maintenance-cadence) にあります。
+
+ツールではないコマンドが 1 つ同梱されています。`cpersona-policy` (同じものが
+`python -m cpersona.policy`) は、常時ロードされるポリシーブロックを表示し、クライアント
+が毎セッション読み込む指示ファイルへインストールします。説明は、それを使う場所である
+[はじめに §5](getting-started.md#5-make-the-memory-triggers-fire-in-every-session)
+にあります。
 
 ## サーバーのバージョン { #server-version }
 

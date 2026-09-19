@@ -168,6 +168,23 @@ Rules for writing the block (per the
   a setup step are in
   [always-loaded-index.md](references/always-loaded-index.md).
 
+**If the client refuses the write, do not work around it.** Some clients block an
+agent from writing text that arrived with an external package into a file that is
+loaded as instructions every session — which is the right default for that file,
+and not something to route around with a shell pipeline. Hand the user the
+command that performs the same install, so the person who owns the file is the
+one who writes to it:
+
+```bash
+cpersona-policy --agent-id <AGENT_ID> --install
+# CPersona run through uvx: uvx --from cpersona cpersona-policy --agent-id <AGENT_ID> --install
+```
+
+Without `--install` it prints the block and writes nothing, so the user can read
+it first. It replaces only the span between the markers, leaving the rest of the
+file untouched, and it takes `--client claude-code|codex` or `--target PATH` when
+the file to write is not the user-level one it can detect.
+
 The block (keep it verbatim apart from the substitution — it is budgeted at
 40 lines because that file costs context in every session, and every line
 is chosen to change behavior the agent would *not* show by default):
@@ -434,7 +451,7 @@ and the backfill for rows written while the backend was down.
 
 ## Key facts
 
-- Schema v13 (auto-migrating) · ~23,738 LOC Python across focused modules · MIT.
+- Schema v13 (auto-migrating) · ~24,516 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 /absolute/path/cpersona.db ".backup 'backup.db'"`, substituting the

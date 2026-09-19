@@ -123,6 +123,13 @@ testpaths = ["tests"]
 
 [project.scripts]
 cpersona = "cpersona.server:run"
+# The policy block has to reach a file the client loads every session, and a
+# client may refuse to let an agent write into such a file — reasonably, since
+# that is where injected instructions would want to land. So the same install is
+# reachable as a command the user runs themselves. A console script rather than
+# only `python -m cpersona.policy` because the reader most likely to need it
+# installed the server with uvx and has no python on PATH to say it with.
+cpersona-policy = "cpersona.policy:main"
 
 [build-system]
 requires = ["hatchling"]

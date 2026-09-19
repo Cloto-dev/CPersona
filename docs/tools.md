@@ -76,6 +76,11 @@ matters when you tighten `limit`.
 `python -m cpersona.checkup`. That is the form to use in CI. Cadence guidance
 is in the [operations runbook](operations.md#maintenance-cadence).
 
+The package installs one other command, which is not a tool at all: `cpersona-policy`
+(equivalently `python -m cpersona.policy`) prints the always-loaded policy block, and
+installs it into the instructions file your client reads every session. It is described
+where it is used, in [Getting Started §5](getting-started.md#5-make-the-memory-triggers-fire-in-every-session).
+
 ## Server version
 
 | Tool | What it does |
