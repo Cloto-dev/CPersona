@@ -196,3 +196,161 @@ short-corpus groups and nothing else.
   regime the pre-registration said this protocol does not look at — a
   caller's ten rows on a pool small enough that the old gate emptied it — and
   a measurement of that needs a protocol built for it.
+
+## Bisection: punctuation handling, 2026-09-15
+
+The REALTALK regression is caused by the `_build_fts_query` punctuation change
+in `a5206f60f2f965adb4c2a5e89ef95649c45d36a2`, not by calibration drift.
+This is a measured diagnostic finding, **not a recommendation to revert the
+commit**. Its identifier-search correction remains necessary.
+
+Protocol: [fixed-calibration preregistration](prereg-recall-bisection.md).
+All arms used the same read-only BAAI/bge-m3 cache, 8,944 input documents
+(8,943 stored after the existing dedup), 679 queries, full pooled ranking,
+threshold 0.6602, RRF and confidence/autocut/fused gate off. No calibration
+samples were drawn. NDCG@10 below is the three-subtask macro mean, in percentage
+points. These are not production-limit or latency measurements.
+
+| Revision / intervention | Commonsense | Multi-hop | Temporal | Macro |
+| --- | ---: | ---: | ---: | ---: |
+| v2.4.40 (`888614f`) | 28.869513 | 29.316193 | 70.946637 | 43.044114 |
+| `68653f3` | 28.869513 | 29.316193 | 70.946637 | 43.044114 |
+| `5499613` | 28.869513 | 29.316193 | 70.946637 | 43.044114 |
+| Parent of `a5206f6` (`0b6b759`) | 28.869513 | 29.316193 | 70.946637 | 43.044114 |
+| `a5206f6` | 24.884225 | 24.083188 | 65.059915 | 38.009109 |
+| Development endpoint (`e43ad34`) | 24.884225 | 24.083188 | 65.059915 | 38.009109 |
+| `e43ad34`, punctuation normalization restored | 28.869513 | 29.316193 | 70.946637 | 43.044114 |
+
+The endpoints reproduce the historical rounded values at the same fixed
+threshold. The adjacent parent/commit pair isolates the transition; reversing
+only punctuation normalization on the development endpoint restores all
+5.035005 points, with zero residual in every subtask. The vector-admission
+summaries are identical across these arms. Later checkpoints were unnecessary
+after the transition and intervention succeeded. `5499613` changes version
+metadata only; `eafd3af` adds benchmark validation, not runtime indexing.
+
+The accelerated arms each checked 11 native vector calls out of 679 and had
+zero mismatches. Two additional **unaccelerated** full REALTALK runs reproduce
+the development and intervention scores exactly, removing acceleration as an
+explanation for this finding. An independent qrels/ranked-ID implementation
+also reproduces every per-query and aggregate score for those two runs and
+the parent/intervention accelerated runs (679 queries each).
+
+### Mechanism and the constraint on a repair
+
+The trigram FTS builder keeps each non-CJK whitespace token whole. Removing
+punctuation normalization made sentence punctuation part of the required
+phrase: for example, `salmon?` is searched as `"salmon?"`, not `"salmon"`.
+The query builder changes on 678/679 REALTALK queries and 499/500 LongMemEval
+queries. This changes lexical membership/ranks and therefore RRF voting even
+when vector admission is unchanged. Preserving embedded punctuation is useful
+for identifiers, but preserving sentence delimiters has a different effect.
+
+The restoration is not uniformly beneficial per query:
+
+| REALTALK subtask | Improved | Worsened | Unchanged |
+| --- | ---: | ---: | ---: |
+| Commonsense | 22 | 12 | 69 |
+| Multi-hop | 86 | 42 | 137 |
+| Temporal | 56 | 26 | 229 |
+
+The existing `tests/test_bug215_fts_punctuation.py` passes 5/5 on unchanged
+`e43ad34`. The diagnostic intervention fails 4/5, including the actual
+keyword-retrieval assertion: the CVE identifier row disappears behind the
+FTS early return while noise rows remain. This is the original failure,
+not an import/setup error. **Do not ship the blanket normalization revert.**
+A repair must retain punctuated identifiers while recovering useful natural
+language terms, with both contracts and retrieval outcomes measured.
+
+Full-precision completed-arm scores, input hashes and source fingerprints are
+in [recall-bisection-results.json](recall-bisection-results.json).
+The reversible diagnostic patch is
+[fts-diagnostic-intervention.patch](fts-diagnostic-intervention.patch).
+The main working checkout and deployed code were not modified.
+
+### LongMemEval confirmation
+
+Both arms completed, and independent per-query verification finished at
+2026-09-15 06:47:32 UTC. Each arm evaluated all 500 queries over 237,655 input
+documents (237,654 stored after dedup), with threshold fixed at 0.4493 and
+the same full-ranking regime. Each checked 10 native vector calls, with zero
+mismatches and zero accelerator fallbacks. This was a paired causal check,
+not another random calibration draw or a production-limit benchmark.
+
+| Type | Queries | Development | Punctuation restored | Delta |
+| --- | ---: | ---: | ---: | ---: |
+| Knowledge update | 78 | 92.190023 | 92.117922 | -0.072101 |
+| Multi-session | 133 | 77.482887 | 79.236651 | +1.753764 |
+| Single-session assistant | 56 | 91.396168 | 91.113784 | -0.282384 |
+| Single-session preference | 30 | 58.686234 | 59.284564 | +0.598330 |
+| Single-session user | 70 | 81.015351 | 84.970804 | +3.955453 |
+| Temporal reasoning | 133 | 77.967371 | 80.291278 | +2.323907 |
+| **Six-type macro mean** | **500** | **79.789672** | **81.169167** | **+1.379495** |
+
+All three preregistered fingerprint types improve. All six restored scores
+match the historical v2.4.40 result at its recorded two-decimal precision;
+the small changes in the other three types are reported rather than hidden.
+The independent verifier recomputed all 1,000 query scores and both macro
+means from ranked IDs and qrels. Full-precision results and fingerprints are
+in [recall-bisection-longmemeval-results.json](recall-bisection-longmemeval-results.json).
+The measured wall times were 9,797.48 and 9,843.02 seconds; the two arms ran
+concurrently. These are diagnostic execution times, not shipped latency claims.
+
+### What has been recovered, and what has not been combined
+
+This experiment restores the old retrieval quality on the two measured tasks
+while leaving the rest of the development checkout in place. It is **not**
+a whole-repository rollback to v2.4.40. However, it does **not** yet combine
+that quality with all improvements from the 2.5 line: the local reversal
+reintroduces the identifier-search failures demonstrated above. Other 2.5
+changes remain in the source, but were not comprehensively revalidated here.
+
+The diagnostic attribution is complete; when this section was written, a
+production repair was not implemented.
+The next repair must recover useful natural-language terms without losing
+punctuated identifiers. There is no claim of statistical significance from
+this single controlled pair, no attribution of the entire 22-task regression,
+and no generalization to other embeddings or the production limit=10 regime.
+The diagnostic reversal itself was never committed or released.
+
+**Follow-up exploration, completed later on 2026-09-15:** the
+[punctuation-policy comparison](results-fts-policy-exploration.md) selects an
+edge-delimiter policy that passes 29 identifier/retrieval tests, reaches
+42.671995 on REALTALK and 81.872540 on LongMemEval. All 500 LongMemEval queries
+completed with independent verification; all six type means improve over
+the development control. This is a separate candidate, not the diagnostic
+reversal above, and it has not completed production acceptance.
+
+**Later, 2026-09-15:** the `edges` policy shipped in the 2.6.0a1 pre-release
+([release PR #271](https://github.com/Cloto-dev/CPersona/pull/271)). The
+REALTALK and LongMemEval figures above were measured on the `e43ad34` base, not
+on the tagged package, and the 22-task comparison has not been re-run since.
+
+### Reproduction and verification
+
+Use `benchmarks/diagnose_recall_revision.py` with a clean revision checkout,
+an existing BAAI/bge-m3 embedding cache, the LMEB directory and a new output
+directory. The cache must be a quiescent snapshot with no WAL. It is opened
+with SQLite `mode=ro&immutable=1`; its stat is checked again after the run.
+Every arm retains its experimental DB, manifest, rankings and scores.
+Initial `mode=ro` attempts stopped before scoring because SQLite could not
+create sidecars in a read-only location; those failed arms are not evidence.
+
+```sh
+python benchmarks/diagnose_recall_revision.py \
+  --repo /path/to/revision --output /path/to/new-arm \
+  --cache /path/to/embcache.sqlite3 --lmeb /path/to/lmeb \
+  --task REALTALK --threshold 0.6602
+python benchmarks/verify_recall_diagnostic.py \
+  --lmeb /path/to/lmeb /path/to/new-arm
+```
+
+For LongMemEval use `--task LongMemEval --threshold 0.4493`. Add `--native`
+to bypass acceleration. The pre-2.5.0 literal 100-row clamp is bypassed only
+for this historical full-ranking protocol. No production settings change.
+
+The independent verifier's rank discount was deliberately changed from
+`log2(rank + 2)` to `log2(rank + 3)`: it failed on `scene_9_q_4` with a
+per-query score mismatch, exit 1. Restoring the discount returned both
+native REALTALK arms to green. This checks detection of a subtle scoring
+error rather than merely successful execution. No existing tests were weakened.

@@ -1,0 +1,302 @@
+{
+  "protocol": "prereg-recall-bisection.md",
+  "completion": {
+    "status": "completed_and_independently_verified",
+    "finished_at": "2026-09-15T06:47:32Z",
+    "verification": [
+      "{\"arm\": \"lme-dev\", \"queries_checked\": 500, \"mean\": 79.789672373894}",
+      "{\"arm\": \"lme-fts-revert\", \"queries_checked\": 500, \"mean\": 81.16916703163893}"
+    ],
+    "macro_control": 79.789672373894,
+    "macro_intervention": 81.16916703163893,
+    "comparison": {
+      "knowledge_update": {
+        "control": 92.1900230569037,
+        "intervention": 92.11792178724039,
+        "delta": -0.07210126966330677
+      },
+      "multi_session": {
+        "control": 77.48288712451959,
+        "intervention": 79.23665067277646,
+        "delta": 1.7537635482568703
+      },
+      "single_session_assistant": {
+        "control": 91.39616801255761,
+        "intervention": 91.11378395408184,
+        "delta": -0.2823840584757704
+      },
+      "single_session_preference": {
+        "control": 58.686234261442195,
+        "intervention": 59.28456435849062,
+        "delta": 0.5983300970484251
+      },
+      "single_session_user": {
+        "control": 81.01535102521598,
+        "intervention": 84.97080361072493,
+        "delta": 3.955452585508951
+      },
+      "temporal_reasoning": {
+        "control": 77.96737076272495,
+        "intervention": 80.29127780651935,
+        "delta": 2.3239070437943923
+      }
+    },
+    "historical_fingerprint_positive": true
+  },
+  "arms": [
+    {
+      "label": "lme-dev",
+      "commit": "e43ad340cff20f807fa5666508afa45e9d924b41",
+      "source_sha256": {
+        "memory_handlers.py": "4910abc5731239f672a74e4c498d539fa1a819f8c37c068e696b2b7bf419746d",
+        "vector.py": "b9a098c1967b9d1f05ea79f5011d40fdad186ee982a31fe97b62a6fce30bab7f",
+        "config.py": "c1fbe7674b088563c0c6adf8bb7e9cc7d5eba54bbfca0bf25e28408512b73e41"
+      },
+      "driver_sha256": "fadedd7776a4ff947cce515bd358b56e3b30eb83267b2bd5e485499dd297ac75",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/LongMemEval/candidates.jsonl": "e1d0ad5eb81203ea309a95988e10f6ea3da87c7a3e083a34d38423dc4d3ac36a",
+        "eval_data/Dialogue/LongMemEval/corpus.jsonl": "c1462e7d8f11cfddec685a67315736c890ebce9da54330aefbf45ba99554148d",
+        "eval_data/Dialogue/LongMemEval/knowledge_update/qrels.tsv": "43314cc3e4444e0800db6427dde82cffdf0df8d1eb6e254b37de1c52a04c578d",
+        "eval_data/Dialogue/LongMemEval/knowledge_update/queries.jsonl": "7125ccefde0a3de14c7797762ffc9926e921e3bf9fd329ac8e5d2214ed17e40e",
+        "eval_data/Dialogue/LongMemEval/multi_session/qrels.tsv": "1687d117cd850c41725619efae5fb086323c3fe27ded8808c43844c954d3759d",
+        "eval_data/Dialogue/LongMemEval/multi_session/queries.jsonl": "1fccbd25d9d815b1c068dbe2f72a7e70388317b0bc49559e637c24f858493d21",
+        "eval_data/Dialogue/LongMemEval/single_session_assistant/qrels.tsv": "4b8bce9bb46d4598ae6ef9e0db6aae83bfdf3c2305b50397af501d2479150354",
+        "eval_data/Dialogue/LongMemEval/single_session_assistant/queries.jsonl": "0fc982400866becd8ae0116c620ac61339c4066c06c65cdce634165f79d16069",
+        "eval_data/Dialogue/LongMemEval/single_session_preference/qrels.tsv": "028d29884f36459db90f356bd82c85c7374280cdbbd5d8333c91f1ed593f80eb",
+        "eval_data/Dialogue/LongMemEval/single_session_preference/queries.jsonl": "58c78b8c450ffb8e40b321523e7cf8a786d7bc825687d9ba2de5243270d90023",
+        "eval_data/Dialogue/LongMemEval/single_session_user/qrels.tsv": "e778107620de70a3a7c08666cc30c27ff025cd71c0d75cffa8f0875be52d1384",
+        "eval_data/Dialogue/LongMemEval/single_session_user/queries.jsonl": "7924230598b51e441ca958e5b4d3dee24ab43f9f2b8ed5d23c54cb34f887f931",
+        "eval_data/Dialogue/LongMemEval/temporal_reasoning/qrels.tsv": "a4f2d7ca39ee10d5e747182e501037d72023229c6ab6d70c6e487643a8984cf3",
+        "eval_data/Dialogue/LongMemEval/temporal_reasoning/queries.jsonl": "d7831edae0276f2f7b3060d04f0d910c10060a94de425d42740667774c24e786"
+      },
+      "started_at": "2026-09-15T04:02:37Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "LongMemEval",
+        "corpus_size": 237655,
+        "coverage": {
+          "knowledge_update": 78,
+          "multi_session": 133,
+          "single_session_assistant": 56,
+          "single_session_preference": 30,
+          "single_session_user": 70,
+          "temporal_reasoning": 133
+        },
+        "subtasks": {
+          "knowledge_update": 92.1900230569037,
+          "multi_session": 77.48288712451959,
+          "single_session_assistant": 91.39616801255761,
+          "single_session_preference": 58.686234261442195,
+          "single_session_user": 81.01535102521598,
+          "temporal_reasoning": 77.96737076272495
+        },
+        "mean_ndcg_at_10": 79.789672373894,
+        "threshold": 0.4493,
+        "admissions": {
+          "knowledge_update": {
+            "queries": 78,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9887,
+            "admitted_fraction_p10": 0.9814,
+            "admitted_fraction_p50": 0.9979,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_session": {
+            "queries": 133,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9911,
+            "admitted_fraction_p10": 0.9803,
+            "admitted_fraction_p50": 0.9993,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "single_session_assistant": {
+            "queries": 56,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9912,
+            "admitted_fraction_p10": 0.9778,
+            "admitted_fraction_p50": 0.9991,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "single_session_preference": {
+            "queries": 30,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9997,
+            "admitted_fraction_p10": 0.9991,
+            "admitted_fraction_p50": 1,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "single_session_user": {
+            "queries": 70,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.985,
+            "admitted_fraction_p10": 0.9747,
+            "admitted_fraction_p50": 0.9951,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 133,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9633,
+            "admitted_fraction_p10": 0.8872,
+            "admitted_fraction_p50": 0.9984,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 238155,
+        "accel": {
+          "queries": 500,
+          "fallbacks": 0,
+          "checked": 10,
+          "mismatches": 0
+        },
+        "time_s": 9797.48321662494
+      }
+    },
+    {
+      "label": "lme-fts-revert",
+      "commit": "e43ad340cff20f807fa5666508afa45e9d924b41",
+      "source_sha256": {
+        "memory_handlers.py": "876cb468403cf99cfb842fdf619cd2d45d0f528daef12a22584a5c7caab32528",
+        "vector.py": "b9a098c1967b9d1f05ea79f5011d40fdad186ee982a31fe97b62a6fce30bab7f",
+        "config.py": "c1fbe7674b088563c0c6adf8bb7e9cc7d5eba54bbfca0bf25e28408512b73e41"
+      },
+      "driver_sha256": "fadedd7776a4ff947cce515bd358b56e3b30eb83267b2bd5e485499dd297ac75",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/LongMemEval/candidates.jsonl": "e1d0ad5eb81203ea309a95988e10f6ea3da87c7a3e083a34d38423dc4d3ac36a",
+        "eval_data/Dialogue/LongMemEval/corpus.jsonl": "c1462e7d8f11cfddec685a67315736c890ebce9da54330aefbf45ba99554148d",
+        "eval_data/Dialogue/LongMemEval/knowledge_update/qrels.tsv": "43314cc3e4444e0800db6427dde82cffdf0df8d1eb6e254b37de1c52a04c578d",
+        "eval_data/Dialogue/LongMemEval/knowledge_update/queries.jsonl": "7125ccefde0a3de14c7797762ffc9926e921e3bf9fd329ac8e5d2214ed17e40e",
+        "eval_data/Dialogue/LongMemEval/multi_session/qrels.tsv": "1687d117cd850c41725619efae5fb086323c3fe27ded8808c43844c954d3759d",
+        "eval_data/Dialogue/LongMemEval/multi_session/queries.jsonl": "1fccbd25d9d815b1c068dbe2f72a7e70388317b0bc49559e637c24f858493d21",
+        "eval_data/Dialogue/LongMemEval/single_session_assistant/qrels.tsv": "4b8bce9bb46d4598ae6ef9e0db6aae83bfdf3c2305b50397af501d2479150354",
+        "eval_data/Dialogue/LongMemEval/single_session_assistant/queries.jsonl": "0fc982400866becd8ae0116c620ac61339c4066c06c65cdce634165f79d16069",
+        "eval_data/Dialogue/LongMemEval/single_session_preference/qrels.tsv": "028d29884f36459db90f356bd82c85c7374280cdbbd5d8333c91f1ed593f80eb",
+        "eval_data/Dialogue/LongMemEval/single_session_preference/queries.jsonl": "58c78b8c450ffb8e40b321523e7cf8a786d7bc825687d9ba2de5243270d90023",
+        "eval_data/Dialogue/LongMemEval/single_session_user/qrels.tsv": "e778107620de70a3a7c08666cc30c27ff025cd71c0d75cffa8f0875be52d1384",
+        "eval_data/Dialogue/LongMemEval/single_session_user/queries.jsonl": "7924230598b51e441ca958e5b4d3dee24ab43f9f2b8ed5d23c54cb34f887f931",
+        "eval_data/Dialogue/LongMemEval/temporal_reasoning/qrels.tsv": "a4f2d7ca39ee10d5e747182e501037d72023229c6ab6d70c6e487643a8984cf3",
+        "eval_data/Dialogue/LongMemEval/temporal_reasoning/queries.jsonl": "d7831edae0276f2f7b3060d04f0d910c10060a94de425d42740667774c24e786"
+      },
+      "started_at": "2026-09-15T04:02:40Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "LongMemEval",
+        "corpus_size": 237655,
+        "coverage": {
+          "knowledge_update": 78,
+          "multi_session": 133,
+          "single_session_assistant": 56,
+          "single_session_preference": 30,
+          "single_session_user": 70,
+          "temporal_reasoning": 133
+        },
+        "subtasks": {
+          "knowledge_update": 92.11792178724039,
+          "multi_session": 79.23665067277646,
+          "single_session_assistant": 91.11378395408184,
+          "single_session_preference": 59.28456435849062,
+          "single_session_user": 84.97080361072493,
+          "temporal_reasoning": 80.29127780651935
+        },
+        "mean_ndcg_at_10": 81.16916703163893,
+        "threshold": 0.4493,
+        "admissions": {
+          "knowledge_update": {
+            "queries": 78,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9887,
+            "admitted_fraction_p10": 0.9814,
+            "admitted_fraction_p50": 0.9979,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_session": {
+            "queries": 133,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9911,
+            "admitted_fraction_p10": 0.9803,
+            "admitted_fraction_p50": 0.9993,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "single_session_assistant": {
+            "queries": 56,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9912,
+            "admitted_fraction_p10": 0.9778,
+            "admitted_fraction_p50": 0.9991,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "single_session_preference": {
+            "queries": 30,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9997,
+            "admitted_fraction_p10": 0.9991,
+            "admitted_fraction_p50": 1,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "single_session_user": {
+            "queries": 70,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.985,
+            "admitted_fraction_p10": 0.9747,
+            "admitted_fraction_p50": 0.9951,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 133,
+            "floor": 0.22465,
+            "admitted_fraction_mean": 0.9633,
+            "admitted_fraction_p10": 0.8872,
+            "admitted_fraction_p50": 0.9984,
+            "admitted_fraction_p90": 1,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 238155,
+        "accel": {
+          "queries": 500,
+          "fallbacks": 0,
+          "checked": 10,
+          "mismatches": 0
+        },
+        "time_s": 9843.022858709097
+      }
+    }
+  ]
+}

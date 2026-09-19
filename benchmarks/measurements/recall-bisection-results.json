@@ -1,0 +1,733 @@
+{
+  "protocol": "prereg-recall-bisection.md",
+  "arms": [
+    {
+      "label": "old-fixed-r2",
+      "commit": "888614feccf3797366e4ca1ed7e45cbd04774568",
+      "source_sha256": {
+        "memory_handlers.py": "8da589524d4141b2895c376929e23112e2fc2c77cbe4d5c48138c87330244781",
+        "vector.py": "dc44f0fc2a6cff7e4a539f84f89ef82a1027d5f36ca7eff7d8e69078206419f7",
+        "config.py": "9e4175344b11959edb4f7ab59cea63e98ae9669d4e7ca35c1be81b4575573b71"
+      },
+      "driver_sha256": "802a60b32853c45afcc3bd7373077ddf2df89a45c7276ccbf0e61bd54227683a",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T03:58:50Z",
+      "historical_unclamp": true,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 28.86951278559288,
+          "multi_hop": 29.316193268997225,
+          "temporal_reasoning": 70.94663691927524
+        },
+        "mean_ndcg_at_10": 43.04411432462178,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": {
+          "queries": 679,
+          "fallbacks": 0,
+          "checked": 11,
+          "mismatches": 0
+        },
+        "time_s": 19.141951999859884
+      }
+    },
+    {
+      "label": "c686",
+      "commit": "68653f33c4e926c516a41769c7cbd43db7f2ef2f",
+      "source_sha256": {
+        "memory_handlers.py": "c343fe086c26e66bb4758a377092d16d176e700d3d638c7115b4d19cc1e8f16d",
+        "vector.py": "3bcf4fb25b5ba5700c67b61c07f8260076eb033381fe27d927c6667a740bfeb7",
+        "config.py": "a13d460c80a1e8983fe7fed13630269e495f713148acd4ae12b0de081fa7804c"
+      },
+      "driver_sha256": "802a60b32853c45afcc3bd7373077ddf2df89a45c7276ccbf0e61bd54227683a",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T03:59:39Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 28.86951278559288,
+          "multi_hop": 29.316193268997225,
+          "temporal_reasoning": 70.94663691927524
+        },
+        "mean_ndcg_at_10": 43.04411432462178,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": {
+          "queries": 679,
+          "fallbacks": 0,
+          "checked": 11,
+          "mismatches": 0
+        },
+        "time_s": 22.648152666166425
+      }
+    },
+    {
+      "label": "c549",
+      "commit": "54996133053e5aad2218d451ffdde8202eef64fe",
+      "source_sha256": {
+        "memory_handlers.py": "a4a1c3427019d34e9307076685ccdcb43d4a7074481c88ff35ed392d486984dd",
+        "vector.py": "758ef6c5e2f48882091ab422e79b6908eb303ff7a58bfd54e417da247960065b",
+        "config.py": "4bcdbc2b01d8c4e1793c79b80a6345c9d6f4919aff51982d01f3326e1535411d"
+      },
+      "driver_sha256": "802a60b32853c45afcc3bd7373077ddf2df89a45c7276ccbf0e61bd54227683a",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T03:59:41Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 28.86951278559288,
+          "multi_hop": 29.316193268997225,
+          "temporal_reasoning": 70.94663691927524
+        },
+        "mean_ndcg_at_10": 43.04411432462178,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": {
+          "queries": 679,
+          "fallbacks": 0,
+          "checked": 11,
+          "mismatches": 0
+        },
+        "time_s": 21.586130208102986
+      }
+    },
+    {
+      "label": "pre-a520",
+      "commit": "0b6b7595239ab15854b5978ea049ac41cb573e3a",
+      "source_sha256": {
+        "memory_handlers.py": "c98b0c729244011ab7a2f4edd0255acac47a35a4aee9ded35fdb077c1c5e3e37",
+        "vector.py": "0e950d724dcae73e820b1bfe7c1e3f5dc086745184f0f351674bfad3163642ad",
+        "config.py": "31b6c950d21d93cc3ddcbfe1d423aab3997665339ee15401cb7c20fdceb08455"
+      },
+      "driver_sha256": "fadedd7776a4ff947cce515bd358b56e3b30eb83267b2bd5e485499dd297ac75",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T04:00:45Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 28.86951278559288,
+          "multi_hop": 29.316193268997225,
+          "temporal_reasoning": 70.94663691927524
+        },
+        "mean_ndcg_at_10": 43.04411432462178,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": {
+          "queries": 679,
+          "fallbacks": 0,
+          "checked": 11,
+          "mismatches": 0
+        },
+        "time_s": 20.343297791900113
+      }
+    },
+    {
+      "label": "ca520",
+      "commit": "a5206f60f2f965adb4c2a5e89ef95649c45d36a2",
+      "source_sha256": {
+        "memory_handlers.py": "30bb2a222703e07605f396b4cc606873425e4eb5224dab4608ca5f632c4a0c3b",
+        "vector.py": "0e950d724dcae73e820b1bfe7c1e3f5dc086745184f0f351674bfad3163642ad",
+        "config.py": "31b6c950d21d93cc3ddcbfe1d423aab3997665339ee15401cb7c20fdceb08455"
+      },
+      "driver_sha256": "802a60b32853c45afcc3bd7373077ddf2df89a45c7276ccbf0e61bd54227683a",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T03:59:44Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 24.88422488041598,
+          "multi_hop": 24.083187813963075,
+          "temporal_reasoning": 65.05991508031843
+        },
+        "mean_ndcg_at_10": 38.00910925823249,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": {
+          "queries": 679,
+          "fallbacks": 0,
+          "checked": 11,
+          "mismatches": 0
+        },
+        "time_s": 21.374839749885723
+      }
+    },
+    {
+      "label": "dev-fixed-r2",
+      "commit": "e43ad340cff20f807fa5666508afa45e9d924b41",
+      "source_sha256": {
+        "memory_handlers.py": "4910abc5731239f672a74e4c498d539fa1a819f8c37c068e696b2b7bf419746d",
+        "vector.py": "b9a098c1967b9d1f05ea79f5011d40fdad186ee982a31fe97b62a6fce30bab7f",
+        "config.py": "c1fbe7674b088563c0c6adf8bb7e9cc7d5eba54bbfca0bf25e28408512b73e41"
+      },
+      "driver_sha256": "802a60b32853c45afcc3bd7373077ddf2df89a45c7276ccbf0e61bd54227683a",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T03:58:52Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 24.88422488041598,
+          "multi_hop": 24.083187813963075,
+          "temporal_reasoning": 65.05991508031843
+        },
+        "mean_ndcg_at_10": 38.00910925823249,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": {
+          "queries": 679,
+          "fallbacks": 0,
+          "checked": 11,
+          "mismatches": 0
+        },
+        "time_s": 18.49284966592677
+      }
+    },
+    {
+      "label": "dev-fts-revert",
+      "commit": "e43ad340cff20f807fa5666508afa45e9d924b41",
+      "source_sha256": {
+        "memory_handlers.py": "876cb468403cf99cfb842fdf619cd2d45d0f528daef12a22584a5c7caab32528",
+        "vector.py": "b9a098c1967b9d1f05ea79f5011d40fdad186ee982a31fe97b62a6fce30bab7f",
+        "config.py": "c1fbe7674b088563c0c6adf8bb7e9cc7d5eba54bbfca0bf25e28408512b73e41"
+      },
+      "driver_sha256": "fadedd7776a4ff947cce515bd358b56e3b30eb83267b2bd5e485499dd297ac75",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T04:00:48Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 28.86951278559288,
+          "multi_hop": 29.316193268997225,
+          "temporal_reasoning": 70.94663691927524
+        },
+        "mean_ndcg_at_10": 43.04411432462178,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": {
+          "queries": 679,
+          "fallbacks": 0,
+          "checked": 11,
+          "mismatches": 0
+        },
+        "time_s": 19.17937520891428
+      }
+    },
+    {
+      "label": "native-dev",
+      "commit": "e43ad340cff20f807fa5666508afa45e9d924b41",
+      "source_sha256": {
+        "memory_handlers.py": "4910abc5731239f672a74e4c498d539fa1a819f8c37c068e696b2b7bf419746d",
+        "vector.py": "b9a098c1967b9d1f05ea79f5011d40fdad186ee982a31fe97b62a6fce30bab7f",
+        "config.py": "c1fbe7674b088563c0c6adf8bb7e9cc7d5eba54bbfca0bf25e28408512b73e41"
+      },
+      "driver_sha256": "fadedd7776a4ff947cce515bd358b56e3b30eb83267b2bd5e485499dd297ac75",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T04:03:23Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 24.88422488041598,
+          "multi_hop": 24.083187813963075,
+          "temporal_reasoning": 65.05991508031843
+        },
+        "mean_ndcg_at_10": 38.00910925823249,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": null,
+        "time_s": 51.12956608319655
+      }
+    },
+    {
+      "label": "native-fts-revert",
+      "commit": "e43ad340cff20f807fa5666508afa45e9d924b41",
+      "source_sha256": {
+        "memory_handlers.py": "876cb468403cf99cfb842fdf619cd2d45d0f528daef12a22584a5c7caab32528",
+        "vector.py": "b9a098c1967b9d1f05ea79f5011d40fdad186ee982a31fe97b62a6fce30bab7f",
+        "config.py": "c1fbe7674b088563c0c6adf8bb7e9cc7d5eba54bbfca0bf25e28408512b73e41"
+      },
+      "driver_sha256": "fadedd7776a4ff947cce515bd358b56e3b30eb83267b2bd5e485499dd297ac75",
+      "harness_sha256": "ca05542733b0b301411dd256b8c3cb9f237eb849b919c508b1eee9c43779f61e",
+      "input_sha256": {
+        "eval_data/Dialogue/REALTALK/candidates.jsonl": "0dabfe1e9fa7d87a07debbe5045b4d500e2b5e6262d3df50c8fe36fe08c0d749",
+        "eval_data/Dialogue/REALTALK/commonsense/qrels.tsv": "f69184dcbddccc770f1d270ddf3c9d2cd1779c30e3db92de80f6143a9ac667e4",
+        "eval_data/Dialogue/REALTALK/commonsense/queries.jsonl": "2e61d8161047013724ecc6707a362084e978ebb48365ead9f14a980b604e4d40",
+        "eval_data/Dialogue/REALTALK/corpus.jsonl": "bc2c77361f8ffefc976a0c5bce8836154d474bfb96f5b38dd68876bc6a776917",
+        "eval_data/Dialogue/REALTALK/multi_hop/qrels.tsv": "ddd8c856c0361b1fd9fbcf8503921fd16577891efed817bcdf0744283095ae1d",
+        "eval_data/Dialogue/REALTALK/multi_hop/queries.jsonl": "5fd506c9be392a9fdcc4996d41395c7930f5788ab74235e0f518dc8e028fb34c",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/qrels.tsv": "7bcd59c18deccdbe9fa6ab1d3a7903d100b13dd779669967e488c4f82489c609",
+        "eval_data/Dialogue/REALTALK/temporal_reasoning/queries.jsonl": "388b9015b927c990938c397d1ed969306f35bcbefb790be2931e8603208f2990"
+      },
+      "started_at": "2026-09-15T04:03:26Z",
+      "historical_unclamp": false,
+      "result": {
+        "task": "REALTALK",
+        "corpus_size": 8944,
+        "coverage": {
+          "commonsense": 103,
+          "multi_hop": 265,
+          "temporal_reasoning": 311
+        },
+        "subtasks": {
+          "commonsense": 28.86951278559288,
+          "multi_hop": 29.316193268997225,
+          "temporal_reasoning": 70.94663691927524
+        },
+        "mean_ndcg_at_10": 43.04411432462178,
+        "threshold": 0.6602,
+        "admissions": {
+          "commonsense": {
+            "queries": 103,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2893,
+            "admitted_fraction_p10": 0.069,
+            "admitted_fraction_p50": 0.2426,
+            "admitted_fraction_p90": 0.632,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "multi_hop": {
+            "queries": 265,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.2247,
+            "admitted_fraction_p10": 0.0548,
+            "admitted_fraction_p50": 0.1912,
+            "admitted_fraction_p90": 0.432,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          },
+          "temporal_reasoning": {
+            "queries": 311,
+            "floor": 0.3301,
+            "admitted_fraction_mean": 0.3593,
+            "admitted_fraction_p10": 0.0931,
+            "admitted_fraction_p50": 0.279,
+            "admitted_fraction_p90": 0.7772,
+            "queries_admitting_none": 0,
+            "queries_admitting_all": 0,
+            "queries_censored_by_limit": 0
+          }
+        },
+        "cache_hits": 9623,
+        "accel": null,
+        "time_s": 51.01595887495205
+      }
+    }
+  ]
+}
