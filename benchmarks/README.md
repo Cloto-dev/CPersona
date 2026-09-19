@@ -342,6 +342,12 @@ the remaining remote time is the FTS5 retriever, which both modes share
 under `rrf`. Numbers predating CEmbedding 0.6.1 are not comparable: 0.6.0's
 fixed-length padding put a ~620 ms encode floor under every recall.
 
+On the reference Intel N150, the same question — recall with the query embedded by
+a real model, here CEmbedding 0.8.0 on the same machine — is recorded in
+[`measurements/results-recall-latency-with-embedding.md`](measurements/results-recall-latency-with-embedding.md)
+(100,000 memories, jina-v5-nano: median 446.6 ms, all 25 queries under 520 ms, and
+why an embedding server sharing the cores should be given fewer threads).
+
 ## Track A vs Track B (documented record)
 
 The metric is Mean NDCG@10 across all 22 tasks, cpersona v2.4.40, full-ranking

@@ -1,0 +1,26 @@
+{
+  "A2_distinct_alone_again": {
+    "max": 251.52,
+    "median": 250.11,
+    "min": 248.45
+  },
+  "A_distinct_alone": {
+    "max": 287.92,
+    "median": 247.5,
+    "min": 244.69
+  },
+  "B_search_vector_first": {
+    "max": 360.8,
+    "median": 254.18,
+    "min": 247.9
+  },
+  "C_repeated_texts": {
+    "max": 357.12,
+    "median": 288.32,
+    "min": 249.14
+  },
+  "dim": 1024,
+  "queries": 15,
+  "rows": 100000,
+  "scan_first": false
+}
