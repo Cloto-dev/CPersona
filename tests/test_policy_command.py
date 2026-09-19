@@ -76,7 +76,11 @@ def test_printed_block_is_the_skill_block_with_the_id_substituted(capsys):
 
 
 @pytest.mark.parametrize("flag", [["--client", "codex"], ["--target", "x.md"], ["--dry-run"]])
-def test_target_flags_without_install_are_a_usage_error(flag, tmp_path, capsys):
+def test_target_flags_without_install_are_a_usage_error(flag, tmp_path, capsys, monkeypatch):
+    # The relative --target resolves against the working directory, so the run is
+    # moved into tmp_path: a regression that did write would otherwise land in the
+    # checkout, and the absence check below would be looking in the wrong place.
+    monkeypatch.chdir(tmp_path)
     code, out, err = _run(["--agent-id", "claude-code", *flag], capsys)
 
     assert code == 2
