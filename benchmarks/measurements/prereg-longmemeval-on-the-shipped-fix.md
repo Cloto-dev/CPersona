@@ -74,3 +74,69 @@ Statistical significance, or a check on held-out data. The other twenty-one
 tasks, which are not run here. That the overall fall of 1.55 points across
 those tasks is resolved. Any latency figure from this run's clock: the machine
 is shared and the regime is the full-ranking one, not the shipped path.
+
+---
+
+# Amendment — registered after the first run was invalidated, before its score was read
+
+The first run finished and **its own invalidation condition fired**: the
+acceleration self-check reported three mismatches out of three sampled queries,
+and the harness printed `treat these scores as suspect until investigated`.
+
+**The score of that run has not been read.** This amendment is written and
+published first, so that what counts as a result is still fixed before anyone
+knows what the result is.
+
+## Why the condition is not simply dropped
+
+The tempting reading is that the rule was too strict: the metric is NDCG@10, it
+reads the first ten positions, and the three divergences are at ranks 597, 1121
+and 1970 — two of them between entries holding exactly the same score, one at
+the seventh decimal. On that reading nothing that matters moved.
+
+That reading is incomplete, because the same check on the same task was clean
+on the builds this run is compared against — seven checks and no mismatch on
+the pre-fix arm, one check and no mismatch on the other. Three of three is not
+the same instrument reporting the same thing it always reported. **Something
+about this build makes the accelerated path and the reference path order
+candidates differently**, and weakening the rule after seeing it fire would
+delete that finding rather than answer it.
+
+## The refined condition, and the evidence it requires
+
+The condition becomes: **no divergence reaches the ten positions the metric
+reads.** It is not satisfied by argument; it is satisfied by measurement:
+
+- The run is repeated with the self-check sampling raised from one per cent to
+  ten, so roughly fifty queries are checked against the reference path instead
+  of three.
+- Each mismatch line carries the **first** rank at which the two orders differ,
+  zero-based. The evidence is the **minimum** of those ranks across every
+  checked query.
+- **At or below rank 9** on any checked query — a divergence reached the window
+  the metric reads. The run is invalid, no score is read from it, and the
+  reference document keeps citing the screen.
+- **Above rank 9 on every checked query** — no sampled query's top ten was
+  touched. The score may then be read and reported under the original decision
+  rule.
+
+## What this evidence does not settle
+
+Fifty of five hundred queries are checked, not all of them. A minimum rank
+above nine means no *sampled* query's window moved; it does not prove that none
+of the unchecked queries' did. That limit is part of the result and is carried
+into anything that cites it.
+
+**The divergence itself remains a finding either way.** Whatever the score
+turns out to be, this build orders equal-scoring candidates differently between
+the two paths where earlier builds did not, and that is recorded as something
+to investigate rather than something the amendment disposed of.
+
+## What is kept
+
+The first run's output directory is kept and marked as invalidated, following
+this repository's practice of keeping invalid runs rather than deleting them.
+The repeat writes to its own directory. The two runs compute the same scores by
+construction — the self-check adds a reference computation, it does not change
+the ranking that is scored — so if their macro figures differ, that difference
+is itself reported.
