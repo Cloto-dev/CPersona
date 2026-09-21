@@ -381,6 +381,67 @@ async def test_another_agents_record_is_never_reserved(reading, lexical_off):
 
 
 @pytest.mark.asyncio
+async def test_an_episode_is_reserved_for_like_a_memory(reading, lexical_off):
+    """Episodes are half of what the index holds, and they hydrate from another
+    table through another branch. Without this the branch could be broken in
+    any way and every other test here would still pass."""
+    async with _TempDB() as tmp:
+        result = await memory_handlers.do_archive_episode(AGENT, [], summary=LONG_RECORD)
+        await tmp.drain()
+        db = await database.get_db()
+        rows = await db.execute_fetchall(
+            "SELECT COUNT(*) FROM record_blocks WHERE parent_kind = 'ep'"
+        )
+        assert rows[0][0] > 1, "the fixture built no episode blocks"
+
+        out = await memory_handlers.do_recall(AGENT, TAIL_SUBJECT, limit=3)
+
+        episode = [m for m in out["messages"] if m.get("ref") == f"ep:{result['episode_id']}"]
+        assert episode, "an episode the block arm reached was not reserved for"
+        assert episode[0]["match_reason"]["signal"] == "block"
+        assert episode[0]["content"].startswith("[Episode] ")
+
+
+@pytest.mark.asyncio
+async def test_a_source_scoped_recall_reserves_no_episode(reading, lexical_off):
+    """The rule the fused arms already apply: episodes carry no per-user source
+    tag, so a source-scoped recall sees them only when a channel scopes them
+    too. A reservation that ignored it would hand one user another's session."""
+    async with _TempDB() as tmp:
+        await memory_handlers.do_archive_episode(AGENT, [], summary=LONG_RECORD)
+        await tmp.drain()
+
+        out = await memory_handlers.do_recall(
+            AGENT, TAIL_SUBJECT, limit=3, source_id="discord:12345"
+        )
+
+        assert not [m for m in out["messages"] if str(m.get("ref", "")).startswith("ep:")]
+
+
+@pytest.mark.asyncio
+async def test_the_arm_ranks_against_the_vector_the_search_embedded(reading, lexical_off):
+    """The query is embedded once, and the arm reads it through the search's
+    out-parameter. If that parameter stopped being filled the arm would rank
+    against nothing and quietly find nothing, which is the failure this catches
+    at the seam rather than through its consequences."""
+    seen: list = []
+    original = blocks.search
+
+    async def spy(db, embedding, iso):
+        seen.append(embedding)
+        return await original(db, embedding, iso)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(blocks, "search", spy)
+        async with _TempDB() as tmp:
+            await _store(tmp, [LONG_RECORD, ECHO_RECORD])
+            await memory_handlers.do_recall(AGENT, TAIL_SUBJECT, limit=3)
+
+    assert seen, "the arm was never handed a query vector"
+    assert blocks.pack_bits(seen[0]) is not None, "the arm was handed something it cannot quantise"
+
+
+@pytest.mark.asyncio
 async def test_a_stale_axis_copy_does_not_let_a_record_through(reading, lexical_off):
     """The copies on a block row are a filter, not an authority.
 
