@@ -91,25 +91,34 @@ distance stands in for cosine. It stands in approximately, and this step treats
 that approximation as the whole of what a block contributes — see section 5.
 
 **Blocks do not store float32 vectors at all.** The reason is scale rather than
-taste. A corpus of one million records, at the estimated block multiplier
-below, is fifteen million blocks: 1.92 GB as bit strings, 61 GB as float32. The
-second number is not a resident-memory figure that a smaller machine escapes —
-it is what the database would have to hold, and it would break the documented
-practice of copying a corpus with a single file-level backup.
+taste. The division of section 2 was run over the deployment's own corpus, by
+then 5,384 records: **105,975 blocks**, a mean of 19.7 per record and a median
+of 13. At that multiplier a corpus of one million records is 19.7 million
+blocks — 2.5 GB as bit strings, 81 GB as float32. The second number is not a
+resident-memory figure that a smaller machine escapes; it is what the database
+would have to hold, and it would break the documented practice of copying a
+corpus with a single file-level backup.
 
-The block multiplier is an estimate: a median record of 913 characters is
-expected to yield roughly fifteen blocks, from the segmentation policy rather
-than from a count. The real distribution must be measured on the deployment's
-corpus before the storage design is settled, and this page updated with it.
+The blocks the policy produces are short, which is what it is for: a median of
+46 characters, 133 at the ninetieth percentile, 289 at the ninety-ninth. Only
+75 of the 105,975 run past 739 characters, where the embedding window can begin
+to close inside a single block, and 12 past 1,787, where it certainly does. A
+forced boundary is therefore rare rather than routine.
 
 Scanning cost follows the same arithmetic. A single-threaded `bitwise_count`
 over one million 768-bit rows takes 79.8 ms on the reference machine, which
-puts a pure-array implementation's ceiling near 1.9 million blocks — about
-130,000 records at the estimated multiplier, roughly twenty-four times the
-current deployment. Below that ceiling this step needs no new dependency and no
-second language. Above it, the coarse pass belongs to the separate line that
-owns the index architecture, and the structure here is chosen so that the same
-scan serves both.
+puts a pure-array implementation's ceiling near 1.9 million blocks. At the
+measured multiplier that is about **97,000 records** — eighteen times the
+current deployment, whose entire block index is 105,975 rows and scans in
+roughly 8 ms. Note that the block index reaches that ceiling 19.7 times sooner
+than a record-level index does, because it holds 19.7 times the rows. Below the
+ceiling this step needs no new dependency and no second language. Above it, the
+coarse pass belongs to the separate line that owns the index architecture, and
+the structure here is chosen so that the same scan serves both.
+
+These counts are the segmentation policy of section 2 applied to the corpus as
+it stands. A change to the policy moves them, and the measurement is cheap
+enough to repeat.
 
 ## 4. Retrieval: Hamming candidates, collapsed to their parent
 
@@ -308,9 +317,11 @@ switches off, and construction on with retrieval off. The second is the one
 that can fail quietly, because the rows exist and something might read them.
 Both must be byte-identical to the previous release.
 
-**Cost.** The measured block count and index size on the deployment's own
-corpus, replacing the estimate in section 3; the scan time at that size; the
-backfill's cost and its resumption after an interrupted run.
+**Cost.** The block count and index size in section 3 are measured rather than
+estimated, and that section names the policy the counts came from. What remains
+is the scan time at that size taken on the reference machine rather than by
+arithmetic, and the backfill's cost together with its resumption after an
+interrupted run.
 
 **One attribution.** The step is not finished until it can name one way its own
 reach fails — a candidate that arrives but ranks too low, a quotation that
