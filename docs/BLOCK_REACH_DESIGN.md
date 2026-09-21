@@ -89,10 +89,25 @@ Each block's vector is quantised to the sign of each dimension and stored as a
 bit string. At 1,024 dimensions that is 128 bytes per block against 4,096 bytes
 for float32.
 
-The sign alone preserves angle well enough to rank candidates: for two vectors
-the probability that a random hyperplane separates them is `θ/π`, so Hamming
-distance stands in for cosine. It stands in approximately, and this step treats
-that approximation as the whole of what a block contributes — see section 5.
+The motivation for a sign code is the random-hyperplane identity: for two
+vectors the probability that a *randomly drawn* hyperplane separates them is
+`θ/π`, which makes a Hamming distance an unbiased estimate of an angle. **That
+identity does not carry over to this quantiser as stated.** The bits here are
+the signs of the model's own coordinates, and the coordinate axes are not a
+random draw — the estimator's mean and the independence between bits both have
+to be argued from the embedding's distribution, not from the identity. Nothing
+here does that.
+
+So the code's fidelity is a heuristic this step does not establish, and the
+design leans on that rather than hiding it: the reservation of section 5 exists
+precisely because a block hit's ranking quality is unproven, and it bounds what
+a bad one can cost. What would settle it is the corpus's own angular geometry —
+the angle to the true nearest block, and the distribution of angles to
+everything else — measured against full-precision block vectors. That
+measurement does not exist, and until it does, the quantities that would fix a
+code width are unknown. They grow with the corpus: a wider corpus needs a finer
+code to keep the same false-survivor budget at the same retention, so a width
+that serves this deployment says nothing about one an order of magnitude larger.
 
 **Blocks do not store float32 vectors at all.** The reason is scale rather than
 taste. The division of section 2 was run over the deployment's own corpus, by
