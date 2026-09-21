@@ -35,6 +35,7 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 from cpersona import acl
 from cpersona import associations as associations_module
+from cpersona import blocks
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
@@ -3679,6 +3680,12 @@ async def main():
         if TASK_QUEUE_ENABLED:
             tasks._task_queue = tasks.MemoryTaskQueue()
             await tasks._task_queue.start()
+            # docs/BLOCK_REACH_DESIGN.md §7: turning block construction on starts
+            # a bounded backfill of the existing corpus. Two statements and a
+            # no-op unless the deployment opted in, so it is awaited here rather
+            # than scheduled — and it queues one task, whose own bounds decide how
+            # much of the corpus a run does.
+            await blocks.queue_backfill()
         else:
             logger.info("Task queue disabled")
 

@@ -210,7 +210,7 @@ worker that drains it at startup and retries failed tasks on a fixed delay
 (`CPERSONA_TASK_RETRY_DELAY`). Because it lives in the database rather than in
 memory, a crash or a restart resumes the work instead of losing it.
 
-**Two things enqueue onto it, and the second is off by default.** When `store`,
+**Two kinds of work are enqueued onto it, and the second is off by default.** When `store`,
 `archive_episode` or `update_memory` writes a text that runs past the embedding
 window, the response carries `nodes: {"status": "queued"}` and a `build_nodes`
 task divides the record and embeds each span
@@ -226,6 +226,13 @@ record still divides into clauses, and the task declines by itself when the
 division yields a single block. Where the setting is off — which is everywhere
 by default — nothing is queued and no embedding call is made.
 
+The same setting puts one more task on the queue at startup: `backfill_blocks`
+sweeps the records that were already stored when the deployment opted in. One
+sweep exists at a time. It stops at a bound on records, characters, embedding
+calls or elapsed time and queues its own continuation, so a corpus is built over
+a series of bounded runs and a restart resumes near where the last one stopped
+rather than starting again.
+
 The queue first existed for server-side episode summarisation, which was
 removed before v2.4.10; `archive_episode` still requires a pre-computed summary
 and writes the row directly, and profile updates are synchronous. Rows left
@@ -234,7 +241,9 @@ behind by an older version are still completed correctly.
 `get_queue_status` reports depth and retries. Depth rises briefly after a long
 write and returns to zero once its nodes are built; a depth that stays up means
 the builds are failing and retrying, usually because the embedding server is
-unreachable.
+unreachable. Where block construction is on, one sweep task sits on the queue
+until the corpus is covered, so a depth of one there is the backfill working
+rather than a symptom.
 
 ## Transports
 

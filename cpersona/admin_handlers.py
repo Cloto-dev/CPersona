@@ -22,6 +22,7 @@ import httpx
 
 from cpersona.isolation import isolation_where
 
+from cpersona import blocks
 from cpersona import config
 from cpersona import fileperms
 from cpersona import nodes
@@ -556,6 +557,14 @@ async def do_update_memory(
         queued = await nodes.queue_build("mem", memory_id, row[1], key)
         if queued:
             result["nodes"] = queued
+    # Blocks (BLOCK_REACH_DESIGN.md §6): the UPDATE's trigger dropped the blocks of
+    # the old text, because they quoted spans of something the record no longer
+    # says. Queueing here is what keeps an edited record reachable by the block arm
+    # without waiting for a backfill sweep to come round to it.
+    if blocks.building_enabled():
+        queued = await blocks.queue_build("mem", memory_id, row[1], key)
+        if queued:
+            result["blocks"] = queued
     return result
 
 

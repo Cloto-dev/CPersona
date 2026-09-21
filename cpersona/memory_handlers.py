@@ -2586,6 +2586,14 @@ async def do_archive_episode(
         queued = await nodes.queue_build("ep", episode_id, agent_id, key)
         if queued:
             result["nodes"] = queued
+    # Blocks (BLOCK_REACH_DESIGN.md §6), on the same text and for the same reason
+    # do_store queues them: an episode divides into clauses whether or not it runs
+    # past the window, and a write path that skipped them would leave every
+    # episode to the backfill sweep.
+    if blocks.building_enabled():
+        queued = await blocks.queue_build("ep", episode_id, agent_id, key)
+        if queued:
+            result["blocks"] = queued
     # Same signal do_store gives for capped content — and, since bug-175, the same
     # definition: the flag reports whether the cap CUT, not whether the caller's
     # raw string (annotation included) happened to exceed it.

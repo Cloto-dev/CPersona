@@ -242,7 +242,17 @@ deployment for the half it is not using:
 | block construction | whether blocks are built and stored at all | no embedding calls, no rows, no queue work |
 | block retrieval | whether the block arm runs during recall | the index may exist, and nothing reads it |
 
-Turning construction on starts a bounded backfill of the existing corpus.
+Turning construction on starts a bounded backfill of the existing corpus. One
+sweep exists at a time, and it queues its own continuation when a bound stops
+it, so the corpus is built in bounded runs across restarts rather than in one
+run that holds the queue for as long as the corpus takes. The cursor a
+continuation carries says where to resume and nothing about what the records
+there said: a set is written only if its parent still holds the text it was
+divided from, so a resumed run re-checks the revision it is building against. A
+run that reaches a bound before it has built anything still starts the record in
+front of it — otherwise a record larger than a single bound would be the place
+every run stopped, and the sweep would never pass it.
+
 Turning retrieval on while construction is off is a configuration error the
 server reports at startup, not a silent no-op that returns fewer rows than the
 caller has reason to expect.
@@ -258,8 +268,19 @@ is measured, never derived from the caller's request:
 | examined block cap | how much of the block index one call may scan |
 | blocks per parent cap | how much of that cap one record may consume |
 | reservation size | how many result places block hits may fill |
-| construction queue limits | records, tokens and embedding calls per backfill run |
+| construction queue limits | records, characters, embedding calls and elapsed time per backfill run |
 | maximum block length | when a forced boundary is taken |
+
+The volume bound counts characters rather than tokens, for the reason the table
+in section 6 has no token count: the divider is offline, and a bound only
+enforceable by fetching a token report would put a network call in front of the
+decision not to make one. The bounds are checked between records, never inside
+one, so a run overshoots by the record it began.
+
+What a run reports keeps what it did apart from what the corpus holds. Records
+built is not coverage: a run that builds every record it was allowed to touch
+says nothing by itself about how much of the corpus has blocks, and the second
+number is the one an operator watching a backfill needs to see move.
 
 ## 8. Invariants
 

@@ -318,6 +318,18 @@ class MemoryTaskQueue:
                         outcome = await blocks.build_blocks(payload)
                         logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
                         await self._delete_task(task_id)
+                    elif task_type == "backfill_blocks":
+                        # The sweep that gives an opted-in deployment the corpus it
+                        # already had. It is bounded, and it queues its own
+                        # continuation when a bound stops it — which lands here
+                        # before this row is deleted, so two sweep rows exist for
+                        # that moment. Harmless: they hold different cursors, and a
+                        # sweep passes over a record whose blocks are current.
+                        from cpersona import blocks
+
+                        outcome = await blocks.backfill(payload)
+                        logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
+                        await self._delete_task(task_id)
                     else:
                         logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
                         await self._delete_task(task_id)

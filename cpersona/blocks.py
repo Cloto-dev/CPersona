@@ -33,10 +33,12 @@ and writes what comes back as one bit per dimension.
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 
 from cpersona import config, tasks, vector
 from cpersona.database import connection, transaction
+from cpersona.isolation import isolation_where
 from cpersona.nodes import PARENT_TEXT
 
 logger = logging.getLogger(__name__)
@@ -352,23 +354,35 @@ async def _node_bounds(db, kind: str, parent_id: int) -> tuple[int, ...]:
     return tuple(r[0] for r in rows)
 
 
-async def _blocks_current(db, kind: str, parent_id: int, text_len: int, model: str) -> bool:
-    """Whether this record's stored blocks were built from its current text by
-    a known model.
+def _set_is_current(count, first, last, current, text_len: int) -> bool:
+    """Whether a stored block set spans ``text_len`` characters and came from the
+    model it was asked about.
 
-    ``model`` is what ``config.reported_embedding_model()`` returns, which is
-    empty when this process cannot learn the backend's model name. Empty
-    compares equal to empty, so an unreported deployment stays consistent with
-    itself — and never equal to a named model, which is the point: the resolved
-    default must not stand in for an identity nobody reported (§6).
+    One predicate, called from both the builder and the backfill sweep, because
+    two answers to "are this record's blocks current" would eventually disagree:
+    the builder would write a set the sweep keeps rebuilding, or the sweep would
+    pass over a record the builder thinks it still owes.
+
+    The model half is where the care is. ``current`` counts the rows produced by
+    what ``config.reported_embedding_model()`` returns, which is empty when this
+    process cannot learn the backend's model name. Empty compares equal to empty,
+    so an unreported deployment stays consistent with itself — and never equal to
+    a named model, which is the point: the resolved default must not stand in for
+    an identity nobody reported (§6).
     """
+    return bool(count) and first == 0 and last == text_len and current == count
+
+
+async def _blocks_current(db, kind: str, parent_id: int, text_len: int, model: str) -> bool:
+    """Whether this record's stored blocks were built from its current text by a
+    known model. The one-record read behind :func:`_set_is_current`."""
     rows = await db.execute_fetchall(
-        "SELECT MIN(start_char), MAX(end_char), COUNT(*), SUM(embedding_model = ?) "
+        "SELECT COUNT(*), MIN(start_char), MAX(end_char), SUM(embedding_model = ?) "
         "FROM record_blocks WHERE parent_kind = ? AND parent_id = ?",
         (model, kind, parent_id),
     )
-    first, last, count, current = rows[0]
-    return bool(count) and first == 0 and last == text_len and current == count
+    count, first, last, current = rows[0]
+    return _set_is_current(count, first, last, current, text_len)
 
 
 @dataclass(frozen=True)
@@ -503,3 +517,322 @@ async def build_blocks(payload: dict) -> str:
         if not await write_blocks(db, prepared):
             return "parent changed during the build, discarded"
     return f"built {len(prepared.spans)} blocks"
+
+
+# --------------------------------------------------------------------------------------
+# backfill: the corpus that was already there when the deployment opted in
+# --------------------------------------------------------------------------------------
+
+#: The queue task type that sweeps the corpus for records without current blocks.
+BACKFILL_TASK_TYPE = "backfill_blocks"
+
+#: The parent kinds the sweep walks, in the order it walks them.
+#:
+#: Written out rather than read from PARENT_TEXT where it is used, because the
+#: resume cursor names one of these: a run that visited them in one order and its
+#: continuation in another would resume inside a kind it had never started, and
+#: every record before the cursor in the kind it skipped would be passed over for
+#: the life of the sweep. A test holds this equal to the kinds that have text, so
+#: a third kind cannot be added and silently left out of every backfill.
+BACKFILL_KINDS: tuple[str, ...] = ("mem", "ep")
+
+#: Records read from a parent table in one statement. This bounds what one page
+#: costs to hold, not what the run does: the caps below decide when it stops.
+_BACKFILL_PAGE = 500
+
+#: What one backfill run may spend before it stops and queues its continuation.
+#:
+#: Server policy (§7): fixed here, registered before anything is measured, and
+#: derived from nothing a caller asks for. Four bounds rather than one because
+#: they run out for different reasons — a corpus of many short records exhausts
+#: the record count, one of few long records the characters, a slow or distant
+#: embedding server the clock.
+#:
+#: The volume bound counts characters, not tokens. The divider is offline by
+#: design (it asks no model and fetches no token report), which is the same
+#: reason the table has no token_count column: a bound only enforceable by
+#: fetching a token report would put a network call in front of the decision not
+#: to make one.
+#:
+#: Every bound is checked before a record is started, never inside one — a
+#: half-built record is not a state this design has (§6) — so a run can overshoot
+#: by the last record it began. A run that has not yet started any record starts
+#: the one in front of it whatever its size: otherwise a record larger than a
+#: single bound would stop every run at the same place, and the sweep would never
+#: get past it.
+BACKFILL_RECORD_CAP = 500
+BACKFILL_CHAR_CAP = 500_000
+BACKFILL_REQUEST_CAP = 250
+BACKFILL_SECONDS = 120.0
+
+
+async def _backfill_pending(db) -> bool:
+    """Whether a sweep is already queued.
+
+    Global on purpose, and the three reads of this sweep say so with the typed
+    no-filter helper rather than by omitting a predicate: a backfill belongs to
+    no agent — it is the server rebuilding its own derived index — and the rows
+    it writes carry their parent's axes for the retrieval path to filter on.
+    """
+    iso = isolation_where(agent_id=None)
+    rows = await db.execute_fetchall(
+        f"SELECT 1 FROM pending_memory_tasks WHERE task_type = ?{iso.and_clause} LIMIT 1",
+        (BACKFILL_TASK_TYPE, *iso.params),
+    )
+    return bool(rows)
+
+
+async def _enqueue_backfill(payload: dict) -> bool:
+    """Put one sweep on the queue. False when there is no queue to put it on."""
+    queue = tasks._task_queue
+    if queue is None:
+        return False
+    try:
+        await queue.enqueue(BACKFILL_TASK_TYPE, "", payload)
+    except Exception as e:
+        # Same stance as queue_build: the corpus is unchanged and every path that
+        # existed before still answers, so a failure to schedule derived work is
+        # logged rather than raised at whoever happened to be starting up.
+        logger.warning("could not queue the block backfill: %s", e)
+        return False
+    return True
+
+
+async def queue_backfill() -> bool:
+    """Schedule a sweep of the existing corpus. True when one was queued.
+
+    Called once per process start, which is what "turning construction on starts
+    a bounded backfill" means in practice (§7): the records a deployment already
+    had are built without an operator asking for them, a bounded run at a time.
+
+    One sweep at a time, and the check is the queue's own table rather than a
+    flag in this process: a sweep a restart interrupted is still queued, and a
+    second one would re-divide the same records to arrive at the same rows. Off
+    means no sweep at all, rather than a sweep that starts and finds the gate
+    closed.
+    """
+    if not building_enabled():
+        return False
+    async with connection() as db:
+        if await _backfill_pending(db):
+            logger.info("block backfill: a sweep is already queued")
+            return False
+    return await _enqueue_backfill({})
+
+
+def _resume_point(payload: object) -> tuple[int, int] | None:
+    """Where this run starts: (index into BACKFILL_KINDS, last id finished there).
+
+    An empty payload is the start of the corpus, which is what a fresh sweep
+    enqueues. None is a payload this module did not write, and the caller
+    discards it rather than rounding it to the beginning: a sweep that quietly
+    restarted on a cursor it could not read would do the whole corpus again and
+    report it as a resumption.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if not payload:
+        return (0, 0)
+    kind = payload.get("kind")
+    after_id = payload.get("after_id")
+    if kind not in BACKFILL_KINDS or not isinstance(after_id, int) or isinstance(after_id, bool):
+        return None
+    return (BACKFILL_KINDS.index(kind), after_id)
+
+
+async def _page(db, kind: str, after_id: int, limit: int) -> list[tuple[int, str]]:
+    """One page of records after the cursor, in the order the cursor advances."""
+    table, column = PARENT_TEXT[kind]
+    iso = isolation_where(agent_id=None)
+    rows = await db.execute_fetchall(
+        f"SELECT id, {column} FROM {table} WHERE id > ?{iso.and_clause} ORDER BY id LIMIT ?",
+        (after_id, *iso.params, limit),
+    )
+    return [(row[0], row[1] or "") for row in rows]
+
+
+async def _sets_for(db, kind: str, ids: list[int], model: str) -> dict[int, tuple]:
+    """The stored block sets of one page, keyed by parent id.
+
+    One aggregate over a range of the primary key rather than a query per record.
+    The page is bounded, so the range is, and the sweep's cost stays in the
+    embedding calls, where it belongs.
+    """
+    if not ids:
+        return {}
+    rows = await db.execute_fetchall(
+        "SELECT parent_id, COUNT(*), MIN(start_char), MAX(end_char), SUM(embedding_model = ?) "
+        "FROM record_blocks WHERE parent_kind = ? AND parent_id BETWEEN ? AND ? "
+        "GROUP BY parent_id",
+        (model, kind, ids[0], ids[-1]),
+    )
+    return {row[0]: tuple(row[1:]) for row in rows}
+
+
+async def coverage(db, model: str) -> tuple[int, int]:
+    """(records in the corpus, records holding blocks from ``model``).
+
+    The second is deliberately the weaker claim: it counts the records that hold
+    blocks this model produced, not the records whose set was checked against the
+    text it must span. That check is the sweep's own work, record by record, and
+    repeating it here would be a second pass over the corpus for a number that is
+    already out of date by the time it is logged.
+
+    The gap between the two readings is narrow in practice — the triggers drop a
+    record's blocks when the text they quote changes, and a set is written whole
+    or not at all — but it is a gap, and the number is reported as what it is.
+
+    A distinct count over both key columns, not over parent_id alone: ids are
+    unique within a kind, so counting parent_id by itself would fold memory 5 and
+    episode 5 into one record and report a corpus smaller than it is.
+    """
+    total = 0
+    iso = isolation_where(agent_id=None)
+    for kind in BACKFILL_KINDS:
+        table, _ = PARENT_TEXT[kind]
+        rows = await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM {table} WHERE 1=1{iso.and_clause}", iso.params
+        )
+        total += rows[0][0]
+    rows = await db.execute_fetchall(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT parent_kind, parent_id FROM record_blocks "
+        "WHERE embedding_model = ?)",
+        (model,),
+    )
+    return total, rows[0][0]
+
+
+def _bound_reached(processed: int, characters: int, requests: int, deadline: float) -> str | None:
+    """Which bound stopped this run, or None while it may start another record."""
+    if processed >= BACKFILL_RECORD_CAP:
+        return "the record cap"
+    if characters >= BACKFILL_CHAR_CAP:
+        return "the character cap"
+    if requests >= BACKFILL_REQUEST_CAP:
+        return "the embedding-request cap"
+    if time.monotonic() >= deadline:
+        return "the time limit"
+    return None
+
+
+async def _build_one(kind: str, row_id: int, text: str) -> tuple[str, int, int]:
+    """Divide and write one record's blocks. Returns (outcome, requests, blocks).
+
+    The outcomes are "built", "none" (the division is the record, so there is
+    nothing a row would add), "refused" (the record moved while the build was in
+    flight, and the compare-and-swap declined the set), and "failed".
+
+    A failure is counted and passed over rather than raised: one unreachable
+    record must not cost the run the rest of the page, and the record is still a
+    candidate the next time the sweep reaches it. The run as a whole raises only
+    if it managed nothing else, which is the shape of a backend being down rather
+    than a record being awkward.
+    """
+    async with connection() as db:
+        node_bounds = await _node_bounds(db, kind, row_id)
+    try:
+        prepared = await prepare_blocks(kind, row_id, text, node_bounds)
+    except Exception as e:
+        logger.warning("block backfill: %s:%s could not be built: %s", kind, row_id, e)
+        return "failed", 0, 0
+    if prepared is None:
+        return "none", 0, 0
+    spent = -(-len(prepared.spans) // _EMBED_BATCH)
+    async with transaction() as db:
+        if not await write_blocks(db, prepared):
+            return "refused", spent, 0
+    return "built", spent, len(prepared.spans)
+
+
+async def backfill(payload: dict) -> str:
+    """Build blocks for the records that were stored before construction was on.
+
+    Returns what happened, for the queue's log. Bounded by the caps above,
+    resumable through the continuation it queues for itself, and idempotent: a
+    record whose set is already current is passed over without an embedding call,
+    so a sweep that runs a second time costs the reads and nothing more.
+
+    The revision each record is built against is re-checked at the write, by the
+    same compare-and-swap the queued build uses — a cursor says where to carry on,
+    and says nothing about what the records there said when the run began.
+    """
+    if not config.BLOCK_BUILD_ENABLED:
+        # The same re-check the queued build does, for the same reason: a sweep
+        # enqueued while the gate was open must not write rows after it closed.
+        return "block building is disabled"
+    start = _resume_point(payload)
+    if start is None:
+        return "malformed payload, discarded"
+    kind_index, after_id = start
+    model = config.reported_embedding_model()
+    deadline = time.monotonic() + BACKFILL_SECONDS
+
+    built = blocks_written = needed_none = refused = failed = 0
+    characters = requests = 0
+    cursor = (BACKFILL_KINDS[kind_index], after_id)
+    stopped_by: str | None = None
+
+    for kind in BACKFILL_KINDS[kind_index:]:
+        page_after = after_id if kind == BACKFILL_KINDS[kind_index] else 0
+        cursor = (kind, page_after)
+        while stopped_by is None:
+            async with connection() as db:
+                page = await _page(db, kind, page_after, _BACKFILL_PAGE)
+                sets = await _sets_for(db, kind, [row_id for row_id, _ in page], model)
+            if not page:
+                break
+            for row_id, text in page:
+                # No row in the aggregate means no blocks, which the predicate
+                # reads as a count of zero rather than as an absence it has to
+                # have a second answer for.
+                stored = sets.get(row_id, (0, None, None, 0))
+                if text and not _set_is_current(*stored, len(text)):
+                    processed = built + needed_none + refused + failed
+                    if processed:
+                        stopped_by = _bound_reached(processed, characters, requests, deadline)
+                        if stopped_by is not None:
+                            # Before the record, so the cursor still names the last
+                            # one this run finished and the continuation starts here.
+                            break
+                    outcome, spent, wrote = await _build_one(kind, row_id, text)
+                    characters += len(text)
+                    requests += spent
+                    if outcome == "built":
+                        built += 1
+                        blocks_written += wrote
+                    elif outcome == "none":
+                        needed_none += 1
+                    elif outcome == "refused":
+                        refused += 1
+                    else:
+                        failed += 1
+                page_after = row_id
+                cursor = (kind, row_id)
+            if stopped_by is None and time.monotonic() >= deadline:
+                # The clock is the one bound a page of records that all turn out
+                # to be current can still reach, and it is checked here as well
+                # as before a build for exactly that case: a swept corpus is read
+                # a page at a time, and a run that never finds work would
+                # otherwise hold the queue for as long as the reads take.
+                stopped_by = "the time limit"
+        if stopped_by is not None:
+            break
+
+    if failed and not (built or needed_none or refused):
+        # Nothing but failures: the shape of an embedding backend that is not
+        # answering rather than of records that are awkward. Raised so the queue's
+        # retry path waits and tries this same cursor again, instead of reporting
+        # a successful run that did nothing and queueing another just like it.
+        raise RuntimeError(f"block backfill: {failed} records failed and none were built")
+
+    async with connection() as db:
+        total, held = await coverage(db, model)
+    report = (
+        f"built {built} records ({blocks_written} blocks) in {requests} embedding requests; "
+        f"{needed_none} needed none, {refused} moved under the build, {failed} failed; "
+        f"corpus {total} records, {held} hold blocks from this model"
+    )
+    if stopped_by is None:
+        return f"backfill swept the corpus: {report}"
+    await _enqueue_backfill({"kind": cursor[0], "after_id": cursor[1]})
+    return f"backfill stopped at {stopped_by} after {cursor[0]}:{cursor[1]}: {report}"
