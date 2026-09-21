@@ -80,6 +80,16 @@ memories channel as a fallback, and runs only when FTS is disabled or its
 `MATCH` returns nothing. It never merges alongside the FTS memories retriever
 — it stands in for it.
 
+The **block arm is not a fourth retriever either**, for the opposite reason: it
+feeds nothing. Where `CPERSONA_BLOCK_RETRIEVAL_ENABLED` is on, it ranks a
+record's clause-sized blocks against the query and hands what it reaches to a
+reservation applied after the quality gate — a fixed, small number of result
+places held for records whose own whole-text vector cannot bring them back
+([block reach](BLOCK_REACH_DESIGN.md)). Nothing it finds is fused with the three
+above, no score it produces reaches the gate, and the places it fills are extra
+to the ones the gate filled. Where the setting is off — which is everywhere by
+default — it does not run.
+
 The pipeline in `rrf` mode:
 
 ```mermaid

@@ -166,7 +166,8 @@ class FastVectorSearch:
     # -- the patched _search_vector ----------------------------------------
 
     async def search_vector(self, db, agent_id, query, limit, min_similarity=None,
-                            channel="", project_id=None, source_id="", *, far_out=None):
+                            channel="", project_id=None, source_id="", *, far_out=None,
+                            query_vec_out=None):
         c = self.cache
         # Fidelity guard: anything the cache doesn't model goes to the original.
         # `far_out` (vector reach past the scan window, v2.5.10) is modelled only
@@ -179,7 +180,8 @@ class FastVectorSearch:
                 or c["agent_id"] != agent_id or c["dim"] == 0):
             self.stats["fallbacks"] += 1
             return await self.original(db, agent_id, query, limit, min_similarity,
-                                       channel, project_id, source_id, far_out=far_out)
+                                       channel, project_id, source_id, far_out=far_out,
+                                       query_vec_out=query_vec_out)
 
         emb_client = self.vector_mod._embedding_client
         embeddings = await emb_client.embed([query])
@@ -190,7 +192,14 @@ class FastVectorSearch:
         if len(query_vec) != c["dim"]:
             self.stats["fallbacks"] += 1
             return await self.original(db, agent_id, query, limit, min_similarity,
-                                       channel, project_id, source_id)
+                                       channel, project_id, source_id,
+                                       query_vec_out=query_vec_out)
+        if query_vec_out is not None:
+            # The block arm quantises this (docs/BLOCK_REACH_DESIGN.md §4). Filled
+            # on the accelerated path too, not only on the fallbacks: an arm that
+            # silently found nothing here would make the harness measure a recall
+            # without it while reporting the configuration that has it.
+            query_vec_out.append(embeddings[0])
 
         effective_min_sim = (min_similarity if min_similarity is not None
                              else self.vector_mod._get_vector_threshold(agent_id))

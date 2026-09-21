@@ -448,6 +448,7 @@ async def _recall_cascade(
     project_id: str | None = None,
     source_id: str = "",
     lexical_terms: list[str] | None = None,
+    query_vec_out: list | None = None,
 ) -> list[dict]:
     """Original cascading recall: stages fill remaining slots sequentially.
 
@@ -463,7 +464,8 @@ async def _recall_cascade(
 
     if vector._embedding_client and query.strip():
         vector_results = await _search_vector(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, limit, channel=channel, project_id=project_id,
+            source_id=source_id, query_vec_out=query_vec_out,
         )
         for row in vector_results:
             rid = row.get("_rid", row["id"])
@@ -514,6 +516,7 @@ async def _recall_rrf(
     project_id: str | None = None,
     source_id: str = "",
     lexical_terms: list[str] | None = None,
+    query_vec_out: list | None = None,
 ) -> list[dict]:
     """v2.4 RRF recall: run vector and FTS5 independently, merge with
     Reciprocal Rank Fusion. Avoids cascade's positional bias.
@@ -537,7 +540,7 @@ async def _recall_rrf(
         vector_results = await _search_vector(
             db, agent_id, query, depth, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_results,
+            far_out=far_results, query_vec_out=query_vec_out,
         )
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -631,6 +634,7 @@ async def _recall_rsf(
     project_id: str | None = None,
     source_id: str = "",
     lexical_terms: list[str] | None = None,
+    query_vec_out: list | None = None,
 ) -> list[dict]:
     """Relative-Score-Fusion recall: like RRF but fuse the per-query min-max
     normalized *raw* score of each channel (cosine for vector, -bm25 for FTS)
@@ -666,7 +670,7 @@ async def _recall_rsf(
         near_rows = await _search_vector(
             db, agent_id, query, depth, min_similarity=rsf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_rows,
+            far_out=far_rows, query_vec_out=query_vec_out,
         )
         for row in near_rows:
             if _content_excluded(row.get("content", ""), _excl):
@@ -1386,6 +1390,93 @@ def _recall_depth(limit: int) -> int:
     return _clamp_limit(max(limit, config.RECALL_DEPTH_FLOOR), RECALL_LIBRARY_MAX_LIMIT)
 
 
+async def _block_reserved_rows(
+    db,
+    hits: list,
+    agent_id: str,
+    *,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
+    exclude_set: set[str],
+    wanted: int,
+) -> list[dict]:
+    """Hydrate the records the block arm reached, best block first (§4, §5).
+
+    The block index is not the authority on what a caller may see. Its rows
+    carry a copy of their parent's isolation axes so the Hamming cut is not
+    spent on rows that will be dropped, and this re-applies the real predicate
+    against the record tables: a row the copies admitted and the authority does
+    not is dropped here, fail-closed, and the reservation goes unfilled rather
+    than being filled with it.
+
+    The caller's other restrictions apply exactly as they do to every other arm:
+    a source-id prefix filters memories, and it suppresses episodes unless a
+    channel is also set, because episodes carry no per-user source tag. An
+    excluded content is excluded here too.
+    """
+    mem_ids = [h.parent_id for h in hits if h.kind == "mem"]
+    ep_ids = [h.parent_id for h in hits if h.kind == "ep"]
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    src = source_id_where(source_id)
+
+    mem_rows = await vector._fetch_rows_by_id(
+        db,
+        "SELECT id, msg_id, content, source, timestamp FROM memories "
+        f"WHERE id IN ({{ph}}){iso.and_clause}{src.and_clause}",
+        mem_ids,
+        (*iso.params, *src.params),
+    )
+    # The episode rule mirrors the fused arms: no per-user source tag exists, so
+    # a source-scoped recall sees episodes only when a channel scopes them too.
+    ep_rows = {}
+    if ep_ids and (not source_id or channel):
+        ep_rows = await vector._fetch_rows_by_id(
+            db,
+            "SELECT id, summary, start_time, resolved, created_at FROM episodes "
+            f"WHERE id IN ({{ph}}){iso.and_clause}",
+            ep_ids,
+            iso.params,
+        )
+
+    out: list[dict] = []
+    for hit in hits:
+        if len(out) >= wanted:
+            break
+        if hit.kind == "mem":
+            row = mem_rows.get(hit.parent_id)
+            if row is None or _content_excluded(row[2] or "", exclude_set):
+                continue
+            built = {
+                "id": row[0],
+                "msg_id": row[1],
+                "content": row[2],
+                "source": row[3],
+                "timestamp": row[4],
+                "_rid": ("mem", row[0]),
+            }
+        else:
+            row = ep_rows.get(hit.parent_id)
+            if row is None:
+                continue
+            built = {
+                "id": row[0],
+                "content": f"[Episode] {row[1]}",
+                "source": {"System": "episode"},
+                "timestamp": episode_timestamp(row[2], row[4]),
+                "_rid": ("ep", row[0]),
+                "_resolved": bool(row[3]),
+            }
+        # Why this row is here, carried on the row and rendered in the response.
+        # It is deliberately not a score: no number from this arm reaches the
+        # quality gate, and one that appeared beside the gate's own signals would
+        # be read as comparable to them.
+        built["_block_distance"] = hit.distance
+        built["_block_index"] = hit.block_index
+        out.append(built)
+    return out
+
+
 async def do_recall(
     agent_id: str,
     query: str,
@@ -1475,21 +1566,29 @@ async def do_recall(
     # Passed only when there are terms, so a recall without them calls each
     # fusion path exactly as it always did.
     lexical = {"lexical_terms": lexical_terms} if lexical_terms else {}
+    # Filled by whichever fusion ran, with the one vector it embedded. Empty
+    # wherever no local vector was produced -- no client, a remote search that
+    # answered for itself, an embed that failed -- and the block arm reads that
+    # emptiness as "nothing to rank on" rather than embedding the query again.
+    query_vec_out: list = []
     async with connection() as db:
         if RECALL_MODE == "rrf" and query.strip():
             results = await _recall_rrf(
                 db, agent_id, query, depth, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id, **lexical,
+                project_id=project_id, source_id=source_id,
+                query_vec_out=query_vec_out, **lexical,
             )
         elif RECALL_MODE == "rsf" and query.strip():
             results = await _recall_rsf(
                 db, agent_id, query, depth, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id, **lexical,
+                project_id=project_id, source_id=source_id,
+                query_vec_out=query_vec_out, **lexical,
             )
         else:
             results = await _recall_cascade(
                 db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id, **lexical,
+                project_id=project_id, source_id=source_id,
+                query_vec_out=query_vec_out, **lexical,
             )
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
@@ -1513,6 +1612,35 @@ async def do_recall(
             db, agent_id, project_id=project_id, channel=channel
         )
         memory_count = pool_memories + pool_episodes
+
+        # The block arm (docs/BLOCK_REACH_DESIGN.md §4-§5). It runs beside the
+        # arms above and is fused with none of them: its hits are admitted by
+        # reservation after the gate, so no score from here reaches a gate that
+        # was calibrated on another population. Hydrated inside this connection
+        # and filtered after the cut, because what the gate will admit is not
+        # known yet and a hit whose record the gate admits anyway is not a
+        # reserved row -- it is a row that was already there.
+        block_rows: list[dict] = []
+        if blocks.retrieval_enabled() and query.strip() and query_vec_out:
+            hits = await blocks.search(
+                db,
+                query_vec_out[0],
+                isolation_where(agent_id=agent_id, project_id=project_id, channel=channel),
+            )
+            # Enough to survive every one of them already being in the result:
+            # the reservation is a fixed number of places and is not derived from
+            # the count, but how many candidates must be looked at to fill those
+            # places does depend on how many rows the cut can hold.
+            block_rows = await _block_reserved_rows(
+                db,
+                hits[: limit + blocks.BLOCK_RESERVATION],
+                agent_id,
+                project_id=project_id,
+                channel=channel,
+                source_id=source_id,
+                exclude_set=exclude_set,
+                wanted=limit + blocks.BLOCK_RESERVATION,
+            )
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26/27: use the calibrated gate for whichever branch is active.
@@ -1606,6 +1734,22 @@ async def do_recall(
         results = _autocut(results)
 
     results = results[:limit]
+
+    # The reservation (§5). A fixed, small number of places are held for records
+    # the block arm reached, filled in Hamming order, and the quality gate is not
+    # consulted for them. They displace nothing: the gate's own rows keep every
+    # place they had, so turning the feature on adds rows and removes none, and a
+    # reservation that cannot be filled leaves the result shorter rather than
+    # padding it. A record the gate already admitted is not reserved for -- it is
+    # in the answer, which is the outcome the reservation exists to produce.
+    if block_rows:
+        present = {
+            r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
+            for r in results
+        }
+        reserved = [row for row in block_rows if row["_rid"] not in present]
+        results.extend(reserved[: blocks.BLOCK_RESERVATION])
+
     results.reverse()
 
     messages = []
@@ -1661,6 +1805,19 @@ async def do_recall(
             if r.get("_rsf_score") is not None:
                 match_reason["rsf"] = r["_rsf_score"]
             msg["match_reason"] = match_reason
+        elif r.get("_block_distance") is not None:
+            # A reserved row (docs/BLOCK_REACH_DESIGN.md §5) has no gate signal,
+            # because no signal from the block arm is allowed to reach the gate.
+            # It says why it is here in its own terms: `hamming` is a distance
+            # where the branches above carry scores, so the two cannot be read
+            # off against each other, and `admission` says the row occupied a
+            # held place rather than passing anything.
+            msg["match_reason"] = {
+                "signal": "block",
+                "admission": "reservation",
+                "hamming": r["_block_distance"],
+                "block": r["_block_index"],
+            }
         # b1-4 residual: the response is built by allowlist above (`msg`), so these
         # pops are hygiene on the internal row, not the thing that keeps private
         # keys out of the payload. _rsf_score was missing from the list — harmless
@@ -1673,6 +1830,8 @@ async def do_recall(
         r.pop("_rrf_score", None)
         r.pop("_rsf_score", None)
         r.pop("_resolved", None)
+        r.pop("_block_distance", None)
+        r.pop("_block_index", None)
         messages.append(msg)
 
     # bug-038: the recall_count/last_recalled_at bump is a write that feeds

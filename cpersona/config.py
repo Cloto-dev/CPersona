@@ -640,6 +640,32 @@ TASK_RETRY_DELAY = _parse_int("CPERSONA_TASK_RETRY_DELAY", 30)
 # unmeasured.
 BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "false").lower() == "true"
 
+# The other half of the same opt-in (§7): whether the block arm runs during
+# recall. Split from construction because one switch would charge a deployment
+# for the half it is not using — an index nothing reads, or a reader with no
+# index. Off means the rows may exist and nothing looks at them.
+BLOCK_RETRIEVAL_ENABLED = (
+    os.environ.get("CPERSONA_BLOCK_RETRIEVAL_ENABLED", "false").lower() == "true"
+)
+
+
+def validate_block_gates() -> None:
+    """Refuse retrieval without construction (docs/BLOCK_REACH_DESIGN.md §7).
+
+    Reading an index nothing fills is not a no-op the caller can see: recall
+    would run the arm, find nothing, and return the rows it would have returned
+    anyway — so the operator who turned the feature on would conclude it does
+    not help, having never had it. A startup error says which half is missing.
+
+    An index that exists but is not read is the other way round and is allowed:
+    it is how a deployment builds coverage before it starts reading.
+    """
+    if BLOCK_RETRIEVAL_ENABLED and not BLOCK_BUILD_ENABLED:
+        raise ValueError(
+            "CPERSONA_BLOCK_RETRIEVAL_ENABLED=true needs "
+            "CPERSONA_BLOCK_BUILD_ENABLED=true: there is no block index to read"
+        )
+
 # bug-371: read unvalidated and unnormalised, this setting had a third state
 # its two consumers both miss — the remote push tests `== "remote"` exactly and
 # the local write gate tests `== "local"` exactly, so a mis-cased or misspelt

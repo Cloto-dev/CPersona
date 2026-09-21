@@ -836,3 +836,155 @@ async def backfill(payload: dict) -> str:
         return f"backfill swept the corpus: {report}"
     await _enqueue_backfill({"kind": cursor[0], "after_id": cursor[1]})
     return f"backfill stopped at {stopped_by} after {cursor[0]}:{cursor[1]}: {report}"
+
+
+# --------------------------------------------------------------------------------------
+# retrieval: Hamming candidates, collapsed to their parent
+# --------------------------------------------------------------------------------------
+
+#: What one recall may examine. Server policy (§7), fixed here and derived from
+#: nothing the caller asks for — invariant 5 is that changing the response count
+#: alone leaves the candidate id set unchanged, and a cap read off the count
+#: would break it.
+#:
+#: The examined cap is above the whole index of the deployment this was measured
+#: on (107,428 rows scanning in about 9 ms), so it bounds a corpus that has grown
+#: rather than shaping today's answers. When it does bind it truncates in primary
+#: key order, which is the order the rows are read in; that is arbitrary with
+#: respect to the query, and the ceiling it defends against is the scan going
+#: unbounded rather than a claim that the surviving set is the best one.
+BLOCK_EXAMINED_CAP = 250_000
+
+#: How much of that cap one record may take. A record divides into 19.9 blocks
+#: on average and into far more than that at the tail, so without this a handful
+#: of long records could fill the examined set on their own.
+BLOCK_PER_PARENT_CAP = 64
+
+#: How many result places block hits may fill (§5). A configured bound with a
+#: conservative default, not a tuned parameter: tuning it needs a reader-based
+#: measurement, which belongs to the precision step. It is an upper bound on
+#: what a bad block hit can cost, not a claim that block hits are good.
+BLOCK_RESERVATION = 2
+
+#: Population count of every byte value, built once and kept. uint16 so a row's
+#: sum cannot wrap. `numpy.bitwise_count` would say the same thing and arrived
+#: in numpy 2.0, which this project does not require; one implementation that
+#: works on both is better than two that have to agree.
+#:
+#: Built on first use rather than at import, because numpy is imported inside
+#: the functions that need it everywhere else in this package and a module-level
+#: table here would pull it into every process that imports this module.
+_POPCOUNT = None
+
+
+def _popcount_table():
+    global _POPCOUNT
+    if _POPCOUNT is None:
+        import numpy as np
+
+        _POPCOUNT = (
+            np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1)
+            .sum(axis=1)
+            .astype(np.uint16)
+        )
+    return _POPCOUNT
+
+
+def retrieval_enabled() -> bool:
+    """Whether the block arm may run during recall."""
+    return config.BLOCK_RETRIEVAL_ENABLED
+
+
+@dataclass(frozen=True)
+class BlockHit:
+    """One record, represented by its best-matching block (§4).
+
+    A record several of whose blocks match is one hit, not several, and the
+    distances of its other blocks are not added to this one: they are correlated
+    observations of a single source, and summing them would turn the length of a
+    record into evidence.
+    """
+
+    kind: str
+    parent_id: int
+    block_index: int
+    distance: int
+
+
+async def _examined(db, iso, model: str) -> list[tuple]:
+    """The block rows one call may look at, in the order the caps truncate.
+
+    The per-parent cap is applied before the examined cap, so a long record
+    spends at most its share and the cap cannot be consumed by one parent. The
+    isolation axes on the row filter here rather than after ranking: a bucket
+    that is one per cent of the corpus would otherwise spend the whole cut on
+    rows the authority then drops.
+    """
+    return await db.execute_fetchall(
+        "SELECT parent_kind, parent_id, block_index, embedding_bits FROM ("
+        "  SELECT parent_kind, parent_id, block_index, embedding_bits,"
+        "         ROW_NUMBER() OVER ("
+        "             PARTITION BY parent_kind, parent_id ORDER BY block_index"
+        "         ) AS within_parent"
+        "    FROM record_blocks"
+        f"   WHERE embedding_bits IS NOT NULL AND embedding_model = ?{iso.and_clause}"
+        ") WHERE within_parent <= ? "
+        "ORDER BY parent_kind, parent_id, block_index LIMIT ?",
+        (model, *iso.params, BLOCK_PER_PARENT_CAP, BLOCK_EXAMINED_CAP),
+    )
+
+
+def _hamming(rows: list[tuple], query_bits: bytes) -> list[BlockHit]:
+    """Rank the examined rows by Hamming distance, collapsed to their parent.
+
+    Rows whose bit string is a different width are skipped rather than compared:
+    a different width is a different dimension, and a distance between the two
+    would be a number with no meaning rather than a large one.
+
+    The order is total and written down (invariant 3): distance, then kind, then
+    parent id, then block index. Nothing here consults the response count.
+    """
+    import numpy as np
+
+    width = len(query_bits)
+    usable = [row for row in rows if row[3] is not None and len(row[3]) == width]
+    if not usable:
+        return []
+    packed = np.frombuffer(b"".join(row[3] for row in usable), dtype=np.uint8).reshape(
+        len(usable), width
+    )
+    query = np.frombuffer(query_bits, dtype=np.uint8)
+    distances = _popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
+    best: dict[tuple[str, int], BlockHit] = {}
+    for row, distance in zip(usable, distances):
+        kind, parent_id, block_index = row[0], row[1], row[2]
+        key = (kind, parent_id)
+        hit = BlockHit(kind, parent_id, int(block_index), int(distance))
+        held = best.get(key)
+        if held is None or (hit.distance, hit.block_index) < (held.distance, held.block_index):
+            best[key] = hit
+    return sorted(best.values(), key=lambda h: (h.distance, h.kind, h.parent_id, h.block_index))
+
+
+async def search(db, embedding: object, iso) -> list[BlockHit]:
+    """Every record the block index reaches for this query, best block first.
+
+    ``iso`` is the caller's isolation predicate over the axes copied onto each
+    row. Those copies are not a second authority — what this returns must be a
+    superset of what the authority admits, and the hydrate re-applies the real
+    predicate fail-closed — but filtering here is what keeps the cap from being
+    spent on rows that will be dropped.
+
+    Returns an empty list rather than raising when the query cannot be
+    quantised: a recall whose other arms answered must not fail because a
+    derived one could not.
+    """
+    query_bits = pack_bits(embedding)
+    if query_bits is None:
+        # Said out loud rather than returned as "no candidates": an arm that
+        # quietly finds nothing is indistinguishable from an index that holds
+        # nothing, and the deployment that turned this on would read the second.
+        logger.warning("block arm: the query vector could not be quantised, skipping")
+        return []
+    rows = await _examined(db, iso, config.reported_embedding_model())
+    return _hamming(rows, query_bits)

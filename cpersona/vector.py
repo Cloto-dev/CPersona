@@ -1725,6 +1725,7 @@ async def _search_vector(
     source_id: str = "",
     *,
     far_out: list[dict] | None = None,
+    query_vec_out: list | None = None,
 ) -> list[dict]:
     """Search memories and episodes using vector cosine similarity.
 
@@ -1843,6 +1844,18 @@ async def _search_vector(
         health.observe_ok()  # embed succeeded — re-arm after any prior degradation
     query_vec = np.array(embeddings[0], dtype=np.float32)
     query_dim = len(query_vec)
+    if query_vec_out is not None:
+        # An out-parameter for the same reason `far_out` is one: the query must be
+        # embedded once. A second entry point that handed the vector back would
+        # either embed the text again — a network call — or cache it somewhere
+        # keyed by the text, which is two answers to "what does this query mean"
+        # sitting in mutable module state. The block arm (docs/BLOCK_REACH_DESIGN.md
+        # §4) quantises this vector; it is left empty on every path that returns
+        # before this line, which is what tells that arm it has nothing to rank on.
+        # The list the backend returned, not the float32 array built from it: the
+        # one place a vector becomes bytes takes a list, and quantising to the sign
+        # of each dimension gives the same bits either way.
+        query_vec_out.append(embeddings[0])
     # effective_min_sim computed once near the top (shared with the remote branch, bug-027).
 
     # bug-085: the scan window must NOT be derived from the response limit. The

@@ -3531,6 +3531,7 @@ async def main():
     # maximum is a startup error, not a silent clamp. Validated before anything
     # expensive, with the same failure posture as the ACL table below.
     config.validate_reconstruct_counts()
+    config.validate_block_gates()
 
     # ACL mode (docs/ACL_DESIGN.md): load and validate the grant table before
     # anything expensive, failing closed on any defect — the server refuses to

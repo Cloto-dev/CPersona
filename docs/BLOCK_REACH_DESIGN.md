@@ -146,6 +146,12 @@ None of these bounds is derived from the number of items the caller asked for.
 Changing the response count alone must leave the set of examined blocks, and
 the set of candidate ids, unchanged.
 
+When the examined cap binds, it truncates in primary key order — the order the
+rows are read in, which is arbitrary with respect to the query. The cap defends
+against an unbounded scan; it is not a claim that the rows surviving it are the
+best ones, and it sits above the whole index of the deployment section 3
+measured.
+
 ## 5. Admission: a reservation, not a gate change
 
 A block hit exists to bring a record into the pool that would not otherwise be
@@ -181,6 +187,14 @@ away:
 
 The quantity the gate is calibrated on does not move, because no new score
 reaches it. That is the property this arrangement exists to preserve.
+
+Two consequences follow for a caller. The reserved places are additional to the
+ones the gate filled, so a response can carry up to the reservation more rows
+than the count asked for — taking them out of the count instead would be the
+displacement the bullet above rules out. And the arm ranks against the query
+vector the local vector search embedded, so a deployment whose vector search is
+remote does not get block reach: the remote service answers for itself and
+never produces the vector this arm quantises.
 
 ## 6. Schema and lifecycle
 

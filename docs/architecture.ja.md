@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:5eb29b43fd6fd1cbcc4eaa22eb1e9e98e746bc47 -->
+<!-- i18n-source: docs/architecture.md@blob:39bc59ea82715804ef95c85255232386a88819db -->
 
 # アーキテクチャ
 
@@ -81,6 +81,15 @@ episodes に対する FTS5。
 チャネルの内側にフォールバックとして置かれ、FTS が無効か `MATCH` が 0 行の
 ときにだけ走ります。FTS memories と並んで融合に入ることはなく、その代わりを
 務めます。
+
+**Block の腕も 4 本目の retriever ではありません。** 理由は逆で、どこにも
+供給しないからです。`CPERSONA_BLOCK_RETRIEVAL_ENABLED` が on の配備では、
+レコードを節に分けた Block をクエリに対して順位付けし、到達したものを品質
+gate の**後**の予約へ渡します — 自分の全文ベクトルでは戻ってこられない
+レコードのために確保された、固定された少数の結果席です
+([Block による到達](BLOCK_REACH_DESIGN.md))。ここで見つかったものが上の 3 本と
+融合されることはなく、ここで出たスコアが gate に届くこともなく、埋める席は
+gate が埋めた席への追加です。設定が off の場合 (既定はどこでも off) は走りません。
 
 `rrf` モードでのパイプライン:
 
