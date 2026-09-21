@@ -74,10 +74,14 @@ boundaries are subordinate to node boundaries: a block does not cross a node,
 and a clause that a node boundary severs is served by the quoted context rather
 than by a schema that lets one block span two nodes.
 
-The fixtures for this policy come from the deployment's own corpus, not from
-invented sentences — negation, conditionals, corrections, omitted subjects,
-mixed scripts, code fences, long URLs and clauses that straddle a node
-boundary all occur there in quantity.
+The shapes the fixtures reproduce come from the deployment's own corpus rather
+than from invented difficulty — negation after a condition, corrections in a
+later sentence, omitted subjects, mixed scripts, code fences, long URLs and
+clauses that straddle a node boundary all occur there in quantity. The fixture
+text is written out rather than copied, because a test file is published and
+the corpus is not. The corpus checks the policy the other way round: the
+division is run over every record and the partition asserted, which is where
+section 3's counts come from.
 
 ## 3. The representation is one bit per dimension
 
@@ -92,26 +96,27 @@ that approximation as the whole of what a block contributes — see section 5.
 
 **Blocks do not store float32 vectors at all.** The reason is scale rather than
 taste. The division of section 2 was run over the deployment's own corpus, by
-then 5,384 records: **105,975 blocks**, a mean of 19.7 per record and a median
-of 13. At that multiplier a corpus of one million records is 19.7 million
-blocks — 2.5 GB as bit strings, 81 GB as float32. The second number is not a
+then 5,387 records: **107,428 blocks**, a mean of 19.9 per record and a median
+of 13. At that multiplier a corpus of one million records is 19.9 million
+blocks — 2.5 GB as bit strings, 82 GB as float32. The second number is not a
 resident-memory figure that a smaller machine escapes; it is what the database
 would have to hold, and it would break the documented practice of copying a
 corpus with a single file-level backup.
 
 The blocks the policy produces are short, which is what it is for: a median of
-46 characters, 133 at the ninetieth percentile, 289 at the ninety-ninth. Only
-75 of the 105,975 run past 739 characters, where the embedding window can begin
-to close inside a single block, and 12 past 1,787, where it certainly does. A
-forced boundary is therefore rare rather than routine.
+45 characters, 133 at the ninetieth percentile, 285 at the ninety-ninth, and
+none above the 739-character limit at which a boundary is forced. That limit
+was reached 42 times in 107,428 blocks — 0.039 per cent — so a forced boundary
+is an exception rather than a routine. The same run checked the partition on
+every record: 5,387 of 5,387 covered with no gap and no overlap.
 
 Scanning cost follows the same arithmetic. A single-threaded `bitwise_count`
 over one million 768-bit rows takes 79.8 ms on the reference machine, which
 puts a pure-array implementation's ceiling near 1.9 million blocks. At the
-measured multiplier that is about **97,000 records** — eighteen times the
-current deployment, whose entire block index is 105,975 rows and scans in
-roughly 8 ms. Note that the block index reaches that ceiling 19.7 times sooner
-than a record-level index does, because it holds 19.7 times the rows. Below the
+measured multiplier that is about **95,000 records** — eighteen times the
+current deployment, whose entire block index is 107,428 rows and scans in
+roughly 9 ms. Note that the block index reaches that ceiling 19.9 times sooner
+than a record-level index does, because it holds 19.9 times the rows. Below the
 ceiling this step needs no new dependency and no second language. Above it, the
 coarse pass belongs to the separate line that owns the index architecture, and
 the structure here is chosen so that the same scan serves both.
@@ -257,9 +262,10 @@ is measured, never derived from the caller's request:
    original.
 2. With the feature disabled, responses are byte-identical to the previous
    release, including when block rows exist.
-3. Determinism — the same text, node layout, segmentation policy and tokenizer
-   produce the same span list, and ties in Hamming order are broken by a
-   written-down total order.
+3. Determinism — the same text, node layout and segmentation policy produce
+   the same span list. The node layout is what carries the tokenizer's
+   influence; the divider itself never calls one, and never reaches the
+   network. Ties in Hamming order are broken by a written-down total order.
 4. Coverage — a block set covers its parent's text with no gap and no overlap,
    and no block crosses a node boundary.
 5. Count independence — none of the caps, the reservation or the examined set
