@@ -283,12 +283,18 @@ def test_the_mcp_schema_admits_range_objects_and_strings():
     items = tools["get_contents"].inputSchema["properties"]["refs"]["items"]
     assert [branch["type"] for branch in items["anyOf"]] == ["string", "object"]
     pair = {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2}
+    index_or_pair = {"anyOf": [{"type": "integer", "minimum": 0}, pair]}
     assert items["anyOf"][1] == {
         "type": "object",
         "properties": {
             "ref": {"type": "string"},
-            "node": {"anyOf": [{"type": "integer", "minimum": 0}, pair]},
+            "node": index_or_pair,
+            # Blocks take the same shape as nodes, and `revision` is the digest a
+            # reconstruct quote's expand hands out for the text its offsets were
+            # measured in (docs/BLOCK_REACH_DESIGN.md invariant 9).
+            "block": index_or_pair,
             "span": pair,
+            "revision": {"type": "string"},
         },
         "required": ["ref"],
     }

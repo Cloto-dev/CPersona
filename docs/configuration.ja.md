@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:aa5c123c43bc421a4615ce6f2f9e2908da1710a9 -->
+<!-- i18n-source: docs/configuration.md@blob:5ac4ec21d9f55903a22ab268cf2dd8a27b68785c -->
 
 # 設定リファレンス
 
@@ -24,7 +24,7 @@
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | confidence メタデータを結果に含める — かつ**それをランキングキーにする**: 結果集合はこのスコアで並べ直され、品質ゲートもこれを見ます。有効時、`CPERSONA_RECALL_MODE` は返却順を決めなくなります ([契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | 起動時に自動較正する |
 | `CPERSONA_BLOCK_BUILD_ENABLED` | `false` | 各レコードを節に相当する Block へ分け、Block ごとに符号量子化ベクトルを 1 本保存する ([Block による到達](BLOCK_REACH_DESIGN.md))。off は「作るが読まない」ではなく、埋め込み呼び出しも行もキューの仕事も無いという意味。on にすると、すでに保存されているレコードに対する有界な backfill も始まる |
-| `CPERSONA_BLOCK_RETRIEVAL_ENABLED` | `false` | recall のときに Block の腕を走らせる ([Block による到達](BLOCK_REACH_DESIGN.md))。到達したレコードは**予約**で通す — 品質 gate の後に確保された少数の席で、その席について gate は参照されず、他のどの席の gate も変わらない。したがって応答は要求された `limit` を**超えて**その席数まで行を運び、直前のリリースが返した行はすべてそのまま返る。`CPERSONA_BLOCK_BUILD_ENABLED=true` が必要 — 何も入っていない索引を読む設定は静かな no-op ではなく起動時エラー。ベクトル検索が remote の構成では効かない (この腕はローカル検索が埋め込んだクエリベクトルで順位付けするが、remote 検索はそれを作らない) |
+| `CPERSONA_BLOCK_RETRIEVAL_ENABLED` | `false` | recall のときに Block 索引を読む ([Block による到達](BLOCK_REACH_DESIGN.md)) — Block の腕と、`reconstruct` が返す引用の両方。引用は一致した Block から取られ、それを支配する連続文脈を伴うか、不完全であると報告される。到達したレコードは**予約**で通す — 品質 gate の後に確保された少数の席で、その席について gate は参照されず、他のどの席の gate も変わらない。したがって応答は要求された `limit` を**超えて**その席数まで行を運び、直前のリリースが返した行はすべてそのまま返る。`CPERSONA_BLOCK_BUILD_ENABLED=true` が必要 — 何も入っていない索引を読む設定は静かな no-op ではなく起動時エラー。ベクトル検索が remote の構成では効かない (この腕はローカル検索が埋め込んだクエリベクトルで順位付けするが、remote 検索はそれを作らない) |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | バックグラウンドタスクキュー (DB 永続・クラッシュ復帰可能) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | 直近に想起された記憶へのペナルティ |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | 上記ペナルティの対象時間窓 (分) |

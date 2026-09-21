@@ -1394,12 +1394,16 @@ registry.auto_tool(
     "[start, end]} for characters. Offsets are in the stored text (a memory's content, "
     "an episode's summary without the '[Episode] ' label). The item then carries that "
     "slice as `content` and `range` = {span, content_len, and node + of when nodes "
-    "were named}; a span end past the text is clamped and `range.span` says what was "
-    "served. A range that cannot be served exactly is never widened to the whole row: "
-    "it comes back in `unresolved` (absent otherwise) as {ref, reason}, reason one of "
+    "were named, or block + of when blocks were}; a span end past the text is clamped and "
+    "`range.span` says what was served. A ref may also carry `revision`, the digest a "
+    "reconstruct quote's `expand` hands out for the text its offsets were measured in: "
+    "a record rewritten since refuses rather than serving different characters under the "
+    "same numbers. A range that cannot be served exactly is never widened to the whole "
+    "row: it comes back in `unresolved` (absent otherwise) as {ref, reason}, reason one of "
     "invalid_range, no_current_nodes (the record has no complete node set -- short "
     "records have none, and a new long one gets them shortly after store), "
-    "node_out_of_range, span_out_of_range. Only the slice counts against the budget.",
+    "node_out_of_range, span_out_of_range, no_current_blocks, block_out_of_range, "
+    "stale_revision. Only the slice counts against the budget.",
     {
         "type": "object",
         "properties": {
@@ -1427,12 +1431,24 @@ registry.auto_tool(
                                         },
                                     ]
                                 },
+                                "block": {
+                                    "anyOf": [
+                                        {"type": "integer", "minimum": 0},
+                                        {
+                                            "type": "array",
+                                            "items": {"type": "integer", "minimum": 0},
+                                            "minItems": 2,
+                                            "maxItems": 2,
+                                        },
+                                    ]
+                                },
                                 "span": {
                                     "type": "array",
                                     "items": {"type": "integer", "minimum": 0},
                                     "minItems": 2,
                                     "maxItems": 2,
                                 },
+                                "revision": {"type": "string"},
                             },
                             "required": ["ref"],
                         },
@@ -1441,7 +1457,9 @@ registry.auto_tool(
                 "maxItems": 20,
                 "description": (
                     "Refs from recall messages ('mem:<id>' / 'ep:<id>'), or range objects such as "
-                    "{'ref': 'mem:<id>', 'node': [2, 3]} / {'ref': 'ep:<id>', 'span': [0, 800]} (max 20 per call)"
+                    "{'ref': 'mem:<id>', 'node': [2, 3]} / {'ref': 'ep:<id>', 'span': [0, 800]} / "
+                    "{'ref': 'mem:<id>', 'block': 4, 'revision': '<from an expand>'} (max 20 per call). "
+                    "At most one of node / span / block"
                 ),
             },
         },

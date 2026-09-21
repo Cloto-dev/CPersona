@@ -2268,6 +2268,12 @@ RANGE_INVALID = "invalid_range"
 RANGE_NO_CURRENT_NODES = "no_current_nodes"
 RANGE_NODE_OUT_OF_RANGE = "node_out_of_range"
 RANGE_SPAN_OUT_OF_RANGE = "span_out_of_range"
+RANGE_NO_CURRENT_BLOCKS = "no_current_blocks"
+RANGE_BLOCK_OUT_OF_RANGE = "block_out_of_range"
+#: The record was rewritten since the offsets were handed out. Reported rather
+#: than served: the same offsets in new text are a different passage, and a
+#: caller quoting it would be quoting something nothing ever said.
+RANGE_STALE_REVISION = "stale_revision"
 
 
 def _is_index(value) -> bool:
@@ -2286,20 +2292,30 @@ def _parse_ref_entry(entry) -> tuple[str, dict | None, str | None]:
         return str(entry), None, None
     ref = entry.get("ref")
     ref = ref if isinstance(ref, str) else str(ref)
-    has_node, has_span = "node" in entry, "span" in entry
-    if has_node and has_span:
+    has_node, has_span, has_block = "node" in entry, "span" in entry, "block" in entry
+    if sum((has_node, has_span, has_block)) > 1:
         return ref, None, RANGE_INVALID
-    if has_node:
-        node = entry["node"]
-        if _is_index(node):
-            first = last = node
-        elif isinstance(node, list) and len(node) == 2 and all(_is_index(v) for v in node):
-            first, last = node
+    # The revision the offsets were measured in, when the caller was given one
+    # (a reconstruct quote's expand attaches it). Checked against the record
+    # before anything is served.
+    revision = entry.get("revision")
+    if revision is not None and not isinstance(revision, str):
+        return ref, None, RANGE_INVALID
+    if has_node or has_block:
+        key = "node" if has_node else "block"
+        value = entry[key]
+        if _is_index(value):
+            first = last = value
+        elif isinstance(value, list) and len(value) == 2 and all(_is_index(v) for v in value):
+            first, last = value
         else:
             return ref, None, RANGE_INVALID
         if first < 0 or last < first:
             return ref, None, RANGE_INVALID
-        return ref, {"node": (first, last)}, None
+        request = {key: (first, last)}
+        if revision is not None:
+            request["revision"] = revision
+        return ref, request, None
     if has_span:
         span = entry["span"]
         if not (isinstance(span, list) and len(span) == 2 and all(_is_index(v) for v in span)):
@@ -2307,8 +2323,28 @@ def _parse_ref_entry(entry) -> tuple[str, dict | None, str | None]:
         start, end = span
         if start < 0 or end <= start:
             return ref, None, RANGE_INVALID
-        return ref, {"span": (start, end)}, None
+        request = {"span": (start, end)}
+        if revision is not None:
+            request["revision"] = revision
+        return ref, request, None
     return ref, None, None
+
+
+def _partitions(rows: list, text: str) -> bool:
+    """Whether `(index, start, end)` rows cover `text` exactly, in order.
+
+    One answer for nodes and for blocks: both are derived sets whose offsets are
+    only usable when they partition the text as it is stored now, and two
+    spellings of that test would eventually disagree about a set that is half
+    there.
+    """
+    return (
+        bool(rows)
+        and [r[0] for r in rows] == list(range(len(rows)))
+        and rows[0][1] == 0
+        and rows[-1][2] == len(text)
+        and all(a[2] == b[1] for a, b in zip(rows, rows[1:]))
+    )
 
 
 async def _resolve_range(db, kind: str, row_id: int, text: str, request: dict) -> tuple[dict | None, str | None]:
@@ -2320,24 +2356,35 @@ async def _resolve_range(db, kind: str, row_id: int, text: str, request: dict) -
     that changed. A span's end past the text is clamped, and the span actually
     served is reported; a start at or past the end of the text serves nothing.
     """
+    # A revision names the text the offsets were measured in. It is checked
+    # before the range is resolved, so a rewritten record refuses rather than
+    # serving different characters under the same numbers.
+    revision = request.get("revision")
+    if revision is not None and revision != blocks.text_revision(text):
+        return None, RANGE_STALE_REVISION
     if "span" in request:
         start, end = request["span"]
         if start >= len(text):
             return None, RANGE_SPAN_OUT_OF_RANGE
         return {"span": [start, min(end, len(text))]}, None
+    if "block" in request:
+        rows = await db.execute_fetchall(
+            "SELECT block_index, start_char, end_char FROM record_blocks "
+            "WHERE parent_kind = ? AND parent_id = ? ORDER BY block_index",
+            (kind, row_id),
+        )
+        if not _partitions(rows, text):
+            return None, RANGE_NO_CURRENT_BLOCKS
+        first, last = request["block"]
+        if last >= len(rows):
+            return None, RANGE_BLOCK_OUT_OF_RANGE
+        return {"span": [rows[first][1], rows[last][2]], "block": [first, last], "of": len(rows)}, None
     rows = await db.execute_fetchall(
         "SELECT node_index, start_char, end_char FROM record_nodes "
         "WHERE parent_kind = ? AND parent_id = ? ORDER BY node_index",
         (kind, row_id),
     )
-    partition = (
-        bool(rows)
-        and [r[0] for r in rows] == list(range(len(rows)))
-        and rows[0][1] == 0
-        and rows[-1][2] == len(text)
-        and all(a[2] == b[1] for a, b in zip(rows, rows[1:]))
-    )
-    if not partition:
+    if not _partitions(rows, text):
         return None, RANGE_NO_CURRENT_NODES
     first, last = request["node"]
     if last >= len(rows):

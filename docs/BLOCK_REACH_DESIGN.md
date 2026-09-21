@@ -196,6 +196,47 @@ vector the local vector search embedded, so a deployment whose vector search is
 remote does not get block reach: the remote service answers for itself and
 never produces the vector this arm quantises.
 
+## 5b. Quotation: a block, and what governs it
+
+A block is a clause. That is small enough to be read, and small enough to say
+the opposite of the record it came from — "we adopted A" is not what the record
+says when the next sentence withdraws it. So what a reader is shown is never
+the block alone: it is the contiguous range of the parent's text that governs
+the block, decided by two rules that are conservative about what they can see.
+
+1. **Finish the sentence.** A block that does not begin one is extended
+   backwards, and a block that does not end one is extended forwards. The
+   divider cuts at structure and sometimes inside a sentence, so a block can be
+   a clause, and a clause read without its sentence is the first way a
+   quotation goes wrong.
+2. **Follow the qualifier.** A block that begins with a word qualifying what
+   came before is extended backwards, and a block followed by such a word is
+   extended forwards. This is the case where both sentences are complete and
+   the second reverses the first.
+
+Both rules work in whole blocks and repeat until neither fires. The context
+they produce is bounded by a fixed limit, and a rule still reaching when the
+limit stops it makes the quotation **incomplete**: it is reported as such and
+carries the range to read instead, rather than being presented as whole
+evidence. The same is true of a quotation the payload budget cuts short.
+
+The limit is server policy and not a budget. The context is decided before
+anything is cut, so raising the payload budget adds items and excerpts and
+never replaces a quotation with a different one — the property the response is
+a prefix of a fixed sequence depends on it.
+
+What these rules do not cover is an unmarked dependency: a correction in the
+next sentence that announces itself only by its content. The rules see marked
+dependencies and sentence boundaries, and a control fixture holds them to it —
+two independent sentences must be quoted apart, or a rule that always took the
+neighbour would satisfy every severance test by quoting the whole record.
+
+A range handed back this way carries the **revision** of the text its offsets
+were measured in. A block range validates itself, because the triggers drop a
+record's blocks when its text changes; a raw span has nothing equivalent, and
+serving old offsets against new text would quote something the record never
+said. A record rewritten since is refused, not served.
+
 ## 6. Schema and lifecycle
 
 Blocks are held in their own table, shaped like the overflow tree's node table:

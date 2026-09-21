@@ -988,3 +988,123 @@ async def search(db, embedding: object, iso) -> list[BlockHit]:
         return []
     rows = await _examined(db, iso, config.reported_embedding_model())
     return _hamming(rows, query_bits)
+
+
+# --------------------------------------------------------------------------------------
+# quotation: a block, and the contiguous context that governs it
+# --------------------------------------------------------------------------------------
+
+#: The widest context a quoted block may carry, in characters.
+#:
+#: Twice the forced-boundary limit: two blocks of the largest size the divider
+#: will produce is the widest the rule below can need before the window that
+#: closes an embedding (1,787 characters on this corpus) is in sight, and it
+#: keeps a quoted block plus its context smaller than the node it sits in —
+#: which is the point of quoting a block at all.
+#:
+#: Server policy, and deliberately not a budget. The context a block carries is
+#: decided before anything is cut, so raising the payload budget adds items and
+#: excerpts and never replaces a quotation with a different one.
+BLOCK_CONTEXT_CHARS = MAX_BLOCK_CHARS * 2
+
+#: Openers that make a block depend on the block beside it. A block that begins
+#: with one of these qualifies what came before; a block followed by one is
+#: qualified by what comes after. Quoting either half alone can say the opposite
+#: of the text it was taken from.
+#:
+#: A marked dependency is the case this can detect. An unmarked one — a
+#: correction in the next sentence that announces itself only by its content —
+#: is not, and this does not claim otherwise: the rule below is conservative
+#: about what it can see, and section 9 of the design says what it does not
+#: cover.
+_QUALIFIERS: tuple[str, ...] = (
+    "ただし", "但し", "ただ、", "しかし", "しかしながら", "だが", "ですが", "でも、",
+    "なお", "とはいえ", "一方", "他方", "その代わり", "代わりに", "except",
+    "however", "but ", "although", "though", "unless", "instead", "on the other hand",
+    "that said", "caveat", "note that", "provided that", "in fact", "actually",
+)
+
+#: Sentence terminators, for deciding whether a block ends one. The full-width
+#: marks end a sentence wherever they stand; the half-width ones only before
+#: whitespace or at the end of the text, which is the divider's own rule.
+_TERMINATORS = ("。", "！", "？", "．", ".", "!", "?", "…")
+
+
+def text_revision(text: str) -> str:
+    """A short digest of the text an offset was measured in.
+
+    Not a version number: nothing increments, and two records holding the same
+    text share it. What it is for is refusal — a span handed back later can be
+    checked against the text as it stands, and a record rewritten since is an
+    `unresolved` answer rather than a different passage served under the same
+    offsets. A block or node range needs no such check, because the triggers
+    delete a record's derived rows when its text changes; a raw span has nothing
+    equivalent, which is why the one place that hands a span back attaches this.
+    """
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _starts_with_qualifier(fragment: str) -> bool:
+    stripped = fragment.lstrip()
+    lowered = stripped.lower()
+    return any(
+        lowered.startswith(q) if q.isascii() else stripped.startswith(q) for q in _QUALIFIERS
+    )
+
+
+def _ends_a_sentence(fragment: str) -> bool:
+    stripped = fragment.rstrip()
+    return bool(stripped) and stripped.endswith(_TERMINATORS)
+
+
+def context_range(
+    text: str, spans: list[tuple[int, int]], index: int, max_chars: int = 0
+) -> tuple[int, int, bool]:
+    """The span to quote for block ``index``, and whether the rule was satisfied.
+
+    ``spans`` are the record's block spans in order, which partition its text.
+    Returns (start, end, complete). ``complete`` is False when the rule wanted
+    more context than ``max_chars`` allowed — the caller reports that rather
+    than presenting a severed quotation as whole evidence.
+
+    Two conservative rules, both in whole blocks, applied until neither fires:
+
+    1. **Finish the sentence.** A block that does not begin one is extended
+       backwards, and a block that does not end one is extended forwards. The
+       divider cuts at structure and sometimes inside a sentence, so a block can
+       be a clause; a clause read without its sentence is the first way a
+       quotation goes wrong.
+    2. **Follow the qualifier.** A block beginning with a word that qualifies
+       what came before is extended backwards, and a block followed by one is
+       extended forwards. This is the case where the sentences are each complete
+       and the second reverses the first.
+    """
+    limit = max_chars if max_chars > 0 else BLOCK_CONTEXT_CHARS
+    first = last = index
+    complete = True
+    while True:
+        start, end = spans[first][0], spans[last][1]
+        wants_before = first > 0 and (
+            not _ends_a_sentence(text[spans[first - 1][0] : spans[first - 1][1]])
+            or _starts_with_qualifier(text[start:end])
+        )
+        wants_after = last + 1 < len(spans) and (
+            not _ends_a_sentence(text[start:end])
+            or _starts_with_qualifier(text[spans[last + 1][0] : spans[last + 1][1]])
+        )
+        if not wants_before and not wants_after:
+            return start, end, complete
+        # Backwards first, so a block that qualifies what came before never
+        # returns the qualification without the thing qualified.
+        if wants_before:
+            candidate = spans[first - 1][0]
+            if end - candidate > limit:
+                return start, end, False
+            first -= 1
+            continue
+        candidate = spans[last + 1][1]
+        if candidate - start > limit:
+            return start, end, False
+        last += 1

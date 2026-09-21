@@ -65,7 +65,7 @@ import logging
 
 import numpy as np
 
-from . import associations, config, nodes, vector
+from . import associations, blocks, config, nodes, vector
 from .database import connection
 from .utils import _parse_timestamp_utc
 
@@ -749,6 +749,39 @@ def rank_nodes(text: str, node_rows: list[tuple], query_vec, query_grams: set[st
     return [node_rows[i] for i in order]
 
 
+def rank_blocks(
+    text: str, block_rows: list[tuple], query_bits: bytes | None, query_grams: set[str]
+) -> list[tuple]:
+    """The blocks of ``text``, best match first. ``block_rows`` are
+    (index, start, end, bits) in order.
+
+    The same two-list fusion the node path uses, with Hamming distance standing
+    in for cosine because that is the representation a block has. Equal values
+    share a rank, so a query with no literal match leaves the choice to the
+    vector rather than to block order; ties go to the earlier block. No score is
+    reported — a Hamming distance is not calibrated across records or models.
+    """
+    lexical = [float(len(query_grams & _trigrams(text[start:end]))) for _, start, end, _ in block_rows]
+    ranks = [_shared_ranks(lexical)]
+    if query_bits is not None:
+        import numpy as np
+
+        width = len(query_bits)
+        usable = all(bits is not None and len(bits) == width for _, _, _, bits in block_rows)
+        if usable and block_rows:
+            packed = np.frombuffer(
+                b"".join(bits for _, _, _, bits in block_rows), dtype=np.uint8
+            ).reshape(len(block_rows), width)
+            query = np.frombuffer(query_bits, dtype=np.uint8)
+            distances = blocks._popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
+            # Ranked highest-first like the others, so a nearer block sorts first.
+            ranks.append(_shared_ranks([-float(d) for d in distances]))
+    k = config.RRF_K
+    fused = [sum(1.0 / (k + 1 + r[i]) for r in ranks) for i in range(len(block_rows))]
+    order = sorted(range(len(block_rows)), key=lambda i: (-fused[i], block_rows[i][0]))
+    return [block_rows[i] for i in order]
+
+
 def best_node(text: str, node_rows: list[tuple], query_vec, query_grams: set[str]) -> tuple:
     """The node of `text` to quote."""
     return rank_nodes(text, node_rows, query_vec, query_grams)[0]
@@ -802,6 +835,52 @@ async def _current_node_sets(
     return out, not_current
 
 
+async def _current_block_sets(
+    agent_id: str, claims: list[_Candidate]
+) -> dict[str, tuple[str, list[tuple]]]:
+    """`ref -> (stored text, blocks)` for the claims whose record has a current
+    block set (docs/BLOCK_REACH_DESIGN.md §6).
+
+    Current is the same test the builder and the backfill share: the set covers
+    the stored text with no gap, and every row came from the model this server
+    reports. Anything else quotes the way it did before — from a node, or from
+    the record's start — because a partial set would put an offset into text it
+    was not measured in.
+    """
+    model = config.reported_embedding_model()
+    out: dict[str, tuple[str, list[tuple]]] = {}
+    async with connection() as db:
+        for kind, (table, column) in nodes.PARENT_TEXT.items():
+            ids = sorted({c.row_id for c in claims if c.kind == kind and c.row_id > 0})
+            for offset in range(0, len(ids), 500):
+                batch = ids[offset : offset + 500]
+                marks = ",".join("?" for _ in batch)
+                texts = dict(
+                    await db.execute_fetchall(
+                        f"SELECT id, {column} FROM {table} WHERE agent_id = ? AND id IN ({marks})",
+                        [agent_id, *batch],
+                    )
+                )
+                rows = await db.execute_fetchall(
+                    "SELECT parent_id, block_index, start_char, end_char, embedding_bits, "
+                    f"embedding_model FROM record_blocks WHERE parent_kind = ? AND parent_id IN ({marks}) "
+                    "ORDER BY parent_id, block_index",
+                    [kind, *batch],
+                )
+                grouped: dict[int, list] = {}
+                for parent_id, index, start, end, bits, block_model in rows:
+                    grouped.setdefault(parent_id, []).append((index, start, end, bits, block_model))
+                for parent_id, group in grouped.items():
+                    text = texts.get(parent_id)
+                    if text is None:
+                        continue
+                    contiguous = all(a[2] == b[1] for a, b in zip(group, group[1:]))
+                    complete = group[0][1] == 0 and group[-1][2] == len(text) and contiguous
+                    if complete and all(g[4] == model for g in group):
+                        out[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
+    return out
+
+
 async def _query_vector(query: str):
     client = vector._embedding_client
     if client is None or not query:
@@ -815,17 +894,82 @@ async def _query_vector(query: str):
     return np.asarray(vectors[0], dtype=np.float32)
 
 
+def _block_quote(claim: _Candidate, entry: tuple, query_bits, query_grams: set[str]) -> dict:
+    """The quoted text for one claim, at block granularity (§4.3, invariant 9).
+
+    A block is a clause, which is small enough to be read and small enough to
+    say the opposite of its record. So what is quoted is not the block but the
+    contiguous range that governs it: the sentence it sits in, and a neighbour
+    that qualifies it. Where the rule wanted more than the context limit allows,
+    the quote carries `context_incomplete` and an `expand` that names the block
+    range it was reaching for — it is a passage to read further from, not
+    complete evidence.
+
+    The expand carries the revision of the text these offsets were measured in.
+    A block range validates itself (the triggers drop a record's blocks when its
+    text changes), and the revision is what makes that refusal legible rather
+    than leaving a caller to infer it from an empty answer.
+    """
+    text, block_rows = entry
+    ranked = rank_blocks(text, block_rows, query_bits, query_grams)
+    index, _, _, _ = ranked[0]
+    spans = [(start, end) for _, start, end, _ in block_rows]
+    start, end, complete = blocks.context_range(text, spans, index)
+    quote: dict = {
+        "content": text[start:end],
+        "block": {"index": index, "of": len(block_rows), "span": [start, end]},
+    }
+    if not complete:
+        first = next(i for i, (s, e) in enumerate(spans) if s == start)
+        last = next(i for i, (s, e) in enumerate(spans) if e == end)
+        wanted = [max(0, first - 1), min(len(spans) - 1, last + 1)]
+        quote["context_incomplete"] = True
+        quote["expand"] = {
+            "ref": claim.ref,
+            "block": wanted,
+            "revision": blocks.text_revision(text),
+        }
+    return quote
+
+
 def _quote(
     claim: _Candidate, node_sets: dict, query_vec, query_grams: set[str], cap: int,
     not_current: frozenset[str] | set[str] = frozenset(),
     node_orders: dict[str, list[int]] | None = None,
+    block_sets: dict | None = None,
+    query_bits: bytes | None = None,
 ) -> dict:
     """The quoted text for one claim, cut as the preview tier cuts.
 
-    A quote that is cut and did not come from a node is only the record's start,
-    not the part that matched; `node_unavailable` says so and why. A record quoted
-    whole needs no such note, whether or not it has nodes.
+    A record with a current block set is quoted at block granularity; one with a
+    current node set and no blocks is quoted from its best node, as before; one
+    with neither is quoted from its start. A quote that is cut and did not come
+    from a node is only the record's start, not the part that matched;
+    `node_unavailable` says so and why. A record quoted whole needs no such
+    note, whether or not it has nodes.
     """
+    block_entry = (block_sets or {}).get(claim.ref)
+    if block_entry is not None:
+        quote = _block_quote(claim, block_entry, query_bits, query_grams)
+        content = quote["content"]
+        if cap > 0 and len(content) > cap:
+            quote["content_len"] = len(content)
+            quote["content"] = content[:cap]
+            quote["content_truncated"] = True
+            span_start = quote["block"]["span"][0]
+            quote["block"]["span"] = [span_start, span_start + cap]
+            # Cut, so what is shown is a prefix of the context rather than the
+            # context: the same treatment a cut node gets, and the same reason.
+            quote["context_incomplete"] = True
+            quote.setdefault(
+                "expand",
+                {
+                    "ref": claim.ref,
+                    "block": quote["block"]["index"],
+                    "revision": blocks.text_revision(block_entry[0]),
+                },
+            )
+        return quote
     entry = node_sets.get(claim.ref)
     if entry is None:
         quote: dict = {"content": claim.content}
@@ -898,7 +1042,19 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
     for (item, head, others), n in zip(admitted, taken):
         item = dict(item)
         item["content"] = head["content"]
-        for key in ("content_len", "content_truncated", "node", "node_unavailable", "expand"):
+        # An allowlist, so a key a quote grows does not reach the response by
+        # accident — and does not fail to reach it by accident either: `block`
+        # and `context_incomplete` are here because a reader that cannot see
+        # them cannot tell a complete quotation from a severed one.
+        for key in (
+            "content_len",
+            "content_truncated",
+            "node",
+            "node_unavailable",
+            "expand",
+            "block",
+            "context_incomplete",
+        ):
             if key in head:
                 item[key] = head[key]
         # Both are omitted when empty: no excerpts carried, none withheld.
@@ -1079,9 +1235,22 @@ async def do_reconstruct(
         entries_claims.append((item, head, others))
     all_claims = [c for _, head, others in entries_claims for c in (head, *others)]
     node_sets, not_current = await _current_node_sets(agent_id, all_claims) if all_claims else ({}, set())
-    query_vec = await _query_vector(query) if node_sets else None
-    if node_sets and query_vec is None:
+    # Blocks are read behind the same switch that lets the block arm run: off
+    # means the index may exist and nothing reads it, and quoting is a read.
+    block_sets = (
+        await _current_block_sets(agent_id, all_claims)
+        if all_claims and blocks.retrieval_enabled()
+        else {}
+    )
+    query_vec = await _query_vector(query) if (node_sets or block_sets) else None
+    if (node_sets or block_sets) and query_vec is None:
         response["quote_selection"] = QUOTE_LEXICAL_ONLY
+    # The same vector, quantised the way a stored block is. One embedding call,
+    # two representations: a block holds the sign of each dimension, and nothing
+    # else about the query is needed to rank against it.
+    query_bits = (
+        blocks.pack_bits(query_vec.tolist()) if (block_sets and query_vec is not None) else None
+    )
     query_grams = _trigrams(query)
     cap = config.RECALL_PREVIEW_CHARS
     entries = []
@@ -1091,9 +1260,18 @@ async def do_reconstruct(
     # is a place to read next, not a confidence.
     node_orders: dict[str, list[int]] | None = {} if trace else None
     for item, head, others in entries_claims:
-        head_quote = _quote(head, node_sets, query_vec, query_grams, cap, not_current, node_orders)
+        head_quote = _quote(
+            head, node_sets, query_vec, query_grams, cap, not_current, node_orders,
+            block_sets, query_bits,
+        )
         other_quotes = [
-            {"ref": c.ref, **_quote(c, node_sets, query_vec, query_grams, cap, not_current, node_orders)}
+            {
+                "ref": c.ref,
+                **_quote(
+                    c, node_sets, query_vec, query_grams, cap, not_current, node_orders,
+                    block_sets, query_bits,
+                ),
+            }
             for c in others
         ]
         entries.append((item, head_quote, other_quotes))
