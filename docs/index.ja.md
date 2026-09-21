@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:8114f335ba2ddaf66b44e8458f16c0cb8af41bc5 -->
+<!-- i18n-source: docs/index.md@blob:8e678cdf96c96891e094be488f640f4b364901aa -->
 
 # CPersona ドキュメント
 
@@ -156,6 +156,9 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 - [適応的融合](ADAPTIVE_FUSION_DESIGN.md) — 各検索器にプールの取り分を確保すること、
   プールサイズ gate から順位カットを外すこと、そして「いま計測済みの lexical 重み」と
   「後の条件付き証拠の融合モード」のどちらを採るかを決める事前登録済みの比較。
+- [Block による到達](BLOCK_REACH_DESIGN.md) — 長いレコードを節に相当する Block へ分け、
+  1 次元 1 ビットの Hamming 距離で順位付けし、親へ畳んで予約席で通すことで、
+  品質 gate に新しいスコアを入れずに末尾へ到達できるようにすること。
 - [溢れ分の tree](OVERFLOW_TREE_DESIGN.md) — 長いレコードを埋め込みの窓に収まる区間に分け、
   recall が返すものを変えずに、返されたレコードを関連する部分で引用できるようにすること。
 - [連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md) — entity・別名・関係の宣言されたグラフ。

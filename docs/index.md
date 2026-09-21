@@ -163,6 +163,10 @@ guides disagree, the guides win.
   share of the pool, removing the rank cut from the pool-size gate, and the
   pre-registered comparison between a measured lexical weight now and a
   conditional-evidence fusion mode later.
+- [Block reach](BLOCK_REACH_DESIGN.md) — clause-sized blocks ranked by
+  Hamming distance on one bit per dimension, collapsed to their parent and
+  admitted by a held reservation, so a long record's tail becomes reachable
+  without a new score entering the quality gate.
 - [Overflow tree](OVERFLOW_TREE_DESIGN.md) — dividing a long record into
   spans that each fit the embedding window, so a returned record can be quoted
   by the part that matters, without changing what recall returns.
