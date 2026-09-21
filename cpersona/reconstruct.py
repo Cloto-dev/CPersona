@@ -65,7 +65,7 @@ import logging
 
 import numpy as np
 
-from . import associations, blocks, config, nodes, vector
+from . import associations, blocks, config, generation, nodes, vector
 from .database import connection
 from .utils import _parse_timestamp_utc
 
@@ -798,7 +798,7 @@ async def _current_node_sets(
     what a record without nodes gets. Reads are keyed on refs retrieval already
     scoped to this agent.
     """
-    model = config.EMBEDDING_MODEL
+    keys = generation.node_keys()
     out: dict[str, tuple[str, list[tuple]]] = {}
     not_current: set[str] = set()
     async with connection() as db:
@@ -828,7 +828,7 @@ async def _current_node_sets(
                         continue
                     contiguous = all(a[2] == b[1] for a, b in zip(group, group[1:]))
                     complete = group[0][1] == 0 and group[-1][2] == len(text) and contiguous
-                    if complete and all(g[4] == model and g[3] is not None for g in group):
+                    if complete and all(g[4] in keys and g[3] is not None for g in group):
                         out[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
                     else:
                         not_current.add(f"{kind}:{parent_id}")
@@ -847,7 +847,7 @@ async def _current_block_sets(
     the record's start — because a partial set would put an offset into text it
     was not measured in.
     """
-    model = config.reported_embedding_model()
+    keys = generation.block_keys()
     out: dict[str, tuple[str, list[tuple]]] = {}
     async with connection() as db:
         for kind, (table, column) in nodes.PARENT_TEXT.items():
@@ -876,7 +876,7 @@ async def _current_block_sets(
                         continue
                     contiguous = all(a[2] == b[1] for a, b in zip(group, group[1:]))
                     complete = group[0][1] == 0 and group[-1][2] == len(text) and contiguous
-                    if complete and all(g[4] == model for g in group):
+                    if complete and all(g[4] in keys for g in group):
                         out[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
     return out
 

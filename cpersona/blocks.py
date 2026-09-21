@@ -36,7 +36,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from cpersona import config, tasks, vector
+from cpersona import config, generation, tasks, vector
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where
 from cpersona.nodes import PARENT_TEXT
@@ -363,23 +363,29 @@ def _set_is_current(count, first, last, current, text_len: int) -> bool:
     the builder would write a set the sweep keeps rebuilding, or the sweep would
     pass over a record the builder thinks it still owes.
 
-    The model half is where the care is. ``current`` counts the rows produced by
-    what ``config.reported_embedding_model()`` returns, which is empty when this
-    process cannot learn the backend's model name. Empty compares equal to empty,
-    so an unreported deployment stays consistent with itself — and never equal to
-    a named model, which is the point: the resolved default must not stand in for
-    an identity nobody reported (§6).
+    The model half is where the care is. ``current`` counts the rows written under
+    either key :func:`generation.block_keys` returns: the backend's own fingerprint
+    when it could be established, and the key this deployment wrote before it could
+    ask. Both are real values — the second still follows the configuration, so an
+    operator who renames the model invalidates the rows that named the old one —
+    and neither is a wildcard: a row from a backend this server never ran is not
+    current. What the pair deliberately does not do is declare the existing corpus
+    stale the day a fingerprint first arrives; see :mod:`cpersona.generation`.
+
+    When nothing could be established the two collapse to one empty string, which
+    compares equal to empty and never to a named model: the resolved default must
+    not stand in for an identity nobody reported (§6).
     """
     return bool(count) and first == 0 and last == text_len and current == count
 
 
-async def _blocks_current(db, kind: str, parent_id: int, text_len: int, model: str) -> bool:
+async def _blocks_current(db, kind: str, parent_id: int, text_len: int, keys: tuple[str, str]) -> bool:
     """Whether this record's stored blocks were built from its current text by a
     known model. The one-record read behind :func:`_set_is_current`."""
     rows = await db.execute_fetchall(
-        "SELECT COUNT(*), MIN(start_char), MAX(end_char), SUM(embedding_model = ?) "
+        "SELECT COUNT(*), MIN(start_char), MAX(end_char), SUM(embedding_model IN (?, ?)) "
         "FROM record_blocks WHERE parent_kind = ? AND parent_id = ?",
-        (model, kind, parent_id),
+        (*keys, kind, parent_id),
     )
     count, first, last, current = rows[0]
     return _set_is_current(count, first, last, current, text_len)
@@ -431,7 +437,7 @@ async def prepare_blocks(
             if packed is None:
                 raise RuntimeError("embedding for a block was refused for storage")
             bits.append(packed)
-    return PreparedBlocks(kind, parent_id, text, spans, bits, config.reported_embedding_model())
+    return PreparedBlocks(kind, parent_id, text, spans, bits, generation.block_keys()[0])
 
 
 async def write_blocks(db, prepared: PreparedBlocks) -> bool:
@@ -499,14 +505,14 @@ async def build_blocks(payload: dict) -> str:
         # no rows, and a queue that outlives a setting change would write them.
         return "block building is disabled"
 
-    model = config.reported_embedding_model()
+    keys = generation.block_keys()
     async with connection() as db:
         text = await _parent_text(db, kind, parent_id)
         if text is None:
             return "parent gone"
         if not text:
             return "parent has no text"
-        if await _blocks_current(db, kind, parent_id, len(text), model):
+        if await _blocks_current(db, kind, parent_id, len(text), keys):
             return "blocks already current"
         node_bounds = await _node_bounds(db, kind, parent_id)
 
@@ -651,7 +657,7 @@ async def _page(db, kind: str, after_id: int, limit: int) -> list[tuple[int, str
     return [(row[0], row[1] or "") for row in rows]
 
 
-async def _sets_for(db, kind: str, ids: list[int], model: str) -> dict[int, tuple]:
+async def _sets_for(db, kind: str, ids: list[int], keys: tuple[str, str]) -> dict[int, tuple]:
     """The stored block sets of one page, keyed by parent id.
 
     One aggregate over a range of the primary key rather than a query per record.
@@ -661,15 +667,15 @@ async def _sets_for(db, kind: str, ids: list[int], model: str) -> dict[int, tupl
     if not ids:
         return {}
     rows = await db.execute_fetchall(
-        "SELECT parent_id, COUNT(*), MIN(start_char), MAX(end_char), SUM(embedding_model = ?) "
+        "SELECT parent_id, COUNT(*), MIN(start_char), MAX(end_char), SUM(embedding_model IN (?, ?)) "
         "FROM record_blocks WHERE parent_kind = ? AND parent_id BETWEEN ? AND ? "
         "GROUP BY parent_id",
-        (model, kind, ids[0], ids[-1]),
+        (*keys, kind, ids[0], ids[-1]),
     )
     return {row[0]: tuple(row[1:]) for row in rows}
 
 
-async def coverage(db, model: str) -> tuple[int, int]:
+async def coverage(db, keys: tuple[str, str]) -> tuple[int, int]:
     """(records in the corpus, records holding blocks from ``model``).
 
     The second is deliberately the weaker claim: it counts the records that hold
@@ -696,8 +702,8 @@ async def coverage(db, model: str) -> tuple[int, int]:
         total += rows[0][0]
     rows = await db.execute_fetchall(
         "SELECT COUNT(*) FROM (SELECT DISTINCT parent_kind, parent_id FROM record_blocks "
-        "WHERE embedding_model = ?)",
-        (model,),
+        "WHERE embedding_model IN (?, ?))",
+        keys,
     )
     return total, rows[0][0]
 
@@ -764,7 +770,7 @@ async def backfill(payload: dict) -> str:
     if start is None:
         return "malformed payload, discarded"
     kind_index, after_id = start
-    model = config.reported_embedding_model()
+    keys = generation.block_keys()
     deadline = time.monotonic() + BACKFILL_SECONDS
 
     built = blocks_written = needed_none = refused = failed = 0
@@ -778,7 +784,7 @@ async def backfill(payload: dict) -> str:
         while stopped_by is None:
             async with connection() as db:
                 page = await _page(db, kind, page_after, _BACKFILL_PAGE)
-                sets = await _sets_for(db, kind, [row_id for row_id, _ in page], model)
+                sets = await _sets_for(db, kind, [row_id for row_id, _ in page], keys)
             if not page:
                 break
             for row_id, text in page:
@@ -826,7 +832,7 @@ async def backfill(payload: dict) -> str:
         raise RuntimeError(f"block backfill: {failed} records failed and none were built")
 
     async with connection() as db:
-        total, held = await coverage(db, model)
+        total, held = await coverage(db, keys)
     report = (
         f"built {built} records ({blocks_written} blocks) in {requests} embedding requests; "
         f"{needed_none} needed none, {refused} moved under the build, {failed} failed; "
@@ -911,7 +917,7 @@ class BlockHit:
     distance: int
 
 
-async def _examined(db, iso, model: str) -> list[tuple]:
+async def _examined(db, iso, keys: tuple[str, str]) -> list[tuple]:
     """The block rows one call may look at, in the order the caps truncate.
 
     The per-parent cap is applied before the examined cap, so a long record
@@ -927,10 +933,10 @@ async def _examined(db, iso, model: str) -> list[tuple]:
         "             PARTITION BY parent_kind, parent_id ORDER BY block_index"
         "         ) AS within_parent"
         "    FROM record_blocks"
-        f"   WHERE embedding_bits IS NOT NULL AND embedding_model = ?{iso.and_clause}"
+        f"   WHERE embedding_bits IS NOT NULL AND embedding_model IN (?, ?){iso.and_clause}"
         ") WHERE within_parent <= ? "
         "ORDER BY parent_kind, parent_id, block_index LIMIT ?",
-        (model, *iso.params, BLOCK_PER_PARENT_CAP, BLOCK_EXAMINED_CAP),
+        (*keys, *iso.params, BLOCK_PER_PARENT_CAP, BLOCK_EXAMINED_CAP),
     )
 
 
@@ -986,7 +992,7 @@ async def search(db, embedding: object, iso) -> list[BlockHit]:
         # nothing, and the deployment that turned this on would read the second.
         logger.warning("block arm: the query vector could not be quantised, skipping")
         return []
-    rows = await _examined(db, iso, config.reported_embedding_model())
+    rows = await _examined(db, iso, generation.block_keys())
     return _hamming(rows, query_bits)
 
 

@@ -18,6 +18,7 @@ from cpersona import (
     blocks,
     config,
     database,
+    generation,
     memory_handlers,
     nodes,
     session,
@@ -171,7 +172,7 @@ async def test_the_per_parent_cap_bounds_what_one_record_takes(monkeypatch, read
         monkeypatch.setattr(blocks, "BLOCK_PER_PARENT_CAP", 1)
         db = await database.get_db()
         rows = await blocks._examined(
-            db, isolation_where(agent_id=AGENT), config.reported_embedding_model()
+            db, isolation_where(agent_id=AGENT), generation.block_keys()
         )
         assert len(rows) == 1, "the cap did not bound one parent's share"
 
@@ -365,7 +366,7 @@ async def test_the_examined_set_holds_no_other_agents_rows(reading, lexical_off)
         await _store(tmp, [LONG_RECORD.replace("pilot", "trial")])
         db = await database.get_db()
         rows = await blocks._examined(
-            db, isolation_where(agent_id=AGENT), config.reported_embedding_model()
+            db, isolation_where(agent_id=AGENT), generation.block_keys()
         )
 
         assert rows, "nothing was examined, so the filter proves nothing"

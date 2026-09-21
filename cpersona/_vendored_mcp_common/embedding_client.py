@@ -114,8 +114,39 @@ class TokenInfo:
     window_end_char: int
 
 
-def _count_tokens_url(embed_url: str) -> str | None:
-    """The ``/count_tokens`` route beside a configured ``/embed`` URL, keeping its query."""
+@dataclass(frozen=True)
+class BackendIdentity:
+    """What produced a backend's vectors, and the token standing for it.
+
+    - ``fingerprint`` — what a caller stores beside a vector. Two vectors may be
+      compared when their fingerprints are equal.
+    - ``fields`` — the components the backend established: its provider, model,
+      dimensions, window, pooling, whether it normalises, and the digests of the
+      files it loaded. Every one of them changes the numbers.
+    - ``incomplete`` — the components it could not establish. Non-empty exactly
+      when ``fingerprint`` is None.
+
+    A ``fingerprint`` of None means **unknown, never unchanged**. A backend that
+    cannot name its own graph — a remote API, a runtime whose weights this
+    process cannot read — reports None rather than a fingerprint over the half it
+    knows, and a caller that receives None keeps whatever policy it had before it
+    could ask. Reading None as "the model did not change" is the mistake this
+    type exists to make hard: it is how vectors from two different models end up
+    compared to each other.
+    """
+
+    fingerprint: str | None
+    fields: dict
+    incomplete: tuple[str, ...]
+
+
+def _sibling_route(embed_url: str, route: str) -> str | None:
+    """A route beside a configured ``/embed`` URL, keeping its query.
+
+    Only an ``/embed`` URL has siblings this process can name. Anything else
+    returns None rather than a guess: deriving a path from one this client was
+    not pointed at would send the request somewhere nobody configured.
+    """
     try:
         parts = urlsplit(embed_url)
     except ValueError:
@@ -123,7 +154,66 @@ def _count_tokens_url(embed_url: str) -> str | None:
     path = parts.path.rstrip("/")
     if not path.endswith("/embed"):
         return None
-    return urlunsplit(parts._replace(path=path[: -len("embed")] + "count_tokens"))
+    return urlunsplit(parts._replace(path=path[: -len("embed")] + route))
+
+
+def _count_tokens_url(embed_url: str) -> str | None:
+    """The ``/count_tokens`` route beside a configured ``/embed`` URL, keeping its query."""
+    return _sibling_route(embed_url, "count_tokens")
+
+
+def _capabilities_url(embed_url: str) -> str | None:
+    """The ``/capabilities`` route beside a configured ``/embed`` URL, keeping its query."""
+    return _sibling_route(embed_url, "capabilities")
+
+
+def _validate_identity(raw: object) -> BackendIdentity:
+    """Refuse a capability report that is malformed or contradicts itself.
+
+    This report decides whether a caller keeps or rebuilds every vector it has
+    stored, so the contradiction that matters is checked rather than trusted: a
+    report that carries a fingerprint while admitting it could not establish part
+    of its identity is refused outright, as is one that establishes everything and
+    still declines to name itself. Accepting the first would let a backend that
+    does not know what it is be compared as though it did; accepting the second
+    would leave a caller unable to tell "complete" from "unknown".
+    """
+    if not isinstance(raw, dict):
+        raise EmbeddingResponseError(f"capability report is {_describe(raw)}, expected an object")
+
+    fields = raw.get("identity")
+    if not isinstance(fields, dict):
+        raise EmbeddingResponseError(
+            f"capability report names its identity as {_describe(fields)}, expected an object"
+        )
+
+    incomplete = raw.get("incomplete", [])
+    if not isinstance(incomplete, list) or not all(isinstance(name, str) for name in incomplete):
+        raise EmbeddingResponseError(
+            "capability report does not name what it could not establish as a list of strings"
+        )
+
+    fingerprint = raw.get("fingerprint")
+    if fingerprint is not None and (not isinstance(fingerprint, str) or not fingerprint):
+        raise EmbeddingResponseError(
+            f"capability report's fingerprint is {_describe(fingerprint)}, "
+            "expected a non-empty string or null"
+        )
+
+    if fingerprint is not None and incomplete:
+        raise EmbeddingResponseError(
+            f"capability report carries a fingerprint while naming {len(incomplete)} "
+            "component(s) it could not establish"
+        )
+    if fingerprint is None and not incomplete:
+        raise EmbeddingResponseError(
+            "capability report carries no fingerprint and names nothing it could not "
+            "establish, so it says neither what it is nor what it is missing"
+        )
+
+    return BackendIdentity(
+        fingerprint=fingerprint, fields=dict(fields), incomplete=tuple(incomplete)
+    )
 
 
 def _is_int(value: object) -> bool:
@@ -269,6 +359,63 @@ class EmbeddingClient:
         """
         result, _ = await self.embed_with_outcome(texts)
         return result
+
+    async def capabilities(self) -> BackendIdentity | None:
+        """What the backend is, for deciding whether stored vectors still compare.
+
+        Returns None when that is not known: no backend, a mode with no such route,
+        a server that predates the report, or a failed request. None means unknown
+        and must never be read as "unchanged".
+        :meth:`capabilities_with_outcome` says which case it was.
+        """
+        result, _ = await self.capabilities_with_outcome()
+        return result
+
+    async def capabilities_with_outcome(self) -> tuple["BackendIdentity | None", EmbedOutcome]:
+        """:meth:`capabilities`, plus what happened.
+
+        The report comes from the server's ``/capabilities`` route, next to
+        ``/embed`` on the same host; only ``mode=http`` has one. Over HTTP the
+        request carries texts and the server picks the model, so the name never
+        crosses the wire and a caller that falls back to its own configuration
+        reads two different models as one. In ``api`` mode there is nothing to ask:
+        the model this client sends is the model that answered.
+
+        Deliberately not cached. The answer changes when the backend is redeployed
+        under the same URL, and a remembered one would describe a process that has
+        since gone — which is the state this call exists to detect.
+        """
+        if self.mode != "http" or not self._client:
+            unsupported = self.mode != "none" and self._client
+            error = f"mode={self.mode} has no capability report" if unsupported else None
+            return None, EmbedOutcome(attempted=False, ok=False, error=error)
+        url = _capabilities_url(self._http_url)
+        if url is None:
+            return None, EmbedOutcome(
+                attempted=False,
+                ok=False,
+                error=f"mode=http / {_safe_endpoint(self._http_url)} does not end in /embed, "
+                "so the capability route cannot be derived from it",
+            )
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            return _validate_identity(self._parse_within_budget(response)), EmbedOutcome(
+                attempted=True, ok=True
+            )
+        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError) as e:
+            safe = _safe_endpoint(url)
+            # Either configured form of the URL can appear in the exception text, and
+            # both carry the same userinfo and query string.
+            detail = (
+                str(e).replace(url, safe).replace(self._http_url, _safe_endpoint(self._http_url))
+            )
+            hint = ""
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
+                hint = " (the server predates the capability report)"
+            evidence = f"mode=http / GET {safe} failed: {type(e).__name__}: {detail}{hint}"
+            logger.warning("Capability request failed: %s", evidence)
+            return None, EmbedOutcome(attempted=True, ok=False, error=evidence)
 
     async def count_tokens(self, texts: list[str]) -> list[TokenInfo] | None:
         """How much of each text the backend's embedding window covers.

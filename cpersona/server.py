@@ -36,6 +36,7 @@ from starlette.responses import JSONResponse
 from cpersona import acl
 from cpersona import associations as associations_module
 from cpersona import blocks
+from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
@@ -3612,6 +3613,11 @@ async def main():
         )
         await vector._embedding_client.initialize()
         logger.info("Embedding client ready (mode=%s)", EMBEDDING_MODE)
+        # Learn what is behind /embed before anything derives a vector from it, so
+        # the first node or block written in this process carries the backend's
+        # identity rather than this server's configured guess at it. A backend that
+        # cannot say stays unknown and the write keys fall back to what they were.
+        await generation.refresh(vector._embedding_client)
         if not local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
             # bug-180: state the trade at boot. In this configuration the local
             # cosine scan — the fallback for a remote /search outage — has no rows

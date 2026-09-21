@@ -24,6 +24,7 @@ from cpersona import (
     blocks,
     config,
     database,
+    generation,
     memory_handlers,
     nodes,
     session,
@@ -446,7 +447,7 @@ async def test_coverage_counts_a_memory_and_an_episode_of_the_same_id_apart(monk
 
         await blocks.backfill({})
         db = await database.get_db()
-        total, held = await blocks.coverage(db, config.reported_embedding_model())
+        total, held = await blocks.coverage(db, generation.block_keys())
 
         assert (total, held) == (2, 2)
 

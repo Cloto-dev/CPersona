@@ -23,7 +23,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from cpersona import config, tasks, vector
+from cpersona import generation, tasks, vector
 from cpersona.database import connection, transaction
 
 logger = logging.getLogger(__name__)
@@ -212,11 +212,11 @@ async def _parent_text(db, kind: str, parent_id: int) -> str | None:
     return rows[0][0] if rows else None
 
 
-async def _nodes_current(db, kind: str, parent_id: int, text_len: int, model: str) -> bool:
+async def _nodes_current(db, kind: str, parent_id: int, text_len: int, keys: tuple[str, str]) -> bool:
     rows = await db.execute_fetchall(
-        "SELECT MIN(start_char), MAX(end_char), COUNT(*), SUM(embedding_model = ?) "
+        "SELECT MIN(start_char), MAX(end_char), COUNT(*), SUM(embedding_model IN (?, ?)) "
         "FROM record_nodes WHERE parent_kind = ? AND parent_id = ?",
-        (model, kind, parent_id),
+        (*keys, kind, parent_id),
     )
     first, last, count, current = rows[0]
     return bool(count) and first == 0 and last == text_len and current == count
@@ -259,7 +259,7 @@ async def prepare_nodes(kind: str, parent_id: int, text: str) -> PreparedNodes |
             if blob is None:
                 raise RuntimeError("embedding for a node span was refused for storage")
             blobs.append(blob)
-    return PreparedNodes(kind, parent_id, text, spans, blobs, config.EMBEDDING_MODEL)
+    return PreparedNodes(kind, parent_id, text, spans, blobs, generation.node_keys()[0])
 
 
 async def write_nodes(db, prepared: PreparedNodes) -> bool:
@@ -304,7 +304,7 @@ async def build_nodes(payload: dict) -> str:
         text = await _parent_text(db, kind, parent_id)
         if text is None:
             return "parent gone"
-        if await _nodes_current(db, kind, parent_id, len(text), config.EMBEDDING_MODEL):
+        if await _nodes_current(db, kind, parent_id, len(text), generation.node_keys()):
             return "nodes already current"
 
     prepared = await prepare_nodes(kind, parent_id, text)
@@ -336,16 +336,16 @@ async def records_without_current_nodes(db, iso) -> list[tuple[str, int, str]]:
     tells them apart with the token report, which this function does not ask for.
     Locked records are included: building nodes never modifies the record.
     """
-    model = config.EMBEDDING_MODEL
+    keys = generation.node_keys()
     out: list[tuple[str, int, str]] = []
     for kind, (table, column) in PARENT_TEXT.items():
         rows = await db.execute_fetchall(
             f"SELECT r.id, r.{column}, n.cnt, n.first, n.last, n.cur FROM {table} r "
             "LEFT JOIN (SELECT parent_id, COUNT(*) AS cnt, MIN(start_char) AS first, "
-            "MAX(end_char) AS last, SUM(embedding_model = ?) AS cur FROM record_nodes "
+            "MAX(end_char) AS last, SUM(embedding_model IN (?, ?)) AS cur FROM record_nodes "
             "WHERE parent_kind = ? GROUP BY parent_id) n ON n.parent_id = r.id "
             f"WHERE 1=1{iso.and_clause} ORDER BY r.id",
-            (model, kind, *iso.params),
+            (*keys, kind, *iso.params),
         )
         for row_id, text, count, first, last, current in rows:
             if text and not _current(count, first, last, current, len(text)):
