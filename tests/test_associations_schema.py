@@ -139,9 +139,15 @@ async def _schema_version(db) -> int:
 # --------------------------------------------------------------------------
 
 
-def test_schema_version_constant_is_15():
-    """v15 = the declared graph (docs/ASSOCIATIVE_MEMORY_DESIGN.md §1)."""
-    assert SCHEMA_VERSION == 15
+def test_schema_version_is_at_least_15():
+    """v15 = the declared graph (docs/ASSOCIATIVE_MEMORY_DESIGN.md §1).
+
+    The floor, not the value: the graph arrived at v15 and later steps add
+    tables beside it rather than change it. Pinning equality here made every
+    later step fail a test about associations, which says nothing about
+    whether the graph is intact.
+    """
+    assert SCHEMA_VERSION >= 15
 
 
 @pytest.mark.asyncio
@@ -194,7 +200,7 @@ async def test_fresh_database_has_the_designed_tables():
             for r in await db.execute_fetchall("SELECT name FROM sqlite_master WHERE type IN ('trigger', 'index')")
         }
         assert set(_GRAPH_TRIGGERS) | set(_GRAPH_INDEXES) <= objects
-        assert await _schema_version(db) == 15
+        assert await _schema_version(db) == SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
@@ -259,7 +265,7 @@ async def test_v14_database_migrates_forward_without_touching_other_objects():
 
         db = await _reboot()
 
-        assert await _schema_version(db) == 15
+        assert await _schema_version(db) == SCHEMA_VERSION
         for table in _GRAPH_TABLES:
             assert await _count(db, table) == 0
         assert await _objects_outside_graph(db) == before

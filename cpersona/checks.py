@@ -1176,6 +1176,69 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "WHEN old.summary <> new.summary BEGIN "
         "DELETE FROM record_nodes WHERE parent_kind = 'ep' AND parent_id = old.id; END",
     },
+    # v16 (see RECORD_BLOCKS_SQL in database.py). Critical for the reason the
+    # node triggers are — a delete or a rewrite would leave blocks quoting spans
+    # of a record that no longer says that — plus one the node table does not
+    # have: the axis triggers keep the isolation copies on the row true to their
+    # parent. Blocks are read by a retrieval path, so a stale axis offers a row
+    # to the wrong bucket's coarse pass; the hydrate then drops it, and the
+    # result is a recall loss that looks like an empty answer rather than an
+    # error. The axis triggers UPDATE rather than DELETE on purpose: a retag
+    # leaves the text alone, so the vectors stay valid.
+    "record_blocks_memories_ad": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_blocks_memories_ad AFTER DELETE ON memories BEGIN "
+        "DELETE FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = old.id; END",
+    },
+    "record_blocks_memories_au": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_blocks_memories_au AFTER UPDATE OF content ON memories "
+        "WHEN old.content <> new.content BEGIN "
+        "DELETE FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = old.id; END",
+    },
+    "record_blocks_memories_ax": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_blocks_memories_ax "
+        "AFTER UPDATE OF agent_id, project_id, channel ON memories "
+        "WHEN old.agent_id <> new.agent_id OR old.project_id <> new.project_id "
+        "OR old.channel <> new.channel BEGIN "
+        "UPDATE record_blocks "
+        "SET agent_id = new.agent_id, project_id = new.project_id, channel = new.channel "
+        "WHERE parent_kind = 'mem' AND parent_id = old.id; END",
+    },
+    "record_blocks_episodes_ad": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_blocks_episodes_ad AFTER DELETE ON episodes BEGIN "
+        "DELETE FROM record_blocks WHERE parent_kind = 'ep' AND parent_id = old.id; END",
+    },
+    "record_blocks_episodes_au": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_blocks_episodes_au AFTER UPDATE OF summary ON episodes "
+        "WHEN old.summary <> new.summary BEGIN "
+        "DELETE FROM record_blocks WHERE parent_kind = 'ep' AND parent_id = old.id; END",
+    },
+    "record_blocks_episodes_ax": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_blocks_episodes_ax "
+        "AFTER UPDATE OF agent_id, project_id, channel ON episodes "
+        "WHEN old.agent_id <> new.agent_id OR old.project_id <> new.project_id "
+        "OR old.channel <> new.channel BEGIN "
+        "UPDATE record_blocks "
+        "SET agent_id = new.agent_id, project_id = new.project_id, channel = new.channel "
+        "WHERE parent_kind = 'ep' AND parent_id = old.id; END",
+    },
+    "idx_record_blocks_axes": {
+        "kind": "index",
+        "severity": "warning",
+        "sql": "CREATE INDEX idx_record_blocks_axes "
+        "ON record_blocks(agent_id, project_id, channel)",
+    },
     # v15 (see ASSOCIATIONS_SQL in database.py). Critical: without one of these
     # a deleted entity or record leaves aliases, mentions and relations that
     # point at rows which no longer exist (design invariant 8), and a walk

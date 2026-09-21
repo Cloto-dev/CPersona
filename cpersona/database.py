@@ -13,7 +13,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -487,6 +487,97 @@ WHEN old.summary <> new.summary BEGIN
 END;
 """
 
+# v16: the blocks of docs/BLOCK_REACH_DESIGN.md — clause-sized spans of a
+# record's own text, each carrying a sign-quantised vector, so the tail of a
+# long record can be reached by search rather than only quoted.
+#
+# Shaped like record_nodes above, and for the same reasons: offsets rather than
+# copied text, a derived set that is rebuilt rather than repaired, and triggers
+# rather than call-site cleanup because the package declares no foreign keys.
+#
+# Two things differ from the node table, and both follow from blocks being
+# READ by a retrieval path where nodes are not:
+#
+# 1. The isolation axes are carried on the row. A coarse pass that ranked the
+#    whole corpus and filtered afterwards would spend its top-k on rows the
+#    authority then drops, and the loss grows as a bucket shrinks relative to
+#    the corpus — at one per cent of it, a post-filter leaves almost nothing.
+#    The axes are here so the cut happens after the filter, not before it. This
+#    is not a second authority: isolation_where() remains the only one, and the
+#    hydrate re-applies it fail-closed (bug-100). The obligation here is
+#    one-directional — the rows this table offers must be a superset of the rows
+#    the authority admits.
+#
+# 2. A retag therefore has to reach the blocks, but it must not destroy them: a
+#    record that moves to another project keeps its text, so its vectors stay
+#    valid. The axis triggers UPDATE the copies instead of deleting the set,
+#    which is why they are separate from the content triggers. A text change
+#    still deletes, because then the spans themselves are wrong.
+#
+# `embedding_bits` is a bit string, not a float32 vector: one bit per dimension,
+# 128 bytes at 1,024 dimensions against 4,096. The design's section 3 has the
+# measurement that settles it.
+#
+# Run on every boot, not only on the step to v16 (bug-118). check_schema_objects
+# watches the six triggers and the axis index.
+RECORD_BLOCKS_SQL = """
+CREATE TABLE IF NOT EXISTS record_blocks (
+    parent_kind     TEXT    NOT NULL,
+    parent_id       INTEGER NOT NULL,
+    block_index     INTEGER NOT NULL,
+    agent_id        TEXT    NOT NULL,
+    project_id      TEXT    NOT NULL DEFAULT '',
+    channel         TEXT    NOT NULL DEFAULT '',
+    start_char      INTEGER NOT NULL,
+    end_char        INTEGER NOT NULL,
+    token_count     INTEGER NOT NULL,
+    window          INTEGER NOT NULL,
+    forced_boundary INTEGER NOT NULL DEFAULT 0,
+    embedding_bits  BLOB,
+    embedding_model TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (parent_kind, parent_id, block_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_record_blocks_axes
+    ON record_blocks(agent_id, project_id, channel);
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_memories_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_memories_au AFTER UPDATE OF content ON memories
+WHEN old.content <> new.content BEGIN
+    DELETE FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_memories_ax AFTER UPDATE OF agent_id, project_id, channel
+ON memories
+WHEN old.agent_id <> new.agent_id OR old.project_id <> new.project_id OR old.channel <> new.channel
+BEGIN
+    UPDATE record_blocks
+       SET agent_id = new.agent_id, project_id = new.project_id, channel = new.channel
+     WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_episodes_ad AFTER DELETE ON episodes BEGIN
+    DELETE FROM record_blocks WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_episodes_au AFTER UPDATE OF summary ON episodes
+WHEN old.summary <> new.summary BEGIN
+    DELETE FROM record_blocks WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_episodes_ax AFTER UPDATE OF agent_id, project_id, channel
+ON episodes
+WHEN old.agent_id <> new.agent_id OR old.project_id <> new.project_id OR old.channel <> new.channel
+BEGIN
+    UPDATE record_blocks
+       SET agent_id = new.agent_id, project_id = new.project_id, channel = new.channel
+     WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+"""
+
 # v15: the declared graph of docs/ASSOCIATIVE_MEMORY_DESIGN.md §1 — entities
 # with aliases, the records that mention them, and subject–predicate–object
 # relations. Nothing in `memories` or `episodes` changes, and nothing here is
@@ -800,6 +891,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
 
     await db.executescript(SCHEMA_SQL)
     await db.executescript(RECORD_NODES_SQL)
+    await db.executescript(RECORD_BLOCKS_SQL)
     await db.executescript(ASSOCIATIONS_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on

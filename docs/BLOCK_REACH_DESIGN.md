@@ -184,6 +184,21 @@ parent kind and id, block index, start and end offsets, token count, the window
 the count was taken under, the bit string, and the model identity the bits were
 produced by. The parent's text is not duplicated.
 
+The row also carries the isolation axes, copied from its parent, which the node
+table has no need of. Blocks are read by a retrieval path where nodes are not,
+and a coarse pass that ranked the whole corpus and filtered afterwards would
+spend its cut on rows the authority then drops — where a bucket is one per cent
+of the corpus, a post-filter leaves almost nothing. The copies are not a second
+authority: the isolation predicate has exactly one source, and the hydrate
+re-applies it fail-closed. The obligation here is one-directional — the rows
+this table offers must be a superset of the rows the authority admits.
+
+A retag therefore has to reach the blocks, and must not destroy them: the text
+is unchanged, so the vectors are still valid and rebuilding them would spend
+embedding calls to arrive at identical bits. The axis triggers update the
+copies; the content triggers delete the set. The asymmetry is deliberate, and a
+test holds each half of it.
+
 Construction is asynchronous, on the queue the tree already uses. A block set
 is written only if the parent still holds the text it was divided from, and a
 partially built set is never treated as current. A crash leaves an unpublished
