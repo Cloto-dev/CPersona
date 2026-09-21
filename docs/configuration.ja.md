@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:e2b0f911df2bc3688a807c1cd49aeda6a6a659a6 -->
+<!-- i18n-source: docs/configuration.md@blob:2e0526257fa0f1a27856b7b58157be8743e057fc -->
 
 # 設定リファレンス
 
@@ -23,6 +23,7 @@
 | `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | プロフィール 1 行あたりの最大文字数 (記憶とは別枠)。プロフィールはプレビュー切り詰めの対象外なので、この上限だけが唯一の歯止めです。ただし*全*応答に注入されるわけではありません: プールが 50 行未満の間は品質ゲートがプロフィール行を落とし、スコア付きの結果で埋まっている場合は `limit` が落とします ([契約 §7](behavior-contracts.md#7-profile-rows-carry-no-score)) |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | confidence メタデータを結果に含める — かつ**それをランキングキーにする**: 結果集合はこのスコアで並べ直され、品質ゲートもこれを見ます。有効時、`CPERSONA_RECALL_MODE` は返却順を決めなくなります ([契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | 起動時に自動較正する |
+| `CPERSONA_BLOCK_BUILD_ENABLED` | `false` | 各レコードを節に相当する Block へ分け、Block ごとに符号量子化ベクトルを 1 本保存する ([Block による到達](BLOCK_REACH_DESIGN.md))。off は「作るが読まない」ではなく、埋め込み呼び出しも行もキューの仕事も無いという意味。まだ Block を読む経路は無いので、今 on にして得られるのは索引だけで挙動は変わらない |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | バックグラウンドタスクキュー (DB 永続・クラッシュ復帰可能) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | 直近に想起された記憶へのペナルティ |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | 上記ペナルティの対象時間窓 (分) |

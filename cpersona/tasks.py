@@ -308,6 +308,16 @@ class MemoryTaskQueue:
                         outcome = await nodes.build_nodes(payload)
                         logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
                         await self._delete_task(task_id)
+                    elif task_type == "build_blocks":
+                        # Same shape and the same idempotence as the nodes above. The
+                        # import is here rather than at the top because blocks imports
+                        # this module for _task_queue, and it is inside the branch
+                        # because a deployment that never opted in never reaches it.
+                        from cpersona import blocks
+
+                        outcome = await blocks.build_blocks(payload)
+                        logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
+                        await self._delete_task(task_id)
                     else:
                         logger.error("MemoryTaskQueue: unknown task type %s, discarding", task_type)
                         await self._delete_task(task_id)

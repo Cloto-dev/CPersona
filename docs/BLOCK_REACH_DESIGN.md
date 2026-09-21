@@ -185,9 +185,14 @@ reaches it. That is the property this arrangement exists to preserve.
 ## 6. Schema and lifecycle
 
 Blocks are held in their own table, shaped like the overflow tree's node table:
-parent kind and id, block index, start and end offsets, token count, the window
-the count was taken under, the bit string, and the model identity the bits were
+parent kind and id, block index, start and end offsets, a flag for an end the
+length limit forced, the bit string, and the model identity the bits were
 produced by. The parent's text is not duplicated.
+
+There is no token count and no window, though the node table has both. The
+divider is offline by design, so it has no honest value for either, and a column
+that could only be filled by breaking that property is an invitation to break
+it. A block's length is its end minus its start.
 
 The row also carries the isolation axes, copied from its parent, which the node
 table has no need of. Blocks are read by a retrieval path where nodes are not,

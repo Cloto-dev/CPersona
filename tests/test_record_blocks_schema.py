@@ -96,9 +96,9 @@ async def _blocks(
     for i in range(count):
         await db.execute(
             "INSERT INTO record_blocks (parent_kind, parent_id, block_index, agent_id, "
-            "project_id, channel, start_char, end_char, token_count, window, "
-            "forced_boundary, embedding_bits, embedding_model) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "project_id, channel, start_char, end_char, forced_boundary, "
+            "embedding_bits, embedding_model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 kind,
                 parent_id,
@@ -108,8 +108,6 @@ async def _blocks(
                 channel,
                 i * 10,
                 (i + 1) * 10,
-                4,
-                512,
                 0,
                 b"\x00" * 128,
                 "test-model",
@@ -166,8 +164,6 @@ async def test_fresh_database_has_the_designed_table():
             ("channel", "TEXT", 1, 0),
             ("start_char", "INTEGER", 1, 0),
             ("end_char", "INTEGER", 1, 0),
-            ("token_count", "INTEGER", 1, 0),
-            ("window", "INTEGER", 1, 0),
             ("forced_boundary", "INTEGER", 1, 0),
             ("embedding_bits", "BLOB", 0, 0),
             ("embedding_model", "TEXT", 1, 0),

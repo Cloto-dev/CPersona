@@ -518,6 +518,12 @@ END;
 # 128 bytes at 1,024 dimensions against 4,096. The design's section 3 has the
 # measurement that settles it.
 #
+# There is deliberately no token_count or window here, though the node table has
+# both. The block divider is offline by design (§2) — it asks no model and
+# fetches no token report — so it has no honest value for either, and a column
+# that can only be filled by breaking that property is an invitation to break
+# it. A block's length in characters is end_char - start_char.
+#
 # Run on every boot, not only on the step to v16 (bug-118). check_schema_objects
 # watches the six triggers and the axis index.
 RECORD_BLOCKS_SQL = """
@@ -530,8 +536,6 @@ CREATE TABLE IF NOT EXISTS record_blocks (
     channel         TEXT    NOT NULL DEFAULT '',
     start_char      INTEGER NOT NULL,
     end_char        INTEGER NOT NULL,
-    token_count     INTEGER NOT NULL,
-    window          INTEGER NOT NULL,
     forced_boundary INTEGER NOT NULL DEFAULT 0,
     embedding_bits  BLOB,
     embedding_model TEXT    NOT NULL DEFAULT '',

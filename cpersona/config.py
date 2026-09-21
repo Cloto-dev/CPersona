@@ -632,6 +632,14 @@ RECENT_RECALL_WINDOW_MIN = _parse_float("CPERSONA_RECENT_RECALL_WINDOW_MIN", 5.0
 TASK_MAX_RETRIES = _parse_int("CPERSONA_TASK_MAX_RETRIES", 3)
 TASK_RETRY_DELAY = _parse_int("CPERSONA_TASK_RETRY_DELAY", 30)
 
+# docs/BLOCK_REACH_DESIGN.md §7. Opt-in for the whole of this step, and off means
+# no embedding calls, no rows and no queue work rather than "built but unread":
+# a deployment not using the feature should not pay the backfill for it.
+# Promotion to a default is deliberately out of scope here — what would justify
+# one is a measured net gain, and §0 records the quantity that decides it as
+# unmeasured.
+BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "false").lower() == "true"
+
 # bug-371: read unvalidated and unnormalised, this setting had a third state
 # its two consumers both miss — the remote push tests `== "remote"` exactly and
 # the local write gate tests `== "local"` exactly, so a mis-cased or misspelt

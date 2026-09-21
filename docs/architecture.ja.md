@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:d7aecb9f4eb64441cbfcd38071aa3861341422d5 -->
+<!-- i18n-source: docs/architecture.md@blob:6baf4db7be2749fb976b3f13f5590040947b258f -->
 
 # アーキテクチャ
 
@@ -205,12 +205,18 @@ CPersona は生成モデルを呼びません。要約も抽出も書き換え�
 これを掃き出し、固定間隔 (`CPERSONA_TASK_RETRY_DELAY`) で再試行します。メモリ上
 ではなくデータベースにあるため、クラッシュや再起動でも作業は失われず再開されます。
 
-**ここに投入するものは 1 つだけです: 長い記録のノード構築。** `store`・
+**ここに投入するものは 2 つあり、2 つ目は既定で off です。** `store`・
 `archive_episode`・`update_memory` が埋め込み窓を超える本文を書くと、応答に
 `nodes: {"status": "queued"}` が付き、`build_nodes` タスクが記録を分割して区間ごとに
 埋め込みます ([overflow tree](OVERFLOW_TREE_DESIGN.md))。書き込み自体はこれを待ちません。
 キューが無効 (`CPERSONA_TASK_QUEUE_ENABLED=false`) か、埋め込みサーバーがトークン数を
 報告できない場合は何も投入されず、長い記録は先頭から引用されます。
+
+2 つ目は `build_blocks` で、`CPERSONA_BLOCK_BUILD_ENABLED` が on の配備でだけ走ります
+([Block による到達](BLOCK_REACH_DESIGN.md))。長い記録だけでなく**すべての記録**に対して
+投入されます — 短い記録も節には分かれるからで、分割が 1 Block にしかならない場合はタスク自身が
+辞退します。設定が off の場合 (既定はどこでも off) は何も投入されず、埋め込み呼び出しも
+発生しません。
 
 このキューはもともとサーバー側でのエピソード要約生成のために存在しましたが、その機能は
 v2.4.10 より前に削除されました。`archive_episode` は今も事前計算された要約を要求して

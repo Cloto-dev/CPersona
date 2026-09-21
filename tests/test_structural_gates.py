@@ -1342,9 +1342,10 @@ def _collect_enqueue_calls(tree):
     ]
 
 
-#: The modules allowed to enqueue, which is what the architecture page names. The
-#: overflow tree's node construction is the one producer (docs/OVERFLOW_TREE_DESIGN.md §3).
-_QUEUE_PRODUCERS = {"nodes.py"}
+#: The modules allowed to enqueue, which is what the architecture page names:
+#: the overflow tree's node construction (docs/OVERFLOW_TREE_DESIGN.md §3) and,
+#: when a deployment opts in, block construction (docs/BLOCK_REACH_DESIGN.md §6).
+_QUEUE_PRODUCERS = {"nodes.py", "blocks.py"}
 
 
 def test_background_queue_has_only_the_documented_producers():

@@ -210,14 +210,21 @@ worker that drains it at startup and retries failed tasks on a fixed delay
 (`CPERSONA_TASK_RETRY_DELAY`). Because it lives in the database rather than in
 memory, a crash or a restart resumes the work instead of losing it.
 
-**One thing enqueues onto it: building the nodes of a long record.** When
-`store`, `archive_episode` or `update_memory` writes a text that runs past the
-embedding window, the response carries `nodes: {"status": "queued"}` and a
-`build_nodes` task divides the record and embeds each span
+**Two things enqueue onto it, and the second is off by default.** When `store`,
+`archive_episode` or `update_memory` writes a text that runs past the embedding
+window, the response carries `nodes: {"status": "queued"}` and a `build_nodes`
+task divides the record and embeds each span
 ([overflow tree](OVERFLOW_TREE_DESIGN.md)). The write itself does not wait for
 it. With the queue disabled (`CPERSONA_TASK_QUEUE_ENABLED=false`), or with an
 embedding server that cannot report tokens, nothing is queued and a long record
 is quoted from its start.
+
+The second is `build_blocks`, which runs only where
+`CPERSONA_BLOCK_BUILD_ENABLED` is on ([block reach](BLOCK_REACH_DESIGN.md)). It
+is queued for every record rather than only the long ones, because a short
+record still divides into clauses, and the task declines by itself when the
+division yields a single block. Where the setting is off — which is everywhere
+by default — nothing is queued and no embedding call is made.
 
 The queue first existed for server-side episode summarisation, which was
 removed before v2.4.10; `archive_episode` still requires a pre-computed summary

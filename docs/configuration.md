@@ -19,6 +19,7 @@
 | `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | Max characters per profile row, capped separately from memories: the profile is never preview-trimmed, so this cap is the only thing bounding it. It is not injected into *every* response: the quality gate drops profile rows while the pool holds fewer than 50 rows, and `limit` cuts them when the scored results already fill it ([contract §7](behavior-contracts.md#7-profile-rows-carry-no-score)) |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results — and make it the ranking key: the result set is re-sorted by the score, and the quality gate keys on it. With this on, `CPERSONA_RECALL_MODE` no longer decides the returned order ([contract §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |
+| `CPERSONA_BLOCK_BUILD_ENABLED` | `false` | Build clause-sized blocks for each record and store one sign-quantised vector per block ([block reach](BLOCK_REACH_DESIGN.md)). Off means no embedding calls, no rows and no queue work — not "built but unread". Nothing reads the blocks yet, so turning it on today buys an index and no change in behaviour |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | Background task queue (DB-persisted, crash-recoverable) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | Penalty for recently recalled memories |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | Window (minutes) for recent recall penalty |

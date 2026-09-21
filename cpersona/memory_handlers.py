@@ -22,6 +22,7 @@ import httpx
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
+from cpersona import blocks
 from cpersona import health
 from cpersona import nodes
 from cpersona import scope_stats
@@ -382,6 +383,14 @@ async def do_store(
         queued = await nodes.queue_build("mem", mem_id, agent_id, key)
         if queued:
             result["nodes"] = queued
+    # Blocks are queued for every record, not only the ones that run past the
+    # window: a short record still divides into clauses, and the build declines
+    # by itself when the division yields a single block. The gate is checked
+    # first, so a deployment that has not opted in does no work here at all.
+    if blocks.building_enabled():
+        queued = await blocks.queue_build("mem", mem_id, agent_id, key)
+        if queued:
+            result["blocks"] = queued
     return result
 
 
