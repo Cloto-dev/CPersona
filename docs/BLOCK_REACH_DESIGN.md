@@ -159,7 +159,8 @@ away:
   not a claim that block hits are good.
 - Reserved candidates displace nothing that the gate admitted. They occupy
   their own places, and when the reservation is not filled the result is
-  shorter rather than padded.
+  shorter rather than padded. Turning the feature on therefore adds rows and
+  removes none: every answer the previous release gave is still given.
 - The reservation size is a configured bound with a conservative default, not a
   tuned parameter. Tuning it requires a reader-based measurement, which belongs
   to the precision step.
@@ -192,11 +193,28 @@ treated as current on the strength of a configured default that happens to
 match — an unknown is an unknown, and a separate piece of work exists to make
 the embedding service state its identity.
 
-## 7. Bounds and configuration
+## 7. Opt-in, and the two gates
 
-The feature is disabled by default. With it disabled the server's ordinary
-responses are byte-identical to the release before it: the presence of the
-block table changes no path.
+The feature is opt-in — not "off by default until it looks good", but opt-in
+for the whole of this step, with promotion to a default deliberately out of
+scope. What would justify a default is a measured net gain, and the quantity
+that decides it is the one section 0 says is unmeasured.
+
+Opt-in is split across two switches, because a single one would still charge a
+deployment for the half it is not using:
+
+| Switch | Governs | Off means |
+|---|---|---|
+| block construction | whether blocks are built and stored at all | no embedding calls, no rows, no queue work |
+| block retrieval | whether the block arm runs during recall | the index may exist, and nothing reads it |
+
+Turning construction on starts a bounded backfill of the existing corpus.
+Turning retrieval on while construction is off is a configuration error the
+server reports at startup, not a silent no-op that returns fewer rows than the
+caller has reason to expect.
+
+With both off, the server does what the previous release did and costs what it
+cost. The presence of the block table changes no path.
 
 Every bound below is fixed by server policy and is registered before anything
 is measured, never derived from the caller's request:
@@ -265,8 +283,14 @@ or response shape changes.
 - Whether nodes should themselves become retrievable. Blocks are finer than
   nodes and answer the same question, so shipping this makes that a choice
   between two derived layers rather than an independent question.
-- The coarse-scan implementation beyond the array ceiling in section 3, which
-  belongs to the line that owns the index architecture.
+- Whether the record layer is itself scanned coarsely. This page adds an arm;
+  it does not re-implement the existing one. Replacing the exact record scan
+  with an approximate one changes answers a caller already receives, which is a
+  different kind of change from adding a reserved arm — it needs an upper bound
+  on degradation where this page needs none. It belongs to the line that owns
+  the index architecture, along with the coarse-scan implementation beyond the
+  array ceiling in section 3. The scan built here is shaped so that line can
+  use it rather than start again.
 - Whether the scan window remains meaningful for an arm that sees the whole
   corpus.
 
@@ -279,8 +303,10 @@ registered before it runs — corpus, selection rule, model, configuration,
 decision rule and sample size — and the post-change number counts as evidence
 only because the same procedure produced the opposite result before the change.
 
-**Non-interference.** With every gate off, responses are byte-identical to the
-previous release on a fixed corpus.
+**Non-interference.** Two states are checked on a fixed corpus, not one: both
+switches off, and construction on with retrieval off. The second is the one
+that can fail quietly, because the rows exist and something might read them.
+Both must be byte-identical to the previous release.
 
 **Cost.** The measured block count and index size on the deployment's own
 corpus, replacing the estimate in section 3; the scan time at that size; the
