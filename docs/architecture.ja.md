@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:39bc59ea82715804ef95c85255232386a88819db -->
+<!-- i18n-source: docs/architecture.md@blob:3d5a33a64e02b2841b568a4c14cc2967b23eb4e7 -->
 
 # アーキテクチャ
 
@@ -53,7 +53,10 @@ WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在�
 グラフの中に消えた行を指すものは残りません。さらに 1 つ、`record_blocks` は
 同じ記録を節に相当する範囲へ分け、各範囲の符号量子化ベクトルを持ちます
 ([Block による到達](BLOCK_REACH_DESIGN.md))。これは opt-in で、そのトリガーは
-本文が変われば Block を削除し、記録が retag されれば分離軸の写しを更新します。
+本文が変われば Block を削除し、記録が retag されれば分離軸の写しを更新します。その隣で
+`record_block_vectors` が各 Block について次元ごとに 1 バイトを保持し、主キーで読み出して
+Block の腕の Hamming パスが最上位に並べたものを再順位付けします。`record_blocks` の
+トリガーが、Block と一緒にその Block のベクトルを削除します。
 
 FTS5 索引は **trigram** トークナイザを使います。これが、CPersona が日本語や
 その他の分かち書きしない文字体系で機能する理由です。単語境界ベースの
