@@ -188,6 +188,9 @@ async def test_registered_mcp_tool_preserves_trace_preview_and_read_scope(tmp_pa
     path.write_text(json.dumps({"clients": [{"client_id": "v1-reader", "token": None,
                                            "grants": {AGENT: "read"}}]}))
     monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 5)
+    # The boundary's preview cut applies to the single-passage quote (CPERSONA_RECONSTRUCT_QUOTE_CHARS=0);
+    # a filled quote passes it uncut, pinned in tests/test_reconstruct_filled_quote.py.
+    monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 0)
     previous = acl.current_principal()
     acl.activate(acl.load_config(str(path)))
     token = acl.set_principal(acl.Principal("v1-reader"))

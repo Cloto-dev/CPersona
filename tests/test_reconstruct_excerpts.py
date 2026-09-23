@@ -29,6 +29,7 @@ WINDOW = 24
 
 def test_budget_default_request_force_and_clamps(monkeypatch):
     monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 500)
+    monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 0)  # the preview-sized head this arithmetic assumes
     monkeypatch.setattr(config, "RECONSTRUCT_DEFAULT_BUDGET", 4000)
     monkeypatch.setattr(config, "RECONSTRUCT_MAX_BUDGET", 20000)
     monkeypatch.setattr(config, "RECONSTRUCT_FORCED_BUDGET", None)
@@ -188,6 +189,10 @@ class _TempDB:
 
 @pytest.fixture
 def windowed(fake_embedding_client, monkeypatch):
+    # These tests pin the single-passage head quote, which 2.6 keeps behind
+    # CPERSONA_RECONSTRUCT_QUOTE_CHARS=0. The filled quote that is now the default is
+    # pinned in tests/test_reconstruct_filled_quote.py.
+    monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 0)
     fake_embedding_client.token_window = WINDOW
     monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 500)
     return fake_embedding_client

@@ -40,6 +40,13 @@ def fill(text: str, spans: list[tuple[int, int]], ranked: list[tuple], cap: int)
     being longer than the cap is cut to the cap rather than dropped, so an
     excerpt is never empty. The ranges are shown in text order.
     """
+    return SEPARATOR.join(text[s:e] for s, e in fill_ranges(text, spans, ranked, cap)[0])
+
+
+def fill_ranges(
+    text: str, spans: list[tuple[int, int]], ranked: list[tuple], cap: int
+) -> tuple[list[tuple[int, int]], bool]:
+    """The ranges `fill` shows, in text order, and whether the best one was cut to the cap."""
     chosen: list[tuple[int, int]] = []
     used = 0
     for row in ranked:
@@ -49,11 +56,11 @@ def fill(text: str, spans: list[tuple[int, int]], ranked: list[tuple], cap: int)
         cost = (end - start) + (len(SEPARATOR) if chosen else 0)
         if used + cost > cap:
             if not chosen:
-                chosen.append((start, start + cap))
+                return [(start, start + cap)], True
             break
         chosen.append((start, end))
         used += cost
-    return SEPARATOR.join(text[s:e] for s, e in sorted(chosen))
+    return sorted(chosen), False
 
 
 async def for_refs(agent_id: str, refs: list[str], query: str, query_vec, cap: int) -> dict[str, dict]:

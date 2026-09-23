@@ -348,8 +348,9 @@ budget_base      = forced_budget ?? requested_budget ?? default_budget(count)
 effective_budget = min(budget_base, max_budget)
 ```
 
-- The default is the configured default, or one preview-tier quote for each
-  item of the window when that is more. A caller that names a count and leaves
+- The default is the configured default, or one head quote
+  (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`, the preview tier's size when that is 0)
+  for each item of the window when that is more. A caller that names a count and leaves
   the budget alone must not lose breadth to a default it never set: with a
   default of 4,000 and quotes of 500 characters, a window of ten used to return
   eight. Only the default moves. A budget the caller or an operator names is
@@ -364,9 +365,17 @@ effective_budget = min(budget_base, max_budget)
   therefore always fits. The default and the maximum budget have no value yet:
   both are chosen by the sweep in section 9, and the figure in the example
   below is illustrative.
-- An item carries its head claim in `content`, as before, and verbatim
-  excerpts of its other retained claims in `excerpts`, most relevant first.
-  Each excerpt is cut as the preview tier cuts. An excerpt only ever comes
+- An item carries its head claim in `content` and verbatim excerpts of its
+  other retained claims in `excerpts`, most relevant first. Since 2.6 the head
+  claim is quoted from the parts of its record that matched the query: the
+  governing ranges of its blocks in ranking order, filled while they fit
+  `CPERSONA_RECONSTRUCT_QUOTE_CHARS` and shown in text order — the same filling
+  as the recall excerpt ([design](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26)).
+  `quote_basis` says how the ranges were chosen and `ranges` where they are in
+  the record. Measured with an answer reader on LongMemEval, this answered 154
+  of 500 questions at count 1 where the single governing passage answered 116,
+  and 321 where it answered 223 at count 5. Each other excerpt is cut as the
+  preview tier cuts. An excerpt only ever comes
   from the item's own claims: an item grows because the memory has more
   structure, never because a relevance score is high. Scores are not
   calibrated across models and corpora, and growing an item beyond its bundle
@@ -417,7 +426,9 @@ layer is present. With no relations this stage is the identity.
 
 ```jsonc
 { "items": [{
-    "content": "…",            // a verbatim excerpt of the head claim, cut as the preview tier cuts
+    "content": "…",            // the parts of the head claim that matched, verbatim, joined by " … "
+    "quote_basis": "blocks",   // blocks / lexical (divided at read time) / start (one block) / whole (fits the quote)
+    "ranges": [[0, 212], [1480, 1731]],  // where content's passages are in the record, in text order
     "head_ref": "…",           // the claim that content quotes
     "excerpts": [{ "ref": "…", "content": "…" }],      // other retained claims, most relevant first, within the budget; absent when none
     "excerpts_omitted": 1,     // retained claims whose text the budget did not carry; absent when zero
@@ -441,9 +452,9 @@ layer is present. With no relations this stage is the identity.
 `supports` (episode containment). `corrects` and `qualifies` need a source of
 truth the server does not have — an in-place update leaves no history — so they
 appear when declared relations do. A reader ignores a role it does not know.
-- Full text is never inlined: `content` and every excerpt are cut as the
-  preview tier cuts, and a `ref` expands through `get_contents`, as it does
-  for the preview tier today.
+- Full text is never inlined: `content` is bounded by the head quote's size and
+  every excerpt is cut as the preview tier cuts, and a `ref` expands through
+  `get_contents`, as it does for the preview tier today.
 
 ### Invariants
 

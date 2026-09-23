@@ -488,12 +488,18 @@ def _apply_reconstruct_preview(result: dict) -> dict:
     reranker wants it), and the MCP boundary shapes the agent-facing payload.
     Section 7 says `content` is "cut as the preview tier cuts", and this is that
     cut — a PURE prefix with content_len / content_truncated markers, expandable
-    through the head claim's `ref` via get_contents.
+    through the head claim's `ref` via get_contents. It applies to the single-passage
+    quote (CPERSONA_RECONSTRUCT_QUOTE_CHARS=0); a filled quote carries `quote_basis`
+    and is left as the library layer made it.
     """
     cap = config.RECALL_PREVIEW_CHARS
     if cap <= 0:
         return result
     for item in result.get("items", []):
+        if "quote_basis" in item:
+            # 2.6: a filled head quote is already bounded by CPERSONA_RECONSTRUCT_QUOTE_CHARS and
+            # is not a prefix, so cutting it here would drop exactly the part that matched.
+            continue
         content = item.get("content")
         if isinstance(content, str) and len(content) > cap:
             item["content_len"] = len(content)
@@ -1486,8 +1492,8 @@ registry.auto_tool(
     "Assemble recall ITEMS from the candidate rows a recall produces: units of memory, "
     "each traceable to the canonical rows that support it. Reconstruction means select, "
     "order and assign roles -- never compose. No model is called and nothing is "
-    "summarised: `content` is a verbatim excerpt of the item's head claim, cut the way "
-    "the recall preview tier cuts, and expandable through `head_ref` via get_contents. "
+    "summarised: `content` quotes the item's head claim verbatim -- the parts of its record "
+    "that matched, filled up to a fixed size -- and expands through `head_ref` via get_contents. "
     "HEAD CLAIM: the most relevant row in the item; if newer versions of that record (same "
     "message id in the same stored project) are present, their latest version. When "
     "max_evidence cuts an item, the head is kept and the most relevant remaining rows fill "
@@ -1534,8 +1540,15 @@ registry.auto_tool(
     "window, whichever is more, so a count you name is not cut by a budget you did not set; a "
     "budget you do name is taken as given. "
     "QUOTES: `content` quotes the head claim and each `excerpts[]` entry quotes another "
-    "retained claim, most relevant first; all are verbatim and cut as the preview tier cuts. "
-    "A long record with overflow-tree nodes is quoted from the node that best matches the "
+    "retained claim, most relevant first; all are verbatim. The head quote is the record's "
+    "passages that matched the query, taken in ranking order while they fit "
+    "CPERSONA_RECONSTRUCT_QUOTE_CHARS (800 by default) and shown in text order joined by ' … ' "
+    "-- the recall excerpt's filling; `quote_basis` says how they were chosen (blocks, lexical, "
+    "start, or whole when the record fits) and `ranges` gives their character spans in the "
+    "record. A best passage longer than the size is cut and carries `context_incomplete` and "
+    "`expand` ({ref, span}) for get_contents. Excerpts of the other claims -- and the head "
+    "when CPERSONA_RECONSTRUCT_QUOTE_CHARS=0 -- are quoted as before 2.6 and cut as the preview "
+    "tier cuts: a long record with overflow-tree nodes is quoted from the node that best matches the "
     "query (rank by embedding similarity and by shared character trigrams, fused), and "
     "`node` gives its index, node count and character span in the stored text; a record "
     "without nodes is quoted from its start. READ FURTHER IN STEPS, SMALLEST FIRST: a node "

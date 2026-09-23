@@ -222,6 +222,12 @@ RECONSTRUCT_ADJACENCY_SECONDS = max(0, _parse_int("CPERSONA_RECONSTRUCT_ADJACENC
 # provisional. The default matches the design's worked example and the maximum
 # is five times it. A default or forced budget above the maximum, or one below a
 # single preview-tier excerpt, is a startup error (validate_reconstruct_counts).
+# 2.6: an item's head quote is the parts of its record that matched, filled in ranking order
+# up to this many characters (the same filling as the recall excerpt, cpersona/excerpts.py).
+# Measured on LongMemEval with an answer reader: 116 -> 154 of 500 at count 1, 223 -> 321 at
+# count 5, against the single governing passage cut at the preview tier. 0 keeps that single
+# passage, which is what every quote was before.
+RECONSTRUCT_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_QUOTE_CHARS", 800))
 RECONSTRUCT_DEFAULT_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", 4000)
 RECONSTRUCT_MAX_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_MAX_BUDGET", 20000)
 _forced_budget_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_BUDGET")

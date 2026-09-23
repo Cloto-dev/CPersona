@@ -65,7 +65,7 @@ import logging
 
 import numpy as np
 
-from . import associations, blocks, config, generation, nodes, vector
+from . import associations, blocks, config, excerpts, generation, nodes, vector
 from .database import connection
 from .utils import _parse_timestamp_utc
 
@@ -275,6 +275,11 @@ def resolve_count(requested: int | None) -> tuple[int, dict]:
     return effective, {"source": source, "clamped": effective < base, "reason": reason}
 
 
+def _head_cap() -> int:
+    """Characters one head quote may carry: the filled quote's size, or the preview tier's when filling is off."""
+    return config.RECONSTRUCT_QUOTE_CHARS if config.RECONSTRUCT_QUOTE_CHARS > 0 else config.RECALL_PREVIEW_CHARS
+
+
 def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
     """The payload budget (section 7, "Breadth before depth").
 
@@ -302,7 +307,7 @@ def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
         base, source, reason = requested, "caller", "budget_requested"
     else:
         base, source, reason = config.RECONSTRUCT_DEFAULT_BUDGET, "server_default", "budget_omitted"
-        heads = int(count) * max(config.RECALL_PREVIEW_CHARS, 0)
+        heads = int(count) * max(_head_cap(), 0)
         if heads > base:
             base, reason = heads, "default_fits_the_window"
     base = int(base)
@@ -997,6 +1002,46 @@ def _quote(
     return quote
 
 
+def _filled_quote(claim: _Candidate, block_entry: tuple | None, query_bits, query_grams: set[str], cap: int) -> dict:
+    """An item's head quote: the parts of its record that matched, filled to `cap` (2.6).
+
+    The ranking, the governing-context rule and the filling are the recall excerpt's
+    (`excerpts.fill_ranges`), so a head quote and a recall excerpt of the same record for the
+    same query are the same passages. With a current block set (read only while block
+    retrieval is on) the blocks are ranked lexically and by their bits; without one the
+    record is divided at read time and ranked by shared words. A record no longer than the
+    cap is quoted whole, and one that divides into a single block from its start.
+
+    `quote_basis` says which of those it was and `ranges` gives the quoted spans in the
+    record's text, in text order; the spans are joined by `excerpts.SEPARATOR`.
+    """
+    text = block_entry[0] if block_entry is not None else claim.content
+    if len(text) <= cap:
+        return {"content": text, "quote_basis": "whole", "ranges": [[0, len(text)]]}
+    if block_entry is not None:
+        block_rows, basis, bits = block_entry[1], "blocks", query_bits
+    else:
+        divided = blocks.segment(text)
+        block_rows = [(i, s.start, s.end, None) for i, s in enumerate(divided)]
+        basis, bits = "lexical", None
+    quote: dict = {"content_len": len(text), "content_truncated": True}
+    if len(block_rows) <= 1:
+        return {**quote, "content": text[:cap], "quote_basis": "start", "ranges": [[0, cap]],
+                "expand": {"ref": claim.ref, "span": [0, len(text)]}}
+    spans = [(start, end) for _, start, end, _ in block_rows]
+    ranked = rank_blocks(text, block_rows, bits, query_grams)
+    ranges, severed = excerpts.fill_ranges(text, spans, ranked, cap)
+    quote.update(content=excerpts.SEPARATOR.join(text[s:e] for s, e in ranges), quote_basis=basis,
+                 ranges=[[s, e] for s, e in ranges])
+    if severed:
+        # The best passage alone was longer than the cap: what is shown is its start.
+        start = ranges[0][0]
+        end = blocks.context_range(text, spans, ranked[0][0])[1]
+        quote["context_incomplete"] = True
+        quote["expand"] = {"ref": claim.ref, "span": [start, end]}
+    return quote
+
+
 def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple[list[dict], int, bool]:
     """Section 7's one fixed sequence, cut to the budget.
 
@@ -1054,6 +1099,8 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
             "expand",
             "block",
             "context_incomplete",
+            "quote_basis",
+            "ranges",
         ):
             if key in head:
                 item[key] = head[key]
@@ -1259,10 +1306,15 @@ async def do_reconstruct(
     # few indices only -- the fused values are not calibrated across records), so the runner-up
     # is a place to read next, not a confidence.
     node_orders: dict[str, list[int]] | None = {} if trace else None
+    head_cap = config.RECONSTRUCT_QUOTE_CHARS
     for item, head, others in entries_claims:
-        head_quote = _quote(
-            head, node_sets, query_vec, query_grams, cap, not_current, node_orders,
-            block_sets, query_bits,
+        head_quote = (
+            _filled_quote(head, block_sets.get(head.ref), query_bits, query_grams, head_cap)
+            if head_cap > 0
+            else _quote(
+                head, node_sets, query_vec, query_grams, cap, not_current, node_orders,
+                block_sets, query_bits,
+            )
         )
         other_quotes = [
             {

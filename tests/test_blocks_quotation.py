@@ -65,6 +65,10 @@ def quoting(monkeypatch, fake_embedding_client):
     monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
     monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", True)
     monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 500)
+    # These tests pin the single-passage head quote, which 2.6 keeps behind
+    # CPERSONA_RECONSTRUCT_QUOTE_CHARS=0. The filled quote that is now the default is
+    # pinned in tests/test_reconstruct_filled_quote.py.
+    monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 0)
     return fake_embedding_client
 
 
