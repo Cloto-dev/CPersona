@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/quality-assurance.md@blob:b28e3497c573c398a0242e18a54dbec61230ef39 -->
+<!-- i18n-source: docs/quality-assurance.md@blob:30b4136b59f92c8ab4307337462b7287b9fc5ceb -->
 
 # 品質保証 { #quality-assurance }
 
