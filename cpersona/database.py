@@ -13,7 +13,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -582,6 +582,42 @@ BEGIN
 END;
 """
 
+# v17: the stored vector of each block (docs/BLOCK_REACH_DESIGN.md §4b), which the
+# block arm reads to re-rank the rows its Hamming pass ranked highest.
+#
+# A table of its own rather than a column on record_blocks, because the two are
+# read in opposite ways. The Hamming pass reads every row of record_blocks on
+# every recall; a 1,024-byte column beside a 128-byte bit string would make that
+# scan read about eight times the pages to use none of the extra bytes. This
+# table is read only by primary key, for the few hundred rows the pass ranked
+# highest, so its size costs disk rather than scan time.
+#
+# int8, one byte per dimension, with no scale kept. Each vector is scaled so its
+# largest component is 127 before rounding, and the scale is dropped because the
+# only thing ever computed from the row is a cosine, which the scale cancels out
+# of. The vector is written in the same statement as its block and deleted with
+# it: the trigger below keys on the block row, so every path that already drops
+# a record's blocks — a delete, a rewrite, delete_agent_data — drops these too
+# without being told about them.
+#
+# Run on every boot, like the two tables above (bug-118). check_schema_objects
+# watches the trigger.
+RECORD_BLOCK_VECTORS_SQL = """
+CREATE TABLE IF NOT EXISTS record_block_vectors (
+    parent_kind     TEXT    NOT NULL,
+    parent_id       INTEGER NOT NULL,
+    block_index     INTEGER NOT NULL,
+    embedding_i8    BLOB    NOT NULL,
+    PRIMARY KEY (parent_kind, parent_id, block_index)
+) WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS record_block_vectors_ad AFTER DELETE ON record_blocks BEGIN
+    DELETE FROM record_block_vectors
+     WHERE parent_kind = old.parent_kind AND parent_id = old.parent_id
+       AND block_index = old.block_index;
+END;
+"""
+
 # v15: the declared graph of docs/ASSOCIATIVE_MEMORY_DESIGN.md §1 — entities
 # with aliases, the records that mention them, and subject–predicate–object
 # relations. Nothing in `memories` or `episodes` changes, and nothing here is
@@ -896,6 +932,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
     await db.executescript(SCHEMA_SQL)
     await db.executescript(RECORD_NODES_SQL)
     await db.executescript(RECORD_BLOCKS_SQL)
+    await db.executescript(RECORD_BLOCK_VECTORS_SQL)
     await db.executescript(ASSOCIATIONS_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on

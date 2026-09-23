@@ -253,12 +253,21 @@ class _TempDB:
 
 
 async def _row_written_under(db, key: str, parent_id: int, text_len: int) -> None:
-    """One complete, single-block set for a record, stored under ``key``."""
+    """One complete, single-block set for a record, stored under ``key``.
+
+    Complete includes the block's re-rank vector: a set without it is not
+    current whatever its key, and these tests are about the key alone.
+    """
     await db.execute(
         "INSERT INTO record_blocks (parent_kind, parent_id, block_index, agent_id, "
         "project_id, channel, start_char, end_char, forced_boundary, embedding_bits, "
         "embedding_model) VALUES ('mem', ?, 0, 'a', '', '', 0, ?, 0, X'00', ?)",
         (parent_id, text_len, key),
+    )
+    await db.execute(
+        "INSERT INTO record_block_vectors (parent_kind, parent_id, block_index, embedding_i8) "
+        "VALUES ('mem', ?, 0, X'7F00000000000000')",
+        (parent_id,),
     )
     await db.commit()
 

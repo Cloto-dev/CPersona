@@ -41,7 +41,7 @@ flowchart TB
 ## ストレージ { #storage }
 
 WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在の
-**schema v16** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
+**schema v17** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
 `memories` / `episodes` / `profiles` / `pending_memory_tasks` の 4 つです。加えて
 記録用の `schema_version` テーブルと、トリガーで同期される FTS5 仮想テーブルが
 2 つあります。5 つ目のテーブル `record_nodes` は、長い記憶とエピソードの本文への

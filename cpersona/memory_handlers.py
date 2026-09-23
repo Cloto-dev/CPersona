@@ -1473,6 +1473,7 @@ async def _block_reserved_rows(
         # be read as comparable to them.
         built["_block_distance"] = hit.distance
         built["_block_index"] = hit.block_index
+        built["_block_order"] = "hamming" if hit.cosine is None else "vector"
         out.append(built)
     return out
 
@@ -1811,10 +1812,15 @@ async def do_recall(
             # It says why it is here in its own terms: `hamming` is a distance
             # where the branches above carry scores, so the two cannot be read
             # off against each other, and `admission` says the row occupied a
-            # held place rather than passing anything.
+            # held place rather than passing anything. `order` says which order
+            # filled the places (§4b): `vector` when the stored vectors re-ranked
+            # the Hamming pass's best rows, `hamming` when some of them had no
+            # vector yet. The re-rank's cosine is not shown, for the reason the
+            # distance is shown instead of a score.
             msg["match_reason"] = {
                 "signal": "block",
                 "admission": "reservation",
+                "order": r["_block_order"],
                 "hamming": r["_block_distance"],
                 "block": r["_block_index"],
             }
@@ -1832,6 +1838,7 @@ async def do_recall(
         r.pop("_resolved", None)
         r.pop("_block_distance", None)
         r.pop("_block_index", None)
+        r.pop("_block_order", None)
         messages.append(msg)
 
     # bug-038: the recall_count/last_recalled_at bump is a write that feeds

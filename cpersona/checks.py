@@ -1233,6 +1233,17 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "SET agent_id = new.agent_id, project_id = new.project_id, channel = new.channel "
         "WHERE parent_kind = 'ep' AND parent_id = old.id; END",
     },
+    # v17 (see RECORD_BLOCK_VECTORS_SQL in database.py). Critical: without it a
+    # rewritten record's new blocks would be re-ranked by the vectors of the old
+    # ones, which describe text the record no longer holds.
+    "record_block_vectors_ad": {
+        "kind": "trigger",
+        "severity": "critical",
+        "sql": "CREATE TRIGGER record_block_vectors_ad AFTER DELETE ON record_blocks BEGIN "
+        "DELETE FROM record_block_vectors "
+        "WHERE parent_kind = old.parent_kind AND parent_id = old.parent_id "
+        "AND block_index = old.block_index; END",
+    },
     "idx_record_blocks_axes": {
         "kind": "index",
         "severity": "warning",

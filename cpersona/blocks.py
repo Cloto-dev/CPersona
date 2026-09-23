@@ -28,7 +28,9 @@ corpus that is 42 blocks out of 107,428.
 
 The divider is the offline half of this module. The build path at the bottom is
 the other half: it calls the embedding server, exactly as the node builder does,
-and writes what comes back as one bit per dimension.
+and writes what comes back twice: as one bit per dimension, which the Hamming
+pass scans, and as one byte per dimension, which re-ranks what that pass ranked
+highest (§4b).
 """
 
 import logging
@@ -290,6 +292,27 @@ def pack_bits(embedding: object) -> bytes | None:
     return np.packbits(np.asarray(embedding, dtype=np.float32) > 0).tobytes()
 
 
+def pack_int8(embedding: object) -> bytes | None:
+    """Quantise a vector to one signed byte per dimension, for the re-rank (§4b).
+
+    Scaled so the largest component is 127, then rounded; the scale is not kept,
+    because the only thing ever computed from these bytes is a cosine and a
+    cosine does not see it. None when the vector must not be stored — the same
+    refusal :func:`pack_bits` delegates — and None for a vector that is zero
+    everywhere, which has no direction to compare and whose cosine would be a
+    division by zero.
+    """
+    if vector.pack_for_storage(embedding) is None:
+        return None
+    import numpy as np
+
+    v = np.asarray(embedding, dtype=np.float32)
+    peak = float(np.abs(v).max())
+    if peak == 0.0:
+        return None
+    return np.round(v * (127.0 / peak)).astype(np.int8).tobytes()
+
+
 def building_enabled() -> bool:
     """Whether a write may queue block construction at all.
 
@@ -379,12 +402,27 @@ def _set_is_current(count, first, last, current, text_len: int) -> bool:
     return bool(count) and first == 0 and last == text_len and current == count
 
 
+#: The aggregate both currentness reads compute over a record's block rows:
+#: count, first start, last end, and how many rows are current. A row is current
+#: when a known model produced it AND its re-rank vector is there (§4b) — a set
+#: built before the vectors existed is rebuilt rather than half-used, because a
+#: re-rank that finds any candidate without a vector falls back to Hamming order
+#: for the whole query. Written once so the builder and the sweep cannot drift
+#: apart on it (see :func:`_set_is_current`).
+_SET_AGGREGATE = (
+    "COUNT(*), MIN(b.start_char), MAX(b.end_char), "
+    "SUM(b.embedding_model IN (?, ?) AND v.block_index IS NOT NULL) "
+    "FROM record_blocks b LEFT JOIN record_block_vectors v "
+    "ON v.parent_kind = b.parent_kind AND v.parent_id = b.parent_id "
+    "AND v.block_index = b.block_index "
+)
+
+
 async def _blocks_current(db, kind: str, parent_id: int, text_len: int, keys: tuple[str, str]) -> bool:
     """Whether this record's stored blocks were built from its current text by a
     known model. The one-record read behind :func:`_set_is_current`."""
     rows = await db.execute_fetchall(
-        "SELECT COUNT(*), MIN(start_char), MAX(end_char), SUM(embedding_model IN (?, ?)) "
-        "FROM record_blocks WHERE parent_kind = ? AND parent_id = ?",
+        f"SELECT {_SET_AGGREGATE}WHERE b.parent_kind = ? AND b.parent_id = ?",
         (*keys, kind, parent_id),
     )
     count, first, last, current = rows[0]
@@ -401,6 +439,7 @@ class PreparedBlocks:
     text: str
     spans: list[BlockSpan]
     bits: list[bytes]
+    vectors: list[bytes]
     model: str
 
 
@@ -427,6 +466,7 @@ async def prepare_blocks(
     if len(spans) <= 1:
         return None
     bits: list[bytes] = []
+    vectors_i8: list[bytes] = []
     for start in range(0, len(spans), _EMBED_BATCH):
         batch = spans[start : start + _EMBED_BATCH]
         vectors = await client.embed([text[s.start : s.end] for s in batch])
@@ -434,10 +474,14 @@ async def prepare_blocks(
             raise RuntimeError("embedding request returned no vectors for the block spans")
         for v in vectors:
             packed = pack_bits(v)
-            if packed is None:
+            quantised = pack_int8(v)
+            if packed is None or quantised is None:
                 raise RuntimeError("embedding for a block was refused for storage")
             bits.append(packed)
-    return PreparedBlocks(kind, parent_id, text, spans, bits, generation.block_keys()[0])
+            vectors_i8.append(quantised)
+    return PreparedBlocks(
+        kind, parent_id, text, spans, bits, vectors_i8, generation.block_keys()[0]
+    )
 
 
 async def write_blocks(db, prepared: PreparedBlocks) -> bool:
@@ -450,9 +494,9 @@ async def write_blocks(db, prepared: PreparedBlocks) -> bool:
     comparison is what closes the unlocked window; removing it is the mutation
     the tests are built to catch.
 
-    The whole set is written in one statement inside the caller's transaction,
-    so a crash between the delete and the inserts leaves the previous set intact
-    rather than half of a new one.
+    The whole set — its rows and their vectors — is written inside the caller's
+    transaction, so a crash between the delete and the inserts leaves the
+    previous set intact rather than half of a new one.
     """
     if await _parent_text(db, prepared.kind, prepared.parent_id) != prepared.text:
         return False
@@ -483,6 +527,17 @@ async def write_blocks(db, prepared: PreparedBlocks) -> bool:
                 prepared.model,
             )
             for i, (s, packed) in enumerate(zip(prepared.spans, prepared.bits))
+        ],
+    )
+    # After the blocks, because the DELETE above removed the old vectors through
+    # the trigger on record_blocks, and in the same transaction, so a set is
+    # never visible with its bits but without its vectors.
+    await db.executemany(
+        "INSERT INTO record_block_vectors (parent_kind, parent_id, block_index, embedding_i8) "
+        "VALUES (?, ?, ?, ?)",
+        [
+            (prepared.kind, prepared.parent_id, i, quantised)
+            for i, quantised in enumerate(prepared.vectors)
         ],
     )
     return True
@@ -667,9 +722,8 @@ async def _sets_for(db, kind: str, ids: list[int], keys: tuple[str, str]) -> dic
     if not ids:
         return {}
     rows = await db.execute_fetchall(
-        "SELECT parent_id, COUNT(*), MIN(start_char), MAX(end_char), SUM(embedding_model IN (?, ?)) "
-        "FROM record_blocks WHERE parent_kind = ? AND parent_id BETWEEN ? AND ? "
-        "GROUP BY parent_id",
+        f"SELECT b.parent_id, {_SET_AGGREGATE}"
+        "WHERE b.parent_kind = ? AND b.parent_id BETWEEN ? AND ? GROUP BY b.parent_id",
         (*keys, kind, ids[0], ids[-1]),
     )
     return {row[0]: tuple(row[1:]) for row in rows}
@@ -866,6 +920,18 @@ BLOCK_EXAMINED_CAP = 250_000
 #: of long records could fill the examined set on their own.
 BLOCK_PER_PARENT_CAP = 64
 
+#: How many of the examined rows, in Hamming order, are re-ranked by their stored
+#: vector (§4b). Server policy, derived from nothing the caller asks for, like
+#: the two caps above.
+#:
+#: Chosen from a measured curve, not tuned to it: over the pre-registered query
+#: families the reservation's reach rose from 57 to 78 of 195 and from 64 to 81
+#: of 189 at this depth, which is within one query of re-ranking every examined
+#: row by its vector. The curve is flat from about 50 upwards, so the depth is a
+#: bound on how many rows are read per recall rather than a knob with an optimum
+#: near it.
+BLOCK_RERANK_DEPTH = 200
+
 #: How many result places block hits may fill (§5). A configured bound with a
 #: conservative default, not a tuned parameter: tuning it needs a reader-based
 #: measurement, which belongs to the precision step. It is an upper bound on
@@ -915,6 +981,9 @@ class BlockHit:
     parent_id: int
     block_index: int
     distance: int
+    #: The cosine between the query and this block's stored vector, when the
+    #: re-rank ordered the hits (§4b). None when they are in Hamming order.
+    cosine: float | None = None
 
 
 async def _examined(db, iso, keys: tuple[str, str]) -> list[tuple]:
@@ -972,8 +1041,101 @@ def _hamming(rows: list[tuple], query_bits: bytes) -> list[BlockHit]:
     return sorted(best.values(), key=lambda h: (h.distance, h.kind, h.parent_id, h.block_index))
 
 
+def _hamming_order(rows: list[tuple], query_bits: bytes) -> list[tuple[tuple, int]]:
+    """The first :data:`BLOCK_RERANK_DEPTH` usable rows in the total order of
+    :func:`_hamming` — distance, kind, parent id, block index — with their distance,
+    before any collapse to the parent.
+
+    The depth is cut on rows, not parents, because a row is what has a vector to
+    read. Ties at the cut are settled by the same written-down order, so the set
+    re-ranked is a function of the database and the query alone.
+    """
+    import numpy as np
+
+    width = len(query_bits)
+    usable = [row for row in rows if row[3] is not None and len(row[3]) == width]
+    if not usable:
+        return []
+    packed = np.frombuffer(b"".join(row[3] for row in usable), dtype=np.uint8).reshape(
+        len(usable), width
+    )
+    query = np.frombuffer(query_bits, dtype=np.uint8)
+    distances = _popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
+    depth = min(BLOCK_RERANK_DEPTH, len(usable))
+    # Every row no farther than the depth-th distance, then the full order over
+    # that handful: sorting the whole examined set in Python to keep 200 of it
+    # would cost more than the scan.
+    cut = int(np.partition(distances, depth - 1)[depth - 1])
+    near = [(usable[j], int(distances[j])) for j in np.flatnonzero(distances <= cut)]
+    near.sort(key=lambda rd: (rd[1], rd[0][0], rd[0][1], rd[0][2]))
+    return near[:depth]
+
+
+async def _stored_vectors(db, keys: list[tuple[str, int, int]]) -> dict[tuple, bytes]:
+    """The re-rank vectors of ``keys``, by (kind, parent id, block index)."""
+    if not keys:
+        return {}
+    marks = ", ".join("(?, ?, ?)" for _ in keys)
+    rows = await db.execute_fetchall(
+        "SELECT parent_kind, parent_id, block_index, embedding_i8 FROM record_block_vectors "
+        f"WHERE (parent_kind, parent_id, block_index) IN (VALUES {marks})",
+        [value for key in keys for value in key],
+    )
+    return {(r[0], r[1], r[2]): r[3] for r in rows}
+
+
+def _rerank(
+    near: list[tuple[tuple, int]], stored: dict[tuple, bytes], embedding: object
+) -> list[BlockHit] | None:
+    """The rows the Hamming pass ranked highest, ordered by the cosine of their
+    stored vector and collapsed to their parent. None when any of them has no
+    usable vector.
+
+    All or nothing, because a cosine and a Hamming distance cannot be put in one
+    order: a row with a vector would be compared on one scale and a row without
+    on another. A set built before the vectors existed is found not current and
+    rebuilt (see :data:`_SET_AGGREGATE`), so the fallback is the state of a
+    deployment part-way through that rebuild, and the answer it gives is the one
+    the previous release gave.
+
+    The parent takes its best block's cosine and nothing is summed, for the
+    reason :class:`BlockHit` gives. The order is written down: cosine descending,
+    then kind, parent id and block index. Parents none of whose blocks made the
+    depth are not candidates.
+    """
+    import numpy as np
+
+    if not near:
+        return []
+    width = len(near[0][0][3]) * 8
+    query = np.asarray(embedding, dtype=np.float32)
+    if query.shape != (width,):
+        return None
+    blobs = [stored.get((row[0], row[1], row[2])) for row, _ in near]
+    if any(blob is None or len(blob) != width for blob in blobs):
+        return None
+    matrix = np.frombuffer(b"".join(blobs), dtype=np.int8).reshape(len(blobs), width)
+    matrix = matrix.astype(np.float32)
+    norms = np.linalg.norm(matrix, axis=1) * float(np.linalg.norm(query))
+    if not np.all(norms > 0):
+        return None
+    cosines = (matrix @ query) / norms
+    best: dict[tuple[str, int], BlockHit] = {}
+    for (row, distance), cosine in zip(near, cosines):
+        kind, parent_id, block_index = row[0], row[1], row[2]
+        hit = BlockHit(kind, parent_id, int(block_index), distance, float(cosine))
+        held = best.get((kind, parent_id))
+        if held is None or (-hit.cosine, hit.block_index) < (-held.cosine, held.block_index):
+            best[(kind, parent_id)] = hit
+    return sorted(best.values(), key=lambda h: (-h.cosine, h.kind, h.parent_id, h.block_index))
+
+
 async def search(db, embedding: object, iso) -> list[BlockHit]:
     """Every record the block index reaches for this query, best block first.
+
+    Best by the stored vector of the rows the Hamming pass ranked highest (§4b),
+    or by Hamming distance over every examined row when any of those rows has no
+    vector yet — never a mixture of the two.
 
     ``iso`` is the caller's isolation predicate over the axes copied onto each
     row. Those copies are not a second authority — what this returns must be a
@@ -993,6 +1155,11 @@ async def search(db, embedding: object, iso) -> list[BlockHit]:
         logger.warning("block arm: the query vector could not be quantised, skipping")
         return []
     rows = await _examined(db, iso, generation.block_keys())
+    near = _hamming_order(rows, query_bits)
+    stored = await _stored_vectors(db, [(row[0], row[1], row[2]) for row, _ in near])
+    reranked = _rerank(near, stored, embedding)
+    if reranked is not None:
+        return reranked
     return _hamming(rows, query_bits)
 
 

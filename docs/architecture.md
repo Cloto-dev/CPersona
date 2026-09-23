@@ -39,7 +39,7 @@ Two things follow from this shape:
 ## Storage
 
 One SQLite database in WAL mode (`CPERSONA_DB_PATH`), currently **schema
-v16**, migrated forward automatically on startup. It holds four data tables —
+v17**, migrated forward automatically on startup. It holds four data tables —
 `memories`, `episodes`, `profiles`, `pending_memory_tasks` — plus a
 `schema_version` bookkeeping table and two FTS5 virtual tables that triggers
 keep in step. A fifth table, `record_nodes`, holds only offsets into the text of
@@ -52,7 +52,10 @@ record, so nothing in the graph ever points at a row that is gone. One more,
 `record_blocks`, divides those same records into clause-sized spans and holds a
 sign-quantised vector for each ([block reach](BLOCK_REACH_DESIGN.md)); it is
 opt-in, and its triggers both drop a record's blocks when its text changes and
-move their copy of the isolation axes when the record is retagged.
+move their copy of the isolation axes when the record is retagged. Beside it,
+`record_block_vectors` keeps one byte per dimension for each block, read by
+primary key to re-rank what the block arm's Hamming pass ranks highest; a
+trigger on `record_blocks` deletes a block's vector with the block.
 
 The FTS5 indexes use the **trigram** tokenizer. That is what makes CPersona
 work on Japanese and other space-less scripts at all. A word-boundary
