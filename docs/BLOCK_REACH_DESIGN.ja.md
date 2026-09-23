@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/BLOCK_REACH_DESIGN.md@blob:fc5b6c81ba1a9e7a8830603753b18be2ed4550ff -->
+<!-- i18n-source: docs/BLOCK_REACH_DESIGN.md@blob:a31ec26e3d94f4942c3ad057102e259fca4d0250 -->
 
 # Block による到達 — 設計 { #block-reach-design }
 
@@ -367,6 +367,18 @@ run が報告するものは、その run がしたことと、コーパスが�
 構築したレコード数は coverage ではありません — 許された範囲をすべて構築した run も、コーパスの
 どれだけに Block があるかについてはそれ自体では何も述べず、backfill を見ている運用者が動きを
 見たいのは後者の数だからです。
+
+この数は health の発見事項でもあります。構築が on のとき、`check_health` は
+`missing_blocks` を報告します — 2 つ以上の Block に分割されるのに current な集合を持たない
+レコードであり、builder と sweep が使うのと同じ分割・同じ currentness 述語によってオフラインで
+見つけられるので、3 者が 1 つのレコードについて食い違うことはありません。`fix=true` のときは
+1 回の run で最大 50 件を構築し、埋め込みは書き込みロックの外で行い、レコードを書き換えることは
+決してありません。これを必要とする場合が 2 つあります。タスクキューが off の配備には他に builder が
+ありません — 書き込み経路も sweep も、どちらもキューの上で走るからです。そして、Block 集合が
+re-rank ベクトルを持たないリリースから上げる配備では、すべての集合が current でないと
+判定されます (不変条件 8)。sweep は有界な run でそれらを作り直し、この check は運用者がその
+進捗を見て、前へ進めるための手段です。構築が off のとき、check は何も報告せず、何も
+構築しません。
 
 ## 8. 不変条件 { #8-invariants }
 
