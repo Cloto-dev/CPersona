@@ -21,6 +21,12 @@ from benchmarks.reconstruct_count_qa import (
 MODEL = "gpt-5.6-luna"
 EFFORT = "high"
 
+#: The executable to run. A wrapper earlier on PATH can add flags of its own (one
+#: that bypasses hook trust, say), and its warnings then arrive as items the
+#: isolation check rightly refuses, so a measurement can point this at the real
+#: binary. Recorded in each call's invocation.json.
+CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
+
 
 def metrics(events, wall_ms):
     """Codex cached input is a subset of input, not an additional input term."""
@@ -53,20 +59,21 @@ def metrics(events, wall_ms):
     return result
 
 
-def invoke(packet, kind, output_dir, *, timeout=180):
-    """No wrapper retries; preserve successful or failed execution evidence."""
-    if kind not in ("reader", "judge"):
-        raise ValueError("Unknown call kind")
+def run_isolated(prompt, system, schema, output_dir, *, model, effort, timeout=180):
+    """One isolated Codex call: no user config, hooks, memories, tools or API keys.
+
+    Returns (structured answer, usage metrics). No wrapper retries; the call's
+    request, events and answer stay in ``output_dir`` as evidence whether it
+    succeeded or failed. ``output_dir`` must not exist yet, so a result is never
+    silently overwritten.
+    """
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
-    schema = READER_SCHEMA if kind == "reader" else JUDGE_SCHEMA
-    system = READER_SYSTEM if kind == "reader" else JUDGE_SYSTEM
     (output_dir / "schema.json").write_text(canonical(schema))
     (output_dir / "instructions.txt").write_text(system)
-    prompt = canonical(packet)
     (output_dir / "request.json").write_text(prompt)
-    command = ["codex", "exec", "--model", MODEL,
-               "-c", f'model_reasoning_effort="{EFFORT}"',
+    command = [CODEX_BIN, "exec", "--model", model,
+               "-c", f'model_reasoning_effort="{effort}"',
                "--ignore-user-config", "--ephemeral", "--skip-git-repo-check",
                "--sandbox", "read-only", "--json", "--color", "never",
                "--output-schema", str(output_dir / "schema.json"),
@@ -81,7 +88,7 @@ def invoke(packet, kind, output_dir, *, timeout=180):
         command += ["--disable", feature]
     command += ["--enable", "skip_host_skill_discovery", "-"]
     (output_dir / "invocation.json").write_text(canonical({
-        "argv": command, "kind": kind, "model": MODEL, "effort": EFFORT,
+        "argv": command, "model": model, "effort": effort,
         "model_identity_evidence": "requested CLI model; JSON usage has no model attestation",
     }))
     env = dict(os.environ)
@@ -108,7 +115,19 @@ def invoke(packet, kind, output_dir, *, timeout=180):
         raise RuntimeError(f"Codex exited {proc.returncode}; inspect retained call artifact")
     events = [json.loads(line) for line in (output_dir / "events.jsonl").read_text().splitlines() if line.strip()]
     measured = metrics(events, wall_ms)
-    value = validate_output(json.loads((output_dir / "answer.json").read_text()), kind)
+    return json.loads((output_dir / "answer.json").read_text()), measured
+
+
+def invoke(packet, kind, output_dir, *, timeout=180):
+    """No wrapper retries; preserve successful or failed execution evidence."""
+    if kind not in ("reader", "judge"):
+        raise ValueError("Unknown call kind")
+    schema = READER_SCHEMA if kind == "reader" else JUDGE_SCHEMA
+    system = READER_SYSTEM if kind == "reader" else JUDGE_SYSTEM
+    output_dir = Path(output_dir).resolve()
+    raw, measured = run_isolated(canonical(packet), system, schema, output_dir,
+                                 model=MODEL, effort=EFFORT, timeout=timeout)
+    value = validate_output(raw, kind)
     result = {"kind": kind, "model": MODEL, "effort": EFFORT,
               "model_identity_evidence": "requested CLI model; not independently attested",
               "packet_sha256": packet_hash(packet), "output": value, "metrics": measured}

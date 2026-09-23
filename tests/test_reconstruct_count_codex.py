@@ -81,3 +81,19 @@ def test_nonzero_exit_never_becomes_success(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="exited 1"):
         qa.invoke({}, "judge", tmp_path / "call")
     assert not (tmp_path / "call" / "result.json").exists()
+
+
+def test_the_executable_can_be_pointed_past_a_wrapper(tmp_path, monkeypatch):
+    observed = []
+
+    def fake_run(command, **kwargs):
+        observed.append(command)
+        kwargs["stdout"].write("\n".join(json.dumps(e) for e in events()))
+        Path(command[command.index("--output-last-message") + 1]).write_text(
+            json.dumps({"correct": True, "reason": "matches"}))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(qa.subprocess, "run", fake_run)
+    monkeypatch.setattr(qa, "CODEX_BIN", "/opt/real/codex")
+    qa.invoke({"question": "q"}, "judge", tmp_path / "call")
+    assert observed[0][0] == "/opt/real/codex"

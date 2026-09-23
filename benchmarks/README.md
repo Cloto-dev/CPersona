@@ -28,6 +28,7 @@ Two tracks are measured:
 | `frozen_replay.py` | Frozen-stage replay of the Track B path: scores the dense-only order, the admitted order, the fused order and the gated order per query on the same frozen embeddings and lexical scores, so Track B − Track A can be attributed to a stage. Reproduces Track A at the first stage and the recorded Track B at the last, and compares its fused/gated orders row for row with the live `_recall_rrf` / `do_recall` on a sample of queries |
 | `replay_summary.py` | Tabulates `frozen_replay.py` output across models: stage decomposition, lexical-weight sweep, top-ten move taxonomy, per-corpus calibration |
 | `replay_query_analysis.py` | Per-query view of the same output: fusion delta by top-cosine quartile, the one-parameter cosine switch and its oracle, gold visibility |
+| `longmemeval_reader.py` | End-to-end answer accuracy on LongMemEval: reads the rankings a retrieval run dumped (`--dump_rankings`), rebuilds what a caller would have read, and has an isolated reader answer and a judge grade it (below) |
 | `benchmark_latency.py` | Production-stack latency runner: end-to-end `do_recall()` / `do_store()` wall clock against a REAL HTTP embedding backend (CEmbedding `/embed`), in both `local` and `remote` (matrix `/search`) vector-search modes |
 
 ## Prerequisites
@@ -290,6 +291,44 @@ EMB_CACHE_DIR=~/lmeb/embcache_jinanano \
 OUTPUT_DIR=trackb_results_jinanano \
 bash benchmarks/run_trackb.sh --unclamp_limit \
     --trust_remote_code --default_task retrieval
+```
+
+## Answer accuracy (LongMemEval reader)
+
+Retrieval metrics say whether the evidence came back; `longmemeval_reader.py`
+says whether a reader could answer from what came back. The memory server calls
+no model: the reader and the judge are this script's, run through an isolated,
+subscription-authenticated Codex call (no tools, hooks, memories or user
+configuration; set `CODEX_BIN` to the real binary if a wrapper sits earlier on
+`PATH`).
+
+Rules:
+
+1. **The input is a retrieval run's rankings**, taken under the caller's regime
+   (`--recall_limit 10`, gates on). Rows from another scene are another user's
+   history: they are dropped and counted, never backfilled, so a run that
+   stores every scene together can hand the reader fewer than ten rows.
+2. **Two arms, both from what the memory stored.** `expanded` shows each
+   returned record in full, as `get_contents` would; `preview` shows the stored
+   text cut to the recall preview length. The benchmark stores title and user
+   turns only, so a single-session-assistant question is structurally
+   unanswerable here and is reported apart from any claim.
+3. **The prompts are the reference implementation's**, copied verbatim and
+   pinned by hash in the tests. The judge model is not the reference one, so
+   the numbers compare arms of this harness, not published results.
+4. **Every call is cached** by model, effort, instructions, schema and prompt.
+   A repeat with `--rep N` bypasses the cache: that is the A/A measurement of
+   the reader's own noise, and no difference smaller than it is a finding.
+5. **Self-tests before any claim:** `--mode oracle` (the reference evidence:
+   the reader's ceiling), `empty` and `shuffled` (another question's evidence:
+   both must fall), `judge_gold` (the gold answer must grade yes) and
+   `judge_other` (another question's answer must grade no).
+
+```bash
+CODEX_BIN=/path/to/codex python -m benchmarks.longmemeval_reader \
+  --rankings <arm>/limit10/rankings.jsonl \
+  --lmeb_dir <lmeb>/eval_data/Dialogue/LongMemEval \
+  --oracle longmemeval_oracle.json --cache_dir <cache> --out <arm>/reader.jsonl
 ```
 
 ## Latency benchmark (production stack)
