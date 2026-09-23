@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:7c5264829318af5aa13445c6bc9a57339527d72c -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:80e8c50cdc15d82cc29c0dbdb221ad0b60948f35 -->
 
 # Reliable Recall — 2.6 系
 
@@ -301,7 +301,8 @@ budget_base      = forced_budget ?? requested_budget ?? default_budget(count)
 effective_budget = min(budget_base, max_budget)
 ```
 
-- 既定値は、設定された既定値か、窓の item 1 件につき preview tier の引用 1 つ分のうち、
+- 既定値は、設定された既定値か、窓の item 1 件につき head の引用 1 つ分
+  (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`。0 の時は preview tier の大きさ) のうち、
   大きい方です。件数を指定して予算を指定しなかった呼び出し側が、自分で決めていない既定値に
   幅を削られてはなりません: 既定 4,000・引用 500 字では、件数 10 の窓が 8 件しか返しません
   でした。動くのは既定値だけです。呼び出し側や運用者が指定した予算はそのまま使い、
@@ -314,8 +315,15 @@ effective_budget = min(budget_base, max_budget)
   エラーであって、黙った clamp ではありません。したがって最初の item は必ず収まります。
   既定と最大の予算にはまだ値がありません: どちらも第 9 節の sweep で選び、下の例の数値は
   説明のためのものです。
-- item は従来どおり head claim を `content` に運び、保持した他の claim の原文抜粋を
-  `excerpts` に関連度の高い順で運びます。各抜粋は preview tier と同じ切り方です。抜粋は
+- item は head claim を `content` に運び、保持した他の claim の原文抜粋を
+  `excerpts` に関連度の高い順で運びます。2.6 からは head claim を、そのレコードのうち
+  クエリに一致した箇所から引用します: ブロックの支配範囲を順位順に、
+  `CPERSONA_RECONSTRUCT_QUOTE_CHARS` に収まる限り詰め、本文順で示します —
+  recall の抜粋と同じ詰め方です ([設計](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26))。
+  `quote_basis` は範囲の選び方を、`ranges` はそれがレコードのどこかを述べます。
+  回答の読み手で LongMemEval を計測したところ、count 1 では単一の支配パッセージが
+  116 問に答えたのに対し 500 問中 154 問、count 5 では 223 問に対し 321 問に答えました。
+  他の各抜粋は preview tier と同じ切り方です。抜粋は
   必ずその item 自身の claim から取ります: item が大きくなるのは記憶の構造が大きいからであり、
   関連度スコアが高いからではありません。スコアはモデルやコーパスをまたいで較正されておらず、
   束ねを超えて item を膨らませると、束ねのキーが独立と判定した記憶を混ぜることになります。
@@ -354,7 +362,9 @@ effective_budget = min(budget_base, max_budget)
 
 ```jsonc
 { "items": [{
-    "content": "…",            // head claim の原文抜粋。preview tier と同じ切り方
+    "content": "…",            // head claim のうち一致した箇所を原文のまま " … " で連結
+    "quote_basis": "blocks",   // blocks / lexical (読み取り時に分割) / start (1 ブロック) / whole (引用に収まる)
+    "ranges": [[0, 212], [1480, 1731]],  // content の各パッセージがレコードのどこか、本文順
     "head_ref": "…",           // content が引用している claim
     "excerpts": [{ "ref": "…", "content": "…" }],      // 保持した他の claim、関連度順、予算の内側。無ければ省略
     "excerpts_omitted": 1,     // 予算がテキストを運ばなかった保持 claim の数。0 なら省略
@@ -377,8 +387,8 @@ effective_budget = min(budget_base, max_budget)
   `supersedes` (メッセージ id と時間順) と `supports` (episode の包含) です。`corrects` と
   `qualifies` にはサーバーが持たない真実の源が要り — in-place の更新は履歴を残しません —
   宣言された関係が入った時に現れます。読み手は知らない役割を無視します。
-- 本文全体は決して inline しません。`content` とすべての抜粋は preview tier と同じ切り方で、
-  `ref` は、今日の preview tier と同じく `get_contents` で展開します。
+- 本文全体は決して inline しません。`content` は head の引用の大きさで制限され、
+  すべての抜粋は preview tier と同じ切り方で、`ref` は、今日の preview tier と同じく `get_contents` で展開します。
 
 ### 不変条件 { #invariants }
 
