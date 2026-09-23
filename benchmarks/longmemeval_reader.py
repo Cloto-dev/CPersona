@@ -380,7 +380,11 @@ def main():
     parser.add_argument("--oracle", required=True, help="longmemeval_oracle.json (answers, types, dates)")
     parser.add_argument("--cache_dir", required=True)
     parser.add_argument("--out", required=True, help="per-question JSONL; the summary goes beside it")
-    parser.add_argument("--reader_effort", default="low")
+    # high: at low and medium this model spends no reasoning tokens, and on the
+    # oracle self-test high answered 93 of 99 against 82 at low, the gain in the
+    # multi-session and temporal types beyond the reader's own run-to-run noise.
+    # A reader that is the bottleneck hides what retrieval changed.
+    parser.add_argument("--reader_effort", default="high")
     parser.add_argument("--judge_effort", default="low")
     parser.add_argument("--limit", type=int, default=0, help="stratified subset size (0 = all)")
     parser.add_argument("--rep", type=int, default=0, help="> 0 repeats every call past the cache (A/A)")

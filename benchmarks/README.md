@@ -319,7 +319,10 @@ Rules:
 4. **Every call is cached** by model, effort, instructions, schema and prompt.
    A repeat with `--rep N` bypasses the cache: that is the A/A measurement of
    the reader's own noise, and no difference smaller than it is a finding.
-5. **Self-tests before any claim:** `--mode oracle` (the reference evidence:
+5. **The reader must not be the bottleneck.** Its effort is chosen on the
+   oracle self-test (the default, `high`, is the lowest level at which the
+   model reasons at all), and the A/A noise is measured at that effort.
+6. **Self-tests before any claim:** `--mode oracle` (the reference evidence:
    the reader's ceiling), `empty` and `shuffled` (another question's evidence:
    both must fall), `judge_gold` (the gold answer must grade yes) and
    `judge_other` (another question's answer must grade no).
