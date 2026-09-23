@@ -33,6 +33,8 @@ import hashlib
 import json
 import random
 import re
+import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -228,6 +230,14 @@ def stored_content(title, text):
 # --- calls ---------------------------------------------------------------------------
 
 
+#: Attempts per call, and the pause before each retry. A failed turn here is the
+#: transport (the backend refusing a connection under load), not an answer, so a
+#: retry does not choose among answers; each failed attempt's artifacts are kept
+#: beside the call and the result records how many attempts it took.
+ATTEMPTS = 3
+RETRY_PAUSE_S = (15, 60)
+
+
 def call(prompt, system, schema, cache_dir, *, effort, rep=0):
     """One isolated call, cached by everything that determines it.
 
@@ -238,8 +248,19 @@ def call(prompt, system, schema, cache_dir, *, effort, rep=0):
     out = Path(cache_dir) / key[:2] / key
     if (out / "result.json").exists():
         return json.loads((out / "result.json").read_text())
-    raw, measured = run_isolated(prompt, system, schema, out, model=MODEL, effort=effort)
-    result = {"key": key, "model": MODEL, "effort": effort, "output": raw, "metrics": measured}
+    for attempt in range(1, ATTEMPTS + 1):
+        if out.exists():
+            # A call that failed earlier, in this run or a previous one: keep it as evidence.
+            out.rename(out.with_name(f"{key}.failed-{time.time_ns()}"))
+        try:
+            raw, measured = run_isolated(prompt, system, schema, out, model=MODEL, effort=effort)
+            break
+        except (RuntimeError, ValueError):
+            if attempt == ATTEMPTS:
+                raise
+            time.sleep(RETRY_PAUSE_S[min(attempt, len(RETRY_PAUSE_S)) - 1])
+    result = {"key": key, "model": MODEL, "effort": effort, "attempts": attempt,
+              "output": raw, "metrics": measured}
     (out / "result.json").write_text(canonical(result))
     return result
 
@@ -396,21 +417,33 @@ def main():
     references = load_references(args.oracle)
     queries = load_queries(args.lmeb_dir)
     items, stats = build_items(args, references, queries)
+    def one(item):
+        """A question that still fails after the retries is counted, not fatal to the run."""
+        try:
+            if args.mode.startswith("judge_"):
+                return grade_only(item, args.cache_dir, args.judge_effort)
+            return answer_and_grade(item, args.cache_dir, args.reader_effort, args.judge_effort, args.rep)
+        except Exception as exc:  # recorded per question; the summary says how many
+            return {"qid": item["qid"], "arm": item["arm"], "error": f"{type(exc).__name__}: {exc}"}
+
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        if args.mode.startswith("judge_"):
-            results = list(pool.map(lambda it: grade_only(it, args.cache_dir, args.judge_effort), items))
-        else:
-            results = list(pool.map(lambda it: answer_and_grade(
-                it, args.cache_dir, args.reader_effort, args.judge_effort, args.rep), items))
+        outcomes = list(pool.map(one, items))
+    failed = [o for o in outcomes if "error" in o]
+    results = [o for o in outcomes if "error" not in o]
     with open(args.out, "w", encoding="utf-8") as fh:
         for r in results:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-    summary = {"mode": args.mode, "model": MODEL, "reader_effort": args.reader_effort,
+    summary = {"failed": len(failed), "failed_questions": [(f["qid"], f["arm"]) for f in failed],
+               "mode": args.mode, "model": MODEL, "reader_effort": args.reader_effort,
                "judge_effort": args.judge_effort, "rep": args.rep, "limit": args.limit,
                "seed": args.seed, "rankings": args.rankings, **stats,
                "accuracy": summarize(results)}
     Path(args.out).with_suffix(".summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False))
     print(json.dumps(summary["accuracy"], indent=1, ensure_ascii=False))
+    if failed:
+        # Re-running resumes: every completed call is read from the cache.
+        print(f"{len(failed)} question(s) failed; the accuracy above excludes them", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

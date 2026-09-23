@@ -295,3 +295,33 @@ def test_the_judge_self_tests_hand_it_the_gold_or_another_questions_answer():
     assert all(i["response"] == i["reference"]["answer"] for i in gold)
     assert all(i["response"] != i["reference"]["answer"] for i in other)
     assert len(gold) == len(other) == 5
+
+
+def test_a_failed_attempt_is_kept_aside_and_retried(tmp_path, monkeypatch):
+    attempts = []
+
+    def run(prompt, system, schema, out, *, model, effort, timeout=180):
+        out.mkdir(parents=True)
+        attempts.append(out)
+        if len(attempts) == 1:
+            raise ValueError("Codex reported a failed turn")
+        return {"answer": "x"}, {"input_tokens": 1, "output_tokens": 1}
+
+    monkeypatch.setattr(R, "run_isolated", run)
+    monkeypatch.setattr(R, "RETRY_PAUSE_S", (0, 0))
+    result = R.call("p", "s", R.READER_SCHEMA, tmp_path, effort="high")
+    assert result["attempts"] == 2
+    kept = [p.name for p in attempts[0].parent.iterdir() if ".failed-" in p.name]
+    assert len(kept) == 1, "the failed attempt's artifacts are evidence, not garbage"
+
+
+def test_a_call_that_keeps_failing_raises_after_the_last_attempt(tmp_path, monkeypatch):
+    def run(prompt, system, schema, out, *, model, effort, timeout=180):
+        out.mkdir(parents=True)
+        raise RuntimeError("Codex exited 1")
+
+    monkeypatch.setattr(R, "run_isolated", run)
+    monkeypatch.setattr(R, "RETRY_PAUSE_S", (0, 0))
+    with pytest.raises(RuntimeError):
+        R.call("p", "s", R.READER_SCHEMA, tmp_path, effort="high")
+    assert len(list((tmp_path).rglob("*.failed-*"))) == R.ATTEMPTS - 1
