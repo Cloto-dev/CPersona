@@ -206,7 +206,8 @@ more than the sign:
   fallback is the state of a deployment part-way through that rebuild, not a
   steady state.
 - **The response says which order filled the reserved places**: a reserved
-  row's `match_reason` carries `order`, `vector` or `hamming`. The cosine itself
+  row's `match_reason` carries an `order` key whose value is `vector` or
+  `hamming`. The cosine itself
   is not shown, for the reason section 5 shows a distance rather than a score.
 
 **What was measured.** The corpus and query families were those registered for
@@ -220,8 +221,8 @@ vector reaches 79 and 81, and the curve is flat from a depth of about fifty; 200
 is the smallest depth on a grid fixed before the run that came within one target
 of that on both families. One byte per dimension reached the same targets as
 float32, to within one. The places the reservation fills are still
-mostly taken by records that are not the target — this raises the share from
-13% to 18%. This is reach, not precision: whether the reached text answers the
+mostly taken by records that are not the target: the share of places the
+target holds rises from 13% to 18%. This is reach, not precision: whether the reached text answers the
 question needs a reader, and the instrument that has one is not built.
 
 **Where the vector comes from.** Four sources were measured against each other
