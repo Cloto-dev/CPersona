@@ -352,6 +352,12 @@ it covers) bundled, each quoted verbatim with the rows behind it in `claims`.
   are configured), repeated until the finding disappears — a run builds at most
   50 records. `count: null` in that finding means the embedding server predates
   the token report (CEmbedding 0.8.0): upgrade it; null is not zero.
+- **Block reach, when the deployment turned block construction on**:
+  `check_health(agent_id, checks=["missing_blocks"], fix=true)` reports records
+  that should hold blocks and do not, and builds up to 50 per run. After
+  upgrading from 2.6.0a5 every existing block set lacks its re-rank vector and
+  is rebuilt; the background sweep does this anyway, and the check shows how far
+  it has got. With block construction off the check stays silent.
 
 ### Associative memory
 

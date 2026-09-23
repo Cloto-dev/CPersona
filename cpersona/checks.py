@@ -86,7 +86,7 @@ import stat
 
 import aiosqlite
 
-from cpersona import config, fileperms, health, nodes, operating_context, vector
+from cpersona import blocks, config, fileperms, health, nodes, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
@@ -2956,6 +2956,109 @@ async def check_missing_nodes(db, agent_id: str, fix: bool, embedding_cache=None
     return [issue]
 
 
+#: Records one fix run builds blocks for, like NODE_REPAIR_RECORD_CAP and for the
+#: same reason: every build is embedding requests, all made before the write lock is
+#: taken, so the cap bounds how long a fix run spends on the network. A corpus with
+#: more records to build converges over successive runs — or through the backfill
+#: sweep, which keeps running on the queue whether or not anyone calls this.
+BLOCK_REPAIR_RECORD_CAP = 50
+
+
+def _block_build_available() -> bool:
+    """Whether this deployment asked for blocks and can embed them.
+
+    Not blocks.building_enabled(): that also needs the task queue, because the
+    write path queues its builds. A fix run builds in-line, so a deployment with
+    the queue off — the one whose blocks nothing else would ever build — is
+    exactly the one this repair must still reach.
+    """
+    return config.BLOCK_BUILD_ENABLED and vector._embedding_client is not None
+
+
+async def _scan_missing_blocks(candidates: list, prepare: bool) -> dict:
+    """{"missing": [...], "prepared": [...], "failed": n}; the first cap prepared.
+
+    Network I/O only when ``prepare``: finding the candidates is offline (the
+    divider asks no model), so a report-only run costs no embedding request.
+    """
+    prepared, failed = [], 0
+    if prepare:
+        for kind, row_id, text, node_bounds in candidates[:BLOCK_REPAIR_RECORD_CAP]:
+            try:
+                built = await blocks.prepare_blocks(kind, row_id, text, node_bounds)
+            except Exception as e:  # one record's failure must not cost the rest
+                logger.warning("block build failed for %s:%s: %s", kind, row_id, e)
+                failed += 1
+                continue
+            if built is not None:
+                prepared.append(built)
+    return {"missing": candidates, "prepared": prepared, "failed": failed}
+
+
+async def prefetch_missing_blocks(agent_id: str = "") -> dict | None:
+    """The fix run's scan, with the embedding requests outside any lock (bug-072's rule).
+
+    None when the deployment has not asked for blocks or cannot embed them.
+    """
+    if not _block_build_available():
+        return None
+    async with connection() as db:
+        candidates = await blocks.records_without_current_blocks(
+            db, isolation_where(agent_id=agent_id or None)
+        )
+    return await _scan_missing_blocks(candidates, prepare=True)
+
+
+async def check_missing_blocks(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
+    """Records that should hold blocks and hold no current set.
+
+    docs/BLOCK_REACH_DESIGN.md §7: the write path queues construction and a
+    bounded sweep builds the corpus that was there before, both on the queue.
+    This check is how an operator sees how far that has got, and how blocks get
+    built where the queue does not run. The repair builds blocks and never
+    modifies a record, so locked records are repaired too.
+
+    Nothing is reported, and nothing is built, unless the deployment turned block
+    construction on: opt-in means a deployment that did not ask pays nothing,
+    and a finding it could only act on by opting in would be noise.
+
+    Info, not warn: a record without current blocks gives every answer it gave
+    before blocks existed. Its tail is out of reach, which is the state the
+    feature is opted into to change.
+    """
+    if not _block_build_available():
+        return []
+    if embedding_cache is not None and embedding_cache.get("blocks") is not None:
+        scan = embedding_cache["blocks"]
+    else:
+        # No prefetch (a report-only run, or the checkup CLI): scan live on this connection.
+        candidates = await blocks.records_without_current_blocks(
+            db, isolation_where(agent_id=agent_id or None)
+        )
+        scan = await _scan_missing_blocks(candidates, prepare=fix)
+    missing = scan["missing"]
+    if not missing:
+        return []
+    issue = {
+        "type": "missing_blocks",
+        "count": len(missing),
+        "memories": sum(1 for kind, *_ in missing if kind == "mem"),
+        "episodes": sum(1 for kind, *_ in missing if kind == "ep"),
+        # Bounded by one run's reach, like missing_nodes: the rest converge on later runs.
+        "repairable": min(len(missing), BLOCK_REPAIR_RECORD_CAP),
+    }
+    if fix:
+        built = 0
+        for prepared in scan["prepared"]:
+            if await blocks.write_blocks(db, prepared):
+                built += 1
+        # Zero is an outcome under fix (bug-379), so the key is always present then.
+        issue["built"] = built
+        if scan["failed"]:
+            issue["build_failed"] = scan["failed"]
+    return [issue]
+
+
 class Check:
     """A registered health check: metadata + runner (see module docstring)."""
 
@@ -3037,6 +3140,7 @@ HEALTH_CHECKS: list[Check] = [
     Check("operating_context_size", "info", False, check_operating_context_size),
     Check("file_permissions", "warn", True, check_file_permissions),
     Check("missing_nodes", "info", True, check_missing_nodes),
+    Check("missing_blocks", "info", True, check_missing_blocks),
 ]
 
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]
@@ -3099,6 +3203,8 @@ _EMBEDDING_CHECKS = {
     "embedding_backend",
     # Reads the node divisions prefetched outside the write lock.
     "missing_nodes",
+    # Reads the block sets prepared outside the write lock.
+    "missing_blocks",
 }
 
 

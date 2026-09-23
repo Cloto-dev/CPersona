@@ -451,6 +451,19 @@ built is not coverage: a run that builds every record it was allowed to touch
 says nothing by itself about how much of the corpus has blocks, and the second
 number is the one an operator watching a backfill needs to see move.
 
+That number is also a health finding. With construction on, `check_health`
+reports `missing_blocks`: the records that divide into more than one block and
+hold no current set, found offline by the same division and the same
+currentness predicate the builder and the sweep use, so the three cannot
+disagree about a record. Under `fix=true` it builds up to 50 of them in one run,
+embedding outside the write lock, and never modifies a record. Two cases need
+it. A deployment whose task queue is off has no other builder, because the
+write path and the sweep both run on the queue. And a deployment upgrading from
+a release whose block sets have no re-rank vectors finds every set not current
+(invariant 8); the sweep rebuilds them in bounded runs, and the check is how an
+operator sees that progress and moves it along. With construction off the
+check reports nothing and builds nothing.
+
 ## 8. Invariants
 
 1. A block never modifies its parent. Blocks are derived; the record is the

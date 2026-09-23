@@ -92,6 +92,9 @@ async def do_check_health(
             # Divided and embedded here, unlocked; the runner only writes (see
             # checks.prefetch_missing_nodes).
             embedding_cache["nodes"] = await checks_registry.prefetch_missing_nodes(agent_id)
+        if "missing_blocks" in checks_run:
+            # Divided and embedded here, unlocked, for the same reason as the nodes.
+            embedding_cache["blocks"] = await checks_registry.prefetch_missing_blocks(agent_id)
 
     # bug-254: the REPORT-ONLY whole-database scan leaves the write seam for the
     # same reason the embedding round-trips did. check_sqlite_integrity runs

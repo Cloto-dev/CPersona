@@ -26,7 +26,7 @@ import pytest
 import pytest_asyncio
 
 from cpersona import session
-from cpersona import checks, vector
+from cpersona import checks, config, vector
 from cpersona.config import MAX_CONTENT_LENGTH, MAX_PROFILE_LENGTH
 from cpersona.database import get_db
 
@@ -317,6 +317,9 @@ EXPECTED_REPAIRABLE = {
     # locked on purpose: building nodes never modifies the record, so a locked row
     # is inside the repair's reach (checks.check_missing_nodes)
     "missing_nodes": 1,
+    # locked on purpose, for the same reason: building blocks never modifies the
+    # record (checks.check_missing_blocks)
+    "missing_blocks": 1,
 }
 
 
@@ -332,6 +335,19 @@ async def _s_missing_nodes(conn):
         yield conn
     finally:
         client.token_window = before
+
+
+@seeder("missing_blocks")
+async def _s_missing_blocks(conn):
+    # A locked record that divides into several blocks and has none, under a
+    # deployment that opted into blocks. The switch is put back afterwards.
+    before = config.BLOCK_BUILD_ENABLED
+    config.BLOCK_BUILD_ENABLED = True
+    await _mem(conn, "一文目です。二文目です。\n\n三文目です。", locked=1)
+    try:
+        yield conn
+    finally:
+        config.BLOCK_BUILD_ENABLED = before
 
 
 @seeder("file_permissions")

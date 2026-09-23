@@ -429,6 +429,51 @@ async def _blocks_current(db, kind: str, parent_id: int, text_len: int, keys: tu
     return _set_is_current(count, first, last, current, text_len)
 
 
+async def records_without_current_blocks(db, iso) -> list[tuple[str, int, str, tuple[int, ...]]]:
+    """Every record in scope that should hold blocks and holds no current set.
+
+    ``(kind, id, text, node bounds)`` for each, in kind then id order. "Should"
+    is decided the way the builder decides it, and offline: the record divides
+    into more than one block under its current node layout. A record that
+    divides into one block has none by design (see :func:`prepare_blocks`), so
+    counting it would report a gap that no build can close. "Current" is
+    :func:`_set_is_current` over :data:`_SET_AGGREGATE`, the same predicate the
+    builder and the sweep read, so the three cannot disagree about a record.
+
+    Locked records are included: building blocks never modifies the record.
+    """
+    keys = generation.block_keys()
+    out: list[tuple[str, int, str, tuple[int, ...]]] = []
+    for kind in BACKFILL_KINDS:
+        table, column = PARENT_TEXT[kind]
+        rows = await db.execute_fetchall(
+            f"SELECT r.id, r.{column}, s.* FROM {table} r "
+            f"LEFT JOIN (SELECT b.parent_id, {_SET_AGGREGATE}"
+            "WHERE b.parent_kind = ? GROUP BY b.parent_id) s ON s.parent_id = r.id "
+            f"WHERE 1=1{iso.and_clause} ORDER BY r.id",
+            (*keys, kind, *iso.params),
+        )
+        stale = [
+            (row_id, text)
+            for row_id, text, _, count, first, last, current in rows
+            if text and not _set_is_current(count, first, last, current, len(text))
+        ]
+        if not stale:
+            continue
+        bounds: dict[int, list[int]] = {}
+        for parent_id, end_char in await db.execute_fetchall(
+            "SELECT parent_id, end_char FROM record_nodes WHERE parent_kind = ? "
+            "ORDER BY parent_id, node_index",
+            (kind,),
+        ):
+            bounds.setdefault(parent_id, []).append(end_char)
+        for row_id, text in stale:
+            node_bounds = tuple(bounds.get(row_id, ()))
+            if len(segment(text, node_bounds=node_bounds)) > 1:
+                out.append((kind, row_id, text, node_bounds))
+    return out
+
+
 @dataclass(frozen=True)
 class PreparedBlocks:
     """One record's division and its quantised vectors, computed outside any

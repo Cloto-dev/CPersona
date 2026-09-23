@@ -3843,7 +3843,8 @@
         "operating_context_parse",
         "operating_context_size",
         "file_permissions",
-        "missing_nodes"
+        "missing_nodes",
+        "missing_blocks"
       ],
       "fixed": false,
       "issues": [
@@ -4596,7 +4597,8 @@
         "operating_context_parse",
         "operating_context_size",
         "file_permissions",
-        "missing_nodes"
+        "missing_nodes",
+        "missing_blocks"
       ],
       "fixed": false,
       "issues": [
@@ -5223,7 +5225,8 @@
         "operating_context_parse",
         "operating_context_size",
         "file_permissions",
-        "missing_nodes"
+        "missing_nodes",
+        "missing_blocks"
       ],
       "fixed": false,
       "issues": [
@@ -9537,7 +9540,8 @@
         "operating_context_parse",
         "operating_context_size",
         "file_permissions",
-        "missing_nodes"
+        "missing_nodes",
+        "missing_blocks"
       ],
       "fixed": false,
       "issues": [],
@@ -12001,7 +12005,8 @@
           "operating_context_parse",
           "operating_context_size",
           "file_permissions",
-          "missing_nodes"
+          "missing_nodes",
+          "missing_blocks"
         ],
         "fixed": false,
         "issues": [
@@ -12135,7 +12140,8 @@
           "operating_context_parse",
           "operating_context_size",
           "file_permissions",
-          "missing_nodes"
+          "missing_nodes",
+          "missing_blocks"
         ],
         "fixed": false,
         "issues": [],
