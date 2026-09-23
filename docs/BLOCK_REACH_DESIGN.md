@@ -109,14 +109,19 @@ code width are unknown. They grow with the corpus: a wider corpus needs a finer
 code to keep the same false-survivor budget at the same retention, so a width
 that serves this deployment says nothing about one an order of magnitude larger.
 
-**Blocks do not store float32 vectors at all.** The reason is scale rather than
+**Blocks do not store float32 vectors.** The reason is scale rather than
 taste. The division of section 2 was run over the deployment's own corpus, by
 then 5,387 records: **107,428 blocks**, a mean of 19.9 per record and a median
 of 13. At that multiplier a corpus of one million records is 19.9 million
 blocks — 2.5 GB as bit strings, 82 GB as float32. The second number is not a
-resident-memory figure that a smaller machine escapes; it is what the database
-would have to hold, and it would break the documented practice of copying a
-corpus with a single file-level backup.
+resident-memory figure that a smaller machine escapes; it is what the database,
+and every file-level backup of it, would have to hold.
+
+What a block does keep beside its bits is one byte per dimension, read only to
+re-order the few hundred rows the Hamming pass ranks highest (section 4b). At
+the same multiplier that is 20 GB for a million records: a quarter of the
+float32 figure and eight times the bit strings, held on disk rather than in
+memory. Section 4b gives what it buys and why it is worth that.
 
 The blocks the policy produces are short, which is what it is for: a median of
 45 characters, 133 at the ninetieth percentile, 285 at the ninety-ninth, and
@@ -167,6 +172,89 @@ against an unbounded scan; it is not a claim that the rows surviving it are the
 best ones, and it sits above the whole index of the deployment section 3
 measured.
 
+## 4b. Re-rank: the stored vector orders what the Hamming pass ranked highest
+
+The reach judgement of section 11 named where this arm's reach fails. Of the
+targets it did not reach, two thirds were among the two hundred records the
+Hamming pass ranked highest and still missed the reserved places: the pass
+found them and its order put other records in front. The order is the loss, and
+order is what a one-bit code is worst at.
+
+So the rows the pass ranks highest are ranked again, by a vector that keeps
+more than the sign:
+
+- **A fixed depth of 200 rows**, taken in the total order of section 4 —
+  distance, then kind, parent id and block index — before anything is collapsed
+  to its parent. The depth is cut on rows because a row is what has a vector to
+  read, and it is server policy like the caps of section 4: derived from
+  nothing the caller asks for.
+- **Each block keeps its vector at one byte per dimension**, scaled so the
+  largest component is 127 and rounded. The scale is not kept, because the only
+  thing ever computed from the bytes is a cosine, and a cosine does not see it.
+  The bytes come from the same embedding call that produced the bits; building
+  them costs no request the block did not already make.
+- **The rows are ordered by the cosine** between the query vector and the stored
+  bytes, then collapsed to their parent exactly as section 4 collapses them: a
+  record is represented by its best block, and nothing is summed. Equal cosines
+  go by kind, parent id and block index. A record none of whose blocks made the
+  depth is not a candidate.
+- **All or nothing.** If any of the rows has no vector, the whole query uses the
+  Hamming order of section 4 — the order the previous release used. A cosine
+  and a Hamming distance cannot be put in one order, so a mixture would compare
+  some rows on one scale and the rest on another. A block set that lacks its
+  vectors is not current (invariant 8) and the sweep rebuilds it, so the
+  fallback is the state of a deployment part-way through that rebuild, not a
+  steady state.
+- **The response says which order filled the reserved places**: a reserved
+  row's `match_reason` carries `order`, `vector` or `hamming`. The cosine itself
+  is not shown, for the reason section 5 shows a distance rather than a score.
+
+**What was measured.** The corpus and query families were those registered for
+the reach judgement: 4,567 records divided into 92,807 blocks, paraphrases aimed
+past the first node of a long record (195 targets), and a replication family
+(189). Through the recall path as built, the re-rank raised the reservation's
+reach from 57 to 78 of 195 and from 64 to 81 of 189, and no target the Hamming
+order reached was lost; with the arm switched off, every response was
+byte-identical to the previous release's. Re-ranking every examined row by its
+vector reaches 79 and 81, and the curve is flat from a depth of about fifty; 200
+is the smallest depth on a grid fixed before the run that came within one target
+of that on both families. One byte per dimension reached the same targets as
+float32, to within one. The places the reservation fills are still
+mostly taken by records that are not the target — this raises the share from
+13% to 18%. This is reach, not precision: whether the reached text answers the
+question needs a reader, and the instrument that has one is not built.
+
+**Where the vector comes from.** Four sources were measured against each other
+on the same families:
+
+| Source | Reach (of 195 / of 189) | Cost |
+|---|---|---|
+| one byte per dimension, stored with the block | 78 / 81 | 1,024 bytes per block on disk; 200 reads per recall |
+| the block's text, embedded again at query time | 71 / 73 at a depth of 12 | 463 ms at a depth of 12 and 5.6 s at 200, on the reference machine |
+| the parent record's own vector | 21 or fewer / — | none, and it cannot see the tail it is asked about |
+| the vector of the node containing the block | 60 or fewer / 54 or fewer | none, and it dilutes one clause in a node ten times its length |
+
+Embedding at query time is ruled out twice over. It is slow, and it breaks
+determinism: the quantised embedding backend this project deploys returns a
+different vector for the same text depending on what else is in the request (a
+median cosine of 0.980 between a text embedded alone and in a batch of
+sixteen), so the order would depend on which candidates happened to be sent
+together.
+
+**Cost.** At the multiplier of section 3, a million records hold 20 GB of these
+vectors. A recall reads 200 of them by primary key: 2.9 ms from the page cache
+on the reference machine, and 12.5 ms as 200 random page reads that bypass it.
+The arm as a whole got cheaper rather than dearer: 167 ms at the median against
+193 ms without the re-rank, because the collapse to parents now runs over the
+200 re-ranked rows instead of every examined row.
+They live in the database, in a table of their own (section 6). In the database
+because, unlike the contiguous vector index, they cannot be rebuilt from it —
+only by embedding every block again — so a backup that left them out would
+restore to a corpus that has to be re-embedded. In a table of their own because
+the Hamming pass reads every block row on every recall, and a kilobyte beside
+each 128-byte bit string would make it read about eight times the pages to use
+none of them.
+
 ## 5. Admission: a reservation, not a gate change
 
 A block hit exists to bring a record into the pool that would not otherwise be
@@ -185,8 +273,8 @@ population. A gate that compares a relative quantity against an absolute
 threshold is a defect this project has already recorded once.
 
 This step therefore admits block-found candidates by **reservation**: a fixed,
-small number of places in the result set are held for them, filled in Hamming
-order, and the quality gate is not consulted for those places and is not
+small number of places in the result set are held for them, filled in the
+order section 4b produces, and the quality gate is not consulted for those places and is not
 altered for any other. The consequences are stated plainly rather than argued
 away:
 
@@ -258,6 +346,15 @@ Blocks are held in their own table, shaped like the overflow tree's node table:
 parent kind and id, block index, start and end offsets, a flag for an end the
 length limit forced, the bit string, and the model identity the bits were
 produced by. The parent's text is not duplicated.
+
+The re-rank vectors of section 4b sit in a second table keyed by the same three
+columns, holding nothing else. They are written in the same transaction as
+their blocks, and a trigger on the block table deletes a block's vector with
+the block — so every path that already drops a record's blocks, a delete, a
+rewrite or an agent's erasure, drops the vectors without being told about them.
+The block table's axis triggers do not reach this one, because it is never
+filtered: it is read only by primary key, for rows the filtered pass already
+chose.
 
 There is no token count and no window, though the node table has both. The
 divider is offline by design, so it has no honest value for either, and a column
@@ -337,6 +434,7 @@ is measured, never derived from the caller's request:
 |---|---|
 | examined block cap | how much of the block index one call may scan |
 | blocks per parent cap | how much of that cap one record may consume |
+| re-rank depth | how many of the examined rows are re-ranked by their stored vector |
 | reservation size | how many result places block hits may fill |
 | construction queue limits | records, characters, embedding calls and elapsed time per backfill run |
 | maximum block length | when a forced boundary is taken |
@@ -361,26 +459,28 @@ number is the one an operator watching a backfill needs to see move.
 3. Determinism — the same text, node layout and segmentation policy produce
    the same span list. The node layout is what carries the tokenizer's
    influence; the divider itself never calls one, and never reaches the
-   network. Ties in Hamming order are broken by a written-down total order.
+   network. Ties in Hamming order, and in the cosine order of the re-rank, are
+   broken by a written-down total order.
 4. Coverage — a block set covers its parent's text with no gap and no overlap,
    and no block crosses a node boundary.
-5. Count independence — none of the caps, the reservation or the examined set
-   may be derived from the response count. Changing the count alone leaves the
+5. Count independence — none of the caps, the re-rank depth, the reservation
+   or the examined set may be derived from the response count. Changing the count alone leaves the
    candidate id set unchanged.
 6. One record, one candidate — several blocks of one record never become
    several candidates, and their scores are never summed.
 7. No new score reaches the quality gate. Block hits are admitted by
    reservation or not at all.
 8. A block set is current only if it was built from the parent's current text
-   by a known model. An unreported model identity is not a match.
+   by a known model, and every block in it has its re-rank vector. An
+   unreported model identity is not a match.
 9. Quotation is never severed — a span shown to a reader carries the contiguous
    context that governs it, or is reported as incomplete.
 
 Each invariant is held by a test whose power is demonstrated by mutation: the
 mutation that re-couples a cap to the count, the one that sums a record's
-blocks, the one that pushes a block's similarity into the gate, and the one
-that treats a partially built set as current must each turn a named assertion
-red.
+blocks, the one that pushes a block's similarity into the gate, the one that
+treats a partially built set as current, and the one that orders a row without
+a vector among rows with one must each turn a named assertion red.
 
 ## 9. What this step does not claim
 
@@ -398,14 +498,16 @@ settle it.
 It does not claim the approximation is harmless. Hamming ranking is
 approximate, and a candidate it fails to surface is not recovered later.
 
-It does not widen what a caller can ask for. No tool is added, and no argument
-or response shape changes.
+It does not widen what a caller can ask for. No tool is added and no argument
+changes; a reserved row's `match_reason` gains one key, saying which order
+placed it (section 4b).
 
 ## 10. Decided separately
 
-- Whether blocks ever hold float32 vectors, and whether a second exact pass
-  re-ranks reserved candidates. Both belong to the precision step, and both are
-  reopened by what the reach failures attribute.
+- Settled in section 4b: blocks hold no float32 vector, they hold one byte per
+  dimension, and a second pass re-ranks the Hamming candidates by it. Still
+  open is whether the quotation of section 5b should choose its block by the
+  same vector, and whether doing so leaves the node vectors with any use.
 - Whether nodes should themselves become retrievable. Blocks are finer than
   nodes and answer the same question, so shipping this makes that a choice
   between two derived layers rather than an independent question.
