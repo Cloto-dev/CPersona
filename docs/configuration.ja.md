@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:5ac4ec21d9f55903a22ab268cf2dd8a27b68785c -->
+<!-- i18n-source: docs/configuration.md@blob:203217a6282a721bac9bc63b17018fb2fe87311d -->
 
 # 設定リファレンス
 
@@ -18,6 +18,7 @@
 | `CPERSONA_VECTOR_SEARCH_MODE` | `local` | ベクトル検索の実行場所 (`local` = プロセス内コサイン、`remote` = 外部委譲) |
 | `CPERSONA_RECALL_MODE` | `rrf` | recall の融合戦略 (`rrf` / `rsf` / `cascade`) — 後述 |
 | `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211): 超過分は行がプレビュー階層に戻り — 関連度の高い行から全文で残し (bug-214) — 応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層**と両方の予算を**無効化します — 無効な階層への降格は本文を無言で落とすことになるため、切り詰めをやめる選択はどこでも切り詰めないという選択になります |
+| `CPERSONA_RECALL_EXCERPT_CHARS` | `800` | プレビューが本文を切ったとき、recall の行がプレビューの傍らに持つクエリ関連の抜粋: 一致したレコードの部分を、ランキング順にこの文字数まで詰め、本文中の順序で並べて示します ([設計](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26))。`full_content=true` のとき、および全文が示される行には付きません。`0` で無効化され、プレビュー階層が無効なときは常に off です |
 | `CPERSONA_RRF_K` | `60` | RRF の平滑化パラメータ |
 | `CPERSONA_MAX_CONTENT_LENGTH` | `16000` | 記憶 1 件・エピソード 1 件あたりの最大文字数。超過分は切り詰められ、`check_health(fix=true)` は既存行も上限で切るため、**下げると保存済みデータが短くなります**。2.5.4a2 で `2000` から引き上げ。埋め込みウィンドウを超えた本文も、行全体を索引するキーワードチャネル経由では検索できます |
 | `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | プロフィール 1 行あたりの最大文字数 (記憶とは別枠)。プロフィールはプレビュー切り詰めの対象外なので、この上限だけが唯一の歯止めです。ただし*全*応答に注入されるわけではありません: プールが 50 行未満の間は品質ゲートがプロフィール行を落とし、スコア付きの結果で埋まっている場合は `limit` が落とします ([契約 §7](behavior-contracts.md#7-profile-rows-carry-no-score)) |

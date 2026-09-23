@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:912f636c85ba284b33368896a7470a5b662c4372 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:7c5264829318af5aa13445c6bc9a57339527d72c -->
 
 # Reliable Recall — 2.6 系
 
@@ -391,7 +391,10 @@ effective_budget = min(budget_base, max_budget)
    落とした行は `bounds.omitted`、`claims_omitted`、`excerpts_omitted`、または不足理由で、
    到達しただけの境界は `bounds.reached` で報告する。
 5. 説明可能性 — すべての要素が、なぜ存在するかを言う。
-6. 既存の `recall` 契約には触れない。
+6. 既存の `recall` 契約には触れない。その後 recall の行は additive な項目を 1 つ得た。
+   切り詰めたプレビューに添える抜粋で、ここでの引用と同じブロック順位付けと
+   支配文脈の規則で作る ([設計](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26))。
+   呼び出し側が既に読んでいたものは何も変わらない。
 7. 件数と探索幅は分離 — `candidate_limit`、`vector_top_k`、`fts_limit`、
    `selected_evidence_limit` のどれも `count` から導出してはならない。テスト: `count` だけを
    変えて候補 id の集合が不変。
