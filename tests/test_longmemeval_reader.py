@@ -360,3 +360,58 @@ def test_fill_adds_passages_in_ranking_order_until_the_cap_and_shows_them_in_tex
     ranked = [(2, 21, 34, b""), (0, 0, 11, b""), (3, 34, 45, b""), (1, 11, 21, b"")]
     assert X.fill(content, spans, ranked, 30) == content[0:11] + X.SEPARATOR + content[21:34]
     assert X.fill(content, spans, ranked, 5) == content[21:26], "a best passage longer than the cap is cut"
+
+
+def test_fill_counts_the_separator_against_the_cap():
+    from benchmarks import longmemeval_excerpts as X
+
+    content = "Alpha one. Beta two. Gamma three. Delta four."
+    spans = [(0, 11), (11, 21), (21, 34), (34, 45)]
+    ranked = [(2, 21, 34, b""), (0, 0, 11, b""), (3, 34, 45, b""), (1, 11, 21, b"")]
+    # The two passages are 24 characters; joined, 27. A cap between the two takes one.
+    assert X.fill(content, spans, ranked, 26) == content[21:34]
+    assert X.fill(content, spans, ranked, 27) == content[0:11] + X.SEPARATOR + content[21:34]
+
+
+def test_fill_never_repeats_a_passage_two_blocks_share():
+    from benchmarks import longmemeval_excerpts as X
+
+    # "However" qualifies what came before, so blocks 0 and 1 share one governing context.
+    content = "Alpha one. However beta two. Gamma three."
+    spans = [(0, 11), (11, 29), (29, 41)]
+    ranked = [(1, 0, 0, b""), (0, 0, 0, b""), (2, 0, 0, b"")]
+    assert X.fill(content, spans, ranked, 100) == content[0:29] + X.SEPARATOR + content[29:41]
+
+
+def test_a_reference_of_another_type_is_refused():
+    refs, queries = _oracle_refs(2)
+    first = sorted(queries)[0]
+    queries[first] = ("temporal-reasoning", queries[first][1])
+    with pytest.raises(ValueError, match="No reference"):
+        R.build_items(SimpleNamespace(mode="oracle", limit=0, seed=1), refs, queries)
+
+
+def test_a_duplicated_question_text_is_refused(tmp_path):
+    entry = {"question_id": "q1", "question_type": "multi-session", "question": "What did I buy?",
+             "answer": "x", "question_date": "2023/05/30 (Tue) 10:00",
+             "haystack_dates": [], "haystack_sessions": []}
+    path = tmp_path / "oracle.json"
+    path.write_text(json.dumps([entry, {**entry, "question_id": "q2", "question": " what did  I buy? "}]))
+    with pytest.raises(ValueError, match="Duplicate question text"):
+        R.load_references(path)
+
+
+def test_the_stratified_subset_is_a_seeded_draw_not_the_first_members():
+    refs, queries = _oracle_refs(30)
+    by_qid = {q: refs[R.normalized(t)] for q, (_, t) in queries.items()}
+    draws = {tuple(R.stratified(sorted(by_qid), by_qid, 9, random.Random(seed))) for seed in range(5)}
+    assert len(draws) > 1
+
+
+def test_the_stratified_subset_keeps_a_type_too_small_for_its_share():
+    refs, queries = _oracle_refs(30)
+    by_qid = {q: refs[R.normalized(t)] for q, (_, t) in queries.items()}
+    lone = sorted(by_qid)[0]
+    by_qid[lone] = {**by_qid[lone], "question_type": "knowledge-update"}
+    subset = R.stratified(sorted(by_qid), by_qid, 9, random.Random(5))
+    assert lone in subset, "one member in 30 rounds to zero at 9; the floor keeps the type"
