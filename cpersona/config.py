@@ -819,6 +819,12 @@ RECALL_MODE = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
 # disables trimming. Boundary-layer only — library callers (do_recall) always
 # receive full content, same layering as the limit cap.
 RECALL_PREVIEW_CHARS = _parse_int("CPERSONA_RECALL_PREVIEW_CHARS", 500)
+# 2.6: the length of the query-relevant excerpt a recall row carries beside its
+# preview when the preview cuts it (cpersona/excerpts.py). Measured on
+# LongMemEval with an answer reader: the preview's first 500 characters answered
+# 260 of 500 questions, an excerpt filled to 800 characters answered 341, and the
+# full records 351. Boundary-layer only, like the preview. 0 disables it.
+RECALL_EXCERPT_CHARS = _parse_int("CPERSONA_RECALL_EXCERPT_CHARS", 800)
 RRF_K = max(1, _parse_int("CPERSONA_RRF_K", 60))
 RRF_THRESHOLD_FACTOR = _parse_float("CPERSONA_RRF_THRESHOLD_FACTOR", 0.5)
 # v2.4.12: Max theoretical _rrf_score ≈ num_retrievers / (RRF_K + 1), with 3

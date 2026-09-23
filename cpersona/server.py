@@ -474,6 +474,8 @@ async def do_recall_boundary(
         project_id=pid,
         source_id=source_id,
         session_key=session_key,
+        # A full_content response shows every row whole, so it needs no excerpt.
+        excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -565,6 +567,7 @@ async def do_recall_with_context_boundary(
         project_id=pid,
         source_id=source_id,
         session_key=session_key,
+        excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -1161,6 +1164,12 @@ registry.auto_tool(
     "full_content is itself budgeted (200k chars per response, bug-211): rows "
     "past the budget degrade to the preview tier and the response carries "
     "full_content_budget_chars (absent when the budget never bites). "
+    "2.6 additive: a message whose content the preview cut also carries excerpt — the part of "
+    "the record that matched the query, at most 800 characters (CPERSONA_RECALL_EXCERPT_CHARS), "
+    "separate passages joined by ' … ' in text order — and excerpt_basis (blocks: the record's "
+    "block set; lexical: divided at read time, ranked by shared words; start: the record is one "
+    "block, so its start). Read the excerpt before deciding to expand a row; content stays the "
+    "record's start. Absent under full_content and on rows shown whole. "
     "v2.5.2 additive: each scored message carries match_reason={signal, score, ...} where "
     "signal is the branch the ranking / quality gate keyed on (confidence > rsf > cosine > rrf) "
     "and the remaining keys (cosine / rrf / rsf) surface the internal per-retriever "
@@ -1266,7 +1275,8 @@ registry.auto_tool(
     "Automatically deduplicates, sorts chronologically, and returns a unified list. "
     "Replaces separate recall + manual merge in the caller. "
     "Content is preview-tiered by default — see recall's full_content / get_contents "
-    "(full_content shares recall's 200k-char response budget, bug-211). "
+    "(full_content shares recall's 200k-char response budget, bug-211); a recalled row the "
+    "preview cut carries excerpt / excerpt_basis as recall's do. "
     # audit C13: disclose the asymmetry instead of leaving it invisible.
     "Every external_context entry's content filters the recall (the caller already "
     "holds that text), but only role=user / role=assistant entries are merged into "

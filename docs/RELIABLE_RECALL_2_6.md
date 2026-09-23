@@ -458,7 +458,11 @@ appear when declared relations do. A reader ignores a role it does not know.
    reported in `bounds.omitted`, `claims_omitted`, `excerpts_omitted` or the
    shortfall reason, and a bound that was only met in `bounds.reached`.
 5. Explainability — every element says why it is present.
-6. The existing `recall` contract is untouched.
+6. The existing `recall` contract is untouched. Since then recall rows have
+   gained one additive field, the excerpt beside a cut preview, made from the
+   same block ranking and governing-context rule as a quotation here
+   ([design](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26)); nothing a caller
+   already read has changed.
 7. Count and breadth are decoupled — none of `candidate_limit`,
    `vector_top_k`, `fts_limit`, `selected_evidence_limit` may be derived from
    `count`. The test: change `count` alone and the candidate id set is

@@ -61,6 +61,48 @@ Contract details, each load-bearing:
 - `recall_with_context`'s echoed conversation entries are trimmed uniformly,
   since the caller already holds their full text. They carry no `ref`.
 
+## Excerpt (2.6)
+
+The prefix answers "is this row relevant?" only when the record says so early.
+Measured on LongMemEval with an answer reader over the same ten returned rows
+per question, the preview's first 500 characters answered 260 of 500
+questions, the full records 351. The rows had arrived; the answer was past the
+cut. So a row the preview cuts also carries the part that matched:
+
+```json
+{
+  "ref": "mem:123",
+  "content": "<pure prefix, unchanged>",
+  "content_truncated": true, "content_len": 1893,
+  "excerpt": "<matching passages, at most CPERSONA_RECALL_EXCERPT_CHARS, joined by ' … '>",
+  "excerpt_basis": "blocks"
+}
+```
+
+- **How it is made.** The record's blocks are ranked as the reconstruction
+  exit ranks them (lexical overlap fused with Hamming distance), each is
+  extended to the range that governs it (the sentence it sits in, and a
+  qualifying neighbour), and the ranges are taken in that order while they fit
+  the cap without overlapping. They are shown in text order, so the excerpt
+  reads forwards. On the same benchmark the excerpt at 800 characters
+  answered 341 of 500 — within the reader's run-to-run noise of the full
+  records at 56% of their length — and at 500 characters, 318, against the
+  prefix's 260 at the same size.
+- **`excerpt_basis` says how.** `blocks`: the record's current block set.
+  `lexical`: no current block set, so the record is divided at read time and
+  ranked by shared words only. `start`: the record is one block, so the excerpt
+  is its start.
+- **Additive.** `content` is the same pure prefix it was, so `exclude_contents`
+  and every consumer reading `content` see no change. The excerpt is absent
+  under `full_content=true` (every row is whole), on rows the preview shows
+  whole, and at the library layer: `do_recall` computes it only when the MCP
+  boundary asks.
+- **Deterministic.** No model is called; the query vector is the one the recall
+  already embedded.
+
+A later release may make the excerpt the default content and retire the prefix;
+that change, like the preview's own, is a separate decision.
+
 ## Full-content access (two routes)
 
 1. **`full_content: true`** — a new boolean parameter on both recall tools

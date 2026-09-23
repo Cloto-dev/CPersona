@@ -23,6 +23,7 @@ from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import blocks
+from cpersona import excerpts
 from cpersona import health
 from cpersona import nodes
 from cpersona import scope_stats
@@ -1489,6 +1490,7 @@ async def do_recall(
     source_id: str = "",
     session_key: str = "",
     lexical_terms: list[str] | None = None,
+    excerpt_chars: int = 0,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1514,6 +1516,12 @@ async def do_recall(
     names and aliases of the entities a query mentions here
     (docs/ASSOCIATIVE_MEMORY_DESIGN.md §3); the ``recall`` tool never does, and
     with ``None`` or an empty list every statement is the one it was before.
+
+    excerpt_chars (2.6): when positive, a row whose content is longer than the
+    preview tier (config.RECALL_PREVIEW_CHARS) also carries ``excerpt`` — the
+    part of the record that matched the query, at most this many characters —
+    and ``excerpt_basis`` (cpersona/excerpts.py). Zero, the default, leaves every
+    row exactly as before: the MCP boundary asks for it, library callers do not.
     """
     # bug-032: clamp the caller-supplied limit like the list handlers do. A
     # negative limit otherwise flows to SQLite as `LIMIT -1` (unbounded full-corpus
@@ -1841,6 +1849,22 @@ async def do_recall(
         r.pop("_block_order", None)
         messages.append(msg)
 
+    # The excerpt a preview-cut row carries beside its prefix (cpersona/excerpts.py).
+    # Only rows the preview will cut: a row the preview shows whole needs none, and
+    # with the preview disabled nothing is cut.
+    preview = config.RECALL_PREVIEW_CHARS
+    if excerpt_chars > 0 and preview > 0 and query.strip():
+        cut = [m for m in messages if m.get("ref") and len(m.get("content") or "") > preview]
+        if cut:
+            found = await excerpts.for_refs(
+                agent_id, [m["ref"] for m in cut], query,
+                query_vec_out[0] if query_vec_out else None, excerpt_chars,
+            )
+            for m in cut:
+                if m["ref"] in found:
+                    m["excerpt"] = found[m["ref"]]["excerpt"]
+                    m["excerpt_basis"] = found[m["ref"]]["basis"]
+
     # bug-038: the recall_count/last_recalled_at bump is a write that feeds
     # _compute_confidence ranking, so it must honor no-persist even though recall
     # is readOnlyHint=true and deliberately not one of the write-gated tools —
@@ -2073,6 +2097,7 @@ async def do_recall_with_context(
     source_id: str = "",
     session_key: str = "",
     context_mode: str | None = None,
+    excerpt_chars: int = 0,
 ) -> dict:
     """Recall memories and merge with external conversation context.
 
@@ -2114,6 +2139,7 @@ async def do_recall_with_context(
         project_id=project_id,
         source_id=source_id,
         session_key=session_key,
+        excerpt_chars=excerpt_chars,
     )
     messages = recall_result.get("messages", [])
 
