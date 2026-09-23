@@ -325,3 +325,38 @@ def test_a_call_that_keeps_failing_raises_after_the_last_attempt(tmp_path, monke
     with pytest.raises(RuntimeError):
         R.call("p", "s", R.READER_SCHEMA, tmp_path, effort="high")
     assert len(list((tmp_path).rglob("*.failed-*"))) == R.ATTEMPTS - 1
+
+
+def test_each_arm_shows_what_it_names():
+    content = "x" * 1000
+    assert R.shown("expanded", content, None) == content
+    assert R.shown("preview", content, None) == content[:R.PREVIEW_CHARS]
+    assert R.shown("prefix800", content, None) == content[:800]
+    assert R.shown("quote800", content, {"quote800": "the part that matched"}) == "the part that matched"
+    assert R.shown("fill500", content, {"fill500": "parts … that matched"}) == "parts … that matched"
+    with pytest.raises(ValueError, match="needs --excerpts"):
+        R.shown("fill800", content, None)
+    with pytest.raises(ValueError, match="Unknown arm"):
+        R.shown("summary", content, None)
+
+
+def test_the_excerpt_arms_read_the_precomputed_quotes(tmp_path):
+    args, refs, queries = _fixture(tmp_path)
+    excerpts = tmp_path / "excerpts.json"
+    excerpts.write_text(json.dumps({"scene_1_q_0": {
+        "scene_1_session_1": {"fill800": "QUOTE-ONE"}, "scene_1_session_2": {"fill800": "QUOTE-TWO"}}}))
+    args.arms, args.excerpts = {"fill800"}, excerpts
+    items, _ = R.build_items(args, refs, queries)
+    assert [i["arm"] for i in items] == ["fill800"]
+    assert "QUOTE-ONE" in items[0]["prompt"] and "QUOTE-TWO" in items[0]["prompt"]
+    assert "red kettle" not in items[0]["prompt"]
+
+
+def test_fill_adds_passages_in_ranking_order_until_the_cap_and_shows_them_in_text_order():
+    from benchmarks import longmemeval_excerpts as X
+
+    content = "Alpha one. Beta two. Gamma three. Delta four."
+    spans = [(0, 11), (11, 21), (21, 34), (34, 45)]
+    ranked = [(2, 21, 34, b""), (0, 0, 11, b""), (3, 34, 45, b""), (1, 11, 21, b"")]
+    assert X.fill(content, spans, ranked, 30) == content[0:11] + X.SEPARATOR + content[21:34]
+    assert X.fill(content, spans, ranked, 5) == content[21:26], "a best passage longer than the cap is cut"

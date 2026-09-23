@@ -362,19 +362,40 @@ def build_items(args, references, queries):
         rows[q], dropped = rows_for(q, rankings[q])
         stats["cross_scene_rows_dropped"] += dropped
     stored = load_stored(Path(args.lmeb_dir) / "corpus.jsonl", {d for r in rows.values() for d in r})
+    excerpts = json.load(open(args.excerpts, encoding="utf-8")) if getattr(args, "excerpts", None) else {}
     for q in qids:
         ref = by_qid[q]
-        expanded, preview = [], []
-        for d in rows[q]:
-            title, text = stored[d]
-            content = stored_content(title, text)
-            expanded.append((session_date(title), content))
-            preview.append((session_date(title), content[:PREVIEW_CHARS]))
-        for arm, sessions in (("expanded", expanded), ("preview", preview)):
-            if arm in args.arms:
-                items.append({"qid": q, "arm": arm, "reference": ref, "rows": rows[q],
-                              "prompt": reader_prompt(ref, sessions)})
+        for arm in sorted(args.arms):
+            sessions = []
+            for d in rows[q]:
+                title, text = stored[d]
+                sessions.append((session_date(title), shown(arm, stored_content(title, text), excerpts.get(q, {}).get(d))))
+            items.append({"qid": q, "arm": arm, "reference": ref, "rows": rows[q],
+                          "prompt": reader_prompt(ref, sessions)})
     return items, stats
+
+
+def shown(arm, content, excerpt):
+    """What an arm shows of one record.
+
+    expanded      the record in full
+    preview       its first PREVIEW_CHARS characters (the recall response today)
+    prefixN       its first N characters
+    quoteN        reconstruct's quotation of the part that matched, cut at N
+    fillN         the matching parts, in ranking order, filled up to N
+                  (both precomputed by longmemeval_excerpts.py)
+    """
+    if arm == "expanded":
+        return content
+    if arm == "preview":
+        return content[:PREVIEW_CHARS]
+    if arm.startswith("prefix"):
+        return content[:int(arm[len("prefix"):])]
+    if arm.startswith(("quote", "fill")):
+        if excerpt is None:
+            raise ValueError("an excerpt arm needs --excerpts covering every returned row")
+        return excerpt[arm]
+    raise ValueError(f"Unknown arm: {arm}")
 
 
 def stratified(qids, by_qid, limit, rng):
@@ -396,7 +417,9 @@ def main():
     parser.add_argument("--mode", default="rankings",
                         choices=["rankings", "oracle", "empty", "shuffled", "judge_gold", "judge_other"])
     parser.add_argument("--rankings", help="--dump_rankings output of a retrieval run (mode rankings)")
-    parser.add_argument("--arms", default="expanded,preview")
+    parser.add_argument("--arms", default="expanded,preview",
+                        help="expanded, preview, prefixN, quoteN, fillN (the last two need --excerpts)")
+    parser.add_argument("--excerpts", help="longmemeval_excerpts.py quote output (quoteN / fillN arms)")
     parser.add_argument("--lmeb_dir", required=True, help="LMEB LongMemEval directory")
     parser.add_argument("--oracle", required=True, help="longmemeval_oracle.json (answers, types, dates)")
     parser.add_argument("--cache_dir", required=True)
