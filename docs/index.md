@@ -159,6 +159,9 @@ guides disagree, the guides win.
 - [Reach, recency and the far vote](REACH_AND_RECENCY_PLAN.md) — three
   measurements in one account, what each establishes, and the plan for pricing
   the far vote in the 2.6 line.
+- [One prior function](PRIOR_FUNCTION_DESIGN.md) — every position and age
+  weight as one function that orders the result and never gates it, and the
+  confidence score returned beside each row instead of re-sorting the list.
 - [Adaptive fusion](ADAPTIVE_FUSION_DESIGN.md) — reserving each retriever a
   share of the pool, removing the rank cut from the pool-size gate, and the
   pre-registered comparison between a measured lexical weight now and a

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:8e678cdf96c96891e094be488f640f4b364901aa -->
+<!-- i18n-source: docs/index.md@blob:b5ead8cb00abbc6ca67dedaaa09373e6c50d0f32 -->
 
 # CPersona ドキュメント
 
@@ -153,6 +153,9 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
   順位付きリスト。
 - [到達範囲・新しさ・far の票](REACH_AND_RECENCY_PLAN.md) — 3 つの計測を 1 つに
   まとめ、それぞれ何を確立したか、そして 2.6 系で far の票に値段を付ける計画。
+- [一本化した事前分布](PRIOR_FUNCTION_DESIGN.md) — 位置と年齢の重みをすべて 1 つの関数に
+  まとめ、順位だけに効かせて足切りには効かせないこと。confidence は並べ直しに使わず、
+  各行の横に別の値として返すこと。
 - [適応的融合](ADAPTIVE_FUSION_DESIGN.md) — 各検索器にプールの取り分を確保すること、
   プールサイズ gate から順位カットを外すこと、そして「いま計測済みの lexical 重み」と
   「後の条件付き証拠の融合モード」のどちらを採るかを決める事前登録済みの比較。

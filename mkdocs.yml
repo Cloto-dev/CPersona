@@ -122,6 +122,7 @@ plugins:
             Contiguous embedding index: 埋め込み索引の連続配置
             Reach and recency in the scan window: 走査窓の到達範囲と新しさの優遇
             Reach, recency and the far vote: 到達範囲・新しさ・far の票
+            One prior function: 一本化した事前分布
             Policy block standard: ポリシーブロック標準
             SuperAuditor standard: SuperAuditor 標準
 
@@ -267,6 +268,7 @@ nav:
           - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
           - Reach and recency in the scan window: SCAN_WINDOW_REACH_DESIGN.md
           - Reach, recency and the far vote: REACH_AND_RECENCY_PLAN.md
+          - One prior function: PRIOR_FUNCTION_DESIGN.md
           - Adaptive fusion: ADAPTIVE_FUSION_DESIGN.md
           - Overflow tree: OVERFLOW_TREE_DESIGN.md
           - Block reach: BLOCK_REACH_DESIGN.md
