@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:80e8c50cdc15d82cc29c0dbdb221ad0b60948f35 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:7814271a67626deb10442b6147e3bd4b4bc59788 -->
 
 # Reliable Recall — 2.6 系
 
@@ -260,7 +260,8 @@ admission floor と gate です。[識別可能性ノート](research/adaptive-f
 ```text
 base      = forced_count ?? requested_count ?? default_count
 effective = min(base, max_count)
-0 <= returned <= effective
+0 <= returned - reserved <= effective
+0 <= reserved <= reservation        (Block の腕が off なら 0)
 ```
 
 - `default_count` は呼び出し側が何も言わない時のサーバーの既定、`max_count` は絶対の
@@ -276,6 +277,15 @@ effective = min(base, max_count)
 - 窓より少ない件数は正常な結果で、理由を伴います: 関連する証拠が無い、品質閾値未満、
   policy によるフィルター、provenance 不足、ペイロード予算の枯渇、システムの劣化。不足分は、
   重複や低品質の項目や、証拠が支えない内容で決して埋められません。
+- Block の腕が on の時、recall はその腕だけが届いたレコードのために決まった数の席を確保し
+  ([Block による到達 §5](BLOCK_REACH_DESIGN.md#5-admission-a-reservation-not-a-gate-change))、
+  reconstruct も同じ形を保ちます。そうした行だけでできた束は窓の席を取りません。窓から
+  外れた束のうちそうした行を含むものが、予約席数まで、窓の後ろに `admission: "reservation"`
+  の印を付けた項目として続き、`reserved_count` が返った数を述べます。これらは窓の項目を
+  押しのけず、窓が足りないかどうかはこれらを除いて判定し、`returned_count` が
+  `effective_count` を超えるのは予約席数までです。既定の予算は予約席の項目 1 件ごとに見出し
+  1 つ分広がります。呼び出し側や運用者が指定した予算は広がらず、それが外した予約席の項目は
+  `reserved_omitted` として報告されます。
 - 未設定時の既定は **1 件**です。実測による最適値ではなく、控えめな呼び出し契約です。
   最大値は、長期記憶ベンチマークで `count` とペイロード予算を sweep し、回答と証拠の品質を
   ペイロードのトークン量・レイテンシと比較するまでは実験的な値です。

@@ -295,7 +295,12 @@ reaches it. That is the property this arrangement exists to preserve.
 Two consequences follow for a caller. The reserved places are additional to the
 ones the gate filled, so a response can carry up to the reservation more rows
 than the count asked for — taking them out of the count instead would be the
-displacement the bullet above rules out. And the arm ranks against the query
+displacement the bullet above rules out. reconstruct, which reads this recall at
+its own candidate depth, keeps the same shape: the held records follow its
+window as items of their own, marked as reserved, and never compete for a place
+in it ([reconstruction window](RELIABLE_RECALL_2_6.md#the-reconstruction-window)).
+Ranked with everything else they would have come last, because they carry no gate
+score, and a full window would never have reached them. And the arm ranks against the query
 vector the local vector search embedded, so a deployment whose vector search is
 remote does not get block reach: the remote service answers for itself and
 never produces the vector this arm quantises.

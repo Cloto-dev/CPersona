@@ -155,8 +155,10 @@ def _compact(response: dict) -> dict:
         del out["requested_count"], out["count_policy"]
     if not budget_policy["clamped"] and budget_policy["source"] in _ASKED:
         del out["requested_budget"], out["budget_policy"]
-    budget_cut = out.get("shortfall_reason") == SHORTFALL_BUDGET_EXHAUSTED or any(
-        "excerpts_omitted" in item for item in out["items"]
+    budget_cut = (
+        out.get("shortfall_reason") == SHORTFALL_BUDGET_EXHAUSTED
+        or "reserved_omitted" in out
+        or any("excerpts_omitted" in item for item in out["items"])
     )
     if not budget_cut:
         del out["effective_budget"], out["used_budget"]
@@ -188,7 +190,10 @@ class _Candidate:
     from.
     """
 
-    __slots__ = ("ref", "kind", "row_id", "content", "timestamp", "ts", "msg_id", "source_id", "source_type", "context", "rank")
+    __slots__ = (
+        "ref", "kind", "row_id", "content", "timestamp", "ts", "msg_id", "source_id", "source_type", "context", "rank",
+        "reserved",
+    )
 
     def __init__(self, msg: dict, rank: int) -> None:
         ref = msg["ref"]
@@ -208,6 +213,11 @@ class _Candidate:
         # REVERSED (most relevant last) so that a truncated tail keeps the
         # valuable end; the caller of this module converts before constructing.
         self.rank = rank
+        # A row recall admitted into a place held for the block arm, not through
+        # the gate (docs/BLOCK_REACH_DESIGN.md §5). It carries no gate score, so
+        # its rank is below every admitted row by construction.
+        reason = msg.get("match_reason")
+        self.reserved = isinstance(reason, dict) and reason.get("admission") == "reservation"
 
 
 def _order_key(c: _Candidate) -> tuple:
@@ -1244,7 +1254,32 @@ async def do_reconstruct(
     # distinct, so the order is total. The walk runs on the items the window
     # holds, in that order, so what it adds to an item does not depend on `count`
     # (an earlier item is always in the window when a later one is).
-    chosen = sorted(clusters, key=lambda group: min(candidates[i].rank for i in group))[:effective_count]
+    ordered = sorted(clusters, key=lambda group: min(candidates[i].rank for i in group))
+    # The window is filled by clusters the gate admitted a row of. A cluster of
+    # reserved rows only never competes for it: a reserved row has no gate score,
+    # so ranking it among admitted rows would put it last and a full window would
+    # never reach it, and with room to spare it would take a place the gate did not
+    # grant. It gets the place recall gives it instead (docs/BLOCK_REACH_DESIGN.md
+    # §5): beside the window, after it, up to the same fixed bound, displacing
+    # nothing. A cluster the window left out that holds a reserved row is eligible
+    # for those places too, because the row is there only for the reservation. The
+    # bound is recall's: it reserved at most blocks.BLOCK_RESERVATION rows, and a
+    # held cluster holds at least one of them.
+    window = [group for group in ordered if any(not candidates[i].reserved for i in group)][:effective_count]
+    in_window = {id(group) for group in window}
+    held = (
+        [group for group in ordered if id(group) not in in_window and any(candidates[i].reserved for i in group)]
+        if effective_count > 0
+        else []
+    )
+    chosen = window + held
+    if held:
+        # The default budget fits one head per item of the window; the held places
+        # are items too, so the default is taken for both. A budget the caller or an
+        # operator named is not widened (resolve_budget takes it as given) -- it
+        # bounds the payload, and the held items, being last, are cut first.
+        effective_budget, budget_policy = resolve_budget(budget, effective_count + len(held))
+        response["effective_budget"], response["budget_policy"] = effective_budget, budget_policy
     graph = await associations.walk_graph(
         agent_id,
         [candidates[i].ref for group in chosen for i in group],
@@ -1259,7 +1294,7 @@ async def do_reconstruct(
 
     by_ref = {c.ref: c for c in candidates}
     selected = []
-    for members, walked in zip(chosen, reached):
+    for position, (members, walked) in enumerate(zip(chosen, reached)):
         rows = [candidates[i] for i in members]
         extra = []
         for ref, label, hops in walked:
@@ -1268,6 +1303,9 @@ async def do_reconstruct(
             by_ref[row.ref] = row
             extra.append((row, label, hops))
         item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)
+        if position >= len(window):
+            # Said in the words recall uses for the same row, so one reading covers both.
+            item["admission"] = "reservation"
         selected.append(item)
 
     # Quote the selected items. Nodes are read only now, after the items and their
@@ -1353,9 +1391,18 @@ async def do_reconstruct(
     response["items"] = items
     response["returned_count"] = len(items)
     response["reconstruction"]["selected_count"] = len(items)
+    held_returned = sum(1 for item in items if item.get("admission") == "reservation")
+    if held_returned:
+        # Beside the window, not in it: returned_count may exceed effective_count by this.
+        response["reserved_count"] = held_returned
+    if len(held) > held_returned:
+        # Held items come last, so a budget that cuts anything cuts them first. Not a
+        # short window, but a bound dropped them, and invariant 4 says which bound.
+        response["reserved_omitted"] = len(held) - held_returned
     if effective_count == 0:
         response["shortfall_reason"] = "count_zero"
-    if len(items) < effective_count:
+    # A held item does not fill the window, so a short window is judged without them.
+    if len(items) - held_returned < effective_count:
         response["shortfall_reason"] = (
             SHORTFALL_BUDGET_EXHAUSTED
             if budget_cut

@@ -299,7 +299,8 @@ recall items returned. It is not a fill target, and it is not a search depth.
 ```text
 base      = forced_count ?? requested_count ?? default_count
 effective = min(base, max_count)
-0 <= returned <= effective
+0 <= returned - reserved <= effective
+0 <= reserved <= reservation        (0 unless the block arm is on)
 ```
 
 - `default_count` is the server's default when the caller says nothing;
@@ -319,6 +320,17 @@ effective = min(base, max_count)
   insufficient provenance, payload budget exhausted, or system degraded. The
   shortfall is never filled with duplicates, low-quality items or content the
   evidence does not support.
+- With the block arm on, recall holds a fixed number of places for records only
+  that arm reached ([block reach §5](BLOCK_REACH_DESIGN.md#5-admission-a-reservation-not-a-gate-change)),
+  and reconstruct keeps them in the same shape. A cluster made only of such
+  rows never takes a place in the window; up to the reservation, clusters the
+  window left out that hold one follow it as items marked
+  `admission: "reservation"`, and `reserved_count` says how many came back. They
+  displace no item of the window, a short window is judged without them, and
+  `returned_count` can exceed `effective_count` by at most the reservation. The
+  default budget widens by one head per held item; a budget the caller or an
+  operator named does not, and a held item it leaves out is reported as
+  `reserved_omitted`.
 - The unconfigured default is **one item**, a conservative call contract rather
   than a measured optimum. The maximum remains experimental until a sweep
   over `count` and the payload budget on the long-memory benchmark compares
