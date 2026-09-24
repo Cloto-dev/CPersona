@@ -436,9 +436,10 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 - **Confidence on = it takes over**: with `CPERSONA_CONFIDENCE_ENABLED=true`
   the result order and the quality gate key on confidence, not the fusion
   mode. Run `calibrate_threshold` once after switching.
-- **Do not backfill episodes**: the episode boundary penalty keys on the
-  newest episode's timestamp, so bulk-importing history penalizes everything
-  older. Disable `CPERSONA_EPISODE_PENALTY_ENABLED` for such an import.
+- **Backfilling episodes is safe under the defaults**: the episode boundary
+  penalty is off unless `CPERSONA_EPISODE_PENALTY_ENABLED=true`. If a deployment
+  has turned it on, the penalty keys on the newest episode's timestamp, so
+  bulk-importing history penalizes everything older; keep it off for the import.
 - **`CPERSONA_MAX_MEMORIES` is the vector scan window, not a cap** — raise it
   via env for large corpora; FTS/keyword reach the full history regardless.
 - **Backup is not `cp`**: the DB runs WAL — use

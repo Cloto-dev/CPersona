@@ -153,9 +153,10 @@ Two bounds sit on either side of fusion. `CPERSONA_MAX_MEMORIES` is the
 vector retriever's
 [scan window](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories),
 not a storage cap, and it bounds what fusion ever gets to see. The
-[episode boundary penalty](behavior-contracts.md#3-episode-boundary-penalty)
-works on the other side: it multiplies the *already fused* score of memories
-older than the most recent `archive_episode`, before the gate runs.
+[episode boundary penalty](behavior-contracts.md#3-episode-boundary-penalty),
+when enabled (it is off by default from 2.6.0a7), works on the other side: it
+multiplies the *already fused* score of memories older than the most recent
+`archive_episode`, before the gate runs.
 
 ## The three memory types
 

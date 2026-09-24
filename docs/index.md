@@ -207,7 +207,7 @@ written to be checked rather than trusted. The
 
 - **Declarative** — individual facts, decisions, rules (`store` / `recall`).
 - **Episodic** — session summaries (`archive_episode`), which also drive the
-  [episode boundary penalty](behavior-contracts.md#3-episode-boundary-penalty).
+  opt-in [episode boundary penalty](behavior-contracts.md#3-episode-boundary-penalty).
 - **Profile** — accumulated user/project attributes (`update_profile`), with a
   [scoring caveat](behavior-contracts.md#7-profile-rows-carry-no-score) worth
   knowing.

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:3d5a33a64e02b2841b568a4c14cc2967b23eb4e7 -->
+<!-- i18n-source: docs/architecture.md@blob:19677fe57e8d0cd34d9ea9fb2ef677d5853aca40 -->
 
 # アーキテクチャ
 
@@ -152,8 +152,8 @@ flowchart LR
 [走査ウィンドウ](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)
 であって保存件数の上限ではなく、融合が見られる範囲を縛ります。
 [エピソード境界ペナルティ](behavior-contracts.md#3-episode-boundary-penalty)
-は反対側で働き、直近の `archive_episode` より古い記憶の*融合済み*スコアに、
-ゲートの前で係数を掛けます。
+は、有効にした場合 (2.6.0a7 から既定で無効)、反対側で働き、直近の
+`archive_episode` より古い記憶の*融合済み*スコアに、ゲートの前で係数を掛けます。
 
 ## 3 つの記憶タイプ { #the-three-memory-types }
 

@@ -13308,9 +13308,9 @@
         {
           "content": "apples in another project",
           "match_reason": {
-            "cosine": 0.4411262731,
-            "rrf": 0.0314976659,
-            "score": 0.4411262731,
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
             "signal": "cosine"
           },
           "ref": "mem:3",
@@ -13320,9 +13320,9 @@
         {
           "content": "apples discussed in chat",
           "match_reason": {
-            "cosine": 0.5544837998,
-            "rrf": 0.0322577957,
-            "score": 0.5544837998,
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
             "signal": "cosine"
           },
           "ref": "mem:4",
@@ -13332,9 +13332,9 @@
         {
           "content": "apples from a tagged user",
           "match_reason": {
-            "cosine": 0.3978533696,
-            "rrf": 0.0310094431,
-            "score": 0.3978533696,
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
             "signal": "cosine"
           },
           "ref": "mem:5",
@@ -13546,9 +13546,9 @@
         {
           "content": "apples in another project",
           "match_reason": {
-            "cosine": 0.4411262731,
-            "rrf": 0.0314976659,
-            "score": 0.4411262731,
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
             "signal": "cosine"
           },
           "ref": "mem:3",
@@ -13558,9 +13558,9 @@
         {
           "content": "apples discussed in chat",
           "match_reason": {
-            "cosine": 0.5544837998,
-            "rrf": 0.0322577957,
-            "score": 0.5544837998,
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
             "signal": "cosine"
           },
           "ref": "mem:4",
@@ -13570,9 +13570,9 @@
         {
           "content": "apples from a tagged user",
           "match_reason": {
-            "cosine": 0.3978533696,
-            "rrf": 0.0310094431,
-            "score": 0.3978533696,
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
             "signal": "cosine"
           },
           "ref": "mem:5",
@@ -13797,9 +13797,9 @@
         {
           "content": "apples in another project",
           "match_reason": {
-            "cosine": 0.4411262731,
-            "rrf": 0.0314976659,
-            "score": 0.4411262731,
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
             "signal": "cosine"
           },
           "ref": "mem:3",
@@ -13809,9 +13809,9 @@
         {
           "content": "apples discussed in chat",
           "match_reason": {
-            "cosine": 0.5544837998,
-            "rrf": 0.0322577957,
-            "score": 0.5544837998,
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
             "signal": "cosine"
           },
           "ref": "mem:4",
@@ -13831,9 +13831,9 @@
         {
           "content": "apples from a tagged user",
           "match_reason": {
-            "cosine": 0.3978533696,
-            "rrf": 0.0310094431,
-            "score": 0.3978533696,
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
             "signal": "cosine"
           },
           "ref": "mem:5",
@@ -14038,9 +14038,9 @@
         {
           "content": "apples in another project",
           "match_reason": {
-            "cosine": 0.4411262731,
-            "rrf": 0.0314976659,
-            "score": 0.4411262731,
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
             "signal": "cosine"
           },
           "ref": "mem:3",
@@ -14060,9 +14060,9 @@
         {
           "content": "apples discussed in chat",
           "match_reason": {
-            "cosine": 0.5544837998,
-            "rrf": 0.0322577957,
-            "score": 0.5544837998,
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
             "signal": "cosine"
           },
           "ref": "mem:4",
@@ -14072,9 +14072,9 @@
         {
           "content": "apples from a tagged user",
           "match_reason": {
-            "cosine": 0.3978533696,
-            "rrf": 0.0310094431,
-            "score": 0.3978533696,
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
             "signal": "cosine"
           },
           "ref": "mem:5",
@@ -14327,9 +14327,9 @@
         {
           "content": "apples in another project",
           "match_reason": {
-            "cosine": 0.4411262731,
-            "rrf": 0.0314976659,
-            "score": 0.4411262731,
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
             "signal": "cosine"
           },
           "ref": "mem:3",
@@ -14339,9 +14339,9 @@
         {
           "content": "apples discussed in chat",
           "match_reason": {
-            "cosine": 0.5544837998,
-            "rrf": 0.0322577957,
-            "score": 0.5544837998,
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
             "signal": "cosine"
           },
           "ref": "mem:4",
@@ -14361,9 +14361,9 @@
         {
           "content": "apples from a tagged user",
           "match_reason": {
-            "cosine": 0.3978533696,
-            "rrf": 0.0310094431,
-            "score": 0.3978533696,
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
             "signal": "cosine"
           },
           "ref": "mem:5",
@@ -14599,9 +14599,9 @@
         {
           "content": "apples in another project",
           "match_reason": {
-            "cosine": 0.4411262731,
-            "rrf": 0.0314976659,
-            "score": 0.4411262731,
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
             "signal": "cosine"
           },
           "ref": "mem:3",
@@ -14611,9 +14611,9 @@
         {
           "content": "apples discussed in chat",
           "match_reason": {
-            "cosine": 0.5544837998,
-            "rrf": 0.0322577957,
-            "score": 0.5544837998,
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
             "signal": "cosine"
           },
           "ref": "mem:4",
@@ -14623,9 +14623,9 @@
         {
           "content": "apples from a tagged user",
           "match_reason": {
-            "cosine": 0.3978533696,
-            "rrf": 0.0310094431,
-            "score": 0.3978533696,
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
             "signal": "cosine"
           },
           "ref": "mem:5",

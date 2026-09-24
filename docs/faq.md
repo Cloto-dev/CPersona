@@ -82,12 +82,13 @@ variable — that is the supported knob, and no archival routine is needed.
 
 The intended cadence is one episode per session, at session end.
 
-The episode boundary penalty softly prefers current-session memories, halving
-older ones at the floor. Its boundary is simply the newest episode's
-timestamp, so **bulk-importing historical conversations moves the boundary to
-import time and penalizes everything older**. Either do not backfill episodes,
-or disable the penalty (`CPERSONA_EPISODE_PENALTY_ENABLED=false`) while you
-do.
+Backfilling is harmless under the defaults. It matters only if you have
+turned on the episode boundary penalty (off by default from 2.6.0a7), which
+softly prefers current-session memories by halving older ones at the floor.
+Its boundary is simply the newest episode's timestamp, so with the penalty on,
+**bulk-importing historical conversations moves the boundary to import time and
+penalizes everything older**. Either do not backfill episodes, or keep the
+penalty off (`CPERSONA_EPISODE_PENALTY_ENABLED=false`) while you do.
 → [Contract §3](behavior-contracts.md#3-episode-boundary-penalty)
 
 ### Does `lock_memory` make a memory rank higher?
