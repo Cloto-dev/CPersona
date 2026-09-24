@@ -29,7 +29,8 @@ def reset_health_state():
 def _assert_default_recall_config():
     assert memory_handlers.RECALL_MODE == "rrf"
     assert memory_handlers.CONFIDENCE_ENABLED is False
-    assert memory_handlers.EPISODE_PENALTY_ENABLED is True
+    # Off by default from 2.6.0a7; the tests that exercise the penalty turn it on.
+    assert memory_handlers.EPISODE_PENALTY_ENABLED is False
 
 
 @pytest.mark.asyncio
@@ -73,8 +74,11 @@ async def test_empty_query_recall_bypasses_unscored_volume_gate(clean_db, fake_e
 
 
 @pytest.mark.asyncio
-async def test_episode_penalty_resorts_with_profile_row(clean_db):
+async def test_episode_penalty_resorts_with_profile_row(clean_db, monkeypatch):
+    # bug-126 was a hole in rrf + confidence off + penalty on. The penalty is an
+    # opt-in from 2.6.0a7, so the test opts in and keeps the rest at the default.
     _assert_default_recall_config()
+    monkeypatch.setattr(memory_handlers, "EPISODE_PENALTY_ENABLED", True)
     agent_id = "profile-penalty-agent"
     await clean_db.execute(
         "INSERT INTO episodes (agent_id, summary, keywords, created_at) "

@@ -813,7 +813,14 @@ AUTOCUT_MIN_RESULTS = max(2, _parse_int("CPERSONA_AUTOCUT_MIN_RESULTS", 3))
 # Episode boundary soft penalty (L3 — v2.4.14)
 # Memories created before the latest archived episode are penalised by a
 # multiplicative factor so cross-session noise is filtered by the quality gate.
-EPISODE_PENALTY_ENABLED = os.environ.get("CPERSONA_EPISODE_PENALTY_ENABLED", "true").lower() == "true"
+# Off by default from 2.6.0a7. An agent that archives an episode at the end of
+# every session puts nearly its whole history behind the boundary, so the
+# penalty halves the score of every earlier memory and lets unrelated rows
+# outrank them. On a real long-term memory store, turning the penalty off about
+# doubled how often the record holding the answer came first. Public benchmarks
+# never create episodes, so they could not see this. Deployments that want the
+# cross-session damping opt in with CPERSONA_EPISODE_PENALTY_ENABLED=true.
+EPISODE_PENALTY_ENABLED = os.environ.get("CPERSONA_EPISODE_PENALTY_ENABLED", "false").lower() == "true"
 EPISODE_DECAY_RATE = _parse_float("CPERSONA_EPISODE_DECAY_RATE", 0.01)
 EPISODE_DECAY_FLOOR = _parse_float("CPERSONA_EPISODE_DECAY_FLOOR", 0.5)
 
