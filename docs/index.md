@@ -162,6 +162,9 @@ guides disagree, the guides win.
 - [One prior function](PRIOR_FUNCTION_DESIGN.md) — every position and age
   weight as one function that orders the result and never gates it, and the
   confidence score returned beside each row instead of re-sorting the list.
+- [The recall process, v0](RECALL_PROCESS_DESIGN.md) — a recall trace that
+  attributes a failure to a stage, and a time cue that moves a row found in the
+  named period up by a bounded number of places without touching the gate.
 - [Adaptive fusion](ADAPTIVE_FUSION_DESIGN.md) — reserving each retriever a
   share of the pool, removing the rank cut from the pool-size gate, and the
   pre-registered comparison between a measured lexical weight now and a

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:e78b14755aee8e932af698853aa1a74bec3413d0 -->
+<!-- i18n-source: docs/index.md@blob:f4523ee5ba78836e7dd1dd4c7a1db57b10e02620 -->
 
 # CPersona ドキュメント
 
@@ -156,6 +156,8 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 - [一本化した事前分布](PRIOR_FUNCTION_DESIGN.md) — 位置と年齢の重みをすべて 1 つの関数に
   まとめ、順位だけに効かせて足切りには効かせないこと。confidence は並べ直しに使わず、
   各行の横に別の値として返すこと。
+- [想起のプロセス v0](RECALL_PROCESS_DESIGN.md) — 失敗をどの段で起きたかに帰属できる想起の記録と、
+  指定した時期に見つかった行を、ゲートに触れずに上限付きの段数だけ上げる時期の手がかり。
 - [適応的融合](ADAPTIVE_FUSION_DESIGN.md) — 各検索器にプールの取り分を確保すること、
   プールサイズ gate から順位カットを外すこと、そして「いま計測済みの lexical 重み」と
   「後の条件付き証拠の融合モード」のどちらを採るかを決める事前登録済みの比較。

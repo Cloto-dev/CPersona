@@ -2,7 +2,10 @@
 
 **Status:** implemented on `master`, unreleased. The confidence change
 (section 5) is in effect by default; the prior's weights (sections 2 to 4) are
-at identity defaults until the measurements in section 8 move them. It is the
+at identity defaults until the measurements in section 8 move them. The age
+weight has been measured (M2) and lost to no weight at every rate tried, so its
+default stays off; see section 8. Time enters the order through the
+[time cue](RECALL_PROCESS_DESIGN.md) instead, bounded in rank space. It is the
 implementation form of
 [the recall line's section 3](RELIABLE_RECALL_2_6.md#3-one-prior-function) and
 of [the far-vote plan](REACH_AND_RECENCY_PLAN.md#6-the-plan-for-the-26-line-a-priced-far-vote-designed-with-recency),
@@ -72,9 +75,10 @@ w_list  = 1 for the near vector list, the full-text list and the keyword list
   measurement that already exists.
 - **The age weight** is `p_age = max(floor, 1 / (1 + age_hours × rate))`. This
   is deliberately the same family as the time decay inside the confidence
-  score. With the confidence score's own rate and floor, one arm of the
-  measurement isolates exactly the time term confidence applies today, so its
-  effect can be read on its own for the first time.
+  score. The confidence score divides its rate by the store's time span in
+  weeks (`CPERSONA_REFERENCE_HOURS`, 168), so the arm that isolates the time
+  term confidence applies today uses that effective rate, computed for the
+  store being measured, not the nominal `CPERSONA_DECAY_RATE`.
 - Under `rsf`, `p(row)` multiplies the fused, normalised score, and the far
   channel is weighted by `w_far`. The channel divisor is unchanged, as the
   plan's note on `rsf` describes.
@@ -169,7 +173,7 @@ Each measurement is pre-registered before it runs.
 | --- | --- | --- | --- |
 | **M0** — dropping the confidence re-sort | Real-store benchmark, development questions, `recall`, episode penalty off | `legacy` against `fusion`, confidence enabled | Answer accuracy does not fall, within a margin fixed in advance |
 | **M1** — the far weight | LongMemEval near and far strata, as in the [far-vote plan](REACH_AND_RECENCY_PLAN.md#64-what-is-pre-registered-before-any-arm-runs) | `w_far ∈ {0, 0.25, 0.5, 0.75, 1}` at a reach of 200,000 | Both ends reproduce arms A and S to the digit; then the near stratum within −1.0 of the shipped answer and the far stratum within a point of the unweighted far list |
-| **M2** — the age weight | Real-store benchmark (every question type, with the current-value and temporal types in front) | `rate ∈ {0, small, medium, confidence's own}` | Accuracy rises overall, and no question type loses three or more answers. The types whose answers are old are the guard |
+| **M2** — the age weight | Real-store benchmark (every question type, with the current-value and temporal types in front) | `rate ∈ {0, small, medium, confidence's effective rate}` | Accuracy rises overall, and no question type loses three or more answers. The types whose answers are old are the guard. **Measured: every rate lost to rate 0 on the development questions, including the current-value type, so the default stays off.** Under `rrf` the first and thirtieth place differ by a factor of 1.475, less than the weight's span, so a multiplicative age weight let recency outrank relevance |
 
 - The age weight is measured only on data with a real time structure. The
   LongMemEval harness (`benchmarks/benchmark_trackb_lmeb.py`) writes every
