@@ -1,10 +1,10 @@
-<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:d5456b9cb44df51045301d713c3653d0ef6efa94 -->
+<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:72aa3687195cbe55a4c635d0c17de1f37f62b489 -->
 
 # 想起のプロセス v0 — 設計 { #the-recall-process-v0-design }
 
 > **翻訳について**: 正本は英語版です。
 
-**Status:** 設計であり、出荷済みの挙動ではありません。
+**Status:** 想起の記録 (§1) は実装済みで、まだリリースに入っていません。ループ (§2) は設計であり、出荷済みの挙動ではありません。
 [想起のプロセス](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process)、
 [Cued Recall](RELIABLE_RECALL_2_6.md#2-cued-recall-the-input-contract)、
 [想起の記録](RELIABLE_RECALL_2_6.md#8-recall-quality-engineering) の最初の段です。
@@ -42,12 +42,12 @@ v0 はサーバーに保存しません。保存したい呼び出し側 (ベン
 | `policy` | `{scoring, process}`: その呼び出しが動いたスコアリングの版と想起のプロセスの方針 (手がかり無しは `single-pass-v0`、有りは `cued-v0`) |
 | `server_version` | 答えたサーバーの版 |
 | `scope` | 解決後の `agent_id`・`project_id`・`channel`・`source_id` |
-| `request` | 要求された `limit` と実効の値、想起の深さ、`deep`、融合方式、confidence の並べ方、事前分布の設定、渡された `time_cue` |
-| `config` | 埋め込みモデル、走査窓・reach・far リストの上限、品質ゲートの閾値・信号・由来 (較正済みか heuristic か) |
+| `request` | `limit`、想起の深さ、`deep`、融合方式、confidence の並べ方、事前分布の設定、エピソードペナルティが有効か、渡された `time_cue` |
+| `config` | 埋め込みの方式とモデル、走査窓・reach・far リストの上限、融合ゲートと autocut が有効か |
 | `arms` | 検索器ごと (近いベクトル・遠いベクトル・エピソードの全文検索・記憶のキーワード・ブロック・手がかりの検索器) の `{ref, rank, raw}`、深さまで |
 | `fusion` | 候補ごとの融合スコアと、各検索器の寄与 |
-| `scoring` | 効いた場合の、エピソードペナルティの係数と事前分布の重み |
-| `gate` | 信号・閾値・通った ref・落ちた ref と理由 (`below_gate`・`profile_small_pool`・`unscored_volume`)、`gate_fallback` が起きたか |
+| `scoring` | 効いた場合の、行ごとのエピソードペナルティの係数と事前分布の重み |
+| `gate` | 信号、較正済みの閾値か heuristic の下限とどちらが効いたか (`origin`)、プールの大きさ、候補ごとの判定 (通ったか、理由付きで落ちたか: `below_gate`・`profile_small_pool`・`unscored_volume`)、`gate_fallback` が起きたか |
 | `autocut` | 起きたか、どこで切ったか、何を落としたか |
 | `order` | 件数で切る前の最終の並びと、件数で落ちた ref |
 | `reservation` | 確保された席 (ブロック到達・時期の手がかり) で入った行 |
@@ -62,8 +62,9 @@ v0 はサーバーに保存しません。保存したい呼び出し側 (ベン
 - **疑い**: recall の中。ループは自分が失敗したかを知りえません。比べる正解を持たないからです。見えるのは兆候だけで、
   何を疑ったか (例: 手がかりの期間に候補が無い時の `CANDIDATE_MISS`) と、それにどう対処したかを記録します。
 - **確定**: 後から、サーバーの外の道具が記録と既知の正解を突き合わせて付けます。答えの記録がどの検索器にも無ければ
-  `CANDIDATE_MISS`、ゲートか autocut が除いたなら `FILTER_DROP`、通ったが件数の切れ目より下なら `RANKING_MISS`、
-  返ったが使われなかったなら証拠や読み手のコード。
+  `CANDIDATE_MISS`、ゲートか autocut が除いたなら `FILTER_DROP`、通ったが件数の切れ目より下なら (または block の検索器が届いたが、
+  その検索器のために取っておいた席より下なら) `RANKING_MISS`、返ったが使われなかったなら証拠や読み手のコード。
+  道具は `benchmarks/recall_trace_confirm.py` です。
 
 2 つを分けておくと、ループ自身の判断を測れます。疑ったことが、確定したこととどれだけ一致したか。確定した失敗の
 履歴が、サーバーの挙動を自動で変えることはありません。方針の変更は、新しい方針の版を伴う、見直された変更です。

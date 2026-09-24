@@ -1,6 +1,7 @@
 # The Recall Process, v0 — design
 
-**Status:** design, not shipped behaviour. It is the first step of
+**Status:** the recall trace (§1) is implemented and not yet in a release;
+the loop (§2) is design, not shipped behaviour. It is the first step of
 [the recall process](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process),
 [Cued Recall](RELIABLE_RECALL_2_6.md#2-cued-recall-the-input-contract) and the
 [recall trace](RELIABLE_RECALL_2_6.md#8-recall-quality-engineering). v0 has
@@ -44,12 +45,12 @@ What a trace may contain when it leaves the machine is decided separately.
 | `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0` with one) |
 | `server_version` | The version that answered |
 | `scope` | `agent_id`, `project_id`, `channel`, `source_id` as resolved |
-| `request` | Requested and effective `limit`, the recall depth, `deep`, the fusion mode, the confidence ordering, the prior's settings, and the `time_cue` when given |
-| `config` | Embedding model, scan window, reach and far-list limit, and the quality gate's threshold, signal and origin (calibrated or heuristic) |
+| `request` | `limit`, the recall depth, `deep`, the fusion mode, the confidence ordering, the prior's settings, whether the episode penalty is on, and the `time_cue` when given |
+| `config` | Embedding mode and model, scan window, reach and far-list limit, and whether the fused gate and autocut are enabled |
 | `arms` | Per retrieval arm (near vector, far vector, episode full text, memory keyword, block, and the cue arm): `{ref, rank, raw}` up to the depth |
 | `fusion` | Per candidate: the fused score and each arm's contribution |
-| `scoring` | The episode penalty's factors and the prior's weights, where applied |
-| `gate` | Signal, threshold, admitted refs, and dropped refs with a reason (`below_gate`, `profile_small_pool`, `unscored_volume`); whether `gate_fallback` fired |
+| `scoring` | The episode penalty's factor and the prior's weight per row, where applied |
+| `gate` | Signal, the calibrated threshold or the heuristic minimum and which one applied (`origin`), the pool size, one decision per candidate (admitted, or dropped with a reason: `below_gate`, `profile_small_pool`, `unscored_volume`), and whether `gate_fallback` fired |
 | `autocut` | Whether it fired, where it cut, and what it dropped |
 | `order` | The final order before the count cut, and the refs the count cut dropped |
 | `reservation` | Rows admitted by a held seat (block reach, time cue) |
@@ -69,8 +70,10 @@ is used twice, and the two uses are kept apart:
 - **Confirmed**, after the fact, by a tool outside the server that compares a
   trace with the known answer: `CANDIDATE_MISS` when the answer's record is in
   no arm, `FILTER_DROP` when the gate or autocut removed it, `RANKING_MISS`
-  when it was admitted but ranked below the count cut, and the evidence and
-  reader codes when it was returned but not used.
+  when it was admitted but ranked below the count cut (or reached by the block
+  arm but ranked below the seats held for it), and the evidence and
+  reader codes when it was returned but not used. The tool is
+  `benchmarks/recall_trace_confirm.py`.
 
 Keeping the two apart makes the loop's own judgement measurable: how often
 did what it suspected match what was confirmed? The history of confirmed
