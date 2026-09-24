@@ -89,7 +89,11 @@ async def _relate(subject: str, predicate: str, obj: str, agent: str = AGENT, de
 async def _reconstruct(query: str = QUERY, **kw) -> dict:
     kw.setdefault("top_k", 20)
     kw.setdefault("trace", True)
-    return await R.do_reconstruct(AGENT, query, **kw)
+    out = await R.do_reconstruct(AGENT, query, **kw)
+    # The inner recall's timings are the one part of a trace that differs run to run;
+    # every other field still has to match wherever these tests compare responses.
+    out.get("trace", {}).get("recall", {}).pop("timing_ms", None)
+    return out
 
 
 def _claims(item: dict) -> dict[str, dict]:

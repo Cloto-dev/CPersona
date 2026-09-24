@@ -202,6 +202,12 @@ def windowed(fake_embedding_client, monkeypatch):
 LONG = " ".join(f"filler sentence {i} about routine things." for i in range(40)) + " The vault combination is 7431."
 
 
+def _untimed(trace: dict) -> dict:
+    """The trace without its inner recall's timings, the one part that differs run to run."""
+    recall = {k: v for k, v in trace.get("recall", {}).items() if k != "timing_ms"}
+    return {**trace, "recall": recall}
+
+
 def _shape(result):
     return [(i["head_ref"], [c["ref"] for c in i["claims"]]) for i in result["items"]]
 
@@ -238,7 +244,7 @@ async def test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_
         assert order[item["head_ref"]][0] == item["node"]["index"]
         assert len(order[item["head_ref"]]) == reconstruct.TRACE_NODE_ORDER < item["node"]["of"]
         assert len(set(order[item["head_ref"]])) == reconstruct.TRACE_NODE_ORDER
-        assert after["trace"] == before["trace"]
+        assert _untimed(after["trace"]) == _untimed(before["trace"])
         plain = await reconstruct.do_reconstruct(AGENT, "vault combination", count=3, deep=True)
         assert "trace" not in plain and "node_order" not in json.dumps(plain)
         assert stored["id"] == int(item["head_ref"].split(":")[1])
@@ -344,7 +350,7 @@ async def test_other_claims_come_back_as_excerpts_and_the_budget_omits_them_befo
         monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 20)
         tight = await reconstruct.do_reconstruct(AGENT, "deploy", count=5, budget=50, trace=True, deep=True)
         assert _shape(tight) == _shape(wide)
-        assert tight["trace"] == wide["trace"]  # the budget never moves the pool or the clusters
+        assert _untimed(tight["trace"]) == _untimed(wide["trace"])  # the budget never moves the pool or the clusters
         assert tight["used_budget"] == 40 <= tight["effective_budget"] == 50
         tight_burst = next(i for i in tight["items"] if len(i["claims"]) == 3)
         assert "excerpts" not in tight_burst and tight_burst["excerpts_omitted"] == 2

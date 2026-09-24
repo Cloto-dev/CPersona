@@ -224,6 +224,23 @@ async def test_a_reserved_row_says_why_it_is_here(reading, lexical_off):
         assert "score" not in reason, "a distance was offered where the gate's scores are read"
 
 
+@pytest.mark.asyncio
+async def test_a_reserved_row_is_traced_as_reached_and_returned(reading, lexical_off):
+    """The block arm is an arm of the recall trace: a row it reached and the
+    reservation admitted is a candidate that was returned, not one no arm found."""
+    from benchmarks.recall_trace_confirm import confirm
+
+    async with _TempDB() as tmp:
+        long_id, _ = await _store(tmp, [LONG_RECORD, ECHO_RECORD])
+        ref = f"mem:{long_id}"
+        out = await memory_handlers.do_recall(AGENT, TAIL_SUBJECT, limit=3, trace=True)
+        tr = out["trace"]
+        assert ref in _refs(out)
+        assert {"ref": ref, "kind": "block"} in tr["reservation"]
+        assert ref in {row["ref"] for row in tr["arms"]["block"]}
+        assert confirm(tr, {ref}) is None
+
+
 # --------------------------------------------------------------------------
 # the reservation displaces nothing (§5)
 # --------------------------------------------------------------------------

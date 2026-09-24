@@ -457,6 +457,7 @@ async def do_recall_boundary(
     source_id: str,
     full_content: bool = False,
     session_key: str = "",
+    trace: bool = False,
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -476,6 +477,7 @@ async def do_recall_boundary(
         session_key=session_key,
         # A full_content response shows every row whole, so it needs no excerpt.
         excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
+        **({"trace": True} if trace else {}),
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -1259,6 +1261,18 @@ registry.auto_tool(
                     "each message's `ref` expands via get_contents. true returns full text."
                 ),
             },
+            "trace": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "2.6 recall trace: true adds `trace` to the response — which rows each stage "
+                    "(retrieval arms, fusion, quality gate, autocut, final order, count cut, reserved "
+                    "seats) kept, dropped or reordered, and why, with ranks and scores. It carries "
+                    "references only, never stored text, and is not stored on the server. "
+                    "trace_version identifies its shape. False (the default) returns the response "
+                    "unchanged."
+                ),
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -1274,6 +1288,7 @@ registry.auto_tool(
         ("source_id", str, ""),
         ("full_content", bool, False),
         ("session_key", str, ""),
+        ("trace", bool, False),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -1664,7 +1679,7 @@ registry.auto_tool(
                 "type": "string",
                 "description": "Per-user source filter -- same semantics as in `recall`.",
             },
-            "trace": {"type": "boolean", "description": "Include candidate refs and cluster membership for local diagnosis; no full text is added."},
+            "trace": {"type": "boolean", "description": "Include candidate refs and cluster membership for local diagnosis, and the trace of the recall it made as trace.recall; no full text is added."},
             "budget": {
                 "type": "integer",
                 "minimum": 1,

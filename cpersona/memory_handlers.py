@@ -27,6 +27,7 @@ from cpersona import excerpts
 from cpersona import health
 from cpersona import nodes
 from cpersona import scope_stats
+from cpersona import recall_trace
 from cpersona import session
 from cpersona import update_check
 from cpersona import vector
@@ -467,6 +468,10 @@ async def _recall_cascade(
     results: list[dict] = []
     seen_ids: set = set()
     _excl = exclude_set or set()
+    rec = recall_trace.current()
+    vector_results: list[dict] = []
+    fts_results: list[dict] = []
+    memory_rows: list[dict] = []
 
     if vector._embedding_client and query.strip():
         vector_results = await _search_vector(
@@ -508,6 +513,12 @@ async def _recall_cascade(
                 results.append(row)
                 seen_ids.add(rid)
 
+    if rec is not None:
+        # Cascade fills stage by stage; it computes no fused score.
+        rec.arm("vector_near", vector_results, "_cosine")
+        rec.arm("episode_fts", fts_results, "_bm25")
+        rec.arm("memory_keyword", memory_rows, "_bm25")
+        rec.fusion(results, "_none")
     return results
 
 
@@ -536,13 +547,20 @@ async def _recall_rrf(
     doc_map: dict[tuple, dict] = {}
     rrf_scores: dict[tuple, float] = {}
     _excl = exclude_set or set()
+    # The recall trace (docs/RECALL_PROCESS_DESIGN.md §1): each arm's list and each
+    # row's votes, recorded only when the caller asked for a trace.
+    rec = recall_trace.current()
+    votes: dict[str, dict] | None = {} if rec is not None else None
+    fts_ep_results: list[dict] = []
+    fts_mem_results: list[dict] = []
+    vector_results: list[dict] = []
+    far_results: list[dict] = []
 
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # One call to the vector retriever, as always. `far_out` collects the
         # second ranked list it produces when CPERSONA_VECTOR_REACH is set above
         # the scan window, and stays empty otherwise.
-        far_results: list[dict] = []
         vector_results = await _search_vector(
             db, agent_id, query, depth, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
@@ -555,6 +573,8 @@ async def _recall_rrf(
             if rid not in doc_map:
                 doc_map[rid] = row
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            if votes is not None:
+                votes.setdefault(f"{rid[0]}:{rid[1]}", {})["vector_near"] = 1.0 / (k + rank + 1)
 
         # The far list (CPERSONA_VECTOR_REACH, empty unless it is set above the
         # scan window) is one more ranked list, fused exactly like the others: a
@@ -575,6 +595,8 @@ async def _recall_rrf(
             if rid not in doc_map:
                 doc_map[rid] = row
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + PRIOR_FAR_WEIGHT / (k + rank + 1)
+            if votes is not None:
+                votes.setdefault(f"{rid[0]}:{rid[1]}", {})["vector_far"] = PRIOR_FAR_WEIGHT / (k + rank + 1)
 
     # Episodes lack per-user source tagging, so a per-user source_id filter
     # normally suppresses them; a channel filter (v2.4.22) scopes episodes to
@@ -588,6 +610,8 @@ async def _recall_rrf(
             if rid not in doc_map:
                 doc_map[rid] = row
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            if votes is not None:
+                votes.setdefault(f"ep:{row['id']}", {})["episode_fts"] = 1.0 / (k + rank + 1)
 
     if FTS_ENABLED:
         fts_mem_results = await _search_memories_keyword(
@@ -601,6 +625,8 @@ async def _recall_rrf(
             if rid not in doc_map:
                 doc_map[rid] = row
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            if votes is not None:
+                votes.setdefault(f"mem:{row['id']}", {})["memory_keyword"] = 1.0 / (k + rank + 1)
 
     sorted_rids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)
     results = []
@@ -608,6 +634,12 @@ async def _recall_rrf(
         row = doc_map[rid]
         row["_rrf_score"] = rrf_scores[rid]
         results.append(row)
+    if rec is not None:
+        rec.arm("vector_near", vector_results, "_cosine")
+        rec.arm("vector_far", far_results, "_cosine")
+        rec.arm("episode_fts", fts_ep_results, "_bm25")
+        rec.arm("memory_keyword", fts_mem_results, "_bm25")
+        rec.fusion(results, "_rrf_score", votes)
 
     await _append_profile_rows(db, agent_id, results)
 
@@ -673,10 +705,14 @@ async def _recall_rsf(
     ep_raw: dict[tuple, float | None] = {}
     mem_raw: dict[tuple, float | None] = {}
     _excl = exclude_set or set()
+    rec = recall_trace.current()
+    near_rows: list[dict] = []
+    far_rows: list[dict] = []
+    ep_rows: list[dict] = []
+    mem_rows: list[dict] = []
 
     rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
-        far_rows: list[dict] = []
         near_rows = await _search_vector(
             db, agent_id, query, depth, min_similarity=rsf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
@@ -708,19 +744,21 @@ async def _recall_rsf(
 
     # Episodes lack per-user source tagging (mirrors _recall_rrf gating).
     if FTS_ENABLED and (not source_id or channel):
-        for row in await _search_episodes_fts(
+        ep_rows = await _search_episodes_fts(
             db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
-        ):
+        )
+        for row in ep_rows:
             rid = ("ep", row["id"])
             doc_map.setdefault(rid, row)
             bm = row.get("_bm25")
             ep_raw[rid] = -bm if bm is not None else None
 
     if FTS_ENABLED:
-        for row in await _search_memories_keyword(
+        mem_rows = await _search_memories_keyword(
             db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
             extra_terms=lexical_terms,
-        ):
+        )
+        for row in mem_rows:
             if _content_excluded(row.get("content", ""), _excl):
                 continue
             rid = ("mem", row["id"])
@@ -731,18 +769,28 @@ async def _recall_rsf(
     active = [ch for ch in (vec_raw, far_raw, ep_raw, mem_raw) if ch]
     n_active = len(active) or 1
     fused: dict[tuple, float] = {}
+    votes: dict[str, dict] | None = {} if rec is not None else None
+    names = {id(vec_raw): "vector_near", id(far_raw): "vector_far", id(ep_raw): "episode_fts", id(mem_raw): "memory_keyword"}
     for ch in active:
         # 2.6.0a7: the far channel is weighted by CPERSONA_PRIOR_FAR_WEIGHT; the
         # divisor stays the channel count (docs/PRIOR_FUNCTION_DESIGN.md §2).
         channel_weight = PRIOR_FAR_WEIGHT if ch is far_raw else 1.0
         for rid, w in _minmax_norm(ch).items():
             fused[rid] = fused.get(rid, 0.0) + w * channel_weight
+            if votes is not None:
+                votes.setdefault(f"{rid[0]}:{rid[1]}", {})[names[id(ch)]] = w * channel_weight / n_active
 
     results = []
     for rid in sorted(fused, key=fused.get, reverse=True):
         row = doc_map[rid]
         row["_rsf_score"] = fused[rid] / n_active
         results.append(row)
+    if rec is not None:
+        rec.arm("vector_near", near_rows, "_cosine")
+        rec.arm("vector_far", far_rows, "_cosine")
+        rec.arm("episode_fts", ep_rows, "_bm25")
+        rec.arm("memory_keyword", mem_rows, "_bm25")
+        rec.fusion(results, "_rsf_score", votes)
 
     await _append_profile_rows(db, agent_id, results)
 
@@ -907,6 +955,8 @@ def _apply_quality_gate(
 
     filtered = []
     stats = {"confidence": 0, "rsf": 0, "cosine": 0, "rrf": 0, "unscored": 0, "profile": 0, "blocked": 0}
+    # The recall trace records each decision with its reason; None outside a traced recall.
+    rec = recall_trace.current()
 
     for r in results:
         # Profile — gate by memory count (unchanged)
@@ -916,6 +966,8 @@ def _apply_quality_gate(
                 stats["profile"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "profile", None, 50, memory_count >= 50, "profile_small_pool")
             continue
 
         confidence = r.get("_confidence_score")
@@ -932,6 +984,8 @@ def _apply_quality_gate(
                 stats["confidence"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "confidence", confidence, conf_threshold, confidence >= conf_threshold, "below_gate")
         elif rsf is not None:
             # RSF fused scores lie in [0, 1] but not on the cosine scale: min-max
             # normalization makes them relative to the rest of this query's
@@ -944,6 +998,8 @@ def _apply_quality_gate(
                 stats["rsf"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "rsf", rsf, rsf_threshold, rsf >= rsf_threshold, "below_gate")
         elif cosine is not None:
             cos_threshold = gate if (gate is not None and gate_signal == "cosine") else min_score
             if cosine >= cos_threshold:
@@ -951,6 +1007,8 @@ def _apply_quality_gate(
                 stats["cosine"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "cosine", cosine, cos_threshold, cosine >= cos_threshold, "below_gate")
         elif rrf is not None:
             # Calibrated gate is on the raw RRF scale (calibrated on raw _rrf_score), so
             # compare directly; otherwise rescale the cosine-scale heuristic min_score.
@@ -960,6 +1018,8 @@ def _apply_quality_gate(
                 stats["rrf"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "rrf", rrf, rrf_threshold, rrf >= rrf_threshold, "below_gate")
         else:
             # Unscored (cascade FTS/keyword without confidence) — volume rule
             # bug-125: an empty query is a pure-recency listing with no relevance
@@ -970,6 +1030,8 @@ def _apply_quality_gate(
                 stats["unscored"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, None, None, None, pure_recency or memory_count >= 100, "unscored_volume")
 
     logger.debug(
         "quality_gate: in=%d out=%d (conf=%d rsf=%d cos=%d rrf=%d uns=%d prof=%d) min_score=%.3f count=%d",
@@ -1418,6 +1480,9 @@ async def _apply_recall_scoring(
                 if _is_episode_result(r):
                     continue
                 factor = _episode_boundary_factor(r.get("timestamp"), episode_boundary_ts)
+                trace_rec = recall_trace.current()
+                if trace_rec is not None:
+                    trace_rec.penalty(r, factor)
                 if factor < 1.0:
                     penalized = True
                     if "_cosine" in r:
@@ -1582,6 +1647,61 @@ async def do_recall(
     session_key: str = "",
     lexical_terms: list[str] | None = None,
     excerpt_chars: int = 0,
+    trace: bool = False,
+) -> dict:
+    """Recall, optionally returning the recall trace (docs/RECALL_PROCESS_DESIGN.md §1).
+
+    Without ``trace`` this is exactly ``_do_recall``. With it, a recorder is active for
+    the duration of the call and the response carries ``trace``: references, ranks,
+    scores and reasons per stage, never stored text. The recall itself is unchanged.
+    """
+    kwargs = dict(
+        deep=deep, channel=channel, exclude_contents=exclude_contents, project_id=project_id,
+        source_id=source_id, session_key=session_key, lexical_terms=lexical_terms,
+        excerpt_chars=excerpt_chars,
+    )
+    if not trace:
+        return await _do_recall(agent_id, query, limit, **kwargs)
+    from cpersona import __version__
+    from cpersona import utils as _utils
+
+    rec = recall_trace.TraceRecorder()
+    rec.set("policy", {"scoring": _utils.SCORING_VERSION, "process": recall_trace.PROCESS_SINGLE_PASS})
+    rec.set("server_version", __version__)
+    rec.set("scope", {"agent_id": agent_id, "project_id": project_id, "channel": channel, "source_id": source_id})
+    rec.set("request", {
+        "limit": limit, "deep": deep, "mode": RECALL_MODE,
+        "confidence_enabled": CONFIDENCE_ENABLED, "confidence_ordering": CONFIDENCE_ORDERING,
+        "prior": {"far_weight": PRIOR_FAR_WEIGHT, "age_rate": PRIOR_AGE_RATE,
+                  "age_floor": PRIOR_AGE_FLOOR, "age_anchor": PRIOR_AGE_ANCHOR},
+        "episode_penalty": EPISODE_PENALTY_ENABLED,
+    })
+    rec.set("config", {
+        "embedding_mode": config.EMBEDDING_MODE, "embedding_model": config.EMBEDDING_MODEL, "scan_window": MAX_MEMORIES,
+        "vector_reach": config.VECTOR_REACH, "vector_far_limit": config.VECTOR_FAR_LIMIT,
+        "fused_gate_enabled": config.FUSED_GATE_ENABLED, "autocut_enabled": AUTOCUT_ENABLED,
+    })
+    token = rec.activate()
+    try:
+        result = await _do_recall(agent_id, query, limit, **kwargs)
+    finally:
+        rec.deactivate(token)
+    result["trace"] = rec.finish()
+    return result
+
+
+async def _do_recall(
+    agent_id: str,
+    query: str,
+    limit: int,
+    deep: bool = False,
+    channel: str = "",
+    exclude_contents: list | None = None,
+    project_id: str | None = None,
+    source_id: str = "",
+    session_key: str = "",
+    lexical_terms: list[str] | None = None,
+    excerpt_chars: int = 0,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1698,6 +1818,10 @@ async def do_recall(
         results, time_range_hours, recall_counts, newest_age_hours = await _apply_recall_scoring(
             db, agent_id, results, deep, project_id=project_id, channel=channel, query=query
         )
+        trace_rec = recall_trace.current()
+        if trace_rec is not None:
+            trace_rec.data["request"]["depth"] = depth
+            trace_rec.mark("retrieve_and_score")
 
         # 2.6.0a7: the span the age weight is measured against, read inside this
         # connection (cached per scope). Nothing is read while the weight is off.
@@ -1753,6 +1877,8 @@ async def do_recall(
                 exclude_set=exclude_set,
                 wanted=limit + blocks.BLOCK_RESERVATION,
             )
+            if trace_rec is not None:
+                trace_rec.arm("block", block_rows, "_block_distance")
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26/27: use the calibrated gate for whichever branch is active.
@@ -1842,12 +1968,26 @@ async def do_recall(
     # (confidence 1.0) the gap between it and the rescued rows is the whole scale: autocut
     # cuts at index 1 and the response says gate_fallback=true while containing nothing but
     # the profile row. Skip it whenever the rescue fired; the gate already did the cutting.
+    trace_rec = recall_trace.current()
+    if trace_rec is not None:
+        trace_rec.gate_summary(
+            signal=gate_signal, calibrated=gate, heuristic_min=effective_min,
+            origin="heuristic" if gate is None else "calibrated",
+            pool=memory_count, gate_fallback=gate_fallback,
+        )
+        trace_rec.mark("gate")
     if AUTOCUT_ENABLED and not gate_fallback:
+        before_autocut = results
         results = _autocut(results)
+        if trace_rec is not None:
+            trace_rec.autocut(before_autocut, results)
 
     # 2.6.0a7: the prior orders what the gate and autocut admitted; it never
     # admits or removes (docs/PRIOR_FUNCTION_DESIGN.md §3).
     results = _apply_prior(results, prior_span, datetime.now(timezone.utc))
+    if trace_rec is not None:
+        trace_rec.order(results, limit)
+        trace_rec.mark("order")
 
     results = results[:limit]
 
@@ -1865,6 +2005,8 @@ async def do_recall(
         }
         reserved = [row for row in block_rows if row["_rid"] not in present]
         results.extend(reserved[: blocks.BLOCK_RESERVATION])
+        if trace_rec is not None:
+            trace_rec.reservation(reserved[: blocks.BLOCK_RESERVATION], "block")
 
     results.reverse()
 

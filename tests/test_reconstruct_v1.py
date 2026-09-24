@@ -53,7 +53,10 @@ async def test_zero_count_on_an_empty_corpus_reports_the_requested_zero():
     assert out["requested_count"] == out["effective_count"] == out["returned_count"] == 0
     assert out["items"] == []
     assert out["shortfall_reason"] == "count_zero"
+    recall_trace = out["trace"].pop("recall")
     assert out["trace"] == {"candidate_refs": [], "clusters": []}
+    # The inner recall's trace rides along (docs/RECALL_PROCESS_DESIGN.md §1.1).
+    assert recall_trace["trace_version"] == 1 and recall_trace["fusion"] == []
 
 
 @pytest.mark.asyncio

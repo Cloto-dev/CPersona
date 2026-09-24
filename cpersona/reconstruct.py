@@ -1176,6 +1176,9 @@ async def do_reconstruct(
         source_id=source_id,
         session_key=session_key,
         **({"lexical_terms": cue_terms} if cue_terms else {}),
+        # The recall trace of the call this reconstruction rests on
+        # (docs/RECALL_PROCESS_DESIGN.md §1.1), returned as trace.recall.
+        **({"trace": True} if trace else {}),
     )
     messages = recall_result.get("messages", [])
 
@@ -1224,6 +1227,8 @@ async def do_reconstruct(
         response["trace"] = {"candidate_refs": [c.ref for c in candidates], "clusters": []}
         if cue_report:
             response["trace"]["cues"] = cue_report
+        if "trace" in recall_result:
+            response["trace"]["recall"] = recall_result["trace"]
     if not candidates:
         response["shortfall_reason"] = (
             "count_zero" if effective_count == 0 else (
