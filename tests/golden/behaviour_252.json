@@ -3611,12 +3611,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:44b9f6445c566baf>",
           "id": 1,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-12-11T00:00:00Z"
         },
@@ -3627,12 +3627,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:19660f63b55f6010>",
           "id": 2,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-12-18T00:00:00Z"
         },
@@ -3643,12 +3643,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:40fdc0f653c2bdbe>",
           "id": 3,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-12-25T00:00:00Z"
         },
@@ -3686,6 +3686,69 @@
       "messages": [
         {
           "confidence": {
+            "age_hours": 336.0,
+            "cosine": 0.5049,
+            "score": 0.5908
+          },
+          "content": "pears picked two weeks ago",
+          "match_reason": {
+            "cosine": 0.5048677325,
+            "rrf": 0.0317460317,
+            "score": 0.5048677325,
+            "signal": "cosine"
+          },
+          "ref": "mem:2",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-18T00:00:00Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 168.0,
+            "cosine": 0.457,
+            "score": 0.601
+          },
+          "content": "pears picked one week ago",
+          "match_reason": {
+            "cosine": 0.4570260644,
+            "rrf": 0.0317540323,
+            "score": 0.4570260644,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-25T00:00:00Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 504.0,
+            "cosine": 0.5289,
+            "score": 0.5637
+          },
+          "content": "pears picked three weeks ago",
+          "match_reason": {
+            "cosine": 0.5288785696,
+            "rrf": 0.0317540323,
+            "score": 0.5288785696,
+            "signal": "cosine"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-11T00:00:00Z"
+        },
+        {
+          "confidence": {
             "age_hours": 24.0,
             "cosine": 0.6001,
             "score": 0.8355
@@ -3694,8 +3757,8 @@
           "match_reason": {
             "cosine": 0.6000586748,
             "rrf": 0.0327868852,
-            "score": 0.8355,
-            "signal": "confidence"
+            "score": 0.6000586748,
+            "signal": "cosine"
           },
           "ref": "mem:4",
           "source": {
@@ -3986,27 +4049,6 @@
       "messages": [
         {
           "confidence": {
-            "age_hours": 168.0,
-            "cosine": 0.457,
-            "score": 0.6835
-          },
-          "content": "pears picked one week ago",
-          "match_reason": {
-            "cosine": 0.4570260644,
-            "rrf": 0.0312576313,
-            "score": 0.6835,
-            "signal": "confidence"
-          },
-          "ref": "mem:3",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-12-25T00:00:00Z"
-        },
-        {
-          "confidence": {
             "age_hours": 336.0,
             "cosine": 0.5049,
             "score": 0.7444
@@ -4015,8 +4057,8 @@
           "match_reason": {
             "cosine": 0.5048677325,
             "rrf": 0.03125,
-            "score": 0.7444,
-            "signal": "confidence"
+            "score": 0.5048677325,
+            "signal": "cosine"
           },
           "ref": "mem:2",
           "source": {
@@ -4028,6 +4070,27 @@
         },
         {
           "confidence": {
+            "age_hours": 168.0,
+            "cosine": 0.457,
+            "score": 0.6835
+          },
+          "content": "pears picked one week ago",
+          "match_reason": {
+            "cosine": 0.4570260644,
+            "rrf": 0.0312576313,
+            "score": 0.4570260644,
+            "signal": "cosine"
+          },
+          "ref": "mem:3",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-25T00:00:00Z"
+        },
+        {
+          "confidence": {
             "age_hours": 504.0,
             "cosine": 0.5289,
             "score": 0.773
@@ -4036,8 +4099,8 @@
           "match_reason": {
             "cosine": 0.5288785696,
             "rrf": 0.0312576313,
-            "score": 0.773,
-            "signal": "confidence"
+            "score": 0.5288785696,
+            "signal": "cosine"
           },
           "ref": "mem:1",
           "source": {
@@ -4057,8 +4120,8 @@
           "match_reason": {
             "cosine": 0.5536241531,
             "rrf": 0.0322580645,
-            "score": 0.8018,
-            "signal": "confidence"
+            "score": 0.5536241531,
+            "signal": "cosine"
           },
           "ref": "mem:5",
           "source": {
@@ -4078,8 +4141,8 @@
           "match_reason": {
             "cosine": 0.6000586748,
             "rrf": 0.0327868852,
-            "score": 0.8529,
-            "signal": "confidence"
+            "score": 0.6000586748,
+            "signal": "cosine"
           },
           "ref": "mem:4",
           "source": {
@@ -4776,27 +4839,6 @@
       "messages": [
         {
           "confidence": {
-            "age_hours": 528.0,
-            "cosine": 0.5368,
-            "score": 0.5748
-          },
-          "content": "apples spelled Z, early",
-          "match_reason": {
-            "cosine": 0.5367515683,
-            "rrf": 0.0307765152,
-            "score": 0.5748,
-            "signal": "confidence"
-          },
-          "ref": "mem:1",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-12-10T00:00:00Z"
-        },
-        {
-          "confidence": {
             "age_hours": 168.0,
             "cosine": 0.4589,
             "score": 0.6085
@@ -4805,8 +4847,8 @@
           "match_reason": {
             "cosine": 0.4588958621,
             "rrf": 0.0151515152,
-            "score": 0.6085,
-            "signal": "confidence"
+            "score": 0.4588958621,
+            "signal": "cosine"
           },
           "ref": "mem:5",
           "source": {
@@ -4818,48 +4860,6 @@
         },
         {
           "confidence": {
-            "age_hours": 527.0,
-            "cosine": 0.5871,
-            "score": 0.6166
-          },
-          "content": "apples spelled -05:00",
-          "match_reason": {
-            "cosine": 0.5870860815,
-            "rrf": 0.0325224749,
-            "score": 0.6166,
-            "signal": "confidence"
-          },
-          "ref": "mem:2",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-12-09T20:00:00-05:00"
-        },
-        {
-          "confidence": {
-            "age_hours": 276.0,
-            "cosine": 0.5822,
-            "score": 0.6933
-          },
-          "content": "apples spelled naive",
-          "match_reason": {
-            "cosine": 0.5821912289,
-            "rrf": 0.0325224749,
-            "score": 0.6933,
-            "signal": "confidence"
-          },
-          "ref": "mem:4",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "<generated>"
-        },
-        {
-          "confidence": {
             "age_hours": 0.0,
             "cosine": 0.5086,
             "score": 0.7491
@@ -4868,8 +4868,8 @@
           "match_reason": {
             "cosine": 0.508646071,
             "rrf": 0.0307692308,
-            "score": 0.7491,
-            "signal": "confidence"
+            "score": 0.508646071,
+            "signal": "cosine"
           },
           "ref": "mem:7",
           "source": {
@@ -4881,6 +4881,27 @@
         },
         {
           "confidence": {
+            "age_hours": 528.0,
+            "cosine": 0.5368,
+            "score": 0.5748
+          },
+          "content": "apples spelled Z, early",
+          "match_reason": {
+            "cosine": 0.5367515683,
+            "rrf": 0.0307765152,
+            "score": 0.5367515683,
+            "signal": "cosine"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-10T00:00:00Z"
+        },
+        {
+          "confidence": {
             "age_hours": 7.0,
             "cosine": 0.5469,
             "score": 0.7897
@@ -4889,8 +4910,8 @@
           "match_reason": {
             "cosine": 0.5468702316,
             "rrf": 0.0314980159,
-            "score": 0.7897,
-            "signal": "confidence"
+            "score": 0.5468702316,
+            "signal": "cosine"
           },
           "ref": "mem:6",
           "source": {
@@ -4899,6 +4920,48 @@
             "type": "User"
           },
           "timestamp": "2027-01-01T02:00:00+09:00"
+        },
+        {
+          "confidence": {
+            "age_hours": 276.0,
+            "cosine": 0.5822,
+            "score": 0.6933
+          },
+          "content": "apples spelled naive",
+          "match_reason": {
+            "cosine": 0.5821912289,
+            "rrf": 0.0325224749,
+            "score": 0.5821912289,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "<generated>"
+        },
+        {
+          "confidence": {
+            "age_hours": 527.0,
+            "cosine": 0.5871,
+            "score": 0.6166
+          },
+          "content": "apples spelled -05:00",
+          "match_reason": {
+            "cosine": 0.5870860815,
+            "rrf": 0.0325224749,
+            "score": 0.5870860815,
+            "signal": "cosine"
+          },
+          "ref": "mem:2",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-09T20:00:00-05:00"
         }
       ]
     },
@@ -5294,12 +5357,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:bd0189b8e6e6ab3e>",
           "id": 2,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:02Z"
         },
@@ -5310,12 +5373,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:8a638cf521f27255>",
           "id": 3,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:03Z"
         },
@@ -5326,12 +5389,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:89a841bb29d94be2>",
           "id": 4,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:04Z"
         },
@@ -5342,12 +5405,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:f8c6dc022675de2e>",
           "id": 5,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:05Z"
         },
@@ -5392,84 +5455,7 @@
         "watermark": 6
       },
       "recalled": {
-        "messages": [
-          {
-            "confidence": {
-              "age_hours": 8760.0,
-              "score": 0.5477
-            },
-            "content": "apples, every element +inf",
-            "match_reason": {
-              "rrf": 0.0153846154,
-              "score": 0.5477,
-              "signal": "confidence"
-            },
-            "ref": "mem:3",
-            "source": {
-              "id": "u",
-              "name": "n",
-              "type": "User"
-            },
-            "timestamp": "2026-01-01T00:00:03Z"
-          },
-          {
-            "confidence": {
-              "age_hours": 8760.0,
-              "score": 0.5477
-            },
-            "content": "apples, every element NaN",
-            "match_reason": {
-              "rrf": 0.015625,
-              "score": 0.5477,
-              "signal": "confidence"
-            },
-            "ref": "mem:2",
-            "source": {
-              "id": "u",
-              "name": "n",
-              "type": "User"
-            },
-            "timestamp": "2026-01-01T00:00:02Z"
-          },
-          {
-            "confidence": {
-              "age_hours": 8760.0,
-              "score": 0.5477
-            },
-            "content": "apples, one element -inf",
-            "match_reason": {
-              "rrf": 0.0158730159,
-              "score": 0.5477,
-              "signal": "confidence"
-            },
-            "ref": "mem:5",
-            "source": {
-              "id": "u",
-              "name": "n",
-              "type": "User"
-            },
-            "timestamp": "2026-01-01T00:00:05Z"
-          },
-          {
-            "confidence": {
-              "age_hours": 8760.0,
-              "score": 0.5477
-            },
-            "content": "apples, one element NaN",
-            "match_reason": {
-              "rrf": 0.0161290323,
-              "score": 0.5477,
-              "signal": "confidence"
-            },
-            "ref": "mem:4",
-            "source": {
-              "id": "u",
-              "name": "n",
-              "type": "User"
-            },
-            "timestamp": "2026-01-01T00:00:04Z"
-          }
-        ]
+        "messages": []
       }
     },
     "seam": "store-recall-health",
@@ -7327,12 +7313,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:bd0189b8e6e6ab3e>",
           "id": 2,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:02Z"
         },
@@ -7343,12 +7329,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:8a638cf521f27255>",
           "id": 3,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:03Z"
         },
@@ -7359,12 +7345,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:89a841bb29d94be2>",
           "id": 4,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:04Z"
         },
@@ -7375,12 +7361,12 @@
           "created_at": "<generated>",
           "embedding": "<blob 256B sha256:f8c6dc022675de2e>",
           "id": 5,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{\"type\":\"User\",\"id\":\"u\",\"name\":\"n\"}",
           "timestamp": "2026-01-01T00:00:05Z"
         },
@@ -7415,90 +7401,7 @@
     "outbound": [],
     "raised": null,
     "result": {
-      "messages": [
-        {
-          "confidence": {
-            "age_hours": 8760.0,
-            "score": 0.5477
-          },
-          "content": "apples, one element -inf",
-          "match_reason": {
-            "rrf": 0.0158730159,
-            "score": 0.5477,
-            "signal": "confidence"
-          },
-          "ref": "mem:5",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:05Z"
-        },
-        {
-          "confidence": {
-            "age_hours": 8760.0,
-            "cosine": "<nan>",
-            "score": 0.5477
-          },
-          "content": "apples, every element NaN",
-          "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0314980159,
-            "score": 0.5477,
-            "signal": "confidence"
-          },
-          "ref": "mem:2",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:02Z"
-        },
-        {
-          "confidence": {
-            "age_hours": 8760.0,
-            "cosine": "<nan>",
-            "score": 0.5477
-          },
-          "content": "apples, every element +inf",
-          "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0315136476,
-            "score": 0.5477,
-            "signal": "confidence"
-          },
-          "ref": "mem:3",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:03Z"
-        },
-        {
-          "confidence": {
-            "age_hours": 8760.0,
-            "cosine": "<nan>",
-            "score": 0.5477
-          },
-          "content": "apples, one element NaN",
-          "match_reason": {
-            "cosine": "<nan>",
-            "rrf": 0.0325224749,
-            "score": 0.5477,
-            "signal": "confidence"
-          },
-          "ref": "mem:4",
-          "source": {
-            "id": "u",
-            "name": "n",
-            "type": "User"
-          },
-          "timestamp": "2026-01-01T00:00:04Z"
-        }
-      ]
+      "messages": []
     },
     "seam": "store-recall-health",
     "thresholds": {}
@@ -12241,12 +12144,12 @@
           "created_at": "2026-01-01T00:00:03Z",
           "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
           "id": 3,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "proj-b",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{}",
           "timestamp": "2026-01-01T00:00:03Z"
         },
@@ -12257,12 +12160,12 @@
           "created_at": "2026-01-01T00:00:04Z",
           "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
           "id": 4,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{}",
           "timestamp": "2026-01-01T00:00:04Z"
         },
@@ -12273,12 +12176,12 @@
           "created_at": "2026-01-01T00:00:05Z",
           "embedding": "<blob 256B sha256:1eb29214c7399141>",
           "id": 5,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{\"id\": \"discord:42\"}",
           "timestamp": "2026-01-01T00:00:05Z"
         },
@@ -12289,12 +12192,12 @@
           "created_at": "2026-01-01T00:00:08Z",
           "embedding": "<blob 32B sha256:06236c5cf7141494>",
           "id": 6,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{}",
           "timestamp": "2026-01-01T00:00:08Z"
         },
@@ -12305,12 +12208,12 @@
           "created_at": "2026-01-01T00:00:09Z",
           "embedding": null,
           "id": 7,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{}",
           "timestamp": "2026-01-01T00:00:09Z"
         }
@@ -12324,32 +12227,94 @@
         {
           "confidence": {
             "age_hours": 8760.0,
-            "score": 0.5477
+            "cosine": 0.3979,
+            "score": 0.3285
           },
-          "content": "apples with a ragged vector",
+          "content": "apples from a tagged user",
           "match_reason": {
-            "rrf": 0.0153846154,
-            "score": 0.5477,
-            "signal": "confidence"
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
+            "signal": "cosine"
           },
-          "ref": "mem:6",
-          "source": {},
-          "timestamp": "2026-01-01T00:00:08Z"
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
         },
         {
           "confidence": {
             "age_hours": 8760.0,
-            "score": 0.5477
+            "cosine": 0.4411,
+            "score": 0.3627
           },
-          "content": "apples with no vector",
+          "content": "apples in another project",
           "match_reason": {
-            "rrf": 0.0163934426,
-            "score": 0.5477,
-            "signal": "confidence"
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
+            "signal": "cosine"
           },
-          "ref": "mem:7",
+          "ref": "mem:3",
           "source": {},
-          "timestamp": "2026-01-01T00:00:09Z"
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5417,
+            "score": 0.4317
+          },
+          "content": "[Episode] orchard apples episode",
+          "match_reason": {
+            "cosine": 0.5416657925,
+            "rrf": 0.0320020481,
+            "score": 0.5416657925,
+            "signal": "cosine"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5545,
+            "score": 0.4397
+          },
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5833,
+            "resolved": true,
+            "score": 0.1372
+          },
+          "content": "[Episode] chat apples episode",
+          "match_reason": {
+            "cosine": 0.5832774043,
+            "rrf": 0.0327868852,
+            "score": 0.5832774043,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
         }
       ]
     },
@@ -12576,32 +12541,94 @@
         {
           "confidence": {
             "age_hours": 8760.0,
-            "score": 1.0
+            "cosine": 0.3979,
+            "score": 0.5998
           },
-          "content": "apples with a ragged vector",
+          "content": "apples from a tagged user",
           "match_reason": {
-            "rrf": 0.0153846154,
-            "score": 1.0,
-            "signal": "confidence"
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
+            "signal": "cosine"
           },
-          "ref": "mem:6",
-          "source": {},
-          "timestamp": "2026-01-01T00:00:08Z"
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
         },
         {
           "confidence": {
             "age_hours": 8760.0,
-            "score": 1.0
+            "cosine": 0.4411,
+            "score": 0.6621
           },
-          "content": "apples with no vector",
+          "content": "apples in another project",
           "match_reason": {
-            "rrf": 0.0163934426,
-            "score": 1.0,
-            "signal": "confidence"
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
+            "signal": "cosine"
           },
-          "ref": "mem:7",
+          "ref": "mem:3",
           "source": {},
-          "timestamp": "2026-01-01T00:00:09Z"
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5417,
+            "score": 0.7882
+          },
+          "content": "[Episode] orchard apples episode",
+          "match_reason": {
+            "cosine": 0.5416657925,
+            "rrf": 0.0320020481,
+            "score": 0.5416657925,
+            "signal": "cosine"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5545,
+            "score": 0.8028
+          },
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5833,
+            "resolved": true,
+            "score": 0.8348
+          },
+          "content": "[Episode] chat apples episode",
+          "match_reason": {
+            "cosine": 0.5832774043,
+            "rrf": 0.0327868852,
+            "score": 0.5832774043,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
         }
       ]
     },
@@ -12874,12 +12901,12 @@
           "created_at": "2026-01-01T00:00:03Z",
           "embedding": "<blob 256B sha256:deb6320c9e3ef4cb>",
           "id": 3,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "proj-b",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{}",
           "timestamp": "2026-01-01T00:00:03Z"
         },
@@ -12890,12 +12917,12 @@
           "created_at": "2026-01-01T00:00:04Z",
           "embedding": "<blob 256B sha256:9e8f09fa61ec22d0>",
           "id": 4,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{}",
           "timestamp": "2026-01-01T00:00:04Z"
         },
@@ -12906,12 +12933,12 @@
           "created_at": "2026-01-01T00:00:05Z",
           "embedding": "<blob 256B sha256:1eb29214c7399141>",
           "id": 5,
-          "last_recalled_at": null,
+          "last_recalled_at": "<generated>",
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 0,
+          "recall_count": 1,
           "source": "{\"id\": \"discord:42\"}",
           "timestamp": "2026-01-01T00:00:05Z"
         },
@@ -12922,12 +12949,12 @@
           "created_at": "2026-01-01T00:00:08Z",
           "embedding": "<blob 32B sha256:06236c5cf7141494>",
           "id": 6,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{}",
           "timestamp": "2026-01-01T00:00:08Z"
         },
@@ -12938,12 +12965,12 @@
           "created_at": "2026-01-01T00:00:09Z",
           "embedding": null,
           "id": 7,
-          "last_recalled_at": "<generated>",
+          "last_recalled_at": null,
           "locked": 0,
           "metadata": "{}",
           "msg_id": "",
           "project_id": "",
-          "recall_count": 1,
+          "recall_count": 0,
           "source": "{}",
           "timestamp": "2026-01-01T00:00:09Z"
         }
@@ -12957,32 +12984,94 @@
         {
           "confidence": {
             "age_hours": 8760.0,
-            "score": 0.5477
+            "cosine": 0.3979,
+            "score": 0.3285
           },
-          "content": "apples with a ragged vector",
+          "content": "apples from a tagged user",
           "match_reason": {
-            "rrf": 0.0153846154,
-            "score": 0.5477,
-            "signal": "confidence"
+            "cosine": 0.3978555799,
+            "rrf": 0.0310096154,
+            "score": 0.3978555799,
+            "signal": "cosine"
           },
-          "ref": "mem:6",
-          "source": {},
-          "timestamp": "2026-01-01T00:00:08Z"
+          "ref": "mem:5",
+          "source": {
+            "id": "discord:42"
+          },
+          "timestamp": "2026-01-01T00:00:05Z"
         },
         {
           "confidence": {
             "age_hours": 8760.0,
-            "score": 0.5477
+            "cosine": 0.4411,
+            "score": 0.3627
           },
-          "content": "apples with no vector",
+          "content": "apples in another project",
           "match_reason": {
-            "rrf": 0.0163934426,
-            "score": 0.5477,
-            "signal": "confidence"
+            "cosine": 0.4411311746,
+            "rrf": 0.0314980159,
+            "score": 0.4411311746,
+            "signal": "cosine"
           },
-          "ref": "mem:7",
+          "ref": "mem:3",
           "source": {},
-          "timestamp": "2026-01-01T00:00:09Z"
+          "timestamp": "2026-01-01T00:00:03Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5417,
+            "score": 0.4317
+          },
+          "content": "[Episode] orchard apples episode",
+          "match_reason": {
+            "cosine": 0.5416657925,
+            "rrf": 0.0320020481,
+            "score": 0.5416657925,
+            "signal": "cosine"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:06Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5545,
+            "score": 0.4397
+          },
+          "content": "apples discussed in chat",
+          "match_reason": {
+            "cosine": 0.5544884205,
+            "rrf": 0.0322580645,
+            "score": 0.5544884205,
+            "signal": "cosine"
+          },
+          "ref": "mem:4",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:04Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "cosine": 0.5833,
+            "resolved": true,
+            "score": 0.1372
+          },
+          "content": "[Episode] chat apples episode",
+          "match_reason": {
+            "cosine": 0.5832774043,
+            "rrf": 0.0327868852,
+            "score": 0.5832774043,
+            "signal": "cosine"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-01-01T00:00:07Z"
         }
       ]
     },

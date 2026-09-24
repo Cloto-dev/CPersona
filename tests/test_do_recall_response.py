@@ -125,6 +125,7 @@ def _patch(monkeypatch):
     # alphabetically-earlier file that imports config first leaves CONFIDENCE off + mode rrf,
     # the _recall_rsf patch goes unused, and do_recall returns no messages).
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     monkeypatch.setattr(M, "RECALL_MODE", "rsf")
     return fake
 

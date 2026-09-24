@@ -687,7 +687,9 @@ async def test_a_measured_gate_owns_the_signal_it_was_measured_for(
     # an ordinary corpus. Both spellings are patched on purpose: memory_handlers
     # binds the flag by value at import, admin_handlers reads it off the module.
     monkeypatch.setattr(config, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(config, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _seed_recallable(db, "gated")
     _write_sidecar(
         live,

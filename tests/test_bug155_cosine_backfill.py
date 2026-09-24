@@ -208,6 +208,7 @@ async def test_bug155_fts_only_row_gets_backfilled_and_sorts_below_vector_hit(mo
     client = _Counting()
     monkeypatch.setattr(V, "_embedding_client", client)
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
 
     # Vector-strong row: content and blob share every token.
     await _insert_mem(content="apples orchard hit", blob=_pack_of("apples orchard hit"))
@@ -343,6 +344,7 @@ async def test_bug155_empty_query_declines_to_backfill(monkeypatch, query):
     client = _Counting()
     monkeypatch.setattr(V, "_embedding_client", client)
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
 
     await _insert_mem(content="apples", blob=_pack_of("apples"))
     await _insert_mem(
@@ -379,6 +381,7 @@ async def test_bug155_ragged_dim_blob_stays_none(monkeypatch):
     client = _Counting()
     monkeypatch.setattr(V, "_embedding_client", client)
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
 
     # A single FTS hit whose blob is a foreign width. Nothing to compete
     # with, but the backfill still runs -- the assertion is that it declines

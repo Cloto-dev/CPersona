@@ -402,6 +402,7 @@ async def test_gate_emptied_by_the_backfill_falls_back_and_says_so(
     Unfixed: ``messages == []``. Fixed: the row comes back, flagged.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _insert_mem(
         content="apples zzz yyy www",
         blob=_pack_of("completely different unrelated content xxxx"),
@@ -427,6 +428,7 @@ async def test_gate_fallback_is_absent_on_an_ordinary_recall(monkeypatch, fake_e
     being untouched in the common case.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _insert_mem(content="apples orchard hit", blob=_pack_of("apples orchard hit"))
 
     out = await M.do_recall(AGENT, "apples", limit=5, deep=True)
@@ -449,6 +451,7 @@ async def test_mixed_result_keeps_the_drop_and_stays_unflagged(monkeypatch, fake
     this assertion is what makes that a decision rather than an accident.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _insert_mem(content="apples orchard hit", blob=_pack_of("apples orchard hit"))
     await _insert_mem(
         content="apples zzz yyy www",
@@ -487,6 +490,7 @@ async def test_a_native_cosine_row_is_not_rescued(monkeypatch, fake_embedding_cl
     an empty pre-gate list it would pass no matter how wide the rescue is.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     for content in (
         "alpha launch checklist",
         "bravo database migration",
@@ -557,6 +561,7 @@ async def test_rescue_survives_autocut_when_a_profile_row_is_present(
     and a ``not results`` trigger never fires at all.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     assert M.AUTOCUT_ENABLED, "this test is about the autocut interaction; it must be on"
     await _insert_profile("the operator prefers concise answers")
     await _insert_filler(50)  # memory_count >= 50 so the profile row passes the gate
@@ -604,6 +609,7 @@ async def test_a_gate_blocked_profile_does_not_ride_along_with_the_rescue(
     profile into exactly the deployments the volume rule excludes.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _insert_profile("the operator prefers concise answers")
     await _insert_mem(  # corpus of 1 -> memory_count < 50 -> profile is gate-blocked
         content="apples zzz yyy www",
@@ -630,6 +636,7 @@ async def test_the_rescue_returns_only_the_backfilled_rows(monkeypatch, fake_emb
     two row kinds have to coexist for the difference to show.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     # Native-cosine below-gate row: content and blob agree, and its cosine against the
     # query clears the vector channel's threshold but not the quality gate.
     await _insert_mem(content="delta release summary", blob=_pack_of("delta release summary"))
@@ -674,6 +681,7 @@ async def test_rescued_rows_earn_no_ranking_credit(monkeypatch, fake_embedding_c
     entirely, so the other rescue tests here cannot see this.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     row_id = await _insert_mem(
         content="apples zzz yyy www",
         blob=_pack_of("completely different unrelated content xxxx"),
@@ -707,6 +715,7 @@ async def test_recall_with_context_forwards_the_flag(monkeypatch, fake_embedding
     rescued result from an ordinary one.
     """
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _insert_mem(
         content="apples zzz yyy www",
         blob=_pack_of("completely different unrelated content xxxx"),

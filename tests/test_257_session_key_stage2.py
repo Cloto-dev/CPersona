@@ -225,6 +225,7 @@ async def test_maintenance_fix_downgrade_follows_the_caller(clean_db):
 async def test_recall_count_bump_follows_the_callers_pause(clean_db, monkeypatch):
     """bug-038's gate, re-keyed: the ranking write is a write like any other."""
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await memory_handlers.do_store("agent-rc", _msg("raspberry jam recipe"))
     await server.do_pause_persistence(ttl_seconds=120, session_key=A)
 

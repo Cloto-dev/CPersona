@@ -284,7 +284,11 @@ def episode_timestamp(start_time: str | None, created_at: str | None) -> str:
 # The 2.5.5a3 episode-penalty exemption (bug-257) is the fourth: episode rows no longer
 # enter the boundary penalty at all, so every episode older than the boundary scores up
 # to 2x higher (the EPISODE_DECAY_FLOOR was 0.5) than the sidecar was calibrated against.
-SCORING_VERSION = "255a3-episode-penalty-exempt"
+# The 2.6.0a7 fusion ordering is the fifth: with confidence enabled, the gate no longer
+# compares the confidence score but the fused score (CPERSONA_CONFIDENCE_ORDERING=fusion,
+# docs/PRIOR_FUNCTION_DESIGN.md §5), so a gate calibrated on confidence gates a quantity
+# it was not measured on. The episode penalty's default also went off in 2.6.0a7.
+SCORING_VERSION = "260a7-confidence-gates-nothing"
 
 
 def _compute_confidence(

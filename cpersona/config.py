@@ -824,6 +824,25 @@ EPISODE_PENALTY_ENABLED = os.environ.get("CPERSONA_EPISODE_PENALTY_ENABLED", "fa
 EPISODE_DECAY_RATE = _parse_float("CPERSONA_EPISODE_DECAY_RATE", 0.01)
 EPISODE_DECAY_FLOOR = _parse_float("CPERSONA_EPISODE_DECAY_FLOOR", 0.5)
 
+# One prior function (2.6.0a7, docs/PRIOR_FUNCTION_DESIGN.md). Every weight that
+# ranks a row by where it sits lives here. The far weight prices a vote from the
+# far list inside the fusion; the age weight p_age multiplies the fused score for
+# the final order only, after the quality gate and autocut have decided which
+# rows remain, so it can reorder rows but never remove one. At these defaults
+# both are identities: the far weight is 1 (today's far vote) and the age rate is
+# 0 (p_age = 1).
+PRIOR_FAR_WEIGHT = min(1.0, max(0.0, _parse_float("CPERSONA_PRIOR_FAR_WEIGHT", 1.0)))
+PRIOR_AGE_RATE = max(0.0, _parse_float("CPERSONA_PRIOR_AGE_RATE", 0.0))
+PRIOR_AGE_FLOOR = min(1.0, max(0.0, _parse_float("CPERSONA_PRIOR_AGE_FLOOR", 0.3)))
+# Age is measured from the newest record in the recall's scope, so a store left
+# idle ranks as it did when last used; `now` measures from the current time.
+PRIOR_AGE_ANCHOR = _parse_choice("CPERSONA_PRIOR_AGE_ANCHOR", "newest", ("newest", "now"))
+# Whether the confidence score orders and gates recall. `fusion` (the default
+# from 2.6.0a7): it does neither, and is returned beside each row as a separate
+# value. `legacy`: the re-sort by confidence and the confidence gate of earlier
+# releases, kept so a deployment can go back by setting rather than by code.
+CONFIDENCE_ORDERING = _parse_choice("CPERSONA_CONFIDENCE_ORDERING", "fusion", ("fusion", "legacy"))
+
 RECALL_MODE = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
 # 2.5.0: MCP-boundary preview tier for recall responses. Message
 # content longer than this many characters is returned as a pure prefix (plus

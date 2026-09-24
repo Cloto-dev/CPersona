@@ -1400,6 +1400,22 @@ async def _corpus_embedding_dim() -> int | None:
     return _modal_width(counts) // 4  # 4 bytes per float32
 
 
+def _calibration_signal() -> str | None:
+    """The gate signal a calibration measures: the one the runtime gate compares.
+
+    Confidence only where it still orders and gates (CPERSONA_CONFIDENCE_ORDERING=legacy),
+    else the fused score of the active mode. From 2.6.0a7 an enabled confidence score is
+    returned beside each row but gates nothing, so calibrating on it would collect no row
+    whose signal matches and store no gate. Cascade with confidence off has no fusion gate
+    (the cosine vector threshold owns precision there): None.
+    """
+    if config.CONFIDENCE_ENABLED and config.CONFIDENCE_ORDERING == "legacy":
+        return "confidence"
+    if config.RECALL_MODE in ("rsf", "rrf"):
+        return config.RECALL_MODE
+    return None
+
+
 async def _calibrate_fused_gate(
     db,
     agent_id: str,
@@ -1447,14 +1463,8 @@ async def _calibrate_fused_gate(
         recall_fn = _recall_rrf
     else:
         recall_fn = _recall_cascade
-    # The gate keys on confidence when enabled (it takes precedence in any mode), else on
-    # the fused score. Cascade with confidence off has no fusion gate — the cosine vector
-    # threshold owns precision there.
-    if config.CONFIDENCE_ENABLED:
-        signal = "confidence"
-    elif mode in ("rsf", "rrf"):
-        signal = mode
-    else:
+    signal = _calibration_signal()
+    if signal is None:
         return None
     if vector._embedding_client is None:
         return None

@@ -274,6 +274,7 @@ async def test_calibrate_negative_sample_size_is_clamped(clean_db, fake_embeddin
 @pytest.mark.asyncio
 async def test_episode_confidence_ignores_colliding_memory_recall_count(clean_db, monkeypatch):
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     monkeypatch.setattr(memory_handlers, "EPISODE_PENALTY_ENABLED", False)
     db = clean_db
     # Memory #N: heavily recalled.

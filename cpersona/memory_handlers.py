@@ -36,12 +36,17 @@ from cpersona.config import (
     AUTOCUT_MIN_GAP_RATIO,
     AUTOCUT_MIN_RESULTS,
     CONFIDENCE_ENABLED,
+    CONFIDENCE_ORDERING,
     EPISODE_DECAY_FLOOR,
     EPISODE_DECAY_RATE,
     EPISODE_PENALTY_ENABLED,
     FTS_ENABLED,
     MAX_MEMORIES,
     MAX_METADATA_LENGTH,
+    PRIOR_AGE_ANCHOR,
+    PRIOR_AGE_FLOOR,
+    PRIOR_AGE_RATE,
+    PRIOR_FAR_WEIGHT,
     RECALL_LIBRARY_MAX_LIMIT,
     RECALL_MODE,
     REMOTE_INDEX_TIMEOUT_SECS,
@@ -559,13 +564,17 @@ async def _recall_rrf(
         # row is counted twice and the most a single row can still reach is three
         # votes — which is the per-row maximum the legacy quality gate rescales
         # its threshold by. See docs/SCAN_WINDOW_REACH_DESIGN.md §3.1.
+        #
+        # 2.6.0a7 (docs/PRIOR_FUNCTION_DESIGN.md §2): a far vote is worth
+        # CPERSONA_PRIOR_FAR_WEIGHT of a near one. At the default of 1 this is
+        # the unpriced far vote above; at 0 a far row contributes nothing.
         for rank, row in enumerate(far_results):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
             rid = row.get("_rid", ("mem", row["id"]))
             if rid not in doc_map:
                 doc_map[rid] = row
-            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + PRIOR_FAR_WEIGHT / (k + rank + 1)
 
     # Episodes lack per-user source tagging, so a per-user source_id filter
     # normally suppresses them; a channel filter (v2.4.22) scopes episodes to
@@ -723,8 +732,11 @@ async def _recall_rsf(
     n_active = len(active) or 1
     fused: dict[tuple, float] = {}
     for ch in active:
+        # 2.6.0a7: the far channel is weighted by CPERSONA_PRIOR_FAR_WEIGHT; the
+        # divisor stays the channel count (docs/PRIOR_FUNCTION_DESIGN.md §2).
+        channel_weight = PRIOR_FAR_WEIGHT if ch is far_raw else 1.0
         for rid, w in _minmax_norm(ch).items():
-            fused[rid] = fused.get(rid, 0.0) + w
+            fused[rid] = fused.get(rid, 0.0) + w * channel_weight
 
     results = []
     for rid in sorted(fused, key=fused.get, reverse=True):
@@ -974,6 +986,83 @@ def _apply_quality_gate(
     )
 
     return filtered
+
+
+def _confidence_orders() -> bool:
+    """Whether the confidence score orders and gates recall (2.6.0a7).
+
+    Only under ``CPERSONA_CONFIDENCE_ORDERING=legacy``. From 2.6.0a7 the default is
+    ``fusion``: with confidence enabled, recall keeps the fusion order and the fusion
+    gate, and the confidence value is only returned beside each row. Measured on a
+    real store, confidence on made the rrf and rsf modes return identical responses
+    -- the re-sort discarded the fusion order -- while leaving answer accuracy where
+    confidence off had it (docs/PRIOR_FUNCTION_DESIGN.md §1, §5). Read at call time
+    so a test can set either global.
+    """
+    return CONFIDENCE_ENABLED and CONFIDENCE_ORDERING == "legacy"
+
+
+def _age_weight(age_hours: float) -> float:
+    """The age weight ``p_age = max(floor, 1 / (1 + age_hours * rate))``.
+
+    The same family as the time decay inside the confidence score, so an arm with
+    confidence's own rate and floor isolates the time term confidence used to apply.
+    Exactly 1.0 while CPERSONA_PRIOR_AGE_RATE is 0 (the default).
+    """
+    if PRIOR_AGE_RATE <= 0:
+        return 1.0
+    return max(PRIOR_AGE_FLOOR, 1.0 / (1.0 + max(0.0, age_hours) * PRIOR_AGE_RATE))
+
+
+def _apply_prior(
+    results: list[dict],
+    span: tuple[datetime | None, datetime | None],
+    now: datetime,
+) -> list[dict]:
+    """Order the admitted rows by fused score x p(row) (docs/PRIOR_FUNCTION_DESIGN.md §2-§4).
+
+    Called after the quality gate and autocut, before the count cut, so it moves rows
+    within what was admitted and never admits or removes one (§3). Returns ``results``
+    untouched -- the same list, in the same order -- when the age rate is 0, when
+    confidence still orders (``legacy``), when the list is not uniformly fusion-scored
+    (cascade keeps its stage order, bug-018), or when the scope has no dated row.
+
+    ``span`` is ``(oldest, newest)`` over the scope's memories. Age is measured from
+    ``newest`` (CPERSONA_PRIOR_AGE_ANCHOR=newest, the default) or from ``now``; a row
+    newer than the anchor counts as age 0, and a row without a usable timestamp is
+    placed at the middle of the scope's age range so that an unknown age cannot win
+    (the bug-207 rule the confidence score already follows). The weight is recorded on
+    each scored row as ``_prior`` for ``match_reason``.
+    """
+    if PRIOR_AGE_RATE <= 0 or not results or _confidence_orders():
+        return results
+    scored = [r for r in results if r.get("id") != -1]
+    key = None
+    for candidate in ("_rrf_score", "_rsf_score"):
+        if scored and all(r.get(candidate) is not None for r in scored):
+            key = candidate
+            break
+    oldest, newest = span
+    if key is None or newest is None:
+        return results
+    width_hours = max(0.0, (newest - oldest).total_seconds() / 3600) if oldest else 0.0
+    if PRIOR_AGE_ANCHOR == "now":
+        anchor = now
+        unknown_age = max(0.0, (now - newest).total_seconds() / 3600) + width_hours / 2.0
+    else:
+        anchor = newest
+        unknown_age = width_hours / 2.0
+    for r in scored:
+        ts = _parse_timestamp_utc(r.get("timestamp") or "")
+        age = (anchor - ts).total_seconds() / 3600 if ts else unknown_age
+        r["_prior"] = _age_weight(age)
+    # Stable, so rows the weight leaves tied keep the fusion order; the profile
+    # sentinel sinks, as in the episode-penalty re-sort.
+    results.sort(
+        key=lambda r: r[key] * r["_prior"] if r.get("id") != -1 else float("-inf"),
+        reverse=True,
+    )
+    return results
 
 
 def _episode_boundary_factor(
@@ -1249,7 +1338,9 @@ async def _apply_recall_scoring(
     # confidence-off the backfill is a no-op — nothing downstream reads _cosine
     # in a way that would change ordering, and materialising one would perturb
     # `match_reason.cosine` and `_gate_score`.
-    if CONFIDENCE_ENABLED:
+    # 2.6.0a7: the backfill exists to give the confidence score and the confidence
+    # gate a real cosine, so it runs only where confidence still orders and gates.
+    if _confidence_orders():
         await _backfill_cosines(db, results, query, project_id, channel)
 
     if CONFIDENCE_ENABLED:
@@ -1341,7 +1432,7 @@ async def _apply_recall_scoring(
             # ignored by output order and downstream truncation). Re-sort here for
             # homogeneous fusion-ordered lists. Cascade results (no fusion score on
             # every row) intentionally keep stage order — bug-018 doctrine.
-            if penalized and not CONFIDENCE_ENABLED:
+            if penalized and not _confidence_orders():
                 # bug-126: a profile injection row (id == -1) carries no fusion score, so the
                 # bare all(...) below saw None and skipped the re-sort whenever a profile was
                 # present — silently defeating the bug-115 penalty re-order under default config.
@@ -1353,7 +1444,7 @@ async def _apply_recall_scoring(
                         results.sort(key=lambda r, k=score_key: r.get(k, float("-inf")), reverse=True)
                         break
 
-    if CONFIDENCE_ENABLED:
+    if _confidence_orders():
         for r in results:
             ts = r.get("timestamp", "")
             raw_cos = r.get("_cosine")
@@ -1608,6 +1699,18 @@ async def do_recall(
             db, agent_id, results, deep, project_id=project_id, channel=channel, query=query
         )
 
+        # 2.6.0a7: the span the age weight is measured against, read inside this
+        # connection (cached per scope). Nothing is read while the weight is off.
+        prior_span: tuple[datetime | None, datetime | None] = (None, None)
+        if PRIOR_AGE_RATE > 0 and not _confidence_orders():
+            span_min, span_max = await scope_stats.get_span(
+                db, agent_id, project_id=project_id, channel=channel
+            )
+            prior_span = (
+                _parse_timestamp_utc(span_min) if span_min else None,
+                _parse_timestamp_utc(span_max) if span_max else None,
+            )
+
         # bug-216: count the pool the gate actually GOVERNS. The heuristic threshold was
         # computed over `memories` alone but applied to every row the retrievers found —
         # episodes and the profile sentinel included — so an agent holding only episodes
@@ -1742,6 +1845,10 @@ async def do_recall(
     if AUTOCUT_ENABLED and not gate_fallback:
         results = _autocut(results)
 
+    # 2.6.0a7: the prior orders what the gate and autocut admitted; it never
+    # admits or removes (docs/PRIOR_FUNCTION_DESIGN.md §3).
+    results = _apply_prior(results, prior_span, datetime.now(timezone.utc))
+
     results = results[:limit]
 
     # The reservation (§5). A fixed, small number of places are held for records
@@ -1813,6 +1920,9 @@ async def do_recall(
                 match_reason["rrf"] = r["_rrf_score"]
             if r.get("_rsf_score") is not None:
                 match_reason["rsf"] = r["_rsf_score"]
+            if r.get("_prior") is not None:
+                # 2.6.0a7: the age weight that ordered this row, when one was applied.
+                match_reason["prior"] = round(r["_prior"], 4)
             msg["match_reason"] = match_reason
         elif r.get("_block_distance") is not None:
             # A reserved row (docs/BLOCK_REACH_DESIGN.md §5) has no gate signal,
@@ -1843,6 +1953,7 @@ async def do_recall(
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
         r.pop("_rsf_score", None)
+        r.pop("_prior", None)
         r.pop("_resolved", None)
         r.pop("_block_distance", None)
         r.pop("_block_index", None)

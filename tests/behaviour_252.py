@@ -1454,8 +1454,11 @@ async def _(ctx):
 # both require the confidence branch. Two flavours below:
 #
 #   recall-basic-hits / recall-exclude-contents / recall-deep-no-decay-no-bump
-#       CONFIDENCE_ENABLED=True — full match_reason (signal="confidence"),
-#       confidence dict in messages, recall_count bump captured in the db dump.
+#       CONFIDENCE_ENABLED=True — confidence dict in messages, recall_count bump
+#       captured in the db dump. From 2.6.0a7 confidence no longer orders or gates
+#       (CPERSONA_CONFIDENCE_ORDERING=fusion), so match_reason carries the fused
+#       signal; the scenarios record that default, which is what a deployment with
+#       confidence on now runs.
 #
 #   recall-empty-query-pure-recency / recall-no-hits
 #       CONFIDENCE_ENABLED=False (module default) — the branches they pin are
@@ -1469,6 +1472,13 @@ async def _(ctx):
 
 def _install_confidence_on(ctx: Ctx) -> None:
     ctx.patch(memory_handlers, "CONFIDENCE_ENABLED", True)
+
+
+def _install_confidence_legacy(ctx: Ctx) -> None:
+    """Confidence on with the pre-2.6.0a7 re-sort and gate, for a scenario whose
+    subject exists only there (the cosine backfill feeds the confidence gate)."""
+    ctx.patch(memory_handlers, "CONFIDENCE_ENABLED", True)
+    ctx.patch(memory_handlers, "CONFIDENCE_ORDERING", "legacy")
 
 
 @scenario("recall-basic-hits", "store-recall-health", "recall: seed_corpus hit set — messages, confidence, match_reason, refs; recall_count/last_recalled_at bumped (CONFIDENCE=on)", seed=seed_corpus)
@@ -2262,7 +2272,7 @@ async def _seed_bug155_backfill(ctx: Ctx) -> None:
           seed=_seed_bug155_backfill)
 async def _(ctx):
     install_local(ctx)
-    _install_confidence_on(ctx)
+    _install_confidence_legacy(ctx)
     return await memory_handlers.do_recall("a374", "apples", 5, deep=True)
 
 
