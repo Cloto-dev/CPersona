@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:8e678cdf96c96891e094be488f640f4b364901aa -->
+<!-- i18n-source: docs/index.md@blob:910ecaebe14a4a6781454a79ee7945706c20bf05 -->
 
 # CPersona ドキュメント
 
@@ -191,6 +191,7 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 
 - **宣言的記憶** — 個別の事実・決定・ルール (`store` / `recall`)。
 - **エピソード記憶** — セッション要約 (`archive_episode`)。
+  有効にした時の
   [エピソード境界ペナルティ](behavior-contracts.md#3-episode-boundary-penalty)
   の駆動源でもあります。
 - **プロフィール** — 蓄積されたユーザー/プロジェクト属性 (`update_profile`)。

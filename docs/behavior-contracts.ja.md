@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:9d998e74594085ef736f27553ccd8b527ba260a6 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:0fa5da35eadb240c1149d8fe87feb4845d1d4b3e -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -72,6 +72,12 @@ resolved 状態・想起回数をブレンドした別の量です。完全一�
 
 ## 3. エピソード境界ペナルティ { #3-episode-boundary-penalty }
 
+**2.6.0a7 から既定で無効です。** 使う場合は
+`CPERSONA_EPISODE_PENALTY_ENABLED=true` で有効にします。セッションの終わりごとに
+エピソードを保存するエージェントでは、履歴のほぼ全体が境界より前になるため、
+ペナルティを有効にすると過去の記憶がすべて半減し、答えを持つ記録より無関係な行が
+上に来ることがあります。この節の以下は、有効にした時の挙動です。
+
 エピソードが存在するとき、**最新のエピソード境界**より古い記憶には減衰係数が
 掛かります:
 
@@ -81,7 +87,7 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 
 | つまみ | 環境変数 | 既定値 |
 |------|---------|--------|
-| 有効化 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `true` |
+| 有効化 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` |
 | レート | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` |
 | 下限 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` |
 
@@ -95,10 +101,11 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
   *内部での*順序付けは、この分解能の外です。緩やかなカーブが欲しければ
   `RATE=0.002` でランプを約 2 週間に伸ばせます。
 
-**一括インポートの落とし穴。** 境界は単に「最も新しいエピソード行」です。
-過去の会話を `archive_episode` で後から流し込むと、*インポート時刻*が境界に
-なり、既存の記憶が全てペナルティ領域に落ちます。エピソードを後から流し込まない
-か、インポート中は `CPERSONA_EPISODE_PENALTY_ENABLED=false` にしてください。
+**一括インポートの落とし穴 (ペナルティ有効時)。** 境界は単に「最も新しい
+エピソード行」です。過去の会話を `archive_episode` で後から流し込むと、
+*インポート時刻*が境界になり、既存の記憶が全てペナルティ領域に落ちます。
+エピソードを後から流し込まないか、インポート中はペナルティを無効のまま
+(`CPERSONA_EPISODE_PENALTY_ENABLED=false`、既定値) にしてください。
 
 ## 4. ベクトル走査ウィンドウ (`CPERSONA_MAX_MEMORIES`) { #4-the-vector-scan-window-cpersona_max_memories }
 

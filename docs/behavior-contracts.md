@@ -74,6 +74,13 @@ exact-match row can legitimately score below a paraphrase row on this scale.
 
 ## 3. Episode boundary penalty
 
+**Off by default from 2.6.0a7.** Opt in with
+`CPERSONA_EPISODE_PENALTY_ENABLED=true`. An agent that archives an episode at
+the end of every session puts nearly its whole history behind the boundary, so
+with the penalty on, every earlier memory is halved and unrelated rows can
+outrank the one that holds the answer. The rest of this section describes the
+behaviour when it is enabled.
+
 When episodes exist, memories older than the **latest episode boundary** are
 multiplied by a decay factor:
 
@@ -83,7 +90,7 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 
 | Knob | Env var | Default |
 |------|---------|---------|
-| Enabled | `CPERSONA_EPISODE_PENALTY_ENABLED` | `true` |
+| Enabled | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` |
 | Rate | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` |
 | Floor | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` |
 
@@ -98,11 +105,11 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
   recency ranking: ordering decisions *within* the last few days are below its
   resolution. Set `RATE=0.002` to stretch the ramp to ~2 weeks.
 
-**Bulk-import hazard.** The boundary is simply the newest episode row. If you
-backfill historical conversations with `archive_episode`, the *import time*
-becomes the boundary, and every pre-existing memory falls into the penalized
-region. Either do not backfill episodes, or set
-`CPERSONA_EPISODE_PENALTY_ENABLED=false` for the import.
+**Bulk-import hazard (penalty enabled).** The boundary is simply the newest
+episode row. If you backfill historical conversations with `archive_episode`,
+the *import time* becomes the boundary, and every pre-existing memory falls into
+the penalized region. Either do not backfill episodes, or keep the penalty off
+(`CPERSONA_EPISODE_PENALTY_ENABLED=false`, the default) for the import.
 
 ## 4. The vector scan window (`CPERSONA_MAX_MEMORIES`)
 
