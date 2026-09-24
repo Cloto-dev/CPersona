@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:fdecd83627bacd01535e9c362850d5376c7422b4 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:c9d2dc88de577917f71145a8f4c61717918d5af7 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -33,7 +33,7 @@
 | # | 条件 | 状態 | 証拠 |
 | --- | --- | --- | --- |
 | 1 | 想起プロセスと Cued Recall がゲートの背後で出荷される | **研究中** | [§1](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process) と [§2](RELIABLE_RECALL_2_6.md#2-cued-recall-the-input-contract) に設計があります。`master` に実装はありません。 |
-| 2 | 最後の再ソートの扱いが決まっている | **研究中** | 何を決めるのか、なぜそれがどの prior よりも先なのかは [§3](RELIABLE_RECALL_2_6.md#3-one-prior-function) にあります。未決定です。 |
+| 2 | 最後の再ソートの扱いが決まっている | **開発中** | 決定: confidence を有効にしても、confidence スコアは recall を並べ直さず、ゲートにも使われません。`CPERSONA_CONFIDENCE_ORDERING=legacy` で戻せます。far の重みと年齢の重みは、ゲートが通したものの順序だけを決める一本化した事前分布で、計測まで恒等の既定値です ([設計](PRIOR_FUNCTION_DESIGN.md))。`master` にあり、未リリース。 |
 | 3 | 深さと件数が分離されている | 2.6.0a2 で **リリース済み** | [#274](https://github.com/Cloto-dev/cpersona/pull/274)。`CPERSONA_RECALL_DEPTH_FLOOR` の既定は `0` で、測定で深さが選ばれるまで 2.5 系の結合を保ちます。 |
 | 4 | 再構成想起がツールとして存在する | 2.6.0a2 で **リリース済み**、a3 で拡張 | ツール本体: [#274](https://github.com/Cloto-dev/cpersona/pull/274)。深さより広さ、payload の予算: [#280](https://github.com/Cloto-dev/cpersona/pull/280)、[#286](https://github.com/Cloto-dev/cpersona/pull/286)。item の形の統一と、何を落としたかを言う応答: [#288](https://github.com/Cloto-dev/cpersona/pull/288)、[#289](https://github.com/Cloto-dev/cpersona/pull/289)、[#290](https://github.com/Cloto-dev/cpersona/pull/290)。これまでの測定: 上限 1〜10 の [count replay](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1-count-replay.md) (記録自身が「既定を選ぶものではない」と述べています) と、事前登録した [reader study](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1_1-reader.md)。後者は 1 回目では reader が受け取る量が減らず、2 つの変更の後の再測定が、18 問で登録済みの判定則を満たしました。既定の件数は今も契約上の選択であり、測定された最適値ではありません。 |
 | 5 | 適応的融合が両方のモデルで素の embedding を上回る | **研究中** | 設計と、その根拠である段ごとの損失の分析: [#260](https://github.com/Cloto-dev/cpersona/pull/260)、[#261](https://github.com/Cloto-dev/cpersona/pull/261)、[設計記録](ADAPTIVE_FUSION_DESIGN.md)。サーバーのコードはありません。 |

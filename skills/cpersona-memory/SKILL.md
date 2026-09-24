@@ -304,10 +304,9 @@ Use the `agent_id` chosen at setup (step 3) on every call.
   `rsf` (relative-score fusion; **recommended for Japanese / CJK or
   topic-drift-prone** corpora, where keyword score magnitude is the
   discriminating signal RRF flattens) / `cascade` (legacy sequential).
-  **Only in effect when `CPERSONA_CONFIDENCE_ENABLED` is off (the default).**
-  With confidence on, the fusion mode still selects the candidates, but the
-  result set is re-sorted by the confidence score before it is returned — so
-  the mode changes what is considered, not the order you see.
+  It decides the order you see whether confidence is on or off (from
+  2.6.0a7; under `CPERSONA_CONFIDENCE_ORDERING=legacy`, confidence re-sorts
+  the result and the mode only changes what is considered).
 - **`set_recall_precision(agent_id, precision)`** — `strict` (fewer wrong hits,
   more misses) / `balanced` (default) / `lenient`. Read it back with
   `get_recall_precision`. The threshold curve is auto-calibrated; this is the
@@ -433,9 +432,11 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
   they sort last and get cut by `limit` on a full corpus. Facts that must
   *always* be in context belong in deterministic injection (the always-loaded file), not
   the profile. `lock_memory` protects from loss; it never boosts ranking.
-- **Confidence on = it takes over**: with `CPERSONA_CONFIDENCE_ENABLED=true`
-  the result order and the quality gate key on confidence, not the fusion
-  mode. Run `calibrate_threshold` once after switching.
+- **Confidence on = a value, not an order** (from 2.6.0a7): with
+  `CPERSONA_CONFIDENCE_ENABLED=true` each row carries a `confidence` value, and
+  the order and the quality gate still follow the fusion mode.
+  `CPERSONA_CONFIDENCE_ORDERING=legacy` restores the old behaviour; run
+  `calibrate_threshold` once after switching either way.
 - **Backfilling episodes is safe under the defaults**: the episode boundary
   penalty is off unless `CPERSONA_EPISODE_PENALTY_ENABLED=true`. If a deployment
   has turned it on, the penalty keys on the newest episode's timestamp, so

@@ -42,31 +42,43 @@ Consequences:
   in, so that the end of the list is reserved for what is genuinely most
   recent.
 
-## 2. Confidence scoring overrides the fusion mode
+## 2. Confidence is returned beside each row; it does not rank { #2-confidence-scoring-overrides-the-fusion-mode }
 
-`CPERSONA_CONFIDENCE_ENABLED` (default `false`) is not a metadata-only switch.
-With it **on**:
+`CPERSONA_CONFIDENCE_ENABLED` (default `false`) adds a `confidence` value to
+every returned row. From 2.6.0a7 that is all it does. Under the default
+`CPERSONA_CONFIDENCE_ORDERING=fusion`, the value neither orders the result nor
+keys the quality gate: a recall with confidence on returns the same rows in the
+same order as with it off, plus the `confidence` field. The reasons are in
+[one prior function](PRIOR_FUNCTION_DESIGN.md#5-confidence).
+
+`CPERSONA_CONFIDENCE_ORDERING=legacy` restores the behaviour of earlier
+releases. With confidence on under `legacy`:
 
 - the result set is **re-sorted by the confidence score**, and
 - the quality gate keys on confidence instead of the fused score.
 
-The fusion mode (`CPERSONA_RECALL_MODE=rrf|rsf|cascade`) still selects *which
-candidates enter* the result set, but it no longer decides the order you get
-back. Measured on a 1,545-document corpus with 394 queries: with confidence
-on, `rsf` and `rrf` returned identical rows in identical order for all 394
-queries; with it off, they agreed on fewer than 10%.
+The fusion mode then still selects *which candidates enter* the result set,
+but no longer decides the order you get back. Measured on a 1,545-document
+corpus with 394 queries: with confidence on under that behaviour, `rsf` and
+`rrf` returned identical rows in identical order for all 394 queries; with it
+off, they agreed on fewer than 10%.
 
-The ranking and gate signal follows a priority chain: **confidence > rsf >
-cosine > rrf**. A scored row's `match_reason.signal` reports which branch
-actually keyed for it.
+Upgrading a deployment that had confidence on changes which score the gate
+compares, so the stored gate is recalibrated at startup (the scoring version
+changed).
+
+The gate signal follows a priority chain: **rsf > cosine > rrf**, with
+**confidence** first only under `legacy`. A scored row's
+`match_reason.signal` reports which branch actually keyed for it. When the age
+weight of the prior is set, `match_reason.prior` reports the weight that
+ordered the row.
 
 Rows that were never scored omit the key entirely. Those are the FTS and
-keyword rows a `cascade` recall fills with, and — with confidence off — the
-injected profile row.
+keyword rows a `cascade` recall fills with, and the injected profile row.
 
-With confidence on, the profile row is scored like any other and carries
-`match_reason` too. Treat `match_reason` as present-or-absent, not as a field
-on every row.
+Under `legacy` with confidence on, the profile row is scored like any other and
+carries `match_reason` too. Treat `match_reason` as present-or-absent, not as a
+field on every row.
 
 Note that confidence is **not match strength**. It blends cosine similarity,
 time decay, resolved status, and recall count into a separate quantity. An
@@ -220,8 +232,9 @@ Branch on `ok is false` first, then on `result`.
 Autocut (largest-score-gap truncation) assumes score gaps encode relevance
 breaks. That is only true of similarity-scale signals:
 
-- **Fires** under confidence scoring, or on a homogeneous raw-cosine list
-  where every row carries the signal.
+- **Fires** under confidence ordering (`CPERSONA_CONFIDENCE_ORDERING=legacy`
+  with confidence on), or on a homogeneous raw-cosine list where every row
+  carries the signal.
 - **Deliberately inert** under `rsf` and `rrf` ordering. Rank-fusion scores
   decay hyperbolically by construction, so their gaps encode retriever
   overlap, not relevance breaks. Fusion-ordered results rely on the fused
@@ -250,11 +263,13 @@ second `update_profile` replaces the first rather than accumulating.
   have no score, sort last, and are **cut by `limit`** when the scored results
   already fill it. Measured under `rsf` with `limit=10` on a full corpus:
   **0 profile rows survived**.
-- Above that threshold, with **confidence on**, profile rows receive a high
-  confidence score and reliably surface near the top.
+- Above that threshold, with **confidence on under
+  `CPERSONA_CONFIDENCE_ORDERING=legacy`**, profile rows receive a high
+  confidence score and reliably surface near the top. Under the default
+  `fusion` ordering (2.6.0a7 onward), confidence on behaves like confidence off
+  here: the profile row sorts last.
 
-Do not treat the profile as a guaranteed always-injected channel unless you
-run with confidence enabled. For facts that *must always be present*, the
+Do not treat the profile as a guaranteed always-injected channel. For facts that *must always be present*, the
 correct mechanism is deterministic injection — your `CLAUDE.md` or system
 prompt — not probabilistic recall. See
 [When not to use recall](operations.md#when-not-to-rely-on-recall).
@@ -267,10 +282,12 @@ matches were returned instead of an empty result. Treat these rows as
 low-confidence. They are typical of identifier and hash lookups, where the
 exact match is semantically distant from the query text.
 
-**The rescue path exists only under confidence scoring.** The rows it returns
+**The rescue path exists only under confidence ordering.** The rows it returns
 are marked by the same backfill that runs when `CPERSONA_CONFIDENCE_ENABLED`
-is on. In the default configuration `gate_fallback` can therefore never
-appear: an all-below-gate recall simply returns nothing.
+is on and `CPERSONA_CONFIDENCE_ORDERING=legacy`. Under the default
+configuration, and under confidence on with the default `fusion` ordering,
+`gate_fallback` can therefore never appear: an all-below-gate recall simply
+returns nothing.
 
 ## 9. `lock_memory` protects; it does not boost
 

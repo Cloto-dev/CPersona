@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:0fa5da35eadb240c1149d8fe87feb4845d1d4b3e -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:5eb50cfe25479448f4a02e1b46c37af3a61ed364 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -42,29 +42,38 @@
   それらは**時刻を持つすべてのメッセージより前**に、マージされた順序のまま
   置かれます。末尾は、本当に最新のものだけのための位置です。
 
-## 2. confidence スコアリングは融合モードを上書きする { #2-confidence-scoring-overrides-the-fusion-mode }
+## 2. confidence は各行の横に返され、順位は決めない { #2-confidence-scoring-overrides-the-fusion-mode }
 
-`CPERSONA_CONFIDENCE_ENABLED` (既定 `false`) は、メタデータを足すだけの
-スイッチではありません。**on** にすると:
+`CPERSONA_CONFIDENCE_ENABLED` (既定 `false`) は、返す各行に `confidence` の値を
+加えます。2.6.0a7 からは、それだけです。既定の `CPERSONA_CONFIDENCE_ORDERING=fusion`
+では、この値は結果の順序も品質ゲートも決めません。confidence を on にした recall は、
+off のときと同じ行を同じ順序で返し、`confidence` フィールドが増えるだけです。
+理由は [一本化した事前分布](PRIOR_FUNCTION_DESIGN.md#5-confidence) にあります。
+
+`CPERSONA_CONFIDENCE_ORDERING=legacy` で、以前のリリースの挙動に戻ります。
+`legacy` で confidence を on にすると:
 
 - 結果集合が **confidence スコアで並べ直され**、
 - 品質ゲートが融合スコアではなく confidence を見るようになります。
 
-融合モード (`CPERSONA_RECALL_MODE=rrf|rsf|cascade`) は*どの候補が結果集合に
-入るか*は引き続き決めますが、**返ってくる順序はもう決めません**。
-1,545 文書のコーパスに 394 クエリで実測しました。confidence を on にすると
-`rsf` と `rrf` は 394 クエリ全てで同一の行を同一の順序で返し、off では一致率が
-10% 未満でした。
+このとき融合モードは*どの候補が結果集合に入るか*は引き続き決めますが、
+**返ってくる順序はもう決めません**。1,545 文書のコーパスに 394 クエリで実測しました。
+この挙動で confidence を on にすると `rsf` と `rrf` は 394 クエリ全てで同一の行を
+同一の順序で返し、off では一致率が 10% 未満でした。
 
-ランキングとゲートのシグナル優先順位は **confidence > rsf > cosine > rrf**
-です。スコアの付いた行では `match_reason.signal` が、その行で実際にどの分岐が
-効いたかを報告します。
+confidence を on にしていた配備を更新すると、ゲートが比べるスコアが変わるので、
+保存済みのゲートは起動時に較正し直されます (スコアリングの版が変わったため)。
+
+ゲートのシグナル優先順位は **rsf > cosine > rrf** で、**confidence** が先頭に来るのは
+`legacy` のときだけです。スコアの付いた行では `match_reason.signal` が、その行で
+実際にどの分岐が効いたかを報告します。事前分布の年齢の重みを設定しているときは、
+`match_reason.prior` がその行の順位を決めた重みを報告します。
 
 スコアの付かない行は、このキー自体を持ちません。`cascade` recall が埋める
-FTS / keyword 行と、confidence off のときの注入プロフィール行がそれです。
-confidence on では、プロフィール行も他の行と同様にスコアが付き `match_reason`
-を持ちます。`match_reason` は「全行にあるフィールド」ではなく「あるかないか」
-として扱ってください。
+FTS / keyword 行と、注入プロフィール行がそれです。
+`legacy` で confidence を on にしたときは、プロフィール行も他の行と同様にスコアが付き
+`match_reason` を持ちます。`match_reason` は「全行にあるフィールド」ではなく
+「あるかないか」として扱ってください。
 
 なお confidence は**マッチ強度ではありません**。コサイン類似度・時間減衰・
 resolved 状態・想起回数をブレンドした別の量です。完全一致の行が言い換えの行
@@ -215,7 +224,8 @@ autocut (スコア差が最大の箇所で切り落とす仕組み) は、スコ
 切れ目を表しているという前提に立ちます。これが成り立つのは類似度スケールの
 シグナルだけです:
 
-- **発火する**のは、confidence スコアリング下、または全行がシグナルを持つ
+- **発火する**のは、confidence による並べ替えの下 (confidence on かつ
+  `CPERSONA_CONFIDENCE_ORDERING=legacy`)、または全行がシグナルを持つ
   均質な生コサインのリストです。
 - **意図的に不活性**なのは、`rsf` と `rrf` の順序付け下です。ランク融合の
   スコアは構造上双曲的に減衰し、その差は関連性の切れ目ではなく retriever の
@@ -245,11 +255,12 @@ autocut (スコア差が最大の箇所で切り落とす仕組み) は、スコ
   スコアを持たず最後尾に並び、スコア付きの結果だけで `limit` が埋まっていると
   **切り落とされます**。実コーパスに `rsf` / `limit=10` で実測:
   **生き残ったプロフィール行は 0 件**でした。
-- この閾値を超えたうえで **confidence on** の場合、プロフィール行は高い
-  confidence スコアを受け取り、安定して上位に現れます。
+- この閾値を超えたうえで **`CPERSONA_CONFIDENCE_ORDERING=legacy` で confidence on**
+  の場合、プロフィール行は高い confidence スコアを受け取り、安定して上位に現れます。
+  既定の `fusion` (2.6.0a7 以降) では、confidence on でもここは confidence off と
+  同じで、プロフィール行は最後に並びます。
 
-confidence を有効にして運用しているのでない限り、プロフィールを「常に必ず
-注入されるチャネル」として扱わないでください。*常に必ず存在してほしい*事実に
+プロフィールを「常に必ず注入されるチャネル」として扱わないでください。*常に必ず存在してほしい*事実に
 対する正しい機構は、確率的な recall ではなく決定的注入 (あなたの `CLAUDE.md`
 やシステムプロンプト) です。
 [recall に頼らないという選択](operations.md#when-not-to-rely-on-recall)
@@ -262,10 +273,11 @@ recall の応答が `gate_fallback: true` を伴う場合 (伴わないときは
 字句マッチを返したという意味です。これらの行は低信頼として扱ってください。
 識別子やハッシュの検索で、完全一致がクエリ文と意味的に遠い場合に典型的です。
 
-**この救済経路は confidence スコアリング有効時にしか存在しません。** 返される行に
-印を付けるのは、`CPERSONA_CONFIDENCE_ENABLED` が有効なときだけ走る backfill です。
-したがって既定の構成では `gate_fallback` は決して現れません。全候補がゲートを
-下回った recall は、単に空を返します。
+**この救済経路は confidence による並べ替えの下にしか存在しません。** 返される行に
+印を付けるのは、`CPERSONA_CONFIDENCE_ENABLED` が有効で、かつ
+`CPERSONA_CONFIDENCE_ORDERING=legacy` のときだけ走る backfill です。
+したがって既定の構成でも、confidence on で既定の `fusion` のときでも、
+`gate_fallback` は決して現れません。全候補がゲートを下回った recall は、単に空を返します。
 
 ## 9. `lock_memory` は保護する、押し上げはしない { #9-lock_memory-protects-it-does-not-boost }
 

@@ -1115,7 +1115,7 @@ async def test_the_profile_row_carries_match_reason_under_confidence(
     )
 
     text = _CONTRACTS.read_text(encoding="utf-8")
-    assert "With confidence on, the profile row is scored like any other and" in text, (
+    assert "Under `legacy` with confidence on, the profile row is scored like any other and" in text, (
         "§3 no longer says the profile row carries match_reason under confidence, "
         "which is what this test measures it doing"
     )

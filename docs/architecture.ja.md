@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:19677fe57e8d0cd34d9ea9fb2ef677d5853aca40 -->
+<!-- i18n-source: docs/architecture.md@blob:0eda1b2ad89f4203a5e13a446c826f96c5855c80 -->
 
 # アーキテクチャ
 
@@ -129,14 +129,17 @@ flowchart LR
 2. **品質ゲート**が「そもそも返してよいほど良いか」を決めます。閾値は
    `calibrate_threshold` がコーパス自身から導出し、実際に回すつまみは
    `set_recall_precision` です。全候補がゲートを下回った場合、応答は**空**で
-   返ります。例外は confidence スコアリング有効時で、そのときだけゲート未満の
-   字句マッチが
+   返ります。例外は confidence による並べ替えの下 (confidence on かつ
+   `CPERSONA_CONFIDENCE_ORDERING=legacy`) で、そのときだけゲート未満の字句マッチが
    [`gate_fallback`](behavior-contracts.md#8-gate_fallback-responses-are-low-confidence)
-   の印つきで返ります。この印は既定構成 (confidence 無効) では到達不能なので、
+   の印つきで返ります。この印はそれ以外の構成では到達不能なので、
    探しに行く前に知っておく価値があります。
-3. **confidence スコアリング** (`CPERSONA_CONFIDENCE_ENABLED`、既定は無効) は
-   メタデータのスイッチではありません。有効時は結果集合が **confidence スコアで
-   並べ直され**、ゲートも融合スコアではなくそのスコアを見ます
+3. **confidence スコアリング** (`CPERSONA_CONFIDENCE_ENABLED`、既定は無効) は、
+   各行の横に `confidence` の値を返します。2.6.0a7 からは、結果の順序もゲートも
+   決めません。時間が順序に入る場所は [事前分布](PRIOR_FUNCTION_DESIGN.md) の
+   年齢の重みで、ゲートが通したものの順序だけを入れ替えます。
+   `CPERSONA_CONFIDENCE_ORDERING=legacy` で、以前の confidence による並べ直しと
+   confidence のゲートに戻ります
    ([契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode))。
    confidence はコサイン類似度・動的な時間減衰・解決済みかどうか・想起回数を
    混ぜた量です。したがって**マッチの強さではありません**。完全一致の行が

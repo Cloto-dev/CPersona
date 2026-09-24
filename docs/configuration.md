@@ -18,7 +18,8 @@
 | `CPERSONA_RRF_K` | `60` | RRF smoothing parameter |
 | `CPERSONA_MAX_CONTENT_LENGTH` | `16000` | Max characters per stored memory or episode. Longer writes are truncated; `check_health(fix=true)` also cuts existing rows above the cap, so lowering it shortens data that was already stored. Raised from `2000` in 2.5.4a2 — text past the embedding window is still searchable through the keyword channel, which indexes the stored row in full |
 | `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | Max characters per profile row, capped separately from memories: the profile is never preview-trimmed, so this cap is the only thing bounding it. It is not injected into *every* response: the quality gate drops profile rows while the pool holds fewer than 50 rows, and `limit` cuts them when the scored results already fill it ([contract §7](behavior-contracts.md#7-profile-rows-carry-no-score)) |
-| `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include confidence metadata in results — and make it the ranking key: the result set is re-sorted by the score, and the quality gate keys on it. With this on, `CPERSONA_RECALL_MODE` no longer decides the returned order ([contract §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
+| `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include a `confidence` value with each returned row. From 2.6.0a7 it neither orders the result nor keys the quality gate unless `CPERSONA_CONFIDENCE_ORDERING=legacy` ([contract §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
+| `CPERSONA_CONFIDENCE_ORDERING` | `fusion` | `fusion`: confidence is returned beside each row and does nothing else. `legacy`: the behaviour before 2.6.0a7 — with confidence on, the result is re-sorted by the confidence score and the quality gate keys on it, so `CPERSONA_RECALL_MODE` no longer decides the returned order |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | Auto-calibrate on startup |
 | `CPERSONA_BLOCK_BUILD_ENABLED` | `false` | Build clause-sized blocks for each record and store one sign-quantised vector per block ([block reach](BLOCK_REACH_DESIGN.md)). Off means no embedding calls, no rows and no queue work — not "built but unread". Turning it on also starts a bounded backfill of the records already stored |
 | `CPERSONA_BLOCK_RETRIEVAL_ENABLED` | `false` | Read the block index during recall ([block reach](BLOCK_REACH_DESIGN.md)): the block arm, and the quotation `reconstruct` returns — a claim is quoted from the block that matches, carrying the contiguous context that governs it, or reported as incomplete. Records it reaches are admitted by **reservation**: a fixed, small number of places held for them after the quality gate, which is neither consulted for those places nor altered for any other. The response therefore carries up to that many rows **beyond** the requested `limit`, and every row the previous release returned is still returned. Needs `CPERSONA_BLOCK_BUILD_ENABLED=true` — reading an index nothing fills is a startup error, not a quiet no-op. No effect where vector search is remote: the arm ranks against the query vector the local search embedded, and a remote search does not produce one |
@@ -29,7 +30,7 @@
 | `CPERSONA_VECTOR_REACH` | `0` | How far past the scan window the vector retriever may look, in rows. It **must exceed `CPERSONA_MAX_MEMORIES` to have any effect**: at or below it (and at the default `0`) the far list does not exist and nothing extra runs. Above it, the rows between the two numbers are ranked as a **second list** and fused alongside the first, so the window keeps working as a recency prior while the reach extends independently. Local vector search and the `rrf`/`rsf` fusion modes only ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_FAR_LIMIT` | `0` | How many rows of that second list reach fusion. `0` (the default) means **the same as the response `limit`**, which is the second list exactly as it is built without this setting; a positive value cuts it to `min(limit, N)` rows. It bounds a candidate count and changes nothing about how a row is scored, so the rows it keeps are the ones the full-length list led with. Irrelevant unless `CPERSONA_VECTOR_REACH` is above `CPERSONA_MAX_MEMORIES`; the first list's own cut stays at `limit` ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_RECALL_DEPTH_FLOOR` | `0` | Recall Depth: the fewest candidates each retrieval arm hands to the fusion, whatever `limit` asks to receive. The depth is `max(limit, this)`, capped by `CPERSONA_RECALL_LIBRARY_MAX_LIMIT`; at `0` it equals `limit`, which is the coupling the 2.5 line shipped with — nothing in the ranking moves until you set it. When it exceeds `limit`, the response carries `depth`, so a caller can see that a 5-row answer was ranked over more than 5 candidates per arm. Fusion modes only: `cascade` fills `limit` slots stage by stage and has no list to deepen ([design](RELIABLE_RECALL_2_6.md#4-depth-is-not-count)) |
-| `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | Result sets smaller than this are never autocut. Autocut fires on similarity-scale signals — under confidence scoring, or on the homogeneous raw-cosine list `cascade` produces — and is deliberately inert under `rsf`/`rrf` ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)), so the fusion mode decides whether this knob does anything |
+| `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | Result sets smaller than this are never autocut. Autocut fires on similarity-scale signals — under confidence ordering (`CPERSONA_CONFIDENCE_ORDERING=legacy`), or on the homogeneous raw-cosine list `cascade` produces — and is deliberately inert under `rsf`/`rrf` ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)), so the fusion mode decides whether this knob does anything |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | The post-fusion quality gate. Disabling it is a last resort: filtering falls back to the pool-size heuristic, which is coarser but still rejects weak matches — what you lose is the operating point measured for this corpus |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | Attach an `advisory` to recall responses while embeddings are unavailable ([runbook](operations.md#detecting-a-dead-embedding-server)) |
 | `CPERSONA_UPDATE_CHECK` | `true` | Check pypi.org once per process start for a newer — or withdrawn — release of this server, and report it through `recall` / `check_health` / `check_update` ([what it sends](architecture.md#transports)). `false` disables the feature entirely: no request, no cache file, no notice. Updating is never automatic either way |
@@ -37,6 +38,10 @@
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | Episode boundary penalty ([contract §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | Penalty decay rate per hour before the boundary |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | Penalty floor (older memories are at most halved) |
+| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | What a vote from the far list is worth, from `0` to `1`, in both fusions ([one prior function](PRIOR_FUNCTION_DESIGN.md#2-the-prior)). Only meaningful when `CPERSONA_VECTOR_REACH` is set above the window; `1` is the unpriced far vote |
+| `CPERSONA_PRIOR_AGE_RATE` | `0` | Rate of the age weight `max(floor, 1 / (1 + age_hours × rate))`, which reorders the rows the quality gate admitted and never admits or removes one. `0` turns it off |
+| `CPERSONA_PRIOR_AGE_FLOOR` | `0.3` | Floor of the age weight |
+| `CPERSONA_PRIOR_AGE_ANCHOR` | `newest` | Where age is measured from: the newest memory in the recall's scope (`newest`, so an idle store ranks as it did when last used) or the current time (`now`) |
 
 The generic aliases `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL`
 are also accepted, and the `CPERSONA_`-prefixed form wins when both are set.
@@ -267,20 +272,23 @@ and per-tool classification, see [ACL design](ACL_DESIGN.md).
   threshold. So with `CPERSONA_CONFIDENCE_ENABLED=false`, which is the default
   and what the [CJK guidance](operations.md#japanese-and-cjk-corpora) assumes,
   a strongly matching row can be dropped for being the weakest of a strong set,
-  and a weak lone match can pass. Turning confidence on moves the gate onto the
-  confidence score and avoids this, at the cost described just below. `rrf`
-  remains the default.
+  and a weak lone match can pass. Turning confidence on under
+  `CPERSONA_CONFIDENCE_ORDERING=legacy` moves the gate onto the confidence
+  score and avoids this, at the cost described just below. `rrf` remains the
+  default.
 - **`cascade`** — sequential channel fill (legacy).
 
-**With `CPERSONA_CONFIDENCE_ENABLED=true`, the fusion mode does not decide the
-order you get back.** Fusion selects which candidates enter the result set.
-Confidence scoring then re-sorts that set, and the quality gate keys on the
-confidence score rather than on the fused one.
+**From 2.6.0a7, `CPERSONA_CONFIDENCE_ENABLED=true` does not change the order
+you get back.** The fusion mode decides it, and the confidence value is
+returned beside each row. Under `CPERSONA_CONFIDENCE_ORDERING=legacy`, the
+behaviour of earlier releases, confidence scoring re-sorts the result set and
+the quality gate keys on the confidence score rather than on the fused one.
 
-Measured on a 1,545-document corpus with 394 queries: with confidence on, `rsf`
-and `rrf` returned the same rows in the same order for **all 394** queries;
-with it off, the two agreed on fewer than 10%.
+Measured on a 1,545-document corpus with 394 queries: with confidence on under
+that legacy behaviour, `rsf` and `rrf` returned the same rows in the same order
+for **all 394** queries; with it off, the two agreed on fewer than 10%.
 
-So if you set a fusion mode expecting a ranking change, either leave confidence
-off, or expect the mode to affect which memories are considered and not the
-order they come back in.
+So under `legacy`, if you set a fusion mode expecting a ranking change, either
+leave confidence off, or expect the mode to affect which memories are
+considered and not the order they come back in. Under the default `fusion`
+ordering the mode decides the order whether confidence is on or off.

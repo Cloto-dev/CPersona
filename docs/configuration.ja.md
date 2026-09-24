@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:ef0982282e635c0220b92c03d5b06abf1c92a89f -->
+<!-- i18n-source: docs/configuration.md@blob:43bcde71643c4819b214fc84f94b02f48c07036c -->
 
 # 設定リファレンス
 
@@ -22,7 +22,8 @@
 | `CPERSONA_RRF_K` | `60` | RRF の平滑化パラメータ |
 | `CPERSONA_MAX_CONTENT_LENGTH` | `16000` | 記憶 1 件・エピソード 1 件あたりの最大文字数。超過分は切り詰められ、`check_health(fix=true)` は既存行も上限で切るため、**下げると保存済みデータが短くなります**。2.5.4a2 で `2000` から引き上げ。埋め込みウィンドウを超えた本文も、行全体を索引するキーワードチャネル経由では検索できます |
 | `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | プロフィール 1 行あたりの最大文字数 (記憶とは別枠)。プロフィールはプレビュー切り詰めの対象外なので、この上限だけが唯一の歯止めです。ただし*全*応答に注入されるわけではありません: プールが 50 行未満の間は品質ゲートがプロフィール行を落とし、スコア付きの結果で埋まっている場合は `limit` が落とします ([契約 §7](behavior-contracts.md#7-profile-rows-carry-no-score)) |
-| `CPERSONA_CONFIDENCE_ENABLED` | `false` | confidence メタデータを結果に含める — かつ**それをランキングキーにする**: 結果集合はこのスコアで並べ直され、品質ゲートもこれを見ます。有効時、`CPERSONA_RECALL_MODE` は返却順を決めなくなります ([契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
+| `CPERSONA_CONFIDENCE_ENABLED` | `false` | 返す各行に `confidence` の値を含めます。2.6.0a7 からは、`CPERSONA_CONFIDENCE_ORDERING=legacy` でない限り、結果の順序も品質ゲートも決めません ([契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
+| `CPERSONA_CONFIDENCE_ORDERING` | `fusion` | `fusion`: confidence は各行の横に返されるだけで、他には何もしません。`legacy`: 2.6.0a7 より前の挙動 — confidence on のとき結果を confidence スコアで並べ直し、品質ゲートもそれを見るので、`CPERSONA_RECALL_MODE` は返却順を決めなくなります |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | 起動時に自動較正する |
 | `CPERSONA_BLOCK_BUILD_ENABLED` | `false` | 各レコードを節に相当する Block へ分け、Block ごとに符号量子化ベクトルを 1 本保存する ([Block による到達](BLOCK_REACH_DESIGN.md))。off は「作るが読まない」ではなく、埋め込み呼び出しも行もキューの仕事も無いという意味。on にすると、すでに保存されているレコードに対する有界な backfill も始まる |
 | `CPERSONA_BLOCK_RETRIEVAL_ENABLED` | `false` | recall のときに Block 索引を読む ([Block による到達](BLOCK_REACH_DESIGN.md)) — Block の腕と、`reconstruct` が返す引用の両方。引用は一致した Block から取られ、それを支配する連続文脈を伴うか、不完全であると報告される。到達したレコードは**予約**で通す — 品質 gate の後に確保された少数の席で、その席について gate は参照されず、他のどの席の gate も変わらない。したがって応答は要求された `limit` を**超えて**その席数まで行を運び、直前のリリースが返した行はすべてそのまま返る。`CPERSONA_BLOCK_BUILD_ENABLED=true` が必要 — 何も入っていない索引を読む設定は静かな no-op ではなく起動時エラー。ベクトル検索が remote の構成では効かない (この腕はローカル検索が埋め込んだクエリベクトルで順位付けするが、remote 検索はそれを作らない) |
@@ -33,7 +34,7 @@
 | `CPERSONA_VECTOR_REACH` | `0` | ベクトル検索が走査ウィンドウの先をどこまで見てよいか (行数)。効果を持たせるには **`CPERSONA_MAX_MEMORIES` より大きくする必要があります**: 同値以下 (既定の `0` を含む) では遠方リストは存在せず、追加の処理は一切走りません。大きくすると、2 つの数値の間にある行が**第 2 のリスト**としてランク付けされ、第 1 のリストと並んで融合されます。つまりウィンドウは新しさの事前分布として働き続けたまま、到達距離だけを独立に伸ばせます。ローカルのベクトル検索と `rrf`/`rsf` の融合モードでのみ有効です ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_FAR_LIMIT` | `0` | その第 2 のリストのうち何行を融合層に渡すか。`0` (既定) は**応答の `limit` と同じ**という意味で、この設定なしで構築される第 2 のリストそのものです。正の値を与えると `min(limit, N)` 行に切り詰められます。これは候補件数の上限であり、行のスコア計算は一切変わりません。したがって残るのは、フル長のリストが先頭に並べていた行そのものです。`CPERSONA_VECTOR_REACH` が `CPERSONA_MAX_MEMORIES` より大きくない限り無関係で、第 1 のリスト側の打ち切りは `limit` のままです ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_RECALL_DEPTH_FLOOR` | `0` | 想起深度: 応答の `limit` にかかわらず、各検索経路が融合に渡す候補数の下限です。深度は `max(limit, この値)` で、`CPERSONA_RECALL_LIBRARY_MAX_LIMIT` が上限です。`0` では `limit` と等しく、2.5 系の結合を維持します。設定しない限り順位は変わりません。`limit` を超える場合、応答の `depth` で候補の深さを確認できます。融合モードのみ有効です。`cascade` は段階的に `limit` 件を埋めるため対象外です ([設計](RELIABLE_RECALL_2_6.md#4-depth-is-not-count)) |
-| `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。autocut は類似度スケールのシグナル — confidence スコアリング下、あるいは `cascade` が作る生 cosine だけの均質なリスト — に対して発火し、`rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。したがってこのつまみが働くかどうかを決めるのは融合モードです |
+| `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。autocut は類似度スケールのシグナル — confidence による並べ替えの下 (`CPERSONA_CONFIDENCE_ORDERING=legacy`)、あるいは `cascade` が作る生 cosine だけの均質なリスト — に対して発火し、`rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。したがってこのつまみが働くかどうかを決めるのは融合モードです |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | 融合後の品質ゲート。無効化は最終手段です: フィルタはプール規模のヒューリスティックにフォールバックし、粗くはなりますが弱い一致は依然として弾かれます — 失うのはこのコーパスに対して測定された動作点です |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | 埋め込みが利用不能な間、recall 応答に `advisory` を付ける ([runbook](operations.md#detecting-a-dead-embedding-server)) |
 | `CPERSONA_UPDATE_CHECK` | `true` | プロセス起動ごとに 1 回 pypi.org を参照し、このサーバーの新しい — あるいは撤回された — リリースを検出して `recall` / `check_health` / `check_update` で報告する ([何を送るか](architecture.md#transports))。`false` で機能全体を無効化します: リクエストもキャッシュファイルも通知もありません。どちらの設定でも更新が自動で行われることはありません |
@@ -41,6 +42,10 @@
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | エピソード境界ペナルティ ([契約 §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | 境界より前の記憶に対する 1 時間あたりの減衰率 |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | ペナルティの下限 (古い記憶でも最大で半分まで) |
+| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | far リストの票の値打ち (`0`〜`1`)。両方の融合に効きます ([一本化した事前分布](PRIOR_FUNCTION_DESIGN.md#2-the-prior))。`CPERSONA_VECTOR_REACH` が窓より大きく設定されている時だけ意味を持ち、`1` は値段の付いていない far の票です |
+| `CPERSONA_PRIOR_AGE_RATE` | `0` | 年齢の重み `max(floor, 1 / (1 + age_hours × rate))` の率。品質ゲートが通した行の順序だけを入れ替え、行を通しも除きもしません。`0` で無効 |
+| `CPERSONA_PRIOR_AGE_FLOOR` | `0.3` | 年齢の重みの下限 |
+| `CPERSONA_PRIOR_AGE_ANCHOR` | `newest` | 年齢をどこから測るか。想起のスコープで最も新しい記憶 (`newest`。放置したストアも最後に使った時と同じ順位になる) か、現在時刻 (`now`) |
 
 汎用エイリアス `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL` も
 受理されます (両方設定されている場合は `CPERSONA_` 接頭辞つきが優先)。
@@ -266,18 +271,21 @@ v2.5.3 以降、サーバーはこれを強制します。`CPERSONA_TRANSPORT=st
   したがって `CPERSONA_CONFIDENCE_ENABLED=false` (既定であり、
   [CJK の指針](operations.md#japanese-and-cjk-corpora) が前提とする構成) のとき、
   強く一致している行が「強い集合の中で最弱だった」という理由で落ち、逆に弱い単独
-  一致が通ることがあります。confidence を有効にするとゲートは confidence スコア
-  側に移り、この問題は避けられますが、その代償はすぐ下に書いたとおりです。
+  一致が通ることがあります。`CPERSONA_CONFIDENCE_ORDERING=legacy` で confidence を
+  有効にするとゲートは confidence スコア側に移り、この問題は避けられますが、その代償は
+  すぐ下に書いたとおりです。
   既定は `rrf` のままです。
 - **`cascade`** — チャネルを順番に埋める方式 (レガシー)。
 
-**`CPERSONA_CONFIDENCE_ENABLED=true` のとき、融合モードは返却順を決めません。**
-融合は「どの候補が結果集合に入るか」を選びます。その後 confidence スコアリングが
-集合を並べ直し、品質ゲートも融合スコアではなく confidence を見ます。
+**2.6.0a7 からは、`CPERSONA_CONFIDENCE_ENABLED=true` にしても返却順は変わりません。**
+順序は融合モードが決め、confidence の値は各行の横に返されます。以前のリリースの挙動である
+`CPERSONA_CONFIDENCE_ORDERING=legacy` では、confidence スコアリングが結果集合を並べ直し、
+品質ゲートも融合スコアではなく confidence を見ます。
 
-1,545 件のコーパスに 394 クエリで実測しました。confidence 有効時、`rsf` と `rrf` は
-**394 クエリすべてで同じ行を同じ順序**で返しました。無効時は一致が 10% 未満でした。
+1,545 件のコーパスに 394 クエリで実測しました。その legacy の挙動で confidence を有効にすると、
+`rsf` と `rrf` は **394 クエリすべてで同じ行を同じ順序**で返しました。無効時は一致が 10% 未満でした。
 
-融合モードを設定してランキングの変化を期待するなら、confidence は無効のままにするか、
-モードが効くのは「どの記憶が考慮されるか」であって「返ってくる順序」ではないと
-理解してください。
+したがって `legacy` では、融合モードを設定してランキングの変化を期待するなら、confidence は
+無効のままにするか、モードが効くのは「どの記憶が考慮されるか」であって「返ってくる順序」
+ではないと理解してください。既定の `fusion` では、confidence の on / off にかかわらず
+融合モードが順序を決めます。

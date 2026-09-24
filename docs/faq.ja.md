@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/faq.md@blob:dc14c37e4fbc426442134d006a4036777b8c15de -->
+<!-- i18n-source: docs/faq.md@blob:8125f8b4c20cbf3cca5622b6285443c85f1001bf -->
 
 # FAQ
 
@@ -26,11 +26,11 @@ hit@k を評価するときは**末尾から**数えてください。先頭か�
    見つかるべきもの」に使います。
 2. **追記でなく上書き。** 置き換えられた決定は `update_memory` で書き換えます。
    検索空間に存在しない古い決定は、勝ちようがありません。
-3. その上で必要なら `CPERSONA_CONFIDENCE_ENABLED=true` を設定します。時間減衰が
-   ランキングに混ざります。ただし順序と品質ゲートが fusion mode から confidence
-   に切り替わる点に注意し、切り替え後に `calibrate_threshold` を一度実行して
-   ください。細粒度の新しさ*ランキング* (recency-weighted search) は 2.6 系の
-   計画機能です。
+3. その上で必要なら、[事前分布](PRIOR_FUNCTION_DESIGN.md) の年齢の重み
+   `CPERSONA_PRIOR_AGE_RATE` を設定します。品質ゲートが通した行の中で新しい記憶を
+   上に来させ、古い記憶を除くことはありません。率を選ぶ計測が済むまで既定は無効です。
+   2.6.0a7 からは `CPERSONA_CONFIDENCE_ENABLED=true` はランキングに時間を混ぜず、
+   各行の横に `confidence` の値を返すだけです。
 
 → [recall に頼らないという選択](operations.md#when-not-to-rely-on-recall)
 
@@ -38,8 +38,10 @@ hit@k を評価するときは**末尾から**数えてください。先頭か�
 
 いいえ。壊れているから無効なのではなく、保守的な出荷既定です。confidence は
 ランキングの意味論を変えるため、opt-in で出荷しています。本番でも使われています
-(メンテナ自身のインスタンスは `rsf` + confidence on で運用)。有効化する場合は、
-結果の再ソートと品質ゲートの切り替えが起きることを理解してください。
+(メンテナ自身のインスタンスは `rsf` + confidence on で運用)。2.6.0a7 からは、
+有効にしても各行に `confidence` の値が加わるだけです。
+`CPERSONA_CONFIDENCE_ORDERING=legacy` で、以前のリリースの再ソートと confidence による
+ゲートに戻ります。
 → [契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)
 
 ### Markdown ファイル群の索引を CPersona と同期し続けるには？ { #how-do-i-keep-an-index-of-markdown-files-in-sync-with-cpersona }

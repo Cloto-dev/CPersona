@@ -127,7 +127,10 @@ and chain nodes need them; restructuring is not planned.
   order entirely when it is enabled, so this line decides whether that pass
   survives, or recency becomes one term inside fusion. The weight of "far"
   candidates beyond the scan window is designed as a special case of the same
-  prior.
+  prior. Decided for 2.6.0a7: the re-sort no longer runs by default, and the
+  far weight and an age weight are [one prior function](PRIOR_FUNCTION_DESIGN.md)
+  that orders what the gate admitted; their defaults move only after
+  measurement.
 - **Fusion depth separated from response size** — asking for five results
   today also fuses only five candidates per retriever, which measurably costs
   accuracy. Depth becomes its own knob, and `limit` means what it says.

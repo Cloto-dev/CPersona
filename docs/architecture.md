@@ -133,12 +133,15 @@ the caller can see:
    confidence scoring: there the below-gate lexical matches are returned,
    marked with
    [`gate_fallback`](behavior-contracts.md#8-gate_fallback-responses-are-low-confidence).
-   That marker is unreachable in the default configuration (confidence off),
-   which is worth knowing before you go looking for it.
-3. **Confidence scoring** (`CPERSONA_CONFIDENCE_ENABLED`, off by default) is
-   not a metadata switch. With it on, the result set is **re-sorted by the
-   confidence score**, and the gate keys on that score instead of the fused
-   one
+   That marker is unreachable unless confidence is on under
+   `CPERSONA_CONFIDENCE_ORDERING=legacy`, which is worth knowing before you go
+   looking for it.
+3. **Confidence scoring** (`CPERSONA_CONFIDENCE_ENABLED`, off by default)
+   returns a `confidence` value beside each row. From 2.6.0a7 it neither
+   orders the result nor keys the gate; the age weight of the
+   [prior](PRIOR_FUNCTION_DESIGN.md) is where time enters the order, and it
+   reorders only what the gate admitted. `CPERSONA_CONFIDENCE_ORDERING=legacy`
+   restores the old re-sort by confidence and the confidence gate
    ([contract §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)).
    Confidence blends cosine similarity, dynamic time decay, resolved status
    and recall count. It is therefore **not** match strength, and an exact

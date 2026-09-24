@@ -1,7 +1,9 @@
 # One Prior Function — design
 
-**Status:** design, not shipped behaviour. Nothing described here is in a
-release yet. It is the implementation form of
+**Status:** implemented on `master`, unreleased. The confidence change
+(section 5) is in effect by default; the prior's weights (sections 2 to 4) are
+at identity defaults until the measurements in section 8 move them. It is the
+implementation form of
 [the recall line's section 3](RELIABLE_RECALL_2_6.md#3-one-prior-function) and
 of [the far-vote plan](REACH_AND_RECENCY_PLAN.md#6-the-plan-for-the-26-line-a-priced-far-vote-designed-with-recency),
 and it settles the decision both of them say must come first: what happens to
@@ -80,7 +82,8 @@ w_list  = 1 for the near vector list, the full-text list and the keyword list
 ## 3. The prior orders; it never admits
 
 The score multiplied by `p(row)` is used for the **final order only**. The
-quality gate and autocut keep reading the unweighted fused score.
+quality gate and autocut keep reading the fused score, which includes the far
+weight (a vote's price is part of the fusion) but never `p(row)`.
 
 Half of the episode penalty's damage came through the gate. Lowering a row's
 score pushed it under the calibrated threshold, and the row disappeared (the
@@ -96,7 +99,8 @@ unchanged; only the order in which the count cuts them moves. A test pins this.
 ## 4. How age is measured
 
 - **Age is measured from the newest record in the recall's scope**, not from
-  the current time. Measured from now, every record would grow older together
+  the current time. The newest record is the newest memory, the span the
+  confidence score already reads; an episode newer than it counts as age 0. Measured from now, every record would grow older together
   while the user is away, and how much the weight separates them would depend
   on how long the store sat idle. Measured from the newest record, a dormant
   store ranks exactly as it did when it was last used. The confidence score

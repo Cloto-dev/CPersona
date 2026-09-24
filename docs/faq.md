@@ -25,11 +25,12 @@ In priority order:
    use memory for what is *asked for*, not for what must *always fire*.
 2. **Overwrite, do not append.** `update_memory` the superseded decision. A
    stale decision that no longer exists cannot win.
-3. Then, optionally, enable `CPERSONA_CONFIDENCE_ENABLED=true`, which blends
-   time decay into the ranking. Be aware that it takes over ordering and the
-   quality gate from the fusion mode, and run `calibrate_threshold` once after
-   switching. Fine-grained recency *ranking* (recency-weighted search) is
-   planned for the 2.6 line.
+3. Then, optionally, set `CPERSONA_PRIOR_AGE_RATE`, the age weight of the
+   [prior](PRIOR_FUNCTION_DESIGN.md), which lets newer memories rank higher
+   among the rows the quality gate admitted without ever removing an older
+   one. Its default is off until the measurement that chooses a rate is done.
+   `CPERSONA_CONFIDENCE_ENABLED=true` no longer blends time into the ranking
+   from 2.6.0a7: it only returns a `confidence` value beside each row.
 
 → [When not to rely on recall](operations.md#when-not-to-rely-on-recall)
 
@@ -38,8 +39,9 @@ In priority order:
 No. It is a conservative shipping default, not a flag disabled because
 something is broken. Confidence changes ranking semantics, so it ships opt-in.
 It is used in production: the maintainer's own instance runs `rsf` with
-confidence on. If you enable it, know that it re-sorts results and re-keys the
-quality gate.
+confidence on. From 2.6.0a7 enabling it only adds a `confidence` value to each
+row; `CPERSONA_CONFIDENCE_ORDERING=legacy` restores the re-sort and the
+confidence gate of earlier releases.
 → [Contract §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)
 
 ### How do I keep an index of Markdown files in sync with CPersona?

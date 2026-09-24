@@ -5714,12 +5714,12 @@
       "version": "2.5.12b1",
       "fixed_in": "2.5.12b2",
       "file": "docs/behavior-contracts.md",
-      "pattern": "With confidence on, the profile row is scored like any other and",
+      "pattern": "Under `legacy` with confidence on, the profile row is scored like any other and",
       "expected": "present",
       "status": "fixed",
       "category": "doc-drift",
       "note": "Deferred out of the frozen 2.5 line: the sentence is a published behaviour contract callers are told to branch on, and correcting what it promises for a documented configuration changes that contract rather than fixing a typo in it. It goes with the next feature line beside bug-390, the missing precondition in section 7 of the same document, so the two sections are rewritten once against one description of the behaviour instead of drifting apart again. No runtime change is warranted: the code does what section 7 already describes.",
-      "fix_note": "Section 3 now says the injected profile row carries match_reason under confidence and omits it only with confidence off, which is what the scoring loop and the response loop do. Rewritten together with the section 7 precondition against one description of the behaviour, which is why this was held for a pair. Regression: tests/test_docs_behavioural_claims.py measures the row carrying match_reason under confidence and quotes the sentence, so a rewrite that drops the correction is red."
+      "fix_note": "Section 3 now says the injected profile row carries match_reason under confidence and omits it only with confidence off, which is what the scoring loop and the response loop do. Rewritten together with the section 7 precondition against one description of the behaviour, which is why this was held for a pair. Regression: tests/test_docs_behavioural_claims.py measures the row carrying match_reason under confidence and quotes the sentence, so a rewrite that drops the correction is red. 2.6.0a7: the sentence is scoped to CPERSONA_CONFIDENCE_ORDERING=legacy, the only ordering in which confidence still scores the profile row; under the default the row carries no score, as with confidence off."
     },
     {
       "id": "bug-390",
