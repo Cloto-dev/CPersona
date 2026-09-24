@@ -729,9 +729,17 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_associations_reconstruct.py",),
         target="associative invariant 3 — a reached record is never an item",
         file="cpersona/reconstruct.py",
-        find="        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)\n        selected.append(item)",
+        find=(
+            "        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)\n"
+            "        if position >= len(window):\n"
+            "            # Said in the words recall uses for the same row, so one reading covers both.\n"
+            "            item[\"admission\"] = \"reservation\"\n"
+            "        selected.append(item)"
+        ),
         replace=(
             "        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, (), links)\n"
+            "        if position >= len(window):\n"
+            "            item[\"admission\"] = \"reservation\"\n"
             "        selected.append(item)\n"
             "        for row, label, hops in extra:\n"
             "            selected.append(structure([row], {}, spans, bounds_max_evidence)[0])"
@@ -798,6 +806,26 @@ MUTATIONS: list[Mutation] = [
         replace='    iso = isolation_where(agent_id=None, project_id=project_id, channel=channel, alias="e")\n    async with connection() as db:\n        starts',
         breaks="another agent's entity of the same name becomes a start, and its identity shows in this agent's answer",
         expect="test_associations_traverse.py::test_isolation_agent_project_and_readable_records",
+    ),
+    Mutation(
+        id="M50",
+        tests=("tests/test_reconstruct_block_reservation.py",),
+        target="reconstruct holds the block reservation beside the window",
+        file="cpersona/reconstruct.py",
+        find="    chosen = window + held\n",
+        replace="    chosen = window\n",
+        breaks="a record only the block arm reached never comes back once the gate has filled the window",
+        expect="test_reconstruct_block_reservation.py::test_a_full_window_still_returns_the_reserved_record",
+    ),
+    Mutation(
+        id="M51",
+        tests=("tests/test_reconstruct_block_reservation.py",),
+        target="a reserved record never takes a place in the window",
+        file="cpersona/reconstruct.py",
+        find="    window = [group for group in ordered if any(not candidates[i].reserved for i in group)][:effective_count]\n",
+        replace="    window = ordered[:effective_count]\n",
+        breaks="with room in the window a reserved row is ranked as an item the gate admitted, and the caller cannot tell",
+        expect="test_reconstruct_block_reservation.py::test_a_reserved_record_never_takes_a_place_in_the_window",
     ),
 ]
 
