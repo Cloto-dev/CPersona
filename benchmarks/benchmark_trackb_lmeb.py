@@ -790,14 +790,15 @@ async def run_task(
     recall_limit: int = 0,
     dump_rankings_sink=None,
     admission_probe: "VectorAdmissionProbe | None" = None,
-    recall_mode: str = "cascade",
     split: tuple[int, str] | None = None,
     latency_scan_window: int = 500,
 ) -> dict | None:
     from trackb_instrument import DepthCheck, record_depth_check
 
-    # One check per task, so the counts in <task>.json are this task's own.
-    depth_check = DepthCheck.from_env(recall_mode)
+    # One check per task, so the counts in <task>.json are this task's own. It
+    # reads the mode, floor and ceiling from the environment the package reads
+    # (async_main sets them from the command line before the package loads).
+    depth_check = DepthCheck.from_env()
     split_assignment: dict = {}
     task_dir = os.path.join(EVAL_DATA, TASK_MAP[task_name])
     if not os.path.isdir(task_dir):
@@ -1173,7 +1174,6 @@ async def async_main(args):
             recall_limit=args.recall_limit,
             dump_rankings_sink=dump_sink,
             admission_probe=admission_probe,
-            recall_mode=args.recall_mode,
             split=(args.split_seed, args.split) if args.split != "all" else None,
             latency_scan_window=args.latency_scan_window,
         )

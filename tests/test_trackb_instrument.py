@@ -106,18 +106,20 @@ def test_examples_are_capped_but_every_mismatch_is_counted():
     assert [e["query_id"] for e in dc.examples] == ["0", "1"]
 
 
-def test_from_env_reads_floor_and_ceiling(monkeypatch):
+def test_from_env_reads_floor_ceiling_and_mode(monkeypatch):
     monkeypatch.setenv("CPERSONA_RECALL_DEPTH_FLOOR", "200")
     monkeypatch.setenv("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", "300000")
-    dc = ti.DepthCheck.from_env("rrf")
-    assert (dc.floor, dc.ceiling, dc.mode) == (200, 300000, "rrf")
+    monkeypatch.setenv("CPERSONA_RECALL_MODE", "cascade")
+    dc = ti.DepthCheck.from_env()
+    assert (dc.floor, dc.ceiling, dc.mode) == (200, 300000, "cascade")
 
 
 def test_from_env_defaults_match_the_package_defaults(monkeypatch):
     monkeypatch.delenv("CPERSONA_RECALL_DEPTH_FLOOR", raising=False)
     monkeypatch.delenv("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", raising=False)
-    dc = ti.DepthCheck.from_env("rrf")
-    assert (dc.floor, dc.ceiling) == (0, 10000)
+    monkeypatch.delenv("CPERSONA_RECALL_MODE", raising=False)
+    dc = ti.DepthCheck.from_env()
+    assert (dc.floor, dc.ceiling, dc.mode) == (0, 10000, "rrf")
 
 
 def test_a_mismatch_marks_the_task_result_invalid():
@@ -282,3 +284,109 @@ async def test_latency_pass_runs_at_the_requested_window_and_restores_it(tmp_pat
     )
     assert seen == [300000] * 3 + [10000] * 3   # NDCG pass wide, latency pass as asked
     assert vec.MAX_MEMORIES == 300000           # restored afterwards
+
+
+# --------------------------------------------------------------------------- run_task wiring
+
+
+class _TaskServer(_FakeServer):
+    async def do_delete_agent_data(self, agent_id):
+        return {}
+
+
+@pytest.fixture
+def fake_task(tmp_path, monkeypatch):
+    """A one-subtask task the real run_task can execute without data or a model."""
+    (tmp_path / "fake").mkdir()
+    corpus = tmp_path / "corpus.jsonl"
+    corpus.write_text("".join(json.dumps({"id": f"d-t{i}", "text": f"t{i}"}) + "\n" for i in range(20)))
+    st = _subtask(tmp_path)
+    st["corpus"] = str(corpus)
+    monkeypatch.setattr(runner, "EVAL_DATA", str(tmp_path))
+    monkeypatch.setitem(runner.TASK_MAP, "Fake", "fake")
+    monkeypatch.setattr(runner, "discover_task_structure", lambda _d: [st])
+
+    async def _store(server_mod, emb_client, st_model, corpus, batch_size=256):
+        return len(corpus)
+
+    monkeypatch.setattr(runner, "store_corpus", _store)
+    monkeypatch.setenv("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", "10000")
+    return tmp_path
+
+
+async def _run_task(tmp_path, server, **kw):
+    return await runner.run_task(
+        "Fake", server, _FakeEmb(), _FakeModel(), str(tmp_path / "out"),
+        skip_latency_pass=True, recall_limit=10, **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_task_marks_the_result_invalid_when_the_floor_never_arrived(fake_task, monkeypatch):
+    monkeypatch.setenv("CPERSONA_RECALL_DEPTH_FLOOR", "50")
+    monkeypatch.setenv("CPERSONA_RECALL_MODE", "rrf")
+    result = await _run_task(fake_task, _TaskServer(depth=None))
+    assert result["invalid"] is True
+    assert result["depth_check"]["mismatches"] == 20
+    on_disk = json.loads((fake_task / "out" / "Fake.json").read_text())
+    assert on_disk["invalid"] is True          # the file a reader aggregates says so too
+
+
+@pytest.mark.asyncio
+async def test_run_task_stays_valid_when_the_floor_arrived_and_records_the_split(fake_task, monkeypatch):
+    monkeypatch.setenv("CPERSONA_RECALL_DEPTH_FLOOR", "50")
+    monkeypatch.setenv("CPERSONA_RECALL_MODE", "rrf")
+    result = await _run_task(fake_task, _TaskServer(depth=50), split=(7, "test"))
+    assert "invalid" not in result
+    assert result["depth_check"]["checked"] == 10
+    assert (result["split"]["seed"], result["split"]["part"]) == (7, "test")
+    assert len(result["split"]["assignment"]["sub"]) == 20
+
+
+@pytest.mark.asyncio
+async def test_run_task_reads_the_mode_the_package_reads(fake_task, monkeypatch):
+    # cascade fuses nothing, so a floor in the environment must not be expected.
+    monkeypatch.setenv("CPERSONA_RECALL_DEPTH_FLOOR", "50")
+    monkeypatch.setenv("CPERSONA_RECALL_MODE", "cascade")
+    result = await _run_task(fake_task, _TaskServer(depth=None))
+    assert "invalid" not in result
+    assert result["depth_check"]["mode"] == "cascade"
+
+
+@pytest.mark.asyncio
+async def test_run_task_without_split_writes_no_split_key(fake_task, monkeypatch):
+    monkeypatch.setenv("CPERSONA_RECALL_MODE", "rrf")
+    monkeypatch.delenv("CPERSONA_RECALL_DEPTH_FLOOR", raising=False)
+    result = await _run_task(fake_task, _TaskServer())
+    assert "split" not in result and "invalid" not in result
+
+
+# --------------------------------------------------------------------------- command line
+
+
+def _parse(monkeypatch, argv):
+    seen = {}
+
+    def _capture(args):
+        seen["args"] = args
+
+    monkeypatch.setattr(runner, "async_main", _capture)
+    monkeypatch.setattr(runner.asyncio, "run", lambda _coro: None)
+    monkeypatch.setattr(sys, "argv", ["benchmark_trackb_lmeb.py", *argv])
+    runner.main()
+    return seen["args"]
+
+
+def test_defaults_leave_existing_runs_unchanged(monkeypatch):
+    args = _parse(monkeypatch, [])
+    assert (args.split, args.split_seed, args.latency_scan_window) == ("all", None, 500)
+
+
+def test_split_and_window_are_parsed(monkeypatch):
+    args = _parse(monkeypatch, ["--split", "dev", "--split_seed", "20260925", "--latency_scan_window", "10000"])
+    assert (args.split, args.split_seed, args.latency_scan_window) == ("dev", 20260925, 10000)
+
+
+def test_a_split_without_a_seed_is_refused(monkeypatch):
+    with pytest.raises(SystemExit):
+        _parse(monkeypatch, ["--split", "dev"])

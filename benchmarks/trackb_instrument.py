@@ -53,10 +53,12 @@ class DepthCheck:
         self.examples: list[dict] = []
 
     @classmethod
-    def from_env(cls, mode: str) -> "DepthCheck":
-        # Read the same variables the package reads, independently of it.
+    def from_env(cls) -> "DepthCheck":
+        # Read the same variables the package reads, independently of it. The
+        # defaults are the package's own (cpersona/config.py).
         floor = _env_int("CPERSONA_RECALL_DEPTH_FLOOR", 0)
         ceiling = _env_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", 10000)
+        mode = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
         return cls(floor=floor, ceiling=ceiling, mode=mode)
 
     def _clamped(self, limit: int) -> int:
