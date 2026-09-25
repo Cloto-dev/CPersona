@@ -1637,6 +1637,33 @@ async def _block_reserved_rows(
     return out
 
 
+async def _episode_rows(db, iso, ranked: list[tuple[int, float | None]]) -> list[dict]:
+    """Episode ids, in the given order, as recall rows (the shape every arm returns)."""
+    payload = await vector._fetch_rows_by_id(
+        db,
+        f"SELECT id, summary, start_time, resolved, created_at FROM episodes e WHERE id IN ({{ph}}){iso.and_clause}",
+        [ep_id for ep_id, _ in ranked],
+        tuple(iso.params),
+    )
+    out = []
+    for ep_id, score in ranked:
+        row = payload.get(ep_id)
+        if row is None:
+            continue
+        built = {
+            "id": ep_id,
+            "_rid": ("ep", ep_id),
+            "content": f"[Episode] {row[1]}",
+            "source": {"System": "episode"},
+            "timestamp": episode_timestamp(row[2], row[4]),
+            "_resolved": bool(row[3]),
+        }
+        if score is not None:
+            built["_cosine"] = score
+        out.append(built)
+    return out
+
+
 async def _search_cue_arm(
     db,
     agent_id: str,
@@ -1651,15 +1678,20 @@ async def _search_cue_arm(
     query_vec: list,
     lexical_terms: list[str] | None = None,
 ) -> list[dict]:
-    """The cue arm (docs/RECALL_PROCESS_DESIGN.md §2.2): the memories whose timestamp
-    falls in `window`, ranked against the query.
+    """The cue arm (docs/RECALL_PROCESS_DESIGN.md §2.2): the memories and episodes whose
+    time falls in `window`, ranked against the query.
 
     Vector and keyword search over the period only, each to `depth`, merged into one
     ranked list by reciprocal rank. The list orders rows for the bounded move and the
     held seat; none of its numbers reaches a fused score or the gate. The vector half
     reuses the query vector the ordinary vector arm embedded (`query_vec`), so a cue
     costs no second embedding; where no local vector was produced it is empty and the
-    arm is keyword only. Isolation and the source filter are the recall's own.
+    arm is keyword only. Isolation and the source filter are the recall's own; an
+    episode carries no per-user source, so with a source filter episodes are searched
+    only when a channel also scopes them, as in the ordinary arms (bug-080).
+
+    Episodes are searched since cued-v0.2 (§2.10): searching memories only lifted the
+    other memories of a period past an episode that held the answer.
     """
     start, end = (cue.sql_instant(w) for w in window)
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
@@ -1706,6 +1738,40 @@ async def _search_cue_arm(
             extra_terms=lexical_terms, window=(start, end),
         )
         lists.append([{**row, "_rid": ("mem", row["id"])} for row in keyword])
+
+    if not source_id or channel:
+        ep_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
+        if query_vec and query.strip():
+            import numpy as np
+
+            qv = np.array(query_vec[0], dtype=np.float32)
+            survivors = await vector._chunked_cosine_scan(
+                db,
+                f"""SELECT e.id, e.embedding FROM episodes e
+                   WHERE {ep_iso.clause} AND e.embedding IS NOT NULL{_EPISODE_IN_WINDOW}
+                   ORDER BY e.created_at DESC, e.id ASC
+                   LIMIT ?""",
+                (*ep_iso.params, start, end, MAX_MEMORIES),
+                qv,
+                len(qv),
+                vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR,
+                depth,
+            )
+            ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
+            lists.append(await _episode_rows(db, ep_iso, [(ep_id, score) for _, ep_id, score in ranked]))
+        if FTS_ENABLED and query.strip():
+            lists.append(await _search_episodes_fts(
+                db, agent_id, query, depth, channel=channel, project_id=project_id,
+                extra_terms=lexical_terms, window=(start, end),
+            ))
+        elif not query.strip():
+            rows_ = await db.execute_fetchall(
+                f"""SELECT e.id FROM episodes e WHERE {ep_iso.clause}{_EPISODE_IN_WINDOW}
+                   ORDER BY datetime(COALESCE(NULLIF(e.start_time, ''), e.created_at)) DESC, e.id ASC
+                   LIMIT ?""",
+                (*ep_iso.params, start, end, depth),
+            )
+            lists.append(await _episode_rows(db, ep_iso, [(r[0], None) for r in rows_]))
 
     votes: dict[tuple, float] = {}
     rows: dict[tuple, dict] = {}
@@ -3098,6 +3164,13 @@ def _build_fts_recall_query(query: str, extra_terms: list[str] | None = None) ->
     return " OR ".join([expression, *phrases] if expression else phrases)
 
 
+# An episode's time as ``episode_timestamp`` reads it, compared as SQLite datetimes.
+_EPISODE_IN_WINDOW = (
+    " AND datetime(COALESCE(NULLIF(e.start_time, ''), e.created_at)) >= datetime(?)"
+    " AND datetime(COALESCE(NULLIF(e.start_time, ''), e.created_at)) < datetime(?)"
+)
+
+
 async def _search_episodes_fts(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -3106,8 +3179,13 @@ async def _search_episodes_fts(
     channel: str = "",
     project_id: str | None = None,
     extra_terms: list[str] | None = None,
+    window: tuple[str, str] | None = None,
 ) -> list[dict]:
     """Search episodes using FTS5.
+
+    window (2.6, the cue arm) keeps episodes whose time -- ``start_time``, else
+    ``created_at``, the rule ``episode_timestamp`` applies -- is in ``[start, end)``,
+    both bounds as SQLite ``datetime()`` reads them.
 
     project_id (v2.4.17) applies the γ filter. channel (v2.4.22) applies an
     exact-match filter on the episode's channel — empty means no channel
@@ -3127,10 +3205,10 @@ async def _search_episodes_fts(
            FROM episodes_fts f
            JOIN episodes e ON f.rowid = e.id
            WHERE episodes_fts MATCH ?
-           AND {iso.clause}
+           AND {iso.clause}{_EPISODE_IN_WINDOW if window is not None else ""}
            ORDER BY rank
            LIMIT ?""",
-        (fts_query, *iso.params, limit),
+        (fts_query, *iso.params, *(window or ()), limit),
     )
 
     return [

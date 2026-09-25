@@ -42,7 +42,7 @@ What a trace may contain when it leaves the machine is decided separately.
 | Field | Content |
 | --- | --- |
 | `trace_version` | `1`. Raised only when an existing field changes meaning; adding a field does not raise it |
-| `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0.1` with one; `cued-v0` before §2.8) |
+| `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0.2` with one; `cued-v0.1` before §2.10, `cued-v0` before §2.8) |
 | `server_version` | The version that answered |
 | `scope` | `agent_id`, `project_id`, `channel`, `source_id` as resolved |
 | `request` | `limit`, the recall depth, `deep`, the fusion mode, the confidence ordering, the prior's settings, whether the episode penalty is on, and the `time_cue` when given |
@@ -205,11 +205,15 @@ belong to the policy version `cued-v0`.
   days. `long_ago` is the oldest third of the time span the scope holds. An
   open end of an absolute cue is closed by the scope's oldest record or by now.
   A date names the whole day, so `before: "2026-08-31"` includes the 31st.
-- **The cue arm** searches memories, not episode summaries. Its vector half
-  reuses the query vector the ordinary vector arm already embedded, so a cue
-  costs no second embedding; where no local vector exists, the arm is keyword
-  only. The two halves are merged by reciprocal rank into one list. With an
-  empty query, the arm returns the period's newest records.
+- **The cue arm** searches memories and, since `cued-v0.2` (§2.10), episodes.
+  An episode's time is its start time, else the time it was recorded, as
+  everywhere else. Its vector half reuses the query vector the ordinary vector
+  arm already embedded, so a cue costs no second embedding; where no local
+  vector exists, the arm is keyword only. All the lists are merged by
+  reciprocal rank into one. With an empty query, the arm returns the period's
+  newest records. With a source filter, episodes (which carry no per-user
+  source) are searched only when a channel also scopes the recall, as in the
+  ordinary arms.
 - **Ties.** A tie between a row the cue found and one it did not goes to the
   found row; any other tie keeps the original order. So the row the cue arm
   ranks first rises exactly `L` places when it stands that far down, and rows
@@ -257,6 +261,18 @@ ones. `cued-v0.1` cuts first and moves rows only among those returned, so the
 returned rows are exactly those of a recall without the cue, reordered, plus
 at most the one seat. The cost is that the move can no longer bring a row
 from just below the cut into view; only the seat adds a row.
+
+### 2.10 The cue arm searches episodes (`cued-v0.2`)
+
+Until `cued-v0.1` the cue arm searched memories only. Measured on a real
+long-term store with 181 questions whose cue period held the evidence in 93%
+of cases, that split the effect by the kind of evidence: where it was a
+memory, the evidence rose on 35 questions and fell on 3; where it was an
+episode, it rose on none and fell on 12. The cue arm could not find the
+episode, so it lifted the period's other memories past it. `cued-v0.2`
+searches episodes in the period with the same vector and keyword halves.
+This change was made after that result and has not yet been measured on
+fresh questions.
 
 ## 3. What v0 claims
 

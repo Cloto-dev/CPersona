@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-POLICY = "cued-v0.1"
+POLICY = "cued-v0.2"
 
 CONFIDENCES = ("sure", "likely", "vague")
 # How far a period is widened on each side, as a fraction of its own length.

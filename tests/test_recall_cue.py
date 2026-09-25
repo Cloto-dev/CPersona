@@ -162,7 +162,7 @@ async def test_a_cue_changes_order_not_admission(fake_embedding_client, monkeypa
         return sorted((d["ref"], d["passed"]) for d in out["trace"]["gate"]["decisions"])
 
     assert decisions(cued) == decisions(plain)  # the gate decided the same
-    assert cued["trace"]["policy"]["process"] == "cued-v0.1"
+    assert cued["trace"]["policy"]["process"] == "cued-v0.2"
     # The count cuts the order the cue did not touch; the cue then reorders what was returned.
     assert cued["trace"]["order"]["before_cut"] == plain["trace"]["order"]["before_cut"]
     before, after = _refs(plain)[::-1], _refs(cued)[::-1]  # best first
@@ -291,7 +291,7 @@ async def test_reconstruct_passes_the_cue_to_its_recall(fake_embedding_client):
     await _seed(CORPUS)
     time_cue = {"after": _ts(125)[:10], "before": _ts(95)[:10], "confidence": "likely"}
     out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, trace=True, time_cue=time_cue)
-    assert out["trace"]["recall"]["policy"]["process"] == "cued-v0.1"
+    assert out["trace"]["recall"]["policy"]["process"] == "cued-v0.2"
     assert out["time_cue"]["confidence"] == "likely"
     assert "time_cue" not in await reconstruct.do_reconstruct(AGENT, QUERY, count=3)
     refused = await server.do_reconstruct_boundary(
@@ -355,7 +355,7 @@ async def test_a_cue_for_only_today_is_not_used_and_the_response_says_so(fake_em
     traced = await memory_handlers.do_recall(AGENT, QUERY, limit=5, trace=True, time_cue=time_cue)
     assert traced["trace"]["cue_ignored"]["reason"] == "recent_only"
     assert "cue" not in traced["trace"]["arms"] and not traced["trace"].get("suspected")
-    assert traced["trace"]["policy"]["process"] == cue.POLICY == "cued-v0.1"
+    assert traced["trace"]["policy"]["process"] == cue.POLICY == "cued-v0.2"
 
 
 @pytest.mark.asyncio
@@ -409,3 +409,68 @@ async def test_a_cue_never_pushes_a_row_out_of_the_answer(fake_embedding_client,
         assert base <= returned, f"limit {limit}: the cue pushed {sorted(base - returned)} out"
         assert len(returned - base) <= cue.SEATS
         assert set(cued["trace"]["order"]["cut_by_count"]) == set(plain["trace"]["order"]["cut_by_count"])
+
+
+# --- episodes in the cue arm (§2.10) --------------------------------------------------
+
+
+async def _episode(summary: str, days_ago: float, agent=AGENT) -> str:
+    out = await memory_handlers.do_archive_episode(agent, [], summary=summary, keywords="harbor lighthouse")
+    db = await get_db()
+    await db.execute("UPDATE episodes SET start_time = ? WHERE id = ?", (_ts(days_ago), out["episode_id"]))
+    await db.commit()
+    return f"ep:{out['episode_id']}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fts", [True, False])
+async def test_the_cue_arm_finds_episodes_in_the_period_and_only_there(fake_embedding_client, monkeypatch, fts):
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "FTS_ENABLED", fts)
+    inside = await _episode(f"{QUERY} review inside the period", 60)
+    outside = await _episode(f"{QUERY} review outside the period", 200)
+    time_cue = {"after": _ts(75)[:10], "before": _ts(46)[:10], "confidence": "sure"}
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=12, trace=True, time_cue=time_cue)
+    found = {row["ref"] for row in out["trace"]["arms"]["cue"]}
+    assert inside in found, "an episode whose time is in the period must be searched"
+    assert outside not in found
+    assert out["time_cue"]["policy"] == "cued-v0.2"
+
+
+@pytest.mark.asyncio
+async def test_an_episode_found_by_the_cue_arm_can_move_up(fake_embedding_client, monkeypatch):
+    # The episode matches the query in part, so the ordinary recall ranks it low among
+    # the returned rows; the cue arm finds it in its period and the move lifts it.
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
+    ep = await _episode(f"{QUERY} note on the fog signal", 60)
+    time_cue = {"after": _ts(62)[:10], "before": _ts(58)[:10], "confidence": "sure"}
+    plain = await memory_handlers.do_recall(AGENT, QUERY, limit=13)
+    cued = await memory_handlers.do_recall(AGENT, QUERY, limit=13, trace=True, time_cue=time_cue)
+    before, after = _refs(plain)[::-1], _refs(cued)[::-1]
+    assert ep in before, "the fixture must return the episode without a cue"
+    assert before.index(ep) > 0, "the fixture must leave room for the episode to rise"
+    assert after.index(ep) < before.index(ep)
+    assert set(after) >= set(before)
+
+
+@pytest.mark.asyncio
+async def test_a_source_filter_leaves_episodes_out_of_the_cue_arm_unless_a_channel_scopes_them(fake_embedding_client):
+    await _seed(CORPUS)
+    ep = await _episode(f"{QUERY} review inside the period", 60)
+    time_cue = {"after": _ts(75)[:10], "before": _ts(46)[:10], "confidence": "sure"}
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=12, trace=True, time_cue=time_cue, source_id="System")
+    assert ep not in {row["ref"] for row in out["trace"]["arms"]["cue"]}
+    # A channel scopes the episode (one stored under '' is global to every channel).
+    scoped = await memory_handlers.do_recall(AGENT, QUERY, limit=12, trace=True, time_cue=time_cue,
+                                             source_id="System", channel="chat")
+    assert ep in {row["ref"] for row in scoped["trace"]["arms"]["cue"]}
+
+
+@pytest.mark.asyncio
+async def test_an_empty_query_returns_the_periods_newest_episodes_too(fake_embedding_client):
+    await _seed(CORPUS)
+    ep = await _episode("fog signal maintenance", 60)
+    time_cue = {"after": _ts(75)[:10], "before": _ts(46)[:10], "confidence": "sure"}
+    out = await memory_handlers.do_recall(AGENT, "", limit=3, trace=True, time_cue=time_cue)
+    assert ep in {row["ref"] for row in out["trace"]["arms"]["cue"]}
