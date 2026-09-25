@@ -28,6 +28,7 @@ from cpersona import cue
 from cpersona import excerpts
 from cpersona import health
 from cpersona import nodes
+from cpersona import providers
 from cpersona import scope_stats
 from cpersona import recall_trace
 from cpersona import session
@@ -78,6 +79,10 @@ from cpersona.utils import (
 from cpersona.vector import _search_vector
 
 logger = logging.getLogger(__name__)
+
+# Resolve the provider seams now, so that a selection the registry refuses stops
+# the server at import rather than failing its first recall (cpersona/providers.py).
+providers.active()
 
 #: Set once the missing-client warning below has been emitted. The condition is a
 #: property of the process, not of the row being written: the client is installed
@@ -1811,14 +1816,18 @@ async def do_recall(
     messages rather than ignored, so a caller never believes a cue it did not send
     was applied.
     """
+    # The providers this recall runs with, read once, here: a set installed while
+    # it runs applies to the recalls that start after it (cpersona/providers.py).
+    active = providers.active()
     try:
-        parsed_cue = cue.parse(time_cue)
+        parsed_cue = active.cue_interpreter.parse(time_cue)
     except cue.TimeCueError as exc:
         return error_response(str(exc), messages=[])
     kwargs = dict(
         deep=deep, channel=channel, exclude_contents=exclude_contents, project_id=project_id,
         source_id=source_id, session_key=session_key, lexical_terms=lexical_terms,
         excerpt_chars=excerpt_chars, **({"time_cue": parsed_cue} if parsed_cue is not None else {}),
+        providers_=active,
     )
     if not trace:
         return await _do_recall(agent_id, query, limit, **kwargs)
@@ -1867,6 +1876,7 @@ async def _do_recall(
     lexical_terms: list[str] | None = None,
     excerpt_chars: int = 0,
     time_cue: cue.TimeCue | None = None,
+    providers_: providers.Providers | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1917,6 +1927,8 @@ async def _do_recall(
     # constant, widening the window for a larger corpus widened this bound by the
     # same factor without anyone choosing to.
     started = time.perf_counter()
+    # The set do_recall read at its start; read here only for a direct library call.
+    p = providers_ if providers_ is not None else providers.active()
     requested = limit
     limit = _clamp_limit(limit, RECALL_LIBRARY_MAX_LIMIT)
     if requested > limit:
@@ -1949,33 +1961,17 @@ async def _do_recall(
     if exclude_contents:
         exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
 
-    # Passed only when there are terms, so a recall without them calls each
-    # fusion path exactly as it always did.
-    lexical = {"lexical_terms": lexical_terms} if lexical_terms else {}
     # Filled by whichever fusion ran, with the one vector it embedded. Empty
     # wherever no local vector was produced -- no client, a remote search that
     # answered for itself, an embed that failed -- and the block arm reads that
     # emptiness as "nothing to rank on" rather than embedding the query again.
     query_vec_out: list = []
     async with connection() as db:
-        if RECALL_MODE == "rrf" and query.strip():
-            results = await _recall_rrf(
-                db, agent_id, query, depth, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
-                query_vec_out=query_vec_out, **lexical,
-            )
-        elif RECALL_MODE == "rsf" and query.strip():
-            results = await _recall_rsf(
-                db, agent_id, query, depth, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
-                query_vec_out=query_vec_out, **lexical,
-            )
-        else:
-            results = await _recall_cascade(
-                db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
-                query_vec_out=query_vec_out, **lexical,
-            )
+        results = await p.fusion.retrieve(
+            db, agent_id=agent_id, query=query, depth=depth, limit=limit, deep=deep,
+            channel=channel, exclude_set=exclude_set, project_id=project_id,
+            source_id=source_id, query_vec_out=query_vec_out, lexical_terms=lexical_terms,
+        )
 
         # Every row an ordinary arm reached, whatever the gate later decides: the
         # cue's held seat is only for a record no other arm found (§2.4), so a row
@@ -1986,7 +1982,7 @@ async def _do_recall(
         # produces the exact same per-row gate score the runtime gate keys on).
         # time_range_hours / recall_counts are reused below for the response metadata + the
         # recall-count update, so they are returned rather than recomputed.
-        results, time_range_hours, recall_counts, newest_age_hours = await _apply_recall_scoring(
+        results, time_range_hours, recall_counts, newest_age_hours = await p.scoring.score(
             db, agent_id, results, deep, project_id=project_id, channel=channel, query=query
         )
         trace_rec = recall_trace.current()
@@ -2029,24 +2025,15 @@ async def _do_recall(
         # reserved row -- it is a row that was already there.
         block_rows: list[dict] = []
         if blocks.retrieval_enabled() and query.strip() and query_vec_out:
-            hits = await blocks.search(
+            block_rows = await p.block_candidates.reserved_rows(
                 db,
                 query_vec_out[0],
-                isolation_where(agent_id=agent_id, project_id=project_id, channel=channel),
-            )
-            # Enough to survive every one of them already being in the result:
-            # the reservation is a fixed number of places and is not derived from
-            # the count, but how many candidates must be looked at to fill those
-            # places does depend on how many rows the cut can hold.
-            block_rows = await _block_reserved_rows(
-                db,
-                hits[: limit + blocks.BLOCK_RESERVATION],
-                agent_id,
+                agent_id=agent_id,
                 project_id=project_id,
                 channel=channel,
                 source_id=source_id,
                 exclude_set=exclude_set,
-                wanted=limit + blocks.BLOCK_RESERVATION,
+                limit=limit,
             )
             if trace_rec is not None:
                 trace_rec.arm("block", block_rows, "_block_distance")
@@ -2067,20 +2054,20 @@ async def _do_recall(
             confidence = time_cue.confidence
             stages: list[dict] = []
             suspected: list[dict] = []
-            if cue.recent_only(time_cue, now, span):
+            if p.cue_interpreter.recent_only(time_cue, now, span):
                 # §2.8: a cue that points only at today or later is not used. The rows
                 # are exactly those of a recall without one; the response says so.
-                own = cue.period(time_cue, "sure", now, span)
+                own = p.envelope_planner.period(time_cue, "sure", now, span)
                 cue_ignored = {"reason": "recent_only", "period": [w.isoformat() for w in own]}
                 if trace_rec is not None:
                     trace_rec.set("cue_ignored", dict(cue_ignored))
             while cue_ignored is None:
-                window = cue.period(time_cue, confidence, now, span)
+                window = p.envelope_planner.period(time_cue, confidence, now, span)
                 if window is not None:
-                    cue_rows = await _search_cue_arm(
-                        db, agent_id, query, depth, window, channel=channel, project_id=project_id,
-                        source_id=source_id, exclude_set=exclude_set, query_vec=query_vec_out,
-                        lexical_terms=lexical_terms,
+                    cue_rows = await p.cue_candidates.search(
+                        db, agent_id=agent_id, query=query, depth=depth, window=window,
+                        channel=channel, project_id=project_id, source_id=source_id,
+                        exclude_set=exclude_set, query_vec=query_vec_out, lexical_terms=lexical_terms,
                     )
                 stage = {
                     "stage": len(stages),
@@ -2095,7 +2082,7 @@ async def _do_recall(
                     trace_rec.arm("cue" if len(stages) == 1 else f"cue_stage_{len(stages) - 1}", cue_rows, "_cosine")
                 if cue_rows or len(stages) == 2:
                     break
-                wider = cue.WIDER[confidence]
+                wider = p.envelope_planner.wider(confidence)
                 suspected.append({"stage": stage["stage"], "code": "CANDIDATE_MISS",
                                   "reason": "the cue period holds no candidate"})
                 if wider is None:
@@ -2216,7 +2203,9 @@ async def _do_recall(
 
     # 2.6.0a7: the prior orders what the gate and autocut admitted; it never
     # admits or removes (docs/PRIOR_FUNCTION_DESIGN.md §3).
-    results = _apply_prior(results, prior_span, datetime.now(timezone.utc))
+    admitted = list(results)
+    results = p.prior.apply(results, prior_span, datetime.now(timezone.utc))
+    providers.check_reorder("prior.apply", admitted, results)
 
     def _rid_of(r: dict) -> tuple:
         return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
@@ -2234,7 +2223,10 @@ async def _do_recall(
     # cut so that it cannot push a row out of the answer: the rows returned are
     # those of a recall without the cue, reordered, plus at most the one seat below.
     if cue_note is not None:
-        results, moves = cue.lift(results, cue_rank, cue.LIFT[cue_note["confidence"]], _rid_of)
+        bound = cue.LIFT[cue_note["confidence"]]
+        lifted, moves = p.evidence_selector.lift(results, cue_rank, bound, _rid_of)
+        providers.check_lift(results, lifted, bound)
+        results = lifted
         for r in results:
             if _rid_of(r) in cue_rank:
                 r["_cue_rank"] = cue_rank[_rid_of(r)]
@@ -2263,7 +2255,9 @@ async def _do_recall(
     # row the gate refused does not come back this way.
     if cue_note is not None:
         present = {_rid_of(r) for r in results}
-        seated = [r for r in cue_rows if r["_rid"] not in reached and r["_rid"] not in present][: cue.SEATS]
+        eligible = [r for r in cue_rows if r["_rid"] not in reached and r["_rid"] not in present]
+        seated = p.evidence_selector.seats(eligible, cue.SEATS)
+        providers.check_seats(seated, eligible, cue.SEATS)
         for r in seated:
             r["_cue_seat"] = True
             r["_cue_rank"] = cue_rank[r["_rid"]]
@@ -2273,6 +2267,7 @@ async def _do_recall(
             trace_rec.reservation(seated, "cue")
             trace_rec.cue(cue_note, cue.LIFT[cue_note["confidence"]])
 
+    providers.check_recall_count(len(results), limit, cue.SEATS, blocks.BLOCK_RESERVATION)
     results.reverse()
 
     messages = []

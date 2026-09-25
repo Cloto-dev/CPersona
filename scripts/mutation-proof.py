@@ -493,13 +493,13 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_reconstruct.py",),
         target="reconstruct invariant 1 — stored rows are never modified",
         file="cpersona/reconstruct.py",
-        find="    uf = bundle(candidates, spans, links)",
+        find="    uf = p.reconstructor.bundle(candidates, spans, links)",
         replace="""    async with connection() as _mutant_db:
         await _mutant_db.execute(
             "UPDATE memories SET content = content || ' (touched)' WHERE agent_id = ?", (agent_id,)
         )
         await _mutant_db.commit()
-    uf = bundle(candidates, spans, links)""",
+    uf = p.reconstructor.bundle(candidates, spans, links)""",
         breaks="the read path writes to the rows it read — an injected defect, because an invariant of absence cannot be broken by deletion",
         expect="test_reconstruct.py::test_1_stored_rows_are_not_modified",
     ),
@@ -730,14 +730,15 @@ MUTATIONS: list[Mutation] = [
         target="associative invariant 3 — a reached record is never an item",
         file="cpersona/reconstruct.py",
         find=(
-            "        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)\n"
+            "        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)\n"
+            "        providers.check_structure(item, {row.ref for row in rows} | {row.ref for row, _, _ in extra})\n"
             "        if position >= len(window):\n"
             "            # Said in the words recall uses for the same row, so one reading covers both.\n"
             "            item[\"admission\"] = \"reservation\"\n"
             "        selected.append(item)"
         ),
         replace=(
-            "        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, (), links)\n"
+            "        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, bounds_max_evidence, (), links)\n"
             "        if position >= len(window):\n"
             "            item[\"admission\"] = \"reservation\"\n"
             "        selected.append(item)\n"
@@ -912,8 +913,8 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_recall_cue.py",),
         target="time cue — no row moves up more than L places",
         file="cpersona/memory_handlers.py",
-        find='cue.lift(results, cue_rank, cue.LIFT[cue_note["confidence"]], _rid_of)',
-        replace="cue.lift(results, cue_rank, 10, _rid_of)",
+        find='        bound = cue.LIFT[cue_note["confidence"]]\n',
+        replace="        bound = 10\n",
         breaks="a wrong cue can carry a row from the bottom of the answer to the top, so its harm is no longer bounded by construction",
         expect="test_recall_cue.py::test_a_cue_changes_order_not_admission",
     ),
@@ -937,6 +938,187 @@ MUTATIONS: list[Mutation] = [
         breaks="the cue arm returns records after the period, so a cue lifts rows it does not point at",
         expect="test_recall_cue.py::test_the_cue_arm_searches_only_the_period",
     ),
+]
+
+# ---------------------------------------------------------------------------
+# The provider seams of recall and reconstruct (cpersona/providers.py).
+#
+# A stage called back through its built-in directly returns the same rows -- the
+# built-in IS the function the Core used to call -- so no test of what recall
+# returns can see a call site that stopped using the installed provider. Only a
+# test that installs a different provider can, and the bypass mutants below show
+# that test_providers.py's recording providers are that test, one call site each.
+# The check mutants show that each of the Core's checks on a stage's output is
+# what stops a provider that breaks the contract, and the registry mutants that
+# each refusal rule is held by its own test.
+# ---------------------------------------------------------------------------
+
+_MH = "cpersona/memory_handlers.py"
+_RC = "cpersona/reconstruct.py"
+_PV = "cpersona/providers.py"
+_IMPORT_BUILTINS = {
+    _MH: ("from cpersona import providers\n", "from cpersona import providers\nfrom cpersona import builtin_providers\n"),
+    _RC: ("    from . import providers\n", "    from . import providers\n    from . import builtin_providers\n"),
+}
+_SPY = "test_providers.py::test_the_core_calls_each_operation_through_its_slot"
+
+# (id, file, the call as the Core writes it, the built-in class, slot, operation, the test that pins it)
+_BYPASSES = [
+    ("M63", _MH, "p.fusion.retrieve(", "Fusion", "fusion", "retrieve", None),
+    ("M64", _MH, "p.scoring.score(", "Scoring", "scoring", "score", None),
+    ("M65", _MH, "p.block_candidates.reserved_rows(", "BlockCandidates", "block_candidates", "reserved_rows", None),
+    ("M66", _MH, "active.cue_interpreter.parse(", "CueInterpreter", "cue_interpreter", "parse", None),
+    ("M67", _MH, "p.cue_interpreter.recent_only(", "CueInterpreter", "cue_interpreter", "recent_only", None),
+    ("M68", _MH, "p.envelope_planner.period(time_cue, confidence,", "EnvelopePlanner", "envelope_planner", "period", None),
+    ("M69", _MH, "p.envelope_planner.wider(", "EnvelopePlanner", "envelope_planner", "wider", None),
+    ("M70", _MH, "p.cue_candidates.search(", "CueCandidates", "cue_candidates", "search", None),
+    ("M71", _MH, "p.prior.apply(", "Prior", "prior", "apply", None),
+    ("M72", _MH, "p.evidence_selector.lift(", "EvidenceSelector", "evidence_selector", "lift", None),
+    ("M73", _MH, "p.evidence_selector.seats(", "EvidenceSelector", "evidence_selector", "seats", None),
+    ("M74", _RC, "p.reconstruct_candidates.candidates(", "ReconstructCandidates", "reconstruct_candidates", "candidates", None),
+    ("M75", _RC, "p.reconstructor.bundle(", "Reconstructor", "reconstructor", "bundle", None),
+    ("M76", _RC, "p.reconstructor.walk(", "Reconstructor", "reconstructor", "walk", None),
+    ("M77", _RC, "p.reconstructor.structure(", "Reconstructor", "reconstructor", "structure", None),
+    ("M78", _RC, "p.reconstructor.allocate(", "Reconstructor", "reconstructor", "allocate", None),
+    ("M79", _RC, "p.cue_interpreter.parse(", "CueInterpreter", "cue_interpreter", "parse",
+     "test_providers.py::test_reconstruct_reads_the_cue_through_the_installed_interpreter"),
+]
+
+MUTATIONS += [
+    Mutation(
+        id=mid,
+        tests=("tests/test_providers.py",),
+        target=f"provider seams — {'reconstruct' if file == _RC else 'recall'} calls {slot}.{op} through its slot",
+        file=file,
+        find=call,
+        replace=f"builtin_providers.{cls}()" + call[call.index(f".{op}("):],
+        also=(_IMPORT_BUILTINS[file],),
+        breaks=f"an installed {slot} provider is ignored at this call and the built-in runs instead",
+        expect=pin or f"{_SPY}[{slot}-{op}]",
+    )
+    for mid, file, call, cls, slot, op, pin in _BYPASSES
+]
+
+MUTATIONS += [
+    Mutation(
+        id="M80",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the cue's move is checked against the bound the Core fixed",
+        file=_MH,
+        find="        providers.check_lift(results, lifted, bound)\n",
+        replace="",
+        breaks="a selector can move a row past the bound, or drop one, and the answer carries it",
+        expect="test_providers.py::test_a_move_past_its_bound_or_out_of_its_rows_is_stopped",
+    ),
+    Mutation(
+        id="M81",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the seat goes to an eligible row, one at most",
+        file=_MH,
+        find="        providers.check_seats(seated, eligible, cue.SEATS)\n",
+        replace="",
+        breaks="a selector can fill more places than are held, or seat a row the gate refused",
+        expect="test_providers.py::test_a_seat_beyond_the_held_one_or_for_another_row_is_stopped",
+    ),
+    Mutation(
+        id="M82",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the prior reorders and neither admits nor removes",
+        file=_MH,
+        find='    providers.check_reorder("prior.apply", admitted, results)\n',
+        replace="",
+        breaks="a prior can remove a row the gate admitted",
+        expect="test_providers.py::test_a_prior_that_removes_a_row_is_stopped",
+    ),
+    Mutation(
+        id="M83",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the walk reaches only records the graph read holds",
+        file=_RC,
+        find="    providers.check_walk(reached, chosen, graph.rows if graph is not None else {})\n",
+        replace="",
+        breaks="a walk can name a record the call never read, or lose a cluster's result",
+        expect="test_providers.py::test_a_reconstructor_that_breaks_its_contract_is_stopped",
+    ),
+    Mutation(
+        id="M84",
+        tests=("tests/test_providers.py",),
+        target="provider seams — an item's head and claims are its own records",
+        file=_RC,
+        find="        providers.check_structure(item, {row.ref for row in rows} | {row.ref for row, _, _ in extra})\n",
+        replace="",
+        breaks="an item can name a head that is none of the records it was built from",
+        expect="test_providers.py::test_a_reconstructor_that_breaks_its_contract_is_stopped",
+    ),
+    Mutation(
+        id="M85",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the budget chooses a prefix and nothing else (invariant 9)",
+        file=_RC,
+        find="    providers.check_allocation(entries, items, used_budget, effective_budget, budget_cut)\n",
+        replace="",
+        breaks="an allocation can skip an item, misreport what it carries, or carry past the budget",
+        expect="test_providers.py::test_an_allocation_past_the_budget_is_stopped",
+    ),
+    Mutation(
+        id="M86",
+        tests=("tests/test_providers.py",),
+        target="provider seams — a request keeps the set it started with",
+        file=_MH,
+        find="p.scoring.score(",
+        replace="providers.active().scoring.score(",
+        breaks="a set installed while a recall runs takes over its later stages",
+        expect="test_providers.py::test_a_request_keeps_the_set_it_started_with",
+    ),
+    Mutation(
+        id="M96",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the cue is read with the set the recall runs with",
+        file=_MH,
+        find="        providers_=active,\n",
+        replace="",
+        breaks="a set installed between reading the cue and retrieving takes over the retrieval",
+        expect="test_providers.py::test_the_set_is_read_before_the_cue_and_kept_after_it",
+    ),
+]
+
+# (id, the refusal as written, what replaces it, what the registry then accepts, the test id)
+_REFUSALS = [
+    ("M87", "        factory = allowlist.get(name, {}).get(provider_id)\n",
+     "        factory = allowlist.get(name, {}).get(provider_id) or allowlist.get(name, {}).get(BUILTIN)\n",
+     "an id the allowlist does not hold silently runs the built-in",
+     "test_a_selection_the_allowlist_does_not_hold_is_refused"),
+    ("M88", "    if manifest.contract[0] != CONTRACT_MAJOR:\n", "    if False:\n",
+     "a provider built for another major contract", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M89", "    missing = [op for op in slot.operations if op not in manifest.capabilities]\n", "    missing = []\n",
+     "a provider that does not declare an operation the Core calls", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M90", "    absent = [op for op in slot.operations if not callable(getattr(provider, op, None))]\n", "    absent = []\n",
+     "a provider that declares an operation it does not have", "test_a_declared_operation_the_provider_does_not_have_is_refused"),
+    ("M91", "    if manifest.generative:\n", "    if False:\n",
+     "a provider that generates text", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M92", "    if not manifest.deterministic:\n", "    if False:\n",
+     "a provider that is not deterministic", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M93", '    if manifest.locality != "in_process":\n', "    if False:\n",
+     "a provider that runs outside this process", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M94", "    if manifest.slot != slot.name:\n", "    if False:\n",
+     "a provider made for another slot", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M95", "    if manifest.provider_id != provider_id:\n", "    if False:\n",
+     "an allowlist id that names a provider calling itself something else",
+     "test_an_allowlist_id_must_be_the_name_the_provider_gives_itself"),
+]
+
+MUTATIONS += [
+    Mutation(
+        id=mid,
+        tests=("tests/test_providers.py",),
+        target="provider seams — the registry refuses what the Core cannot call",
+        file=_PV,
+        find=find,
+        replace=replace,
+        breaks=f"the registry accepts {accepted}",
+        expect=f"test_providers.py::{test}",
+    )
+    for mid, find, replace, accepted, test in _REFUSALS
 ]
 
 

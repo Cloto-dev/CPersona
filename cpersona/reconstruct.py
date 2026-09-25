@@ -1152,13 +1152,16 @@ async def do_reconstruct(
     # make the pair mutually importable depending on which the server touches
     # first.
     from . import cue as _time_cue
-    from .memory_handlers import RECALL_LIBRARY_MAX_LIMIT, do_recall
+    from . import providers
+    from .memory_handlers import RECALL_LIBRARY_MAX_LIMIT
 
+    # The providers this reconstruction runs with, read once (cpersona/providers.py).
+    p = providers.active()
     # The time cue (docs/RECALL_PROCESS_DESIGN.md §2) is the candidate recall's: it
     # orders the candidate pool this reconstruction reads. Read here as well, so a cue
     # that cannot be read is refused rather than taken for an empty candidate pool.
     try:
-        _time_cue.parse(time_cue)
+        p.cue_interpreter.parse(time_cue)
     except _time_cue.TimeCueError as exc:
         return error_response(str(exc), items=[], returned_count=0)
     effective_count, count_policy = resolve_count(count)
@@ -1175,7 +1178,7 @@ async def do_reconstruct(
     cue_terms, cue_report = await associations.query_terms(
         agent_id, query, project_id=project_id, channel=channel
     )
-    recall_result = await do_recall(
+    recall_result = await p.reconstruct_candidates.candidates(
         agent_id,
         query,
         effective_top_k,  # the candidate depth — NOT `count` (invariant 7)
@@ -1254,7 +1257,7 @@ async def do_reconstruct(
 
     pool_refs = [c.ref for c in candidates]
     links = await associations.record_links(agent_id, pool_refs, project_id=project_id, channel=channel)
-    uf = bundle(candidates, spans, links)
+    uf = p.reconstructor.bundle(candidates, spans, links)
     grouped: dict[int, list[int]] = {}
     for i in range(len(candidates)):
         grouped.setdefault(uf.find(i), []).append(i)
@@ -1305,7 +1308,8 @@ async def do_reconstruct(
         channel=channel,
         source_id=source_id,
     )
-    reached, walk_cuts = walk(chosen, candidates, graph, bounds_max_hops)
+    reached, walk_cuts = p.reconstructor.walk(chosen, candidates, graph, bounds_max_hops)
+    providers.check_walk(reached, chosen, graph.rows if graph is not None else {})
 
     by_ref = {c.ref: c for c in candidates}
     selected = []
@@ -1317,7 +1321,8 @@ async def do_reconstruct(
             row.context = graph.rows[ref]["context"]
             by_ref[row.ref] = row
             extra.append((row, label, hops))
-        item, _ = structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)
+        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)
+        providers.check_structure(item, {row.ref for row in rows} | {row.ref for row, _, _ in extra})
         if position >= len(window):
             # Said in the words recall uses for the same row, so one reading covers both.
             item["admission"] = "reservation"
@@ -1380,7 +1385,8 @@ async def do_reconstruct(
             for c in others
         ]
         entries.append((item, head_quote, other_quotes))
-    items, used_budget, budget_cut = allocate(entries, effective_budget)
+    items, used_budget, budget_cut = p.reconstructor.allocate(entries, effective_budget)
+    providers.check_allocation(entries, items, used_budget, effective_budget, budget_cut)
     if node_orders:
         response["trace"]["node_order"] = node_orders
     response["used_budget"] = used_budget
@@ -1407,6 +1413,9 @@ async def do_reconstruct(
     response["returned_count"] = len(items)
     response["reconstruction"]["selected_count"] = len(items)
     held_returned = sum(1 for item in items if item.get("admission") == "reservation")
+    providers.check_reconstruct_count(
+        len(items), held_returned, effective_count, blocks.BLOCK_RESERVATION + _time_cue.SEATS
+    )
     if held_returned:
         # Beside the window, not in it: returned_count may exceed effective_count by this.
         response["reserved_count"] = held_returned
