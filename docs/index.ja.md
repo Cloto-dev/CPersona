@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:cbb4b7ddda5928b935fe5a3f7804fd50a31beabe -->
+<!-- i18n-source: docs/index.md@blob:3e00402a359b0c9f92957d1226279cd7c88498bf -->
 
 # CPersona ドキュメント
 
@@ -25,6 +25,8 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 >
 > **翻訳について**: 正本は英語版です。日本語版が古い場合や存在しないページは
 > 英語版を参照してください (未翻訳ページは自動的に英語で表示されます)。
+
+> **2.6 の pre-release へ移行するなら:** [2.5 から 2.6 への移行](https://cloto-dev.github.io/CPersona/2.6/ja/upgrading-to-2.6/)が、2.5.x のストアを一度に移行する手順をまとめています。
 
 ## 目的別ガイド { #where-to-go }
 
