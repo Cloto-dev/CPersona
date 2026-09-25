@@ -1,10 +1,14 @@
-<!-- i18n-source: docs/BLOCK_REACH_DESIGN.md@blob:24919044845afffb8ff3a28a447593c78314e07e -->
+<!-- i18n-source: docs/BLOCK_REACH_DESIGN.md@blob:ca03299e5cb61e592840976df08728e8627fdbd7 -->
 
 # Block による到達 — 設計 { #block-reach-design }
 
-Status: 設計であり、出荷済みの挙動ではありません。ここに書かれたものはまだどのリリースにも
-入っていません。見積もりと書いてあるものは見積もりであり、どれを実測で置き換えてから
-「完了」と呼ぶのかは最後の節が述べます。
+Status: 出荷済みで、既定では off です。2.6.0a5 がこの段階を 2 つのゲート
+`CPERSONA_BLOCK_BUILD_ENABLED` と `CPERSONA_BLOCK_RETRIEVAL_ENABLED` の後ろで出荷しました。
+どちらも設定しない限り off です。2.6.0a6 は Block ごとのベクトル (スキーマ v17) を加え、
+`reconstruct` が Block の腕の到達したものを返すようにしました。既定は off のままです:
+既定で on にすることを正当化する量は、まだ測られていません (第 0 節)。
+見積もりと書いてあるものは見積もりであり、どれを実測で置き換えてから「完了」と呼ぶのかは
+最後の節が述べます。
 
 ## 0. 欠陥と、この段階がそれに対してすること { #0-the-defect-and-what-this-step-does-about-it }
 
