@@ -164,9 +164,10 @@ VECTOR_FAR_LIMIT = max(0, _parse_int("CPERSONA_VECTOR_FAR_LIMIT", 0))
 # Schema declares `maximum: 100`, and that is what bounds a context window. This
 # one bounds resource use for callers that legitimately ask for full depth —
 # benchmark full-ranking, bulk export, a future rerank — and in rrf mode the
-# fusion-list depth tracks `limit`, so a ceiling that bites collapses deep-ranking
-# quality rather than merely trimming a response. It bit once already, at 100
-# (bge-m3 LongMemEval 81.17 -> 48.98), which is why a bench that reaches it is
+# fusion-list depth tracks `limit`, so a ceiling that bites cuts both the list a
+# caller gets back and the depth it was fused from. It bit once already, at 100:
+# a full-ranking bench (bge-m3 LongMemEval) fell from 81.17 to 48.98 because
+# its returned list was cut to 100 rows, which is why a bench that reaches it is
 # told so rather than left to read the damage off its own scores.
 RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", 10000))
 # 2.6: Recall Depth, separated from the response count. `limit` on the recall
@@ -175,9 +176,10 @@ RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT"
 # is `max(limit, RECALL_DEPTH_FLOOR)`, clamped to the library ceiling above.
 # Default 0 keeps the depth equal to the count -- the coupling the 2.5 line
 # shipped with, bit for bit -- so a caller who sets nothing gets the ranking
-# they got yesterday. The floor's default is decided by measurement (LMEB
-# depth sweep), not here: a number written before the sweep is a guess baked
-# into a default. See docs/RELIABLE_RECALL_2_6.md section 4.
+# they got yesterday. The default is the measured one: the pre-registered sweep
+# at a count of ten found no gain from any floor, so it stays 0
+# (benchmarks/measurements/results-recall-depth-floor-sweep.md). See
+# docs/RELIABLE_RECALL_2_6.md section 4.
 RECALL_DEPTH_FLOOR = max(0, _parse_int("CPERSONA_RECALL_DEPTH_FLOOR", 0))
 
 # 2.6: the Reconstruction Window and the bounds of the reconstruct tool
