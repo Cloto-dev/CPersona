@@ -207,10 +207,10 @@ belong to the policy version `cued-v0`.
   costs no second embedding; where no local vector exists, the arm is keyword
   only. The two halves are merged by reciprocal rank into one list. With an
   empty query, the arm returns the period's newest records.
-- **The bound in practice.** Rows are sorted stably, so a row whose key ties
-  another's stays behind it. A single moved row therefore rises at most
-  `L − 1` places, and a `vague` cue (`L` = 1) moves no row: it can only fill
-  the seat.
+- **Ties.** A tie between a row the cue found and one it did not goes to the
+  found row; any other tie keeps the original order. So the row the cue arm
+  ranks first rises exactly `L` places when it stands that far down, and rows
+  it ranks lower rise less (at cue rank 60, half of `L`).
 - **After a revision**, `L` is that of the confidence step actually searched.
   A `vague` cue whose period holds nothing stops, since there is no wider
   period.

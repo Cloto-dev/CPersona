@@ -120,9 +120,17 @@ def test_no_row_moves_up_more_than_l_places_however_many_move():
 
 def test_the_move_is_the_key_the_design_gives():
     rows = [{"id": i} for i in range(8)]
-    # p = 5, c = 0, L = 3: key 2, tied with row 2, which keeps its place (stable).
+    # p = 5, c = 0, L = 3: key 2, tied with row 2; the tie goes to the row the cue
+    # found, so the cue arm's first row moves exactly L places.
     ordered, _ = cue.lift(rows, {5: 0}, 3, lambda r: r["id"])
-    assert [r["id"] for r in ordered] == [0, 1, 2, 5, 3, 4, 6, 7]
+    assert [r["id"] for r in ordered] == [0, 1, 5, 2, 3, 4, 6, 7]
+    for bound in (1, 2, 3):
+        ordered, _ = cue.lift(rows, {5: 0}, bound, lambda r: r["id"])
+        assert [r["id"] for r in ordered].index(5) == 5 - bound
+    # Two found rows at once: row 4 (key 1) takes the tie with row 1; row 5 at a
+    # worse cue rank (key 3.49) passes only row 4's old place.
+    ordered, _ = cue.lift(rows, {4: 0, 5: 60}, 3, lambda r: r["id"])
+    assert [r["id"] for r in ordered] == [0, 4, 1, 2, 3, 5, 6, 7]
     # A worse cue rank moves it less: c = 60 halves the bonus to 1.5.
     ordered, _ = cue.lift(rows, {5: 60}, 3, lambda r: r["id"])
     assert [r["id"] for r in ordered] == [0, 1, 2, 3, 5, 4, 6, 7]

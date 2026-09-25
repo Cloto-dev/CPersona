@@ -156,9 +156,13 @@ def lift(admitted: list[dict], cue_rank: dict, bound: int, rid_of) -> tuple[list
 
     `admitted` is the order the gate, autocut and prior produced (best first);
     `cue_rank` maps a row id to its 0-based rank on the cue arm. A row's sort key
-    is its position minus `bound * 61 / (61 + c)`, sorted ascending and stably, so
-    a row can only pass rows fewer than `bound` places ahead of it: no row moves
-    up more than `bound` places, however many rows move at once.
+    is its position minus `bound * 61 / (61 + c)`, sorted ascending. A tie between
+    a row the cue found and one it did not goes to the found row; any other tie
+    keeps the original order. So a found row can pass a row at most `bound`
+    places ahead of it, and only another found row fewer than `bound` places
+    ahead: no row moves up more than `bound` places, however many move at once,
+    and the row the cue arm ranks first moves exactly `bound` places when it
+    stands that far down.
     Returns the new order and one entry per row that moved.
     """
     if bound <= 0 or not cue_rank:
@@ -167,7 +171,9 @@ def lift(admitted: list[dict], cue_rank: dict, bound: int, rid_of) -> tuple[list
     def key(item):
         p, row = item
         c = cue_rank.get(rid_of(row))
-        return p if c is None else p - bound * RANK_CONSTANT / (RANK_CONSTANT + c)
+        if c is None:
+            return (p, 1, p)
+        return (p - bound * RANK_CONSTANT / (RANK_CONSTANT + c), 0, p)
 
     ordered = [row for _, row in sorted(enumerate(admitted), key=key)]
     before = {id(row): p for p, row in enumerate(admitted)}
