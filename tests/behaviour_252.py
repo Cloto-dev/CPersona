@@ -54,7 +54,7 @@ import stat
 import tempfile
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 # Mirror conftest's hermetic pins so the capture script gets the same environment
@@ -2644,3 +2644,186 @@ async def _(ctx):
           seed=_seed_deep_anonymous_source)
 async def _(ctx):
     return await maintenance_handlers.do_deep_check(_DEEP_AGENT, fix=True)
+
+
+# ---------------------------------------------------------------------------
+# The modular recall's first stage (wrapping the recall and reconstruct stages
+# behind provider seams) must not change what they return. The scenarios above
+# hold no time cue and no reconstruct call, so these are recorded BEFORE the
+# wrapping, against the code it wraps, and replayed after it.
+#
+# Comparison rules fixed with them: the clock is the frozen instant every
+# scenario sees; a trace's measured `timing_ms` is removed before recording
+# (it is wall time, measured separately as performance), and every other trace
+# field -- stages, arms, gate decisions, seats, stop reasons -- is recorded.
+# ---------------------------------------------------------------------------
+
+_SEAM_M1 = "modular-recall-m1"
+_M1 = "m1"
+_M1_QUERY = "harbor lighthouse keeper logbook"
+
+
+def _m1_ts(days_before: float) -> str:
+    return (FROZEN_INSTANT - timedelta(days=days_before)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _without_timing(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _without_timing(v) for k, v in obj.items() if k != "timing_ms"}
+    if isinstance(obj, list):
+        return [_without_timing(v) for v in obj]
+    return obj
+
+
+async def _m1_row(db, content: str, days_before: float, agent: str = _M1) -> None:
+    ts = _m1_ts(days_before)
+    await db.execute(
+        f"INSERT INTO memories ({_MEM_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (agent, "", "", "", content, '{"type":"System","id":"test"}', ts, "{}", pack(content), 0, ts),
+    )
+
+
+async def _m1_episode(db, summary: str, days_before: float, agent: str = _M1) -> None:
+    ts = _m1_ts(days_before)
+    await db.execute(
+        "INSERT INTO episodes (agent_id, project_id, channel, summary, keywords, embedding, "
+        "start_time, resolved, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (agent, "", "", summary, "harbor lighthouse", pack(summary), ts, 0, ts),
+    )
+
+
+async def seed_m1(ctx: Ctx) -> None:
+    """Twelve records that all match the query, one per ten days back from the
+    frozen instant, plus an episode inside a middle period and one far outside it."""
+    db = ctx.db
+    for i in range(12):
+        await _m1_row(db, f"harbor lighthouse keeper logbook entry {i}", 10 * i + 1)
+    await _m1_episode(db, "harbor lighthouse keeper review inside the period", 60)
+    await _m1_episode(db, "harbor lighthouse keeper review far outside the period", 200)
+    await db.commit()
+
+
+async def seed_m1_seat(ctx: Ctx) -> None:
+    """Six recent exact matches fill every ordinary arm at a count of two; three
+    older records match only in part, so only a search of their period finds them."""
+    db = ctx.db
+    for d in range(1, 7):
+        await _m1_row(db, f"{_M1_QUERY} {d}", d)
+    for i in range(3):
+        await _m1_row(db, f"harbor lighthouse note {i}", 100 + 5 * i)
+    await db.commit()
+
+
+def _period(after_days: float, before_days: float, confidence: str) -> dict:
+    return {"after": _m1_ts(after_days)[:10], "before": _m1_ts(before_days)[:10], "confidence": confidence}
+
+
+@scenario("m1-recall-cue-sure-rrf-trace", _SEAM_M1,
+          "recall rrf + a sure cue over the oldest records: bounded move, trace (stages, arms, gate, cue) without timing",
+          seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    ctx.patch(memory_handlers, "RECALL_MODE", "rrf")
+    out = await memory_handlers.do_recall(_M1, _M1_QUERY, 12, trace=True, time_cue=_period(125, 95, "sure"))
+    return _without_timing(out)
+
+
+# Under rsf the gate refuses the three oldest records, so this cue names a period
+# the answer holds (the move acts only among the rows returned).
+@scenario("m1-recall-cue-sure-rsf", _SEAM_M1, "recall rsf + a sure cue over a period the answer holds: the move under the rsf fusion", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    ctx.patch(memory_handlers, "RECALL_MODE", "rsf")
+    return await memory_handlers.do_recall(_M1, _M1_QUERY, 12, time_cue=_period(75, 46, "sure"))
+
+
+@scenario("m1-recall-cue-widened", _SEAM_M1, "an empty sure period is widened once to the likely margin (CANDIDATE_MISS)", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    out = await memory_handlers.do_recall(_M1, _M1_QUERY, 5, trace=True, time_cue=_period(8, 3, "sure"))
+    return _without_timing(out)
+
+
+@scenario("m1-recall-cue-vague-empty-stops", _SEAM_M1, "an empty vague period has no wider step and stops", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    out = await memory_handlers.do_recall(
+        _M1, _M1_QUERY, 5, trace=True, time_cue={"after": "2020-01-01", "before": "2020-01-02", "confidence": "vague"})
+    return _without_timing(out)
+
+
+@scenario("m1-recall-cue-today-ignored", _SEAM_M1, "a cue for only the current day is not used (recent_only)", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    out = await memory_handlers.do_recall(
+        _M1, _M1_QUERY, 5, trace=True, time_cue={"after": FROZEN_INSTANT.date().isoformat(), "confidence": "sure"})
+    return _without_timing(out)
+
+
+@scenario("m1-recall-cue-seat", _SEAM_M1, "the one held seat for the best record only the cue arm found", seed=seed_m1_seat)
+async def _(ctx):
+    install_local(ctx)
+    ctx.patch(memory_handlers, "RECALL_MODE", "rrf")
+    out = await memory_handlers.do_recall(_M1, _M1_QUERY, 2, trace=True, time_cue=_period(115, 95, "sure"))
+    return _without_timing(out)
+
+
+@scenario("m1-recall-cue-episode", _SEAM_M1, "the cue arm finds the episode in its period and not the one outside", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    out = await memory_handlers.do_recall(_M1, _M1_QUERY, 14, trace=True, time_cue=_period(75, 46, "sure"))
+    return _without_timing(out)
+
+
+@scenario("m1-recall-cue-empty-query", _SEAM_M1, "an empty query with a cue lists the period's newest records", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    out = await memory_handlers.do_recall(_M1, "", 3, trace=True, time_cue=_period(75, 46, "sure"))
+    return _without_timing(out)
+
+
+@scenario("m1-recall-cue-no-embedding", _SEAM_M1, "degraded: no embedding client, the cue arm is keyword only", seed=seed_m1)
+async def _(ctx):
+    out = await memory_handlers.do_recall(_M1, _M1_QUERY, 12, trace=True, time_cue=_period(125, 95, "sure"))
+    return _without_timing(out)
+
+
+@scenario("m1-recall-cue-fts-off", _SEAM_M1, "degraded: FTS off, the cue arm is vector only", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    ctx.patch(memory_handlers, "FTS_ENABLED", False)
+    out = await memory_handlers.do_recall(_M1, _M1_QUERY, 12, trace=True, time_cue=_period(125, 95, "sure"))
+    return _without_timing(out)
+
+
+@scenario("m1-recall-depth-floor", _SEAM_M1, "a depth floor above the count: depth reported, the count still bounds the answer", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    from cpersona import config as _config
+    ctx.patch(_config, "RECALL_DEPTH_FLOOR", 12)
+    out = await memory_handlers.do_recall(_M1, _M1_QUERY, 3, trace=True)
+    return _without_timing(out)
+
+
+@scenario("m1-reconstruct-default", _SEAM_M1, "reconstruct at the default count and budget, with its recall's trace", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    from cpersona import reconstruct
+    out = await reconstruct.do_reconstruct(_M1, _M1_QUERY, trace=True)
+    return _without_timing(out)
+
+
+@scenario("m1-reconstruct-count-budget", _SEAM_M1, "reconstruct at count 3 with a budget below one excerpt: raised to the floor (budget_policy), item shape, bounds", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    from cpersona import reconstruct
+    out = await reconstruct.do_reconstruct(_M1, _M1_QUERY, count=3, budget=120, trace=True)
+    return _without_timing(out)
+
+
+@scenario("m1-reconstruct-cue", _SEAM_M1, "reconstruct passes a cue to the recall it reads", seed=seed_m1)
+async def _(ctx):
+    install_local(ctx)
+    from cpersona import reconstruct
+    out = await reconstruct.do_reconstruct(_M1, _M1_QUERY, count=3, trace=True, time_cue=_period(125, 95, "likely"))
+    return _without_timing(out)
