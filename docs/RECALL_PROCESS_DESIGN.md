@@ -129,14 +129,16 @@ re-scored. A cue is a prior, never a filter.
 ### 2.3 How a cue moves a row
 
 The cue never touches a fused score, the quality gate or autocut. After they
-have decided which rows remain, a row the cue arm also found is moved up. The
-move is bounded in positions, not in score:
+and the count have decided which rows are returned, a row among them that the
+cue arm also found is moved up. Because the move comes after the count, it
+cannot push a row out of the answer (§2.9). The move is bounded in positions,
+not in score:
 
 ```text
 key(row) = p − L × 61 / (61 + c)        sorted ascending
 ```
 
-- `p` is the row's position in the admitted order.
+- `p` is the row's position in the returned order.
 - `c` is its rank on the cue arm.
 - `L` is set by confidence: `sure` 3, `likely` 2, `vague` 1.
 
@@ -187,7 +189,8 @@ trace.
 
 - Without `time_cue`, a recall is identical to today's, pinned by the golden.
 - With `time_cue`, the set of rows that pass the quality gate is identical to
-  the set without it. The cue changes order and adds at most one reserved row.
+  the set without it, and so are the rows the count returns. The cue reorders
+  those rows and adds at most one reserved row.
 - No row moves up more than `L` places.
 - Isolation (`agent_id`, `project_id`, `channel`) is never widened: it is the
   space the search happens in, not a cue.
@@ -242,6 +245,18 @@ cue goes wrong. The rule loses a correct cue only when the answer was stored
 within the last day, and those records are the newest in the store anyway.
 The tool description asks callers to pass a cue only when the request itself
 names a time.
+
+### 2.9 The move comes after the count (`cued-v0.1`)
+
+In `cued-v0` the move ran before the count cut the order to `limit`. A row
+just below the cut could then rise into the answer and push the last row out,
+although the tool description said the cue never removed a row. Measured on a
+real long-term store at a count of ten, that happened on 8 of 60 cued
+questions with the extracted cues, and on 2 of 60 with deliberately wrong
+ones. `cued-v0.1` cuts first and moves rows only among those returned, so the
+returned rows are exactly those of a recall without the cue, reordered, plus
+at most the one seat. The cost is that the move can no longer bring a row
+from just below the cut into view; only the seat adds a row.
 
 ## 3. What v0 claims
 

@@ -163,8 +163,9 @@ async def test_a_cue_changes_order_not_admission(fake_embedding_client, monkeypa
 
     assert decisions(cued) == decisions(plain)  # the gate decided the same
     assert cued["trace"]["policy"]["process"] == "cued-v0.1"
-    before = [row["ref"] for row in plain["trace"]["order"]["before_cut"]]
-    after = [row["ref"] for row in cued["trace"]["order"]["before_cut"]]
+    # The count cuts the order the cue did not touch; the cue then reorders what was returned.
+    assert cued["trace"]["order"]["before_cut"] == plain["trace"]["order"]["before_cut"]
+    before, after = _refs(plain)[::-1], _refs(cued)[::-1]  # best first
     assert sorted(before) == sorted(after) and before != after
     for ref in after:
         assert before.index(ref) - after.index(ref) <= cue.LIFT["sure"]
@@ -383,3 +384,28 @@ async def test_reconstruct_reports_a_cue_it_did_not_use(fake_embedding_client):
     assert out["time_cue"]["ignored"] == "recent_only"
     plain = await reconstruct.do_reconstruct(AGENT, QUERY, count=3)
     assert [i.get("head_ref") for i in out["items"]] == [i.get("head_ref") for i in plain["items"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["rrf", "rsf"])
+async def test_a_cue_never_pushes_a_row_out_of_the_answer(fake_embedding_client, monkeypatch, mode):
+    """The move happens after the count, so every row a recall without the cue returns
+    is still returned; the only row the cue can add is the one seat."""
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", mode)
+    # Arms deeper than the count, so admitted rows sit below the cut. The cue names
+    # the period of those rows, which a move made before the cut would lift into it.
+    monkeypatch.setattr(config, "RECALL_DEPTH_FLOOR", 12)
+    for limit in (3, 4, 5, 6):
+        plain = await memory_handlers.do_recall(AGENT, QUERY, limit=limit, trace=True)
+        order = [row["ref"] for row in plain["trace"]["order"]["before_cut"]]
+        below = order[limit:limit + 3]
+        assert below, "the fixture must leave rows below the cut"
+        stamps = sorted(m["timestamp"] for m in (await memory_handlers.do_recall(AGENT, QUERY, limit=12))["messages"]
+                        if m["ref"] in below)
+        time_cue = {"after": stamps[0][:10], "before": stamps[-1][:10], "confidence": "sure"}
+        cued = await memory_handlers.do_recall(AGENT, QUERY, limit=limit, trace=True, time_cue=time_cue)
+        returned, base = set(_refs(cued)), set(_refs(plain))
+        assert base <= returned, f"limit {limit}: the cue pushed {sorted(base - returned)} out"
+        assert len(returned - base) <= cue.SEATS
+        assert set(cued["trace"]["order"]["cut_by_count"]) == set(plain["trace"]["order"]["cut_by_count"])

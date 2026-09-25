@@ -2152,25 +2152,27 @@ async def _do_recall(
     # admits or removes (docs/PRIOR_FUNCTION_DESIGN.md §3).
     results = _apply_prior(results, prior_span, datetime.now(timezone.utc))
 
-    # The cue's bounded move (§2.3): after the gate, autocut and prior have decided
-    # which rows remain and in what order, a row the cue arm also found moves up by
-    # at most L places. Scores are not read or written, so which rows remain cannot
-    # change; only their order can.
     def _rid_of(r: dict) -> tuple:
         return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
 
     cue_rank = {_rid_of(r): c for c, r in enumerate(cue_rows)}
+    if trace_rec is not None:
+        trace_rec.order(results, limit)
+        trace_rec.mark("order")
+
+    results = results[:limit]
+
+    # The cue's bounded move (§2.3): after the gate, autocut, prior and the count
+    # have decided which rows are returned and in what order, a row the cue arm
+    # also found moves up by at most L places among them. The move comes after the
+    # cut so that it cannot push a row out of the answer: the rows returned are
+    # those of a recall without the cue, reordered, plus at most the one seat below.
     if cue_note is not None:
         results, moves = cue.lift(results, cue_rank, cue.LIFT[cue_note["confidence"]], _rid_of)
         for r in results:
             if _rid_of(r) in cue_rank:
                 r["_cue_rank"] = cue_rank[_rid_of(r)]
         cue_note["lifted"] = moves
-    if trace_rec is not None:
-        trace_rec.order(results, limit)
-        trace_rec.mark("order")
-
-    results = results[:limit]
 
     # The reservation (§5). A fixed, small number of places are held for records
     # the block arm reached, filled in Hamming order, and the quality gate is not
