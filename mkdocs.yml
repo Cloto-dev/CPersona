@@ -86,6 +86,7 @@ plugins:
             Behavior Contracts: 挙動契約
             Tools: ツール一覧
             Operations Runbook: 運用 Runbook
+            Upgrading to 2.6: 2.6 への移行
             Configuration: 設定リファレンス
             FAQ: FAQ
             Quality Assurance: 品質保証
@@ -247,6 +248,7 @@ nav:
       - FAQ: faq.md
   - Operating:
       - Operations Runbook: operations.md
+      - Upgrading to 2.6: upgrading-to-2.6.md
       - Quality Assurance: quality-assurance.md
   # Normative: these say what a release, an audit report or a policy block MUST
   # look like, and other repositories adopt them. Kept apart from Design notes,

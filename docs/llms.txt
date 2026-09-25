@@ -27,6 +27,7 @@ CPERSONA_MAX_MEMORIES is the vector scan window, not a storage cap.
 - [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/): the behaviors callers may rely on — recall ordering, confidence×fusion interaction, episode boundary penalty, scan window, dedup, autocut, profile scoring, gate_fallback, lock semantics
 - [FAQ](https://cloto-dev.github.io/CPersona/faq/): question-shaped index into the pages above
 - [Operations Runbook](https://cloto-dev.github.io/CPersona/operations/): WAL-safe backup, degradation detection, recall tuning order, Japanese/CJK guidance, corpus indexing patterns, maintenance cadence
+- [Upgrading to 2.6](https://cloto-dev.github.io/CPersona/2.6/upgrading-to-2.6/): one-pass upgrade from a 2.5.x store to the current 2.6 pre-release: backup, what the first start migrates, the node backfill, recalibration, behaviour changes, and how to go back
 - [Quality Assurance](https://cloto-dev.github.io/CPersona/quality-assurance/): how a release is gated — audit rounds, the bug ledger, structural CI gates, mutation proof, and the gates that check the docs themselves
 
 ## Project standards
