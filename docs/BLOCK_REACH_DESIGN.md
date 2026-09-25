@@ -1,9 +1,13 @@
 # Block Reach — design
 
-**Status:** design, not shipped behaviour. Nothing described here is in a
-release yet. Numbers marked as estimates are estimates, and the section that
-says how the step is judged says which ones must be replaced by measurement
-before the work is called done.
+**Status:** shipped, off by default. 2.6.0a5 released this step behind two
+gates, `CPERSONA_BLOCK_BUILD_ENABLED` and `CPERSONA_BLOCK_RETRIEVAL_ENABLED`,
+both off unless set; 2.6.0a6 added a vector per block (schema v17) and let
+`reconstruct` return what the block arm reaches. The default stays off: the
+quantity that would justify turning it on is still unmeasured (section 0).
+Numbers marked as estimates are estimates, and the section that says how the
+step is judged says which ones must be replaced by measurement before the work
+is called done.
 
 ## 0. The defect, and what this step does about it
 
