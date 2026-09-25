@@ -134,6 +134,16 @@ def test_a_minor_contract_version_is_accepted():
     assert providers.resolve(_allowlist_with("prior", "variant", cls), {"prior": "variant"}).prior.manifest.contract[1] == 3
 
 
+def test_a_manifest_describes_its_contract_as_major_dot_minor():
+    """What a traced recall records for each slot (trace.providers)."""
+    cls = _variant("prior", contract=(providers.CONTRACT_MAJOR, 7), policy="p-1")
+    described = providers.resolve(_allowlist_with("prior", "variant", cls), {"prior": "variant"}).manifests["prior"]
+    assert described.describe() == {"provider_id": "variant", "role": "PriorFunction", "contract": "1.7", "policy": "p-1"}
+    assert providers.active().manifests["prior"].describe() == {
+        "provider_id": "builtin", "role": "PriorFunction", "contract": "1.0",
+    }
+
+
 def test_a_declared_operation_the_provider_does_not_have_is_refused():
     cls = _variant("evidence_selector", seats=None)
     with pytest.raises(providers.ProviderConfigError, match=r"declares but does not have \['seats'\]"):
