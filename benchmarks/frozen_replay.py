@@ -71,6 +71,9 @@ logging.basicConfig(format="%(levelname)s|%(asctime)s|%(name)s: %(message)s",
 logger = logging.getLogger("replay")
 
 W_SWEEP = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+#: --w_sweep overrides the grid above. The default is the coarse grid the
+#: earlier runs used; a finer grid is for locating a default and its
+#: flatness, which the coarse one cannot do near its lower edge.
 
 
 def _dcg_w(rank0: int) -> float:
@@ -497,10 +500,15 @@ if __name__ == "__main__":
     ap.add_argument("--default_task", default=None)
     ap.add_argument("--selfcheck_rate", type=float, default=0.0)
     ap.add_argument("--identity_every", type=int, default=20, help="check S2/S3 against the real pipeline every N queries (0=off)")
+    ap.add_argument("--w_sweep", default=None,
+                    help="comma-separated lexical weights to sweep (default: the coarse grid)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--max_queries_per_subtask", type=int, default=0, help="every k-th query so that at most N per subtask are replayed (0=all)")
     ap.add_argument("--work_depth", type=int, default=3000, help="fusion working-set depth D per arm (exact for the top-10 when no candidate subset applies)")
-    asyncio.run(main(ap.parse_args()))
+    _args = ap.parse_args()
+    if _args.w_sweep:
+        W_SWEEP = [float(x) for x in _args.w_sweep.split(",") if x.strip()]
+    asyncio.run(main(_args))
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)  # the harness stack has been seen to idle at interpreter exit
