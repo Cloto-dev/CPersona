@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:9872b57ce2a174b953ff0d4858bdd4005035fa90 -->
+<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:c9082c385032b8c4223464d2a3a7ecda1af422f0 -->
 
 # 想起のプロセス v0 — 設計 { #the-recall-process-v0-design }
 
