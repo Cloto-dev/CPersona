@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-POLICY = "cued-v0"
+POLICY = "cued-v0.1"
 
 CONFIDENCES = ("sure", "likely", "vague")
 # How far a period is widened on each side, as a fraction of its own length.
@@ -34,6 +34,11 @@ WIDER = {"sure": "likely", "likely": "vague", "vague": None}
 # the same 61 the fusion's reciprocal rank uses (k = 60, rank + 1).
 RANK_CONSTANT = 61
 SEATS = 1
+# A cue whose own period (before any margin) starts no earlier than this long before
+# now points only at today or the future. Such a cue is not used: an agent that fills
+# the cue with today's date for a request that named no time is the observed way a
+# cue goes wrong, and today's records are the newest in the store in any case.
+RECENT_ONLY = timedelta(hours=24)
 
 _UNITS = {"days": timedelta(days=1), "weeks": timedelta(weeks=1), "months": timedelta(days=30)}
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -149,6 +154,16 @@ def period(
         end = start + timedelta(seconds=1)
     margin = (end - start) * MARGIN[confidence]
     return start - margin, end + margin
+
+
+def recent_only(cue: TimeCue, now: datetime, span: tuple[datetime | None, datetime | None]) -> bool:
+    """Whether the cue points only at the last `RECENT_ONLY` or later, and so is not used.
+
+    Judged on the cue's own period, before any confidence margin: a `sure` cue for
+    today and a `vague` one for today point at the same thing.
+    """
+    window = period(cue, "sure", now, span)
+    return window is not None and window[0] >= now - RECENT_ONLY
 
 
 def lift(admitted: list[dict], cue_rank: dict, bound: int, rid_of) -> tuple[list[dict], list[dict]]:

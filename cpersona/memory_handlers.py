@@ -1991,6 +1991,7 @@ async def _do_recall(
         # not run a second time.
         cue_rows: list[dict] = []
         cue_note: dict | None = None
+        cue_ignored: dict | None = None
         if time_cue is not None:
             span_min, span_max = await scope_stats.get_span(
                 db, agent_id, project_id=project_id, channel=channel
@@ -2000,7 +2001,14 @@ async def _do_recall(
             confidence = time_cue.confidence
             stages: list[dict] = []
             suspected: list[dict] = []
-            while True:
+            if cue.recent_only(time_cue, now, span):
+                # §2.8: a cue that points only at today or later is not used. The rows
+                # are exactly those of a recall without one; the response says so.
+                own = cue.period(time_cue, "sure", now, span)
+                cue_ignored = {"reason": "recent_only", "period": [w.isoformat() for w in own]}
+                if trace_rec is not None:
+                    trace_rec.set("cue_ignored", dict(cue_ignored))
+            while cue_ignored is None:
                 window = cue.period(time_cue, confidence, now, span)
                 if window is not None:
                     cue_rows = await _search_cue_arm(
@@ -2032,10 +2040,11 @@ async def _do_recall(
                     break
                 stage["next"] = f"widen to the {wider} margin"
                 confidence = wider
-            cue_note = {"stages": stages, "suspected": suspected, "confidence": confidence}
-            if trace_rec is not None:
-                trace_rec.set("stages", [dict(st) for st in stages])
-                trace_rec.set("suspected", suspected)
+            if cue_ignored is None:
+                cue_note = {"stages": stages, "suspected": suspected, "confidence": confidence}
+                if trace_rec is not None:
+                    trace_rec.set("stages", [dict(st) for st in stages])
+                    trace_rec.set("suspected", suspected)
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26/27: use the calibrated gate for whichever branch is active.
@@ -2397,6 +2406,8 @@ async def _do_recall(
             "moved": len(cue_note.get("lifted", [])),
             "seated": len(cue_note.get("seated", [])),
         }
+    elif cue_ignored is not None:
+        result["time_cue"] = {"policy": cue.POLICY, "ignored": cue_ignored["reason"], "period": cue_ignored["period"]}
     advisory = health.maybe_advisory(session_key_resolved, session_key_declared)
     if advisory is not None:
         result["advisory"] = advisory

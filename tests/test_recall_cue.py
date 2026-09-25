@@ -162,7 +162,7 @@ async def test_a_cue_changes_order_not_admission(fake_embedding_client, monkeypa
         return sorted((d["ref"], d["passed"]) for d in out["trace"]["gate"]["decisions"])
 
     assert decisions(cued) == decisions(plain)  # the gate decided the same
-    assert cued["trace"]["policy"]["process"] == "cued-v0"
+    assert cued["trace"]["policy"]["process"] == "cued-v0.1"
     before = [row["ref"] for row in plain["trace"]["order"]["before_cut"]]
     after = [row["ref"] for row in cued["trace"]["order"]["before_cut"]]
     assert sorted(before) == sorted(after) and before != after
@@ -290,7 +290,7 @@ async def test_reconstruct_passes_the_cue_to_its_recall(fake_embedding_client):
     await _seed(CORPUS)
     time_cue = {"after": _ts(125)[:10], "before": _ts(95)[:10], "confidence": "likely"}
     out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, trace=True, time_cue=time_cue)
-    assert out["trace"]["recall"]["policy"]["process"] == "cued-v0"
+    assert out["trace"]["recall"]["policy"]["process"] == "cued-v0.1"
     assert out["time_cue"]["confidence"] == "likely"
     assert "time_cue" not in await reconstruct.do_reconstruct(AGENT, QUERY, count=3)
     refused = await server.do_reconstruct_boundary(
@@ -306,3 +306,80 @@ async def test_an_empty_query_searches_the_period_by_recency(fake_embedding_clie
     out = await memory_handlers.do_recall(AGENT, "", limit=3, trace=True, time_cue=time_cue)
     assert [row["ref"] for row in out["trace"]["arms"]["cue"]] == [refs[5], refs[6], refs[7]]
     assert out["trace"]["stages"][0]["found"] == 3
+
+
+# --- a cue that points only at today (§2.8) ------------------------------------------
+
+
+def test_a_cue_is_recent_only_when_its_own_period_starts_within_the_last_day():
+    now = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
+    span = (now - timedelta(days=90), now)
+
+    def starting(delta, confidence="sure"):
+        return cue.parse({"after": (now - delta).isoformat(), "confidence": confidence})
+
+    assert cue.recent_only(starting(timedelta(hours=24)), now, span)  # exactly one day back: not used
+    assert not cue.recent_only(starting(timedelta(hours=24, seconds=1)), now, span)
+    assert cue.recent_only(starting(timedelta(hours=-5)), now, span)  # the future
+    # Judged before the margin: a vague cue for the same period is not used either,
+    # although its widened period reaches further back than a day.
+    assert cue.recent_only(starting(timedelta(hours=20), "vague"), now, span)
+    assert not cue.recent_only(starting(timedelta(hours=30), "vague"), now, span)
+    # Today's date and "0 days ago" name only today; "1 day ago" is yesterday.
+    assert cue.recent_only(cue.parse({"after": now.date().isoformat(), "before": now.date().isoformat(),
+                                      "confidence": "sure"}), now, span)
+    assert cue.recent_only(cue.parse({"ago": {"unit": "days", "value": 0}, "confidence": "likely"}), now, span)
+    assert not cue.recent_only(cue.parse({"ago": {"unit": "days", "value": 1}, "confidence": "sure"}), now, span)
+    # A scope younger than a day: long ago is still within it, so not used.
+    assert cue.recent_only(cue.parse({"ago": "long_ago", "confidence": "sure"}), now,
+                           (now - timedelta(hours=6), now))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("time_cue", [
+    {"after": NOW.date().isoformat(), "before": NOW.date().isoformat(), "confidence": "sure"},
+    {"after": NOW.date().isoformat(), "confidence": "vague"},
+    {"ago": {"unit": "days", "value": 0}, "confidence": "sure"},
+    {"after": (NOW + timedelta(days=2)).date().isoformat(), "confidence": "likely"},
+])
+async def test_a_cue_for_only_today_is_not_used_and_the_response_says_so(fake_embedding_client, monkeypatch, time_cue):
+    # The newest record is a day old, so a cue for today would find nothing and widen;
+    # an unused cue must do neither.
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
+    plain = await memory_handlers.do_recall(AGENT, QUERY, limit=5)
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=5, time_cue=time_cue)
+    assert out.pop("time_cue")["ignored"] == "recent_only"
+    assert out == plain  # the rows, their order and every other field are those of no cue
+    traced = await memory_handlers.do_recall(AGENT, QUERY, limit=5, trace=True, time_cue=time_cue)
+    assert traced["trace"]["cue_ignored"]["reason"] == "recent_only"
+    assert "cue" not in traced["trace"]["arms"] and not traced["trace"].get("suspected")
+    assert traced["trace"]["policy"]["process"] == cue.POLICY == "cued-v0.1"
+
+
+@pytest.mark.asyncio
+async def test_a_cue_that_reaches_past_the_last_day_is_used(fake_embedding_client, monkeypatch):
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
+    now = datetime.now(timezone.utc)
+    # Yesterday, and a period starting 25 hours back: both used (the newest record is a day old).
+    for time_cue in ({"ago": {"unit": "days", "value": 1}, "confidence": "sure"},
+                     {"after": (now - timedelta(hours=25)).isoformat(), "confidence": "sure"}):
+        out = await memory_handlers.do_recall(AGENT, QUERY, limit=5, trace=True, time_cue=time_cue)
+        assert "ignored" not in out["time_cue"] and "cue" in out["trace"]["arms"]
+        assert "cue_ignored" not in out["trace"]
+    # Starting 23 hours back: not used.
+    late = {"after": (now - timedelta(hours=23)).isoformat(), "confidence": "sure"}
+    assert (await memory_handlers.do_recall(AGENT, QUERY, limit=5, time_cue=late))["time_cue"]["ignored"] == "recent_only"
+
+
+@pytest.mark.asyncio
+async def test_reconstruct_reports_a_cue_it_did_not_use(fake_embedding_client):
+    from cpersona import reconstruct
+
+    await _seed(CORPUS)
+    today = {"after": NOW.date().isoformat(), "confidence": "sure"}
+    out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, time_cue=today)
+    assert out["time_cue"]["ignored"] == "recent_only"
+    plain = await reconstruct.do_reconstruct(AGENT, QUERY, count=3)
+    assert [i.get("head_ref") for i in out["items"]] == [i.get("head_ref") for i in plain["items"]]

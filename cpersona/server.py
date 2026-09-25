@@ -1290,8 +1290,12 @@ registry.auto_tool(
                     "confidence step. likely widens the period by half its length on each side, "
                     "vague by its whole length. The response then carries time_cue: the period "
                     "searched, whether it was widened, how many rows moved and how many seats were "
-                    "used. Omit it when you do not know when. A cue that cannot be read returns an "
-                    "error and no messages."
+                    "used. Pass it only when the request itself says when (a date, a month, "
+                    "\"last week\", \"in the spring\"); omit it when the request names no time, and "
+                    "never fill it with today's date or a guess. A cue whose own period starts "
+                    "within the last 24 hours (today, or later) is not used: the rows are those of "
+                    "a recall without a cue, and time_cue in the response says ignored. A cue that "
+                    "cannot be read returns an error and no messages."
                 ),
                 "properties": {
                     "after": {"type": "string"},

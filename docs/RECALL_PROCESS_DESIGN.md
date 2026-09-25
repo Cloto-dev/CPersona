@@ -42,7 +42,7 @@ What a trace may contain when it leaves the machine is decided separately.
 | Field | Content |
 | --- | --- |
 | `trace_version` | `1`. Raised only when an existing field changes meaning; adding a field does not raise it |
-| `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0` with one) |
+| `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0.1` with one; `cued-v0` before §2.8) |
 | `server_version` | The version that answered |
 | `scope` | `agent_id`, `project_id`, `channel`, `source_id` as resolved |
 | `request` | `limit`, the recall depth, `deep`, the fusion mode, the confidence ordering, the prior's settings, whether the episode penalty is on, and the `time_cue` when given |
@@ -223,6 +223,25 @@ belong to the policy version `cued-v0`.
   false` and an `error` naming the part, never ignored.
 - `reconstruct` accepts the same `time_cue` and applies it to the recall it
   reads its candidates from.
+
+### 2.8 A cue for today is not used (`cued-v0.1`)
+
+A cue whose own period, before any confidence margin, starts no earlier than
+24 hours before now points only at today or at the future, and the recall does
+not use it. The rows are exactly those of a recall without a cue. The
+response's `time_cue` carries `ignored: "recent_only"` and the period, and the
+trace records `cue_ignored`. The policy version is `cued-v0.1`; `cued-v0` is
+the same policy without this rule.
+
+Why: the first measurement of the loop gave each question the cue a separate
+model extracted from the question text and the date the question was asked.
+Of 60 cues, 36 named the question date itself although the question named no
+time, and the cue period held the evidence for only 18 of 57 questions. A
+caller that fills the cue with today's date is therefore the observed way a
+cue goes wrong. The rule loses a correct cue only when the answer was stored
+within the last day, and those records are the newest in the store anyway.
+The tool description asks callers to pass a cue only when the request itself
+names a time.
 
 ## 3. What v0 claims
 
