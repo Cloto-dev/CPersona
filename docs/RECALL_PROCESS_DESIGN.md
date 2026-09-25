@@ -1,7 +1,7 @@
 # The Recall Process, v0 — design
 
 **Status:** the recall trace (§1) and the loop's basic form (§2) are
-implemented and not yet in a release. It is the first step of
+released in 2.6.0a7. It is the first step of
 [the recall process](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process),
 [Cued Recall](RELIABLE_RECALL_2_6.md#2-cued-recall-the-input-contract) and the
 [recall trace](RELIABLE_RECALL_2_6.md#8-recall-quality-engineering). v0 has

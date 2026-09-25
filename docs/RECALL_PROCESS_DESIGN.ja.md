@@ -1,10 +1,10 @@
-<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:d7963642152849bac459940a5e6d3f4b74c31775 -->
+<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:9872b57ce2a174b953ff0d4858bdd4005035fa90 -->
 
 # 想起のプロセス v0 — 設計 { #the-recall-process-v0-design }
 
 > **翻訳について**: 正本は英語版です。
 
-**Status:** 想起の記録 (§1) とループの基本形 (§2) は実装済みで、まだリリースに入っていません。
+**Status:** 想起の記録 (§1) とループの基本形 (§2) は 2.6.0a7 でリリースされています。
 [想起のプロセス](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process)、
 [Cued Recall](RELIABLE_RECALL_2_6.md#2-cued-recall-the-input-contract)、
 [想起の記録](RELIABLE_RECALL_2_6.md#8-recall-quality-engineering) の最初の段です。
