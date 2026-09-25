@@ -573,13 +573,24 @@ async def run_subtask(
     dump_rankings_sink=None,
     task_name: str = "",
     admission_probe: "VectorAdmissionProbe | None" = None,
+    depth_check=None,
+    split: tuple[int, str] | None = None,
+    split_sink: dict | None = None,
+    latency_scan_window: int = 500,
 ) -> float:
     """Run a single subtask using cpersona's actual do_recall().
 
     When latency lists are provided, per-query wall-clock of the real
     do_recall() call is appended to them: `latencies_full` for the NDCG pass
     and `latencies_limit10` for an extra production-shaped pass (limit=10, the
-    MCP default) over the same queries.
+    MCP default) over the same queries, at `latency_scan_window`.
+
+    ``depth_check`` (a ``trackb_instrument.DepthCheck``) sees every recall
+    response of both passes and counts those whose reported depth is not the
+    one this run intended. ``split`` = ``(seed, part)`` keeps only the queries
+    the seeded shuffle assigns to ``part`` ("dev" or "test") and scores only
+    them; the full assignment is written into ``split_sink`` under the
+    subtask's name.
 
     ``recall_limit`` controls the ``limit`` passed to do_recall for the NDCG
     pass:
@@ -601,6 +612,19 @@ async def run_subtask(
     queries_data = load_jsonl(subtask["queries"])
     qrels = load_qrels(subtask["qrels"])
     candidates = load_candidates(subtask["candidates"]) if subtask["candidates"] else {}
+
+    # Dev / test split: drop the other half's queries AND their qrels. compute_ndcg
+    # iterates over qrels, so a query left in qrels but not queried would score 0.
+    if split is not None:
+        from trackb_instrument import split_queries
+
+        split_seed, split_part = split
+        assignment = split_queries([str(q["id"]) for q in queries_data], split_seed, subtask.get("name", ""))
+        if split_sink is not None:
+            split_sink[subtask.get("name", "")] = assignment
+        queries_data = [q for q in queries_data if assignment[str(q["id"])] == split_part]
+        kept = {str(q["id"]) for q in queries_data}
+        qrels = {qid: rels for qid, rels in qrels.items() if qid in kept}
 
     # Pre-compute query embeddings
     query_texts = [q["text"] for q in queries_data]
@@ -636,6 +660,8 @@ async def run_subtask(
         )
         if latencies_full is not None:
             latencies_full.append((time.perf_counter() - t0) * 1000)
+        if depth_check is not None:
+            depth_check.observe(effective_limit, qtext, recall_result, query_id=qid)
 
         # Extract msg_ids from recall result (same format as MCP response).
         # IMPORTANT: do_recall() reverses results for LLM context (most relevant
@@ -688,10 +714,12 @@ async def run_subtask(
     if admission_probe is not None:
         admission_probe.active = False
 
-    # Production-shaped latency pass: same queries, MCP default limit=10 and
-    # the shipped MAX_MEMORIES=500 scan cap (the benchmark env raises the cap
-    # for the NDCG pass; restoring 500 here makes the p50 an honest
-    # as-shipped number). NDCG is not computed here.
+    # Production-shaped latency pass: same queries, MCP default limit=10 and a
+    # restored scan window (the benchmark env raises the window for the NDCG
+    # pass). The window defaults to 500, the value this pass has always used so
+    # its recorded numbers stay comparable; the package has shipped 10,000 since
+    # then, so an as-shipped reading passes --latency_scan_window 10000. NDCG is
+    # not computed here.
     if latencies_limit10 is not None:
         # MAX_MEMORIES is imported into both consumer modules at load time —
         # override each module-level binding, not cpersona.config.
@@ -701,12 +729,14 @@ async def run_subtask(
         ]
         saved_caps = [(m, m.MAX_MEMORIES) for m in cap_mods]
         for m in cap_mods:
-            m.MAX_MEMORIES = 500
+            m.MAX_MEMORIES = latency_scan_window
         try:
             for q in queries_data:
                 t0 = time.perf_counter()
-                await server_mod.do_recall(agent_id=AGENT_ID, query=q["text"], limit=10)
+                lat_result = await server_mod.do_recall(agent_id=AGENT_ID, query=q["text"], limit=10)
                 latencies_limit10.append((time.perf_counter() - t0) * 1000)
+                if depth_check is not None:
+                    depth_check.observe(10, q["text"], lat_result, query_id=str(q["id"]))
         finally:
             for m, v in saved_caps:
                 m.MAX_MEMORIES = v
@@ -760,7 +790,15 @@ async def run_task(
     recall_limit: int = 0,
     dump_rankings_sink=None,
     admission_probe: "VectorAdmissionProbe | None" = None,
+    recall_mode: str = "cascade",
+    split: tuple[int, str] | None = None,
+    latency_scan_window: int = 500,
 ) -> dict | None:
+    from trackb_instrument import DepthCheck, record_depth_check
+
+    # One check per task, so the counts in <task>.json are this task's own.
+    depth_check = DepthCheck.from_env(recall_mode)
+    split_assignment: dict = {}
     task_dir = os.path.join(EVAL_DATA, TASK_MAP[task_name])
     if not os.path.isdir(task_dir):
         logger.error(f"  Task dir not found: {task_dir}")
@@ -831,6 +869,10 @@ async def run_task(
                 dump_rankings_sink=dump_rankings_sink,
                 task_name=task_name,
                 admission_probe=admission_probe,
+                depth_check=depth_check,
+                split=split,
+                split_sink=split_assignment,
+                latency_scan_window=latency_scan_window,
             )
             eval_time = time.time() - eval_start
             subtask_results[st["name"]] = ndcg
@@ -883,6 +925,15 @@ async def run_task(
         result["calibration"] = calibration_records
     if admission_results:
         result["vector_admission"] = admission_results
+    if latencies_limit10:
+        result["recall_latency_limit10_scan_window"] = latency_scan_window
+    # Every recall of both passes, checked against the depth this run intended
+    # (benchmarks/trackb_instrument.py). A mismatch means the package ranked at a
+    # depth nobody chose -- most often a floor set after the package was imported
+    # -- so the run is marked invalid rather than left to read as a null result.
+    record_depth_check(result, depth_check)
+    if split is not None:
+        result["split"] = {"seed": split[0], "part": split[1], "assignment": split_assignment}
     if skip_latency_pass:
         result["accel"] = True
         result["latency_note"] = ("run with --fast acceleration; latency numbers are "
@@ -1067,6 +1118,9 @@ async def async_main(args):
             "min_similarity": args.min_similarity,
             "confidence_enabled_effective": effective_flag,
             "confidence_enabled_env": os.environ.get("CPERSONA_CONFIDENCE_ENABLED", ""),
+            "depth_floor_env": os.environ.get("CPERSONA_RECALL_DEPTH_FLOOR", ""),
+            "split": args.split,
+            "split_seed": args.split_seed,
         }
         dump_fh.write(json.dumps(header) + "\n")
         dump_fh.flush()
@@ -1119,6 +1173,9 @@ async def async_main(args):
             recall_limit=args.recall_limit,
             dump_rankings_sink=dump_sink,
             admission_probe=admission_probe,
+            recall_mode=args.recall_mode,
+            split=(args.split_seed, args.split) if args.split != "all" else None,
+            latency_scan_window=args.latency_scan_window,
         )
         if result:
             all_results.append(result)
@@ -1250,7 +1307,20 @@ def main():
                              "score. The header line pins the effective config so a "
                              "parent script can compute cosine prevalence / disturbance "
                              "externally without re-running the recall.")
+    parser.add_argument("--split", default="all", choices=["all", "dev", "test"],
+                        help="Run and score only one half of each subtask's queries. The "
+                             "halves come from a shuffle seeded by --split_seed and the "
+                             "subtask name; the full assignment is written to the task "
+                             "JSON under `split`. Default: all queries.")
+    parser.add_argument("--split_seed", type=int, default=None,
+                        help="Seed for --split (required when --split is dev or test).")
+    parser.add_argument("--latency_scan_window", type=int, default=500,
+                        help="CPERSONA_MAX_MEMORIES for the limit=10 latency pass. Default "
+                             "500 keeps recorded latency numbers comparable; the package "
+                             "ships 10,000, so pass 10000 for an as-shipped reading.")
     args = parser.parse_args()
+    if args.split != "all" and args.split_seed is None:
+        parser.error("--split dev/test needs --split_seed, so the halves can be redrawn identically")
 
     asyncio.run(async_main(args))
 
