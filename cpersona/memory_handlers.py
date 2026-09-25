@@ -24,6 +24,7 @@ from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import blocks
+from cpersona import budget
 from cpersona import cue
 from cpersona import excerpts
 from cpersona import health
@@ -1804,6 +1805,7 @@ async def do_recall(
     excerpt_chars: int = 0,
     trace: bool = False,
     time_cue: dict | None = None,
+    iteration_budget: int | None = None,
 ) -> dict:
     """Recall, optionally returning the recall trace (docs/RECALL_PROCESS_DESIGN.md §1).
 
@@ -1815,7 +1817,16 @@ async def do_recall(
     ``cpersona/cue.py``. A cue that cannot be read is refused with ``error`` and no
     messages rather than ignored, so a caller never believes a cue it did not send
     was applied.
+
+    ``iteration_budget`` is how many hypotheses the recall may evaluate on the rows
+    it holds (cpersona/budget.py); None takes the default. It is a library
+    argument, not a tool argument: a recall evaluates one hypothesis today, and a
+    traced recall reports what was requested, what was evaluated and why it stopped.
     """
+    try:
+        ledger = budget.Ledger.for_recall(iteration_budget)
+    except ValueError as exc:
+        return error_response(str(exc), messages=[])
     # The providers this recall runs with, read once, here: a set installed while
     # it runs applies to the recalls that start after it (cpersona/providers.py).
     active = providers.active()
@@ -1828,6 +1839,7 @@ async def do_recall(
         source_id=source_id, session_key=session_key, lexical_terms=lexical_terms,
         excerpt_chars=excerpt_chars, **({"time_cue": parsed_cue} if parsed_cue is not None else {}),
         providers_=active,
+        ledger_=ledger,
     )
     if not trace:
         return await _do_recall(agent_id, query, limit, **kwargs)
@@ -1840,6 +1852,7 @@ async def do_recall(
         "process": cue.POLICY if parsed_cue is not None else recall_trace.PROCESS_SINGLE_PASS,
     })
     rec.set("server_version", __version__)
+    rec.set("providers", {"digest": active.digest, "slots": active.describe()})
     rec.set("scope", {"agent_id": agent_id, "project_id": project_id, "channel": channel, "source_id": source_id})
     rec.set("request", {
         "limit": limit, "deep": deep, "mode": RECALL_MODE,
@@ -1877,6 +1890,7 @@ async def _do_recall(
     excerpt_chars: int = 0,
     time_cue: cue.TimeCue | None = None,
     providers_: providers.Providers | None = None,
+    ledger_: budget.Ledger | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1929,6 +1943,10 @@ async def _do_recall(
     started = time.perf_counter()
     # The set do_recall read at its start; read here only for a direct library call.
     p = providers_ if providers_ is not None else providers.active()
+    # What this recall may spend, declared before it spends any (cpersona/budget.py).
+    ledger = ledger_ if ledger_ is not None else budget.Ledger.for_recall()
+    # Each stage's input is recorded on a traced recall (recall_trace.stage_input).
+    trace_rec = recall_trace.current()
     requested = limit
     limit = _clamp_limit(limit, RECALL_LIBRARY_MAX_LIMIT)
     if requested > limit:
@@ -1967,11 +1985,14 @@ async def _do_recall(
     # emptiness as "nothing to rank on" rather than embedding the query again.
     query_vec_out: list = []
     async with connection() as db:
+        ledger.spend(budget.ORDINARY_FETCH)
         results = await p.fusion.retrieve(
             db, agent_id=agent_id, query=query, depth=depth, limit=limit, deep=deep,
             channel=channel, exclude_set=exclude_set, project_id=project_id,
             source_id=source_id, query_vec_out=query_vec_out, lexical_terms=lexical_terms,
         )
+        if trace_rec is not None:
+            trace_rec.stage_input("scoring", results)
 
         # Every row an ordinary arm reached, whatever the gate later decides: the
         # cue's held seat is only for a record no other arm found (§2.4), so a row
@@ -2025,6 +2046,7 @@ async def _do_recall(
         # reserved row -- it is a row that was already there.
         block_rows: list[dict] = []
         if blocks.retrieval_enabled() and query.strip() and query_vec_out:
+            ledger.spend(budget.BLOCK_FETCH)
             block_rows = await p.block_candidates.reserved_rows(
                 db,
                 query_vec_out[0],
@@ -2062,6 +2084,7 @@ async def _do_recall(
                 if trace_rec is not None:
                     trace_rec.set("cue_ignored", dict(cue_ignored))
             while cue_ignored is None:
+                ledger.spend(budget.CUE_STAGE)
                 window = p.envelope_planner.period(time_cue, confidence, now, span)
                 if window is not None:
                     cue_rows = await p.cue_candidates.search(
@@ -2080,7 +2103,7 @@ async def _do_recall(
                 stages.append(stage)
                 if trace_rec is not None:
                     trace_rec.arm("cue" if len(stages) == 1 else f"cue_stage_{len(stages) - 1}", cue_rows, "_cosine")
-                if cue_rows or len(stages) == 2:
+                if cue_rows or not ledger.allows(budget.CUE_STAGE):
                     break
                 wider = p.envelope_planner.wider(confidence)
                 suspected.append({"stage": stage["stage"], "code": "CANDIDATE_MISS",
@@ -2112,6 +2135,8 @@ async def _do_recall(
         if gate is not None and deep:
             gate = gate * 0.5  # mirror the deep relaxation of min_score
     pre_gate = results
+    if trace_rec is not None:
+        trace_rec.stage_input("gate", results)
     results = _apply_quality_gate(
         results,
         effective_min,
@@ -2197,12 +2222,16 @@ async def _do_recall(
         trace_rec.mark("gate")
     if AUTOCUT_ENABLED and not gate_fallback:
         before_autocut = results
+        if trace_rec is not None:
+            trace_rec.stage_input("autocut", results)
         results = _autocut(results)
         if trace_rec is not None:
             trace_rec.autocut(before_autocut, results)
 
     # 2.6.0a7: the prior orders what the gate and autocut admitted; it never
     # admits or removes (docs/PRIOR_FUNCTION_DESIGN.md §3).
+    if trace_rec is not None:
+        trace_rec.stage_input("prior", results)
     admitted = list(results)
     results = p.prior.apply(results, prior_span, datetime.now(timezone.utc))
     providers.check_reorder("prior.apply", admitted, results)
@@ -2212,6 +2241,7 @@ async def _do_recall(
 
     cue_rank = {_rid_of(r): c for c, r in enumerate(cue_rows)}
     if trace_rec is not None:
+        trace_rec.stage_input("cut", results)
         trace_rec.order(results, limit)
         trace_rec.mark("order")
 
@@ -2223,6 +2253,8 @@ async def _do_recall(
     # cut so that it cannot push a row out of the answer: the rows returned are
     # those of a recall without the cue, reordered, plus at most the one seat below.
     if cue_note is not None:
+        if trace_rec is not None:
+            trace_rec.stage_input("selector", results)
         bound = cue.LIFT[cue_note["confidence"]]
         lifted, moves = p.evidence_selector.lift(results, cue_rank, bound, _rid_of)
         providers.check_lift(results, lifted, bound)
@@ -2268,6 +2300,11 @@ async def _do_recall(
             trace_rec.cue(cue_note, cue.LIFT[cue_note["confidence"]])
 
     providers.check_recall_count(len(results), limit, cue.SEATS, blocks.BLOCK_RESERVATION)
+    # The one hypothesis a recall evaluates today: the order its stages produced.
+    ledger.spend(budget.ITERATION)
+    if trace_rec is not None:
+        trace_rec.set("budget", ledger.report())
+        trace_rec.stage_input("output", results)
     results.reverse()
 
     messages = []

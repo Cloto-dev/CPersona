@@ -13,6 +13,8 @@ what it did before.
 from __future__ import annotations
 
 import contextvars
+import hashlib
+import json
 import time
 
 TRACE_VERSION = 1
@@ -50,6 +52,17 @@ def _num(value):
     return None if value is None else float(value)
 
 
+def order_digest(rows: list[dict]) -> str:
+    """A digest of the rows' references in order: which rows, and in what order.
+
+    Scores are left out on purpose. They are recorded where a stage reads them
+    (the fusion list, the gate decisions), compared there with a tolerance, and a
+    digest over floats would differ between platforms whose last bits differ.
+    """
+    refs = [ref_of(r) for r in rows]
+    return hashlib.sha256(json.dumps(refs, separators=(",", ":")).encode()).hexdigest()[:16]
+
+
 class TraceRecorder:
     """Collects one recall's trace. Every method is safe to call in any order."""
 
@@ -72,6 +85,7 @@ class TraceRecorder:
             "reservation": [],
             "stages": [],
             "suspected": [],
+            "stage_inputs": {},
             "timing_ms": {},
         }
 
@@ -94,6 +108,15 @@ class TraceRecorder:
 
     def set(self, key: str, value) -> None:
         self.data[key] = value
+
+    def stage_input(self, stage: str, rows: list[dict]) -> None:
+        """What `stage` received: how many rows, and a digest of which rows in which order.
+
+        A replay that starts from a stage's recorded input checks it against this
+        before running the stage; a stage whose input digest matches and whose
+        output differs is where two runs parted.
+        """
+        self.data["stage_inputs"][stage] = {"rows": len(rows), "order": order_digest(rows)}
 
     # -- retrieval ----------------------------------------------------------------
 

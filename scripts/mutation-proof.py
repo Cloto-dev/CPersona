@@ -1121,6 +1121,111 @@ MUTATIONS += [
     for mid, find, replace, accepted, test in _REFUSALS
 ]
 
+# ---------------------------------------------------------------------------
+# The budget ledger (cpersona/budget.py) and the trace's record of each stage's
+# input (recall_trace.stage_input). The ledger's limits are the bounds recall
+# already held, so the mutants below either loosen a bound (and the loop runs a
+# stage it never ran), stop counting (and the trace misreports what was spent),
+# or move a recorded input to another stage (and a replay would start from the
+# wrong rows).
+# ---------------------------------------------------------------------------
+
+_BG = "cpersona/budget.py"
+_RT = "cpersona/recall_trace.py"
+
+MUTATIONS += [
+    Mutation(
+        id="M97",
+        tests=("tests/test_budget.py", "tests/test_recall_cue.py"),
+        target="budget ledger — the cue loop runs at most two stages",
+        file=_BG,
+        find="CUE_STAGES = 2\n",
+        replace="CUE_STAGES = 3\n",
+        breaks="an empty widened period is widened again, to the vague width, a stage v0 never ran",
+        expect="test_budget.py::test_a_cue_whose_widened_period_is_still_empty_stops_at_the_ledger",
+    ),
+    Mutation(
+        id="M98",
+        tests=("tests/test_budget.py", "tests/test_recall_cue.py"),
+        target="budget ledger — the cue loop asks the ledger before another stage",
+        file=_MH,
+        find="                if cue_rows or not ledger.allows(budget.CUE_STAGE):\n",
+        replace="                if cue_rows:\n",
+        breaks="the loop starts a stage the ledger does not allow, and the recall fails instead of stopping",
+        expect="test_budget.py::test_a_cue_whose_widened_period_is_still_empty_stops_at_the_ledger",
+    ),
+    Mutation(
+        id="M99",
+        tests=("tests/test_budget.py",),
+        target="budget ledger — the one hypothesis a recall evaluates is counted",
+        file=_MH,
+        find="    ledger.spend(budget.ITERATION)\n",
+        replace="",
+        breaks="a trace reports no hypothesis evaluated, so an iteration budget reads as untouched",
+        expect="test_budget.py::test_a_plain_recall_spends_one_fetch_and_one_iteration",
+    ),
+    Mutation(
+        id="M100",
+        tests=("tests/test_budget.py",),
+        target="budget ledger — the stop reason tells an unused budget from a spent one",
+        file=_BG,
+        find="        return STOP_NO_HYPOTHESIS if self.allows(ITERATION) else STOP_BUDGET\n",
+        replace="        return STOP_BUDGET\n",
+        breaks="a budget of 256 that evaluated one hypothesis reads as though all 256 were spent",
+        expect="test_budget.py::test_a_larger_iteration_budget_is_reported_unused_and_changes_nothing",
+    ),
+    Mutation(
+        id="M101",
+        tests=("tests/test_budget.py",),
+        target="budget ledger — the block arm's fetch is its own",
+        file=_MH,
+        find="            ledger.spend(budget.BLOCK_FETCH)\n",
+        replace="",
+        breaks="a recall that ran the block arm reports it never fetched",
+        expect="test_budget.py::test_the_block_arm_spends_its_own_fetch",
+    ),
+    Mutation(
+        id="M102",
+        tests=("tests/test_budget.py",),
+        target="budget ledger — a spend past the limit is refused",
+        file=_BG,
+        find="        if not self.allows(kind):\n",
+        replace="        if False:\n",
+        breaks="a stage can spend past its limit and the ledger counts it as though it fit",
+        expect="test_budget.py::test_spending_up_to_the_limit_is_counted_and_past_it_is_refused",
+    ),
+    Mutation(
+        id="M103",
+        tests=("tests/test_trace_seams.py",),
+        target="trace seams — the cut's recorded input is what the prior returned",
+        file=_MH,
+        find='        trace_rec.stage_input("cut", results)\n',
+        replace='        trace_rec.stage_input("cut", admitted)\n',
+        breaks="a replay starting at the cut would start from the order before the prior",
+        expect="test_trace_seams.py::test_only_the_stages_after_a_changed_stage_see_a_different_input",
+    ),
+    Mutation(
+        id="M104",
+        tests=("tests/test_trace_seams.py",),
+        target="trace seams — the digest keeps the order",
+        file=_RT,
+        find="    refs = [ref_of(r) for r in rows]\n",
+        replace="    refs = sorted(ref_of(r) for r in rows)\n",
+        breaks="two inputs with the same rows in another order read as the same input",
+        expect="test_trace_seams.py::test_only_the_stages_after_a_changed_stage_see_a_different_input",
+    ),
+    Mutation(
+        id="M105",
+        tests=("tests/test_trace_seams.py",),
+        target="trace seams — a traced recall names the provider set",
+        file=_MH,
+        find='    rec.set("providers", {"digest": active.digest, "slots": active.describe()})\n',
+        replace="",
+        breaks="a trace cannot say which providers produced it, so a replay cannot check it runs the same set",
+        expect="test_trace_seams.py::test_a_traced_recall_names_the_provider_set",
+    ),
+]
+
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, **kw)

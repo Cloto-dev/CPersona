@@ -551,7 +551,20 @@ async def observe_all() -> dict:
 # reason, evidence and the runbook this scenario recorded are unchanged, and the
 # recorded run is stdio, where the answer is "session" and nothing downgraded
 # differently. Pinned in tests/test_bug251_advisory_scope.py.
-_KEYS_ADDED_SINCE_GOLDEN = {"repairable", "checks_run", "advisory_scope"}
+#
+# budget (2.6): a traced recall reports its budget ledger -- the limits it ran
+# under, what it spent of each, and why its iterations stopped. Additive and
+# trace-only: the stages, arms, gate decisions and seats the m1 scenarios
+# recorded are unchanged, and no untraced response carries it. Pinned in
+# tests/test_budget.py.
+#
+# providers, stage_inputs (2.6): a traced recall names the provider set it ran
+# with and, for each stage, how many rows it received and a digest of their
+# order -- what a replay starting from a stage checks its input against.
+# Additive and trace-only, like `budget`. Pinned in tests/test_trace_seams.py.
+_KEYS_ADDED_SINCE_GOLDEN = {
+    "repairable", "checks_run", "advisory_scope", "budget", "providers", "stage_inputs",
+}
 
 
 # Values the golden DOES hold that a later version deliberately changed.
