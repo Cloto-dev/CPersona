@@ -458,6 +458,7 @@ async def do_recall_boundary(
     full_content: bool = False,
     session_key: str = "",
     trace: bool = False,
+    time_cue: dict | None = None,
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -478,6 +479,7 @@ async def do_recall_boundary(
         # A full_content response shows every row whole, so it needs no excerpt.
         excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
         **({"trace": True} if trace else {}),
+        **({"time_cue": time_cue} if time_cue is not None else {}),
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -524,6 +526,7 @@ async def do_reconstruct_boundary(
     session_key: str = "",
     trace: bool = False,
     budget: int | None = None,
+    time_cue: dict | None = None,
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -545,6 +548,7 @@ async def do_reconstruct_boundary(
         session_key=session_key,
         trace=trace,
         budget=budget,
+        **({"time_cue": time_cue} if time_cue else {}),
     )
     result = _apply_reconstruct_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -1273,6 +1277,49 @@ registry.auto_tool(
                     "unchanged."
                 ),
             },
+            "time_cue": {
+                "type": "object",
+                "description": (
+                    "2.6: when the answer was stored, as far as you remember. Give after and/or "
+                    "before (a date YYYY-MM-DD, which includes that whole day, or an ISO-8601 "
+                    "timestamp), or ago, plus confidence. The server also searches that period and "
+                    "moves a row found there up by at most 3 / 2 / 1 places (sure / likely / vague), "
+                    "and holds one extra seat for the best record only that search found. It never "
+                    "removes or re-scores rows outside the period, and which rows pass the quality "
+                    "gate does not change. If the period holds nothing it is widened once, one "
+                    "confidence step. likely widens the period by half its length on each side, "
+                    "vague by its whole length. The response then carries time_cue: the period "
+                    "searched, whether it was widened, how many rows moved and how many seats were "
+                    "used. Omit it when you do not know when. A cue that cannot be read returns an "
+                    "error and no messages."
+                ),
+                "properties": {
+                    "after": {"type": "string"},
+                    "before": {"type": "string"},
+                    "ago": {
+                        "description": (
+                            'Relative to now: {"unit": "days" | "weeks" | "months", "value": N} '
+                            "names the unit-long period centred N units ago (a month is 30 days); "
+                            '"long_ago" names the oldest third of what this scope holds.'
+                        ),
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "unit": {"type": "string", "enum": ["days", "weeks", "months"]},
+                                    "value": {"type": "integer", "minimum": 0},
+                                },
+                                "required": ["unit", "value"],
+                                "additionalProperties": False,
+                            },
+                            {"type": "string", "enum": ["long_ago"]},
+                        ],
+                    },
+                    "confidence": {"type": "string", "enum": ["sure", "likely", "vague"]},
+                },
+                "required": ["confidence"],
+                "additionalProperties": False,
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -1289,6 +1336,7 @@ registry.auto_tool(
         ("full_content", bool, False),
         ("session_key", str, ""),
         ("trace", bool, False),
+        ("time_cue", dict, None),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -1699,6 +1747,14 @@ registry.auto_tool(
                     "and not a data filter. Forwarded to the candidate recall."
                 ),
             },
+            "time_cue": {
+                "type": "object",
+                "description": (
+                    "2.6: when the answer was stored, as far as you remember — the same object "
+                    "recall takes (see recall's time_cue), applied to the candidate recall this "
+                    "reconstruction reads. The response carries time_cue when one was applied."
+                ),
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -1717,6 +1773,7 @@ registry.auto_tool(
         ("session_key", str, ""),
         ("trace", bool, False),
         ("budget", int, None),
+        ("time_cue", dict, None),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )

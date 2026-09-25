@@ -857,6 +857,11 @@ RECALL_PREVIEW_CHARS = _parse_int("CPERSONA_RECALL_PREVIEW_CHARS", 500)
 # 260 of 500 questions, an excerpt filled to 800 characters answered 341, and the
 # full records 351. Boundary-layer only, like the preview. 0 disables it.
 RECALL_EXCERPT_CHARS = _parse_int("CPERSONA_RECALL_EXCERPT_CHARS", 800)
+
+# 2.6 time cue (docs/RECALL_PROCESS_DESIGN.md §2.5): the one revision -- widening the
+# cue's period and running the cue arm again -- is skipped once the recall has taken
+# this long, and the trace says it stopped at the limit. Milliseconds.
+RECALL_CUE_TIME_LIMIT_MS = max(0, _parse_int("CPERSONA_RECALL_CUE_TIME_LIMIT_MS", 1000))
 RRF_K = max(1, _parse_int("CPERSONA_RRF_K", 60))
 RRF_THRESHOLD_FACTOR = _parse_float("CPERSONA_RRF_THRESHOLD_FACTOR", 0.5)
 # v2.4.12: Max theoretical _rrf_score ≈ num_retrievers / (RRF_K + 1), with 3

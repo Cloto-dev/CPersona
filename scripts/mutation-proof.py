@@ -907,6 +907,36 @@ MUTATIONS: list[Mutation] = [
         breaks="a record the reservation returned is confirmed as lost at the gate or the count cut",
         expect="test_recall_trace.py::test_confirm_orders_the_stages",
     ),
+    Mutation(
+        id="M60",
+        tests=("tests/test_recall_cue.py",),
+        target="time cue — no row moves up more than L places",
+        file="cpersona/memory_handlers.py",
+        find='cue.lift(results, cue_rank, cue.LIFT[cue_note["confidence"]], _rid_of)',
+        replace="cue.lift(results, cue_rank, 10, _rid_of)",
+        breaks="a wrong cue can carry a row from the bottom of the answer to the top, so its harm is no longer bounded by construction",
+        expect="test_recall_cue.py::test_a_cue_changes_order_not_admission",
+    ),
+    Mutation(
+        id="M61",
+        tests=("tests/test_recall_cue.py",),
+        target="time cue — the held seat is for records no ordinary arm reached",
+        file="cpersona/memory_handlers.py",
+        find='r for r in cue_rows if r["_rid"] not in reached and r["_rid"] not in present]',
+        replace='r for r in cue_rows if r["_rid"] not in present]',
+        breaks="a row the quality gate refused comes back through the cue's seat, so a cue changes which rows are admitted",
+        expect="test_recall_cue.py::test_a_row_the_gate_refused_does_not_come_back_through_the_seat",
+    ),
+    Mutation(
+        id="M62",
+        tests=("tests/test_recall_cue.py",),
+        target="time cue — the cue arm searches only the period",
+        file="cpersona/memory_handlers.py",
+        find='        src_clause_m += " AND datetime(m.timestamp) >= datetime(?) AND datetime(m.timestamp) < datetime(?)"',
+        replace='        src_clause_m += " AND datetime(m.timestamp) >= datetime(?) AND ? IS NOT NULL"',
+        breaks="the cue arm returns records after the period, so a cue lifts rows it does not point at",
+        expect="test_recall_cue.py::test_the_cue_arm_searches_only_the_period",
+    ),
 ]
 
 

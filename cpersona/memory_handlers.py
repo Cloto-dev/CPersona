@@ -15,6 +15,7 @@ import logging
 import math
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -23,6 +24,7 @@ from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import blocks
+from cpersona import cue
 from cpersona import excerpts
 from cpersona import health
 from cpersona import nodes
@@ -1635,6 +1637,88 @@ async def _block_reserved_rows(
     return out
 
 
+async def _search_cue_arm(
+    db,
+    agent_id: str,
+    query: str,
+    depth: int,
+    window: tuple[datetime, datetime],
+    *,
+    channel: str,
+    project_id: str | None,
+    source_id: str,
+    exclude_set: set[str],
+    query_vec: list,
+    lexical_terms: list[str] | None = None,
+) -> list[dict]:
+    """The cue arm (docs/RECALL_PROCESS_DESIGN.md §2.2): the memories whose timestamp
+    falls in `window`, ranked against the query.
+
+    Vector and keyword search over the period only, each to `depth`, merged into one
+    ranked list by reciprocal rank. The list orders rows for the bounded move and the
+    held seat; none of its numbers reaches a fused score or the gate. The vector half
+    reuses the query vector the ordinary vector arm embedded (`query_vec`), so a cue
+    costs no second embedding; where no local vector was produced it is empty and the
+    arm is keyword only. Isolation and the source filter are the recall's own.
+    """
+    start, end = (cue.sql_instant(w) for w in window)
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    src = source_id_where(source_id)
+    in_window = "datetime(timestamp) >= datetime(?) AND datetime(timestamp) < datetime(?)"
+    lists: list[list[dict]] = []
+
+    if query_vec and query.strip():
+        import numpy as np
+
+        qv = np.array(query_vec[0], dtype=np.float32)
+        survivors = await vector._chunked_cosine_scan(
+            db,
+            f"""SELECT id, embedding FROM memories
+               WHERE {iso.clause} AND embedding IS NOT NULL{src.and_clause} AND {in_window}
+               ORDER BY created_at DESC, id ASC
+               LIMIT ?""",
+            (*iso.params, *src.params, start, end, MAX_MEMORIES),
+            qv,
+            len(qv),
+            vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR,
+            depth,
+        )
+        ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
+        payload = await vector._fetch_rows_by_id(
+            db,
+            f"SELECT id, msg_id, content, source, timestamp FROM memories WHERE id IN ({{ph}})"
+            f"{iso.and_clause}{src.and_clause}",
+            [mem_id for _, mem_id, _ in ranked],
+            (*iso.params, *src.params),
+        )
+        lists.append([
+            {"id": mem_id, "_rid": ("mem", mem_id), "_cosine": score, "msg_id": payload[mem_id][1],
+             "content": payload[mem_id][2], "source": payload[mem_id][3], "timestamp": payload[mem_id][4]}
+            for _, mem_id, score in ranked
+            if mem_id in payload
+        ])
+
+    # An empty query has no ranking to offer, so the keyword half returns the period's
+    # newest records, as the ordinary recall does for an empty query.
+    if FTS_ENABLED or not query.strip():
+        keyword = await _search_memories_keyword(
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms, window=(start, end),
+        )
+        lists.append([{**row, "_rid": ("mem", row["id"])} for row in keyword])
+
+    votes: dict[tuple, float] = {}
+    rows: dict[tuple, dict] = {}
+    for ranked_list in lists:
+        for rank, row in enumerate(ranked_list):
+            if _content_excluded(row.get("content", ""), exclude_set):
+                continue
+            rows.setdefault(row["_rid"], row)
+            votes[row["_rid"]] = votes.get(row["_rid"], 0.0) + 1.0 / (cue.RANK_CONSTANT + rank)
+    ordered = sorted(votes, key=lambda rid: -votes[rid])  # stable: first-seen breaks ties
+    return [rows[rid] for rid in ordered[:depth]]
+
+
 async def do_recall(
     agent_id: str,
     query: str,
@@ -1648,17 +1732,27 @@ async def do_recall(
     lexical_terms: list[str] | None = None,
     excerpt_chars: int = 0,
     trace: bool = False,
+    time_cue: dict | None = None,
 ) -> dict:
     """Recall, optionally returning the recall trace (docs/RECALL_PROCESS_DESIGN.md §1).
 
     Without ``trace`` this is exactly ``_do_recall``. With it, a recorder is active for
     the duration of the call and the response carries ``trace``: references, ranks,
     scores and reasons per stage, never stored text. The recall itself is unchanged.
+
+    ``time_cue`` (§2) says when the answer was stored, with a confidence; see
+    ``cpersona/cue.py``. A cue that cannot be read is refused with ``error`` and no
+    messages rather than ignored, so a caller never believes a cue it did not send
+    was applied.
     """
+    try:
+        parsed_cue = cue.parse(time_cue)
+    except cue.TimeCueError as exc:
+        return error_response(str(exc), messages=[])
     kwargs = dict(
         deep=deep, channel=channel, exclude_contents=exclude_contents, project_id=project_id,
         source_id=source_id, session_key=session_key, lexical_terms=lexical_terms,
-        excerpt_chars=excerpt_chars,
+        excerpt_chars=excerpt_chars, **({"time_cue": parsed_cue} if parsed_cue is not None else {}),
     )
     if not trace:
         return await _do_recall(agent_id, query, limit, **kwargs)
@@ -1666,7 +1760,10 @@ async def do_recall(
     from cpersona import utils as _utils
 
     rec = recall_trace.TraceRecorder()
-    rec.set("policy", {"scoring": _utils.SCORING_VERSION, "process": recall_trace.PROCESS_SINGLE_PASS})
+    rec.set("policy", {
+        "scoring": _utils.SCORING_VERSION,
+        "process": cue.POLICY if parsed_cue is not None else recall_trace.PROCESS_SINGLE_PASS,
+    })
     rec.set("server_version", __version__)
     rec.set("scope", {"agent_id": agent_id, "project_id": project_id, "channel": channel, "source_id": source_id})
     rec.set("request", {
@@ -1675,6 +1772,7 @@ async def do_recall(
         "prior": {"far_weight": PRIOR_FAR_WEIGHT, "age_rate": PRIOR_AGE_RATE,
                   "age_floor": PRIOR_AGE_FLOOR, "age_anchor": PRIOR_AGE_ANCHOR},
         "episode_penalty": EPISODE_PENALTY_ENABLED,
+        **({"time_cue": parsed_cue.echo()} if parsed_cue is not None else {}),
     })
     rec.set("config", {
         "embedding_mode": config.EMBEDDING_MODE, "embedding_model": config.EMBEDDING_MODEL, "scan_window": MAX_MEMORIES,
@@ -1702,6 +1800,7 @@ async def _do_recall(
     session_key: str = "",
     lexical_terms: list[str] | None = None,
     excerpt_chars: int = 0,
+    time_cue: cue.TimeCue | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1751,6 +1850,7 @@ async def _do_recall(
     # looks, and how many rows one call may materialise — and while they shared a
     # constant, widening the window for a larger corpus widened this bound by the
     # same factor without anyone choosing to.
+    started = time.perf_counter()
     requested = limit
     limit = _clamp_limit(limit, RECALL_LIBRARY_MAX_LIMIT)
     if requested > limit:
@@ -1810,6 +1910,11 @@ async def _do_recall(
                 project_id=project_id, source_id=source_id,
                 query_vec_out=query_vec_out, **lexical,
             )
+
+        # Every row an ordinary arm reached, whatever the gate later decides: the
+        # cue's held seat is only for a record no other arm found (§2.4), so a row
+        # the gate refused cannot come back through it.
+        reached = {r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id")) for r in results}
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
         # produces the exact same per-row gate score the runtime gate keys on).
@@ -1879,6 +1984,58 @@ async def _do_recall(
             )
             if trace_rec is not None:
                 trace_rec.arm("block", block_rows, "_block_distance")
+
+        # The time cue (docs/RECALL_PROCESS_DESIGN.md §2): the cue arm searches the
+        # period, and if it finds nothing the loop suspects the period is wrong and
+        # widens it once, running only the cue arm again. The ordinary arms above are
+        # not run a second time.
+        cue_rows: list[dict] = []
+        cue_note: dict | None = None
+        if time_cue is not None:
+            span_min, span_max = await scope_stats.get_span(
+                db, agent_id, project_id=project_id, channel=channel
+            )
+            span = (cue.utc(span_min), cue.utc(span_max))
+            now = datetime.now(timezone.utc)
+            confidence = time_cue.confidence
+            stages: list[dict] = []
+            suspected: list[dict] = []
+            while True:
+                window = cue.period(time_cue, confidence, now, span)
+                if window is not None:
+                    cue_rows = await _search_cue_arm(
+                        db, agent_id, query, depth, window, channel=channel, project_id=project_id,
+                        source_id=source_id, exclude_set=exclude_set, query_vec=query_vec_out,
+                        lexical_terms=lexical_terms,
+                    )
+                stage = {
+                    "stage": len(stages),
+                    "searched": "all arms and the cue period" if not stages else "the cue period only",
+                    "confidence": confidence,
+                    "period": [w.isoformat() for w in window] if window is not None else None,
+                    "found": len(cue_rows),
+                    "next": None,
+                }
+                stages.append(stage)
+                if trace_rec is not None:
+                    trace_rec.arm("cue" if len(stages) == 1 else f"cue_stage_{len(stages) - 1}", cue_rows, "_cosine")
+                if cue_rows or len(stages) == 2:
+                    break
+                wider = cue.WIDER[confidence]
+                suspected.append({"stage": stage["stage"], "code": "CANDIDATE_MISS",
+                                  "reason": "the cue period holds no candidate"})
+                if wider is None:
+                    stage["next"] = "stop: no wider period (a vague cue widens to no period)"
+                    break
+                if (time.perf_counter() - started) * 1000 > config.RECALL_CUE_TIME_LIMIT_MS:
+                    stage["next"] = "stop: time limit"
+                    break
+                stage["next"] = f"widen to the {wider} margin"
+                confidence = wider
+            cue_note = {"stages": stages, "suspected": suspected, "confidence": confidence}
+            if trace_rec is not None:
+                trace_rec.set("stages", [dict(st) for st in stages])
+                trace_rec.set("suspected", suspected)
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26/27: use the calibrated gate for whichever branch is active.
@@ -1985,6 +2142,21 @@ async def _do_recall(
     # 2.6.0a7: the prior orders what the gate and autocut admitted; it never
     # admits or removes (docs/PRIOR_FUNCTION_DESIGN.md §3).
     results = _apply_prior(results, prior_span, datetime.now(timezone.utc))
+
+    # The cue's bounded move (§2.3): after the gate, autocut and prior have decided
+    # which rows remain and in what order, a row the cue arm also found moves up by
+    # at most L places. Scores are not read or written, so which rows remain cannot
+    # change; only their order can.
+    def _rid_of(r: dict) -> tuple:
+        return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
+
+    cue_rank = {_rid_of(r): c for c, r in enumerate(cue_rows)}
+    if cue_note is not None:
+        results, moves = cue.lift(results, cue_rank, cue.LIFT[cue_note["confidence"]], _rid_of)
+        for r in results:
+            if _rid_of(r) in cue_rank:
+                r["_cue_rank"] = cue_rank[_rid_of(r)]
+        cue_note["lifted"] = moves
     if trace_rec is not None:
         trace_rec.order(results, limit)
         trace_rec.mark("order")
@@ -2007,6 +2179,22 @@ async def _do_recall(
         results.extend(reserved[: blocks.BLOCK_RESERVATION])
         if trace_rec is not None:
             trace_rec.reservation(reserved[: blocks.BLOCK_RESERVATION], "block")
+
+    # The cue's held seat (§2.4): the best record only the cue arm found. The bounded
+    # move cannot reach it because it is not in the admitted order; the seat adds it
+    # and displaces nothing. A record an ordinary arm reached is not eligible, so a
+    # row the gate refused does not come back this way.
+    if cue_note is not None:
+        present = {_rid_of(r) for r in results}
+        seated = [r for r in cue_rows if r["_rid"] not in reached and r["_rid"] not in present][: cue.SEATS]
+        for r in seated:
+            r["_cue_seat"] = True
+            r["_cue_rank"] = cue_rank[r["_rid"]]
+        results.extend(seated)
+        cue_note["seated"] = seated
+        if trace_rec is not None:
+            trace_rec.reservation(seated, "cue")
+            trace_rec.cue(cue_note, cue.LIFT[cue_note["confidence"]])
 
     results.reverse()
 
@@ -2054,7 +2242,12 @@ async def _do_recall(
         # Scoring reshape lives in 2.6.0 (charter §5 soak isolation); this exposes
         # only what the existing scoring layer already computed.
         gate_score, gate_signal = _gate_score(r)
-        if gate_signal is not None:
+        if r.get("_cue_seat"):
+            # A held seat for the time cue (docs/RECALL_PROCESS_DESIGN.md §2.4). Checked
+            # before the gate branches: a cue-arm row may carry a cosine, but no gate
+            # read it, so it must not be reported as having passed one.
+            msg["match_reason"] = {"signal": "cue", "admission": "reservation", "cue_rank": r["_cue_rank"]}
+        elif gate_signal is not None:
             match_reason: dict = {"signal": gate_signal, "score": gate_score}
             if r.get("_cosine") is not None:
                 match_reason["cosine"] = r["_cosine"]
@@ -2065,6 +2258,9 @@ async def _do_recall(
             if r.get("_prior") is not None:
                 # 2.6.0a7: the age weight that ordered this row, when one was applied.
                 match_reason["prior"] = round(r["_prior"], 4)
+            if r.get("_cue_rank") is not None:
+                # The row's rank on the cue arm, which bounded how far it could move.
+                match_reason["cue_rank"] = r["_cue_rank"]
             msg["match_reason"] = match_reason
         elif r.get("_block_distance") is not None:
             # A reserved row (docs/BLOCK_REACH_DESIGN.md §5) has no gate signal,
@@ -2100,6 +2296,8 @@ async def _do_recall(
         r.pop("_block_distance", None)
         r.pop("_block_index", None)
         r.pop("_block_order", None)
+        r.pop("_cue_seat", None)
+        r.pop("_cue_rank", None)
         messages.append(msg)
 
     # The excerpt a preview-cut row carries beside its prefix (cpersona/excerpts.py).
@@ -2186,6 +2384,19 @@ async def _do_recall(
     # change the payload of the whole surface (and every recorded golden) to say nothing.
     if gate_fallback:
         result["gate_fallback"] = True
+    # The time cue (docs/RECALL_PROCESS_DESIGN.md §2), present only when one was
+    # given: the period that was searched last, whether the loop widened it, how
+    # many returned rows it moved, and whether it filled its seat.
+    if cue_note is not None:
+        last = cue_note["stages"][-1]
+        result["time_cue"] = {
+            "policy": cue.POLICY,
+            "period": last["period"],
+            "confidence": cue_note["confidence"],
+            "revised": len(cue_note["stages"]) > 1,
+            "moved": len(cue_note.get("lifted", [])),
+            "seated": len(cue_note.get("seated", [])),
+        }
     advisory = health.maybe_advisory(session_key_resolved, session_key_declared)
     if advisory is not None:
         result["advisory"] = advisory
@@ -2934,6 +3145,7 @@ async def _search_memories_keyword(
     project_id: str | None = None,
     source_id: str = "",
     extra_terms: list[str] | None = None,
+    window: tuple[str, str] | None = None,
 ) -> list[dict]:
     """Search memories using FTS5 (preferred) or LIKE fallback.
 
@@ -2941,6 +3153,8 @@ async def _search_memories_keyword(
     source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
     extra_terms (2.6) are matched as well as the query, by FTS phrase and by the
     LIKE fallback; see ``_build_fts_recall_query``.
+    window (2.6, the cue arm) keeps rows whose timestamp is in ``[start, end)``,
+    both bounds as SQLite ``datetime()`` reads them; see ``cpersona/cue.py``.
     """
     # isolation_where composes all three axes: exact agent, γ project,
     # and the knob2 v2 channel contract (stored channel '' matches every
@@ -2955,6 +3169,12 @@ async def _search_memories_keyword(
     src_params_bare = src_bare.params
     src_clause_m = src_m.and_clause
     src_params_m = src_m.params
+    if window is not None:
+        # Compared as instants, not as text: stored timestamps mix spellings (bug-394).
+        src_clause_bare += " AND datetime(timestamp) >= datetime(?) AND datetime(timestamp) < datetime(?)"
+        src_clause_m += " AND datetime(m.timestamp) >= datetime(?) AND datetime(m.timestamp) < datetime(?)"
+        src_params_bare = (*src_params_bare, *window)
+        src_params_m = (*src_params_m, *window)
 
     if not query.strip():
         rows = await db.execute_fetchall(

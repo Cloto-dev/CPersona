@@ -7,8 +7,9 @@ answer, and assigns one confirmed code from the failure taxonomy:
 
     CANDIDATE_MISS       the answer's record is in no retrieval arm
     FILTER_DROP          it was a candidate, and the quality gate or autocut removed it
-    RANKING_MISS         it passed, but the count cut dropped it; or the block arm reached
-                         it and it ranked below the seats held for that arm
+    RANKING_MISS         it passed, but the count cut dropped it; or an arm with held seats
+                         (the block arm, the time cue's arm) reached it and it ranked below
+                         the seats held for that arm
     RECONSTRUCTION_LOSS  it was returned, and the answer's text was not in what was shown
     AGENT_MISUSE         the answer's text was shown, and the reader still answered wrong
     UNATTRIBUTED         none of the above can be established from the record
@@ -30,6 +31,16 @@ def _norm(text: str | None) -> str:
 
 def _arm_refs(trace: dict) -> set[str]:
     return {row["ref"] for rows in trace.get("arms", {}).values() for row in rows}
+
+
+def _seat_arm_refs(trace: dict) -> set[str]:
+    """Rows reached by an arm whose rows are admitted only through held seats."""
+    return {
+        row["ref"]
+        for name, rows in trace.get("arms", {}).items()
+        if name == "block" or name == "cue" or name.startswith("cue_stage_")
+        for row in rows
+    }
 
 
 def confirm(
@@ -70,8 +81,8 @@ def confirm(
             return "FILTER_DROP"  # it passed the gate, and autocut removed it
         if gold & set(order.get("cut_by_count", [])):
             return "RANKING_MISS"
-        if gold & {row["ref"] for row in trace.get("arms", {}).get("block", [])}:
-            return "RANKING_MISS"  # the block arm reached it, and it ranked below the held seats
+        if gold & _seat_arm_refs(trace):
+            return "RANKING_MISS"  # an arm with held seats reached it, and it ranked below them
         return "UNATTRIBUTED"
 
     if shown_text is not None and quotes:

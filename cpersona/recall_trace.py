@@ -150,6 +150,15 @@ class TraceRecorder:
             "cut_by_count": [ref_of(r) for r in before_cut[limit:]],
         }
 
+    def cue(self, note: dict, bound: int) -> None:
+        """The time cue's effect: the bound it ran under, the moves and the seat."""
+        self.data["cue"] = {
+            "bound": bound,
+            "confidence": note["confidence"],
+            "lifted": [{"ref": ref_of(m["row"]), "from": m["from"], "to": m["to"]} for m in note.get("lifted", [])],
+            "seated": [ref_of(r) for r in note.get("seated", [])],
+        }
+
     def reservation(self, rows: list[dict], kind: str) -> None:
         self.data["reservation"].extend({"ref": ref_of(r), "kind": kind} for r in rows)
 
