@@ -1,7 +1,7 @@
 # The Recall Process, v0 — design
 
-**Status:** the recall trace (§1) is implemented and not yet in a release;
-the loop (§2) is design, not shipped behaviour. It is the first step of
+**Status:** the recall trace (§1) and the loop's basic form (§2) are
+implemented and not yet in a release. It is the first step of
 [the recall process](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process),
 [Cued Recall](RELIABLE_RECALL_2_6.md#2-cued-recall-the-input-contract) and the
 [recall trace](RELIABLE_RECALL_2_6.md#8-recall-quality-engineering). v0 has
@@ -191,6 +191,38 @@ trace.
 - No row moves up more than `L` places.
 - Isolation (`agent_id`, `project_id`, `channel`) is never widened: it is the
   space the search happens in, not a cue.
+
+### 2.7 As implemented
+
+The points the sections above leave open were settled this way. All of them
+belong to the policy version `cued-v0`.
+
+- **Relative periods.** `{"unit": u, "value": n}` is the period one unit long,
+  centred `n` units before now, and ending no later than now. A month is 30
+  days. `long_ago` is the oldest third of the time span the scope holds. An
+  open end of an absolute cue is closed by the scope's oldest record or by now.
+  A date names the whole day, so `before: "2026-08-31"` includes the 31st.
+- **The cue arm** searches memories, not episode summaries. Its vector half
+  reuses the query vector the ordinary vector arm already embedded, so a cue
+  costs no second embedding; where no local vector exists, the arm is keyword
+  only. The two halves are merged by reciprocal rank into one list. With an
+  empty query, the arm returns the period's newest records.
+- **The bound in practice.** Rows are sorted stably, so a row whose key ties
+  another's stays behind it. A single moved row therefore rises at most
+  `L − 1` places, and a `vague` cue (`L` = 1) moves no row: it can only fill
+  the seat.
+- **After a revision**, `L` is that of the confidence step actually searched.
+  A `vague` cue whose period holds nothing stops, since there is no wider
+  period.
+- **The time limit** for the revision is `CPERSONA_RECALL_CUE_TIME_LIMIT_MS`
+  (default 1000), measured from the start of the recall.
+- **The response** carries `time_cue`: the policy, the period searched last,
+  the confidence step used, whether the loop revised, how many rows moved and
+  how many seats were used. A row the cue arm ranked carries
+  `match_reason.cue_rank`. A cue that cannot be read is refused with `ok:
+  false` and an `error` naming the part, never ignored.
+- `reconstruct` accepts the same `time_cue` and applies it to the recall it
+  reads its candidates from.
 
 ## 3. What v0 claims
 
