@@ -67,7 +67,7 @@ import numpy as np
 
 from . import associations, blocks, config, excerpts, generation, nodes, vector
 from .database import connection
-from .utils import _parse_timestamp_utc
+from .utils import _parse_timestamp_utc, error_response
 
 logger = logging.getLogger(__name__)
 
@@ -1138,6 +1138,7 @@ async def do_reconstruct(
     session_key: str = "",
     trace: bool = False,
     budget: int | None = None,
+    time_cue: dict | None = None,
 ) -> dict:
     """Assemble recall items from the candidate pool the recall process produced.
 
@@ -1150,8 +1151,16 @@ async def do_reconstruct(
     # config and database modules this one uses, and a top-level import would
     # make the pair mutually importable depending on which the server touches
     # first.
+    from . import cue as _time_cue
     from .memory_handlers import RECALL_LIBRARY_MAX_LIMIT, do_recall
 
+    # The time cue (docs/RECALL_PROCESS_DESIGN.md §2) is the candidate recall's: it
+    # orders the candidate pool this reconstruction reads. Read here as well, so a cue
+    # that cannot be read is refused rather than taken for an empty candidate pool.
+    try:
+        _time_cue.parse(time_cue)
+    except _time_cue.TimeCueError as exc:
+        return error_response(str(exc), items=[], returned_count=0)
     effective_count, count_policy = resolve_count(count)
     effective_budget, budget_policy = resolve_budget(budget, effective_count)
     bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))
@@ -1179,6 +1188,7 @@ async def do_reconstruct(
         # The recall trace of the call this reconstruction rests on
         # (docs/RECALL_PROCESS_DESIGN.md §1.1), returned as trace.recall.
         **({"trace": True} if trace else {}),
+        **({"time_cue": time_cue} if time_cue else {}),
     )
     messages = recall_result.get("messages", [])
 
@@ -1218,7 +1228,7 @@ async def do_reconstruct(
     }
     # bug-436: do_recall has already marked these notices as delivered to this
     # session. Forward them even when no candidate survives reconstruction.
-    for notice in ("advisory", "update"):
+    for notice in ("advisory", "update", "time_cue"):
         if notice in recall_result:
             response[notice] = recall_result[notice]
     if recall_result.get("gate_fallback"):

@@ -224,6 +224,11 @@ def test_confirm_orders_the_stages():
                   "reservation": [{"ref": "mem:c", "kind": "block"}]}
     assert confirm(seats_full, {"mem:d"}) == "RANKING_MISS"
     assert confirm(seats_full, {"mem:c"}) is None
+    # The time cue's arm holds a seat the same way, at either stage of the loop.
+    for arm in ("cue", "cue_stage_1"):
+        cue_full = {**seats_full, "arms": {arm: seats_full["arms"]["block"]}}
+        assert confirm(cue_full, {"mem:d"}) == "RANKING_MISS"
+    assert confirm({**seats_full, "arms": {"vector_near": seats_full["arms"]["block"]}}, {"mem:d"}) == "UNATTRIBUTED"
     assert confirm(_trace(**base), {"mem:b"}) is None
 
 

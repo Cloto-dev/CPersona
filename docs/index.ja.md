@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:f4523ee5ba78836e7dd1dd4c7a1db57b10e02620 -->
+<!-- i18n-source: docs/index.md@blob:5088a9cc506c9afe7cbee0faa94d442d161258ad -->
 
 # CPersona ドキュメント
 
@@ -79,6 +79,15 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
     バックアップ、劣化検知、recall を調整する順序、日本語コーパス、保守の周期。
 
     [:octicons-arrow-right-24: 運用 Runbook](operations.md)
+
+-   :material-database-arrow-up:{ .lg .middle } **2.6 への移行**
+
+    ---
+
+    2.5.x のストアを現在の 2.6 pre-release へ一度に移行する手順: バックアップ、最初の起動で
+    移行されるもの、後で作るもの、戻し方。
+
+    [:octicons-arrow-right-24: 2.6 への移行](upgrading-to-2.6.md)
 
 -   :material-help-circle:{ .lg .middle } **FAQ**
 

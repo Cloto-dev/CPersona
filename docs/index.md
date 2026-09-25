@@ -77,6 +77,15 @@ things that does not mean:
 
     [:octicons-arrow-right-24: Operations Runbook](operations.md)
 
+-   :material-database-arrow-up:{ .lg .middle } **Upgrading to 2.6**
+
+    ---
+
+    Taking a 2.5.x store to the current 2.6 pre-release in one pass: backup,
+    what the first start migrates, what to build afterwards, how to go back.
+
+    [:octicons-arrow-right-24: Upgrading to 2.6](upgrading-to-2.6.md)
+
 -   :material-help-circle:{ .lg .middle } **FAQ**
 
     ---

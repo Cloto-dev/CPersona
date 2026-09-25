@@ -1,7 +1,7 @@
 # The Recall Process, v0 — design
 
-**Status:** the recall trace (§1) is implemented and not yet in a release;
-the loop (§2) is design, not shipped behaviour. It is the first step of
+**Status:** the recall trace (§1) and the loop's basic form (§2) are
+released in 2.6.0a7. It is the first step of
 [the recall process](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process),
 [Cued Recall](RELIABLE_RECALL_2_6.md#2-cued-recall-the-input-contract) and the
 [recall trace](RELIABLE_RECALL_2_6.md#8-recall-quality-engineering). v0 has
@@ -42,7 +42,7 @@ What a trace may contain when it leaves the machine is decided separately.
 | Field | Content |
 | --- | --- |
 | `trace_version` | `1`. Raised only when an existing field changes meaning; adding a field does not raise it |
-| `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0` with one) |
+| `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0.2` with one; `cued-v0.1` before §2.10, `cued-v0` before §2.8) |
 | `server_version` | The version that answered |
 | `scope` | `agent_id`, `project_id`, `channel`, `source_id` as resolved |
 | `request` | `limit`, the recall depth, `deep`, the fusion mode, the confidence ordering, the prior's settings, whether the episode penalty is on, and the `time_cue` when given |
@@ -129,14 +129,16 @@ re-scored. A cue is a prior, never a filter.
 ### 2.3 How a cue moves a row
 
 The cue never touches a fused score, the quality gate or autocut. After they
-have decided which rows remain, a row the cue arm also found is moved up. The
-move is bounded in positions, not in score:
+and the count have decided which rows are returned, a row among them that the
+cue arm also found is moved up. Because the move comes after the count, it
+cannot push a row out of the answer (§2.9). The move is bounded in positions,
+not in score:
 
 ```text
 key(row) = p − L × 61 / (61 + c)        sorted ascending
 ```
 
-- `p` is the row's position in the admitted order.
+- `p` is the row's position in the returned order.
 - `c` is its rank on the cue arm.
 - `L` is set by confidence: `sure` 3, `likely` 2, `vague` 1.
 
@@ -187,10 +189,90 @@ trace.
 
 - Without `time_cue`, a recall is identical to today's, pinned by the golden.
 - With `time_cue`, the set of rows that pass the quality gate is identical to
-  the set without it. The cue changes order and adds at most one reserved row.
+  the set without it, and so are the rows the count returns. The cue reorders
+  those rows and adds at most one reserved row.
 - No row moves up more than `L` places.
 - Isolation (`agent_id`, `project_id`, `channel`) is never widened: it is the
   space the search happens in, not a cue.
+
+### 2.7 As implemented
+
+The points the sections above leave open were settled this way. All of them
+belong to the policy version `cued-v0`.
+
+- **Relative periods.** `{"unit": u, "value": n}` is the period one unit long,
+  centred `n` units before now, and ending no later than now. A month is 30
+  days. `long_ago` is the oldest third of the time span the scope holds. An
+  open end of an absolute cue is closed by the scope's oldest record or by now.
+  A date names the whole day, so `before: "2026-08-31"` includes the 31st.
+- **The cue arm** searches memories and, since `cued-v0.2` (§2.10), episodes.
+  An episode's time is its start time, else the time it was recorded, as
+  everywhere else. Its vector half reuses the query vector the ordinary vector
+  arm already embedded, so a cue costs no second embedding; where no local
+  vector exists, the arm is keyword only. All the lists are merged by
+  reciprocal rank into one. With an empty query, the arm returns the period's
+  newest records. With a source filter, episodes (which carry no per-user
+  source) are searched only when a channel also scopes the recall, as in the
+  ordinary arms.
+- **Ties.** A tie between a row the cue found and one it did not goes to the
+  found row; any other tie keeps the original order. So the row the cue arm
+  ranks first rises exactly `L` places when it stands that far down, and rows
+  it ranks lower rise less (at cue rank 60, half of `L`).
+- **After a revision**, `L` is that of the confidence step actually searched.
+  A `vague` cue whose period holds nothing stops, since there is no wider
+  period.
+- **The time limit** for the revision is `CPERSONA_RECALL_CUE_TIME_LIMIT_MS`
+  (default 1000), measured from the start of the recall.
+- **The response** carries `time_cue`: the policy, the period searched last,
+  the confidence step used, whether the loop revised, how many rows moved and
+  how many seats were used. A row the cue arm ranked carries
+  `match_reason.cue_rank`. A cue that cannot be read is refused with `ok:
+  false` and an `error` naming the part, never ignored.
+- `reconstruct` accepts the same `time_cue` and applies it to the recall it
+  reads its candidates from.
+
+### 2.8 A cue for today is not used (`cued-v0.1`)
+
+A cue whose own period, before any confidence margin, starts no earlier than
+24 hours before now points only at today or at the future, and the recall does
+not use it. The rows are exactly those of a recall without a cue. The
+response's `time_cue` carries `ignored: "recent_only"` and the period, and the
+trace records `cue_ignored`. The policy version is `cued-v0.1`; `cued-v0` is
+the same policy without this rule.
+
+Why: the first measurement of the loop gave each question the cue a separate
+model extracted from the question text and the date the question was asked.
+Of 60 cues, 36 named the question date itself although the question named no
+time, and the cue period held the evidence for only 18 of 57 questions. A
+caller that fills the cue with today's date is therefore the observed way a
+cue goes wrong. The rule loses a correct cue only when the answer was stored
+within the last day, and those records are the newest in the store anyway.
+The tool description asks callers to pass a cue only when the request itself
+names a time.
+
+### 2.9 The move comes after the count (`cued-v0.1`)
+
+In `cued-v0` the move ran before the count cut the order to `limit`. A row
+just below the cut could then rise into the answer and push the last row out,
+although the tool description said the cue never removed a row. Measured on a
+real long-term store at a count of ten, that happened on 8 of 60 cued
+questions with the extracted cues, and on 2 of 60 with deliberately wrong
+ones. `cued-v0.1` cuts first and moves rows only among those returned, so the
+returned rows are exactly those of a recall without the cue, reordered, plus
+at most the one seat. The cost is that the move can no longer bring a row
+from just below the cut into view; only the seat adds a row.
+
+### 2.10 The cue arm searches episodes (`cued-v0.2`)
+
+Until `cued-v0.1` the cue arm searched memories only. Measured on a real
+long-term store with 181 questions whose cue period held the evidence in 93%
+of cases, that split the effect by the kind of evidence: where it was a
+memory, the evidence rose on 35 questions and fell on 3; where it was an
+episode, it rose on none and fell on 12. The cue arm could not find the
+episode, so it lifted the period's other memories past it. `cued-v0.2`
+searches episodes in the period with the same vector and keyword halves.
+This change was made after that result and has not yet been measured on
+fresh questions.
 
 ## 3. What v0 claims
 

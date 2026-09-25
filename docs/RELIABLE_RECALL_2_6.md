@@ -188,12 +188,18 @@ than assuming the two regimes agree.
 
 ## 4. Depth is not count
 
-Two numbers are conflated in the current `recall` tool, and the conflation
-measurably costs accuracy. `limit` is documented as a per-retriever search
-depth: it is the top-K each arm hands to the fusion, so asking for five results
-also fuses only five candidates per arm. Measured on the benchmark corpus, a fusion over the full candidate list scores
-far above the same fusion cut to a hundred. A limit of five put rows
-structurally out of reach at every gate value.
+Two numbers are conflated in the current `recall` tool. `limit` is documented
+as a per-retriever search depth: it is the top-K each arm hands to the fusion,
+so asking for five results also fuses only five candidates per arm. A limit of
+five put rows structurally out of reach at every gate value.
+
+Whether a deeper fusion also returns better rows at the same count is a
+separate question, and it is measured rather than assumed. The first
+pre-registered sweep, at a count of ten on the LongMemEval harness, found no
+gain (`benchmarks/measurements/results-recall-depth-floor-sweep.md`), so the
+depth floor ships at 0. The contrast earlier cited here, full ranking against
+the same ranking cut to a hundred rows, differed in how many rows came back,
+not only in depth, and is not evidence either way.
 
 The line separates them and gives each its name:
 
