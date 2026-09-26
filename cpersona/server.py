@@ -480,6 +480,9 @@ async def do_recall_boundary(
         excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
         **({"trace": True} if trace else {}),
         **({"time_cue": time_cue} if time_cue is not None else {}),
+        # The propagation seat is measured on this tool only (cpersona/propagation.py);
+        # passed only when on, so a recall with it off is called exactly as before.
+        **({"propagation_seat": True} if config.RECALL_PROPAGATION_SEAT else {}),
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)

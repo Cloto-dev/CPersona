@@ -29,6 +29,7 @@ from cpersona import cue
 from cpersona import excerpts
 from cpersona import health
 from cpersona import nodes
+from cpersona import propagation
 from cpersona import providers
 from cpersona import scope_stats
 from cpersona import recall_trace
@@ -1543,6 +1544,125 @@ async def _apply_recall_scoring(
     return results, time_range_hours, recall_counts, newest_age_hours
 
 
+def _propagation_applies(requested: bool, query: str) -> bool:
+    """Whether a recall runs the propagation seat: asked for, a fusion mode, a real query.
+
+    The cascade fuses nothing, so it has no deeper order to draw a candidate from,
+    and an empty query is a recency listing with no first row to follow.
+    """
+    return bool(requested) and RECALL_MODE in {"rrf", "rsf"} and bool(query.strip())
+
+
+async def _propagation_seat_rows(
+    p,
+    ledger: budget.Ledger,
+    window: list[dict],
+    present: set,
+    *,
+    agent_id: str,
+    query: str,
+    depth: int,
+    limit: int,
+    deep: bool,
+    channel: str,
+    exclude_set: set[str],
+    project_id: str | None,
+    source_id: str,
+    lexical_terms: list[str] | None,
+    gate,
+    gate_signal,
+    effective_min: float,
+    memory_count: int,
+    pure_recency: bool,
+    prior_span,
+) -> tuple[list[dict], dict]:
+    """The propagation seat (cpersona/propagation.py): the row, if any, that takes it.
+
+    The same recall is ranked again at propagation.DEPTH -- the ordinary arms, the
+    scoring, the gate, autocut and the prior, exactly as the window was -- and the
+    rows of that order not already in the answer are the candidates. The Core
+    decides which rows are eligible and how many places there are; the provider in
+    the propagation_selector slot only chooses among them. Nothing here is recorded
+    on the trace except the note it returns: the deeper ranking is the seat's own,
+    and the trace's arms, fusion and gate stay the answer's.
+    """
+
+    def rid_of(r: dict) -> tuple:
+        return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
+
+    ledger.spend(budget.PROPAGATION_FETCH)
+    deeper = _clamp_limit(max(propagation.DEPTH, depth), RECALL_LIBRARY_MAX_LIMIT)
+    anchor_row = next((r for r in window if isinstance(r.get("id"), int) and r["id"] > 0), None)
+    note: dict = {"policy": propagation.POLICY, "depth": deeper, "candidates": 0, "seated": []}
+    if anchor_row is None:
+        return [], note
+    with recall_trace.suspended():
+        async with connection() as db:
+            order = await p.fusion.retrieve(
+                db, agent_id=agent_id, query=query, depth=deeper, limit=limit, deep=deep,
+                channel=channel, exclude_set=exclude_set, project_id=project_id,
+                source_id=source_id, query_vec_out=[], lexical_terms=lexical_terms,
+            )
+            order, *_ = await p.scoring.score(
+                db, agent_id, order, deep, project_id=project_id, channel=channel, query=query
+            )
+            order = _apply_quality_gate(
+                order, effective_min, memory_count, gate=gate, gate_signal=gate_signal,
+                pure_recency=pure_recency,
+            )
+            if AUTOCUT_ENABLED:
+                order = _autocut(order)
+            admitted = list(order)
+            order = p.prior.apply(order, prior_span, datetime.now(timezone.utc))
+            providers.check_reorder("prior.apply", admitted, order)
+            candidates = [
+                r for r in order
+                if isinstance(r.get("id"), int) and r["id"] > 0 and rid_of(r) not in present
+            ]
+            note["candidates"] = len(candidates)
+            if not candidates:
+                return [], note
+            wanted = {("mem", "memories"): [], ("ep", "episodes"): []}
+            for r in [anchor_row, *candidates]:
+                kind = rid_of(r)[0]
+                wanted[(kind, "memories" if kind == "mem" else "episodes")].append(r["id"])
+            blobs: dict[tuple, bytes] = {}
+            for (kind, table), ids in wanted.items():
+                if not ids:
+                    continue
+                marks = ",".join("?" * len(ids))
+                async with db.execute(
+                    f"SELECT id, embedding FROM {table} WHERE agent_id = ? AND id IN ({marks})",
+                    (agent_id, *ids),
+                ) as cur:
+                    for row_id, blob in await cur.fetchall():
+                        blobs[(kind, row_id)] = blob
+    anchor = propagation.unit(blobs.get(rid_of(anchor_row)))
+    if anchor is None:
+        return [], note
+    vectors = {}
+    for i, r in enumerate(candidates):
+        vec = propagation.unit(blobs.get(rid_of(r)), anchor.size)
+        if vec is not None:
+            vectors[i] = vec
+    seated = p.propagation_selector.seat(candidates, anchor, vectors, propagation.SEATS)
+    providers.check_seats(seated, candidates, propagation.SEATS, stage="propagation_selector.seat")
+    cosine_rank = propagation.ranks(candidates, anchor, vectors)
+    position = {id(r): i for i, r in enumerate(candidates)}
+    for r in seated:
+        i = position[id(r)]
+        r["_propagation_seat"] = True
+        r["_propagation_fused_rank"] = i + 1
+        r["_propagation_cosine_rank"] = cosine_rank[i]
+    note["anchor"] = recall_trace.ref_of(anchor_row)
+    note["seated"] = [
+        {"ref": recall_trace.ref_of(r), "fused_rank": r["_propagation_fused_rank"],
+         "cosine_rank": r["_propagation_cosine_rank"]}
+        for r in seated
+    ]
+    return seated, note
+
+
 def _recall_depth(limit: int) -> int:
     """Recall Depth for a response count of `limit` (2.6, "Depth is not count").
 
@@ -1806,6 +1926,7 @@ async def do_recall(
     trace: bool = False,
     time_cue: dict | None = None,
     iteration_budget: int | None = None,
+    propagation_seat: bool = False,
 ) -> dict:
     """Recall, optionally returning the recall trace (docs/RECALL_PROCESS_DESIGN.md §1).
 
@@ -1822,9 +1943,16 @@ async def do_recall(
     it holds (cpersona/budget.py); None takes the default. It is a library
     argument, not a tool argument: a recall evaluates one hypothesis today, and a
     traced recall reports what was requested, what was evaluated and why it stopped.
+
+    ``propagation_seat`` holds one more place after the window for the row a deeper
+    ranking finds nearest the answer's first row (cpersona/propagation.py). It is a
+    library argument the ``recall`` tool sets from CPERSONA_RECALL_PROPAGATION_SEAT;
+    reconstruct and recall_with_context never pass it, so it changes only the tool
+    it was measured on. It applies to the fusion modes and to a non-blank query.
     """
+    propagation_seat = _propagation_applies(propagation_seat, query)
     try:
-        ledger = budget.Ledger.for_recall(iteration_budget)
+        ledger = budget.Ledger.for_recall(iteration_budget, propagation=propagation_seat)
     except ValueError as exc:
         return error_response(str(exc), messages=[])
     # The providers this recall runs with, read once, here: a set installed while
@@ -1840,6 +1968,7 @@ async def do_recall(
         excerpt_chars=excerpt_chars, **({"time_cue": parsed_cue} if parsed_cue is not None else {}),
         providers_=active,
         ledger_=ledger,
+        **({"propagation_seat": True} if propagation_seat else {}),
     )
     if not trace:
         return await _do_recall(agent_id, query, limit, **kwargs)
@@ -1850,6 +1979,7 @@ async def do_recall(
     rec.set("policy", {
         "scoring": _utils.SCORING_VERSION,
         "process": cue.POLICY if parsed_cue is not None else recall_trace.PROCESS_SINGLE_PASS,
+        **({"propagation": propagation.POLICY} if propagation_seat else {}),
     })
     rec.set("server_version", __version__)
     rec.set("providers", {"digest": active.digest, "slots": active.describe()})
@@ -1861,6 +1991,7 @@ async def do_recall(
                   "age_floor": PRIOR_AGE_FLOOR, "age_anchor": PRIOR_AGE_ANCHOR},
         "episode_penalty": EPISODE_PENALTY_ENABLED,
         **({"time_cue": parsed_cue.echo()} if parsed_cue is not None else {}),
+        **({"propagation_seat": True} if propagation_seat else {}),
     })
     rec.set("config", {
         "embedding_mode": config.EMBEDDING_MODE, "embedding_model": config.EMBEDDING_MODEL, "scan_window": MAX_MEMORIES,
@@ -1891,6 +2022,7 @@ async def _do_recall(
     time_cue: cue.TimeCue | None = None,
     providers_: providers.Providers | None = None,
     ledger_: budget.Ledger | None = None,
+    propagation_seat: bool = False,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1943,8 +2075,9 @@ async def _do_recall(
     started = time.perf_counter()
     # The set do_recall read at its start; read here only for a direct library call.
     p = providers_ if providers_ is not None else providers.active()
+    propagation_seat = _propagation_applies(propagation_seat, query)
     # What this recall may spend, declared before it spends any (cpersona/budget.py).
-    ledger = ledger_ if ledger_ is not None else budget.Ledger.for_recall()
+    ledger = ledger_ if ledger_ is not None else budget.Ledger.for_recall(propagation=propagation_seat)
     # Each stage's input is recorded on a traced recall (recall_trace.stage_input).
     trace_rec = recall_trace.current()
     requested = limit
@@ -2246,6 +2379,9 @@ async def _do_recall(
         trace_rec.mark("order")
 
     results = results[:limit]
+    # The window as the count cut it, before the cue's move reorders it: the
+    # propagation seat follows this order's first row.
+    window = list(results)
 
     # The cue's bounded move (§2.3): after the gate, autocut, prior and the count
     # have decided which rows are returned and in what order, a row the cue arm
@@ -2299,7 +2435,29 @@ async def _do_recall(
             trace_rec.reservation(seated, "cue")
             trace_rec.cue(cue_note, cue.LIFT[cue_note["confidence"]])
 
-    providers.check_recall_count(len(results), limit, cue.SEATS, blocks.BLOCK_RESERVATION)
+    # The propagation seat (cpersona/propagation.py): one held place after
+    # everything above, for the best row of a deeper ranking of the same recall.
+    # Like the cue's seat it displaces nothing. Not after a gate rescue: those rows
+    # are below-gate by construction, and there is no answer's first row to follow.
+    if propagation_seat and not gate_fallback:
+        seated, propagation_note = await _propagation_seat_rows(
+            p, ledger, window, {_rid_of(r) for r in results},
+            agent_id=agent_id, query=query, depth=depth, limit=limit, deep=deep,
+            channel=channel, exclude_set=exclude_set, project_id=project_id,
+            source_id=source_id, lexical_terms=lexical_terms, gate=gate,
+            gate_signal=gate_signal, effective_min=effective_min,
+            memory_count=memory_count, pure_recency=pure_recency, prior_span=prior_span,
+        )
+        results.extend(seated)
+        if trace_rec is not None:
+            trace_rec.reservation(seated, "propagation")
+            trace_rec.set("propagation", propagation_note)
+            trace_rec.mark("propagation")
+
+    providers.check_recall_count(
+        len(results), limit, cue.SEATS + (propagation.SEATS if propagation_seat else 0),
+        blocks.BLOCK_RESERVATION,
+    )
     # The one hypothesis a recall evaluates today: the order its stages produced.
     ledger.spend(budget.ITERATION)
     if trace_rec is not None:
@@ -2356,6 +2514,17 @@ async def _do_recall(
             # before the gate branches: a cue-arm row may carry a cosine, but no gate
             # read it, so it must not be reported as having passed one.
             msg["match_reason"] = {"signal": "cue", "admission": "reservation", "cue_rank": r["_cue_rank"]}
+        elif r.get("_propagation_seat"):
+            # The propagation seat (cpersona/propagation.py). Its row passed the gate
+            # on the deeper ranking, not on this one's count, so it says which places
+            # chose it: its rank in that deeper order among the candidates, and its
+            # rank by closeness to the answer's first row.
+            msg["match_reason"] = {
+                "signal": "propagation",
+                "admission": "reservation",
+                "fused_rank": r["_propagation_fused_rank"],
+                "cosine_rank": r["_propagation_cosine_rank"],
+            }
         elif gate_signal is not None:
             match_reason: dict = {"signal": gate_signal, "score": gate_score}
             if r.get("_cosine") is not None:
@@ -2407,6 +2576,9 @@ async def _do_recall(
         r.pop("_block_order", None)
         r.pop("_cue_seat", None)
         r.pop("_cue_rank", None)
+        r.pop("_propagation_seat", None)
+        r.pop("_propagation_fused_rank", None)
+        r.pop("_propagation_cosine_rank", None)
         messages.append(msg)
 
     # The excerpt a preview-cut row carries beside its prefix (cpersona/excerpts.py).

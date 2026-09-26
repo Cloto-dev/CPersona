@@ -114,6 +114,7 @@ SLOTS: Mapping[str, Slot] = MappingProxyType(
             Slot("cue_candidates", "CandidateGenerator", ("search",)),
             Slot("prior", "PriorFunction", ("apply",)),
             Slot("evidence_selector", "EvidenceSelector", ("lift", "seats")),
+            Slot("propagation_selector", "EvidenceSelector", ("seat",)),
             Slot("reconstruct_candidates", "CandidateGenerator", ("candidates",)),
             Slot("reconstructor", "Reconstructor", ("bundle", "walk", "structure", "allocate")),
         )
@@ -262,20 +263,21 @@ def check_lift(before: list[dict], after: list[dict], bound: int) -> None:
             )
 
 
-def check_seats(seated: list[dict], eligible: list[dict], places: int) -> None:
+def check_seats(
+    seated: list[dict], eligible: list[dict], places: int, stage: str = "evidence_selector.seats"
+) -> None:
     """At most `places` seats, each a row the Core found eligible, none twice."""
     allowed = {id(row) for row in eligible}
     if len(seated) > places:
-        raise ProviderContractError(
-            f"evidence_selector.seats: {len(seated)} seats filled; {places} are held"
-        )
+        raise ProviderContractError(f"{stage}: {len(seated)} seats filled; {places} are held")
     if any(id(row) not in allowed for row in seated) or len({id(r) for r in seated}) != len(seated):
-        raise ProviderContractError("evidence_selector.seats: a seat went to a row that is not eligible")
+        raise ProviderContractError(f"{stage}: a seat went to a row that is not eligible")
 
 
 def check_recall_count(returned: int, limit: int, seats: int, reservation: int) -> None:
-    """recall: returned rows <= limit + the cue's seats + the block reservation.
+    """recall: returned rows <= limit + the held seats + the block reservation.
 
+    The held seats are the cue's, plus the propagation seat's when it is on.
     The reserved places sit beside the count rather than inside it, so a bound
     of `limit` alone would refuse a correct answer that filled them.
     """

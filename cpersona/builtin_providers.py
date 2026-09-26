@@ -10,7 +10,7 @@ seams at module scope.
 """
 from __future__ import annotations
 
-from . import blocks, cue
+from . import blocks, cue, propagation
 from .providers import BUILTIN, CONTRACT_MAJOR, CONTRACT_MINOR, SLOTS, Manifest
 
 
@@ -169,6 +169,15 @@ class EvidenceSelector:
         return eligible[:places]
 
 
+class PropagationSelector:
+    """recall's propagation seat: the deeper order's candidates, ranked from the window's first row."""
+
+    manifest = _manifest("propagation_selector", propagation.POLICY)
+
+    def seat(self, candidates: list[dict], anchor, vectors, places: int) -> list[dict]:
+        return [candidates[i] for i in propagation.order(candidates, anchor, vectors)[:places]]
+
+
 class ReconstructCandidates:
     """reconstruct's candidate pool: a recall at the candidate depth."""
 
@@ -217,6 +226,7 @@ ALLOWLIST = {
     "cue_candidates": {BUILTIN: CueCandidates},
     "prior": {BUILTIN: Prior},
     "evidence_selector": {BUILTIN: EvidenceSelector},
+    "propagation_selector": {BUILTIN: PropagationSelector},
     "reconstruct_candidates": {BUILTIN: ReconstructCandidates},
     "reconstructor": {BUILTIN: Reconstructor},
 }

@@ -182,6 +182,16 @@ RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT"
 # docs/RELIABLE_RECALL_2_6.md section 4.
 RECALL_DEPTH_FLOOR = max(0, _parse_int("CPERSONA_RECALL_DEPTH_FLOOR", 0))
 
+# 2.6: the propagation seat (cpersona/propagation.py). One held place after the
+# window for the row that best combines its place in a deeper ranking with its
+# closeness to the window's first row -- measured on two-record questions, where
+# the second record is often admitted just below the cut. Off by default: off,
+# no deeper ranking runs and the recall is the one it was before, bit for bit.
+# On, a recall also ranks at propagation.DEPTH and may return one more row.
+RECALL_PROPAGATION_SEAT = (
+    os.environ.get("CPERSONA_RECALL_PROPAGATION_SEAT", "false").lower() == "true"
+)
+
 # 2.6: the Reconstruction Window and the bounds of the reconstruct tool
 # (docs/RELIABLE_RECALL_2_6.md section 7). `count` is the CEILING on how many
 # recall items come back -- not a fill target and not a search depth:

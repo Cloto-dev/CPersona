@@ -12,6 +12,7 @@ what it did before.
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import hashlib
 import json
@@ -31,6 +32,18 @@ _current: contextvars.ContextVar[TraceRecorder | None] = contextvars.ContextVar(
 def current() -> TraceRecorder | None:
     """The recorder of the recall in progress, or None when none was requested."""
     return _current.get()
+
+
+@contextlib.contextmanager
+def suspended():
+    """Record nothing inside the block: a second ranking a recall runs for its own
+    use (the propagation seat's deeper order) must not overwrite the arms, fusion
+    and gate the trace holds for the answer's own ranking."""
+    token = _current.set(None)
+    try:
+        yield
+    finally:
+        _current.reset(token)
 
 
 def ref_of(row: dict) -> str:

@@ -211,6 +211,10 @@ async def spied(fake_embedding_client, monkeypatch, installed):
     # Days 3 to 8 hold nothing, so the loop asks for the next width.
     widened = await memory_handlers.do_recall(AGENT, QUERY, limit=5, time_cue=_period(8, 3))
     assert widened["time_cue"]["revised"] is True
+    # The propagation seat's selector runs only when the seat is asked for; a
+    # small count leaves admitted rows below the cut for it to choose among.
+    seated = await memory_handlers.do_recall(AGENT, QUERY, limit=2, propagation_seat=True)
+    assert [m["match_reason"]["signal"] for m in seated["messages"]].count("propagation") == 1
     entry[0] = "reconstruct"
     out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3)
     assert out["returned_count"] == 3
