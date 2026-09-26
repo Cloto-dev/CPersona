@@ -238,12 +238,16 @@ rows are eligible and how many places there are, and refuses anything else.
 
 It is off by default (`CPERSONA_RECALL_PROPAGATION_SEAT`). On a private pack of
 real agent memories, among questions that need two records, it completed the
-evidence on more questions than the ranking's next row under both fusion modes;
-that pack cannot be published, so the setting stays off until the measurement
-can be repeated on public data. It applies to the `recall` tool only, in a
-fusion mode, for a non-blank query, and adds a second ranking pass to each
-recall that takes it. The weights, the depth and the offset form the policy
-`propagation-v1`, which a traced recall records.
+evidence on more questions than the ranking's next row under both fusion modes.
+Those questions were built from pairs of records that were already near
+neighbours in the embedding the seat ranks by, which favours the seat by
+construction. On questions built from pairs drawn without that condition, the
+seat still lost no question to the next row, but its gain was less than half as
+large and was significant under rsf only. The pack cannot be published, so the
+setting stays off until the measurement can be repeated on public data. It
+applies to the `recall` tool only, in a fusion mode, for a non-blank query, and
+adds a second ranking pass to each recall that takes it. The weights, the depth
+and the offset form the policy `propagation-v1`, which a traced recall records.
 
 ## 5. Adaptive fusion
 
