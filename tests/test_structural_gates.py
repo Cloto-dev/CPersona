@@ -2944,3 +2944,179 @@ def test_the_gate_sees_every_registered_tool():
         f"registration sites and the live registry disagree: only-in-source="
         f"{sorted(seen - registered)}, only-in-registry={sorted(registered - seen)}"
     )
+
+
+# --------------------------------------------------------------------------------------
+# Gate 21 (evidence records): an invalid measurement run says so in its data, and only
+# an invalid run does.
+#
+# benchmarks/measurements/README.md keeps invalid runs on purpose and puts the warning
+# in the data, not in the directory name: a suffix does not survive a file being copied,
+# and `jq .mean_ndcg_at_10 **/LongMemEval.json` returns a valid figure and an invalid one
+# with nothing to tell them apart. That rule was held by whoever committed the next
+# invalid run remembering it, and it was not always remembered: a run committed under an
+# `.INVALID-` name carried none of the three fields.
+#
+# The gate ties the name to the data in both directions:
+# - every JSON file under a directory whose name marks the run invalid (`.INVALID-*` /
+#   `.CLAMPED-*`) carries `invalid: true`, a non-empty `invalid_reason` and a
+#   `superseded_by` key -- at the top level and on every object inside it that carries a
+#   score, so a reader who flattens a summary's per-task list still meets the warning
+#   beside the figure;
+# - `superseded_by` names a run directory that exists here and is not itself invalid, or
+#   is null when nothing has replaced the run yet;
+# - no JSON file anywhere else here carries `invalid`, so a run cannot be invalid in its
+#   data while its name presents it as a result.
+# --------------------------------------------------------------------------------------
+
+MEASUREMENTS = pathlib.Path(__file__).parent.parent / "benchmarks" / "measurements"
+_INVALID_RUN_NAME = re.compile(r"\.(INVALID|CLAMPED)-")
+_SCORE_KEYS = ("mean_ndcg_at_10", "overall_mean")
+_INVALID_FIELDS = ("invalid", "invalid_reason", "superseded_by")
+
+
+def _score_bearing_objects(doc):
+    """The top-level object, then every object below it that carries a score."""
+    found = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            if where == "$" or any(key in node for key in _SCORE_KEYS):
+                found.append((where, node))
+            for key, value in node.items():
+                walk(value, f"{where}.{key}")
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{where}[{index}]")
+
+    walk(doc, "$")
+    return found
+
+
+def _is_invalid_run(path, root):
+    return any(_INVALID_RUN_NAME.search(part) for part in path.relative_to(root).parts[:-1])
+
+
+def _invalid_run_violations(root):
+    """Every place under ``root`` where a run's name and its data disagree."""
+    import json
+
+    violations = []
+    for path in sorted(root.rglob("*.json")):
+        rel = path.relative_to(root).as_posix()
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        marked = _is_invalid_run(path, root)
+        for where, obj in _score_bearing_objects(doc):
+            if not marked:
+                if "invalid" in obj:
+                    violations.append(
+                        f"{rel} {where}: carries `invalid` but its directory name does not "
+                        "mark the run invalid"
+                    )
+                continue
+            missing = [field for field in _INVALID_FIELDS if field not in obj]
+            if missing:
+                violations.append(f"{rel} {where}: missing {missing}")
+                continue
+            if obj["invalid"] is not True:
+                violations.append(f"{rel} {where}: `invalid` is {obj['invalid']!r}, not true")
+            reason = obj["invalid_reason"]
+            if not isinstance(reason, str) or not reason.strip():
+                violations.append(f"{rel} {where}: `invalid_reason` is empty")
+            target = obj["superseded_by"]
+            if target is None:
+                continue
+            target_dir = root / target if isinstance(target, str) and target else None
+            if target_dir is None or not target_dir.is_dir():
+                violations.append(
+                    f"{rel} {where}: `superseded_by` {target!r} is not a run directory here"
+                )
+            elif _INVALID_RUN_NAME.search(target):
+                violations.append(
+                    f"{rel} {where}: `superseded_by` {target!r} is itself an invalid run"
+                )
+    return violations
+
+
+def test_invalid_runs_say_so_in_their_data():
+    marked_dirs = sorted(
+        d for d in MEASUREMENTS.rglob("*") if d.is_dir() and _INVALID_RUN_NAME.search(d.name)
+    )
+    # A gate that found no invalid run would pass for the same reason it passes on a
+    # repository with nothing to check.
+    assert marked_dirs, f"no `.INVALID-*` / `.CLAMPED-*` directory found under {MEASUREMENTS}"
+    for d in marked_dirs:
+        assert any(d.rglob("*.json")), f"{d.name} is marked invalid but holds no JSON record"
+
+    violations = _invalid_run_violations(MEASUREMENTS)
+    assert not violations, (
+        "a run's name and its data disagree about whether it is valid "
+        "(benchmarks/measurements/README.md, 'Why invalid runs are kept'):\n  "
+        + "\n  ".join(violations)
+    )
+
+
+def test_invalid_run_gate_has_teeth(tmp_path):
+    """Known positives for each rule, and the complete shapes that must pass."""
+    import json
+
+    def write(rel, doc):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc), encoding="utf-8")
+
+    marker = {"invalid": True, "invalid_reason": "why", "superseded_by": "run_a"}
+    write("run_a/Task.json", {"mean_ndcg_at_10": 80.0})
+    write("run_a.INVALID-x/Task.json", {"mean_ndcg_at_10": 40.0, **marker})
+    write(
+        "run_a.INVALID-x/summary.json",
+        {"overall_mean": 40.0, **marker, "tasks": [{"mean_ndcg_at_10": 40.0, **marker}]},
+    )
+    write("run_b.CLAMPED-y/Task.json", {"mean_ndcg_at_10": 40.0, **marker, "superseded_by": None})
+    assert _invalid_run_violations(tmp_path) == []
+
+    # A field missing at the top level.
+    write("run_a.INVALID-x/Task.json", {"mean_ndcg_at_10": 40.0, "invalid": True,
+                                        "invalid_reason": "why"})
+    assert _invalid_run_violations(tmp_path) == [
+        "run_a.INVALID-x/Task.json $: missing ['superseded_by']"
+    ]
+    write("run_a.INVALID-x/Task.json", {"mean_ndcg_at_10": 40.0, **marker})
+
+    # Present at the top of a summary, absent beside a per-task figure.
+    write("run_a.INVALID-x/summary.json",
+          {"overall_mean": 40.0, **marker, "tasks": [{"mean_ndcg_at_10": 40.0}]})
+    assert _invalid_run_violations(tmp_path) == [
+        "run_a.INVALID-x/summary.json $.tasks[0]: missing "
+        "['invalid', 'invalid_reason', 'superseded_by']"
+    ]
+    write("run_a.INVALID-x/summary.json",
+          {"overall_mean": 40.0, **marker, "tasks": [{"mean_ndcg_at_10": 40.0, **marker}]})
+
+    # Present but not saying what it must.
+    write("run_a.INVALID-x/Task.json", {"mean_ndcg_at_10": 40.0, **marker, "invalid": "yes",
+                                        "invalid_reason": " "})
+    assert _invalid_run_violations(tmp_path) == [
+        "run_a.INVALID-x/Task.json $: `invalid` is 'yes', not true",
+        "run_a.INVALID-x/Task.json $: `invalid_reason` is empty",
+    ]
+
+    # Superseded by a run that does not exist, or by another invalid run.
+    write("run_a.INVALID-x/Task.json", {"mean_ndcg_at_10": 40.0, **marker,
+                                        "superseded_by": "run_z"})
+    write("run_b.CLAMPED-y/Task.json", {"mean_ndcg_at_10": 40.0, **marker,
+                                        "superseded_by": "run_a.INVALID-x"})
+    assert _invalid_run_violations(tmp_path) == [
+        "run_a.INVALID-x/Task.json $: `superseded_by` 'run_z' is not a run directory here",
+        "run_b.CLAMPED-y/Task.json $: `superseded_by` 'run_a.INVALID-x' is itself an "
+        "invalid run",
+    ]
+    write("run_a.INVALID-x/Task.json", {"mean_ndcg_at_10": 40.0, **marker})
+    write("run_b.CLAMPED-y/Task.json", {"mean_ndcg_at_10": 40.0, **marker})
+
+    # The other direction: a run whose name presents it as a result.
+    write("run_a/Task.json", {"mean_ndcg_at_10": 80.0, "invalid": True})
+    assert _invalid_run_violations(tmp_path) == [
+        "run_a/Task.json $: carries `invalid` but its directory name does not mark the "
+        "run invalid"
+    ]

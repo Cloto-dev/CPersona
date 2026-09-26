@@ -2,6 +2,9 @@
   "task": "LongMemEval",
   "memory_type": "Dialogue",
   "mean_ndcg_at_10": 81.87,
+  "invalid": true,
+  "invalid_reason": "The acceleration self-check, which this run's pre-registration made an invalidation condition, reported 3 mismatches in 3 sampled queries (sampling rate 1%). Repeated on the same build with the sampling raised to 10% under the amended condition; see prereg-longmemeval-on-the-shipped-fix.md.",
+  "superseded_by": "trackb_results_v260a4_bgem3",
   "subtasks": {
     "knowledge_update": 93.01,
     "multi_session": 79.92,
