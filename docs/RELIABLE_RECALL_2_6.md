@@ -217,6 +217,34 @@ change the set of candidate ids the fusion considered. A test asserts it, and a
 mutation that re-couples the two (`candidate_limit = count`) must turn that
 test red before the work is called done.
 
+### The propagation seat
+
+A deeper ranking can help without deepening the answer. When a question needs
+two stored records, the second is often admitted by the gate but ranked just
+below the count's cut. The propagation seat is one held place for it: the same
+recall is ranked again at a Recall Depth of 100, the rows the answer does not
+already hold are the candidates, and the candidate with the best
+
+```text
+0.65 / (60 + rank in the deeper order) + 0.35 / (60 + rank by closeness to the answer's first row)
+```
+
+takes the seat. Like the time cue's seat it displaces nothing: every row and
+place of the answer stays and the seat is added after them, so a `recall` can
+return one row more than `limit`. That row carries `match_reason.signal:
+"propagation"` and `admission: "reservation"`, with both ranks. The choice is
+made by the provider in the `propagation_selector` slot; the Core decides which
+rows are eligible and how many places there are, and refuses anything else.
+
+It is off by default (`CPERSONA_RECALL_PROPAGATION_SEAT`). On a private pack of
+real agent memories, among questions that need two records, it completed the
+evidence on more questions than the ranking's next row under both fusion modes;
+that pack cannot be published, so the setting stays off until the measurement
+can be repeated on public data. It applies to the `recall` tool only, in a
+fusion mode, for a non-blank query, and adds a second ranking pass to each
+recall that takes it. The weights, the depth and the offset form the policy
+`propagation-v1`, which a traced recall records.
+
 ## 5. Adaptive fusion
 
 The three retrieval arms are fused by reciprocal rank with fixed weights. The benchmark record shows why that is the wrong constant. With a weak embedding
