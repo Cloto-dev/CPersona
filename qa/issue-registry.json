@@ -6452,6 +6452,20 @@
       "category": "health-check",
       "note": "Surfaced as an order-dependent test failure: enough FTS writes in earlier test files moved the index under the read connection's cache. Reproduced before the overflow-tree work, so it was not introduced by it.",
       "fix_note": "A quick_check finding is confirmed on a read-only connection opened for it, which has no cached structure. A healthy run pays nothing; a genuine corruption is on disk and the fresh connection reports it too."
+    },
+    {
+      "id": "bug-440",
+      "summary": "(LOW) Over MCP, every store without associations ran an empty declaration and returned an extra `associations` key, and every declare_associations call without retract returned an empty `retracted`. The argument validator hands an omitted object argument over as {} rather than None, and both boundaries tested `is not None`. The library-level tests passed None directly and never saw what a client sends.",
+      "severity": "LOW",
+      "discovered": "2026-09-18T06:55:00Z",
+      "version": "2.6.0a4",
+      "file": "cpersona/server.py",
+      "pattern": "if associations and isinstance\\(result\\.get\\(\"id\"\\), int\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "associative-memory",
+      "note": "Found on the production deployment of 2.6.0a4: a plain store answered with associations: {entities: [], mentions: 0, relations: [], dropped: []}. Nothing was written to the graph tables; each store paid one empty write transaction.",
+      "fix_note": "An empty associations or retract object is treated as absent. Tests call the registered handler, the path an MCP client takes, and fail on the previous code with the extra key in the response."
     }
   ]
 }

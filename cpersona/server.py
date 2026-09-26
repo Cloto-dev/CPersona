@@ -223,7 +223,12 @@ async def do_store_boundary(
     # the pre-existing one a dedup branch echoed — because the declaration is
     # about that memory either way. A paused or rejected store resolved to no
     # row, so there is nothing to anchor and the rider is not recorded.
-    if associations is not None and isinstance(result.get("id"), int) and result["id"] > 0:
+    #
+    # Truthiness, not `is not None`: the MCP argument validator hands an omitted
+    # object argument over as {}, so `is not None` ran an empty declaration on
+    # every store and added an `associations` key to every response. An empty
+    # object declares nothing and is treated as absent.
+    if associations and isinstance(result.get("id"), int) and result["id"] > 0:
         result["associations"] = await associations_module.declare(
             agent_id,
             associations,
@@ -254,13 +259,15 @@ async def do_declare_associations_boundary(
             key,
         )
     result: dict = {"ok": True, "result": "declared"}
-    if associations is not None:
+    # An omitted object argument arrives as {} through MCP (see do_store_boundary);
+    # an empty one declares and retracts nothing, so it is treated as absent.
+    if associations:
         result.update(await associations_module.declare(
             agent_id, associations, project_id=resolved, channel=channel, anchor_ref=anchor_ref
         ))
     else:
         result.update({"entities": [], "mentions": 0, "relations": [], "dropped": []})
-    if retract is not None:
+    if retract:
         if isinstance(retract, dict):
             retracted = await associations_module.retract(
                 agent_id, relations=retract.get("relations"), mentions=retract.get("mentions")
