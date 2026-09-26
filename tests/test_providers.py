@@ -197,7 +197,7 @@ def _spy_set(calls: dict, entry: list) -> providers.Providers:
 @pytest_asyncio.fixture
 async def spied(fake_embedding_client, monkeypatch, installed):
     """Run recall and reconstruct over paths that reach every operation, recording the calls."""
-    calls: dict = {"recall": [], "reconstruct": []}
+    calls: dict = {"recall": [], "seat": [], "reconstruct": []}
     entry = ["recall"]
     installed(_spy_set(calls, entry))
     monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
@@ -212,7 +212,11 @@ async def spied(fake_embedding_client, monkeypatch, installed):
     widened = await memory_handlers.do_recall(AGENT, QUERY, limit=5, time_cue=_period(8, 3))
     assert widened["time_cue"]["revised"] is True
     # The propagation seat's selector runs only when the seat is asked for; a
-    # small count leaves admitted rows below the cut for it to choose among.
+    # small count leaves admitted rows below the cut for it to choose among. Its
+    # calls are kept apart, so the recalls above still have to reach every
+    # recall stage by themselves -- the seat's second ranking calls fusion,
+    # scoring and the prior too, and would otherwise hide a bypass of theirs.
+    entry[0] = "seat"
     seated = await memory_handlers.do_recall(AGENT, QUERY, limit=2, propagation_seat=True)
     assert [m["match_reason"]["signal"] for m in seated["messages"]].count("propagation") == 1
     entry[0] = "reconstruct"
@@ -222,12 +226,24 @@ async def spied(fake_embedding_client, monkeypatch, installed):
 
 
 _RECONSTRUCT_SLOTS = {"reconstruct_candidates", "reconstructor"}
+_SEAT_SLOTS = {"propagation_selector"}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("slot, op", [(n, op) for n, s in providers.SLOTS.items() for op in s.operations])
 async def test_the_core_calls_each_operation_through_its_slot(spied, slot, op):
-    assert (slot, op) in spied["reconstruct" if slot in _RECONSTRUCT_SLOTS else "recall"]
+    bucket = "reconstruct" if slot in _RECONSTRUCT_SLOTS else "seat" if slot in _SEAT_SLOTS else "recall"
+    assert (slot, op) in spied[bucket]
+
+
+@pytest.mark.asyncio
+async def test_a_seated_recall_ranks_twice_through_the_slots(spied):
+    """The answer's ranking and the seat's deeper one each go through the slots:
+    one bypassed site leaves one call where two are made."""
+    made = spied["seat"]
+    for stage in (("fusion", "retrieve"), ("scoring", "score"), ("prior", "apply")):
+        assert made.count(stage) == 2, stage
+    assert made.count(("propagation_selector", "seat")) == 1
 
 
 @pytest.mark.asyncio
@@ -266,6 +282,28 @@ async def test_a_request_keeps_the_set_it_started_with(fake_embedding_client, mo
     # The set it installed applies from the next request.
     with pytest.raises(AssertionError, match="installed mid-request"):
         await memory_handlers.do_recall(AGENT, QUERY, limit=3)
+
+
+@pytest.mark.asyncio
+async def test_a_seated_request_keeps_the_set_it_started_with(fake_embedding_client, installed):
+    """The seat is chosen after both rankings, so a set installed during either of
+    them must not be the one that chooses it."""
+    await _seed(CORPUS)
+
+    def failing(self, *a, **kw):
+        raise AssertionError("the seat selector of a set installed mid-request was used")
+
+    later = _with("propagation_selector", seat=failing)
+
+    async def installs_mid_request(self, db, **kw):
+        providers.install(later)
+        return await builtin_providers.Fusion.retrieve(self, db, **kw)
+
+    installed(_with("fusion", retrieve=installs_mid_request))
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=3, propagation_seat=True)
+    assert [m["match_reason"]["signal"] for m in out["messages"]].count("propagation") == 1
+    with pytest.raises(AssertionError, match="installed mid-request"):
+        await memory_handlers.do_recall(AGENT, QUERY, limit=3, propagation_seat=True)
 
 
 @pytest.mark.asyncio

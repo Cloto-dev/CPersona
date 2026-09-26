@@ -961,6 +961,7 @@ _IMPORT_BUILTINS = {
     _RC: ("    from . import providers\n", "    from . import providers\n    from . import builtin_providers\n"),
 }
 _SPY = "test_providers.py::test_the_core_calls_each_operation_through_its_slot"
+_SEATED = "test_providers.py::test_a_seated_recall_ranks_twice_through_the_slots"
 
 # (id, file, the call as the Core writes it, the built-in class, slot, operation, the test that pins it)
 _BYPASSES = [
@@ -982,7 +983,25 @@ _BYPASSES = [
     ("M78", _RC, "p.reconstructor.allocate(", "Reconstructor", "reconstructor", "allocate", None),
     ("M79", _RC, "p.cue_interpreter.parse(", "CueInterpreter", "cue_interpreter", "parse",
      "test_providers.py::test_reconstruct_reads_the_cue_through_the_installed_interpreter"),
+    # The propagation seat ranks the recall a second time, so fusion, scoring and
+    # the prior each have two call sites; each is its own mutant, and the pin
+    # counts the calls of one seated recall, because the spy's any-call test would
+    # let one site's bypass hide behind the other's call.
+    ("M106", _MH, "p.fusion.retrieve(", "Fusion", "fusion", "retrieve", _SEATED),
+    ("M107", _MH, "p.scoring.score(", "Scoring", "scoring", "score", _SEATED),
+    ("M108", _MH, "p.prior.apply(", "Prior", "prior", "apply", _SEATED),
+    ("M109", _MH, "p.propagation_selector.seat(", "PropagationSelector", "propagation_selector", "seat", None),
 ]
+
+# Where a call appears more than once in its file, the text before it names the site.
+_LEADS = {
+    "M63": "results = await ",
+    "M64": "results, time_range_hours, recall_counts, newest_age_hours = await ",
+    "M71": "results = ",
+    "M106": "order = await ",
+    "M107": "order, *_ = await ",
+    "M108": "order = ",
+}
 
 MUTATIONS += [
     Mutation(
@@ -990,8 +1009,8 @@ MUTATIONS += [
         tests=("tests/test_providers.py",),
         target=f"provider seams — {'reconstruct' if file == _RC else 'recall'} calls {slot}.{op} through its slot",
         file=file,
-        find=call,
-        replace=f"builtin_providers.{cls}()" + call[call.index(f".{op}("):],
+        find=_LEADS.get(mid, "") + call,
+        replace=_LEADS.get(mid, "") + f"builtin_providers.{cls}()" + call[call.index(f".{op}("):],
         also=(_IMPORT_BUILTINS[file],),
         breaks=f"an installed {slot} provider is ignored at this call and the built-in runs instead",
         expect=pin or f"{_SPY}[{slot}-{op}]",
@@ -1065,10 +1084,20 @@ MUTATIONS += [
         tests=("tests/test_providers.py",),
         target="provider seams — a request keeps the set it started with",
         file=_MH,
-        find="p.scoring.score(",
-        replace="providers.active().scoring.score(",
+        find="newest_age_hours = await p.scoring.score(",
+        replace="newest_age_hours = await providers.active().scoring.score(",
         breaks="a set installed while a recall runs takes over its later stages",
         expect="test_providers.py::test_a_request_keeps_the_set_it_started_with",
+    ),
+    Mutation(
+        id="M110",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the propagation seat chooses with the set the recall started with",
+        file=_MH,
+        find="p.propagation_selector.seat(",
+        replace="providers.active().propagation_selector.seat(",
+        breaks="a set installed while a seated recall runs chooses its seat",
+        expect="test_providers.py::test_a_seated_request_keeps_the_set_it_started_with",
     ),
     Mutation(
         id="M96",
