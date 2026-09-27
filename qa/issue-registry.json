@@ -6452,6 +6452,20 @@
       "category": "health-check",
       "note": "Surfaced as an order-dependent test failure: enough FTS writes in earlier test files moved the index under the read connection's cache. Reproduced before the overflow-tree work, so it was not introduced by it.",
       "fix_note": "A quick_check finding is confirmed on a read-only connection opened for it, which has no cached structure. A healthy run pays nothing; a genuine corruption is on disk and the fresh connection reports it too."
+    },
+    {
+      "id": "bug-441",
+      "summary": "(LOW) A recall trace named the configured embedding model rather than the one that produced the vectors. Over HTTP the request carries texts and the backend chooses the model, so the configured default never reaches it; the trace wrote that default into config.embedding_model, and on one evaluation every trace said text-embedding-3-small while bge-m3 answered.",
+      "severity": "LOW",
+      "discovered": "2026-09-26T00:22:00Z",
+      "version": "2.6.0a7",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "\"embedding_model\": generation\\.trace_model\\(\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "imputed-over-observed",
+      "note": "Trace only: nothing ranked or stored read the field. Found when a stage replay could not tell from its traces which model the results came from.",
+      "fix_note": "A traced recall asks the backend what it is (bounded by the existing refresh interval; an untraced recall does not ask) and names the model the capability report gives, else the name this process can vouch for (config.reported_embedding_model), else empty -- not known here."
     }
   ]
 }

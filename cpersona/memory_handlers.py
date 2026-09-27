@@ -27,6 +27,7 @@ from cpersona import blocks
 from cpersona import budget
 from cpersona import cue
 from cpersona import excerpts
+from cpersona import generation
 from cpersona import health
 from cpersona import nodes
 from cpersona import propagation
@@ -1994,8 +1995,11 @@ async def do_recall(
         **({"time_cue": parsed_cue.echo()} if parsed_cue is not None else {}),
         **({"propagation_seat": True} if propagation_seat else {}),
     })
+    # A traced recall names the model that produced its vectors as the backend reports
+    # it. Asking is bounded by generation's refresh interval and only a traced call asks.
+    await generation.refresh()
     rec.set("config", {
-        "embedding_mode": config.EMBEDDING_MODE, "embedding_model": config.EMBEDDING_MODEL, "scan_window": MAX_MEMORIES,
+        "embedding_mode": config.EMBEDDING_MODE, "embedding_model": generation.trace_model(), "scan_window": MAX_MEMORIES,
         "vector_reach": config.VECTOR_REACH, "vector_far_limit": config.VECTOR_FAR_LIMIT,
         "fused_gate_enabled": config.FUSED_GATE_ENABLED, "autocut_enabled": AUTOCUT_ENABLED,
     })
