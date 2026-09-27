@@ -412,3 +412,14 @@ def test_a_cue_may_add_as_many_rows_as_its_policy_holds_seats(confidence, extra,
 def test_a_policy_the_instrument_does_not_know_is_refused():
     with pytest.raises(ValueError, match="no seat allowance"):
         T.judge(_rows(n_up=62), "cued-v9")
+
+
+def test_the_recorded_tmd_run_is_judged_as_it_was():
+    """The committed TMD run (gzipped) re-judges to the verdict its results page reports."""
+    d = BENCH / "measurements" / "tmd_time_cue"
+    v = T.judge(T.read_rows(d), json.loads((d / "run.json").read_text())["cue_policy"])
+    assert v["verdict"] == "pass" and v["valid"]
+    assert v["preconditions"]["target"] == 1167
+    assert (v["primary"]["up"], v["primary"]["down"]) == (1029, 0)
+    assert (v["control"]["up"], v["control"]["down"]) == (1003, 16)
+    assert v["primary"]["p_one_sided"] < 0.05 and v["control"]["p_one_sided"] < 0.05 and v["type_guard"]["ok"]

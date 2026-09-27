@@ -1,0 +1,62 @@
+{
+ "task": "TMD",
+ "cpersona_version": "2.6.0a7",
+ "cpersona_commit": "70c9b86db3d782e1299d56eaf14c1179116ef785",
+ "cue_policy": "cued-v0.3",
+ "arms": [
+  "none",
+  "none_again",
+  "extracted",
+  "control",
+  "shifted",
+  "half"
+ ],
+ "limit": 10,
+ "questions": 1221,
+ "scenes": 12,
+ "sessions": 7463,
+ "stored": 7463,
+ "cues_file": "measurements/tmd_time_cues.jsonl",
+ "cues_sha256_16": "9e3780eafdcdb956",
+ "extractor_sha": [
+  "551ef1e5812749c1"
+ ],
+ "calibration": {
+  "ok": true,
+  "old_threshold": 0.3,
+  "new_threshold": 0.667,
+  "method": "separation",
+  "z_factor": 1.0
+ },
+ "autocut_enabled": true,
+ "fused_gate_enabled": true,
+ "recall_mode": "rrf",
+ "confidence_enabled": false,
+ "env": {
+  "CPERSONA_EMBEDDING_MODE": "http",
+  "CPERSONA_EMBEDDING_URL": "http://localhost:0",
+  "CPERSONA_FTS_ENABLED": "true",
+  "CPERSONA_MAX_MEMORIES": "300000",
+  "CPERSONA_RECALL_LIBRARY_MAX_LIMIT": "300000",
+  "CPERSONA_RECALL_MODE": "rrf",
+  "CPERSONA_STORE_BLOB": "true",
+  "CPERSONA_TASK_QUEUE_ENABLED": "false",
+  "CPERSONA_VECTOR_MIN_SIMILARITY": "0.3",
+  "CPERSONA_VECTOR_SEARCH_MODE": "local"
+ },
+ "model": "BAAI/bge-m3",
+ "dtype": "float16",
+ "device": "cpu",
+ "clock_patched": [
+  "cpersona._vendored_mcp_common.no_persist",
+  "cpersona.admin_handlers",
+  "cpersona.associations",
+  "cpersona.cue",
+  "cpersona.memory_handlers",
+  "cpersona.session",
+  "cpersona.update_check",
+  "cpersona.utils"
+ ],
+ "calls": 7254,
+ "seconds": 250.2
+}

@@ -591,6 +591,17 @@ def judge(rows: list[dict], policy: str) -> dict:
     }
 
 
+def read_rows(d: Path) -> list[dict]:
+    """A run's rows: rows.jsonl, or rows.jsonl.gz as a recorded run is committed."""
+    if (d / "rows.jsonl").exists():
+        text = (d / "rows.jsonl").read_text(encoding="utf-8")
+    else:
+        import gzip
+
+        text = gzip.decompress((d / "rows.jsonl.gz").read_bytes()).decode("utf-8")
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -620,7 +631,7 @@ def main() -> int:
         return asyncio.run(run(args))
     d = Path(args.dir).expanduser()
     meta = json.loads((d / "run.json").read_text())
-    rows = [json.loads(line) for line in (d / "rows.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = read_rows(d)
     print(json.dumps(judge(rows, args.policy or meta["cue_policy"]), indent=1, ensure_ascii=False))
     return 0
 

@@ -311,9 +311,12 @@ and adds at most `L` rows. A recall with a cue can therefore return up to three
 rows more than `limit`. Replayed on the same questions, the change returned all
 evidence on 43 questions instead of 39, but so did adding the same number of
 uncued rows on 40, so part of the gain is the extra places themselves. Whether
-the cue's places carry more than that is measured on questions that depend on
+the cue's places carry more than that was measured on questions that depend on
 time, under a rule that requires the cue to beat both no cue and the same
-number of uncued rows.
+number of uncued rows: on the LMEB TMD task (1,167 questions whose text states
+a time), it did. Mean NDCG over the returned rows rose from 0.189 to 0.281
+(+49%) with the cue and to 0.204 (+8%) with as many uncued rows; the evidence
+rose on 1,029 questions and fell on none (`benchmarks/measurements/results-tmd-time-cue.md`).
 
 ## 3. What v0 claims
 
@@ -324,7 +327,10 @@ A precision claim needs enough questions that carry a cue. Only questions
 whose text points at a time can carry one, and a few dozen cued questions give
 little power to detect a moderate effect. The claim therefore waits for a
 question set with at least sixty cued questions. The first such measurement
-gave `cued-v0.2` no claim (§2.10).
+gave `cued-v0.2` no claim (§2.10). The second gave `cued-v0.3` one, at the
+retrieval stage and on questions that depend on time (§2.11): a correct stated
+time moves the evidence up beyond what the same number of extra rows gives.
+It is not a claim about answer accuracy.
 
 The harm a wrong cue can do is bounded by construction (`L` places and `L`
 seats) rather than by a statistical test. A test showing that a wrong cue costs
