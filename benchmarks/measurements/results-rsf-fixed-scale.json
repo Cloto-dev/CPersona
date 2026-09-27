@@ -1,0 +1,293 @@
+{
+ "registration": "benchmarks/measurements/prereg-rsf-fixed-scale.md",
+ "dev": {
+  "cpersona_version": "2.6.0a8",
+  "split": "dev",
+  "split_seed": 20260928,
+  "questions": 249,
+  "variants": [
+   "legacy",
+   "none:1",
+   "none:2",
+   "none:4",
+   "none:8",
+   "present:1",
+   "present:2",
+   "present:4",
+   "present:8"
+  ],
+  "stored": 237655,
+  "vector_threshold": 0.4796,
+  "first_calibration": {
+   "new_threshold": 0.4796,
+   "method": "separation"
+  },
+  "calibrations": {
+   "first_fused_gate": 0.8487,
+   "legacy": {
+    "fused_gate": null
+   },
+   "none:1": {
+    "fused_gate": null
+   },
+   "none:2": {
+    "fused_gate": null
+   },
+   "none:4": {
+    "fused_gate": null
+   },
+   "none:8": {
+    "fused_gate": null
+   },
+   "present:1": {
+    "fused_gate": null
+   },
+   "present:2": {
+    "fused_gate": null
+   },
+   "present:4": {
+    "fused_gate": null
+   },
+   "present:8": {
+    "fused_gate": null
+   }
+  },
+  "seconds": 3845.3,
+  "summary": {
+   "legacy": {
+    "by_type": {
+     "knowledge_update": 91.75,
+     "multi_session": 75.6,
+     "single_session_assistant": 87.25,
+     "single_session_preference": 49.93,
+     "single_session_user": 86.96,
+     "temporal_reasoning": 76.14
+    },
+    "macro": 77.94,
+    "n": 249,
+    "rows_mean": 4.55
+   },
+   "none:1": {
+    "by_type": {
+     "knowledge_update": 90.12,
+     "multi_session": 74.07,
+     "single_session_assistant": 89.0,
+     "single_session_preference": 42.33,
+     "single_session_user": 86.85,
+     "temporal_reasoning": 76.94
+    },
+    "macro": 76.55,
+    "n": 249,
+    "rows_mean": 10.0
+   },
+   "none:2": {
+    "by_type": {
+     "knowledge_update": 90.91,
+     "multi_session": 74.13,
+     "single_session_assistant": 87.68,
+     "single_session_preference": 42.33,
+     "single_session_user": 86.85,
+     "temporal_reasoning": 77.54
+    },
+    "macro": 76.57,
+    "n": 249,
+    "rows_mean": 10.0
+   },
+   "none:4": {
+    "by_type": {
+     "knowledge_update": 90.12,
+     "multi_session": 74.67,
+     "single_session_assistant": 89.0,
+     "single_session_preference": 45.67,
+     "single_session_user": 87.91,
+     "temporal_reasoning": 77.71
+    },
+    "macro": 77.51,
+    "n": 249,
+    "rows_mean": 10.0
+   },
+   "none:8": {
+    "by_type": {
+     "knowledge_update": 91.56,
+     "multi_session": 80.34,
+     "single_session_assistant": 87.97,
+     "single_session_preference": 53.65,
+     "single_session_user": 88.35,
+     "temporal_reasoning": 77.97
+    },
+    "macro": 79.97,
+    "n": 249,
+    "rows_mean": 10.0
+   },
+   "present:1": {
+    "by_type": {
+     "knowledge_update": 40.22,
+     "multi_session": 33.14,
+     "single_session_assistant": 29.66,
+     "single_session_preference": 19.07,
+     "single_session_user": 39.96,
+     "temporal_reasoning": 39.15
+    },
+    "macro": 33.53,
+    "n": 249,
+    "rows_mean": 10.0
+   },
+   "present:2": {
+    "by_type": {
+     "knowledge_update": 48.8,
+     "multi_session": 33.99,
+     "single_session_assistant": 32.47,
+     "single_session_preference": 19.36,
+     "single_session_user": 48.71,
+     "temporal_reasoning": 39.39
+    },
+    "macro": 37.12,
+    "n": 249,
+    "rows_mean": 10.0
+   },
+   "present:4": {
+    "by_type": {
+     "knowledge_update": 78.04,
+     "multi_session": 51.78,
+     "single_session_assistant": 66.18,
+     "single_session_preference": 29.45,
+     "single_session_user": 70.37,
+     "temporal_reasoning": 49.59
+    },
+    "macro": 57.57,
+    "n": 249,
+    "rows_mean": 10.0
+   },
+   "present:8": {
+    "by_type": {
+     "knowledge_update": 90.44,
+     "multi_session": 75.64,
+     "single_session_assistant": 81.85,
+     "single_session_preference": 49.34,
+     "single_session_user": 84.44,
+     "temporal_reasoning": 72.01
+    },
+    "macro": 75.62,
+    "n": 249,
+    "rows_mean": 10.0
+   }
+  }
+ },
+ "test": {
+  "cpersona_version": "2.6.0a8",
+  "split": "test",
+  "split_seed": 20260928,
+  "questions": 251,
+  "variants": [
+   "legacy",
+   "none:8"
+  ],
+  "stored": 237655,
+  "vector_threshold": 0.4807,
+  "first_calibration": {
+   "new_threshold": 0.4807,
+   "method": "separation"
+  },
+  "calibrations": {
+   "first_fused_gate": 0.6069,
+   "legacy": {
+    "fused_gate": null
+   },
+   "none:8": {
+    "fused_gate": null
+   }
+  },
+  "seconds": 1208.2,
+  "summary": {
+   "legacy": {
+    "by_type": {
+     "knowledge_update": 95.25,
+     "multi_session": 75.11,
+     "single_session_assistant": 95.33,
+     "single_session_preference": 62.98,
+     "single_session_user": 81.85,
+     "temporal_reasoning": 78.21
+    },
+    "macro": 81.45,
+    "n": 251,
+    "rows_mean": 4.23
+   },
+   "none:8": {
+    "by_type": {
+     "knowledge_update": 94.7,
+     "multi_session": 77.17,
+     "single_session_assistant": 96.05,
+     "single_session_preference": 69.19,
+     "single_session_user": 83.0,
+     "temporal_reasoning": 81.5
+    },
+    "macro": 83.6,
+    "n": 251,
+    "rows_mean": 10.0
+   }
+  }
+ },
+ "decision": {
+  "chosen": "none:8",
+  "per_type": {
+   "knowledge_update": {
+    "n": 39,
+    "fell": 3,
+    "rose": 2,
+    "net": 1,
+    "allowance": 2,
+    "legacy": 95.25,
+    "none:8": 94.7
+   },
+   "multi_session": {
+    "n": 67,
+    "fell": 11,
+    "rose": 17,
+    "net": -6,
+    "allowance": 4,
+    "legacy": 75.11,
+    "none:8": 77.17
+   },
+   "single_session_assistant": {
+    "n": 28,
+    "fell": 0,
+    "rose": 1,
+    "net": -1,
+    "allowance": 2,
+    "legacy": 95.33,
+    "none:8": 96.05
+   },
+   "single_session_preference": {
+    "n": 15,
+    "fell": 1,
+    "rose": 4,
+    "net": -3,
+    "allowance": 2,
+    "legacy": 62.98,
+    "none:8": 69.19
+   },
+   "single_session_user": {
+    "n": 35,
+    "fell": 2,
+    "rose": 3,
+    "net": -1,
+    "allowance": 2,
+    "legacy": 81.85,
+    "none:8": 83.0
+   },
+   "temporal_reasoning": {
+    "n": 67,
+    "fell": 10,
+    "rose": 16,
+    "net": -6,
+    "allowance": 4,
+    "legacy": 78.21,
+    "none:8": 81.5
+   }
+  },
+  "macro_change": 2.14,
+  "rule_1_no_type_falls": true,
+  "rule_2_mean_holds": true,
+  "macro_change_note": "unrounded per-question macro: legacy 81.4547, none:8 83.5991; the summaries' macros are rounded to two places"
+ }
+}
