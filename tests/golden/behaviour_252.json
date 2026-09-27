@@ -15574,11 +15574,41 @@
     "result": {
       "messages": [
         {
+          "content": "harbor lighthouse keeper logbook entry 4",
+          "match_reason": {
+            "cosine": 0.7352844477,
+            "rsf": 0.7352864512,
+            "score": 0.7352864512,
+            "signal": "rsf"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-11-21T00:00:00Z"
+        },
+        {
+          "content": "harbor lighthouse keeper logbook entry 10",
+          "match_reason": {
+            "cosine": 0.7384849787,
+            "rsf": 0.738486961,
+            "score": 0.738486961,
+            "signal": "rsf"
+          },
+          "ref": "mem:11",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-09-22T00:00:00Z"
+        },
+        {
           "content": "harbor lighthouse keeper logbook entry 1",
           "match_reason": {
             "cosine": 0.7628725767,
-            "rsf": 0.4373689586,
-            "score": 0.4373689586,
+            "rsf": 0.7628745803,
+            "score": 0.7628745803,
             "signal": "rsf"
           },
           "ref": "mem:2",
@@ -15592,8 +15622,8 @@
           "content": "harbor lighthouse keeper logbook entry 3",
           "match_reason": {
             "cosine": 0.766953826,
-            "rsf": 0.4527594664,
-            "score": 0.4527594664,
+            "rsf": 0.7669558295,
+            "score": 0.7669558295,
             "signal": "rsf"
           },
           "ref": "mem:4",
@@ -15607,8 +15637,8 @@
           "content": "harbor lighthouse keeper logbook entry 8",
           "match_reason": {
             "cosine": 0.7822899818,
-            "rsf": 0.5105925498,
-            "score": 0.5105925498,
+            "rsf": 0.7822919854,
+            "score": 0.7822919854,
             "signal": "rsf"
           },
           "ref": "mem:9",
@@ -15622,8 +15652,8 @@
           "content": "harbor lighthouse keeper logbook entry 0",
           "match_reason": {
             "cosine": 0.7840166092,
-            "rsf": 0.5171037111,
-            "score": 0.5171037111,
+            "rsf": 0.7840186128,
+            "score": 0.7840186128,
             "signal": "rsf"
           },
           "ref": "mem:1",
@@ -15637,8 +15667,8 @@
           "content": "harbor lighthouse keeper logbook entry 9",
           "match_reason": {
             "cosine": 0.7993612885,
-            "rsf": 0.5749689367,
-            "score": 0.5749689367,
+            "rsf": 0.7993632921,
+            "score": 0.7993632921,
             "signal": "rsf"
           },
           "ref": "mem:10",
@@ -15653,8 +15683,8 @@
           "match_reason": {
             "cosine": 0.7966907024,
             "cue_rank": 3,
-            "rsf": 0.5648980799,
-            "score": 0.5648980799,
+            "rsf": 0.796692706,
+            "score": 0.796692706,
             "signal": "rsf"
           },
           "ref": "mem:7",
@@ -15668,8 +15698,8 @@
           "content": "harbor lighthouse keeper logbook entry 2",
           "match_reason": {
             "cosine": 0.8081727624,
-            "rsf": 0.6081972571,
-            "score": 0.6081972571,
+            "rsf": 0.808174766,
+            "score": 0.808174766,
             "signal": "rsf"
           },
           "ref": "mem:3",
@@ -15684,8 +15714,8 @@
           "match_reason": {
             "cosine": 0.8017895818,
             "cue_rank": 1,
-            "rsf": 0.5841261,
-            "score": 0.5841261,
+            "rsf": 0.8017915854,
+            "score": 0.8017915854,
             "signal": "rsf"
           },
           "ref": "mem:6",
@@ -15696,12 +15726,27 @@
           "timestamp": "2026-11-11T00:00:00Z"
         },
         {
+          "content": "harbor lighthouse keeper logbook entry 11",
+          "match_reason": {
+            "cosine": 0.823677659,
+            "rsf": 0.8236796413,
+            "score": 0.8236796413,
+            "signal": "rsf"
+          },
+          "ref": "mem:12",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-09-12T00:00:00Z"
+        },
+        {
           "content": "harbor lighthouse keeper logbook entry 7",
           "match_reason": {
             "cosine": 0.8020077944,
             "cue_rank": 2,
-            "rsf": 0.584948986,
-            "score": 0.584948986,
+            "rsf": 0.802009798,
+            "score": 0.802009798,
             "signal": "rsf"
           },
           "ref": "mem:8",
@@ -15714,7 +15759,7 @@
       ],
       "time_cue": {
         "confidence": "sure",
-        "moved": 5,
+        "moved": 6,
         "period": [
           "2026-10-18T00:00:00+00:00",
           "2026-11-17T00:00:00+00:00"
