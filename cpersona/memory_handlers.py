@@ -659,8 +659,10 @@ async def _recall_rrf(
 # bug-247: rsf puts each channel on a fixed [0, 1] scale, so a row's fused score is a
 # function of its own raw scores and an absolute gate can read it. A cosine is already
 # on that scale. A keyword score (-bm25, larger is better) is mapped by s / (s + H):
-# monotone, bounded below 1, and H is the score that counts half a vote.
-RSF_LEXICAL_HALF = 2.0
+# monotone, bounded below 1, and H is the score that counts half a vote. H and the
+# divisor were chosen on the dev half of LongMemEval under a pre-registered rule
+# (benchmarks/measurements/prereg-rsf-fixed-scale.md).
+RSF_LEXICAL_HALF = 8.0
 # What the fused sum is divided by: "none" (the plain sum) or "present" (the channels the
 # row itself appeared in). Either way a row found by one channel keeps that channel's
 # score, so a cosine-scale gate -- the one a store uses before its fused gate is
