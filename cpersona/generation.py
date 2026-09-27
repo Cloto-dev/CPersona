@@ -41,12 +41,16 @@ REFRESH_INTERVAL_SECONDS = 300
 #: (when it was learned, what was learned). ``None`` for the second element means
 #: asked and not answered — which is *unknown*, never *unchanged*.
 _learned: tuple[float, str | None] | None = None
+#: The model name the backend gave in its last capability report, or None. A label for
+#: saying what produced a result, never a key for deciding whether vectors compare.
+_reported_model: str | None = None
 
 
 def reset() -> None:
     """Forget what was learned. For tests and for a client being replaced."""
-    global _learned
+    global _learned, _reported_model
     _learned = None
+    _reported_model = None
 
 
 def fingerprint() -> str | None:
@@ -68,7 +72,7 @@ async def refresh(client=None) -> str | None:
     identity. Every one of those is unknown, and every one of them leaves this
     server writing the key it wrote before.
     """
-    global _learned
+    global _learned, _reported_model
     now = time.monotonic()
     if _learned and now - _learned[0] < REFRESH_INTERVAL_SECONDS:
         return _learned[1]
@@ -79,9 +83,13 @@ async def refresh(client=None) -> str | None:
         client = vector._embedding_client
     if client is None or not callable(getattr(client, "capabilities_with_outcome", None)):
         _learned = (now, None)
+        _reported_model = None
         return None
 
     identity, outcome = await client.capabilities_with_outcome()
+    # A report that could not complete its identity can still name its model.
+    model = identity.fields.get("model") if identity is not None else None
+    _reported_model = model if isinstance(model, str) and model else None
     # An identity the backend could not complete carries no fingerprint by
     # construction, so this reads the field rather than re-deriving the rule.
     learned = identity.fingerprint if identity is not None else None
@@ -96,6 +104,19 @@ async def refresh(client=None) -> str | None:
         )
     _learned = (now, learned)
     return learned
+
+
+def reported_model() -> str | None:
+    """The model name the backend gave in its last capability report, or None."""
+    return _reported_model
+
+
+def trace_model() -> str:
+    """The embedding model a recall trace names: the one the backend reported, else
+    the one this process can vouch for (:func:`config.reported_embedding_model`), else
+    empty -- not known here. Over HTTP the configured default never reaches the
+    backend, so it says nothing about the model that answered and is not reported."""
+    return reported_model() or config.reported_embedding_model()
 
 
 def keys(legacy: str) -> tuple[str, str]:

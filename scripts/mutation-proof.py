@@ -1285,6 +1285,16 @@ MUTATIONS += [
         breaks="the cue arm ranks only as deep as the count, so on a wide period it finds what the ordinary arms returned",
         expect="test_recall_cue.py::test_the_cue_arm_searches_to_its_own_depth_whatever_the_count",
     ),
+    Mutation(
+        id="M114",
+        tests=("tests/test_trace_embedding_model.py",),
+        target="recall trace — names the embedding model that produced the vectors (bug-441)",
+        file=_MH,
+        find='"embedding_model": generation.trace_model(),',
+        replace='"embedding_model": config.EMBEDDING_MODEL,',
+        breaks="a trace over HTTP names the configured default, a model nothing ran",
+        expect="test_trace_embedding_model.py::test_a_traced_recall_writes_it_and_an_untraced_one_does_not_ask",
+    ),
 ]
 
 

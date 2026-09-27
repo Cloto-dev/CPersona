@@ -11333,7 +11333,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -12110,7 +12110,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -13004,7 +13004,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -13656,7 +13656,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -14242,7 +14242,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -14977,7 +14977,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -16120,7 +16120,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -16770,7 +16770,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -17444,7 +17444,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -18146,7 +18146,7 @@
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
-          "embedding_model": "text-embedding-3-small",
+          "embedding_model": "",
           "fused_gate_enabled": true,
           "scan_window": 10000,
           "vector_far_limit": 0,
@@ -19003,7 +19003,7 @@
           "config": {
             "autocut_enabled": true,
             "embedding_mode": "none",
-            "embedding_model": "text-embedding-3-small",
+            "embedding_model": "",
             "fused_gate_enabled": true,
             "scan_window": 10000,
             "vector_far_limit": 0,
@@ -19891,7 +19891,7 @@
           "config": {
             "autocut_enabled": true,
             "embedding_mode": "none",
-            "embedding_model": "text-embedding-3-small",
+            "embedding_model": "",
             "fused_gate_enabled": true,
             "scan_window": 10000,
             "vector_far_limit": 0,
@@ -20761,7 +20761,7 @@
           "config": {
             "autocut_enabled": true,
             "embedding_mode": "none",
-            "embedding_model": "text-embedding-3-small",
+            "embedding_model": "",
             "fused_gate_enabled": true,
             "scan_window": 10000,
             "vector_far_limit": 0,
