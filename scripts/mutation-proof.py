@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -1399,18 +1401,85 @@ def apply_mutation(m: Mutation) -> str:
 TARGETED_CAUGHT_CODES = frozenset({1, 2})
 
 
-def verdict(m: Mutation, run_tests) -> tuple[bool, str]:
+@dataclass(frozen=True)
+class Run:
+    """One pytest run: its exit code and the node ids its summary named as failed."""
+
+    code: int
+    failed: tuple[str, ...] = ()
+
+
+# `-rfE` prints one "FAILED <node id> - <message>" or "ERROR <node id> - <message>" line
+# per failure; the message is optional and a node id may contain spaces inside [...].
+_SUMMARY_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+?(?:\[.*?\])?)(?: - .*)?$")
+
+
+def failed_node_ids(output: str) -> tuple[str, ...]:
+    """The node ids pytest's short summary names as failed or errored, in order."""
+    return tuple(m.group(1) for m in map(_SUMMARY_LINE.match, output.splitlines()) if m)
+
+
+def _as_run(result) -> Run:
+    # A runner may answer with a bare exit code; it then names no failures.
+    return result if isinstance(result, Run) else Run(int(result))
+
+
+def verdict(m: Mutation, run_tests, report: list | None = None) -> tuple[bool, str]:
     """Whether the test suite catches the applied mutant, and which run decided.
 
     `run_tests(paths)` runs pytest over `paths` (all tests when empty) and returns
-    its exit code. The full suite decides unless the mutant's own test files
-    are already red: an equivalent mutant must survive the WHOLE suite, so it
-    never takes the shortcut.
+    its exit code, or a `Run` naming the tests that failed. The full suite decides
+    unless the mutant's own test files are already red: an equivalent mutant must
+    survive the WHOLE suite, so it never takes the shortcut.
+
+    A red full run is only a verdict when it reproduces (see `_full_verdict`).
+    `report`, when given, collects ("failed" | "flaky", node ids) entries for the
+    caller to print.
     """
     if m.tests and not m.equivalent:
-        if run_tests(list(m.tests)) in TARGETED_CAUGHT_CODES:
+        if _as_run(run_tests(list(m.tests))).code in TARGETED_CAUGHT_CODES:
             return True, "targeted"
-    return run_tests([]) != 0, "full"
+    return _full_verdict(run_tests, report), "full"
+
+
+def _full_verdict(run_tests, report: list | None) -> bool:
+    """Run the whole suite; a red run counts only if its failure reproduces.
+
+    The full suite stops at its first failure (-x), and any test that fails once
+    for a reason unrelated to the mutant used to decide the verdict on its own:
+    an equivalent mutant read as OVER-PINNED, and a behavioural one as CAUGHT --
+    the direction that hides a survivor. So the failing tests are run again with
+    the mutant still applied. If they fail again, the mutant is caught. If they
+    pass, they are set aside as flaky and the rest of the suite decides. A red
+    run that names no test, or a rerun that cannot answer (nothing collected,
+    usage or internal error), keeps the conservative verdict: caught.
+    """
+    first = _as_run(run_tests([]))
+    if first.code == 0:
+        return False
+    if not first.failed:
+        return True
+    if report is not None:
+        report.append(("failed", first.failed))
+    again = _as_run(run_tests(list(first.failed)))
+    if again.code != 0:
+        return True
+    if report is not None:
+        report.append(("flaky", first.failed))
+    rest = _as_run(run_tests([], deselect=first.failed))
+    if rest.code != 0 and rest.failed and report is not None:
+        report.append(("failed", rest.failed))
+    return rest.code != 0
+
+
+def run_pytest(paths: list[str], deselect: tuple[str, ...] = ()) -> Run:
+    """pytest over `paths` (the whole suite when empty), stopping at the first failure."""
+    # -x: the first failure is enough to prove the mutant is caught.
+    cmd = ["uv", "run", "pytest", "-q", "-x", "-rfE", *paths]
+    for node_id in deselect:
+        cmd += ["--deselect", node_id]
+    proc = run(cmd)
+    return Run(proc.returncode, failed_node_ids(proc.stdout))
 
 
 def missing_test_files(selected: list[Mutation]) -> list[str]:
@@ -1445,13 +1514,12 @@ def main() -> int:
     print("Baseline green.\n")
 
     survived: list[Mutation] = []
+    flaky: list[tuple[str, str]] = []
     for m in selected:
         original = apply_mutation(m)
+        report: list = []
         try:
-            # -x: the first failure is enough to prove the mutant is caught.
-            caught, decided_by = verdict(
-                m, lambda paths: run(["uv", "run", "pytest", "-q", "-x", *paths]).returncode
-            )
+            caught, decided_by = verdict(m, run_pytest, report)
         finally:
             restore_mutation(m, original)
 
@@ -1465,6 +1533,14 @@ def main() -> int:
         print(f"[{status}] {m.id}  {m.target}")
         print(f"           {m.breaks}")
         print(f"           decided by: {decided_by} run")
+        for kind, node_ids in report:
+            for node_id in node_ids:
+                if kind == "failed":
+                    print(f"           failed: {node_id}")
+                else:
+                    flaky.append((m.id, node_id))
+                    print(f"           !! flaky: {node_id} passed when run again with the mutant applied;")
+                    print("              it was set aside and the rest of the suite decided")
         if not caught and not m.equivalent:
             survived.append(m)
             print(f"           !! no test failed. Expected pin: {m.expect}")
@@ -1488,6 +1564,14 @@ def main() -> int:
     equiv = [m for m in selected if m.equivalent]
     print(f"{len(real) - len([m for m in survived if not m.equivalent])}/{len(real)} behavioural mutations caught")
     print(f"{len(equiv)} equivalent mutants (expected to survive; they document redundant defences)")
+    if flaky:
+        # A flaky test does not fail this run -- it did not decide any verdict -- but it
+        # is reported where a reader will see it, as an annotation on CI.
+        print("\nFlaky tests set aside (each failed once, then passed with the mutant still applied):")
+        for mid, node_id in flaky:
+            print(f"  {node_id}  (while judging {mid})")
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                print(f"::warning title=mutation-proof: flaky test::{node_id} failed once while judging {mid} and passed on a rerun")
     if survived:
         print("\nUnresolved — address these BEFORE refactoring the named seam:")
         for m in survived:
