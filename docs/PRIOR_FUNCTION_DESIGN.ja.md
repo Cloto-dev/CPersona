@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PRIOR_FUNCTION_DESIGN.md@blob:40e541f03b852a49775835171bbe6559bc7bf287 -->
+<!-- i18n-source: docs/PRIOR_FUNCTION_DESIGN.md@blob:5c565702439cac207c0fe1b26fbb876bf3f3714f -->
 
 # 一本化した事前分布 — 設計 { #one-prior-function-design }
 
@@ -66,8 +66,10 @@ w_list  = 近いベクトルリスト・全文検索リスト・キーワード�
   時間の減衰と同じ族にしています。confidence スコアは率をストアの期間 (週単位、`CPERSONA_REFERENCE_HOURS` = 168)
   で割るので、今 confidence が掛けている時間の項を取り出す腕は、公称の `CPERSONA_DECAY_RATE` ではなく、
   計測するストアについて計算したその実効の率を使います。
-- `rsf` では、`p(row)` は融合・正規化済みのスコアに掛かり、far チャネルは `w_far` で重み付けされます。
-  チャネル数による割り算は、計画の `rsf` の注記どおり変えません。
+- `rsf` では、`p(row)` は融合スコアに掛かり、far チャネルは `w_far` で重み付けされます。
+  チャネル数による割り算は、ここでは計画の `rsf` の注記どおり変えませんでした。2.6.0b1 からは
+  各チャネルが固定の尺度に載り、合計は割られません
+  ([設定](configuration.md#recall-fusion-mode-cpersona_recall_mode))。
 
 ## 3. 事前分布は順位を決め、足切りはしない { #3-the-prior-orders-it-never-admits }
 

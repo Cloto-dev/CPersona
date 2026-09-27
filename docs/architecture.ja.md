@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:0eda1b2ad89f4203a5e13a446c826f96c5855c80 -->
+<!-- i18n-source: docs/architecture.md@blob:65fd532fb9d80ad9e4742d918da2e23bd5598864 -->
 
 # アーキテクチャ
 
@@ -122,7 +122,8 @@ flowchart LR
 
 1. **融合** (`CPERSONA_RECALL_MODE`)。`rrf` は順位のみで融合します。頑健で
    スケール非依存ですが、スコアの大きさを捨てます。`rsf` は各チャネルの生スコアを
-   クエリ単位で正規化して加算するため、bm25 の大きさが融合後も残ります。その
+   固定の尺度に載せて加算するため、bm25 の大きさが融合後も残り、行のスコアは
+   そのクエリがほかに何を retrieve したかに左右されません。その
    大きさは [日本語コーパス](operations.md#japanese-and-cjk-corpora) における
    識別シグナルであり、そこで `rsf` が推奨される理由です。`cascade` は
    チャネルを順に埋める方式で、レガシーです。

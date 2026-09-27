@@ -148,6 +148,11 @@ is registered for the shipped `rrf` mode only. Under `rsf` the far list is
 fused as a fourth channel, and no claim is made about it until it is
 measured.
 
+From 2.6.0b1 `rsf` puts each channel on a fixed scale and does not divide the
+sum, so a fourth channel adds to the rows it found and changes no other row's
+score ([configuration](configuration.md#recall-fusion-mode-cpersona_recall_mode)).
+The paragraphs above describe the scale this page was written against.
+
 ### 3.3 The two suppliers
 
 The vector scan has two suppliers for the same contract — `(ids, similarities)`

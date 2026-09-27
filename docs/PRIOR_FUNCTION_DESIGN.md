@@ -79,9 +79,11 @@ w_list  = 1 for the near vector list, the full-text list and the keyword list
   weeks (`CPERSONA_REFERENCE_HOURS`, 168), so the arm that isolates the time
   term confidence applies today uses that effective rate, computed for the
   store being measured, not the nominal `CPERSONA_DECAY_RATE`.
-- Under `rsf`, `p(row)` multiplies the fused, normalised score, and the far
-  channel is weighted by `w_far`. The channel divisor is unchanged, as the
-  plan's note on `rsf` describes.
+- Under `rsf`, `p(row)` multiplies the fused score, and the far channel is
+  weighted by `w_far`. The channel divisor was left unchanged here, as the
+  plan's note on `rsf` describes. From 2.6.0b1 each channel is on a fixed scale
+  and the sum is not divided at all
+  ([configuration](configuration.md#recall-fusion-mode-cpersona_recall_mode)).
 
 ## 3. The prior orders; it never admits
 

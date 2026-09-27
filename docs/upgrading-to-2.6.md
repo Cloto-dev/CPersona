@@ -48,8 +48,8 @@ recorded as done, so it is retried on the next start.
 
 ### The gate is recalibrated
 
-2.6.0a7 changed the scoring version, so a calibration stored by an earlier
-version is treated as stale. With the default
+2.6.0a7 and 2.6.0b1 changed the scoring version, so a calibration stored by an
+earlier version is treated as stale. With the default
 `CPERSONA_CALIBRATE_ON_MODEL_CHANGE=true`, the server recalibrates the global
 threshold at startup. If both that and `CPERSONA_AUTO_CALIBRATE` are off, the
 stale gate is not applied and `deep_check` reports `stale_scoring_version`
@@ -114,6 +114,12 @@ Check these against what your deployment relies on. Each is off, or equal to
   returns up to `limit` + 3 rows (3 / 2 / 1 by the cue's confidence), and a cue
   that points only at the last 24 hours is not used (`time_cue.ignored`).
   Without a cue nothing changes.
+- **`rsf` scores each channel on a fixed scale** (2.6.0b1). Under
+  `CPERSONA_RECALL_MODE=rsf` a row's fused score no longer depends on the other
+  rows the query retrieved, so the gate stops dropping the weakest row of a
+  strong set and stops passing a weak lone match. The fused gate is
+  recalibrated with the scoring version ([above](#the-gate-is-recalibrated)).
+  `rrf` and `cascade` are unchanged.
 
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 (`trace=true`), the time cue (`time_cue`), associations declared with
