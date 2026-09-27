@@ -184,3 +184,22 @@ def test_failed_node_ids_reads_the_short_summary():
         "tests/test_b.py::test_y[m1 - recall cue]",
         "tests/test_c.py::test_z",
     )
+
+
+def test_run_pytest_deselects_what_it_is_given_and_names_what_failed(monkeypatch):
+    seen: list[list[str]] = []
+
+    class Done:
+        returncode = 1
+        stdout = f"F\nFAILED {FLAKY} - AssertionError\n1 failed in 0.01s\n"
+
+    def fake_run(cmd, **kw):
+        seen.append(cmd)
+        return Done()
+
+    monkeypatch.setattr(H, "run", fake_run)
+    got = H.run_pytest([], deselect=(FLAKY, "tests/test_x.py::test_y"))
+    assert got == H.Run(1, (FLAKY,))
+    cmd = seen[0]
+    assert cmd[:6] == ["uv", "run", "pytest", "-q", "-x", "-rfE"]
+    assert cmd[6:] == ["--deselect", FLAKY, "--deselect", "tests/test_x.py::test_y"]
