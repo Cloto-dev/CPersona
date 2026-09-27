@@ -29,6 +29,7 @@ Two tracks are measured:
 | `frozen_replay.py` | Frozen-stage replay of the Track B path: scores the dense-only order, the admitted order, the fused order and the gated order per query on the same frozen embeddings and lexical scores, so Track B − Track A can be attributed to a stage. Reproduces Track A at the first stage and the recorded Track B at the last, and compares its fused/gated orders row for row with the live `_recall_rrf` / `do_recall` on a sample of queries |
 | `replay_summary.py` | Tabulates `frozen_replay.py` output across models: stage decomposition, lexical-weight sweep, top-ten move taxonomy, per-corpus calibration |
 | `replay_query_analysis.py` | Per-query view of the same output: fusion delta by top-cosine quartile, the one-parameter cosine switch and its oracle, gold visibility |
+| `longmemeval_time_cue.py` | LongMemEval with a time cue: stores each question's scene at its session dates, stops the clock at the question date, and compares `recall` with and without the cue the question states (and two wrong-cue controls) in one process; `judge` computes the pre-registered verdict (below) |
 | `longmemeval_reader.py` | End-to-end answer accuracy on LongMemEval: reads the rankings a retrieval run dumped (`--dump_rankings`), rebuilds what a caller would have read, and has an isolated reader answer and a judge grade it (below) |
 | `benchmark_latency.py` | Production-stack latency runner: end-to-end `do_recall()` / `do_store()` wall clock against a REAL HTTP embedding backend (CEmbedding `/embed`), in both `local` and `remote` (matrix `/search`) vector-search modes |
 
@@ -303,6 +304,25 @@ OUTPUT_DIR=~/lmeb/lme_by_type/v2.4.40 CPERSONA_REPO=/path/to/v2.4.41 \
 OUTPUT_DIR=~/lmeb/lme_by_type/dev benchmarks/run_longmemeval_by_type.sh
 # one table per regime; the first arm is the reference for the deltas
 python benchmarks/longmemeval_by_type.py v2.4.40=~/lmeb/lme_by_type/v2.4.40 dev=~/lmeb/lme_by_type/dev
+```
+
+### LongMemEval with a time cue
+
+`longmemeval_time_cue.py` measures the time cue (`docs/RECALL_PROCESS_DESIGN.md`
+§2) on LongMemEval's own questions, in the `limit10` haystack above. Only the
+scenes of questions that carry a cue are stored, each session at the time in
+its title, and the clock the recall path reads is stopped at the question's
+date. The cues (`measurements/longmemeval_time_cues.jsonl`) were extracted by a
+model from the question text and date only; the extractor's prompt and schema
+are in `measurements/longmemeval_time_cue_extractor.json`, and every row carries
+their hash. The arms, the metric and the decision rule are fixed in
+`measurements/prereg-longmemeval-time-cue.md`.
+
+```bash
+PYTHONPATH=benchmarks EMB_CACHE_DIR=~/lmeb/embcache LMEB_DIR=~/lmeb \
+    python benchmarks/longmemeval_time_cue.py run \
+    --cues benchmarks/measurements/longmemeval_time_cues.jsonl --out ~/lmeb/time_cue/run1
+python benchmarks/longmemeval_time_cue.py judge ~/lmeb/time_cue/run1
 ```
 
 ### Prompted / task-adapter models

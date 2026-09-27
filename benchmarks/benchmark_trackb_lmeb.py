@@ -442,7 +442,7 @@ _QUERY_ENCODE_KW: dict = {}
 
 
 async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], batch_size: int = 256,
-                       isolate_scenes: bool = False) -> int:
+                       isolate_scenes: bool = False, timestamp_of=None) -> int:
     """Store corpus using cpersona's schema and FTS5 triggers with batch optimization.
 
     Optimizations (all external to cpersona — no cpersona code changes):
@@ -453,6 +453,11 @@ async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], bat
     Recall still uses 100% real do_recall(). Store uses cpersona's actual
     SQLite schema and FTS5 triggers (which fire on INSERT automatically),
     bypassing only do_store()'s per-row commit and dedup check.
+
+    Every record is stored at one fixed time unless ``timestamp_of`` is given:
+    a function from a corpus doc to the ISO-8601 time to store it at. The
+    time cue measurement (``longmemeval_time_cue.py``) stores each session at
+    the date in its title, since a cue can only find a record by its time.
     """
     import struct
 
@@ -483,7 +488,8 @@ async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], bat
             # only its own history (the production haystack) instead of the
             # whole pooled corpus with the scene filter applied afterwards.
             channel = get_scene_id(str(doc["id"])) if isolate_scenes else ""
-            rows.append((AGENT_ID, str(doc["id"]), text, source_json, timestamp, metadata_json, blob, channel))
+            stamp = timestamp_of(doc) if timestamp_of is not None else timestamp
+            rows.append((AGENT_ID, str(doc["id"]), text, source_json, stamp, metadata_json, blob, channel))
 
         # v2.4.36 enforces UNIQUE(agent_id, project_id, channel, content) and
         # UNIQUE(agent_id, project_id, msg_id) — exact-duplicate corpus docs

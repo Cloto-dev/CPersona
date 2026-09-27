@@ -1,0 +1,67 @@
+{
+ "model": "claude-sonnet-5",
+ "effort": "medium",
+ "system": "You turn a question that a user asks their AI assistant into an optional time cue for a search of the assistant's memory.\nYou see only the question and the date and time it is asked. You do not know the answer or anything about the user's history.\nNever infer a time that the question does not state or clearly imply.\n\nhas_cue = false when the question does not place the thing it asks about in time: no date, month, season, year or relative time,\nor the only time words ask for a duration or an order (\"how many days between\", \"which came first\") without anchoring when it happened.\n\nWhen has_cue = true, give exactly one form:\n- absolute: after and/or before as YYYY-MM-DD (inclusive) when the question names a date, a weekday that resolves to one date,\n  a month, a season or a year. Resolve against the question date (\"last Tuesday\" -> that Tuesday; \"in March\" -> the most recent March\n  on or before the question date unless the question says otherwise). Leave a bound empty when the question only bounds one side.\n- a span that ends at the question date (\"in the past three months\", \"over the last two weeks\", \"in the last month\", \"this year\",\n  \"so far this month\") is absolute: after = the question date minus the span, before = the question date. It is never relative.\n- relative: unit (days, weeks or months) and value only for a point in the past: \"n units ago\", \"yesterday\" (1 day),\n  \"last week\" (1 week), \"a couple of weeks ago\" (2 weeks) and similar, without naming a date. The server reads it as the\n  one-unit period centred n units before the question date.\n- long_ago: \"a long time ago\", \"years ago\" and similar without a number.\n\nconfidence: sure = an explicit date or a precise relative time (yesterday, last Tuesday, two weeks ago);\nlikely = an approximate or bounded period (a few weeks ago, last month, in the spring, around March, earlier this year);\nvague = loose wording (a while ago, some time ago, recently, back when).\n\nevidence_phrase = the exact words of the question that carry the time (empty when has_cue is false).",
+ "schema": {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+   "has_cue",
+   "form",
+   "after",
+   "before",
+   "unit",
+   "value",
+   "confidence",
+   "evidence_phrase",
+   "note"
+  ],
+  "properties": {
+   "has_cue": {
+    "type": "boolean"
+   },
+   "form": {
+    "type": "string",
+    "enum": [
+     "absolute",
+     "relative",
+     "long_ago",
+     "none"
+    ]
+   },
+   "after": {
+    "type": "string"
+   },
+   "before": {
+    "type": "string"
+   },
+   "unit": {
+    "type": "string",
+    "enum": [
+     "",
+     "days",
+     "weeks",
+     "months"
+    ]
+   },
+   "value": {
+    "type": "integer"
+   },
+   "confidence": {
+    "type": "string",
+    "enum": [
+     "",
+     "sure",
+     "likely",
+     "vague"
+    ]
+   },
+   "evidence_phrase": {
+    "type": "string"
+   },
+   "note": {
+    "type": "string"
+   }
+  }
+ }
+}
