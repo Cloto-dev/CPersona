@@ -11454,7 +11454,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "confidence": "sure",
@@ -12470,7 +12470,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "confidence": "sure",
@@ -13286,7 +13286,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "confidence": "sure",
@@ -13927,7 +13927,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "confidence": "sure",
@@ -14371,7 +14371,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "confidence": "sure",
@@ -15321,7 +15321,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "confidence": "sure",
@@ -16358,7 +16358,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "next": null,
@@ -17008,7 +17008,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "confidence": "vague",
@@ -17682,7 +17682,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "confidence": "sure",
@@ -18453,7 +18453,7 @@
           "source_id": ""
         },
         "scoring": {},
-        "server_version": "2.6.0a7",
+        "server_version": "<server version>",
         "stages": [
           {
             "next": null,
@@ -19306,7 +19306,7 @@
             "source_id": ""
           },
           "scoring": {},
-          "server_version": "2.6.0a7",
+          "server_version": "<server version>",
           "stages": [
             {
               "next": null,
@@ -20241,7 +20241,7 @@
             "source_id": ""
           },
           "scoring": {},
-          "server_version": "2.6.0a7",
+          "server_version": "<server version>",
           "stages": [
             {
               "confidence": "likely",
@@ -21064,7 +21064,7 @@
             "source_id": ""
           },
           "scoring": {},
-          "server_version": "2.6.0a7",
+          "server_version": "<server version>",
           "stages": [
             {
               "next": null,

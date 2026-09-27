@@ -2680,11 +2680,21 @@ def _m1_ts(days_before: float) -> str:
     return (FROZEN_INSTANT - timedelta(days=days_before)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _without_timing(obj: Any) -> Any:
+def _without_volatile(obj: Any) -> Any:
+    """Drop the timing and blank the answering version: neither is behaviour.
+
+    A traced recall names the version that answered (`server_version`). Kept
+    verbatim, every version bump would read as a change in all traced scenarios;
+    the key stays, so its presence is still compared.
+    """
     if isinstance(obj, dict):
-        return {k: _without_timing(v) for k, v in obj.items() if k != "timing_ms"}
+        return {
+            k: ("<server version>" if k == "server_version" else _without_volatile(v))
+            for k, v in obj.items()
+            if k != "timing_ms"
+        }
     if isinstance(obj, list):
-        return [_without_timing(v) for v in obj]
+        return [_without_volatile(v) for v in obj]
     return obj
 
 
@@ -2738,7 +2748,7 @@ async def _(ctx):
     install_local(ctx)
     ctx.patch(memory_handlers, "RECALL_MODE", "rrf")
     out = await memory_handlers.do_recall(_M1, _M1_QUERY, 12, trace=True, time_cue=_period(125, 95, "sure"))
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 # Under rsf the gate refuses the three oldest records, so this cue names a period
@@ -2754,7 +2764,7 @@ async def _(ctx):
 async def _(ctx):
     install_local(ctx)
     out = await memory_handlers.do_recall(_M1, _M1_QUERY, 5, trace=True, time_cue=_period(8, 3, "sure"))
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-recall-cue-vague-empty-stops", _SEAM_M1, "an empty vague period has no wider step and stops", seed=seed_m1)
@@ -2762,7 +2772,7 @@ async def _(ctx):
     install_local(ctx)
     out = await memory_handlers.do_recall(
         _M1, _M1_QUERY, 5, trace=True, time_cue={"after": "2020-01-01", "before": "2020-01-02", "confidence": "vague"})
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-recall-cue-today-ignored", _SEAM_M1, "a cue for only the current day is not used (recent_only)", seed=seed_m1)
@@ -2770,7 +2780,7 @@ async def _(ctx):
     install_local(ctx)
     out = await memory_handlers.do_recall(
         _M1, _M1_QUERY, 5, trace=True, time_cue={"after": FROZEN_INSTANT.date().isoformat(), "confidence": "sure"})
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-recall-cue-seat", _SEAM_M1, "the one held seat for the best record only the cue arm found", seed=seed_m1_seat)
@@ -2778,27 +2788,27 @@ async def _(ctx):
     install_local(ctx)
     ctx.patch(memory_handlers, "RECALL_MODE", "rrf")
     out = await memory_handlers.do_recall(_M1, _M1_QUERY, 2, trace=True, time_cue=_period(115, 95, "sure"))
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-recall-cue-episode", _SEAM_M1, "the cue arm finds the episode in its period and not the one outside", seed=seed_m1)
 async def _(ctx):
     install_local(ctx)
     out = await memory_handlers.do_recall(_M1, _M1_QUERY, 14, trace=True, time_cue=_period(75, 46, "sure"))
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-recall-cue-empty-query", _SEAM_M1, "an empty query with a cue lists the period's newest records", seed=seed_m1)
 async def _(ctx):
     install_local(ctx)
     out = await memory_handlers.do_recall(_M1, "", 3, trace=True, time_cue=_period(75, 46, "sure"))
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-recall-cue-no-embedding", _SEAM_M1, "degraded: no embedding client, the cue arm is keyword only", seed=seed_m1)
 async def _(ctx):
     out = await memory_handlers.do_recall(_M1, _M1_QUERY, 12, trace=True, time_cue=_period(125, 95, "sure"))
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-recall-cue-fts-off", _SEAM_M1, "degraded: FTS off, the cue arm is vector only", seed=seed_m1)
@@ -2806,7 +2816,7 @@ async def _(ctx):
     install_local(ctx)
     ctx.patch(memory_handlers, "FTS_ENABLED", False)
     out = await memory_handlers.do_recall(_M1, _M1_QUERY, 12, trace=True, time_cue=_period(125, 95, "sure"))
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-recall-depth-floor", _SEAM_M1, "a depth floor above the count: depth reported, the count still bounds the answer", seed=seed_m1)
@@ -2815,7 +2825,7 @@ async def _(ctx):
     from cpersona import config as _config
     ctx.patch(_config, "RECALL_DEPTH_FLOOR", 12)
     out = await memory_handlers.do_recall(_M1, _M1_QUERY, 3, trace=True)
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-reconstruct-default", _SEAM_M1, "reconstruct at the default count and budget, with its recall's trace", seed=seed_m1)
@@ -2823,7 +2833,7 @@ async def _(ctx):
     install_local(ctx)
     from cpersona import reconstruct
     out = await reconstruct.do_reconstruct(_M1, _M1_QUERY, trace=True)
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-reconstruct-count-budget", _SEAM_M1, "reconstruct at count 3 with a budget below one excerpt: raised to the floor (budget_policy), item shape, bounds", seed=seed_m1)
@@ -2831,7 +2841,7 @@ async def _(ctx):
     install_local(ctx)
     from cpersona import reconstruct
     out = await reconstruct.do_reconstruct(_M1, _M1_QUERY, count=3, budget=120, trace=True)
-    return _without_timing(out)
+    return _without_volatile(out)
 
 
 @scenario("m1-reconstruct-cue", _SEAM_M1, "reconstruct passes a cue to the recall it reads", seed=seed_m1)
@@ -2839,4 +2849,4 @@ async def _(ctx):
     install_local(ctx)
     from cpersona import reconstruct
     out = await reconstruct.do_reconstruct(_M1, _M1_QUERY, count=3, trace=True, time_cue=_period(125, 95, "likely"))
-    return _without_timing(out)
+    return _without_volatile(out)
