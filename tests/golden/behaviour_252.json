@@ -11411,7 +11411,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -12440,7 +12440,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -13256,7 +13256,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -13897,7 +13897,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -14328,7 +14328,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -15291,7 +15291,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -16374,7 +16374,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -17023,7 +17023,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -17697,7 +17697,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -18473,7 +18473,7 @@
         },
         "policy": {
           "process": "single-pass-v0",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "260b1-rsf-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -19326,7 +19326,7 @@
           },
           "policy": {
             "process": "single-pass-v0",
-            "scoring": "260a7-confidence-gates-nothing"
+            "scoring": "260b1-rsf-fixed-scale"
           },
           "request": {
             "confidence_enabled": false,
@@ -20256,7 +20256,7 @@
           },
           "policy": {
             "process": "cued-v0.3",
-            "scoring": "260a7-confidence-gates-nothing"
+            "scoring": "260b1-rsf-fixed-scale"
           },
           "request": {
             "confidence_enabled": false,
@@ -21084,7 +21084,7 @@
           },
           "policy": {
             "process": "single-pass-v0",
-            "scoring": "260a7-confidence-gates-nothing"
+            "scoring": "260b1-rsf-fixed-scale"
           },
           "request": {
             "confidence_enabled": false,

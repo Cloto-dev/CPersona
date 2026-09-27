@@ -120,3 +120,13 @@ async def test_a_strong_single_channel_row_still_clears_a_cosine_scale_gate(monk
     assert 1 in _gated(rows)
     monkeypatch.setattr(mh, "RSF_DIVISOR", "active")
     assert 1 not in _gated(await _fuse(monkeypatch, near=_near([(1, 0.8)]), keyword=_keyword([(2, 4.0)])))
+
+
+@pytest.mark.asyncio
+async def test_the_shipped_constants_are_the_ones_the_dev_measurement_chose(monkeypatch):
+    # benchmarks/measurements/prereg-rsf-fixed-scale.md chose divisor "none" with H = 8 on
+    # the dev half and judged that choice on the test half. A keyword score of 8 is half a
+    # vote, and a row both channels found keeps the plain sum of its two votes.
+    s = _scores(await _fuse(monkeypatch, near=_near([(1, 0.6)]), keyword=_keyword([(1, 8.0), (2, 8.0)])))
+    assert s[2] == pytest.approx(0.5)
+    assert s[1] == pytest.approx(1.1)
