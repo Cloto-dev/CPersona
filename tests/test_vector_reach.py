@@ -900,3 +900,50 @@ async def test_the_fusion_receives_at_most_that_many_far_only_votes(
             f"{rid} scored {after.get(rid)} with a three-row far list and {score} "
             "without one; a shorter far list must still only add"
         )
+
+
+# --------------------------------------------------------------------------
+# (11) `CPERSONA_PRIOR_FAR_WEIGHT` at 0 is the reach turned off (bug-442)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["rrf", "rsf"])
+async def test_a_far_weight_of_zero_is_the_reach_turned_off(
+    corpus, one_hot_client, monkeypatch, mode
+):
+    """Same answer as the reach off, and no far scan to get it.
+
+    Three near rows and no lexical list leave the answer short of `limit`. That
+    is where far rows weighted 0 used to surface under rrf: they entered the
+    fusion at a score of 0, the gate read their cosine, and they filled the
+    tail. The scan counter is proven live by the same recall at a weight of 1.
+    """
+    monkeypatch.setattr(M, "RECALL_MODE", mode)
+    monkeypatch.setattr(M, "FTS_ENABLED", False)
+    calls: list[int] = []
+    real = vector._search_vector_far
+
+    async def counting(*args, **kwargs):
+        calls.append(1)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(vector, "_search_vector_far", counting)
+
+    async def refs():
+        res = await M.do_recall(agent_id=AGENT, query="row", limit=10)
+        return [m["ref"] for m in res["messages"]]
+
+    set_reach(monkeypatch, 3, 0)
+    off = await refs()
+    assert 0 < len(off) < 10, "the answer is not short of limit, so no tail can be filled"
+
+    set_reach(monkeypatch, 3, REACH)
+    monkeypatch.setattr(M, "PRIOR_FAR_WEIGHT", 0.0)
+    assert await refs() == off, "a far weight of 0 answered differently from the reach off"
+    assert calls == [], f"a far weight of 0 still scanned the far region ({len(calls)} calls)"
+
+    monkeypatch.setattr(M, "PRIOR_FAR_WEIGHT", 1.0)
+    one = await refs()
+    assert calls, "the far scan was not reached at a weight of 1, so the count above proves nothing"
+    assert len(one) > len(off), "the far list added nothing at a weight of 1 in this corpus"

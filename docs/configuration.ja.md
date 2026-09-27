@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:20e84ac505051c13ecedd42ce9dbe6286bc3fa73 -->
+<!-- i18n-source: docs/configuration.md@blob:d3e7b215e10e6defdd2edcc39ba00f2266587519 -->
 
 # 設定リファレンス
 
@@ -44,7 +44,7 @@
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | エピソード境界ペナルティ ([契約 §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | 境界より前の記憶に対する 1 時間あたりの減衰率 |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | ペナルティの下限 (古い記憶でも最大で半分まで) |
-| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | far リストの票の値打ち (`0`〜`1`)。両方の融合に効きます ([一本化した事前分布](PRIOR_FUNCTION_DESIGN.md#2-the-prior))。`CPERSONA_VECTOR_REACH` が窓より大きく設定されている時だけ意味を持ち、`1` は値段の付いていない far の票です |
+| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | far リストの票の値打ち (`0`〜`1`)。両方の融合に効きます ([一本化した事前分布](PRIOR_FUNCTION_DESIGN.md#2-the-prior))。`CPERSONA_VECTOR_REACH` が窓より大きく設定されている時だけ意味を持ちます。`1` は値段の付いていない far の票、`0` は reach を切ったのと同じで、far の領域を走査しません |
 | `CPERSONA_PRIOR_AGE_RATE` | `0` | 年齢の重み `max(floor, 1 / (1 + age_hours × rate))` の率。品質ゲートが通した行の順序だけを入れ替え、行を通しも除きもしません。`0` で無効 |
 | `CPERSONA_PRIOR_AGE_FLOOR` | `0.3` | 年齢の重みの下限 |
 | `CPERSONA_PRIOR_AGE_ANCHOR` | `newest` | 年齢をどこから測るか。想起のスコープで最も新しい記憶 (`newest`。放置したストアも最後に使った時と同じ順位になる) か、現在時刻 (`now`) |

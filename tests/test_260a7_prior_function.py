@@ -146,7 +146,9 @@ def _row(i, cosine):
 
 def _fake_search(near, far):
     async def search(db, agent_id, query, depth, **kwargs):
-        kwargs["far_out"].extend(far)
+        # As the real retriever: no list handed over, no far list (vector.search).
+        if kwargs.get("far_out") is not None:
+            kwargs["far_out"].extend(far)
         return near
     return search
 
@@ -162,6 +164,9 @@ async def test_rrf_prices_only_the_far_vote(fake_embedding_client, monkeypatch, 
     k = memory_handlers.RRF_K
     assert score[1] == 1.0 / (k + 1) and score[2] == 1.0 / (k + 2), "a near vote moved"
     assert score.get(3, 0.0) == pytest.approx(weight / (k + 1))
+    if weight == 0:
+        # bug-442: not a far row scored 0, which a cosine-reading gate can admit.
+        assert 3 not in score, "a far weight of 0 still put the far row in the fusion"
 
 
 @pytest.mark.asyncio

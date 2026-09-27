@@ -571,10 +571,17 @@ async def _recall_rrf(
         # One call to the vector retriever, as always. `far_out` collects the
         # second ranked list it produces when CPERSONA_VECTOR_REACH is set above
         # the scan window, and stays empty otherwise.
+        #
+        # bug-442: a far vote worth 0 is the reach turned off, so the list is not
+        # asked for. Asked for and weighted by 0, its rows still entered the
+        # fusion at a score of 0, the gate here reads their cosine and let them
+        # through, and they filled the tail of any answer the near and lexical
+        # lists left short of `limit`.
         vector_results = await _search_vector(
             db, agent_id, query, depth, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_results, query_vec_out=query_vec_out,
+            far_out=far_results if PRIOR_FAR_WEIGHT > 0 else None,
+            query_vec_out=query_vec_out,
         )
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -769,10 +776,12 @@ async def _recall_rsf(
 
     rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
+        # bug-442: as under rrf, a far channel weighted 0 is not read at all.
         near_rows = await _search_vector(
             db, agent_id, query, depth, min_similarity=rsf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_rows, query_vec_out=query_vec_out,
+            far_out=far_rows if PRIOR_FAR_WEIGHT > 0 else None,
+            query_vec_out=query_vec_out,
         )
         for row in near_rows:
             if _content_excluded(row.get("content", ""), _excl):

@@ -6467,6 +6467,20 @@
       "category": "imputed-over-observed",
       "note": "Trace only: nothing ranked or stored read the field. Found when a stage replay could not tell from its traces which model the results came from.",
       "fix_note": "A traced recall asks the backend what it is (bounded by the existing refresh interval; an untraced recall does not ask) and names the model the capability report gives, else the name this process can vouch for (config.reported_embedding_model), else empty -- not known here."
+    },
+    {
+      "id": "bug-442",
+      "summary": "(LOW) CPERSONA_PRIOR_FAR_WEIGHT=0 was not the reach turned off, as PRIOR_FUNCTION_DESIGN.md says it is. The far list was still scanned and fused at a weight of 0; under rrf the gate reads a row's cosine rather than its fused score, so far rows entered at a score of 0 passed it and filled the tail of any answer the near and lexical lists left short of limit. Under rsf the answer was unchanged, but the far region was still scanned on every recall.",
+      "severity": "LOW",
+      "discovered": "2026-09-28T00:05:00Z",
+      "version": "2.6.0a8",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "far_out=far_[a-z]+ if PRIOR_FAR_WEIGHT > 0 else None",
+      "expected": "present",
+      "status": "fixed",
+      "category": "correctness",
+      "note": "Reachable only with CPERSONA_VECTOR_REACH set above the window and the weight set to 0; both are off by default. Found while registering the far-weight sweep, whose w=0 arm is an identity control against the reach off: on a corpus where three near rows and no lexical list answered, the reach off returned 3 rows and w=0 returned 10.",
+      "fix_note": "Both fusions ask the vector retriever for the far list only when the weight is above 0. At 0 no far scan runs, so the answer is the reach-off answer by construction rather than by the gate. tests/test_vector_reach.py pins both the answer and the absence of the scan, and proves the scan counter live at a weight of 1."
     }
   ]
 }

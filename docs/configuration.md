@@ -40,7 +40,7 @@
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | Episode boundary penalty ([contract §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | Penalty decay rate per hour before the boundary |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | Penalty floor (older memories are at most halved) |
-| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | What a vote from the far list is worth, from `0` to `1`, in both fusions ([one prior function](PRIOR_FUNCTION_DESIGN.md#2-the-prior)). Only meaningful when `CPERSONA_VECTOR_REACH` is set above the window; `1` is the unpriced far vote |
+| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | What a vote from the far list is worth, from `0` to `1`, in both fusions ([one prior function](PRIOR_FUNCTION_DESIGN.md#2-the-prior)). Only meaningful when `CPERSONA_VECTOR_REACH` is set above the window; `1` is the unpriced far vote, and `0` is the reach turned off: the far region is not scanned |
 | `CPERSONA_PRIOR_AGE_RATE` | `0` | Rate of the age weight `max(floor, 1 / (1 + age_hours × rate))`, which reorders the rows the quality gate admitted and never admits or removes one. `0` turns it off |
 | `CPERSONA_PRIOR_AGE_FLOOR` | `0.3` | Floor of the age weight |
 | `CPERSONA_PRIOR_AGE_ANCHOR` | `newest` | Where age is measured from: the newest memory in the recall's scope (`newest`, so an idle store ranks as it did when last used) or the current time (`now`) |
