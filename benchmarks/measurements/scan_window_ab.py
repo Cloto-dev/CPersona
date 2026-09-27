@@ -396,12 +396,21 @@ async def build(args: argparse.Namespace) -> None:
 # arm: one window, one recall pass
 # ---------------------------------------------------------------------------
 
-def _set_env(db_path: str, window: int, reach: int = 0, far_limit: int = 0) -> None:
+REGIMES = ("shipped", "production")
+
+
+def _set_env(db_path: str, window: int, reach: int = 0, far_limit: int = 0,
+             far_weight: float | None = None, regime: str = "shipped") -> None:
     """Shipped defaults except for what a benchmark cannot have (no network).
 
     The truncation layers stay ON: they are the mechanisms a larger candidate
     pool is suspected of disturbing, so the usual "turn them off for a pure
     ranking number" convention would remove the effect being measured.
+
+    `regime="production"` is the fusion a production deployment runs — `rsf`
+    with the confidence scorer enabled — and nothing else moves: the gate,
+    autocut and threshold stay at their defaults, and the gate stays
+    uncalibrated, as in every other arm of this harness.
     """
     os.environ["CPERSONA_DB_PATH"] = db_path
     os.environ["CPERSONA_EMBEDDING_MODE"] = "http"
@@ -429,11 +438,33 @@ def _set_env(db_path: str, window: int, reach: int = 0, far_limit: int = 0) -> N
                 "CPERSONA_RECALL_MODE", "CPERSONA_CONFIDENCE_ENABLED",
                 "CPERSONA_VECTOR_MIN_SIMILARITY"):
         os.environ.pop(key, None)
+    if regime == "production":
+        os.environ["CPERSONA_RECALL_MODE"] = "rsf"
+        os.environ["CPERSONA_CONFIDENCE_ENABLED"] = "true"
+    elif regime != "shipped":
+        raise SystemExit(f"unknown regime {regime!r}: expected one of {REGIMES}")
+    # The far vote's price. Unset is its default (1, the unpriced vote), which is
+    # what every reach arm measured before this setting existed ran; a value is
+    # pinned, so an inherited one cannot decide an arm.
+    if far_weight is None:
+        os.environ.pop("CPERSONA_PRIOR_FAR_WEIGHT", None)
+    else:
+        os.environ["CPERSONA_PRIOR_FAR_WEIGHT"] = repr(far_weight)
 
 
 async def arm(args: argparse.Namespace) -> None:
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    _set_env(args.db, args.window, args.reach, args.far_limit)
+    # The production regime runs the confidence scorer, and a recall under it
+    # writes (`recall_count`). Such an arm queries its own copy of the rotation's
+    # database, so it cannot change the corpus the next arm reads; the copy is
+    # made with SQLite's backup API, which carries any WAL content with it.
+    db_path = args.db
+    if args.regime == "production":
+        db_path = f"{args.db}.{args.label}.tmp"
+        with sqlite3.connect(args.db) as src, sqlite3.connect(db_path) as dst:
+            src.backup(dst)
+    _set_env(db_path, args.window, args.reach, args.far_limit,
+             args.far_weight, args.regime)
 
     import cpersona.config as config
     import cpersona.memory_handlers as mh
@@ -459,7 +490,21 @@ async def arm(args: argparse.Namespace) -> None:
             f"far-list limit did not take: config says {config.VECTOR_FAR_LIMIT}, "
             f"asked for {args.far_limit}"
         )
+    # Read where the fusion reads it: `memory_handlers` binds the value at import.
+    want_weight = 1.0 if args.far_weight is None else args.far_weight
+    if mh.PRIOR_FAR_WEIGHT != want_weight:
+        raise SystemExit(
+            f"far weight did not take: the fusion reads {mh.PRIOR_FAR_WEIGHT}, "
+            f"asked for {want_weight}"
+        )
+    if args.regime == "production" and not (
+            mh.RECALL_MODE == "rsf" and config.CONFIDENCE_ENABLED):
+        raise SystemExit(
+            f"production regime did not take: recall mode {mh.RECALL_MODE}, "
+            f"confidence {config.CONFIDENCE_ENABLED}"
+        )
     regime = {
+        "name": args.regime,
         "recall_mode": config.RECALL_MODE,
         "fused_gate": config.FUSED_GATE_ENABLED,
         "autocut": config.AUTOCUT_ENABLED,
@@ -468,6 +513,7 @@ async def arm(args: argparse.Namespace) -> None:
         "scan_window": config.MAX_MEMORIES,
         "reach": config.VECTOR_REACH,
         "far_limit": config.VECTOR_FAR_LIMIT,
+        "far_weight": mh.PRIOR_FAR_WEIGHT,
     }
 
     emb = LookupEmbeddingClient()
@@ -519,7 +565,8 @@ async def arm(args: argparse.Namespace) -> None:
     db = await get_db()
 
     out = {"window": args.window, "reach": args.reach, "limit": args.limit,
-           "far_limit": args.far_limit, "label": args.label,
+           "far_limit": args.far_limit, "far_weight": args.far_weight,
+           "regime_name": args.regime, "label": args.label,
            "rotation": plan["rotation"], "corpus_size": plan["corpus_size"],
            "regime": regime, "results": {}}
     t0 = time.time()
@@ -555,7 +602,12 @@ async def arm(args: argparse.Namespace) -> None:
         (AGENT_ID,)))[0][0]
     out["recall_count_sum"] = bumped
     await close_db()
-    if bumped:
+    if db_path != args.db:
+        # The writes were the reason for the copy; they are expected, and they
+        # stay with it.
+        for suffix in ("", "-wal", "-shm"):
+            Path(db_path + suffix).unlink(missing_ok=True)
+    elif bumped:
         raise SystemExit(
             f"recall bumped recall_count on {bumped} rows: the arms no longer share "
             "an identical corpus. Give each arm its own copy of the database."
@@ -563,8 +615,8 @@ async def arm(args: argparse.Namespace) -> None:
 
     Path(args.out).write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     print(f"  arm {args.label} (window {args.window}, reach {args.reach}, "
-          f"far limit {args.far_limit}): "
-          f"{len(plan['queries'])} queries in {time.time() - t0:.0f}s")
+          f"far limit {args.far_limit}, far weight {args.far_weight}, "
+          f"{args.regime}): {len(plan['queries'])} queries in {time.time() - t0:.0f}s")
 
 
 # ---------------------------------------------------------------------------
@@ -589,13 +641,18 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
-def score(groups: list[tuple[dict, list[dict]]]) -> dict:
+def score(groups: list[tuple[dict, list[dict]]],
+          identity: list[tuple[str, str]] | None = None) -> dict:
     """`groups` is one (plan, arms) pair per rotation; results are pooled over
     rotations because the cohorts are disjoint by construction.
 
     Arms are compared within one `limit`: the first arm carrying a given limit
     is that limit's baseline. A delta across two response sizes would not be a
     window effect.
+
+    `identity` names pairs of arms that must return the same rows for every
+    query — a setting written two ways — whether or not either is a baseline.
+    They are counted, not asserted, like the other controls.
     """
     labels: list[str] = []
     for _, arms in groups:
@@ -603,15 +660,22 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
             if a["label"] not in labels:
                 labels.append(a["label"])
     limit_of = {a["label"]: a["limit"] for _, arms in groups for a in arms}
-    base_of: dict[str, str] = {}
+    # And within one regime: an arm under the production fusion is read against
+    # the first arm under that fusion, not against the shipped one. An arm file
+    # written before regimes existed ran the shipped regime.
+    regime_of = {a["label"]: a.get("regime_name", "shipped") for _, arms in groups for a in arms}
+    first_of: dict[tuple[int, str], str] = {}
     for label in labels:
-        base_of.setdefault(limit_of[label], label)
+        first_of.setdefault((limit_of[label], regime_of[label]), label)
+    base_of = {label: first_of[(limit_of[label], regime_of[label])] for label in labels}
 
     reach_of = {a["label"]: a.get("reach", 0) for _, arms in groups for a in arms}
     # `.get` with 0 for the same reason the reach uses it: an arm file written
     # before this field existed ran the far list at the response limit, which is
     # what 0 means.
     far_limit_of = {a["label"]: a.get("far_limit", 0) for _, arms in groups for a in arms}
+    weight_of = {a["label"]: a.get("far_weight") for _, arms in groups for a in arms}
+    same: dict[tuple[str, str, str], list[int]] = {}
 
     acc: dict[tuple[str, str], dict[str, list]] = {}
     paired: dict[tuple[str, str], list[tuple[float, float]]] = {}
@@ -643,11 +707,17 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
                     cell["mrr"].append(1.0 / rank if rank else 0.0)
                     cell["returned"].append(r["returned"])
                     cell["ms"].append(r["ms"])
+                for left, right in identity or []:
+                    x = by_label.get(left) and by_label[left]["results"].get(q["id"])
+                    y = by_label.get(right) and by_label[right]["results"].get(q["id"])
+                    if x and y:
+                        same.setdefault((left, right, stratum), []).append(
+                            int(x["ids"] == y["ids"]))
                 for label in labels:
-                    if label == base_of[limit_of[label]]:
+                    if label == base_of[label]:
                         continue
                     a = by_label.get(label)
-                    base = by_label.get(base_of[limit_of[label]])
+                    base = by_label.get(base_of[label])
                     x = base and base["results"].get(q["id"])
                     y = a and a["results"].get(q["id"])
                     if not x or not y:
@@ -707,7 +777,7 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
         "corpus_size": groups[0][0]["corpus_size"],
         "seed": groups[0][0]["seed"],
         "regime": groups[0][1][0]["regime"],
-        "arms": [], "delta": [], "disturbance": [], "controls": [],
+        "arms": [], "delta": [], "disturbance": [], "controls": [], "identity": [],
         "exploratory": {"far_only_votes": []},
     }
     for label in labels:
@@ -719,6 +789,7 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
                 "label": label, "window": windows[label],
                 "reach": reach_of.get(label, 0), "limit": limits[label],
                 "far_limit": far_limit_of.get(label, 0),
+                "far_weight": weight_of.get(label), "regime": regime_of[label],
                 "stratum": stratum, "n": len(cell["ndcg"]),
                 "ndcg@10": round(_mean(cell["ndcg"]), 2),
                 "recall@10": round(_mean(cell["recall"]) * 100, 2),
@@ -733,7 +804,7 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
         mean = _mean(deltas)
         sd = (sum((d - mean) ** 2 for d in deltas) / (n - 1)) ** 0.5 if n > 1 else 0.0
         report["delta"].append({
-            "pair": f"{base_of[limit_of[label]]} -> {label}", "stratum": stratum, "n": n,
+            "pair": f"{base_of[label]} -> {label}", "stratum": stratum, "n": n,
             "mean_delta_ndcg": round(mean, 2),
             "sem": round(sd / (n ** 0.5), 2) if n else 0.0,
             "worse": sum(1 for d in deltas if d < -1e-9),
@@ -742,7 +813,7 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
     for (label, stratum), d in disturb.items():
         n = max(len(d["jaccard"]), 1)
         report["disturbance"].append({
-            "pair": f"{base_of[limit_of[label]]} -> {label}", "stratum": stratum,
+            "pair": f"{base_of[label]} -> {label}", "stratum": stratum,
             "n": len(d["jaccard"]),
             "top10_set_changed_pct": round(sum(d["set"]) / n * 100, 1),
             "top10_order_changed_pct": round(sum(d["order"]) / n * 100, 1),
@@ -751,12 +822,17 @@ def score(groups: list[tuple[dict, list[dict]]]) -> dict:
     for (label, stratum), c in control.items():
         n = len(paired.get((label, stratum), []))
         report["controls"].append({
-            "pair": f"{base_of[limit_of[label]]} -> {label}", "stratum": stratum,
+            "pair": f"{base_of[label]} -> {label}", "stratum": stratum,
             "n": n,
             "near_list_compared": c["near_n"],
             "near_list_differs": c["near_differs"],
             "ids_identical": c["ids_identical"],
             "ids_identical_pct": round(c["ids_identical"] / n * 100, 1) if n else 0.0,
+        })
+    for (left, right, stratum), hits in same.items():
+        report["identity"].append({
+            "pair": f"{left} == {right}", "stratum": stratum, "n": len(hits),
+            "ids_identical": sum(hits),
         })
     for label, f in far_only.items():
         report["exploratory"]["far_only_votes"].append({
@@ -770,13 +846,16 @@ def print_report(report: dict) -> None:
     print(f"\ncorpus {report['corpus_size']} rows, seed {report['seed']}, "
           f"rotations {report['rotations']}")
     print(f"regime {report['regime']}\n")
-    hdr = (f"{'arm':<8}{'window':>9}{'reach':>9}{'limit':>6}{'far':>5}{'stratum':>9}{'n':>5}"
+    hdr = (f"{'arm':<8}{'window':>9}{'reach':>9}{'limit':>6}{'far':>5}{'wt':>6}{'regime':>11}"
+           f"{'stratum':>9}{'n':>5}"
            f"{'ndcg@10':>9}{'rec@10':>8}{'mrr':>7}{'ret':>7}{'p50ms':>9}{'p95ms':>9}")
     print(hdr)
     print("-" * len(hdr))
     for a in report["arms"]:
         print(f"{a['label']:<8}{a['window']:>9}{a.get('reach', 0):>9}{a['limit']:>6}"
-              f"{a.get('far_limit', 0):>5}{a['stratum']:>9}{a['n']:>5}"
+              f"{a.get('far_limit', 0):>5}"
+              f"{'-' if a.get('far_weight') is None else a['far_weight']:>6}"
+              f"{a.get('regime', 'shipped'):>11}{a['stratum']:>9}{a['n']:>5}"
               f"{a['ndcg@10']:>9.2f}{a['recall@10']:>8.2f}{a['mrr']:>7.3f}"
               f"{a['returned_mean']:>7.2f}"
               f"{a['latency_p50_ms']:>9.1f}{a['latency_p95_ms']:>9.1f}")
@@ -798,6 +877,10 @@ def print_report(report: dict) -> None:
                   f"near_list_differs={c['near_list_differs']}/{c['near_list_compared']}   "
                   f"ids_identical={c['ids_identical']}/{c['n']} "
                   f"({c['ids_identical_pct']:.1f}%)")
+    if report.get("identity"):
+        print("\nidentity  (the same setting written two ways: every query identical expected)")
+        for c in report["identity"]:
+            print(f"{c['pair']:<20}{c['stratum']:>6}  ids_identical={c['ids_identical']}/{c['n']}")
     votes = report.get("exploratory", {}).get("far_only_votes") or []
     if votes:
         print("\nEXPLORATORY — not part of the decision rule")
@@ -871,8 +954,37 @@ FAR_LIMIT_EXPLORATORY_SPEC = (
 )
 
 
-def parse_spec(spec: str) -> list[tuple[str, int, int, int, int]]:
-    """`label:window:reach:limit:farlimit`, and the two shorter forms before it.
+# The far-weight matrix (`prereg-far-weight-sweep.md`): the reach and the far
+# list the separation was measured at, with the far vote priced at w. "A" is the
+# reach off and "S" the unpriced far list, so W0 must answer as A (a weight of 0
+# is the reach turned off) and W100 as S (the default written as a number). The
+# same arms under the production fusion carry a "-p" and have their own
+# baseline, "A-p". W875 / W90 / W95 are exploratory: they sit where rrf's
+# arithmetic puts the change (see the pre-registration) and cannot move the rule.
+M1_SPEC = ",".join(
+    [f"A:{NARROW_WINDOW}:0:10:0:-",
+     f"A-rep:{NARROW_WINDOW}:0:10:0:-"]
+    + [f"W{tag}:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0:{w}"
+       for tag, w in (("0", 0.0), ("25", 0.25), ("50", 0.5), ("75", 0.75))]
+    + [f"S:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0:-",
+       f"W100:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0:1.0"]
+    + [f"W{tag}:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0:{w}"
+       for tag, w in (("875", 0.875), ("90", 0.9), ("95", 0.95))]
+    + [f"A-p:{NARROW_WINDOW}:0:10:0:-:production"]
+    + [f"W{tag}-p:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0:{w}:production"
+       for tag, w in (("0", 0.0), ("25", 0.25), ("50", 0.5), ("75", 0.75))]
+    + [f"S-p:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0:-:production"]
+)
+M1_IDENTITY = "A:W0,S:W100,A-p:W0-p"
+
+
+def parse_spec(spec: str) -> list[tuple[str, int, int, int, int, float | None, str]]:
+    """`label:window:reach:limit:farlimit[:weight[:regime]]`, and the shorter forms.
+
+    `weight` is the far vote's price (`CPERSONA_PRIOR_FAR_WEIGHT`), `-` for unset;
+    `regime` is `shipped` (the default) or `production`. Five fields and fewer
+    mean what they meant before either existed: the weight unset, the shipped
+    regime.
 
     Four fields is the spec the reach measurement was run with and means what it
     meant: far limit 0, the far list cut at the response `limit`. Three fields is
@@ -883,7 +995,7 @@ def parse_spec(spec: str) -> list[tuple[str, int, int, int, int]]:
     arms = []
     for part in spec.split(","):
         fields = part.split(":")
-        far_limit = "0"
+        far_limit, weight, regime = "0", "-", "shipped"
         if len(fields) == 3:
             label, window, limit = fields
             reach = "0"
@@ -891,17 +1003,39 @@ def parse_spec(spec: str) -> list[tuple[str, int, int, int, int]]:
             label, window, reach, limit = fields
         elif len(fields) == 5:
             label, window, reach, limit, far_limit = fields
+        elif len(fields) in (6, 7):
+            label, window, reach, limit, far_limit, weight = fields[:6]
+            regime = fields[6] if len(fields) == 7 else "shipped"
         else:
             raise SystemExit(
-                f"arm spec {part!r} is not label:window:reach:limit:farlimit "
+                f"arm spec {part!r} is not label:window:reach:limit:farlimit[:weight[:regime]] "
                 "(nor the older label:window:reach:limit or label:window:limit)"
             )
-        arms.append((label, int(window), int(reach), int(limit), int(far_limit)))
+        far_weight = None if weight in ("", "-") else float(weight)
+        if far_weight is not None and not 0.0 <= far_weight <= 1.0:
+            raise SystemExit(f"arm spec {part!r}: the far weight is clamped to [0, 1] by "
+                             "the server, so a value outside it would not be what ran")
+        if regime not in REGIMES:
+            raise SystemExit(f"arm spec {part!r}: unknown regime {regime!r}")
+        arms.append((label, int(window), int(reach), int(limit), int(far_limit),
+                     far_weight, regime))
     return arms
 
 
+def parse_identity(text: str) -> list[tuple[str, str]]:
+    """`A:B,C:D` — pairs of arm labels that must return the same rows."""
+    pairs = []
+    for part in filter(None, (text or "").split(",")):
+        left, sep, right = part.partition(":")
+        if not sep or not left or not right:
+            raise SystemExit(f"identity pair {part!r} is not LEFT:RIGHT")
+        pairs.append((left, right))
+    return pairs
+
+
 def _arm_path(work: Path, rot: int, label: str, reach: int, limit: int,
-              far_limit: int) -> Path:
+              far_limit: int, far_weight: float | None = None,
+              regime: str = "shipped") -> Path:
     """Every setting that decides the arm is in the filename, not only the label.
 
     Two arms of one matrix can share a label and a limit and differ in the reach
@@ -909,7 +1043,11 @@ def _arm_path(work: Path, rot: int, label: str, reach: int, limit: int,
     there, so a filename that cannot tell them apart would silently answer one
     arm with the other's results.
     """
-    return work / f"arm-r{rot}-{label}-reach{reach}-limit{limit}-far{far_limit}.json"
+    # The weight and the regime are named only when set, so the files of the
+    # measurements that predate them keep the names they were written under.
+    tail = "" if far_weight is None else f"-w{far_weight:g}"
+    tail += "" if regime == "shipped" else f"-{regime}"
+    return work / f"arm-r{rot}-{label}-reach{reach}-limit{limit}-far{far_limit}{tail}.json"
 
 
 def run(args: argparse.Namespace) -> None:
@@ -923,23 +1061,25 @@ def run(args: argparse.Namespace) -> None:
     for rot in range(args.rotations):
         plan = work / f"plan-r{rot}.json"
         db = work / "corpus.db"
-        outs = [_arm_path(work, rot, label, reach, limit, far_limit)
-                for label, _, reach, limit, far_limit in spec]
+        outs = [_arm_path(work, rot, label, reach, limit, far_limit, weight, regime)
+                for label, _, reach, limit, far_limit, weight, regime in spec]
         if args.rerun or not all(o.exists() for o in outs):
             _self(["build", "--db", str(db), "--plan", str(plan), "--seed", str(args.seed),
                    "--rotation", str(rot), "--task", args.task, "--lmeb", args.lmeb,
                    "--cache", args.cache, "--cache-label", args.cache_label])
-            for (label, window, reach, limit, far_limit), out in zip(spec, outs):
+            for (label, window, reach, limit, far_limit, weight, regime), out in zip(spec, outs):
                 if out.exists() and not args.rerun:
                     continue
                 _self(["arm", "--db", str(db), "--plan", str(plan), "--window", str(window),
                        "--reach", str(reach), "--far-limit", str(far_limit),
                        "--limit", str(limit), "--label", label, "--out", str(out),
+                       "--regime", regime,
+                       *(["--far-weight", repr(weight)] if weight is not None else []),
                        "--cache", args.cache, "--cache-label", args.cache_label])
         groups.append((json.loads(plan.read_text(encoding="utf-8")),
                        [json.loads(o.read_text(encoding="utf-8")) for o in outs]))
 
-    report = score(groups)
+    report = score(groups, parse_identity(args.identity))
     print_report(report)
     if args.json:
         Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=2),
@@ -988,12 +1128,18 @@ def main() -> None:
     a.add_argument("--limit", type=int, default=10)
     a.add_argument("--label", default="arm")
     a.add_argument("--out", required=True)
+    a.add_argument("--far-weight", type=float, default=None)
+    a.add_argument("--regime", choices=REGIMES, default="shipped")
     common(a)
 
     s = sub.add_parser("score")
     s.add_argument("--workdir", required=True)
     s.add_argument("--rotations", type=int)
+    s.add_argument("--first-rotation", type=int, default=0,
+                   help="score rotations first..first+rotations-1 (a dev/test split)")
     s.add_argument("--spec")
+    s.add_argument("--identity", default="",
+                   help="pairs that must return identical rows: A:B,C:D")
     s.add_argument("--json")
 
     r = sub.add_parser("run")
@@ -1002,6 +1148,7 @@ def main() -> None:
     r.add_argument("--spec", default=DEFAULT_SPEC)
     r.add_argument("--json")
     r.add_argument("--rerun", action="store_true")
+    r.add_argument("--identity", default="")
     common(r)
 
     args = ap.parse_args()
@@ -1016,14 +1163,14 @@ def main() -> None:
         spec = parse_spec(args.spec or manifest.get("spec", DEFAULT_SPEC))
         rotations = args.rotations or manifest.get("rotations", 1)
         groups = []
-        for rot in range(rotations):
+        for rot in range(args.first_rotation, args.first_rotation + rotations):
             plan = json.loads((work / f"plan-r{rot}.json").read_text(encoding="utf-8"))
             arms = [json.loads(
-                        _arm_path(work, rot, label, reach, limit,
-                                  far_limit).read_text(encoding="utf-8"))
-                    for label, _, reach, limit, far_limit in spec]
+                        _arm_path(work, rot, label, reach, limit, far_limit, weight,
+                                  regime).read_text(encoding="utf-8"))
+                    for label, _, reach, limit, far_limit, weight, regime in spec]
             groups.append((plan, arms))
-        report = score(groups)
+        report = score(groups, parse_identity(args.identity))
         print_report(report)
         if args.json:
             Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=2),
