@@ -759,15 +759,25 @@ judged here. A benchmark's `k` and this server's response count are different
 variables and are never conflated.
 
 **The recall process** (sections 1–2) is judged by a pre-registered claim:
-*evidence recall rises while the payload tokens and the end-to-end memory
-tokens stay unchanged*, because the loop spends none of the agent's tokens.
-The instrument is the long-memory corpus with its near/far strata and
-rotations that produced the reach measurements. The arms are a hint robustness pack: correct cue, approximate cue, wrong cue, no
-cue, contradictory cues. The expected shape is that a correct cue improves,
-an approximate one improves or is neutral, a wrong one recovers gracefully, and
-no cue is identical to today.
-If the loop does not move the evidence recall under those conditions, the loop
-is decoration and is not shipped.
+*with the cue a question states, the evidence rises in what recall returns,
+against the same call without a cue and against asking for as many more rows
+without one*. The second comparison is part of the claim because the time cue
+may hold places beyond the count ([the recall process design](RECALL_PROCESS_DESIGN.md#211-seats-for-rows-the-count-cut-and-a-cue-arm-of-its-own-depth-cued-v03)):
+a gain that as many uncued rows also give is not the loop's. The loop spends
+none of the agent's tokens; the rows it adds are reported beside the result.
+The instrument is a set of questions that depend on time — the LMEB TMD task,
+dated conversations stored one turn per record — with each cue extracted from
+the question text and date alone. The arms are no cue, the extracted cue, as
+many rows without a cue, a moved (wrong) cue and a partly right one.
+Contradictory cues are not an arm: the time cue takes one period per call. The
+expected shape is that a correct cue improves on both references, a partly
+right one improves less, a wrong one costs little, and no cue is identical to
+today. The first run under this rule met it
+(`benchmarks/measurements/results-tmd-time-cue.md`); on LongMemEval, whose
+conversations span a median of ten days, the previous policy did not
+(`benchmarks/measurements/results-longmemeval-time-cue.md`).
+If the loop does not move the evidence under those conditions, the loop is
+decoration and is not shipped.
 
 **The exit** (section 7) is judged by a `count` sweep — 1, 2, 4, up to the
 maximum — crossed with a payload-budget sweep, reading answer quality and
@@ -808,7 +818,7 @@ The line closes when all of the following hold, in this order of importance:
 
 1. **The recall process and Cued Recall ship behind a gate, off by default,
    byte-identical at the default**, and the pre-registered claim in section 9
-   has been shown on the frozen baseline.
+   has been shown under its registered rule.
 2. **The final re-sort has been decided** (section 3), the priced far vote and
    the recency prior are one mechanism, and the benchmark record has been
    re-taken under the production regime.
