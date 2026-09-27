@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:0cad570ac28040e97287b4a960eed31b93696628 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:ab10203ec852fa75eb87ddd5e04d9449c0f58f1c -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -99,9 +99,13 @@ Block による到達は既定で off で、off の間は費用がかかりま�
   戻ります。
 - **エピソード境界のペナルティは既定で off です** (2.6.0a7)。古いセッションを抑えるのに使っていた
   配備は `CPERSONA_EPISODE_PENALTY_ENABLED=true` を設定してください。
+- **時期の手がかりは最大 3 行を足しえます** (2.6.0a8)。`time_cue` を渡すと、`recall` は最大
+  `limit` + 3 行 (手がかりの確かさ別に 3 / 2 / 1) を返し、直近 24 時間だけを指す手がかりは使われません
+  (`time_cue.ignored`)。手がかりを渡さなければ何も変わりません。
 
 2.6 で新しく入り、求めない限り何もしないもの: `reconstruct` ツール、recall の trace (`trace=true`)、
-時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想。
+時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、伝播の席
+(`CPERSONA_RECALL_PROPAGATION_SEAT`)。
 
 ## 結果を確かめる { #checking-the-result }
 

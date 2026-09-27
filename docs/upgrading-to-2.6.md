@@ -110,10 +110,15 @@ Check these against what your deployment relies on. Each is off, or equal to
   restores the old order.
 - **The episode-boundary penalty is off by default** (2.6.0a7). Deployments
   that used it to damp older sessions set `CPERSONA_EPISODE_PENALTY_ENABLED=true`.
+- **A time cue can add up to three rows** (2.6.0a8). With `time_cue`, `recall`
+  returns up to `limit` + 3 rows (3 / 2 / 1 by the cue's confidence), and a cue
+  that points only at the last 24 hours is not used (`time_cue.ignored`).
+  Without a cue nothing changes.
 
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
-(`trace=true`), the time cue (`time_cue`), and associations declared with
-`declare_associations` or on `store`.
+(`trace=true`), the time cue (`time_cue`), associations declared with
+`declare_associations` or on `store`, and the propagation seat
+(`CPERSONA_RECALL_PROPAGATION_SEAT`).
 
 ## Checking the result
 
