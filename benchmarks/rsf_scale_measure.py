@@ -12,9 +12,13 @@ process against one store:
   titles (so calibration's same-session positives mean something), recall inside the
   question's channel, `limit=10`, `rsf`, autocut and the fused gate at the build's
   defaults.
-- The vector threshold is calibrated once; the fused gate is recalibrated for every
-  variant, because each variant puts the fused score on its own scale -- as a deployment
-  recalibrates when the scoring version moves.
+- The vector threshold is calibrated once and held for every variant. The fused gate is
+  unset for every variant, so each runs under the heuristic gate a store uses before its
+  fused gate is calibrated. The fused calibration cannot be used here: its positives are
+  rows stored within 30 minutes of a pseudo-query, and with one record per session they
+  arise only when two scenes' times happen to coincide, so it succeeds on some draws and
+  not others -- and a calibration that fails leaves the previous variant's gate, measured
+  on another scale, in place.
 - Queries are split 50/50 per subtask with `trackb_instrument.split_queries` and a seed;
   `--split` chooses the half.
 
@@ -138,7 +142,7 @@ async def run(args) -> int:
     fixed_norm = mh._fixed_norm
     first = await server_mod.do_calibrate_threshold(tb.AGENT_ID)
     vector_threshold = vector_mod._agent_thresholds.get(tb.AGENT_ID)
-    calibrations = {}
+    calibrations = {"first_fused_gate": vector_mod._agent_fused_gates.get(tb.AGENT_ID)}
     rows = []
     with (out / "rows.jsonl").open("w", encoding="utf-8") as fh:
         for divisor, half in variants:
@@ -149,13 +153,11 @@ async def run(args) -> int:
             else:
                 mh._fixed_norm = fixed_norm
                 mh.RSF_DIVISOR, mh.RSF_LEXICAL_HALF = divisor, half
-            cal = await server_mod.do_calibrate_threshold(tb.AGENT_ID)
-            # One vector threshold for every variant: only the fused gate belongs to the scale.
+            # Every variant under the heuristic gate, with the one vector threshold.
+            vector_mod._agent_fused_gates.pop(tb.AGENT_ID, None)
+            vector_mod._fused_gate_signal = None
             vector_mod._agent_thresholds[tb.AGENT_ID] = vector_threshold
-            calibrations[name] = {"fused_gate": vector_mod._agent_fused_gates.get(tb.AGENT_ID),
-                                  "signal": vector_mod._fused_gate_signal,
-                                  "draws": (cal.get("fused_gate") or {}).get("threshold_draws")
-                                  if isinstance(cal.get("fused_gate"), dict) else None}
+            calibrations[name] = {"fused_gate": vector_mod._get_fused_gate(tb.AGENT_ID)}
             for qid, q in keep.items():
                 resp = await mh.do_recall(agent_id=tb.AGENT_ID, query=q["text"], limit=LIMIT,
                                           channel=tb.get_scene_id(qid))

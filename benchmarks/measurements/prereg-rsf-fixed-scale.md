@@ -96,4 +96,19 @@ has been run on the dev or test questions.
 
 ## Amendments
 
-(none)
+### 1 — the fused gate is left unset (2026-09-27, before any dev question was asked)
+
+Seen: the dev run's first calibration logged no fused gate, and the one earlier
+full-store calibration had succeeded on two of its five draws. Reading
+`_calibrate_fused_gate` (`cpersona/admin_handlers.py`): its positives are the
+rows stored within 30 minutes of a pseudo-query. With one record per
+LongMemEval session they occur only when two scenes' times happen to coincide,
+so the calibration succeeds or fails by chance, and a calibration that fails
+leaves the previous variant's gate — measured on another scale — in place.
+
+Changed: every variant runs with the fused gate unset, under the heuristic gate
+a store uses before its fused gate is calibrated; the vector threshold is still
+calibrated once and held. The instrument section's sentence about recalibrating
+the fused gate per variant no longer describes the run. The dev run was stopped
+with no question asked (its rows file was empty) and restarted. Everything
+else in this registration is unchanged.
