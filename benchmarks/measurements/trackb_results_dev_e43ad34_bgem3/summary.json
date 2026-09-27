@@ -1,0 +1,3656 @@
+{
+  "model": "BAAI/bge-m3",
+  "track": "B",
+  "pipeline": "CPersona Cascading Recall (Vector + FTS5 keyword)",
+  "code_path": "servers/cpersona/server.py do_store() + do_recall()",
+  "active_stages": [
+    "Stage 0: Vector (local BLOB cosine)",
+    "Stage 3: FTS5 keyword"
+  ],
+  "inactive_stages": [
+    "Stage 1: Episodes (no data)",
+    "Stage 2: Profile (no data)"
+  ],
+  "overall_mean": 56.11,
+  "tasks": [
+    {
+      "task": "EPBench",
+      "memory_type": "Episodic",
+      "mean_ndcg_at_10": 89.94,
+      "subtasks": {
+        "default_claude_long/Entities": 73.82,
+        "default_claude_long/Event_contents": 75.84,
+        "default_claude_long/Full_event_details": 100.0,
+        "default_claude_long/Other_entities": 100.0,
+        "default_claude_long/Spaces": 78.75,
+        "default_claude_long/Times": 83.83,
+        "default_claude_short/Entities": 90.7,
+        "default_claude_short/Event_contents": 91.69,
+        "default_claude_short/Full_event_details": 100.0,
+        "default_claude_short/Other_entities": 100.0,
+        "default_claude_short/Spaces": 95.08,
+        "default_claude_short/Times": 95.61,
+        "default_claude_very_long/Entities": 66.19,
+        "default_claude_very_long/Event_contents": 76.48,
+        "default_claude_very_long/Full_event_details": 100.0,
+        "default_claude_very_long/Other_entities": 100.0,
+        "default_claude_very_long/Spaces": 78.64,
+        "default_claude_very_long/Times": 80.21,
+        "default_gpt4o_long/Entities": 73.03,
+        "default_gpt4o_long/Event_contents": 83.45,
+        "default_gpt4o_long/Full_event_details": 92.62,
+        "default_gpt4o_long/Other_entities": 92.62,
+        "default_gpt4o_long/Spaces": 81.33,
+        "default_gpt4o_long/Times": 86.94,
+        "default_gpt4o_short/Entities": 86.38,
+        "default_gpt4o_short/Event_contents": 91.97,
+        "default_gpt4o_short/Full_event_details": 100.0,
+        "default_gpt4o_short/Other_entities": 100.0,
+        "default_gpt4o_short/Spaces": 92.47,
+        "default_gpt4o_short/Times": 94.81,
+        "sci_fi_claude_long/Entities": 79.32,
+        "sci_fi_claude_long/Event_contents": 80.93,
+        "sci_fi_claude_long/Full_event_details": 100.0,
+        "sci_fi_claude_long/Other_entities": 100.0,
+        "sci_fi_claude_long/Spaces": 81.37,
+        "sci_fi_claude_long/Times": 88.22,
+        "sci_fi_claude_short/Entities": 90.77,
+        "sci_fi_claude_short/Event_contents": 90.98,
+        "sci_fi_claude_short/Full_event_details": 100.0,
+        "sci_fi_claude_short/Other_entities": 100.0,
+        "sci_fi_claude_short/Spaces": 90.1,
+        "sci_fi_claude_short/Times": 95.16,
+        "world_news_claude_long/Entities": 79.83,
+        "world_news_claude_long/Event_contents": 79.87,
+        "world_news_claude_long/Full_event_details": 100.0,
+        "world_news_claude_long/Other_entities": 100.0,
+        "world_news_claude_long/Spaces": 85.39,
+        "world_news_claude_long/Times": 87.13,
+        "world_news_claude_short/Entities": 88.56,
+        "world_news_claude_short/Event_contents": 90.77,
+        "world_news_claude_short/Full_event_details": 100.0,
+        "world_news_claude_short/Other_entities": 100.0,
+        "world_news_claude_short/Spaces": 92.65,
+        "world_news_claude_short/Times": 93.24
+      },
+      "num_subtasks": 54,
+      "time_s": 41.6,
+      "recall_latency_full": {
+        "n": 3644,
+        "p50_ms": 10.38,
+        "p95_ms": 20.81,
+        "p99_ms": 23.84,
+        "mean_ms": 10.78
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "default_claude_long/Entities",
+            "default_claude_long/Event_contents",
+            "default_claude_long/Full_event_details",
+            "default_claude_long/Other_entities",
+            "default_claude_long/Spaces",
+            "default_claude_long/Times"
+          ],
+          "corpus_size": 196,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5998,
+          "sampled_embeddings": 196,
+          "num_pairs": 19110,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6096,
+            "std": 0.0486,
+            "median": 0.6064,
+            "p95": 0.6953
+          },
+          "null_admit_rate": 0.5608,
+          "pos_admit_rate": 0.6051,
+          "pos_mean": 0.6105,
+          "youden_j": 0.0443,
+          "fusion_admission_floor": 0.2999,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "default_claude_short/Entities",
+            "default_claude_short/Event_contents",
+            "default_claude_short/Full_event_details",
+            "default_claude_short/Other_entities",
+            "default_claude_short/Spaces",
+            "default_claude_short/Times"
+          ],
+          "corpus_size": 19,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.542,
+          "sampled_embeddings": 19,
+          "num_pairs": 171,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6018,
+            "std": 0.0463,
+            "median": 0.5985,
+            "p95": 0.6838
+          },
+          "null_admit_rate": 0.9298,
+          "pos_admit_rate": 1.0,
+          "pos_mean": 0.5932,
+          "youden_j": 0.0702,
+          "fusion_admission_floor": 0.271,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "default_claude_very_long/Entities",
+            "default_claude_very_long/Event_contents",
+            "default_claude_very_long/Full_event_details",
+            "default_claude_very_long/Other_entities",
+            "default_claude_very_long/Spaces",
+            "default_claude_very_long/Times"
+          ],
+          "corpus_size": 1967,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6216,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6043,
+            "std": 0.0464,
+            "median": 0.6025,
+            "p95": 0.6845
+          },
+          "null_admit_rate": 0.3351,
+          "pos_admit_rate": 0.4422,
+          "pos_mean": 0.611,
+          "youden_j": 0.1065,
+          "fusion_admission_floor": 0.3108,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "default_gpt4o_long/Entities",
+            "default_gpt4o_long/Event_contents",
+            "default_gpt4o_long/Full_event_details",
+            "default_gpt4o_long/Other_entities",
+            "default_gpt4o_long/Spaces",
+            "default_gpt4o_long/Times"
+          ],
+          "corpus_size": 196,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6415,
+          "sampled_embeddings": 196,
+          "num_pairs": 19110,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6208,
+            "std": 0.0495,
+            "median": 0.6191,
+            "p95": 0.7064
+          },
+          "null_admit_rate": 0.3151,
+          "pos_admit_rate": 0.3795,
+          "pos_mean": 0.625,
+          "youden_j": 0.0641,
+          "fusion_admission_floor": 0.3207,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "default_gpt4o_short/Entities",
+            "default_gpt4o_short/Event_contents",
+            "default_gpt4o_short/Full_event_details",
+            "default_gpt4o_short/Other_entities",
+            "default_gpt4o_short/Spaces",
+            "default_gpt4o_short/Times"
+          ],
+          "corpus_size": 20,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6531,
+          "sampled_embeddings": 20,
+          "num_pairs": 190,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6298,
+            "std": 0.0506,
+            "median": 0.627,
+            "p95": 0.7064
+          },
+          "null_admit_rate": 0.3316,
+          "pos_admit_rate": 0.4737,
+          "pos_mean": 0.6336,
+          "youden_j": 0.1421,
+          "fusion_admission_floor": 0.3266,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "sci_fi_claude_long/Entities",
+            "sci_fi_claude_long/Event_contents",
+            "sci_fi_claude_long/Full_event_details",
+            "sci_fi_claude_long/Other_entities",
+            "sci_fi_claude_long/Spaces",
+            "sci_fi_claude_long/Times"
+          ],
+          "corpus_size": 200,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6321,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6867,
+            "std": 0.0438,
+            "median": 0.6871,
+            "p95": 0.7587
+          },
+          "null_admit_rate": 0.8963,
+          "pos_admit_rate": 0.9447,
+          "pos_mean": 0.6836,
+          "youden_j": 0.0485,
+          "fusion_admission_floor": 0.316,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "sci_fi_claude_short/Entities",
+            "sci_fi_claude_short/Event_contents",
+            "sci_fi_claude_short/Full_event_details",
+            "sci_fi_claude_short/Other_entities",
+            "sci_fi_claude_short/Spaces",
+            "sci_fi_claude_short/Times"
+          ],
+          "corpus_size": 20,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6197,
+          "sampled_embeddings": 20,
+          "num_pairs": 190,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6834,
+            "std": 0.0382,
+            "median": 0.6844,
+            "p95": 0.7474
+          },
+          "null_admit_rate": 0.9632,
+          "pos_admit_rate": 1.0,
+          "pos_mean": 0.6733,
+          "youden_j": 0.0368,
+          "fusion_admission_floor": 0.3099,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "world_news_claude_long/Entities",
+            "world_news_claude_long/Event_contents",
+            "world_news_claude_long/Full_event_details",
+            "world_news_claude_long/Other_entities",
+            "world_news_claude_long/Spaces",
+            "world_news_claude_long/Times"
+          ],
+          "corpus_size": 200,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6718,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5924,
+            "std": 0.0606,
+            "median": 0.5865,
+            "p95": 0.7079
+          },
+          "null_admit_rate": 0.0998,
+          "pos_admit_rate": 0.1457,
+          "pos_mean": 0.5941,
+          "youden_j": 0.0459,
+          "fusion_admission_floor": 0.3359,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "world_news_claude_short/Entities",
+            "world_news_claude_short/Event_contents",
+            "world_news_claude_short/Full_event_details",
+            "world_news_claude_short/Other_entities",
+            "world_news_claude_short/Spaces",
+            "world_news_claude_short/Times"
+          ],
+          "corpus_size": 20,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5464,
+          "sampled_embeddings": 20,
+          "num_pairs": 190,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5976,
+            "std": 0.0641,
+            "median": 0.5852,
+            "p95": 0.7292
+          },
+          "null_admit_rate": 0.8211,
+          "pos_admit_rate": 1.0,
+          "pos_mean": 0.6113,
+          "youden_j": 0.1789,
+          "fusion_admission_floor": 0.2732,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "KnowMeBench",
+      "memory_type": "Episodic",
+      "mean_ndcg_at_10": 47.4,
+      "subtasks": {
+        "event_driven/adversarial_abstention": 49.69,
+        "event_driven/information_extraction": 66.22,
+        "event_driven/mind-body_interaction": 33.74,
+        "event_driven/mnestic_trigger_analysis": 25.15,
+        "event_driven/temporal_reasoning": 36.75,
+        "flashback_intensive/adversarial_abstention": 51.36,
+        "flashback_intensive/information_extraction": 55.66,
+        "flashback_intensive/mind-body_interaction": 35.32,
+        "flashback_intensive/mnestic_trigger_analysis": 50.5,
+        "flashback_intensive/temporal_reasoning": 17.43,
+        "psychological_depth/adversarial_abstention": 61.88,
+        "psychological_depth/information_extraction": 79.78,
+        "psychological_depth/mind-body_interaction": 40.75,
+        "psychological_depth/mnestic_trigger_analysis": 44.46,
+        "psychological_depth/temporal_reasoning": 62.37
+      },
+      "num_subtasks": 15,
+      "time_s": 156.7,
+      "recall_latency_full": {
+        "n": 2162,
+        "p50_ms": 54.46,
+        "p95_ms": 161.27,
+        "p99_ms": 182.06,
+        "mean_ms": 68.06
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "event_driven/adversarial_abstention",
+            "event_driven/information_extraction",
+            "event_driven/mind-body_interaction",
+            "event_driven/mnestic_trigger_analysis",
+            "event_driven/temporal_reasoning"
+          ],
+          "corpus_size": 11995,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6674,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6089,
+            "std": 0.0585,
+            "median": 0.6058,
+            "p95": 0.7091
+          },
+          "null_admit_rate": 0.1386,
+          "pos_admit_rate": 0.8794,
+          "pos_mean": 0.7594,
+          "youden_j": 0.7406,
+          "fusion_admission_floor": 0.3337,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "flashback_intensive/adversarial_abstention",
+            "flashback_intensive/information_extraction",
+            "flashback_intensive/mind-body_interaction",
+            "flashback_intensive/mnestic_trigger_analysis",
+            "flashback_intensive/temporal_reasoning"
+          ],
+          "corpus_size": 6644,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6198,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5385,
+            "std": 0.0569,
+            "median": 0.536,
+            "p95": 0.6344
+          },
+          "null_admit_rate": 0.077,
+          "pos_admit_rate": 0.7387,
+          "pos_mean": 0.6788,
+          "youden_j": 0.6617,
+          "fusion_admission_floor": 0.3099,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "psychological_depth/adversarial_abstention",
+            "psychological_depth/information_extraction",
+            "psychological_depth/mind-body_interaction",
+            "psychological_depth/mnestic_trigger_analysis",
+            "psychological_depth/temporal_reasoning"
+          ],
+          "corpus_size": 8423,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7014,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6524,
+            "std": 0.0559,
+            "median": 0.6502,
+            "p95": 0.7474
+          },
+          "null_admit_rate": 0.1892,
+          "pos_admit_rate": 0.8543,
+          "pos_mean": 0.7559,
+          "youden_j": 0.6652,
+          "fusion_admission_floor": 0.3507,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "LoCoMo",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 41.85,
+      "subtasks": {
+        "adversarial": 43.81,
+        "multi_hop": 29.48,
+        "open_domain": 25.95,
+        "single_hop": 56.54,
+        "temporal_reasoning": 53.47
+      },
+      "num_subtasks": 5,
+      "time_s": 39.6,
+      "recall_latency_full": {
+        "n": 1976,
+        "p50_ms": 15.67,
+        "p95_ms": 29.96,
+        "p99_ms": 116.12,
+        "mean_ms": 18.96
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "adversarial",
+            "multi_hop",
+            "open_domain",
+            "single_hop",
+            "temporal_reasoning"
+          ],
+          "corpus_size": 5882,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7098,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6179,
+            "std": 0.0602,
+            "median": 0.6169,
+            "p95": 0.7195
+          },
+          "null_admit_rate": 0.0662,
+          "pos_admit_rate": 0.8744,
+          "pos_mean": 0.7932,
+          "youden_j": 0.8083,
+          "fusion_admission_floor": 0.3549,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "LongMemEval",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 79.79,
+      "subtasks": {
+        "knowledge_update": 92.19,
+        "multi_session": 77.48,
+        "single_session_assistant": 91.4,
+        "single_session_preference": 58.69,
+        "single_session_user": 81.02,
+        "temporal_reasoning": 77.97
+      },
+      "num_subtasks": 6,
+      "time_s": 1915.4,
+      "recall_latency_full": {
+        "n": 500,
+        "p50_ms": 3329.15,
+        "p95_ms": 4124.44,
+        "p99_ms": 5022.04,
+        "mean_ms": 3351.84
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "knowledge_update",
+            "multi_session",
+            "single_session_assistant",
+            "single_session_preference",
+            "single_session_user",
+            "temporal_reasoning"
+          ],
+          "corpus_size": 237655,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.4491,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.4487,
+            "std": 0.06,
+            "median": 0.4451,
+            "p95": 0.5518
+          },
+          "null_admit_rate": 0.4727,
+          "pos_admit_rate": 0.6332,
+          "pos_mean": 0.4694,
+          "youden_j": 0.1606,
+          "fusion_admission_floor": 0.2245,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "REALTALK",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 38.01,
+      "subtasks": {
+        "commonsense": 24.88,
+        "multi_hop": 24.08,
+        "temporal_reasoning": 65.06
+      },
+      "num_subtasks": 3,
+      "time_s": 106.3,
+      "recall_latency_full": {
+        "n": 679,
+        "p50_ms": 130.05,
+        "p95_ms": 295.31,
+        "p99_ms": 413.37,
+        "mean_ms": 145.78
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "commonsense",
+            "multi_hop",
+            "temporal_reasoning"
+          ],
+          "corpus_size": 8944,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6602,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5631,
+            "std": 0.0801,
+            "median": 0.5606,
+            "p95": 0.7006
+          },
+          "null_admit_rate": 0.1138,
+          "pos_admit_rate": 0.8794,
+          "pos_mean": 0.7323,
+          "youden_j": 0.7656,
+          "fusion_admission_floor": 0.3301,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "TMD",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 23.2,
+      "subtasks": {
+        "content_time_qs": 51.72,
+        "date_span_time_qs": 54.38,
+        "dates_time_qs": 36.46,
+        "day_span_time_qs": 71.03,
+        "earlier_today_time_qs": 17.1,
+        "last_named_day_time_qs": 6.41,
+        "month_time_qs": 16.28,
+        "rel_day_time_qs": 3.89,
+        "rel_month_time_qs": 12.27,
+        "rel_session_time_qs": 3.42,
+        "session_span_time_qs": 3.63,
+        "session_time_qs": 1.85
+      },
+      "num_subtasks": 12,
+      "time_s": 621.8,
+      "recall_latency_full": {
+        "n": 2134,
+        "p50_ms": 291.31,
+        "p95_ms": 457.22,
+        "p99_ms": 543.34,
+        "mean_ms": 288.61
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "content_time_qs",
+            "date_span_time_qs",
+            "dates_time_qs",
+            "day_span_time_qs",
+            "earlier_today_time_qs",
+            "last_named_day_time_qs",
+            "month_time_qs",
+            "rel_day_time_qs",
+            "rel_month_time_qs",
+            "rel_session_time_qs",
+            "session_span_time_qs",
+            "session_time_qs"
+          ],
+          "corpus_size": 7463,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6565,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6001,
+            "std": 0.0714,
+            "median": 0.6026,
+            "p95": 0.7091
+          },
+          "null_admit_rate": 0.1885,
+          "pos_admit_rate": 0.9296,
+          "pos_mean": 0.7527,
+          "youden_j": 0.7412,
+          "fusion_admission_floor": 0.3282,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "MemBench",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 64.59,
+      "subtasks": {
+        "aggregative": 86.18,
+        "comparative": 84.96,
+        "emotion": 54.29,
+        "knowledge_updating": 44.09,
+        "multi_hop": 49.62,
+        "multi_session_assistant": 42.91,
+        "post_processing": 50.8,
+        "preference": 72.56,
+        "single_hop": 89.12,
+        "single_session_assistant": 71.42
+      },
+      "num_subtasks": 10,
+      "time_s": 8036.8,
+      "recall_latency_full": {
+        "n": 10000,
+        "p50_ms": 553.15,
+        "p95_ms": 1827.75,
+        "p99_ms": 2249.09,
+        "mean_ms": 751.19
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "aggregative"
+          ],
+          "corpus_size": 136596,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7421,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6884,
+            "std": 0.0622,
+            "median": 0.6889,
+            "p95": 0.7891
+          },
+          "null_admit_rate": 0.2009,
+          "pos_admit_rate": 0.4422,
+          "pos_mean": 0.7281,
+          "youden_j": 0.2416,
+          "fusion_admission_floor": 0.371,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "comparative"
+          ],
+          "corpus_size": 135732,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7423,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6736,
+            "std": 0.0619,
+            "median": 0.6716,
+            "p95": 0.7784
+          },
+          "null_admit_rate": 0.1396,
+          "pos_admit_rate": 0.4322,
+          "pos_mean": 0.7251,
+          "youden_j": 0.2927,
+          "fusion_admission_floor": 0.3711,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "emotion"
+          ],
+          "corpus_size": 5991,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7578,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.7238,
+            "std": 0.0455,
+            "median": 0.7249,
+            "p95": 0.7967
+          },
+          "null_admit_rate": 0.2208,
+          "pos_admit_rate": 0.4271,
+          "pos_mean": 0.7433,
+          "youden_j": 0.2065,
+          "fusion_admission_floor": 0.3789,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "knowledge_updating"
+          ],
+          "corpus_size": 153736,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.73,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6661,
+            "std": 0.0619,
+            "median": 0.6661,
+            "p95": 0.7667
+          },
+          "null_admit_rate": 0.154,
+          "pos_admit_rate": 0.4874,
+          "pos_mean": 0.7296,
+          "youden_j": 0.3334,
+          "fusion_admission_floor": 0.365,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "multi_hop"
+          ],
+          "corpus_size": 145703,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7307,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6754,
+            "std": 0.0617,
+            "median": 0.6742,
+            "p95": 0.7773
+          },
+          "null_admit_rate": 0.1889,
+          "pos_admit_rate": 0.4271,
+          "pos_mean": 0.7179,
+          "youden_j": 0.2382,
+          "fusion_admission_floor": 0.3654,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "multi_session_assistant"
+          ],
+          "corpus_size": 17997,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6807,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6396,
+            "std": 0.0724,
+            "median": 0.6334,
+            "p95": 0.7688
+          },
+          "null_admit_rate": 0.2624,
+          "pos_admit_rate": 0.6533,
+          "pos_mean": 0.7,
+          "youden_j": 0.3909,
+          "fusion_admission_floor": 0.3403,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "post_processing"
+          ],
+          "corpus_size": 145601,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7288,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6716,
+            "std": 0.0608,
+            "median": 0.6732,
+            "p95": 0.7683
+          },
+          "null_admit_rate": 0.1746,
+          "pos_admit_rate": 0.4673,
+          "pos_mean": 0.7235,
+          "youden_j": 0.2975,
+          "fusion_admission_floor": 0.3644,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "preference"
+          ],
+          "corpus_size": 24104,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6765,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6553,
+            "std": 0.0732,
+            "median": 0.6548,
+            "p95": 0.7764
+          },
+          "null_admit_rate": 0.3879,
+          "pos_admit_rate": 0.6985,
+          "pos_mean": 0.7088,
+          "youden_j": 0.3109,
+          "fusion_admission_floor": 0.3382,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "single_hop"
+          ],
+          "corpus_size": 136731,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7226,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6699,
+            "std": 0.0585,
+            "median": 0.6688,
+            "p95": 0.7678
+          },
+          "null_admit_rate": 0.1848,
+          "pos_admit_rate": 0.6181,
+          "pos_mean": 0.7331,
+          "youden_j": 0.4333,
+          "fusion_admission_floor": 0.3613,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "single_session_assistant"
+          ],
+          "corpus_size": 26924,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6959,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6486,
+            "std": 0.0665,
+            "median": 0.6433,
+            "p95": 0.7663
+          },
+          "null_admit_rate": 0.2383,
+          "pos_admit_rate": 0.6583,
+          "pos_mean": 0.7196,
+          "youden_j": 0.4198,
+          "fusion_admission_floor": 0.3479,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "ConvoMem",
+      "memory_type": "Dialogue",
+      "mean_ndcg_at_10": 60.8,
+      "subtasks": {
+        "abstention_evidence": 81.19,
+        "assistant_facts_evidence": 73.83,
+        "changing_evidence": 52.8,
+        "implicit_connection_evidence": 33.95,
+        "preference_evidence": 49.87,
+        "user_evidence": 73.15
+      },
+      "num_subtasks": 6,
+      "time_s": 9310.9,
+      "recall_latency_full": {
+        "n": 5867,
+        "p50_ms": 1382.06,
+        "p95_ms": 2516.48,
+        "p99_ms": 2948.31,
+        "mean_ms": 1532.77
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "abstention_evidence"
+          ],
+          "corpus_size": 70568,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5679,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5409,
+            "std": 0.0704,
+            "median": 0.5401,
+            "p95": 0.6589
+          },
+          "null_admit_rate": 0.3437,
+          "pos_admit_rate": 0.7688,
+          "pos_mean": 0.6206,
+          "youden_j": 0.4254,
+          "fusion_admission_floor": 0.2839,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "assistant_facts_evidence"
+          ],
+          "corpus_size": 50925,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5961,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5553,
+            "std": 0.069,
+            "median": 0.551,
+            "p95": 0.6768
+          },
+          "null_admit_rate": 0.2566,
+          "pos_admit_rate": 0.6734,
+          "pos_mean": 0.6316,
+          "youden_j": 0.4169,
+          "fusion_admission_floor": 0.298,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "changing_evidence"
+          ],
+          "corpus_size": 177687,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5876,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5521,
+            "std": 0.0674,
+            "median": 0.5483,
+            "p95": 0.6686
+          },
+          "null_admit_rate": 0.2836,
+          "pos_admit_rate": 0.7337,
+          "pos_mean": 0.6297,
+          "youden_j": 0.4501,
+          "fusion_admission_floor": 0.2938,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "implicit_connection_evidence"
+          ],
+          "corpus_size": 72387,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6026,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5542,
+            "std": 0.0676,
+            "median": 0.5531,
+            "p95": 0.6687
+          },
+          "null_admit_rate": 0.2285,
+          "pos_admit_rate": 0.6332,
+          "pos_mean": 0.6249,
+          "youden_j": 0.4047,
+          "fusion_admission_floor": 0.3013,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "preference_evidence"
+          ],
+          "corpus_size": 20918,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.586,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5524,
+            "std": 0.0704,
+            "median": 0.5498,
+            "p95": 0.6712
+          },
+          "null_admit_rate": 0.3001,
+          "pos_admit_rate": 0.6583,
+          "pos_mean": 0.6145,
+          "youden_j": 0.358,
+          "fusion_admission_floor": 0.293,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "user_evidence"
+          ],
+          "corpus_size": 107736,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5765,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5478,
+            "std": 0.0719,
+            "median": 0.5425,
+            "p95": 0.6748
+          },
+          "null_admit_rate": 0.3169,
+          "pos_admit_rate": 0.7286,
+          "pos_mean": 0.6093,
+          "youden_j": 0.4118,
+          "fusion_admission_floor": 0.2883,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "QASPER",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 48.71,
+      "subtasks": {
+        ".": 48.71
+      },
+      "num_subtasks": 1,
+      "time_s": 230.0,
+      "recall_latency_full": {
+        "n": 1335,
+        "p50_ms": 122.16,
+        "p95_ms": 284.83,
+        "p99_ms": 303.73,
+        "mean_ms": 161.09
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "."
+          ],
+          "corpus_size": 65300,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5503,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.4641,
+            "std": 0.0677,
+            "median": 0.4634,
+            "p95": 0.5755
+          },
+          "null_admit_rate": 0.1,
+          "pos_admit_rate": 0.809,
+          "pos_mean": 0.6412,
+          "youden_j": 0.709,
+          "fusion_admission_floor": 0.2752,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "NovelQA",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 33.83,
+      "subtasks": {
+        "Character": 45.55,
+        "Meaning": 53.81,
+        "Plot": 26.17,
+        "Relation": 27.54,
+        "Setting": 52.65,
+        "Span": 7.68,
+        "Times": 23.43
+      },
+      "num_subtasks": 7,
+      "time_s": 1454.3,
+      "recall_latency_full": {
+        "n": 1541,
+        "p50_ms": 872.96,
+        "p95_ms": 1422.4,
+        "p99_ms": 2273.37,
+        "mean_ms": 894.53
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "Character",
+            "Meaning",
+            "Plot",
+            "Relation",
+            "Setting",
+            "Span",
+            "Times"
+          ],
+          "corpus_size": 79286,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5667,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.4713,
+            "std": 0.07,
+            "median": 0.4754,
+            "p95": 0.5792
+          },
+          "null_admit_rate": 0.0761,
+          "pos_admit_rate": 0.8794,
+          "pos_mean": 0.646,
+          "youden_j": 0.8032,
+          "fusion_admission_floor": 0.2833,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "PeerQA",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 29.1,
+      "subtasks": {
+        ".": 29.1
+      },
+      "num_subtasks": 1,
+      "time_s": 43.7,
+      "recall_latency_full": {
+        "n": 136,
+        "p50_ms": 195.53,
+        "p95_ms": 402.0,
+        "p99_ms": 587.38,
+        "mean_ms": 235.76
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "."
+          ],
+          "corpus_size": 18593,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.4682,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.4045,
+            "std": 0.0677,
+            "median": 0.4016,
+            "p95": 0.5184
+          },
+          "null_admit_rate": 0.176,
+          "pos_admit_rate": 0.6985,
+          "pos_mean": 0.5101,
+          "youden_j": 0.5226,
+          "fusion_admission_floor": 0.2341,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "CovidQA",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 82.34,
+      "subtasks": {
+        ".": 82.34
+      },
+      "num_subtasks": 1,
+      "time_s": 87.6,
+      "recall_latency_full": {
+        "n": 1111,
+        "p50_ms": 66.32,
+        "p95_ms": 193.64,
+        "p99_ms": 249.85,
+        "mean_ms": 76.19
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "."
+          ],
+          "corpus_size": 3351,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5223,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.4417,
+            "std": 0.0671,
+            "median": 0.4381,
+            "p95": 0.5561
+          },
+          "null_admit_rate": 0.1095,
+          "pos_admit_rate": 0.7387,
+          "pos_mean": 0.6087,
+          "youden_j": 0.6291,
+          "fusion_admission_floor": 0.2611,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "ESGReports",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 41.38,
+      "subtasks": {
+        ".": 41.38
+      },
+      "num_subtasks": 1,
+      "time_s": 4.1,
+      "recall_latency_full": {
+        "n": 36,
+        "p50_ms": 61.61,
+        "p95_ms": 145.59,
+        "p99_ms": 225.46,
+        "mean_ms": 69.82
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "."
+          ],
+          "corpus_size": 2407,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5715,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.4981,
+            "std": 0.0757,
+            "median": 0.4988,
+            "p95": 0.6192
+          },
+          "null_admit_rate": 0.1624,
+          "pos_admit_rate": 0.7487,
+          "pos_mean": 0.6305,
+          "youden_j": 0.5863,
+          "fusion_admission_floor": 0.2858,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "MLDR",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 79.8,
+      "subtasks": {
+        ".": 79.8
+      },
+      "num_subtasks": 1,
+      "time_s": 7.5,
+      "recall_latency_full": {
+        "n": 100,
+        "p50_ms": 64.99,
+        "p95_ms": 102.91,
+        "p99_ms": 207.2,
+        "mean_ms": 65.59
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "."
+          ],
+          "corpus_size": 1536,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.406,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.3083,
+            "std": 0.0675,
+            "median": 0.303,
+            "p95": 0.4199
+          },
+          "null_admit_rate": 0.0678,
+          "pos_admit_rate": 0.7487,
+          "pos_mean": 0.5183,
+          "youden_j": 0.6809,
+          "fusion_admission_floor": 0.203,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "LooGLE",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 61.99,
+      "subtasks": {
+        "LongDepQA": 44.13,
+        "ShortDepQA": 79.86
+      },
+      "num_subtasks": 2,
+      "time_s": 524.0,
+      "recall_latency_full": {
+        "n": 3052,
+        "p50_ms": 126.69,
+        "p95_ms": 388.19,
+        "p99_ms": 588.86,
+        "mean_ms": 162.98
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "LongDepQA"
+          ],
+          "corpus_size": 18048,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5878,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.4111,
+            "std": 0.1077,
+            "median": 0.4052,
+            "p95": 0.5679
+          },
+          "null_admit_rate": 0.0245,
+          "pos_admit_rate": 0.9146,
+          "pos_mean": 0.6698,
+          "youden_j": 0.8901,
+          "fusion_admission_floor": 0.2939,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "ShortDepQA"
+          ],
+          "corpus_size": 10142,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5546,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.3182,
+            "std": 0.0777,
+            "median": 0.309,
+            "p95": 0.4393
+          },
+          "null_admit_rate": 0.0177,
+          "pos_admit_rate": 0.9447,
+          "pos_mean": 0.6907,
+          "youden_j": 0.927,
+          "fusion_admission_floor": 0.2773,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "LMEB_SciFact",
+      "memory_type": "Semantic",
+      "mean_ndcg_at_10": 74.32,
+      "subtasks": {
+        ".": 74.32
+      },
+      "num_subtasks": 1,
+      "time_s": 20.4,
+      "recall_latency_full": {
+        "n": 188,
+        "p50_ms": 88.25,
+        "p95_ms": 209.11,
+        "p99_ms": 279.18,
+        "mean_ms": 101.53
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "."
+          ],
+          "corpus_size": 1748,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6473,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.4207,
+            "std": 0.068,
+            "median": 0.4148,
+            "p95": 0.525
+          },
+          "null_admit_rate": 0.0086,
+          "pos_admit_rate": 0.7688,
+          "pos_mean": 0.7382,
+          "youden_j": 0.7602,
+          "fusion_admission_floor": 0.3236,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "Gorilla",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 33.03,
+      "subtasks": {
+        "gorilla_huggingface": 29.71,
+        "gorilla_pytorch": 33.7,
+        "gorilla_tensor": 35.69
+      },
+      "num_subtasks": 3,
+      "time_s": 84.7,
+      "recall_latency_full": {
+        "n": 598,
+        "p50_ms": 131.87,
+        "p95_ms": 231.37,
+        "p99_ms": 298.22,
+        "mean_ms": 140.33
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "gorilla_huggingface"
+          ],
+          "corpus_size": 907,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6988,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6269,
+            "std": 0.0634,
+            "median": 0.6267,
+            "p95": 0.7234
+          },
+          "null_admit_rate": 0.1037,
+          "pos_admit_rate": 0.7688,
+          "pos_mean": 0.7693,
+          "youden_j": 0.6652,
+          "fusion_admission_floor": 0.3494,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "gorilla_pytorch"
+          ],
+          "corpus_size": 43,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7107,
+          "sampled_embeddings": 43,
+          "num_pairs": 903,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.7049,
+            "std": 0.0728,
+            "median": 0.6987,
+            "p95": 0.8257
+          },
+          "null_admit_rate": 0.4507,
+          "pos_admit_rate": 0.619,
+          "pos_mean": 0.7406,
+          "youden_j": 0.1683,
+          "fusion_admission_floor": 0.3553,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "gorilla_tensor"
+          ],
+          "corpus_size": 55,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.8042,
+          "sampled_embeddings": 55,
+          "num_pairs": 1485,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.8225,
+            "std": 0.0766,
+            "median": 0.816,
+            "p95": 0.9583
+          },
+          "null_admit_rate": 0.5785,
+          "pos_admit_rate": 0.6852,
+          "pos_mean": 0.8297,
+          "youden_j": 0.1067,
+          "fusion_admission_floor": 0.4021,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "ToolBench",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 50.11,
+      "subtasks": {
+        ".": 50.11
+      },
+      "num_subtasks": 1,
+      "time_s": 478.3,
+      "recall_latency_full": {
+        "n": 1100,
+        "p50_ms": 398.94,
+        "p95_ms": 677.37,
+        "p99_ms": 838.91,
+        "mean_ms": 424.04
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "."
+          ],
+          "corpus_size": 13862,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6963,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6162,
+            "std": 0.0582,
+            "median": 0.6171,
+            "p95": 0.7098
+          },
+          "null_admit_rate": 0.0747,
+          "pos_admit_rate": 0.7487,
+          "pos_mean": 0.7799,
+          "youden_j": 0.674,
+          "fusion_admission_floor": 0.3482,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "ReMe",
+      "memory_type": "Episodic",
+      "mean_ndcg_at_10": 58.96,
+      "subtasks": {
+        "appworld_qwen3_14b/generalized_query": 45.89,
+        "appworld_qwen3_32b/generalized_query": 49.54,
+        "appworld_qwen3_8b/generalized_query": 44.18,
+        "bfcl_qwen3_14b/generalized_query": 80.82,
+        "bfcl_qwen3_14b/task_query": 53.77,
+        "bfcl_qwen3_32b/generalized_query": 70.43,
+        "bfcl_qwen3_32b/task_query": 53.62,
+        "bfcl_qwen3_8b/generalized_query": 75.28,
+        "bfcl_qwen3_8b/task_query": 57.13
+      },
+      "num_subtasks": 9,
+      "time_s": 129.4,
+      "recall_latency_full": {
+        "n": 1217,
+        "p50_ms": 97.9,
+        "p95_ms": 190.36,
+        "p99_ms": 254.65,
+        "mean_ms": 105.73
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "appworld_qwen3_14b/generalized_query"
+          ],
+          "corpus_size": 218,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5622,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.596,
+            "std": 0.0868,
+            "median": 0.5825,
+            "p95": 0.7607
+          },
+          "null_admit_rate": 0.6086,
+          "pos_admit_rate": 0.6583,
+          "pos_mean": 0.5909,
+          "youden_j": 0.0503,
+          "fusion_admission_floor": 0.2811,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "appworld_qwen3_32b/generalized_query"
+          ],
+          "corpus_size": 184,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6746,
+          "sampled_embeddings": 184,
+          "num_pairs": 16836,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5999,
+            "std": 0.083,
+            "median": 0.5901,
+            "p95": 0.7507
+          },
+          "null_admit_rate": 0.1804,
+          "pos_admit_rate": 0.2186,
+          "pos_mean": 0.6027,
+          "youden_j": 0.0382,
+          "fusion_admission_floor": 0.3373,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "appworld_qwen3_8b/generalized_query"
+          ],
+          "corpus_size": 207,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5538,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6005,
+            "std": 0.0825,
+            "median": 0.5925,
+            "p95": 0.7529
+          },
+          "null_admit_rate": 0.7027,
+          "pos_admit_rate": 0.7638,
+          "pos_mean": 0.6005,
+          "youden_j": 0.061,
+          "fusion_admission_floor": 0.2769,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "bfcl_qwen3_14b/generalized_query",
+            "bfcl_qwen3_14b/task_query"
+          ],
+          "corpus_size": 110,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5261,
+          "sampled_embeddings": 110,
+          "num_pairs": 5995,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5337,
+            "std": 0.0774,
+            "median": 0.524,
+            "p95": 0.6707
+          },
+          "null_admit_rate": 0.4871,
+          "pos_admit_rate": 0.5688,
+          "pos_mean": 0.5399,
+          "youden_j": 0.0821,
+          "fusion_admission_floor": 0.2631,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "bfcl_qwen3_32b/generalized_query",
+            "bfcl_qwen3_32b/task_query"
+          ],
+          "corpus_size": 99,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5242,
+          "sampled_embeddings": 99,
+          "num_pairs": 4851,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.5488,
+            "std": 0.0805,
+            "median": 0.5395,
+            "p95": 0.698
+          },
+          "null_admit_rate": 0.5916,
+          "pos_admit_rate": 0.6633,
+          "pos_mean": 0.5547,
+          "youden_j": 0.0716,
+          "fusion_admission_floor": 0.2621,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "bfcl_qwen3_8b/generalized_query",
+            "bfcl_qwen3_8b/task_query"
+          ],
+          "corpus_size": 96,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6072,
+          "sampled_embeddings": 96,
+          "num_pairs": 4560,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.549,
+            "std": 0.0828,
+            "median": 0.536,
+            "p95": 0.7063
+          },
+          "null_admit_rate": 0.1969,
+          "pos_admit_rate": 0.3053,
+          "pos_mean": 0.566,
+          "youden_j": 0.1083,
+          "fusion_admission_floor": 0.3036,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "Proced_mem_bench",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 52.13,
+      "subtasks": {
+        "easy": 46.82,
+        "hard": 50.02,
+        "medium": 59.57
+      },
+      "num_subtasks": 3,
+      "time_s": 1.8,
+      "recall_latency_full": {
+        "n": 40,
+        "p50_ms": 35.7,
+        "p95_ms": 58.69,
+        "p99_ms": 59.29,
+        "mean_ms": 35.97
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "easy",
+            "hard",
+            "medium"
+          ],
+          "corpus_size": 336,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.8303,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.7853,
+            "std": 0.0603,
+            "median": 0.7762,
+            "p95": 0.8991
+          },
+          "null_admit_rate": 0.2168,
+          "pos_admit_rate": 0.2764,
+          "pos_mean": 0.785,
+          "youden_j": 0.0595,
+          "fusion_admission_floor": 0.4152,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "MemGovern",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 89.16,
+      "subtasks": {
+        "Azure_azure-sdk-for-python": 88.53,
+        "ClusterHQ_flocker": 86.94,
+        "DataDog_integrations-core": 81.36,
+        "Microsoft_TypeScript": 97.58,
+        "PokemonGoF_PokemonGo-Bot": 88.69,
+        "Qiskit_qiskit-terra": 90.55,
+        "StackStorm_st2": 91.03,
+        "apache_airflow": 90.04,
+        "apache_incubator-airflow": 86.13,
+        "certbot_certbot": 87.56,
+        "dask_dask": 89.27,
+        "datalad_datalad": 89.86,
+        "django_django": 96.05,
+        "dmwm_WMCore": 88.18,
+        "encode_django-rest-framework": 88.59,
+        "facebook_react": 93.04,
+        "great-expectations_great_expectations": 87.34,
+        "home-assistant_core": 82.14,
+        "home-assistant_home-assistant": 76.41,
+        "huggingface_transformers": 92.28,
+        "kubernetes_kubernetes": 83.87,
+        "mesonbuild_meson": 88.14,
+        "microsoft_vscode": 96.13,
+        "mne-tools_mne-python": 89.03,
+        "moby_moby": 93.18,
+        "napari_napari": 91.63,
+        "numpy_numpy": 93.51,
+        "optuna_optuna": 84.33,
+        "pandas-dev_pandas": 89.54,
+        "pydata_xarray": 90.2,
+        "pypa_pip": 85.12,
+        "pytest-dev_pytest": 87.9,
+        "pytorch_pytorch": 89.97,
+        "raiden-network_raiden": 90.16,
+        "rust-lang_rust": 85.37,
+        "saltstack_salt": 91.74,
+        "scikit-learn_scikit-learn": 88.94,
+        "scipy_scipy": 92.85,
+        "scrapy_scrapy": 94.35,
+        "spack_spack": 72.59,
+        "sphinx-doc_sphinx": 91.24,
+        "spotify_luigi": 90.22,
+        "spring-projects_spring-framework": 95.33,
+        "spyder-ide_spyder": 90.78,
+        "sympy_sympy": 85.95,
+        "tensorflow_tensorflow": 91.79,
+        "webpack_webpack": 92.23,
+        "xonsh_xonsh": 92.05
+      },
+      "num_subtasks": 48,
+      "time_s": 34900.4,
+      "recall_latency_full": {
+        "n": 121475,
+        "p50_ms": 247.16,
+        "p95_ms": 628.64,
+        "p99_ms": 846.67,
+        "mean_ms": 285.68
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "Azure_azure-sdk-for-python"
+          ],
+          "corpus_size": 1952,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7117,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6539,
+            "std": 0.0522,
+            "median": 0.6533,
+            "p95": 0.7401
+          },
+          "null_admit_rate": 0.1285,
+          "pos_admit_rate": 0.191,
+          "pos_mean": 0.6571,
+          "youden_j": 0.0623,
+          "fusion_admission_floor": 0.3558,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "ClusterHQ_flocker"
+          ],
+          "corpus_size": 1346,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5381,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.636,
+            "std": 0.0525,
+            "median": 0.6347,
+            "p95": 0.7233
+          },
+          "null_admit_rate": 0.9723,
+          "pos_admit_rate": 0.9849,
+          "pos_mean": 0.6265,
+          "youden_j": 0.0126,
+          "fusion_admission_floor": 0.2691,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "DataDog_integrations-core"
+          ],
+          "corpus_size": 4120,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6488,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.646,
+            "std": 0.0546,
+            "median": 0.6429,
+            "p95": 0.7389
+          },
+          "null_admit_rate": 0.4546,
+          "pos_admit_rate": 0.5226,
+          "pos_mean": 0.652,
+          "youden_j": 0.0722,
+          "fusion_admission_floor": 0.3244,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "Microsoft_TypeScript"
+          ],
+          "corpus_size": 779,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6952,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6481,
+            "std": 0.049,
+            "median": 0.6482,
+            "p95": 0.7281
+          },
+          "null_admit_rate": 0.1635,
+          "pos_admit_rate": 0.2362,
+          "pos_mean": 0.655,
+          "youden_j": 0.0727,
+          "fusion_admission_floor": 0.3476,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "PokemonGoF_PokemonGo-Bot"
+          ],
+          "corpus_size": 1165,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7353,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.645,
+            "std": 0.0511,
+            "median": 0.6435,
+            "p95": 0.7319
+          },
+          "null_admit_rate": 0.0451,
+          "pos_admit_rate": 0.0553,
+          "pos_mean": 0.639,
+          "youden_j": 0.0102,
+          "fusion_admission_floor": 0.3676,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "Qiskit_qiskit-terra"
+          ],
+          "corpus_size": 2198,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6019,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6262,
+            "std": 0.0524,
+            "median": 0.6249,
+            "p95": 0.7155
+          },
+          "null_admit_rate": 0.673,
+          "pos_admit_rate": 0.7236,
+          "pos_mean": 0.6275,
+          "youden_j": 0.0509,
+          "fusion_admission_floor": 0.3009,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "StackStorm_st2"
+          ],
+          "corpus_size": 1580,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7653,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6408,
+            "std": 0.0504,
+            "median": 0.6391,
+            "p95": 0.7262
+          },
+          "null_admit_rate": 0.0107,
+          "pos_admit_rate": 0.0251,
+          "pos_mean": 0.6363,
+          "youden_j": 0.0145,
+          "fusion_admission_floor": 0.3826,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "apache_airflow"
+          ],
+          "corpus_size": 2075,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6577,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6295,
+            "std": 0.0518,
+            "median": 0.6278,
+            "p95": 0.717
+          },
+          "null_admit_rate": 0.2781,
+          "pos_admit_rate": 0.3518,
+          "pos_mean": 0.6381,
+          "youden_j": 0.0735,
+          "fusion_admission_floor": 0.3288,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "apache_incubator-airflow"
+          ],
+          "corpus_size": 2659,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6295,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6309,
+            "std": 0.0532,
+            "median": 0.6273,
+            "p95": 0.7219
+          },
+          "null_admit_rate": 0.482,
+          "pos_admit_rate": 0.5678,
+          "pos_mean": 0.634,
+          "youden_j": 0.0855,
+          "fusion_admission_floor": 0.3147,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "certbot_certbot"
+          ],
+          "corpus_size": 1452,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6014,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6339,
+            "std": 0.0546,
+            "median": 0.6313,
+            "p95": 0.7275
+          },
+          "null_admit_rate": 0.7192,
+          "pos_admit_rate": 0.8442,
+          "pos_mean": 0.6429,
+          "youden_j": 0.1253,
+          "fusion_admission_floor": 0.3007,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "dask_dask"
+          ],
+          "corpus_size": 2577,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7002,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6403,
+            "std": 0.0483,
+            "median": 0.6379,
+            "p95": 0.7224
+          },
+          "null_admit_rate": 0.1031,
+          "pos_admit_rate": 0.1357,
+          "pos_mean": 0.6316,
+          "youden_j": 0.0324,
+          "fusion_admission_floor": 0.3501,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "datalad_datalad"
+          ],
+          "corpus_size": 2024,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6222,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.643,
+            "std": 0.0526,
+            "median": 0.6431,
+            "p95": 0.7284
+          },
+          "null_admit_rate": 0.6675,
+          "pos_admit_rate": 0.7739,
+          "pos_mean": 0.6487,
+          "youden_j": 0.1066,
+          "fusion_admission_floor": 0.3111,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "django_django"
+          ],
+          "corpus_size": 1369,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5803,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6148,
+            "std": 0.0505,
+            "median": 0.6147,
+            "p95": 0.6971
+          },
+          "null_admit_rate": 0.759,
+          "pos_admit_rate": 0.809,
+          "pos_mean": 0.6157,
+          "youden_j": 0.0497,
+          "fusion_admission_floor": 0.2902,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "dmwm_WMCore"
+          ],
+          "corpus_size": 2235,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6126,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6296,
+            "std": 0.0528,
+            "median": 0.6296,
+            "p95": 0.7149
+          },
+          "null_admit_rate": 0.6348,
+          "pos_admit_rate": 0.6884,
+          "pos_mean": 0.6355,
+          "youden_j": 0.0536,
+          "fusion_admission_floor": 0.3063,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "encode_django-rest-framework"
+          ],
+          "corpus_size": 1077,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7324,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6344,
+            "std": 0.0574,
+            "median": 0.6323,
+            "p95": 0.7308
+          },
+          "null_admit_rate": 0.0475,
+          "pos_admit_rate": 0.0854,
+          "pos_mean": 0.6322,
+          "youden_j": 0.0379,
+          "fusion_admission_floor": 0.3662,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "facebook_react"
+          ],
+          "corpus_size": 1604,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.653,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6393,
+            "std": 0.0521,
+            "median": 0.6377,
+            "p95": 0.7266
+          },
+          "null_admit_rate": 0.3726,
+          "pos_admit_rate": 0.392,
+          "pos_mean": 0.6363,
+          "youden_j": 0.0193,
+          "fusion_admission_floor": 0.3265,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "great-expectations_great_expectations"
+          ],
+          "corpus_size": 1990,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6193,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6558,
+            "std": 0.0581,
+            "median": 0.6515,
+            "p95": 0.7585
+          },
+          "null_admit_rate": 0.7261,
+          "pos_admit_rate": 0.7889,
+          "pos_mean": 0.6545,
+          "youden_j": 0.0629,
+          "fusion_admission_floor": 0.3096,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "home-assistant_core"
+          ],
+          "corpus_size": 3255,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6204,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6572,
+            "std": 0.0578,
+            "median": 0.6569,
+            "p95": 0.7492
+          },
+          "null_admit_rate": 0.7484,
+          "pos_admit_rate": 0.794,
+          "pos_mean": 0.6563,
+          "youden_j": 0.0457,
+          "fusion_admission_floor": 0.3102,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "home-assistant_home-assistant"
+          ],
+          "corpus_size": 6196,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5628,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6503,
+            "std": 0.0545,
+            "median": 0.6484,
+            "p95": 0.7398
+          },
+          "null_admit_rate": 0.9533,
+          "pos_admit_rate": 0.9799,
+          "pos_mean": 0.6469,
+          "youden_j": 0.0266,
+          "fusion_admission_floor": 0.2814,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "huggingface_transformers"
+          ],
+          "corpus_size": 782,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.535,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6393,
+            "std": 0.0542,
+            "median": 0.638,
+            "p95": 0.7304
+          },
+          "null_admit_rate": 0.9754,
+          "pos_admit_rate": 0.9899,
+          "pos_mean": 0.6356,
+          "youden_j": 0.0145,
+          "fusion_admission_floor": 0.2675,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "kubernetes_kubernetes"
+          ],
+          "corpus_size": 11339,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7151,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6265,
+            "std": 0.0488,
+            "median": 0.6257,
+            "p95": 0.7077
+          },
+          "null_admit_rate": 0.0387,
+          "pos_admit_rate": 0.0452,
+          "pos_mean": 0.6174,
+          "youden_j": 0.0065,
+          "fusion_admission_floor": 0.3575,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "mesonbuild_meson"
+          ],
+          "corpus_size": 3090,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7252,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6373,
+            "std": 0.0517,
+            "median": 0.6363,
+            "p95": 0.7235
+          },
+          "null_admit_rate": 0.0469,
+          "pos_admit_rate": 0.1005,
+          "pos_mean": 0.6421,
+          "youden_j": 0.0536,
+          "fusion_admission_floor": 0.3626,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "microsoft_vscode"
+          ],
+          "corpus_size": 654,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6045,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6272,
+            "std": 0.0506,
+            "median": 0.627,
+            "p95": 0.7095
+          },
+          "null_admit_rate": 0.6776,
+          "pos_admit_rate": 0.7186,
+          "pos_mean": 0.6288,
+          "youden_j": 0.0413,
+          "fusion_admission_floor": 0.3023,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "mne-tools_mne-python"
+          ],
+          "corpus_size": 3952,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.631,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6282,
+            "std": 0.0492,
+            "median": 0.6262,
+            "p95": 0.7113
+          },
+          "null_admit_rate": 0.4622,
+          "pos_admit_rate": 0.4975,
+          "pos_mean": 0.6253,
+          "youden_j": 0.0352,
+          "fusion_admission_floor": 0.3155,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "moby_moby"
+          ],
+          "corpus_size": 892,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5483,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.636,
+            "std": 0.0531,
+            "median": 0.637,
+            "p95": 0.7228
+          },
+          "null_admit_rate": 0.9479,
+          "pos_admit_rate": 0.9648,
+          "pos_mean": 0.6262,
+          "youden_j": 0.0171,
+          "fusion_admission_floor": 0.2742,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "napari_napari"
+          ],
+          "corpus_size": 1860,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7072,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6309,
+            "std": 0.0514,
+            "median": 0.6304,
+            "p95": 0.7149
+          },
+          "null_admit_rate": 0.0664,
+          "pos_admit_rate": 0.0754,
+          "pos_mean": 0.6215,
+          "youden_j": 0.009,
+          "fusion_admission_floor": 0.3536,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "numpy_numpy"
+          ],
+          "corpus_size": 1335,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6681,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6268,
+            "std": 0.0504,
+            "median": 0.6262,
+            "p95": 0.7104
+          },
+          "null_admit_rate": 0.1991,
+          "pos_admit_rate": 0.2111,
+          "pos_mean": 0.6209,
+          "youden_j": 0.0119,
+          "fusion_admission_floor": 0.3341,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "optuna_optuna"
+          ],
+          "corpus_size": 1371,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5952,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6447,
+            "std": 0.0573,
+            "median": 0.6427,
+            "p95": 0.7399
+          },
+          "null_admit_rate": 0.8097,
+          "pos_admit_rate": 0.8392,
+          "pos_mean": 0.6448,
+          "youden_j": 0.0296,
+          "fusion_admission_floor": 0.2976,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "pandas-dev_pandas"
+          ],
+          "corpus_size": 2751,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6645,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6383,
+            "std": 0.0534,
+            "median": 0.6383,
+            "p95": 0.7244
+          },
+          "null_admit_rate": 0.3042,
+          "pos_admit_rate": 0.3668,
+          "pos_mean": 0.6457,
+          "youden_j": 0.0627,
+          "fusion_admission_floor": 0.3322,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "pydata_xarray"
+          ],
+          "corpus_size": 1699,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6056,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6286,
+            "std": 0.0517,
+            "median": 0.6261,
+            "p95": 0.718
+          },
+          "null_admit_rate": 0.6585,
+          "pos_admit_rate": 0.7337,
+          "pos_mean": 0.6302,
+          "youden_j": 0.0755,
+          "fusion_admission_floor": 0.3028,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "pypa_pip"
+          ],
+          "corpus_size": 2618,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7018,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6391,
+            "std": 0.0499,
+            "median": 0.6392,
+            "p95": 0.7203
+          },
+          "null_admit_rate": 0.1027,
+          "pos_admit_rate": 0.1307,
+          "pos_mean": 0.6386,
+          "youden_j": 0.0281,
+          "fusion_admission_floor": 0.3509,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "pytest-dev_pytest"
+          ],
+          "corpus_size": 2293,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5998,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6426,
+            "std": 0.0531,
+            "median": 0.6405,
+            "p95": 0.7327
+          },
+          "null_admit_rate": 0.7882,
+          "pos_admit_rate": 0.8191,
+          "pos_mean": 0.6411,
+          "youden_j": 0.0306,
+          "fusion_admission_floor": 0.2999,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "pytorch_pytorch"
+          ],
+          "corpus_size": 6492,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5951,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6159,
+            "std": 0.0471,
+            "median": 0.6153,
+            "p95": 0.6936
+          },
+          "null_admit_rate": 0.6718,
+          "pos_admit_rate": 0.6935,
+          "pos_mean": 0.6144,
+          "youden_j": 0.0217,
+          "fusion_admission_floor": 0.2975,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "raiden-network_raiden"
+          ],
+          "corpus_size": 1554,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6685,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6389,
+            "std": 0.05,
+            "median": 0.6375,
+            "p95": 0.7226
+          },
+          "null_admit_rate": 0.2658,
+          "pos_admit_rate": 0.2965,
+          "pos_mean": 0.6369,
+          "youden_j": 0.0306,
+          "fusion_admission_floor": 0.3342,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "rust-lang_rust"
+          ],
+          "corpus_size": 9095,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5888,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6318,
+            "std": 0.0522,
+            "median": 0.6288,
+            "p95": 0.7219
+          },
+          "null_admit_rate": 0.7944,
+          "pos_admit_rate": 0.8593,
+          "pos_mean": 0.6334,
+          "youden_j": 0.0651,
+          "fusion_admission_floor": 0.2944,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "saltstack_salt"
+          ],
+          "corpus_size": 2363,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6287,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6368,
+            "std": 0.0497,
+            "median": 0.6352,
+            "p95": 0.7215
+          },
+          "null_admit_rate": 0.5523,
+          "pos_admit_rate": 0.6784,
+          "pos_mean": 0.6391,
+          "youden_j": 0.1256,
+          "fusion_admission_floor": 0.3144,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "scikit-learn_scikit-learn"
+          ],
+          "corpus_size": 1821,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5457,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6461,
+            "std": 0.053,
+            "median": 0.6448,
+            "p95": 0.7348
+          },
+          "null_admit_rate": 0.9735,
+          "pos_admit_rate": 0.9849,
+          "pos_mean": 0.6422,
+          "youden_j": 0.0114,
+          "fusion_admission_floor": 0.2728,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "scipy_scipy"
+          ],
+          "corpus_size": 1006,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6652,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6256,
+            "std": 0.0531,
+            "median": 0.6238,
+            "p95": 0.7146
+          },
+          "null_admit_rate": 0.2188,
+          "pos_admit_rate": 0.3116,
+          "pos_mean": 0.6338,
+          "youden_j": 0.093,
+          "fusion_admission_floor": 0.3326,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "scrapy_scrapy"
+          ],
+          "corpus_size": 311,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6149,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6276,
+            "std": 0.0528,
+            "median": 0.6271,
+            "p95": 0.7146
+          },
+          "null_admit_rate": 0.5911,
+          "pos_admit_rate": 0.6583,
+          "pos_mean": 0.6295,
+          "youden_j": 0.0676,
+          "fusion_admission_floor": 0.3075,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "spack_spack"
+          ],
+          "corpus_size": 6079,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7041,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6621,
+            "std": 0.054,
+            "median": 0.6586,
+            "p95": 0.757
+          },
+          "null_admit_rate": 0.1965,
+          "pos_admit_rate": 0.3015,
+          "pos_mean": 0.6749,
+          "youden_j": 0.1052,
+          "fusion_admission_floor": 0.352,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "sphinx-doc_sphinx"
+          ],
+          "corpus_size": 1959,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6149,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6264,
+            "std": 0.0525,
+            "median": 0.6258,
+            "p95": 0.7135
+          },
+          "null_admit_rate": 0.5822,
+          "pos_admit_rate": 0.7085,
+          "pos_mean": 0.6372,
+          "youden_j": 0.1263,
+          "fusion_admission_floor": 0.3075,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "spotify_luigi"
+          ],
+          "corpus_size": 1250,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7329,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6338,
+            "std": 0.0495,
+            "median": 0.6326,
+            "p95": 0.7162
+          },
+          "null_admit_rate": 0.0257,
+          "pos_admit_rate": 0.0352,
+          "pos_mean": 0.6273,
+          "youden_j": 0.0095,
+          "fusion_admission_floor": 0.3664,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "spring-projects_spring-framework"
+          ],
+          "corpus_size": 414,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5206,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6301,
+            "std": 0.0544,
+            "median": 0.6281,
+            "p95": 0.7196
+          },
+          "null_admit_rate": 0.9827,
+          "pos_admit_rate": 1.0,
+          "pos_mean": 0.626,
+          "youden_j": 0.0173,
+          "fusion_admission_floor": 0.2603,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "spyder-ide_spyder"
+          ],
+          "corpus_size": 1891,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6701,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6274,
+            "std": 0.0506,
+            "median": 0.6262,
+            "p95": 0.7103
+          },
+          "null_admit_rate": 0.1906,
+          "pos_admit_rate": 0.2261,
+          "pos_mean": 0.63,
+          "youden_j": 0.0355,
+          "fusion_admission_floor": 0.3351,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "sympy_sympy"
+          ],
+          "corpus_size": 6776,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5735,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6356,
+            "std": 0.0523,
+            "median": 0.6358,
+            "p95": 0.7207
+          },
+          "null_admit_rate": 0.8827,
+          "pos_admit_rate": 0.9196,
+          "pos_mean": 0.6358,
+          "youden_j": 0.0372,
+          "fusion_admission_floor": 0.2868,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "tensorflow_tensorflow"
+          ],
+          "corpus_size": 2093,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.5127,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.625,
+            "std": 0.0516,
+            "median": 0.6241,
+            "p95": 0.71
+          },
+          "null_admit_rate": 0.9857,
+          "pos_admit_rate": 1.0,
+          "pos_mean": 0.6167,
+          "youden_j": 0.0143,
+          "fusion_admission_floor": 0.2564,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "webpack_webpack"
+          ],
+          "corpus_size": 813,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.7046,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6469,
+            "std": 0.0497,
+            "median": 0.645,
+            "p95": 0.7282
+          },
+          "null_admit_rate": 0.1153,
+          "pos_admit_rate": 0.1357,
+          "pos_mean": 0.6413,
+          "youden_j": 0.0203,
+          "fusion_admission_floor": 0.3523,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "xonsh_xonsh"
+          ],
+          "corpus_size": 1269,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6787,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6324,
+            "std": 0.046,
+            "median": 0.6307,
+            "p95": 0.7098
+          },
+          "null_admit_rate": 0.1469,
+          "pos_admit_rate": 0.1759,
+          "pos_mean": 0.6276,
+          "youden_j": 0.0287,
+          "fusion_admission_floor": 0.3393,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    },
+    {
+      "task": "DeepPlanning",
+      "memory_type": "Procedural",
+      "mean_ndcg_at_10": 53.89,
+      "subtasks": {
+        "shopping_level1": 54.47,
+        "shopping_level2": 46.48,
+        "shopping_level3": 60.72
+      },
+      "num_subtasks": 3,
+      "time_s": 107.7,
+      "recall_latency_full": {
+        "n": 120,
+        "p50_ms": 743.15,
+        "p95_ms": 1200.4,
+        "p99_ms": 1327.26,
+        "mean_ms": 777.34
+      },
+      "recall_latency_limit10": null,
+      "calibration": [
+        {
+          "subtasks": [
+            "shopping_level1"
+          ],
+          "corpus_size": 8257,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6391,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6333,
+            "std": 0.0579,
+            "median": 0.6256,
+            "p95": 0.7406
+          },
+          "null_admit_rate": 0.393,
+          "pos_admit_rate": 0.5628,
+          "pos_mean": 0.6626,
+          "youden_j": 0.1698,
+          "fusion_admission_floor": 0.3196,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "shopping_level2"
+          ],
+          "corpus_size": 8167,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6311,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6316,
+            "std": 0.0582,
+            "median": 0.6226,
+            "p95": 0.7389
+          },
+          "null_admit_rate": 0.4333,
+          "pos_admit_rate": 0.6583,
+          "pos_mean": 0.6604,
+          "youden_j": 0.2252,
+          "fusion_admission_floor": 0.3155,
+          "rrf_threshold_factor": 0.5
+        },
+        {
+          "subtasks": [
+            "shopping_level3"
+          ],
+          "corpus_size": 3415,
+          "ok": true,
+          "method": "separation",
+          "proxy_source": "temporal",
+          "old_threshold": 0.3,
+          "new_threshold": 0.6589,
+          "sampled_embeddings": 200,
+          "num_pairs": 19900,
+          "z_factor": 1.0,
+          "percentile": 0.95,
+          "embedding_dim": 1024,
+          "distribution": {
+            "mean": 0.6307,
+            "std": 0.0549,
+            "median": 0.6227,
+            "p95": 0.7311
+          },
+          "null_admit_rate": 0.2513,
+          "pos_admit_rate": 0.4925,
+          "pos_mean": 0.6626,
+          "youden_j": 0.2412,
+          "fusion_admission_floor": 0.3295,
+          "rrf_threshold_factor": 0.5
+        }
+      ],
+      "accel": true,
+      "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+    }
+  ],
+  "accel": {
+    "backend": "numpy",
+    "device": "cpu",
+    "selfcheck": {
+      "queries": 159011,
+      "fallbacks": 0,
+      "checked": 1576,
+      "mismatches": 0
+    }
+  }
+}

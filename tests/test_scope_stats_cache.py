@@ -137,6 +137,7 @@ async def test_a_second_recall_in_one_scope_reads_no_aggregates(
     three statements re-issued.
     """
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", confidence)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _seed()
     scope_stats.clear()
 
@@ -187,6 +188,7 @@ async def test_a_store_between_two_recalls_re_issues_the_aggregates(
 ):
     """A write invalidates: with a stale entry the gate would keep sizing the old pool."""
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _seed()
     scope_stats.clear()
     await memory_handlers.do_recall(AGENT, QUERY, limit=5)
@@ -356,6 +358,7 @@ async def test_the_disabled_cache_reads_the_aggregates_every_time(
     """``CPERSONA_SCOPE_STATS_CACHE=false`` restores the pre-cache read pattern."""
     monkeypatch.setattr(scope_stats, "SCOPE_STATS_CACHE_ENABLED", False)
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _seed()
     scope_stats.clear()
 

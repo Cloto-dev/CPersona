@@ -256,6 +256,7 @@ async def test_the_scoring_pass_computes_and_hands_over_the_anchor(clean_db, mon
 
     monkeypatch.setattr(memory_handlers, "_compute_confidence", spy)
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
 
     rows = [{"id": 1, "content": "the oldest row", "timestamp": _iso(51), "_cosine": COSINE}]
     _, span, _, anchor = await memory_handlers._apply_recall_scoring(
@@ -300,6 +301,7 @@ async def test_one_empty_timestamp_does_not_collapse_the_anchor(clean_db, monkey
     assert premise[0][0] == "", "premise: '' sorts first, so MIN() collapses onto it"
 
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     rows = [{"id": 1, "content": "the oldest row", "timestamp": _iso(51), "_cosine": COSINE}]
     _, span, _, anchor = await memory_handlers._apply_recall_scoring(
         clean_db, "bug237-agent", rows, False

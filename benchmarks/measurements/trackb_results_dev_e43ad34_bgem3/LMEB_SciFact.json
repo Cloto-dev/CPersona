@@ -1,0 +1,50 @@
+{
+  "task": "LMEB_SciFact",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 74.32,
+  "subtasks": {
+    ".": 74.32
+  },
+  "num_subtasks": 1,
+  "time_s": 20.4,
+  "recall_latency_full": {
+    "n": 188,
+    "p50_ms": 88.25,
+    "p95_ms": 209.11,
+    "p99_ms": 279.18,
+    "mean_ms": 101.53
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "."
+      ],
+      "corpus_size": 1748,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6473,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.4207,
+        "std": 0.068,
+        "median": 0.4148,
+        "p95": 0.525
+      },
+      "null_admit_rate": 0.0086,
+      "pos_admit_rate": 0.7688,
+      "pos_mean": 0.7382,
+      "youden_j": 0.7602,
+      "fusion_admission_floor": 0.3236,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

@@ -222,20 +222,13 @@ def test_a_ban_with_nothing_left_to_ban_reports_itself(tmp_path):
 THEMED = (
     '<html><body><header class="md-header" data-md-component="header">'
     '<div class="md-select cp-version"><button class="md-header__button">{title}</button>'
-    '<ul><a href="{root}{path}" class="md-select__link" aria-current="true">{title}</a></ul>'
+    "<ul>{rows}</ul>"
     "</div></header>"
     "<blockquote><p><strong>Applies to: CPersona {label}.</strong> Prose.</p></blockquote>"
     "</body></html>"
 )
 
-
-def _published(tree: pathlib.Path, subtree: str, label: str, root: str, title: str) -> None:
-    page = tree / subtree / "faq" / "index.html" if subtree else tree / "faq" / "index.html"
-    page.parent.mkdir(parents=True, exist_ok=True)
-    path = f"{subtree}/" if subtree else ""
-    page.write_text(
-        THEMED.format(label=label, root=root, path=path, title=title), encoding="utf-8"
-    )
+ROW = '<a href="{root}{line}/" class="md-select__link"{current}>{title}</a>'
 
 
 @pytest.fixture(scope="module")
@@ -243,8 +236,8 @@ def selector_gate():
     return _load("check_version_selector_banner", "check-version-selector.py")
 
 
-def _map(gate) -> tuple[str, str, str]:
-    """The line served at the root of the real map, its title and the site root.
+def _map(gate) -> tuple[str, dict[str, str], str]:
+    """The lines the real map declares, their titles, and the site root.
 
     Read from the map the gate itself reads, so this test does not carry a
     second copy of which lines exist -- the day a line is added, these tests
@@ -253,9 +246,46 @@ def _map(gate) -> tuple[str, str, str]:
     import json
 
     config = json.loads(gate.CONFIG_PATH.read_text(encoding="utf-8"))
-    current = config["current"]
-    titles = {v["id"]: v.get("title", v["id"]) for v in config["versions"]}
-    return current, titles[current], config["site_url"]
+    titles = {version["id"]: version.get("title", version["id"]) for version in config["versions"]}
+    return config["current"], titles, config["site_url"]
+
+
+def _published(gate, tree: pathlib.Path, label: str | None = None) -> str:
+    """Write the assembled tree, with `label` on the current line's pages.
+
+    Every declared line is published, because the gate asks its question once
+    per line: a tree holding only one of them is reported for the ones it left
+    out, whichever question the test was asking. The lines a test is not aiming
+    at state the label their id implies, derived here rather than taken from the
+    map -- a title only has to start with its id, and a decorated one is a label
+    the gate is right to reject. `label` of None means every line states the
+    label it should.
+
+    Returns the current line, which is the one the tests below aim at.
+    """
+    current, titles, root = _map(gate)
+    for subtree in titles:
+        rows = "".join(
+            ROW.format(
+                root=root,
+                line=other,
+                title=titles[other],
+                current=' aria-current="true"' if other == subtree else "",
+            )
+            for other in sorted(titles)
+        )
+        page = THEMED.format(
+            title=titles[subtree],
+            rows=rows,
+            label=label if subtree == current and label is not None else f"{subtree}.x",
+        )
+        # The line's own landing page as well as a page under it: the selector
+        # links to the former from every tree, so a tree missing it is reported
+        # for a reason that has nothing to do with the banner.
+        for path in (tree / subtree / "index.html", tree / subtree / "faq" / "index.html"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(page, encoding="utf-8")
+    return current
 
 
 def test_a_page_published_under_another_line_is_reported(selector_gate, tmp_path, capsys):
@@ -265,8 +295,7 @@ def test_a_page_published_under_another_line_is_reported(selector_gate, tmp_path
     links. Only its position in the assembled tree disagrees with what it says
     about itself, and only something reading the assembled tree can see that.
     """
-    current, title, root = _map(selector_gate)
-    _published(tmp_path, current, "9.9.x", root, title)
+    _published(selector_gate, tmp_path, "9.9.x")
 
     code = selector_gate.main(["check-version-selector.py", str(tmp_path)])
 
@@ -281,8 +310,7 @@ def test_an_unsubstituted_placeholder_is_reported(selector_gate, tmp_path, capsy
     "the hook did not run" and "this page has no banner" must not look the same
     from here.
     """
-    current, title, root = _map(selector_gate)
-    _published(tmp_path, current, "{{ version_line }}", root, title)
+    _published(selector_gate, tmp_path, "{{ version_line }}")
 
     code = selector_gate.main(["check-version-selector.py", str(tmp_path)])
 
@@ -291,27 +319,32 @@ def test_an_unsubstituted_placeholder_is_reported(selector_gate, tmp_path, capsy
 
 
 def test_a_line_whose_pages_state_nothing_is_reported(selector_gate, tmp_path, capsys):
-    """A tree with no banner at all is not a clean run."""
-    current, title, root = _map(selector_gate)
-    _published(tmp_path, current, "2.5.x", root, title)
-    page = tmp_path / current / "faq" / "index.html"
-    page.write_text(page.read_text(encoding="utf-8").replace("Applies to", "About"), "utf-8")
+    """A line whose pages carry no banner is reported, and named.
+
+    The rest of the tree keeps its banners, so this also holds the gate to
+    counting per line: one that pooled them would find the banners the other
+    lines still have and report nothing.
+    """
+    current = _published(selector_gate, tmp_path)
+    for page in (tmp_path / current).rglob("index.html"):
+        page.write_text(page.read_text(encoding="utf-8").replace("Applies to", "About"), "utf-8")
 
     code = selector_gate.main(["check-version-selector.py", str(tmp_path)])
 
     assert code == 1
-    assert "no page states which line it applies to" in capsys.readouterr().err
+    assert f"{current}: no page states which line it applies to" in capsys.readouterr().err
 
 
 def test_the_matching_line_is_accepted(selector_gate, tmp_path, capsys):
     """The positive control: the shape the assembler really writes passes.
 
     Without it, every assertion above would still hold if the banner check
-    rejected everything.
+    rejected everything. It asks for the whole run to be clean rather than for
+    the banner problem to be absent, so a tree that has no banner problem
+    because it failed an earlier question is not read as a pass.
     """
-    current, title, root = _map(selector_gate)
-    _published(tmp_path, current, f"{current}.x", root, title)
+    _published(selector_gate, tmp_path)
 
-    selector_gate.main(["check-version-selector.py", str(tmp_path)])
+    code = selector_gate.main(["check-version-selector.py", str(tmp_path)])
 
-    assert "applies to" not in capsys.readouterr().err
+    assert code == 0, capsys.readouterr().err

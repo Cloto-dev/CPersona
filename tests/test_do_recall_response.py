@@ -88,7 +88,7 @@ class _FakeDB:
 
 
 async def _fake_rsf(db, agent_id, query, limit, deep, channel="", exclude_set=None,
-                    project_id=None, source_id=""):
+                    project_id=None, source_id="", query_vec_out=None):
     return [
         {"id": 1, "content": "recall precision calibration gate", "source": {"System": "t"},
          "timestamp": "2026-06-26T12:00:00+00:00", "_cosine": 0.82, "_rsf_score": 0.82,
@@ -125,6 +125,7 @@ def _patch(monkeypatch):
     # alphabetically-earlier file that imports config first leaves CONFIDENCE off + mode rrf,
     # the _recall_rsf patch goes unused, and do_recall returns no messages).
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     monkeypatch.setattr(M, "RECALL_MODE", "rsf")
     return fake
 
@@ -440,10 +441,10 @@ def _patch_capture_limit(monkeypatch):
     seen: dict = {}
 
     async def _capture_rsf(db, agent_id, query, limit, deep, channel="", exclude_set=None,
-                           project_id=None, source_id=""):
+                           project_id=None, source_id="", query_vec_out=None):
         seen["limit"] = limit
         return await _fake_rsf(db, agent_id, query, limit, deep, channel, exclude_set,
-                               project_id, source_id)
+                               project_id, source_id, query_vec_out)
 
     monkeypatch.setattr(M, "_recall_rsf", _capture_rsf)
     return seen

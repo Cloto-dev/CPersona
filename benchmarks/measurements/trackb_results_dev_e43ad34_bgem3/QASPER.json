@@ -1,0 +1,50 @@
+{
+  "task": "QASPER",
+  "memory_type": "Semantic",
+  "mean_ndcg_at_10": 48.71,
+  "subtasks": {
+    ".": 48.71
+  },
+  "num_subtasks": 1,
+  "time_s": 230.0,
+  "recall_latency_full": {
+    "n": 1335,
+    "p50_ms": 122.16,
+    "p95_ms": 284.83,
+    "p99_ms": 303.73,
+    "mean_ms": 161.09
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "."
+      ],
+      "corpus_size": 65300,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.5503,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.4641,
+        "std": 0.0677,
+        "median": 0.4634,
+        "p95": 0.5755
+      },
+      "null_admit_rate": 0.1,
+      "pos_admit_rate": 0.809,
+      "pos_mean": 0.6412,
+      "youden_j": 0.709,
+      "fusion_admission_floor": 0.2752,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

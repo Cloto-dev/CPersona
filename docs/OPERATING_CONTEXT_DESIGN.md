@@ -1,36 +1,41 @@
 # Server-Served Operating Context (Global Config + MCP Instructions Distribution)
 
-**Status**: implemented on `feature/2.5.1-operating-context` (target: 2.5.1, direct
-release — no pre-release ladder; merge/tag gated on 2.5.0 final)
-**Decision**: project owner, 2026-07-16 (design discussion immediately after the 2.5.0b1
-release)
-**Scope**: additive — no DB schema change, one new read tool, one sidecar config file.
-The 2.5.x line declaration in `SUPPORT.md` ("DB schema and MCP tool contract are
-preserved, rollback-free") is maintained.
+**Status**: implemented on `feature/2.5.1-operating-context` (target: 2.5.1,
+direct release — no pre-release ladder; merge and tag gated on 2.5.0 final)
+**Decision**: project owner, 2026-07-16 (design discussion immediately after the
+2.5.0b1 release)
+**Scope**: additive — no DB schema change, one new read tool, one sidecar config
+file. The 2.5.x line declaration in `SUPPORT.md` ("DB schema and MCP tool
+contract are preserved, rollback-free") is maintained.
 
 ---
 
 ## 1. Motivation
 
 CPersona's operating doctrine — which `project_id` values exist, what `agent_id`
-conventions apply, how `recall` should be used (limits, `exclude_contents`, session-start
-discipline) — currently lives in **client-side documents**: the operator's `CLAUDE.md`
-files, per-repo instructions, and skill texts. This has two structural problems:
+conventions apply, how `recall` should be used (limits, `exclude_contents`,
+session-start discipline) — currently lives in **client-side documents**: the
+operator's `CLAUDE.md` files, per-repo instructions, and skill texts. That has
+two structural problems.
 
-1. **Divergence at the source.** Every agent/environment pair (Claude Code, ClotoCore
-   kernel agents, claude.ai remote connector, future clients) carries its own copy of the
-   doctrine, and the copies drift. A new environment silently starts with *no* doctrine.
-2. **Operator-side sprawl.** The doctrine competes for space in `CLAUDE.md`, which is
-   already under a slimming discipline (token fixed-cost per session).
+1. **Divergence at the source.** Every agent/environment pair (Claude Code,
+   ClotoCore kernel agents, claude.ai remote connector, future clients) carries
+   its own copy of the doctrine, and the copies drift. A new environment starts
+   with *no* doctrine, and nothing announces it.
+2. **Operator-side sprawl.** The doctrine competes for space in `CLAUDE.md`,
+   which is already under a slimming discipline (token fixed-cost per
+   session).
 
-The server is the single component every client, by definition, connects to. MCP provides
-a purpose-built distribution channel: the `instructions` field of the `initialize`
-response. This design makes CPersona serve its own operating context — **deterministic
-distribution, explicitly distinguished from probabilistic compliance**.
+The server is the single component every client connects to, by definition. MCP
+provides a purpose-built distribution channel: the `instructions` field of the
+`initialize` response. This design makes CPersona serve its own operating
+context — **deterministic distribution, explicitly distinguished from
+probabilistic compliance**.
 
-This generalizes the "shaping/limiting belongs to the boundary layer" principle
-already applied to the agent-facing `limit` cap: rules that can be *validated* are enforced server-side (Hard layer);
-rules that can only be *stated* are distributed server-side (Soft layer).
+This generalizes the "shaping and limiting belong to the boundary layer"
+principle already applied to the agent-facing `limit` cap. Rules that can be
+*validated* are enforced server-side (the Hard layer); rules that can only be
+*stated* are distributed server-side (the Soft layer).
 
 ## 2. Two-layer architecture
 
@@ -42,30 +47,38 @@ rules that can only be *stated* are distributed server-side (Soft layer).
 ## 3. Sidecar configuration file (no DB schema)
 
 Precedent: CScheduler's `~/.cscheduler/bindings.json`. The operating context is a
-**file owned by the operator**, not DB rows — this is the first-choice design because it
-keeps the 2.5.x rollback-free declaration intact and makes governance trivial (§7).
+**file owned by the operator**, not a set of DB rows. That is the first-choice
+design because it keeps the 2.5.x rollback-free declaration intact, and makes
+governance trivial (§7).
 
 - **Path**: `~/.cpersona/operating-context.toml`, overridable via
-  `CPERSONA_OPERATING_CONTEXT_PATH`. Kill switch: `CPERSONA_OPERATING_CONTEXT=off`.
-- **Format**: TOML, parsed with stdlib `tomllib` (Python ≥3.11, zero new dependencies).
-  TOML is chosen over JSON for multiline doctrine text blocks.
-- **Absent file → feature fully dormant.** No instructions, no validation, no behavior
-  change whatsoever. Existing deployments are untouched.
-- **Invalid file → non-fatal.** The server boots with the feature off, logs a warning,
-  and `check_health` reports a finding (§8). A config typo must never take memory down.
-- **Reload**: lazy, mtime-based — on the Hard side only. `get_context()` re-parses when
-  the file's mtime changes, so registry validation, `@auto` resolution and
-  `get_operating_context` reflect an operator's edit on the next tool call.
-  The `instructions` text does **not** follow: it is read once, at module import
-  (`registry = ToolRegistry(..., instructions=operating_context.instructions_text())`),
-  and the SDK's `Server` holds that string as an attribute which every
-  `create_initialization_options()` returns — so it is frozen for the life of the
-  process. **Reconnecting is not enough**: a client re-initializing against a running
-  server is served the same text again. Publishing an edit requires restarting the
-  server process. A stdio client restarts it whenever it relaunches the server, so it
-  does pick edits up between sessions; the streamable-HTTP transport, where one
-  long-lived process serves every client, does not. (This document previously claimed
-  clients see updates on reconnect — bug-252.)
+  `CPERSONA_OPERATING_CONTEXT_PATH`. Kill switch:
+  `CPERSONA_OPERATING_CONTEXT=off`.
+- **Format**: TOML, parsed with stdlib `tomllib` (Python ≥3.11, zero new
+  dependencies). TOML is chosen over JSON for multiline doctrine text blocks.
+- **Absent file → feature fully dormant.** No instructions, no validation, no
+  behaviour change whatsoever. Existing deployments are untouched.
+- **Invalid file → non-fatal.** The server boots with the feature off, logs a
+  warning, and `check_health` reports a finding (§8). A config typo must never
+  take memory down.
+- **Reload**: lazy and mtime-based, on the Hard side only. `get_context()`
+  re-parses when the file's mtime changes, so registry validation, `@auto`
+  resolution and `get_operating_context` reflect an operator's edit on the next
+  tool call.
+
+    The `instructions` text does **not** follow. It is read once, at module
+    import (`registry = ToolRegistry(..., instructions=operating_context.instructions_text())`),
+    and the SDK's `Server` holds that string as an attribute which every
+    `create_initialization_options()` returns. It is therefore frozen for the
+    life of the process.
+
+    **Reconnecting is not enough**: a client re-initializing against a running
+    server is served the same text again. Publishing an edit requires
+    restarting the server process. A stdio client restarts it whenever it
+    relaunches the server, so it does pick edits up between sessions. The
+    streamable-HTTP transport, where one long-lived process serves every
+    client, does not. (This document previously claimed clients see updates on
+    reconnect — bug-252.)
 
 ### 3.1 Schema
 
@@ -105,21 +118,24 @@ body = """..."""
 
 ## 4. Soft layer: `initialize` instructions
 
-The official MCP Python SDK already carries the field end-to-end:
+The official MCP Python SDK already carries the field end to end:
 `Server(name, instructions=...)` → `create_initialization_options()` →
 `InitializeResult.instructions` (verified in the vendored SDK,
-`mcp/server/lowlevel/server.py:142,188`). The only cpersona change is threading it
-through the vendored `ToolRegistry.__init__` (currently `Server(server_name)` with no
-instructions, `_vendored_mcp_common/mcp_utils.py:73`).
+`mcp/server/lowlevel/server.py:142,188`). The only cpersona change is threading
+it through the vendored `ToolRegistry.__init__`, which is currently
+`Server(server_name)` with no instructions
+(`_vendored_mcp_common/mcp_utils.py:73`).
 
-Composition rule: `instructions = [instructions.summary]` verbatim, prefixed with
-nothing. **The summary is the compact canonical; details are opt-in** via
-`get_operating_context` (preview-tier structure, same token fixed-cost discipline as
-CSC `get_active_context` / recall preview tiers).
+Composition rule: `instructions = [instructions.summary]` verbatim, with no
+prefix. **The summary is the compact canonical; details are opt-in** via
+`get_operating_context` (preview-tier structure, under the same token
+fixed-cost discipline as CSC `get_active_context` and the recall preview
+tiers).
 
-Size discipline: the summary SHOULD stay ≤ 1,500 characters; `check_health` warns above
-3,000 (§8). The instructions text is a per-session fixed cost on every connected client —
-treat it like CLAUDE.md budget, not like a doc.
+Size discipline: the summary SHOULD stay at or under 1,500 characters, and
+`check_health` warns above 3,000 (§8). The instructions text is a per-session
+fixed cost on every connected client. Treat it like a `CLAUDE.md` budget, not
+like a doc.
 
 ### 4.1 Client propagation matrix (measured 2026-07-16)
 
@@ -129,9 +145,9 @@ treat it like CLAUDE.md budget, not like a doc.
 | ClotoCore kernel | **Dropped.** `initialize()` extracts only `capabilities.mgp` and `capabilities.logging`; the result is logged and discarded (`crates/core/src/managers/mcp_client.rs`, `initialize()`) | **Gap confirmed** — kernel-side work item, tracked in ClotoCore (out of scope here). Until it lands, kernel agents get the Hard layer only |
 | claude.ai remote connector | Untested | **To measure** during implementation; if the connector strips instructions, Claude Code local stdio still covers the primary environment |
 
-The kernel gap does not block 2.5.1: the Hard layer (§5) enforces the machine-checkable
-subset for kernel agents regardless, and the Soft layer degrades to exactly today's
-status quo.
+The kernel gap does not block 2.5.1. The Hard layer (§5) enforces the
+machine-checkable subset for kernel agents regardless, and the Soft layer
+degrades to exactly today's status quo.
 
 ## 5. Hard layer: registry validation + `@auto` sentinel
 
@@ -147,59 +163,68 @@ The invariant table:
 
 ### 5.1 Registry validation
 
-Applied on the six tools that accept `project_id` (write: `store`, `archive_episode`;
-read: `recall`, `recall_with_context`, `list_memories`, `list_episodes` — `update_memory`
-does not take `project_id` in the current tool contract). Modes:
+Applied on the six tools that accept `project_id`: `store` and `archive_episode`
+on the write side, and `recall`, `recall_with_context`, `list_memories`,
+`list_episodes` on the read side. (`update_memory` does not take `project_id`
+in the current tool contract.) The modes are:
 
-- `off` — no checks (registry is documentation only).
-- `warn` (default) — unknown id is accepted; the response carries
-  `operating_context_warning: "project_id 'X' not in registry (rev ...)"`. Advisory-first,
-  same philosophy as degraded-advisory: report, don't break.
-- `reject` — unknown id on **writes** returns an error naming the registry and revision.
-  Reads still warn rather than reject (a bad read filter loses nothing; a bad write
-  pollutes a bucket — the asymmetry mirrors the actual damage).
+- `off` — no checks. The registry is documentation only.
+- `warn` (default) — an unknown id is accepted, and the response carries
+  `operating_context_warning: "project_id 'X' not in registry (rev ...)"`.
+  Advisory-first, the same philosophy as degraded-advisory: report, do not
+  break.
+- `reject` — an unknown id on **writes** returns an error naming the registry
+  and revision. Reads still warn rather than reject. A bad read filter loses
+  nothing; a bad write pollutes a bucket, and the asymmetry mirrors the actual
+  damage.
 
-Rationale for `warn` default: the registry file is new; a stale registry must not brick
-writes. Operators who want the fence escalate to `reject` deliberately.
+The `warn` default has a reason: the registry file is new, and a stale registry
+must not brick writes. Operators who want the fence escalate to `reject`
+deliberately.
 
 ### 5.2 `@auto` sentinel
 
-- Resolution: `defaults[agent_id]` → that project_id. No mapping → resolves to `""` and
-  the response carries an `operating_context_warning` (in `reject` mode: error instead).
-- The resolved value is echoed as `resolved_project_id` in the response — the caller can
-  always see what actually happened (transparency over silence).
-- `@auto` is literal and opt-in. A caller that never sends it is never affected; explicit
-  values are never rewritten; the resolved value is then registry-validated like an
-  explicit value.
+- Resolution: `defaults[agent_id]` gives that project_id. With no mapping it
+  resolves to `""`, and the response carries an `operating_context_warning` (in
+  `reject` mode, an error instead).
+- The resolved value is echoed as `resolved_project_id` in the response, so the
+  caller can always see what actually happened. Transparency over silence.
+- `@auto` is literal and opt-in. A caller that never sends it is never
+  affected, explicit values are never rewritten, and the resolved value is
+  registry-validated like an explicit one.
 
 ## 6. Tool surface: `get_operating_context` (24 → 25 tools)
 
-Read-only. Arguments:
+Read-only. The arguments are:
 
 - (no args) → `{ context_revision, instructions_summary, registry: {project_ids, enforce},
   defaults, doctrine_sections: [names only], _meta }` — the preview tier.
 - `section: "recall-discipline"` → that section's full body.
 
-No write tool (§7). Additive to the MCP tool contract (new tool only, no signature
-changes to existing tools — response-field additions in §5 are additive fields, which the
-2.5.x line declaration treats as preserved-contract, same as `persisted`/`degraded`
-precedents).
+There is no write tool (§7). The change is additive to the MCP tool contract:
+a new tool only, with no signature changes to existing tools. The
+response-field additions in §5 are additive fields, which the 2.5.x line
+declaration treats as preserved-contract, following the `persisted` and
+`degraded` precedents.
 
 ## 7. Governance: the write path is the filesystem
 
-**There is no MCP write tool for the operating context in 2.5.1.** The sidecar is edited
-by the operator through the OS, full stop. This is the strongest available gate against
-the contamination path (a compromised or confused agent talking the server into
-rewriting the doctrine that all other agents will then receive):
+**There is no MCP write tool for the operating context in 2.5.1.** The sidecar
+is edited by the operator through the OS, full stop.
+
+This is the strongest available gate against the contamination path, where a
+compromised or confused agent talks the server into rewriting the doctrine that
+all other agents will then receive:
 
 - MCP surface: read-only (`get_operating_context`).
-- Write surface: file permissions — operator-owned, same trust level as editing
-  `CLAUDE.md` or `bindings.json`.
-- Kill switch: `CPERSONA_OPERATING_CONTEXT=off` (env, i.e. also operator-owned).
+- Write surface: file permissions. Operator-owned, at the same trust level as
+  editing `CLAUDE.md` or `bindings.json`.
+- Kill switch: `CPERSONA_OPERATING_CONTEXT=off` (an env var, so also
+  operator-owned).
 
-If a future version wants agent-mediated edits (e.g. "register this new project_id"),
-that lands as a separate design with an explicit approval mechanism — deliberately out of
-scope here.
+If a future version wants agent-mediated edits ("register this new project_id",
+for example), that lands as a separate design with an explicit approval
+mechanism. It is deliberately out of scope here.
 
 ## 8. Health integration
 
@@ -212,34 +237,43 @@ Two additive checks in the `check_health` registry (v2.4.37 registry architectur
 
 ## 9. Testing plan
 
-Hermetic (tmp-dir sidecar + env override), no live backend needed:
+Hermetic — a tmp-dir sidecar plus an env override, with no live backend
+needed:
 
-1. Absent / `off` / invalid sidecar → feature dormant, zero behavior deltas (regression
-   guard over the full existing suite).
+1. Absent, `off`, or invalid sidecar: the feature is dormant, with zero
+   behaviour deltas (a regression guard over the full existing suite).
 2. Instructions threading: `ToolRegistry(instructions=...)` lands in
    `create_initialization_options()`.
-3. Registry modes: off/warn/reject × read/write × known/unknown/`""` project_id.
-4. `@auto`: mapped, unmapped, explicit-value-never-rewritten, `resolved_project_id` echo.
-5. mtime reload: edit sidecar mid-session → next call sees the new registry. Hard layer
-   only — the same edit does not change the `instructions` a reconnect is served, which
-   stays frozen until the process restarts (§3), and a test pins that asymmetry.
+3. Registry modes: off / warn / reject × read / write × known / unknown / `""`
+   project_id.
+4. `@auto`: mapped, unmapped, explicit-value-never-rewritten, and the
+   `resolved_project_id` echo.
+5. mtime reload: edit the sidecar mid-session, and the next call sees the new
+   registry. This is the Hard layer only. The same edit does not change the
+   `instructions` a reconnect is served, which stays frozen until the process
+   restarts (§3), and a test pins that asymmetry.
 6. Health checks fire on the two conditions in §8.
 
 ## 10. Version position & release path
 
-- **2.5.1, direct release** (owner ruling 2026-07-16): additive feature, no schema/contract
-  break → no pre-release ladder. The 2.5.0 a/b ladder was the caution for *breaking*
-  internal stabilization, not a general rule. Requires RELEASE_LIFECYCLE_STANDARD v1.2
-  (in-line feature cycle + ladder trigger criteria) — companion revision, same batch.
-- Tag/release only **after 2.5.0 final**; design and branch implementation proceed in
-  parallel with the b1 soak. Note: shipping 2.5.1 during the soak effectively restarts
-  the 2.5.x Stable-certification clock (certification is then taken with 2.5.1 included).
+- **2.5.1, direct release** (owner ruling 2026-07-16). It is an additive
+  feature with no schema or contract break, so no pre-release ladder. The 2.5.0
+  a/b ladder was the caution for *breaking* internal stabilization, not a
+  general rule. It requires RELEASE_LIFECYCLE_STANDARD v1.2 (in-line feature
+  cycle plus ladder trigger criteria) as a companion revision, in the same
+  batch.
+- Tag and release only **after 2.5.0 final**. Design and branch implementation
+  proceed in parallel with the b1 soak. Note that shipping 2.5.1 during the
+  soak effectively restarts the 2.5.x Stable-certification clock, since
+  certification is then taken with 2.5.1 included.
 
 ## 11. Open questions
 
-1. claude.ai remote connector propagation (§4.1) — measure; result does not change the
-   design, only the coverage claim.
-2. ClotoCore kernel `instructions` support — file as a ClotoCore issue/goal; decide
-   whether it injects into the agent system prompt globally or per-agent.
-3. Should `[defaults]` support a wildcard key (`"*"`)? Deferred until a concrete need —
-   YAGNI, and a wildcard weakens the explicitness of `@auto`.
+1. claude.ai remote connector propagation (§4.1). Measure it. The result does
+   not change the design, only the coverage claim.
+2. ClotoCore kernel `instructions` support. File it as a ClotoCore issue or
+   goal, and decide whether it injects into the agent system prompt globally or
+   per agent.
+3. Should `[defaults]` support a wildcard key (`"*"`)? Deferred until a
+   concrete need — YAGNI, and a wildcard weakens the explicitness of
+   `@auto`.

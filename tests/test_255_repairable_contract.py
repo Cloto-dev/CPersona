@@ -26,7 +26,7 @@ import pytest
 import pytest_asyncio
 
 from cpersona import session
-from cpersona import checks, vector
+from cpersona import checks, config, vector
 from cpersona.config import MAX_CONTENT_LENGTH, MAX_PROFILE_LENGTH
 from cpersona.database import get_db
 
@@ -314,7 +314,40 @@ EXPECTED_REPAIRABLE = {
     # (never narrowed) and is covered in tests/test_file_permissions_check.py, which is
     # why the seeder above widens a file and leaves the directory alone.
     "file_permissions": 1,
+    # locked on purpose: building nodes never modifies the record, so a locked row
+    # is inside the repair's reach (checks.check_missing_nodes)
+    "missing_nodes": 1,
+    # locked on purpose, for the same reason: building blocks never modifies the
+    # record (checks.check_missing_blocks)
+    "missing_blocks": 1,
 }
+
+
+@seeder("missing_nodes")
+async def _s_missing_nodes(conn):
+    # A locked record past a small token window, with no nodes. The window lives on
+    # the fake client the contract tests install, and is put back afterwards.
+    client = vector._embedding_client
+    before = client.token_window
+    client.token_window = 16
+    await _mem(conn, " ".join(f"word{i}" for i in range(80)), locked=1)
+    try:
+        yield conn
+    finally:
+        client.token_window = before
+
+
+@seeder("missing_blocks")
+async def _s_missing_blocks(conn):
+    # A locked record that divides into several blocks and has none, under a
+    # deployment that opted into blocks. The switch is put back afterwards.
+    before = config.BLOCK_BUILD_ENABLED
+    config.BLOCK_BUILD_ENABLED = True
+    await _mem(conn, "一文目です。二文目です。\n\n三文目です。", locked=1)
+    try:
+        yield conn
+    finally:
+        config.BLOCK_BUILD_ENABLED = before
 
 
 @seeder("file_permissions")

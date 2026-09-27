@@ -1,0 +1,112 @@
+{
+  "task": "Gorilla",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 33.04,
+  "subtasks": {
+    "gorilla_huggingface": 29.72,
+    "gorilla_pytorch": 33.7,
+    "gorilla_tensor": 35.69
+  },
+  "num_subtasks": 3,
+  "time_s": 18.6,
+  "recall_latency_full": {
+    "n": 598,
+    "p50_ms": 21.57,
+    "p95_ms": 29.29,
+    "p99_ms": 33.81,
+    "mean_ms": 20.22
+  },
+  "recall_latency_limit10": {
+    "n": 598,
+    "p50_ms": 9.58,
+    "p95_ms": 14.75,
+    "p99_ms": 17.55,
+    "mean_ms": 9.55
+  },
+  "calibration": [
+    {
+      "subtasks": [
+        "gorilla_huggingface"
+      ],
+      "corpus_size": 907,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6993,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6314,
+        "std": 0.057,
+        "median": 0.628,
+        "p95": 0.7237
+      },
+      "null_admit_rate": 0.0991,
+      "pos_admit_rate": 0.7688,
+      "pos_mean": 0.7693,
+      "youden_j": 0.6696,
+      "fusion_admission_floor": 0.3497,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "gorilla_pytorch"
+      ],
+      "corpus_size": 43,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.7107,
+      "sampled_embeddings": 43,
+      "num_pairs": 903,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.7049,
+        "std": 0.0728,
+        "median": 0.6987,
+        "p95": 0.8257
+      },
+      "null_admit_rate": 0.4507,
+      "pos_admit_rate": 0.619,
+      "pos_mean": 0.7406,
+      "youden_j": 0.1683,
+      "fusion_admission_floor": 0.3553,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "gorilla_tensor"
+      ],
+      "corpus_size": 55,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.8042,
+      "sampled_embeddings": 55,
+      "num_pairs": 1485,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.8225,
+        "std": 0.0766,
+        "median": 0.816,
+        "p95": 0.9583
+      },
+      "null_admit_rate": 0.5785,
+      "pos_admit_rate": 0.6852,
+      "pos_mean": 0.8297,
+      "youden_j": 0.1067,
+      "fusion_admission_floor": 0.4021,
+      "rrf_threshold_factor": 0.5
+    }
+  ]
+}

@@ -24,10 +24,12 @@ Two tracks are measured:
 | `budget_batching.py` | Token-budget dynamic batching for SentenceTransformer encode (MPS pathologies workaround); shared by both tracks |
 | `mps_accel.py` | Optional behavior-invariant recall acceleration (`--fast`): preloads each corpus group's embeddings into one matrix instead of per-query full-table scans. Zero changes to cpersona itself |
 | `mps_accel_equivalence_gate.py` | Equivalence gate proving `mps_accel` returns identical results to the original `_search_vector` (numpy backend: bitwise; torch: ≤1e-5), including a `do_recall` integration comparison. `--mode sidecar` turns the same harness on the contiguous embedding index, comparing `_search_vector` with and without the index file present. Deliberately NOT named `test_*.py`: it is a standalone script that mutates `os.environ` at import time, so pytest must never collect it |
+| `trackb_instrument.py` | Instrument pieces the Track B runner uses without trusting the package under test: a per-recall check that the reported Recall Depth is `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)` (a mismatch marks the task result `invalid`), and the seeded dev / test split behind `--split` / `--split_seed`. The runner's `--latency_scan_window` sets the scan window of its `limit=10` latency pass |
 | `run_trackb.sh` | Track B launcher encoding the official measurement regime |
 | `frozen_replay.py` | Frozen-stage replay of the Track B path: scores the dense-only order, the admitted order, the fused order and the gated order per query on the same frozen embeddings and lexical scores, so Track B − Track A can be attributed to a stage. Reproduces Track A at the first stage and the recorded Track B at the last, and compares its fused/gated orders row for row with the live `_recall_rrf` / `do_recall` on a sample of queries |
 | `replay_summary.py` | Tabulates `frozen_replay.py` output across models: stage decomposition, lexical-weight sweep, top-ten move taxonomy, per-corpus calibration |
 | `replay_query_analysis.py` | Per-query view of the same output: fusion delta by top-cosine quartile, the one-parameter cosine switch and its oracle, gold visibility |
+| `longmemeval_reader.py` | End-to-end answer accuracy on LongMemEval: reads the rankings a retrieval run dumped (`--dump_rankings`), rebuilds what a caller would have read, and has an isolated reader answer and a judge grade it (below) |
 | `benchmark_latency.py` | Production-stack latency runner: end-to-end `do_recall()` / `do_store()` wall clock against a REAL HTTP embedding backend (CEmbedding `/embed`), in both `local` and `remote` (matrix `/search`) vector-search modes |
 
 ## Prerequisites
@@ -336,6 +338,47 @@ bash benchmarks/run_trackb.sh --unclamp_limit \
     --trust_remote_code --default_task retrieval
 ```
 
+## Answer accuracy (LongMemEval reader)
+
+Retrieval metrics say whether the evidence came back; `longmemeval_reader.py`
+says whether a reader could answer from what came back. The memory server calls
+no model: the reader and the judge are this script's, run through an isolated,
+subscription-authenticated Codex call (no tools, hooks, memories or user
+configuration; set `CODEX_BIN` to the real binary if a wrapper sits earlier on
+`PATH`).
+
+Rules:
+
+1. **The input is a retrieval run's rankings**, taken under the caller's regime
+   (`--recall_limit 10`, gates on). Rows from another scene are another user's
+   history: they are dropped and counted, never backfilled, so a run that
+   stores every scene together can hand the reader fewer than ten rows.
+2. **Two arms, both from what the memory stored.** `expanded` shows each
+   returned record in full, as `get_contents` would; `preview` shows the stored
+   text cut to the recall preview length. The benchmark stores title and user
+   turns only, so a single-session-assistant question is structurally
+   unanswerable here and is reported apart from any claim.
+3. **The prompts are the reference implementation's**, copied verbatim and
+   pinned by hash in the tests. The judge model is not the reference one, so
+   the numbers compare arms of this harness, not published results.
+4. **Every call is cached** by model, effort, instructions, schema and prompt.
+   A repeat with `--rep N` bypasses the cache: that is the A/A measurement of
+   the reader's own noise, and no difference smaller than it is a finding.
+5. **The reader must not be the bottleneck.** Its effort is chosen on the
+   oracle self-test (the default, `high`, is the lowest level at which the
+   model reasons at all), and the A/A noise is measured at that effort.
+6. **Self-tests before any claim:** `--mode oracle` (the reference evidence:
+   the reader's ceiling), `empty` and `shuffled` (another question's evidence:
+   both must fall), `judge_gold` (the gold answer must grade yes) and
+   `judge_other` (another question's answer must grade no).
+
+```bash
+CODEX_BIN=/path/to/codex python -m benchmarks.longmemeval_reader \
+  --rankings <arm>/limit10/rankings.jsonl \
+  --lmeb_dir <lmeb>/eval_data/Dialogue/LongMemEval \
+  --oracle longmemeval_oracle.json --cache_dir <cache> --out <arm>/reader.jsonl
+```
+
 ## Latency benchmark (production stack)
 
 `benchmark_latency.py` measures what the ranking tracks deliberately do
@@ -385,6 +428,12 @@ per-query full-table blob scan that the resident matrix eliminates; most of
 the remaining remote time is the FTS5 retriever, which both modes share
 under `rrf`. Numbers predating CEmbedding 0.6.1 are not comparable: 0.6.0's
 fixed-length padding put a ~620 ms encode floor under every recall.
+
+On the reference Intel N150, the same question — recall with the query embedded by
+a real model, here CEmbedding 0.8.0 on the same machine — is recorded in
+[`measurements/results-recall-latency-with-embedding.md`](measurements/results-recall-latency-with-embedding.md)
+(100,000 memories, jina-v5-nano: median 446.6 ms, all 25 queries under 520 ms, and
+why an embedding server sharing the cores should be given fewer threads).
 
 ## Track A vs Track B (documented record)
 

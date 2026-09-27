@@ -302,6 +302,21 @@ async def test_recall_boundary_warns_but_serves(sidecar, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_traverse_boundary_warns_but_serves(sidecar, monkeypatch):
+    """traverse is a read: an unregistered project warns in reject mode instead of refusing."""
+    from cpersona import associations, server
+
+    async def echo_traverse(agent_id, entity, **kwargs):
+        return {"entity": entity, "entities": [], "relations": [], "seen_project_id": kwargs.get("project_id")}
+
+    monkeypatch.setattr(associations, "traverse", echo_traverse)
+    sidecar(_with_enforce("reject"))
+    result = await server.do_traverse_boundary("claude-code", "MizEye", 1, 20, "", "ghost", "")
+    assert result.get("ok") is not False and result["seen_project_id"] == "ghost"
+    assert "not in registry" in result["operating_context_warning"]
+
+
+@pytest.mark.asyncio
 async def test_read_boundaries_warn_through_on_unmapped_auto(sidecar, monkeypatch):
     """bug-256 (owner ruling 2026-08-18): unmapped ``@auto`` never rejects a READ.
 

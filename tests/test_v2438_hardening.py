@@ -531,6 +531,7 @@ async def test_recall_does_not_bump_recall_count_under_no_persist(clean_db, monk
     await db.commit()
 
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     monkeypatch.setattr(memory_handlers, "_apply_quality_gate", lambda results, *a, **k: results)
 
     # sanity: a normal recall reaches the bump path (proves the test isn't vacuous)

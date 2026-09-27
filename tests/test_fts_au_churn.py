@@ -165,7 +165,7 @@ async def test_v12_to_v13_migration_replaces_triggers():
         ver = await db.execute_fetchall(
             "SELECT MAX(version) FROM schema_version"
         )
-        assert ver[0][0] == 13
+        assert ver[0][0] == database.SCHEMA_VERSION
         await database.close_db()
     finally:
         database._db, database.DB_PATH = saved_db, saved_path

@@ -13,7 +13,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 17
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -434,6 +434,286 @@ WHEN old.content <> new.content BEGIN
 END;
 """
 
+# v14 (docs/OVERFLOW_TREE_DESIGN.md §1, §4): the spans a long record is divided
+# into so each can be embedded whole. A node stores offsets into its parent's
+# text, never text, and lives in its own table so none of the queries that read
+# `memories` or `episodes` has to learn to exclude it.
+#
+# The triggers are what keep a node true to its parent. The package has a dozen
+# statements that delete a memory or an episode and two that rewrite a memory's
+# text; a trigger covers all of them, and every one written later,
+# where a call-site cleanup covers only the sites someone remembered. The package
+# declares no foreign keys, so ON DELETE CASCADE would not fire either.
+#
+# The UPDATE triggers are column-scoped and guarded on a real change for the
+# same reason as the FTS triggers (bug-012): an update that rewrites the text
+# with itself leaves every node valid. Queueing the rebuild belongs to the
+# write path, not here — a trigger cannot reach the embedding server.
+#
+# Run on every boot, not only on the step to v14: CREATE ... IF NOT EXISTS is a
+# no-op once the objects exist, and a version-gated CREATE is the shape that
+# left FTS triggers permanently missing on a database stamped past its step
+# (bug-118). check_schema_objects watches the four triggers.
+RECORD_NODES_SQL = """
+CREATE TABLE IF NOT EXISTS record_nodes (
+    parent_kind     TEXT    NOT NULL,
+    parent_id       INTEGER NOT NULL,
+    node_index      INTEGER NOT NULL,
+    start_char      INTEGER NOT NULL,
+    end_char        INTEGER NOT NULL,
+    token_count     INTEGER NOT NULL,
+    window          INTEGER NOT NULL,
+    embedding       BLOB,
+    embedding_model TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (parent_kind, parent_id, node_index)
+);
+
+CREATE TRIGGER IF NOT EXISTS record_nodes_memories_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM record_nodes WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_nodes_memories_au AFTER UPDATE OF content ON memories
+WHEN old.content <> new.content BEGIN
+    DELETE FROM record_nodes WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_nodes_episodes_ad AFTER DELETE ON episodes BEGIN
+    DELETE FROM record_nodes WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_nodes_episodes_au AFTER UPDATE OF summary ON episodes
+WHEN old.summary <> new.summary BEGIN
+    DELETE FROM record_nodes WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+"""
+
+# v16: the blocks of docs/BLOCK_REACH_DESIGN.md — clause-sized spans of a
+# record's own text, each carrying a sign-quantised vector, so the tail of a
+# long record can be reached by search rather than only quoted.
+#
+# Shaped like record_nodes above, and for the same reasons: offsets rather than
+# copied text, a derived set that is rebuilt rather than repaired, and triggers
+# rather than call-site cleanup because the package declares no foreign keys.
+#
+# Two things differ from the node table, and both follow from blocks being
+# READ by a retrieval path where nodes are not:
+#
+# 1. The isolation axes are carried on the row. A coarse pass that ranked the
+#    whole corpus and filtered afterwards would spend its top-k on rows the
+#    authority then drops, and the loss grows as a bucket shrinks relative to
+#    the corpus — at one per cent of it, a post-filter leaves almost nothing.
+#    The axes are here so the cut happens after the filter, not before it. This
+#    is not a second authority: isolation_where() remains the only one, and the
+#    hydrate re-applies it fail-closed (bug-100). The obligation here is
+#    one-directional — the rows this table offers must be a superset of the rows
+#    the authority admits.
+#
+# 2. A retag therefore has to reach the blocks, but it must not destroy them: a
+#    record that moves to another project keeps its text, so its vectors stay
+#    valid. The axis triggers UPDATE the copies instead of deleting the set,
+#    which is why they are separate from the content triggers. A text change
+#    still deletes, because then the spans themselves are wrong.
+#
+# `embedding_bits` is a bit string, not a float32 vector: one bit per dimension,
+# 128 bytes at 1,024 dimensions against 4,096. The design's section 3 has the
+# measurement that settles it.
+#
+# There is deliberately no token_count or window here, though the node table has
+# both. The block divider is offline by design (§2) — it asks no model and
+# fetches no token report — so it has no honest value for either, and a column
+# that can only be filled by breaking that property is an invitation to break
+# it. A block's length in characters is end_char - start_char.
+#
+# Run on every boot, not only on the step to v16 (bug-118). check_schema_objects
+# watches the six triggers and the axis index.
+RECORD_BLOCKS_SQL = """
+CREATE TABLE IF NOT EXISTS record_blocks (
+    parent_kind     TEXT    NOT NULL,
+    parent_id       INTEGER NOT NULL,
+    block_index     INTEGER NOT NULL,
+    agent_id        TEXT    NOT NULL,
+    project_id      TEXT    NOT NULL DEFAULT '',
+    channel         TEXT    NOT NULL DEFAULT '',
+    start_char      INTEGER NOT NULL,
+    end_char        INTEGER NOT NULL,
+    forced_boundary INTEGER NOT NULL DEFAULT 0,
+    embedding_bits  BLOB,
+    embedding_model TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (parent_kind, parent_id, block_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_record_blocks_axes
+    ON record_blocks(agent_id, project_id, channel);
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_memories_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_memories_au AFTER UPDATE OF content ON memories
+WHEN old.content <> new.content BEGIN
+    DELETE FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_memories_ax AFTER UPDATE OF agent_id, project_id, channel
+ON memories
+WHEN old.agent_id <> new.agent_id OR old.project_id <> new.project_id OR old.channel <> new.channel
+BEGIN
+    UPDATE record_blocks
+       SET agent_id = new.agent_id, project_id = new.project_id, channel = new.channel
+     WHERE parent_kind = 'mem' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_episodes_ad AFTER DELETE ON episodes BEGIN
+    DELETE FROM record_blocks WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_episodes_au AFTER UPDATE OF summary ON episodes
+WHEN old.summary <> new.summary BEGIN
+    DELETE FROM record_blocks WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_blocks_episodes_ax AFTER UPDATE OF agent_id, project_id, channel
+ON episodes
+WHEN old.agent_id <> new.agent_id OR old.project_id <> new.project_id OR old.channel <> new.channel
+BEGIN
+    UPDATE record_blocks
+       SET agent_id = new.agent_id, project_id = new.project_id, channel = new.channel
+     WHERE parent_kind = 'ep' AND parent_id = old.id;
+END;
+"""
+
+# v17: the stored vector of each block (docs/BLOCK_REACH_DESIGN.md §4b), which the
+# block arm reads to re-rank the rows its Hamming pass ranked highest.
+#
+# A table of its own rather than a column on record_blocks, because the two are
+# read in opposite ways. The Hamming pass reads every row of record_blocks on
+# every recall; a 1,024-byte column beside a 128-byte bit string would make that
+# scan read about eight times the pages to use none of the extra bytes. This
+# table is read only by primary key, for the few hundred rows the pass ranked
+# highest, so its size costs disk rather than scan time.
+#
+# int8, one byte per dimension, with no scale kept. Each vector is scaled so its
+# largest component is 127 before rounding, and the scale is dropped because the
+# only thing ever computed from the row is a cosine, which the scale cancels out
+# of. The vector is written in the same statement as its block and deleted with
+# it: the trigger below keys on the block row, so every path that already drops
+# a record's blocks — a delete, a rewrite, delete_agent_data — drops these too
+# without being told about them.
+#
+# Run on every boot, like the two tables above (bug-118). check_schema_objects
+# watches the trigger.
+RECORD_BLOCK_VECTORS_SQL = """
+CREATE TABLE IF NOT EXISTS record_block_vectors (
+    parent_kind     TEXT    NOT NULL,
+    parent_id       INTEGER NOT NULL,
+    block_index     INTEGER NOT NULL,
+    embedding_i8    BLOB    NOT NULL,
+    PRIMARY KEY (parent_kind, parent_id, block_index)
+) WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS record_block_vectors_ad AFTER DELETE ON record_blocks BEGIN
+    DELETE FROM record_block_vectors
+     WHERE parent_kind = old.parent_kind AND parent_id = old.parent_id
+       AND block_index = old.block_index;
+END;
+"""
+
+# v15: the declared graph of docs/ASSOCIATIVE_MEMORY_DESIGN.md §1 — entities
+# with aliases, the records that mention them, and subject–predicate–object
+# relations. Nothing in `memories` or `episodes` changes, and nothing here is
+# read on the `recall` path (design invariant 1).
+#
+# The same trigger discipline as the nodes above (invariant 8: no declaration
+# outlives its endpoints). Deleting an entity takes its aliases, mentions and
+# relations; deleting a memory or episode takes its mentions and every
+# relation that names it as an endpoint or as its anchor. A relation whose
+# evidence is gone is gone with it — the alternative, keeping the assertion
+# with the anchor cleared, was considered and not taken (design §7).
+#
+# A text change does NOT touch the graph: a mention is a declaration about the
+# record, not a derivation from its wording, so a rewrite leaves it true.
+#
+# Run on every boot, like RECORD_NODES_SQL (bug-118). check_schema_objects
+# watches the three triggers.
+#
+# Uniqueness of a normalized alias within a scope cannot be a table constraint
+# here — entity_aliases carries no scope columns — so the declare handler
+# enforces it, and the index only serves the lookup.
+ASSOCIATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS entities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT    NOT NULL,
+    project_id  TEXT    NOT NULL DEFAULT '',
+    channel     TEXT    NOT NULL DEFAULT '',
+    name        TEXT    NOT NULL,
+    normalized  TEXT    NOT NULL,
+    declared_by TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    UNIQUE (agent_id, project_id, channel, normalized)
+);
+
+CREATE TABLE IF NOT EXISTS entity_aliases (
+    entity_id   INTEGER NOT NULL,
+    alias       TEXT    NOT NULL,
+    normalized  TEXT    NOT NULL,
+    PRIMARY KEY (entity_id, normalized)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_normalized ON entity_aliases(normalized);
+
+CREATE TABLE IF NOT EXISTS entity_mentions (
+    entity_id   INTEGER NOT NULL,
+    ref         TEXT    NOT NULL,
+    declared_by TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    PRIMARY KEY (entity_id, ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_mentions_ref ON entity_mentions(ref);
+
+CREATE TABLE IF NOT EXISTS relations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id     TEXT    NOT NULL,
+    project_id   TEXT    NOT NULL DEFAULT '',
+    channel      TEXT    NOT NULL DEFAULT '',
+    subject_kind TEXT    NOT NULL,
+    subject_id   INTEGER NOT NULL,
+    predicate    TEXT    NOT NULL,
+    object_kind  TEXT    NOT NULL,
+    object_id    INTEGER NOT NULL,
+    anchor_ref   TEXT    NOT NULL DEFAULT '',
+    declared_by  TEXT    NOT NULL,
+    declared_at  TEXT    NOT NULL,
+    UNIQUE (agent_id, project_id, channel,
+            subject_kind, subject_id, predicate, object_kind, object_id, anchor_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_relations_subject ON relations(subject_kind, subject_id);
+CREATE INDEX IF NOT EXISTS idx_relations_object ON relations(object_kind, object_id);
+CREATE INDEX IF NOT EXISTS idx_relations_anchor ON relations(anchor_ref);
+
+CREATE TRIGGER IF NOT EXISTS associations_entities_ad AFTER DELETE ON entities BEGIN
+    DELETE FROM entity_aliases WHERE entity_id = old.id;
+    DELETE FROM entity_mentions WHERE entity_id = old.id;
+    DELETE FROM relations WHERE (subject_kind = 'entity' AND subject_id = old.id)
+                            OR (object_kind = 'entity' AND object_id = old.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS associations_memories_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM entity_mentions WHERE ref = 'mem:' || old.id;
+    DELETE FROM relations WHERE (subject_kind = 'mem' AND subject_id = old.id)
+                            OR (object_kind = 'mem' AND object_id = old.id)
+                            OR anchor_ref = 'mem:' || old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS associations_episodes_ad AFTER DELETE ON episodes BEGIN
+    DELETE FROM entity_mentions WHERE ref = 'ep:' || old.id;
+    DELETE FROM relations WHERE (subject_kind = 'ep' AND subject_id = old.id)
+                            OR (object_kind = 'ep' AND object_id = old.id)
+                            OR anchor_ref = 'ep:' || old.id;
+END;
+"""
+
 _db: aiosqlite.Connection | None = None
 _read_db: aiosqlite.Connection | None = None
 # bug-105: maintenance CLIs (checkup without --fix) set this before first DB
@@ -650,6 +930,10 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
     await db.execute("PRAGMA busy_timeout=5000")
 
     await db.executescript(SCHEMA_SQL)
+    await db.executescript(RECORD_NODES_SQL)
+    await db.executescript(RECORD_BLOCKS_SQL)
+    await db.executescript(RECORD_BLOCK_VECTORS_SQL)
+    await db.executescript(ASSOCIATIONS_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on
     # THIS boot (a DB originally created with CPERSONA_FTS_ENABLED=false, now

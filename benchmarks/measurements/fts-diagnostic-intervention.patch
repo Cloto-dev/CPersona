@@ -1,0 +1,13 @@
+diff --git a/cpersona/memory_handlers.py b/cpersona/memory_handlers.py
+--- a/cpersona/memory_handlers.py
++++ b/cpersona/memory_handlers.py
+@@ -2157,6 +2157,8 @@ def _build_fts_query(query: str) -> str:
+     neutralising is the FTS5 phrase quote, which is escaped by doubling.
+     """
++    # Diagnostic intervention: restore pre-a5206f6 punctuation normalization.
++    sanitized = re.sub(r"[^\w\s]", "", query, flags=re.UNICODE)
+     terms: list[str] = []
+-    for tok in _TOKEN_RE.findall(query):
++    for tok in _TOKEN_RE.findall(sanitized):
+         if _CJK_RE.match(tok):
+             if len(tok) >= 3:

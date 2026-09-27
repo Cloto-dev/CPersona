@@ -68,6 +68,7 @@ def test_is_episode_result_discriminator():
 @pytest.mark.asyncio
 async def test_recall_bump_skips_episode_ids(clean_db, fake_embedding_client, monkeypatch):
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     db = clean_db
     # memory #1 and an episode #1 (same id space). Recall the episode's topic.
     await memory_handlers.do_store("a1", {"content": "quantum physics lecture notes", "source": {"type": "User"}, "timestamp": "2026-07-01T00:00:00+00:00"})
@@ -291,6 +292,7 @@ async def test_write_lock_is_shared_singleton_and_writes_work(clean_db):
 @pytest.mark.asyncio
 async def test_recall_survives_bump_failure(clean_db, fake_embedding_client, monkeypatch):
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await memory_handlers.do_store("a1", {"content": "resilient recall row", "source": {"type": "User"}, "timestamp": "2026-07-01T00:00:00+00:00"})
 
     db = await get_db()

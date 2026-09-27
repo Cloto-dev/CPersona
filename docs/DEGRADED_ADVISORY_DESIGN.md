@@ -1,24 +1,26 @@
 # Embedding Degradation: Runtime Detection + Advisory Injection
 
-**Status**: implemented. Route B shipped on the 2.4.x line; Route A replaced it — the
-evidence now comes from the embedding call that failed, and the probe is gone (§6).
+**Status**: implemented. Route B shipped on the 2.4.x line, and Route A replaced it —
+the evidence now comes from the embedding call that failed, and the probe is gone (§6).
 **Decision**: project owner + claude-code, 2026-06-28 (handoff: CPersona memory `id 1165`, `agent_id=claude-web`, `project_id=cloto`)
-**Scope**: surgical patch — no SCHEMA change, no new tool. A new response field + a process-level health state + one env var.
+**Scope**: a surgical patch — no SCHEMA change, no new tool. One new response field, one process-level health state, and one env var.
 
 ---
 
 ## 1. Motivation
 
-The bundled skill runs a **setup-time** self-check. That is a snapshot: it
-proves the embedding backend was reachable *at install*. It cannot catch embedding that
-**drifts into a degraded state afterwards** — the process dies, the DB is copied to another
-machine, a port changes, or a startup race leaves `mode=http` pointing at nothing.
+The bundled skill runs a **setup-time** self-check. That is a snapshot: it proves the
+embedding backend was reachable *at install*.
 
-In all of those cases CPersona keeps answering `recall`, silently degraded to FTS-only.
-"Still running but degraded" is a **reputation liability**, especially for the casual /
-vibe-coder audience the SKILL is meant to serve ("just build me a CPersona"). This design
-is the **runtime guard that pairs with the SKILL's install gate** — it flips the silent
-failure into a self-reported one.
+It cannot catch an embedding backend that **drifts into a degraded state afterwards**.
+The process dies, the DB is copied to another machine, a port changes, or a startup
+race leaves `mode=http` pointing at nothing. In all of those cases CPersona keeps
+answering `recall`, degraded to FTS-only, and says nothing.
+
+"Still running but degraded" is a **reputation liability**, especially for the casual
+and vibe-coder audience the SKILL is meant to serve ("just build me a CPersona"). This
+design is the **runtime guard that pairs with the SKILL's install gate**: it turns the
+silent failure into a self-reported one.
 
 The problem is already acknowledged in the code:
 
@@ -28,9 +30,9 @@ The problem is already acknowledged in the code:
 EMBEDDING_MODE = os.environ.get("CPERSONA_EMBEDDING_MODE") or os.environ.get("EMBEDDING_MODE", "none")
 ```
 
-`bug-001` was the env-key fix (the static, install-time half). This design is its
-**runtime successor**: the same trap list, shared between the install gate (SKILL) and the
-runtime guard (here).
+`bug-001` was the env-key fix, the static install-time half. This design is its
+**runtime successor**, using the same trap list, shared between the install gate (the
+SKILL) and the runtime guard (here).
 
 ---
 
@@ -56,9 +58,9 @@ async def embed(self, texts):
         return None                              # (b) http reachable-but-down, swallowed
 ```
 
-**Both (a) and (b) collapse to `None`.** The caller cannot tell "embedding is intentionally
-off" from "embedding is configured but the endpoint is dead". Disambiguating these two is
-the heart of the feature.
+**Both (a) and (b) collapse to `None`.** The caller cannot tell "embedding is
+intentionally off" from "embedding is configured but the endpoint is dead".
+Disambiguating those two is the heart of the feature.
 
 ### 2.2 The secondary swallow — remote vector search
 
@@ -69,7 +71,7 @@ except Exception as e:
     logger.warning("Remote vector search failed, falling back to local: %s", e)
 ```
 
-Same shape: a real outage is logged and silently downgraded.
+Same shape: a real outage is logged, downgraded, and never surfaced to the caller.
 
 ### 2.3 The advisory landing site — `do_recall`
 
@@ -84,9 +86,10 @@ regression-tests this response contract, so the field has test coverage to exten
 
 ### 2.4 The state-storage precedent
 
-A **process-level module state** already exists in this codebase: the no-persist toggle,
-and the per-agent `dict`s in `vector.py` (`_agent_thresholds`, `_agent_fused_gates`).
-The health state is placed the same way — a module singleton, reset on restart.
+A **process-level module state** already exists in this codebase: the no-persist
+toggle, and the per-agent `dict`s in `vector.py` (`_agent_thresholds`,
+`_agent_fused_gates`). The health state is placed the same way, as a module singleton
+reset on restart.
 
 ---
 
@@ -110,18 +113,21 @@ The health state is placed the same way — a module singleton, reset on restart
 
 ### 4.1 Why Route B now
 
-`embed()` lives in `_vendored_mcp_common/` — a shared client vendored into CPersona. At the
-time, making `embed()` itself surface `{attempted, ok, error}` was judged to require a
-release of the upstream package and a change every consumer would have to absorb, which
-contradicted the "surgical patch / no new tool / 2.4.x QOL line" framing.
+`embed()` lives in `_vendored_mcp_common/`, a shared client vendored into CPersona. At
+the time, making `embed()` itself surface `{attempted, ok, error}` was judged to require
+a release of the upstream package and a change every consumer would have to absorb,
+which contradicted the "surgical patch / no new tool / 2.4.x QOL line" framing.
 
 That premise did not survive contact with the change (§6): an additive method left the
 existing entry point untouched, so no consumer had to absorb anything.
 
-Route B keeps the change **cpersona-only**: `embed()` is left untouched; CPersona derives
-health from (a) `config.EMBEDDING_MODE` for the static `hint` case and (b) **its own
-lightweight health-probe** for the `fault` case, capturing the real error string the probe's
-own `try/except` sees.
+That premise did not survive contact with the change (§6): an additive method left the
+existing entry point untouched, so no consumer had to absorb anything.
+
+Route B keeps the change **cpersona-only**. `embed()` is left untouched, and CPersona
+derives health from two sources: `config.EMBEDDING_MODE` for the static `hint` case, and
+**its own lightweight health probe** for the `fault` case, capturing the real error
+string the probe's own `try/except` sees.
 
 ### 4.2 New module — `health.py`
 
@@ -145,20 +151,22 @@ _advisory_emitted = False   # full-vs-short selector (point 4)
 FAULT_PROMOTE_THRESHOLD = 2  # consecutive failures before healthy->fault (point 3)
 ```
 
-Key transitions:
+The key transitions are these.
 
-- **`observe_config()`** (called once at do_recall entry): if `EMBEDDING_MODE == "none"`,
-  set `HINT` immediately (static, no debounce). Otherwise leave the http path to the probe.
-- **`observe_ok()`**: embedding produced a usable vector → `HEALTHY`, reset
-  `_consecutive_failures`, clear `_advisory_emitted` (so a re-failure later re-emits the full
-  template — point 4 "recovered→re-failed re-arms").
-- **`observe_failure(evidence)`**: `mode=http` attempt failed → `_consecutive_failures += 1`;
-  promote to `FAULT` only at `>= FAULT_PROMOTE_THRESHOLD` (debounce single blips).
+- **`observe_config()`**, called once at do_recall entry. If
+  `EMBEDDING_MODE == "none"`, it sets `HINT` immediately — static, no debounce.
+  Otherwise it leaves the http path to the probe.
+- **`observe_ok()`**: embedding produced a usable vector, so the state becomes `HEALTHY`,
+  `_consecutive_failures` resets, and `_advisory_emitted` clears (so a re-failure later
+  re-emits the full template — point 4, "recovered → re-failed re-arms").
+- **`observe_failure(evidence)`**: a `mode=http` attempt failed, so
+  `_consecutive_failures += 1`. It promotes to `FAULT` only at
+  `>= FAULT_PROMOTE_THRESHOLD`, which debounces single blips.
 
 ### 4.3 The probe
 
-> **Superseded by §6.** The probe described here no longer exists. It is kept because the
-> reason it was needed is the reason the current design looks the way it does.
+> **Superseded by §6.** The probe described here no longer exists. It is kept because
+> the reason it was needed is the reason the current design looks the way it does.
 
 When `_search_vector` called `embed([query])` and got a falsy result while
 `EMBEDDING_MODE != "none"`, CPersona ran `_probe_embedding_health()`:
@@ -179,27 +187,33 @@ async def _probe_embedding_health() -> tuple[bool, str | None]:
         return False, f"mode=http / POST {client._http_url} failed: {e}"
 ```
 
-- Probe runs **only on a suspected failure** (embed returned falsy on a non-empty query),
-  not on every recall — bounded extra I/O, and the embedding cache already absorbs repeats.
+- The probe runs **only on a suspected failure** — embed returned falsy on a non-empty
+  query — not on every recall. That bounds the extra I/O, and the embedding cache
+  already absorbs repeats.
 - The probe's captured error is the **dynamic evidence** (point 5).
-- Debounce (point 3): two consecutive probe failures promote `HINT`/`HEALTHY`→`FAULT`.
+- Debounce (point 3): two consecutive probe failures promote `HINT` or `HEALTHY` to
+  `FAULT`.
 
-> **The double-I/O and the disagreement it allowed**: the probe was a *separate* POST from
-> the real recall-path `embed()` call, so the two could disagree — and the direction that
-> mattered was the probe succeeding while the real call failed, because the branch then
-> recorded health as OK on a recall that returned nothing. The probe also carried the local
-> server's payload shape to `_http_url`, which an api-mode client does not have, so that
-> mode could only ever produce "embedding client unavailable" instead of evidence. Both are
-> gone with the probe (§6).
+> **The double I/O, and the disagreement it allowed.** The probe was a *separate* POST
+> from the real recall-path `embed()` call, so the two could disagree. The direction
+> that mattered was the probe succeeding while the real call failed, because the branch
+> then recorded health as OK on a recall that returned nothing.
+>
+> The probe also carried the local server's payload shape to `_http_url`, which an
+> api-mode client does not have, so that mode could only ever produce "embedding client
+> unavailable" instead of evidence. Both are gone with the probe (§6).
 
 ### 4.4 `do_recall` integration
 
-At `do_recall` entry, `health.observe_config()`. The recall path feeds `observe_ok()` /
-`observe_failure()` from the outcome of the embedding call itself — `observe_ok()` only
-when that outcome reports `attempted`, because the client answers a repeated single-text
-embed from its TTL cache without a request leaving the process, and a value it never went
-out for is not an observation of the backend (bug-248). A cache hit leaves the state where
-the last real call put it. Before `return {"messages": messages}`:
+At `do_recall` entry, `health.observe_config()` runs. The recall path then feeds
+`observe_ok()` and `observe_failure()` from the outcome of the embedding call itself.
+
+`observe_ok()` fires only when that outcome reports `attempted`, because the client
+answers a repeated single-text embed from its TTL cache without a request leaving the
+process, and a value it never went out for is not an observation of the backend
+(bug-248). A cache hit leaves the state where the last real call put it.
+
+Before `return {"messages": messages}`:
 
 ```python
 advisory = health.maybe_advisory()  # None when healthy/opted-out; full or short struct otherwise
@@ -208,9 +222,10 @@ if advisory is not None:
 return {"messages": messages}
 ```
 
-`maybe_advisory()` returns `None` when `_state == HEALTHY` or the env opt-out is set; a
-**full** struct on the first transition of an outage (`not _advisory_emitted`, then sets it);
-a **short** struct on subsequent recalls within the same outage.
+`maybe_advisory()` returns `None` when `_state == HEALTHY` or the env opt-out is set. It
+returns a **full** struct on the first transition of an outage (`not
+_advisory_emitted`, which it then sets), and a **short** struct on subsequent recalls
+within the same outage.
 
 ### 4.5 Advisory payload (point 6)
 
@@ -224,10 +239,12 @@ a **short** struct on subsequent recalls within the same outage.
 }
 ```
 
-`runbook` for `fault` (full, point 9 skeleton): state + measured evidence / plain-language
-impact / investigation steps (process alive? port? `curl` result? model downloaded?) /
-repair commands (start the embedding server / fix URL+port / re-run the setup steps if the
-backend must be reinstalled) / one plain user-facing sentence / the opt-out env. Phrased imperatively to raise relay odds (point 6).
+The `fault` runbook, in full (the point 9 skeleton), carries: the state and the measured
+evidence; the plain-language impact; investigation steps (is the process alive? the
+port? the `curl` result? is the model downloaded?); repair commands (start the embedding
+server, fix the URL and port, or re-run the setup steps if the backend must be
+reinstalled); one plain user-facing sentence; and the opt-out env var. It is phrased
+imperatively to raise relay odds (point 6).
 
 ### 4.6 Env opt-out (point 8)
 
@@ -236,81 +253,103 @@ DEGRADED_ADVISORY_ENABLED = os.environ.get("CPERSONA_DEGRADED_ADVISORY", "true")
 ```
 
 On by default. Opting out silences the advisory for an operator who accepts running
-without an embedding backend; it does not make that configuration a recommended one.
+without an embedding backend. It does not make that configuration a recommended one.
 
 ### 4.7 Tests
 
-- Extend `test_do_recall_response.py`: (a) `mode=none` → `hint` advisory present; (b)
-  `mode=http` + probe fails twice → `fault` advisory with evidence; (c) one blip (single
-  failure) → **no** advisory (debounce); (d) `healthy` → no `advisory` key at all; (e)
-  full-then-short across two recalls in one outage; (f) recovery clears state and re-arms;
-  (g) env opt-out silences everything. Probe is monkeypatched (no live endpoint needed).
+Extend `test_do_recall_response.py` with: (a) `mode=none` → a `hint` advisory is
+present; (b) `mode=http` with the probe failing twice → a `fault` advisory with
+evidence; (c) one blip, a single failure → **no** advisory, which is the debounce;
+(d) `healthy` → no `advisory` key at all; (e) full-then-short across two recalls in one
+outage; (f) recovery clears state and re-arms; (g) the env opt-out silences everything.
+The probe is monkeypatched, so no live endpoint is needed.
 
 ---
 
 ## 5. Out of scope
 
-- No SCHEMA change, no new MCP tool (response field + env only).
-- No push (MCP cannot) — reach is "next recall surfaces it" (point 7), stated honestly.
-- bge-m3 mac CoreML hang guard remains best-effort / unverified (handoff open item).
+- No SCHEMA change, and no new MCP tool. A response field and an env var only.
+- No push, because MCP cannot. The reach is "the next recall surfaces it" (point 7),
+  stated honestly.
+- The bge-m3 mac CoreML hang guard remains best-effort and unverified (a handoff open
+  item).
 
 ---
 
 ## 6. Route A — shipped
 
-The detection is folded into the boundary itself, and the probe (§4.3) is **removed**: the
-health state is fed directly from the real recall-path call.
+The detection is folded into the boundary itself, and the probe (§4.3) is **removed**.
+The health state is fed directly from the real recall-path call.
 
 It did not need the breaking change §4.1 assumed. `embed()` keeps its signature and its
-return values exactly; an additive `embed_with_outcome()` returns the same value alongside
-`{attempted, ok, error}`, and the recall path calls that one. Nothing else had to change,
-which is why this landed on the 2.5.x line rather than waiting for a major version.
+return values exactly, and an additive `embed_with_outcome()` returns the same value
+alongside `{attempted, ok, error}`. The recall path calls that one. Nothing else had to
+change, which is why this landed on the 2.5.x line rather than waiting for a major
+version.
 
-The outcome is returned to the caller rather than stored on the client, so two concurrent
-embeds cannot read each other's result. One case is worth naming: a 2xx response carrying
-no embeddings is reported as a failure, because it is one for the caller — and it is
-exactly what a separate probe got wrong, since the probe saw the same success code.
+The outcome is returned to the caller rather than stored on the client, so two
+concurrent embeds cannot read each other's result. One case is worth naming: a 2xx
+response carrying no embeddings is reported as a failure, because it is one for the
+caller. It is also exactly what a separate probe got wrong, since the probe saw the same
+success code.
 
-**Why the layering is clean (forward-compat)**: Route B's **advisory contract is the stable
-interface** — the payload struct `{degraded, severity, reason, evidence, runbook}` and the
-`do_recall` `advisory` field do not change. Route A is a **"swap the signal source"**
-refactor (probe → embed() result), not a redesign. The user-facing contract is identical;
-the evidence is *upgraded* from a separate probe POST to the actual recall-path call,
-eliminating the §4.3 double-I/O and the probe-vs-real-call race.
+**Why the layering is clean (forward-compat).** Route B's **advisory contract is the
+stable interface**: the payload struct `{degraded, severity, reason, evidence, runbook}`
+and the `do_recall` `advisory` field do not change.
+
+Route A is a **"swap the signal source"** refactor (probe → `embed()` result), not a
+redesign. The user-facing contract is identical, and the evidence is *upgraded* from a
+separate probe POST to the actual recall-path call, eliminating the §4.3 double I/O and
+the probe-versus-real-call race.
 
 What the cross-repo cost turned out to be: an additive method upstream, then a re-vendor
 here. No existing entry point changed, so no other consumer had anything to absorb or
 revalidate.
 
-One correction to carry forward, because the estimate above assumed otherwise. The vendored
-copy here is byte-identical to the upstream it syncs from, but that upstream is not the only
-lineage of this client: a sibling lineage, maintained separately, carries a transport mode
-and a broader failure catch that the upstream does not have. An additive change made
-upstream does not reach it, and syncing it backwards would delete what it has. Planning work
-on this client as though one canonical copy existed is how a change silently misses half its
-callers.
+One correction to carry forward, because the estimate above assumed otherwise. The
+vendored copy here is byte-identical to the upstream it syncs from, but that upstream is
+not the only lineage of this client.
+
+A sibling lineage, maintained separately, carries a transport mode and a broader failure
+catch that the upstream does not have. An additive change made upstream does not reach
+it, and syncing it backwards would delete what it has. Planning work on this client as
+though one canonical copy existed is how a change misses half its callers with nothing
+to show for it.
 
 ---
 
 ## 7. Implementation notes / corrections (v2.4.33 build)
 
-Refinements discovered while implementing Route B; these supersede the earlier sections
+Refinements discovered while implementing Route B. These supersede the earlier sections
 where they conflict.
 
-1. **No `HINT→FAULT` path** (supersedes §4.3 wording). When `EMBEDDING_MODE=="none"`,
-   `server.py:959` never constructs the client, so `vector._embedding_client is None` and
-   the embed/probe path is never entered. `hint` is therefore detected *solely* by
-   `health.observe_config()` at `do_recall` entry, and `fault` only ever promotes from
-   `unknown`/`healthy`.
-2. **Two advisory return sites** (supersedes the §2.3 "single structure at :825" framing).
+1. **No `HINT → FAULT` path** (supersedes §4.3's wording). When
+   `EMBEDDING_MODE == "none"`, `server.py:959` never constructs the client, so
+   `vector._embedding_client is None` and the embed/probe path is never entered. `hint`
+   is therefore detected *solely* by `health.observe_config()` at `do_recall` entry, and
+   `fault` only ever promotes from `unknown` or `healthy`.
+2. **Two advisory return sites** (supersedes §2.3's "single structure at :825" framing).
    `do_recall_with_context` builds its own return and extracts only `messages` from
-   `do_recall`'s result, so it must **forward** `recall_result.get("advisory")` explicitly
-   or the advisory is dropped. It must NOT call `maybe_advisory()` again (that would flip
-   full→short within one logical recall).
+   `do_recall`'s result, so it must **forward** `recall_result.get("advisory")`
+   explicitly, or the advisory is dropped. It must NOT call `maybe_advisory()` again —
+   that would flip full to short within one logical recall.
 3. **Probe placement** (refines §4.3; **superseded by §6** — the probe and its dedicated
    timeout are gone, and the failure path no longer needs the `health.is_faulted()` gate
    that existed to bound probe I/O). `health.py` still takes no `vector` import, so the
    dependency graph is unchanged: `config ← health ← vector ← memory_handlers`.
+
+    Two points observe, and they are not symmetric. The recall path's embed reports both
+    failure and recovery; the maintenance re-embed reports failure only. Recovery stays
+    with recall on purpose: a maintenance run that cleared the state would erase a fault
+    a user's recall had just latched, along with the record of which sessions had already
+    been told about it. The second point was added with the maintenance breaker, and is
+    the one place outside `vector.py` that writes health. A doc that says "the
+    observation point" in the singular is describing the first build, not the code.
+4. **The remote-search swallow needs no separate hook** (refines §2.2). On
+   `VECTOR_SEARCH_MODE == "remote"`, a remote failure falls through to the instrumented
+   local embed path, so only the local path is wired (production uses local mode).
+5. **No tool-schema change.** `_vendored_mcp_common/mcp_utils.py` `json.dumps`es the
+   whole handler return dict, so the extra `advisory` key reaches the client for free.
 
    Two points observe, and they are not symmetric. The recall path's embed reports both
    failure and recovery; the maintenance re-embed reports failure only. Recovery stays with
@@ -325,56 +364,65 @@ where they conflict.
 5. **No tool-schema change** — `_vendored_mcp_common/mcp_utils.py` `json.dumps`es the whole
    handler return dict, so the extra `advisory` key reaches the client for free.
 
-**Files**: `health.py` (new), `vector.py` (probe + observe at the local embed path),
-`memory_handlers.py` (`observe_config` at entry; advisory at both return sites), `config.py`
-(`CPERSONA_DEGRADED_ADVISORY`), `test_do_recall_response.py` (state-machine units + do_recall
-integration + probe units; autouse `health._reset`). Tests: 13/13 green; recall-SQL
-regression `test_channel_axis_migration` 7/7 + `test_episode_channel` 10/10 green.
+**Files**: `health.py` (new), `vector.py` (probe and observe at the local embed path),
+`memory_handlers.py` (`observe_config` at entry, advisory at both return sites),
+`config.py` (`CPERSONA_DEGRADED_ADVISORY`), and `test_do_recall_response.py`
+(state-machine units, do_recall integration, probe units, autouse `health._reset`).
+Tests: 13/13 green. The recall-SQL regressions `test_channel_axis_migration` (7/7) and
+`test_episode_channel` (10/10) are green.
 
 ---
 
 ## 8. Suppression scope (bug-251)
 
-Supersedes the point-4 firing rule in §3 and the payload field lists in §4.5 and §6.
+This supersedes the point-4 firing rule in §3, and the payload field lists in §4.5 and
+§6.
 
 **The defect.** "The full runbook already fired" is process state
 (`health._advisory_emitted`), and the once-per-episode downgrade keys on it. Under stdio
-that is the intended rule — one process serves one client session. But
-`CPERSONA_TRANSPORT=streamable-http` runs `StreamableHTTPSessionManager(stateless=True)`,
-so one process answers every connected client: the first recall of an outage consumed the
-full runbook for everybody. Every other session received `FAULT_RUNBOOK_SHORT`, which
-carries no `**Notify the user:**` imperative and reads as a follow-up to a message that
-session never got. Point 7's honest reach — "fault surfaces on the *next* recall" —
-quietly became "on the next recall of one session, once per outage".
+that is the intended rule, because one process serves one client session.
+
+But `CPERSONA_TRANSPORT=streamable-http` runs
+`StreamableHTTPSessionManager(stateless=True)`, so one process answers every connected
+client. The first recall of an outage consumed the full runbook for everybody. Every
+other session received `FAULT_RUNBOOK_SHORT`, which carries no `**Notify the user:**`
+imperative and reads as a follow-up to a message that session never got.
+
+Point 7's honest reach — "fault surfaces on the *next* recall" — had become "on the next
+recall of one session, once per outage", and nothing said so. Measured through the real
+transport, with two clients in one process during one outage: the first got 1067
+characters with the imperative, the second got 107 without it.
 
 Measured through the real transport, two clients in one process during one outage: the
 first got 1067 characters with the imperative, the second got 107 without it.
 
 **The rule now.** For a caller that declares no session identity, a `fault` does not
-downgrade while the process serves several sessions. An outage is rare and the runbook is
-the point of the feature, so paying for it on every recall beats paying silence on every
-session but one.
+downgrade while the process serves several sessions. An outage is rare and the runbook
+is the point of the feature, so paying for it on every recall beats paying silence on
+every session but one.
 
 A `hint` still downgrades. `mode=none` is permanent, so the exemption would repeat the
 full runbook on every recall forever, and running without an embedding backend is a
 standing condition rather than an outage to be escalated.
 
 **The payload says which rule is in force.** `advisory_scope` is `"process"` when the
-suppression state is shared and `"session"` when the process is the session, so a client
+suppression state is shared, and `"session"` when the process is the session, so a client
 can tell a reminder it never received from a follow-up to one it did. The no-persist
 toggle discloses its blast radius the same way; this advisory used to degrade its own
-payload silently instead.
+payload and report nothing.
 
-**Per session, since.** The paragraph this replaces recorded per-session suppression as out
-of reach: nothing at the recall seam identified a session to key on, the HTTP mode is
-stateless so no session survives a request, and the ACL principal carries only a client id —
-two windows sharing one credential are one principal. What was missing was an identity the
-*caller* declares rather than one the transport supplies, and that is what shipped. A caller
-that declares a session key gets suppression keyed on that session, so every session in an
-outage is told once, and `advisory_scope` answers `"session"` for it — the field the earlier
-paragraph named, with the change of shape it predicted, which is none.
+**Per session, since.** The paragraph this replaces recorded per-session suppression as
+out of reach: nothing at the recall seam identified a session to key on, the HTTP mode is
+stateless so no session survives a request, and the ACL principal carries only a client
+id, so two windows sharing one credential are one principal.
+
+What was missing was an identity the *caller* declares, rather than one the transport
+supplies, and that is what shipped. A caller that declares a session key gets suppression
+keyed on that session, so every session in an outage is told once, and `advisory_scope`
+answers `"session"` for it — the field the earlier paragraph named, with the change of
+shape it predicted, which is none.
 
 The `fault` exemption above is deliberately not applied to a declared key. The exemption
-compensates for missing identity; where identity is present, repeating a full runbook to a
-session that already received it would reinstate the cost the exemption exists to avoid. A
-caller that declares nothing keeps the keyless behaviour unchanged.
+compensates for missing identity; where identity is present, repeating a full runbook to
+a session that already received it would reinstate the cost the exemption exists to
+avoid. A caller that declares nothing keeps the keyless behaviour unchanged.

@@ -272,6 +272,7 @@ async def test_the_scored_age_is_the_real_one_not_the_corpus_midpoint(
 
     monkeypatch.setattr(memory_handlers, "_compute_confidence", spy)
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     rows = await memory_handlers._search_episodes_fts(clean_db, AGENT, "raspberry", 10)
     await memory_handlers._apply_recall_scoring(clean_db, AGENT, rows, False)
 

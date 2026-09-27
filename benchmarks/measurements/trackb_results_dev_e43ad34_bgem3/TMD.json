@@ -1,0 +1,72 @@
+{
+  "task": "TMD",
+  "memory_type": "Dialogue",
+  "mean_ndcg_at_10": 23.2,
+  "subtasks": {
+    "content_time_qs": 51.72,
+    "date_span_time_qs": 54.38,
+    "dates_time_qs": 36.46,
+    "day_span_time_qs": 71.03,
+    "earlier_today_time_qs": 17.1,
+    "last_named_day_time_qs": 6.41,
+    "month_time_qs": 16.28,
+    "rel_day_time_qs": 3.89,
+    "rel_month_time_qs": 12.27,
+    "rel_session_time_qs": 3.42,
+    "session_span_time_qs": 3.63,
+    "session_time_qs": 1.85
+  },
+  "num_subtasks": 12,
+  "time_s": 621.8,
+  "recall_latency_full": {
+    "n": 2134,
+    "p50_ms": 291.31,
+    "p95_ms": 457.22,
+    "p99_ms": 543.34,
+    "mean_ms": 288.61
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "content_time_qs",
+        "date_span_time_qs",
+        "dates_time_qs",
+        "day_span_time_qs",
+        "earlier_today_time_qs",
+        "last_named_day_time_qs",
+        "month_time_qs",
+        "rel_day_time_qs",
+        "rel_month_time_qs",
+        "rel_session_time_qs",
+        "session_span_time_qs",
+        "session_time_qs"
+      ],
+      "corpus_size": 7463,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6565,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6001,
+        "std": 0.0714,
+        "median": 0.6026,
+        "p95": 0.7091
+      },
+      "null_admit_rate": 0.1885,
+      "pos_admit_rate": 0.9296,
+      "pos_mean": 0.7527,
+      "youden_j": 0.7412,
+      "fusion_admission_floor": 0.3282,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

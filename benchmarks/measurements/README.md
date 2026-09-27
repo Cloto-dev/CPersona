@@ -11,7 +11,7 @@ only lands here once it is worth citing.
 
 ## Why invalid runs are kept
 
-Two of the sets below are wrong, and are kept precisely because they are wrong.
+Three of the sets below are wrong, and are kept precisely because they are wrong.
 A number that was quietly under-measured is worth more as a recorded artifact
 than as a deleted mistake: it is what lets a later reader tell "the model got
 worse" apart from "the harness stopped measuring the tail". Do not delete or
@@ -32,6 +32,21 @@ a file being copied, and `jq .mean_ndcg_at_10 **/LongMemEval.json` returns 81.17
 48.98 and 38.72 with nothing to tell them apart. The three fields were added on
 2026-07-21; no measured value was modified, and the addition is verifiable
 against the parent commit.
+
+That held only while whoever committed the next invalid run remembered it, and
+`trackb_results_v260a4_bgem3.INVALID-accel-selfcheck` was committed on
+2026-09-20 without the fields. They were added on 2026-09-26 in the same way —
+no measured value modified, verifiable against the parent commit — and the rule
+is now checked instead of remembered. `test_invalid_runs_say_so_in_their_data`
+(`tests/test_structural_gates.py`, Gate 21) fails when:
+
+- a JSON file under an `.INVALID-*` / `.CLAMPED-*` directory lacks any of the
+  three fields, at its top level or beside any score inside it (a summary's
+  per-task entries included);
+- `superseded_by` names something other than a valid run directory here
+  (`null` is accepted when nothing has replaced the run yet);
+- a JSON file anywhere else here carries `invalid` — a run that is invalid in
+  its data must be named so.
 
 Track A files carry their own provenance because mteb writes it (`mteb_version`,
 `dataset_revision`). Track B files do not: which build produced a set is recorded
@@ -76,6 +91,22 @@ not traverse. `--unclamp_limit` is accepted as a no-op since then.
 Run under the v2.4.39 scan-window behaviour. Worse than the clamp case and
 differently shaped: KnowMeBench falls 51.62 → 22.82, more than half. Superseded
 by the v2.4.40 sets above; kept as the record of what that window did.
+
+### `trackb_results_v260a4_bgem3.INVALID-accel-selfcheck` — the self-check that fired
+
+LongMemEval only, on the 2.6.0a4 release, under `--fast` acceleration. The
+run's pre-registration (`prereg-longmemeval-on-the-shipped-fix.md`) made the
+acceleration self-check an invalidation condition, and it fired: three
+mismatches in three sampled queries at a sampling rate of 1%. The condition was
+refined in an amendment registered before the score was read, and the run was
+repeated on the same build with the sampling raised to 10%
+(`trackb_results_v260a4_bgem3`: 52 of 52 checked queries diverge, none within
+the ten positions the metric reads). The write-up is
+`results-longmemeval-on-the-shipped-fix.md`.
+
+Both runs report the same macro, 81.87. That agreement is recorded as evidence
+that the self-check does not perturb what is scored; it does not make this run
+a result.
 
 ## Track A — raw embedding baseline (`lmeb_results/`)
 

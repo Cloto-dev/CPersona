@@ -1,0 +1,33 @@
+{
+  "dim": 1024,
+  "do_recall_ms": {
+    "after": 292.0,
+    "before": 852.06
+  },
+  "index": {
+    "bytes": 413900384,
+    "count": 100000,
+    "dim": 1024,
+    "watermark": 100000
+  },
+  "limit": 10,
+  "non_vector_ms": {
+    "after": 213.82,
+    "before": 241.36
+  },
+  "numpy": "2.4.6",
+  "python": "3.11.2",
+  "queries": 15,
+  "rows": 100000,
+  "scan_window": 100000,
+  "speedup_do_recall": 2.92,
+  "speedup_vector_arm": 7.81,
+  "vector_arm_ms": {
+    "after": 78.19,
+    "before": 610.7
+  },
+  "vector_share_of_recall": {
+    "after": 0.268,
+    "before": 0.717
+  }
+}

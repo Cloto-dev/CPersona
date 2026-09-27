@@ -217,10 +217,11 @@ jobs:
     # adding signal.
     if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
-    # The script runs the suite up to ~13 times, but caught mutants fail fast (-x)
-    # and every test is bounded by the 60s per-test timeout; local wall time is
-    # ~12s. 15 minutes is a generous hang ceiling, matching the `test` job.
-    timeout-minutes: 15
+    # Each mutant runs its own test files first and falls back to the full suite
+    # only when they stay green, so a normal run is a few minutes. The ceiling
+    # stays at 30 minutes for the case where every `tests` list goes stale and
+    # every mutant falls back; each test remains bounded by its 60s timeout.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install uv

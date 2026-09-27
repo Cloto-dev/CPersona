@@ -225,6 +225,7 @@ async def test_maintenance_fix_downgrade_follows_the_caller(clean_db):
 async def test_recall_count_bump_follows_the_callers_pause(clean_db, monkeypatch):
     """bug-038's gate, re-keyed: the ranking write is a write like any other."""
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await memory_handlers.do_store("agent-rc", _msg("raspberry jam recipe"))
     await server.do_pause_persistence(ttl_seconds=120, session_key=A)
 
@@ -767,6 +768,8 @@ async def test_a_rolled_back_insert_keeps_its_attribution(clean_db, monkeypatch)
 
     monkeypatch.setattr(memory_handlers, "_prepare_episode_row", fake_prepare)
     monkeypatch.setattr(memory_handlers, "_insert_episode_row", flaky_insert)
+    # The retry is under test, not its pacing: without this the drain really sleeps.
+    monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
 
     queue = tasks.MemoryTaskQueue()
     task_id = await queue.enqueue("archive_episode", "agent-A", [{"content": "x"}], session_key=A)

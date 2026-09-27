@@ -538,6 +538,7 @@ async def test_gate_fallback_is_unreachable_with_confidence_off(
     )
 
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     rescued = await memory_handlers.do_recall(AGENT_A, identifier, limit=10)
 
     assert rescued.get("gate_fallback") is True, (
@@ -1100,6 +1101,7 @@ async def test_the_profile_row_carries_match_reason_under_confidence(
     from cpersona import admin_handlers
 
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await admin_handlers.do_update_profile(AGENT_A, "operator prefers metric units")
     for index in range(50):
         await memory_handlers.do_store(AGENT_A, {"content": f"gardening notes {index} soil"})
@@ -1113,7 +1115,7 @@ async def test_the_profile_row_carries_match_reason_under_confidence(
     )
 
     text = _CONTRACTS.read_text(encoding="utf-8")
-    assert "With confidence on, the profile row is scored like any other and" in text, (
+    assert "Under `legacy` with confidence on, the profile row is scored like any other and" in text, (
         "§3 no longer says the profile row carries match_reason under confidence, "
         "which is what this test measures it doing"
     )

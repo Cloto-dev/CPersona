@@ -22,8 +22,10 @@ import httpx
 
 from cpersona.isolation import isolation_where
 
+from cpersona import blocks
 from cpersona import config
 from cpersona import fileperms
+from cpersona import nodes
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
@@ -549,6 +551,20 @@ async def do_update_memory(
     result = {"ok": True, "updated_id": memory_id}
     if truncated:
         result["truncated"] = True
+    # Overflow tree (§4): the UPDATE's trigger removed the nodes of the old text; a
+    # new text that runs past the window gets new ones queued.
+    if await nodes.runs_past_window(content):
+        queued = await nodes.queue_build("mem", memory_id, row[1], key)
+        if queued:
+            result["nodes"] = queued
+    # Blocks (BLOCK_REACH_DESIGN.md §6): the UPDATE's trigger dropped the blocks of
+    # the old text, because they quoted spans of something the record no longer
+    # says. Queueing here is what keeps an edited record reachable by the block arm
+    # without waiting for a backfill sweep to come round to it.
+    if blocks.building_enabled():
+        queued = await blocks.queue_build("mem", memory_id, row[1], key)
+        if queued:
+            result["blocks"] = queued
     return result
 
 
@@ -614,6 +630,13 @@ async def _delete_agent_rows(db, agent_id: str) -> dict:
     task_cursor = await db.execute(
         "DELETE FROM pending_memory_tasks WHERE agent_id = ?", (agent_id,)
     )
+    # The declared graph (schema v15). Deleting the records above already took
+    # their mentions and anchored relations through the triggers; what remains
+    # is the agent's entities (their aliases and mentions follow by trigger)
+    # and any relation that names no record at all — an agent-level assertion
+    # only the agent axis can reach.
+    await db.execute("DELETE FROM entities WHERE agent_id = ?", (agent_id,))
+    await db.execute("DELETE FROM relations WHERE agent_id = ?", (agent_id,))
     return {
         "deleted_memories": mem_cursor.rowcount,
         "deleted_profiles": prof_cursor.rowcount,
@@ -1377,6 +1400,22 @@ async def _corpus_embedding_dim() -> int | None:
     return _modal_width(counts) // 4  # 4 bytes per float32
 
 
+def _calibration_signal() -> str | None:
+    """The gate signal a calibration measures: the one the runtime gate compares.
+
+    Confidence only where it still orders and gates (CPERSONA_CONFIDENCE_ORDERING=legacy),
+    else the fused score of the active mode. From 2.6.0a7 an enabled confidence score is
+    returned beside each row but gates nothing, so calibrating on it would collect no row
+    whose signal matches and store no gate. Cascade with confidence off has no fusion gate
+    (the cosine vector threshold owns precision there): None.
+    """
+    if config.CONFIDENCE_ENABLED and config.CONFIDENCE_ORDERING == "legacy":
+        return "confidence"
+    if config.RECALL_MODE in ("rsf", "rrf"):
+        return config.RECALL_MODE
+    return None
+
+
 async def _calibrate_fused_gate(
     db,
     agent_id: str,
@@ -1424,14 +1463,8 @@ async def _calibrate_fused_gate(
         recall_fn = _recall_rrf
     else:
         recall_fn = _recall_cascade
-    # The gate keys on confidence when enabled (it takes precedence in any mode), else on
-    # the fused score. Cascade with confidence off has no fusion gate — the cosine vector
-    # threshold owns precision there.
-    if config.CONFIDENCE_ENABLED:
-        signal = "confidence"
-    elif mode in ("rsf", "rrf"):
-        signal = mode
-    else:
+    signal = _calibration_signal()
+    if signal is None:
         return None
     if vector._embedding_client is None:
         return None

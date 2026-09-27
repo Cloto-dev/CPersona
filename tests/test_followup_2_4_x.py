@@ -188,8 +188,8 @@ async def test_fts_backfill_when_enabled_after_created_disabled(tmp_path, monkey
     """A DB stamped at the current schema with FTS off must not lose historical
     rows from the keyword index when FTS is later turned on.
 
-    Boot 1 (FTS off): rows land with no FTS tables/triggers, version stamped 13.
-    Boot 2 (FTS on): the version-gated backfill steps are all behind current=13,
+    Boot 1 (FTS off): rows land with no FTS tables/triggers, version stamped current.
+    Boot 2 (FTS on): the version-gated backfill steps are all behind the current stamp,
     so without the first-boot backfill the just-created FTS index would stay empty
     and MATCH would return nothing for the historical row.
     """

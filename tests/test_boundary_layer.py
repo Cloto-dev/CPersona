@@ -277,6 +277,8 @@ async def test_recall_boundary_forwards_every_arg_to_do_recall(monkeypatch):
         "project_id": "",
         "source_id": "src:1",
         "session_key": "s-1",
+        # The boundary asks for the excerpt a preview-cut row carries (2.6).
+        "excerpt_chars": config.RECALL_EXCERPT_CHARS,
     }
     assert result == {"messages": []}
 
@@ -303,6 +305,8 @@ async def test_recall_boundary_full_content_stays_at_the_boundary(monkeypatch):
         "a-1", "q", 5, False, "", [], "", "", full_content=True
     )
     assert "full_content" not in captured["kwargs"]
+    # A full_content response shows every row whole, so it asks for no excerpt.
+    assert captured["kwargs"]["excerpt_chars"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +352,7 @@ async def test_recall_with_context_boundary_forwards_every_arg(monkeypatch):
         "project_id": "",
         "source_id": "src:1",
         "session_key": "s-1",
+        "excerpt_chars": config.RECALL_EXCERPT_CHARS,
     }
     assert result == {"messages": []}
 

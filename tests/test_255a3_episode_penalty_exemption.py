@@ -190,6 +190,7 @@ async def test_exempt_episode_outranks_penalised_memory_under_confidence(clean_d
     age, same raw cosine, the episode wins.
     """
     monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     monkeypatch.setattr(memory_handlers, "EPISODE_PENALTY_ENABLED", True)
     await _arm_boundary(clean_db, AGENT)
 

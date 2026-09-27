@@ -28,12 +28,14 @@ included — a mutant applied over a staged change describes a tree nobody is
 shipping, and that run still goes green. Each mutation is
 applied by exact string replacement and reverted in a finally block; the run
 ends by asserting `git diff --quiet` so a crash can never leave a mutant on
-disk. Mutants are never committed.
+disk. Mutants are never committed. Every write — mutant and restore — also
+removes the file's cached bytecode (see `forget_bytecode`).
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -62,6 +64,11 @@ class Mutation:
     # They are kept because "this guard is not the one holding the invariant up"
     # is exactly the kind of thing a refactor needs to know.
     equivalent: bool = False
+    # Test files that catch this mutant, run BEFORE the full suite. Only a
+    # shortcut: a red subset is a red suite, so it can shorten a CAUGHT verdict
+    # but never produce one the full suite would not. A green subset (a stale
+    # list) falls through to the full suite, which stays the authority.
+    tests: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +80,7 @@ class Mutation:
 MUTATIONS: list[Mutation] = [
     Mutation(
         id="M01",
+        tests=("tests/test_v2438_hardening.py",),
         target="_search_vector remote payload",
         file="cpersona/vector.py",
         find='"min_similarity": effective_min_sim,',
@@ -82,6 +90,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M02",
+        tests=("tests/test_v2438_hardening.py",),
         target="_search_vector remote timeout",
         file="cpersona/vector.py",
         find="timeout=REMOTE_SEARCH_TIMEOUT_SECS,",
@@ -91,12 +100,13 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M03",
+        tests=("tests/test_refactor_seams_252.py", "tests/test_equivalence_252.py"),
         target="_search_vector remote isolation",
         file="cpersona/vector.py",
         find="iso_fetch = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)",
         replace="iso_fetch = isolation_where(agent_id=agent_id, project_id=None, channel='')",
         breaks="remote by-id fetch loses the γ axes; another project's row can surface (bug-046/075/100)",
-        expect="tests/test_isolation.py",
+        expect="test_refactor_seams_252.py::test_remote_by_id_fetch_refuses_rows_outside_the_isolation_axes, test_equivalence_252.py[sv-remote-isolation-miss]",
     ),
     # ---------------------------------------------------------------------
     # do_import_memories (admin_handlers.py) — the highest-value split target
@@ -110,6 +120,7 @@ MUTATIONS: list[Mutation] = [
     # path can afford to lose is often the only one a preview has.
     Mutation(
         id="M04",
+        tests=("tests/test_equivalence_252.py",),
         target="do_import_memories msg_id pre-check — load-bearing on the dry_run path",
         file="cpersona/admin_handlers.py",
         find="if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):",
@@ -128,6 +139,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M05",
+        tests=("tests/test_audit_2500b1.py",),
         target="do_import_memories header validation",
         file="cpersona/admin_handlers.py",
         # _validate_file_header guards with an early return, so disabling the
@@ -182,6 +194,7 @@ MUTATIONS: list[Mutation] = [
     # The load-bearing layers the two equivalent mutants sit above.
     Mutation(
         id="M10",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_import_memories dry_run read seam",
         file="cpersona/admin_handlers.py",
         # Both import and merge use this idiom; anchor on the import one via the
@@ -207,6 +220,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M12",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_merge_memories dry_run read seam",
         file="cpersona/admin_handlers.py",
         find="""    # exit and auto-rolls-back on fault. dry_run does no writes → read seam.
@@ -230,6 +244,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M11",
+        tests=("tests/test_refactor_seams_252.py",),
         target="do_import_memories collision semantics",
         file="cpersona/admin_handlers.py",
         # Two INSERT OR IGNORE sites (import at :1617, merge at :1902); anchor on
@@ -250,6 +265,7 @@ MUTATIONS: list[Mutation] = [
     # ---------------------------------------------------------------------
     Mutation(
         id="M07",
+        tests=("tests/test_audit_2500b1.py",),
         target="do_merge_memories move semantics",
         file="cpersona/admin_handlers.py",
         find='if mode == "move" and not dry_run:',
@@ -262,15 +278,17 @@ MUTATIONS: list[Mutation] = [
     # ---------------------------------------------------------------------
     Mutation(
         id="M08",
+        tests=("tests/test_refactor_seams_252.py", "tests/test_equivalence_252.py"),
         target="do_calibrate_threshold sample floor",
         file="cpersona/admin_handlers.py",
         find="if len(vecs) < 10:",
         replace="if len(vecs) < 0:",
         breaks="calibrates a threshold from a handful of vectors; the null distribution is noise",
-        expect="test_calibrate_threshold_insufficient_embeddings",
+        expect="test_refactor_seams_252.py::test_calibrate_rejects_when_dim_filter_drops_below_the_floor, test_equivalence_252.py[calibrate-ragged]",
     ),
     Mutation(
         id="M09",
+        tests=("tests/test_v2438_hardening.py",),
         target="do_calibrate_threshold dim filter",
         file="cpersona/admin_handlers.py",
         find="vecs = [v for v in vecs if v.shape[0] == target_dim]",
@@ -285,6 +303,7 @@ MUTATIONS: list[Mutation] = [
     # -----------------------------------------------------------------------
     Mutation(
         id="M13",
+        tests=("tests/test_257_session_key_stage2.py",),
         target="queue attribution reconcile",
         file="cpersona/tasks.py",
         find="await self._forget_vanished_rows()",
@@ -294,6 +313,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M14",
+        tests=("tests/test_bug287_temporal_merge_order.py",),
         target="recall_with_context temporal merge order",
         file="cpersona/memory_handlers.py",
         find="""    parsed = _parse_timestamp_utc(m.get("timestamp", "") or "")
@@ -304,6 +324,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03a",
+        tests=("tests/test_future_timestamp.py", "tests/test_equivalence_252.py"),
         target="the write seam's verdict on a timestamp ahead of the clock (bug-293)",
         file="cpersona/utils.py",
         # The detector goes blind: every stamp reads as inside the allowance. This
@@ -321,6 +342,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03b",
+        tests=("tests/test_future_timestamp.py", "tests/test_255_repairable_contract.py", "tests/test_equivalence_252.py"),
         target="the health check's boundary — the rows already stored (bug-293)",
         file="cpersona/checks.py",
         # A boundary nothing can reach. The check still runs, still reports zero,
@@ -339,6 +361,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N03c",
+        tests=("tests/test_future_timestamp.py",),
         target="the restore seam's report — faithful, but not silent (bug-293)",
         file="cpersona/admin_handlers.py",
         find='    if future_timestamp_issue(record.get("timestamp", "")):\n        tally.future_timestamps += 1',
@@ -348,6 +371,7 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M-N04",
+        tests=("tests/test_unicode_identity.py", "tests/test_equivalence_252.py"),
         target="the Unicode identity detector (bug-295)",
         file="cpersona/checks.py",
         # Compare the row against itself instead of against its normal form: the
@@ -363,6 +387,871 @@ MUTATIONS: list[Mutation] = [
             "::test_the_half_voiced_mark_is_found_too, "
             "test_equivalence_252.py[corpus-unnormalized-deep-check]"
         ),
+    ),
+    # ---------------------------------------------------------------------
+    # reconstruct (reconstruct.py) — the reconstructive recall exit.
+    # The design states eight invariants and a count window. Each entry below
+    # destroys exactly one of them; a SURVIVED line here means an invariant is
+    # written down but not held.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M15",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 7 — count and breadth are decoupled",
+        file="cpersona/reconstruct.py",
+        find="bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))",
+        replace="bounds_top_k = effective_count",
+        breaks="the candidate depth is derived from the response count again, so asking for fewer items also searches less deeply",
+        expect="test_reconstruct.py::test_count_alone_does_not_move_the_pool",
+    ),
+    Mutation(
+        id="M16",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 8 — one cluster is one item",
+        file="cpersona/reconstruct.py",
+        find="    clusters = [sorted(members) for _, members in sorted(grouped.items())]",
+        replace="    clusters = [[i] for i in range(len(candidates))]",
+        breaks="a bundled record is split back into one item per row, so the window is padded with fragments of one memory",
+        expect="test_reconstruct.py::test_msg_id_bundles_and_derives_supersedes, ::test_4b_evidence_cut_sets_truncated",
+    ),
+    Mutation(
+        id="M17",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 3 — the written-down total order",
+        file="cpersona/reconstruct.py",
+        find="        -c.ts.timestamp() if c.ts is not None else 0.0,",
+        replace="        0.0,",
+        breaks="claims stop reading newest first, so a supersession chain no longer starts from its current statement",
+        expect="test_reconstruct.py::test_msg_id_bundles_and_derives_supersedes",
+    ),
+    Mutation(
+        id="M18",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 2 — content is a quotation",
+        file="cpersona/reconstruct.py",
+        find='        "content": head.content,',
+        replace='        "content": f"summary of {len(ordered)} rows",',
+        breaks="the server writes a sentence it did not store — the one thing a zero-model read path must never do",
+        expect="test_reconstruct.py::test_2_content_is_a_quotation",
+    ),
+    Mutation(
+        id="M19",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 4 — dropped rows are named",
+        file="cpersona/reconstruct.py",
+        find='    if omitted:\n        bounds["omitted"] = omitted',
+        replace='    if False:\n        bounds["omitted"] = omitted',
+        breaks="an item cut by the evidence bound looks whole, so a caller cannot tell it holds only part of the cluster",
+        expect="test_reconstruct.py::test_4b_evidence_cut_names_the_bound_and_counts_the_rows",
+    ),
+    Mutation(
+        id="M20",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 5 — every element says why it is present",
+        file="cpersona/reconstruct.py",
+        find='        claim: dict = {"ref": m.ref, "as_of": m.timestamp, "why": why.get(m.ref, "seed")}',
+        replace='        claim: dict = {"ref": m.ref, "as_of": m.timestamp, "why": ""}',
+        breaks="a claim stops naming the key that admitted it, so an item cannot be audited back to a reason",
+        expect="test_reconstruct.py::test_5_every_element_says_why",
+    ),
+    Mutation(
+        id="M21",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct — the Reconstruction Window's ceiling",
+        file="cpersona/reconstruct.py",
+        find="    effective = min(base, maximum)",
+        replace="    effective = base",
+        breaks="the server maximum stops bounding the window, so a caller's number is the only limit on payload size",
+        expect="test_reconstruct.py::test_count_window_arithmetic",
+    ),
+    Mutation(
+        id="M21b",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — the payload budget's ceiling",
+        file="cpersona/reconstruct.py",
+        find="    budget = min(base, maximum)",
+        replace="    budget = base",
+        breaks="the server maximum stops bounding the payload budget, so a caller's number is the only limit on quoted text",
+        expect="test_reconstruct_excerpts.py::test_budget_default_request_force_and_clamps",
+    ),
+    Mutation(
+        id="M22",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct stage 2 — 'adjacent timestamps, same source' is ONE key",
+        file="cpersona/reconstruct.py",
+        find="""                gap = candidates[right].ts.timestamp() - candidates[anchor].ts.timestamp()
+                if gap <= window:
+                    uf.union(anchor, right, "cluster:adjacent")""",
+        replace="""                gap = 0
+                if gap <= window:
+                    uf.union(anchor, right, "cluster:adjacent")""",
+        breaks="source alone bundles, so in a single-agent store every candidate folds into one item on every call",
+        expect="test_reconstruct.py::test_source_alone_does_not_bundle",
+    ),
+    Mutation(
+        id="M23",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct invariant 1 — stored rows are never modified",
+        file="cpersona/reconstruct.py",
+        find="    uf = p.reconstructor.bundle(candidates, spans, links)",
+        replace="""    async with connection() as _mutant_db:
+        await _mutant_db.execute(
+            "UPDATE memories SET content = content || ' (touched)' WHERE agent_id = ?", (agent_id,)
+        )
+        await _mutant_db.commit()
+    uf = p.reconstructor.bundle(candidates, spans, links)""",
+        breaks="the read path writes to the rows it read — an injected defect, because an invariant of absence cannot be broken by deletion",
+        expect="test_reconstruct.py::test_1_stored_rows_are_not_modified",
+    ),
+    Mutation(
+        id="M24",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct head claim — the most relevant row, not the newest",
+        file="cpersona/reconstruct.py",
+        find="    lead = min(members, key=_relevance_key)",
+        replace="    lead = min(members, key=_order_key)",
+        breaks="an item quotes the last thing said in a burst instead of the row the retrieval ranked highest",
+        expect="test_reconstruct.py::test_head_of_distinct_rows_is_the_most_relevant_not_the_newest",
+    ),
+    Mutation(
+        id="M25",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct head claim — a version chain resolves to its latest version",
+        file="cpersona/reconstruct.py",
+        find="    return min(versions, key=_order_key)",
+        replace="    return min(versions, key=_relevance_key)",
+        breaks="an item quotes a superseded version as current because the older version ranked higher",
+        expect="test_reconstruct.py::test_head_of_a_version_chain_is_its_latest_version_even_when_older_ranks_higher",
+    ),
+    Mutation(
+        id="M26",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct evidence cut — keeps the head, then relevance decides",
+        file="cpersona/reconstruct.py",
+        find="    others = sorted((m for m in members if m is not head), key=_relevance_key)",
+        replace="    others = sorted((m for m in members if m is not head), key=_order_key)",
+        breaks="a bounded item keeps the newest rows and drops the ones that made it relevant",
+        expect="test_reconstruct.py::test_an_evidence_cut_keeps_the_head_then_the_most_relevant_rows",
+    ),
+    # ---------------------------------------------------------------------
+    # get_contents ranges (memory_handlers.py) — reconstruction v1.1 expansion.
+    # A range is served exactly or refused; it is never widened to the row.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M27",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — a range the server cannot serve is refused, not widened",
+        file="cpersona/memory_handlers.py",
+        find='''                if served is None:
+                    unresolved.append({"ref": ref, "reason": reason})
+                    continue''',
+        replace='''                if served is None:
+                    served = {"span": [0, len(text)]}''',
+        breaks="a node that does not exist comes back as the whole record, the payload the caller asked to avoid, with nothing saying so",
+        expect="test_get_contents_ranges.py::test_the_last_node_is_served_and_one_past_it_is_refused, ::test_a_node_range_on_a_record_without_a_complete_node_set_is_refused_not_widened",
+    ),
+    Mutation(
+        id="M28",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — nodes are served only from a partition of the stored text",
+        file="cpersona/memory_handlers.py",
+        find="        and all(a[2] == b[1] for a, b in zip(rows, rows[1:]))",
+        replace="        and True",
+        breaks="a node set with a gap or an overlap is served by offset, so a node range returns characters that are not the nodes it names",
+        expect="test_get_contents_ranges.py::test_nodes_that_overlap_or_leave_a_gap_are_not_a_partition",
+    ),
+    Mutation(
+        id="M29",
+        tests=("tests/test_get_contents_ranges.py",),
+        target="get_contents ranges — a range is checked after ownership",
+        file="cpersona/memory_handlers.py",
+        find='''            if kind == "mem":
+                rows = await db.execute_fetchall(
+                    "SELECT msg_id''',
+        replace='''            if invalid is not None:
+                unresolved.append({"ref": ref, "reason": invalid})
+                continue
+            if kind == "mem":
+                rows = await db.execute_fetchall(
+                    "SELECT msg_id''',
+        breaks="a malformed range on a ref the caller does not own is answered as unresolved, so `missing` stops meaning 'not yours or not there' and `unresolved` stops meaning 'yours, but not servable'",
+        expect="test_get_contents_ranges.py::test_a_range_on_another_agents_row_is_missing_and_says_nothing_about_its_nodes",
+    ),
+    Mutation(
+        id="M30",
+        tests=("tests/test_reconstruct.py",),
+        target="reconstruct — a bound that was met is not a bound that dropped rows",
+        file="cpersona/reconstruct.py",
+        find='BOUND_EVIDENCE = "max_evidence"',
+        replace='BOUND_EVIDENCE = "top_k"',
+        breaks="rows the evidence bound dropped are reported under the depth's name, the one bound the tool cannot tell was a cut, so `omitted` stops meaning 'these rows exist and were withheld'",
+        expect="test_reconstruct.py::test_4b_evidence_cut_names_the_bound_and_counts_the_rows",
+    ),
+    Mutation(
+        id="M31",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — node choice without a query embedding is admitted",
+        file="cpersona/reconstruct.py",
+        find="    if (node_sets or block_sets) and query_vec is None:\n",
+        replace="    if False:\n",
+        breaks="an unreachable embedding server silently turns node choice into trigram matching, and the quote looks as considered as any other",
+        expect="test_reconstruct_excerpts.py::test_nodes_ranked_without_a_query_embedding_say_so",
+    ),
+    Mutation(
+        id="M32",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — a cut quote that is only the record's start says so",
+        file="cpersona/reconstruct.py",
+        find='            "node_unavailable",\n            "expand",\n',
+        replace='            "expand",\n',
+        breaks="the first 500 characters of a long record pass for the part that matched the query, which is the failure v1.1 exists to remove",
+        expect="test_reconstruct_excerpts.py::test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_do_not_move",
+    ),
+    Mutation(
+        id="M33",
+        tests=("tests/test_reconstruct_review.py",),
+        target="reconstruct — a compact response still says when the server overrode the request",
+        file="cpersona/reconstruct.py",
+        find='    if not count_policy["clamped"] and count_policy["source"] in _ASKED:',
+        replace='    if count_policy["source"] in _ASKED:',
+        breaks="a clamped count is served without its policy, so the compact envelope hides exactly the case it exists to keep: the server doing something other than what was asked",
+        expect="test_reconstruct_review.py::test_a_clamped_count_states_its_policy_and_a_clamped_budget_its_own",
+    ),
+    Mutation(
+        id="M34",
+        tests=("tests/test_reconstruct_excerpts.py",),
+        target="reconstruct — a cut node quote hands over the read that continues it",
+        file="cpersona/reconstruct.py",
+        find='quote["expand"] = {"ref": claim.ref, "node": quote["node"]["index"]}',
+        replace='quote["expand"] = {"ref": claim.ref, "node": 0}',
+        breaks="the ready-made argument reads the start of the record instead of the node that matched, so the cheapest next read returns the wrong text",
+        expect="test_reconstruct_excerpts.py::test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_its_node",
+    ),
+    # ---------------------------------------------------------------------
+    # associative memory read by reconstruct (associations.py, reconstruct.py) —
+    # docs/ASSOCIATIVE_MEMORY_DESIGN.md §3 and §5. The loader and the pure walk
+    # both bound the walk; each entry below breaks the one it names, and the
+    # tests it expects reach that layer directly.
+    # ---------------------------------------------------------------------
+    Mutation(
+        id="M35",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 1 — declared names reach the lexical arm only",
+        file="cpersona/reconstruct.py",
+        find="        query,\n        effective_top_k,  # the candidate depth",
+        replace="        (query + ' ' + ' '.join(cue_terms)).strip(),\n        effective_top_k,  # the candidate depth",
+        breaks="an alias is appended to the query the vector arm embeds, so expanding a name moves what the query means",
+        expect="test_associations_reconstruct.py::test_the_vector_arm_sees_the_query_unchanged",
+    ),
+    Mutation(
+        id="M36",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 1 — recall does not read the graph",
+        file="cpersona/memory_handlers.py",
+        find="    exclude_set: set[str] = set()\n    if exclude_contents:",
+        replace=(
+            "    if lexical_terms is None:\n"
+            "        from cpersona import associations as _a\n"
+            "        lexical_terms = (await _a.query_terms(agent_id, query, project_id=project_id, channel=channel))[0] or None\n"
+            "    exclude_set: set[str] = set()\n    if exclude_contents:"
+        ),
+        breaks="recall expands declared aliases on its own, so the flat contract changes with every declaration",
+        expect="test_associations_reconstruct.py::test_recall_is_unchanged_by_a_populated_graph",
+    ),
+    Mutation(
+        id="M37",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 2 — a graph the query does not name is not read",
+        file="cpersona/associations.py",
+        find="        if not matched:\n            return [], {}\n        marks",
+        replace=(
+            "        matched = sorted({r[0] for r in await db.execute_fetchall("
+            "f'SELECT e.id FROM entities e WHERE {iso.clause}', iso.params)})\n"
+            "        if not matched:\n            return [], {}\n        marks"
+        ),
+        breaks="every entity in scope counts as named by every query, so a store with any declaration answers differently from one without",
+        expect="test_associations_reconstruct.py::test_a_graph_that_does_not_apply_changes_nothing",
+    ),
+    Mutation(
+        id="M38",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 2 — a declared record relation bundles its endpoints",
+        file="cpersona/reconstruct.py",
+        find='            uf.union(index[subject], index[obj], "cluster:relation", WHY_RELATION + predicate)',
+        replace="            pass",
+        breaks="two candidates an agent declared as one correction of the other come back as separate items",
+        expect="test_associations_reconstruct.py::test_a_record_relation_merges_items_without_reordering_the_rest",
+    ),
+    Mutation(
+        id="M39",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative roles — the referenced row is the subject",
+        file="cpersona/reconstruct.py",
+        find='''        if obj == claim.ref and subject in retained and predicate in ROLE_VOCABULARY:
+            role = {"ref": subject, "role": predicate}''',
+        replace='''        if subject == claim.ref and obj in retained and predicate in ROLE_VOCABULARY:
+            role = {"ref": obj, "role": predicate}''',
+        breaks="a declared correction is emitted on the correcting row, so the reader is told the new statement is what was corrected",
+        expect="test_associations_reconstruct.py::test_each_role_word_is_emitted_in_the_vocabulary_direction",
+    ),
+    Mutation(
+        id="M40",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 5 — the walk stops at max_hops by itself",
+        file="cpersona/reconstruct.py",
+        find="        for hop in range(1, max_hops + 1):\n            step",
+        replace="        for hop in range(1, max_hops + 2):\n            step",
+        breaks="the walk follows one relation more than the caller allowed whenever the graph holds it",
+        expect="test_associations_reconstruct.py::test_the_walk_stops_at_its_hop_bound_even_when_the_graph_holds_more",
+    ),
+    Mutation(
+        id="M41",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative stage 3 — sharing an entity is not a relation",
+        file="cpersona/reconstruct.py",
+        find="            if hops == 0:\n                continue\n            if entity in graph.records_cut:\n                cuts[position].add(BOUND_EVIDENCE)\n            recency, predicate = via[entity]",
+        replace="            if entity in graph.records_cut:\n                cuts[position].add(BOUND_EVIDENCE)\n            recency, predicate = via.get(entity, (0, 'mentions'))",
+        breaks="every record that mentions the candidate's own entity becomes evidence, which is the contamination bundling by entity was refused for",
+        expect="test_associations_reconstruct.py::test_the_walk_starts_from_each_items_own_candidates_and_skips_their_own_entities",
+    ),
+    Mutation(
+        id="M42",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 5 — the written order of the evidence cut",
+        file="cpersona/associations.py",
+        find="newest_first = sorted(edges, key=lambda r: (edges[r][3], -r), reverse=True)",
+        replace="newest_first = sorted(edges, key=lambda r: (edges[r][3], -r))",
+        breaks="an item bounded by max_evidence keeps what an old relation reached and drops what the latest declaration reached",
+        expect="test_associations_reconstruct.py::test_the_evidence_cut_follows_hops_then_recency_then_record_id",
+    ),
+    Mutation(
+        id="M43",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 3 — a reached record is never an item",
+        file="cpersona/reconstruct.py",
+        find=(
+            "        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)\n"
+            "        providers.check_structure(item, {row.ref for row in rows} | {row.ref for row, _, _ in extra})\n"
+            "        if position >= len(window):\n"
+            "            # Said in the words recall uses for the same row, so one reading covers both.\n"
+            "            item[\"admission\"] = \"reservation\"\n"
+            "        selected.append(item)"
+        ),
+        replace=(
+            "        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, bounds_max_evidence, (), links)\n"
+            "        if position >= len(window):\n"
+            "            item[\"admission\"] = \"reservation\"\n"
+            "        selected.append(item)\n"
+            "        for row, label, hops in extra:\n"
+            "            selected.append(structure([row], {}, spans, bounds_max_evidence)[0])"
+        ),
+        breaks="records the walk reached become items of their own, so a declaration reorders and pads the window",
+        expect="test_associations_reconstruct.py::test_entity_relations_leave_item_heads_and_order_unchanged",
+    ),
+    Mutation(
+        id="M44",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 7 — the walk reads this agent's relations only",
+        file="cpersona/associations.py",
+        find='    iso_r = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="r")\n    iso_s',
+        replace='    iso_r = isolation_where(agent_id=None, project_id="", channel=channel, alias="r")\n    iso_s',
+        breaks="a relation another agent's row holds is followed, so one agent's declarations shape another's evidence",
+        expect="test_associations_reconstruct.py::test_rows_that_cross_agents_are_not_read_even_when_they_exist",
+    ),
+    Mutation(
+        id="M45",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="associative invariant 7 — a reached record is one the call could read",
+        file="cpersona/associations.py",
+        find='    iso_m = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="t")',
+        replace='    iso_m = isolation_where(agent_id=agent_id, project_id=None, channel=channel, alias="t")',
+        breaks="a record in a project the call does not read is quoted as evidence, through a relation declared in one it does",
+        expect="test_associations_reconstruct.py::test_a_record_the_call_could_not_read_is_not_reached",
+    ),
+    Mutation(
+        id="M46",
+        tests=("tests/test_associations_traverse.py", "tests/test_associations_reconstruct.py"),
+        target="associative graph reads — relations are followed from either end",
+        file="cpersona/associations.py",
+        find='f"AND (r.subject_id IN ({marks}) OR r.object_id IN ({marks}))",',
+        replace='f"AND (r.subject_id IN ({marks}) AND r.object_id IN ({marks}))",',
+        breaks="an entity named as a relation's object reaches nothing through it, so traverse and the reconstruct walk see half the graph",
+        expect="test_associations_traverse.py::test_the_neighbourhood_to_the_hop_bound, test_associations_reconstruct.py::test_relations_are_followed_in_both_directions",
+    ),
+    Mutation(
+        id="M47",
+        tests=("tests/test_associations_traverse.py",),
+        target="traverse — limit bounds the entities returned",
+        file="cpersona/associations.py",
+        find="        kept = order[:limit]\n",
+        replace="        kept = order\n",
+        breaks="a hub entity returns its whole neighbourhood whatever the caller asked for",
+        expect="test_associations_traverse.py::test_limit_bounds_entities_and_mentions_and_says_so",
+    ),
+    Mutation(
+        id="M48",
+        tests=("tests/test_associations_traverse.py",),
+        target="traverse — refs only, never record text",
+        file="cpersona/associations.py",
+        find='                entry["mentions"] = [ref for _, _, ref, _ in found]',
+        replace='                entry["mentions"] = [row["content"] for _, _, _, row in found]',
+        breaks="the graph query returns stored text, so its payload grows with the records and bypasses the preview tier",
+        expect="test_associations_traverse.py::test_no_record_text_is_returned",
+    ),
+    Mutation(
+        id="M49",
+        tests=("tests/test_associations_traverse.py",),
+        target="traverse — the named entity is one this agent declared",
+        file="cpersona/associations.py",
+        find='    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")\n    async with connection() as db:\n        starts',
+        replace='    iso = isolation_where(agent_id=None, project_id=project_id, channel=channel, alias="e")\n    async with connection() as db:\n        starts',
+        breaks="another agent's entity of the same name becomes a start, and its identity shows in this agent's answer",
+        expect="test_associations_traverse.py::test_isolation_agent_project_and_readable_records",
+    ),
+    Mutation(
+        id="M50",
+        tests=("tests/test_reconstruct_block_reservation.py",),
+        target="reconstruct holds the block reservation beside the window",
+        file="cpersona/reconstruct.py",
+        find="    chosen = window + held\n",
+        replace="    chosen = window\n",
+        breaks="a record only the block arm reached never comes back once the gate has filled the window",
+        expect="test_reconstruct_block_reservation.py::test_a_full_window_still_returns_the_reserved_record",
+    ),
+    Mutation(
+        id="M51",
+        tests=("tests/test_reconstruct_block_reservation.py",),
+        target="a reserved record never takes a place in the window",
+        file="cpersona/reconstruct.py",
+        find="    window = [group for group in ordered if any(not candidates[i].reserved for i in group)][:effective_count]\n",
+        replace="    window = ordered[:effective_count]\n",
+        breaks="with room in the window a reserved row is ranked as an item the gate admitted, and the caller cannot tell",
+        expect="test_reconstruct_block_reservation.py::test_a_reserved_record_never_takes_a_place_in_the_window",
+    ),
+    Mutation(
+        id="M52",
+        tests=("tests/test_260a7_prior_function.py",),
+        target="with confidence enabled, the confidence score no longer re-sorts recall",
+        file="cpersona/memory_handlers.py",
+        find='    if _confidence_orders():\n        for r in results:\n            ts = r.get("timestamp", "")\n',
+        replace='    if CONFIDENCE_ENABLED:\n        for r in results:\n            ts = r.get("timestamp", "")\n',
+        breaks="confidence on discards the fusion order again, and any prior applied in the fusion does nothing",
+        expect="test_260a7_prior_function.py::test_enabled_confidence_changes_nothing_but_the_confidence_field",
+    ),
+    Mutation(
+        id="M53",
+        tests=("tests/test_260a7_prior_function.py",),
+        target="the gate calibration measures the signal the runtime gate compares",
+        file="cpersona/admin_handlers.py",
+        find='    if config.CONFIDENCE_ENABLED and config.CONFIDENCE_ORDERING == "legacy":\n        return "confidence"\n',
+        replace='    if config.CONFIDENCE_ENABLED:\n        return "confidence"\n',
+        breaks="with confidence on, calibration collects no row whose signal matches and stores no gate",
+        expect="test_260a7_prior_function.py::test_calibration_measures_the_signal_the_runtime_gate_compares",
+    ),
+    Mutation(
+        id="M54",
+        tests=("tests/test_260a7_prior_function.py",),
+        target="the age weight orders the admitted rows by score times weight",
+        file="cpersona/memory_handlers.py",
+        find='        key=lambda r: r[key] * r["_prior"] if r.get("id") != -1 else float("-inf"),\n',
+        replace='        key=lambda r: r[key] if r.get("id") != -1 else float("-inf"),\n',
+        breaks="the age weight is computed and reported but never moves a row",
+        expect="test_260a7_prior_function.py::test_the_weight_orders_by_score_times_age_weight",
+    ),
+    Mutation(
+        id="M55",
+        tests=("tests/test_260a7_prior_function.py",),
+        target="the age weight never rewrites the score the gate reads",
+        file="cpersona/memory_handlers.py",
+        find='        r["_prior"] = _age_weight(age)\n',
+        replace='        r["_prior"] = _age_weight(age)\n        r[key] = r[key] * r["_prior"]\n',
+        breaks="the weight leaks into the score the gate and match_reason read, so a later move of the call ahead of the gate would let it remove rows",
+        expect="test_260a7_prior_function.py::test_the_weight_never_rewrites_the_score_the_gate_reads",
+    ),
+    Mutation(
+        id="M56",
+        tests=("tests/test_recall_trace.py",),
+        target="recall trace — a requested trace changes nothing in the messages",
+        file="cpersona/memory_handlers.py",
+        find="    token = rec.activate()\n    try:\n        result = await _do_recall(agent_id, query, limit, **kwargs)",
+        replace="    token = rec.activate()\n    try:\n        result = await _do_recall(agent_id, query, max(1, limit - 1), **kwargs)",
+        breaks="asking for a trace changes what the recall returns, so a traced run measures a different recall",
+        expect="test_recall_trace.py::test_a_requested_trace_changes_nothing_in_the_messages",
+    ),
+    Mutation(
+        id="M57",
+        tests=("tests/test_blocks_retrieval.py",),
+        target="recall trace — the block arm is an arm",
+        file="cpersona/memory_handlers.py",
+        find='                trace_rec.arm("block", block_rows, "_block_distance")',
+        replace="                pass",
+        breaks="a record only the block arm reached is confirmed as a candidate miss although it was returned",
+        expect="test_blocks_retrieval.py::test_a_reserved_row_is_traced_as_reached_and_returned",
+    ),
+    Mutation(
+        id="M58",
+        tests=("tests/test_recall_trace.py",),
+        target="recall trace — a gate decision says what the gate did",
+        file="cpersona/memory_handlers.py",
+        find='rec.gate_decision(r, "rrf", rrf, rrf_threshold, rrf >= rrf_threshold, "below_gate")',
+        replace='rec.gate_decision(r, "rrf", rrf, rrf_threshold, True, "below_gate")',
+        breaks="the trace says a row was admitted that the gate dropped, so a filter drop is confirmed as something else",
+        expect="test_recall_trace.py::test_every_gate_branch_records_its_signal_and_reason",
+    ),
+    Mutation(
+        id="M59",
+        tests=("tests/test_recall_trace.py",),
+        target="recall trace confirmation — a held seat returns a row",
+        file="benchmarks/recall_trace_confirm.py",
+        find='    reserved = {row["ref"] for row in trace.get("reservation", [])}\n',
+        replace="    reserved = set()\n",
+        breaks="a record the reservation returned is confirmed as lost at the gate or the count cut",
+        expect="test_recall_trace.py::test_confirm_orders_the_stages",
+    ),
+    Mutation(
+        id="M60",
+        tests=("tests/test_recall_cue.py",),
+        target="time cue — no row moves up more than L places",
+        file="cpersona/memory_handlers.py",
+        find='        bound = cue.LIFT[cue_note["confidence"]]\n',
+        replace="        bound = 10\n",
+        breaks="a wrong cue can carry a row from the bottom of the answer to the top, so its harm is no longer bounded by construction",
+        expect="test_recall_cue.py::test_a_cue_changes_order_not_admission",
+    ),
+    Mutation(
+        id="M61",
+        tests=("tests/test_recall_cue.py",),
+        target="time cue — the held seat is for records no ordinary arm reached",
+        file="cpersona/memory_handlers.py",
+        find='r for r in cue_rows if r["_rid"] not in reached and r["_rid"] not in present]',
+        replace='r for r in cue_rows if r["_rid"] not in present]',
+        breaks="a row the quality gate refused comes back through the cue's seat, so a cue changes which rows are admitted",
+        expect="test_recall_cue.py::test_a_row_the_gate_refused_does_not_come_back_through_the_seat",
+    ),
+    Mutation(
+        id="M62",
+        tests=("tests/test_recall_cue.py",),
+        target="time cue — the cue arm searches only the period",
+        file="cpersona/memory_handlers.py",
+        find='        src_clause_m += " AND datetime(m.timestamp) >= datetime(?) AND datetime(m.timestamp) < datetime(?)"',
+        replace='        src_clause_m += " AND datetime(m.timestamp) >= datetime(?) AND ? IS NOT NULL"',
+        breaks="the cue arm returns records after the period, so a cue lifts rows it does not point at",
+        expect="test_recall_cue.py::test_the_cue_arm_searches_only_the_period",
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# The provider seams of recall and reconstruct (cpersona/providers.py).
+#
+# A stage called back through its built-in directly returns the same rows -- the
+# built-in IS the function the Core used to call -- so no test of what recall
+# returns can see a call site that stopped using the installed provider. Only a
+# test that installs a different provider can, and the bypass mutants below show
+# that test_providers.py's recording providers are that test, one call site each.
+# The check mutants show that each of the Core's checks on a stage's output is
+# what stops a provider that breaks the contract, and the registry mutants that
+# each refusal rule is held by its own test.
+# ---------------------------------------------------------------------------
+
+_MH = "cpersona/memory_handlers.py"
+_RC = "cpersona/reconstruct.py"
+_PV = "cpersona/providers.py"
+_IMPORT_BUILTINS = {
+    _MH: ("from cpersona import providers\n", "from cpersona import providers\nfrom cpersona import builtin_providers\n"),
+    _RC: ("    from . import providers\n", "    from . import providers\n    from . import builtin_providers\n"),
+}
+_SPY = "test_providers.py::test_the_core_calls_each_operation_through_its_slot"
+_SEATED = "test_providers.py::test_a_seated_recall_ranks_twice_through_the_slots"
+
+# (id, file, the call as the Core writes it, the built-in class, slot, operation, the test that pins it)
+_BYPASSES = [
+    ("M63", _MH, "p.fusion.retrieve(", "Fusion", "fusion", "retrieve", None),
+    ("M64", _MH, "p.scoring.score(", "Scoring", "scoring", "score", None),
+    ("M65", _MH, "p.block_candidates.reserved_rows(", "BlockCandidates", "block_candidates", "reserved_rows", None),
+    ("M66", _MH, "active.cue_interpreter.parse(", "CueInterpreter", "cue_interpreter", "parse", None),
+    ("M67", _MH, "p.cue_interpreter.recent_only(", "CueInterpreter", "cue_interpreter", "recent_only", None),
+    ("M68", _MH, "p.envelope_planner.period(time_cue, confidence,", "EnvelopePlanner", "envelope_planner", "period", None),
+    ("M69", _MH, "p.envelope_planner.wider(", "EnvelopePlanner", "envelope_planner", "wider", None),
+    ("M70", _MH, "p.cue_candidates.search(", "CueCandidates", "cue_candidates", "search", None),
+    ("M71", _MH, "p.prior.apply(", "Prior", "prior", "apply", None),
+    ("M72", _MH, "p.evidence_selector.lift(", "EvidenceSelector", "evidence_selector", "lift", None),
+    ("M73", _MH, "p.evidence_selector.seats(", "EvidenceSelector", "evidence_selector", "seats", None),
+    ("M74", _RC, "p.reconstruct_candidates.candidates(", "ReconstructCandidates", "reconstruct_candidates", "candidates", None),
+    ("M75", _RC, "p.reconstructor.bundle(", "Reconstructor", "reconstructor", "bundle", None),
+    ("M76", _RC, "p.reconstructor.walk(", "Reconstructor", "reconstructor", "walk", None),
+    ("M77", _RC, "p.reconstructor.structure(", "Reconstructor", "reconstructor", "structure", None),
+    ("M78", _RC, "p.reconstructor.allocate(", "Reconstructor", "reconstructor", "allocate", None),
+    ("M79", _RC, "p.cue_interpreter.parse(", "CueInterpreter", "cue_interpreter", "parse",
+     "test_providers.py::test_reconstruct_reads_the_cue_through_the_installed_interpreter"),
+    # The propagation seat ranks the recall a second time, so fusion, scoring and
+    # the prior each have two call sites; each is its own mutant, and the pin
+    # counts the calls of one seated recall, because the spy's any-call test would
+    # let one site's bypass hide behind the other's call.
+    ("M106", _MH, "p.fusion.retrieve(", "Fusion", "fusion", "retrieve", _SEATED),
+    ("M107", _MH, "p.scoring.score(", "Scoring", "scoring", "score", _SEATED),
+    ("M108", _MH, "p.prior.apply(", "Prior", "prior", "apply", _SEATED),
+    ("M109", _MH, "p.propagation_selector.seat(", "PropagationSelector", "propagation_selector", "seat", None),
+]
+
+# Where a call appears more than once in its file, the text before it names the site.
+_LEADS = {
+    "M63": "results = await ",
+    "M64": "results, time_range_hours, recall_counts, newest_age_hours = await ",
+    "M71": "results = ",
+    "M106": "order = await ",
+    "M107": "order, *_ = await ",
+    "M108": "order = ",
+}
+
+MUTATIONS += [
+    Mutation(
+        id=mid,
+        tests=("tests/test_providers.py",),
+        target=f"provider seams — {'reconstruct' if file == _RC else 'recall'} calls {slot}.{op} through its slot",
+        file=file,
+        find=_LEADS.get(mid, "") + call,
+        replace=_LEADS.get(mid, "") + f"builtin_providers.{cls}()" + call[call.index(f".{op}("):],
+        also=(_IMPORT_BUILTINS[file],),
+        breaks=f"an installed {slot} provider is ignored at this call and the built-in runs instead",
+        expect=pin or f"{_SPY}[{slot}-{op}]",
+    )
+    for mid, file, call, cls, slot, op, pin in _BYPASSES
+]
+
+MUTATIONS += [
+    Mutation(
+        id="M80",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the cue's move is checked against the bound the Core fixed",
+        file=_MH,
+        find="        providers.check_lift(results, lifted, bound)\n",
+        replace="",
+        breaks="a selector can move a row past the bound, or drop one, and the answer carries it",
+        expect="test_providers.py::test_a_move_past_its_bound_or_out_of_its_rows_is_stopped",
+    ),
+    Mutation(
+        id="M81",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the seat goes to an eligible row, one at most",
+        file=_MH,
+        find="        providers.check_seats(seated, eligible, cue.SEATS)\n",
+        replace="",
+        breaks="a selector can fill more places than are held, or seat a row the gate refused",
+        expect="test_providers.py::test_a_seat_beyond_the_held_one_or_for_another_row_is_stopped",
+    ),
+    Mutation(
+        id="M82",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the prior reorders and neither admits nor removes",
+        file=_MH,
+        find='    providers.check_reorder("prior.apply", admitted, results)\n',
+        replace="",
+        breaks="a prior can remove a row the gate admitted",
+        expect="test_providers.py::test_a_prior_that_removes_a_row_is_stopped",
+    ),
+    Mutation(
+        id="M83",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the walk reaches only records the graph read holds",
+        file=_RC,
+        find="    providers.check_walk(reached, chosen, graph.rows if graph is not None else {})\n",
+        replace="",
+        breaks="a walk can name a record the call never read, or lose a cluster's result",
+        expect="test_providers.py::test_a_reconstructor_that_breaks_its_contract_is_stopped",
+    ),
+    Mutation(
+        id="M84",
+        tests=("tests/test_providers.py",),
+        target="provider seams — an item's head and claims are its own records",
+        file=_RC,
+        find="        providers.check_structure(item, {row.ref for row in rows} | {row.ref for row, _, _ in extra})\n",
+        replace="",
+        breaks="an item can name a head that is none of the records it was built from",
+        expect="test_providers.py::test_a_reconstructor_that_breaks_its_contract_is_stopped",
+    ),
+    Mutation(
+        id="M85",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the budget chooses a prefix and nothing else (invariant 9)",
+        file=_RC,
+        find="    providers.check_allocation(entries, items, used_budget, effective_budget, budget_cut)\n",
+        replace="",
+        breaks="an allocation can skip an item, misreport what it carries, or carry past the budget",
+        expect="test_providers.py::test_an_allocation_past_the_budget_is_stopped",
+    ),
+    Mutation(
+        id="M86",
+        tests=("tests/test_providers.py",),
+        target="provider seams — a request keeps the set it started with",
+        file=_MH,
+        find="newest_age_hours = await p.scoring.score(",
+        replace="newest_age_hours = await providers.active().scoring.score(",
+        breaks="a set installed while a recall runs takes over its later stages",
+        expect="test_providers.py::test_a_request_keeps_the_set_it_started_with",
+    ),
+    Mutation(
+        id="M110",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the propagation seat chooses with the set the recall started with",
+        file=_MH,
+        find="p.propagation_selector.seat(",
+        replace="providers.active().propagation_selector.seat(",
+        breaks="a set installed while a seated recall runs chooses its seat",
+        expect="test_providers.py::test_a_seated_request_keeps_the_set_it_started_with",
+    ),
+    Mutation(
+        id="M96",
+        tests=("tests/test_providers.py",),
+        target="provider seams — the cue is read with the set the recall runs with",
+        file=_MH,
+        find="        providers_=active,\n",
+        replace="",
+        breaks="a set installed between reading the cue and retrieving takes over the retrieval",
+        expect="test_providers.py::test_the_set_is_read_before_the_cue_and_kept_after_it",
+    ),
+]
+
+# (id, the refusal as written, what replaces it, what the registry then accepts, the test id)
+_REFUSALS = [
+    ("M87", "        factory = allowlist.get(name, {}).get(provider_id)\n",
+     "        factory = allowlist.get(name, {}).get(provider_id) or allowlist.get(name, {}).get(BUILTIN)\n",
+     "an id the allowlist does not hold silently runs the built-in",
+     "test_a_selection_the_allowlist_does_not_hold_is_refused"),
+    ("M88", "    if manifest.contract[0] != CONTRACT_MAJOR:\n", "    if False:\n",
+     "a provider built for another major contract", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M89", "    missing = [op for op in slot.operations if op not in manifest.capabilities]\n", "    missing = []\n",
+     "a provider that does not declare an operation the Core calls", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M90", "    absent = [op for op in slot.operations if not callable(getattr(provider, op, None))]\n", "    absent = []\n",
+     "a provider that declares an operation it does not have", "test_a_declared_operation_the_provider_does_not_have_is_refused"),
+    ("M91", "    if manifest.generative:\n", "    if False:\n",
+     "a provider that generates text", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M92", "    if not manifest.deterministic:\n", "    if False:\n",
+     "a provider that is not deterministic", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M93", '    if manifest.locality != "in_process":\n', "    if False:\n",
+     "a provider that runs outside this process", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M94", "    if manifest.slot != slot.name:\n", "    if False:\n",
+     "a provider made for another slot", "test_a_manifest_the_core_cannot_call_is_refused"),
+    ("M95", "    if manifest.provider_id != provider_id:\n", "    if False:\n",
+     "an allowlist id that names a provider calling itself something else",
+     "test_an_allowlist_id_must_be_the_name_the_provider_gives_itself"),
+]
+
+MUTATIONS += [
+    Mutation(
+        id=mid,
+        tests=("tests/test_providers.py",),
+        target="provider seams — the registry refuses what the Core cannot call",
+        file=_PV,
+        find=find,
+        replace=replace,
+        breaks=f"the registry accepts {accepted}",
+        expect=f"test_providers.py::{test}",
+    )
+    for mid, find, replace, accepted, test in _REFUSALS
+]
+
+# ---------------------------------------------------------------------------
+# The budget ledger (cpersona/budget.py) and the trace's record of each stage's
+# input (recall_trace.stage_input). The ledger's limits are the bounds recall
+# already held, so the mutants below either loosen a bound (and the loop runs a
+# stage it never ran), stop counting (and the trace misreports what was spent),
+# or move a recorded input to another stage (and a replay would start from the
+# wrong rows).
+# ---------------------------------------------------------------------------
+
+_BG = "cpersona/budget.py"
+_RT = "cpersona/recall_trace.py"
+
+MUTATIONS += [
+    Mutation(
+        id="M97",
+        tests=("tests/test_budget.py", "tests/test_recall_cue.py"),
+        target="budget ledger — the cue loop runs at most two stages",
+        file=_BG,
+        find="CUE_STAGES = 2\n",
+        replace="CUE_STAGES = 3\n",
+        breaks="an empty widened period is widened again, to the vague width, a stage v0 never ran",
+        expect="test_budget.py::test_a_cue_whose_widened_period_is_still_empty_stops_at_the_ledger",
+    ),
+    Mutation(
+        id="M98",
+        tests=("tests/test_budget.py", "tests/test_recall_cue.py"),
+        target="budget ledger — the cue loop asks the ledger before another stage",
+        file=_MH,
+        find="                if cue_rows or not ledger.allows(budget.CUE_STAGE):\n",
+        replace="                if cue_rows:\n",
+        breaks="the loop starts a stage the ledger does not allow, and the recall fails instead of stopping",
+        expect="test_budget.py::test_a_cue_whose_widened_period_is_still_empty_stops_at_the_ledger",
+    ),
+    Mutation(
+        id="M99",
+        tests=("tests/test_budget.py",),
+        target="budget ledger — the one hypothesis a recall evaluates is counted",
+        file=_MH,
+        find="    ledger.spend(budget.ITERATION)\n",
+        replace="",
+        breaks="a trace reports no hypothesis evaluated, so an iteration budget reads as untouched",
+        expect="test_budget.py::test_a_plain_recall_spends_one_fetch_and_one_iteration",
+    ),
+    Mutation(
+        id="M100",
+        tests=("tests/test_budget.py",),
+        target="budget ledger — the stop reason tells an unused budget from a spent one",
+        file=_BG,
+        find="        return STOP_NO_HYPOTHESIS if self.allows(ITERATION) else STOP_BUDGET\n",
+        replace="        return STOP_BUDGET\n",
+        breaks="a budget of 256 that evaluated one hypothesis reads as though all 256 were spent",
+        expect="test_budget.py::test_a_larger_iteration_budget_is_reported_unused_and_changes_nothing",
+    ),
+    Mutation(
+        id="M101",
+        tests=("tests/test_budget.py",),
+        target="budget ledger — the block arm's fetch is its own",
+        file=_MH,
+        find="            ledger.spend(budget.BLOCK_FETCH)\n",
+        replace="",
+        breaks="a recall that ran the block arm reports it never fetched",
+        expect="test_budget.py::test_the_block_arm_spends_its_own_fetch",
+    ),
+    Mutation(
+        id="M102",
+        tests=("tests/test_budget.py",),
+        target="budget ledger — a spend past the limit is refused",
+        file=_BG,
+        find="        if not self.allows(kind):\n",
+        replace="        if False:\n",
+        breaks="a stage can spend past its limit and the ledger counts it as though it fit",
+        expect="test_budget.py::test_spending_up_to_the_limit_is_counted_and_past_it_is_refused",
+    ),
+    Mutation(
+        id="M103",
+        tests=("tests/test_trace_seams.py",),
+        target="trace seams — the cut's recorded input is what the prior returned",
+        file=_MH,
+        find='        trace_rec.stage_input("cut", results)\n',
+        replace='        trace_rec.stage_input("cut", admitted)\n',
+        breaks="a replay starting at the cut would start from the order before the prior",
+        expect="test_trace_seams.py::test_only_the_stages_after_a_changed_stage_see_a_different_input",
+    ),
+    Mutation(
+        id="M104",
+        tests=("tests/test_trace_seams.py",),
+        target="trace seams — the digest keeps the order",
+        file=_RT,
+        find="    refs = [ref_of(r) for r in rows]\n",
+        replace="    refs = sorted(ref_of(r) for r in rows)\n",
+        breaks="two inputs with the same rows in another order read as the same input",
+        expect="test_trace_seams.py::test_only_the_stages_after_a_changed_stage_see_a_different_input",
+    ),
+    Mutation(
+        id="M105",
+        tests=("tests/test_trace_seams.py",),
+        target="trace seams — a traced recall names the provider set",
+        file=_MH,
+        find='    rec.set("providers", {"digest": active.digest, "slots": active.describe()})\n',
+        replace="",
+        breaks="a trace cannot say which providers produced it, so a replay cannot check it runs the same set",
+        expect="test_trace_seams.py::test_a_traced_recall_names_the_provider_set",
     ),
 ]
 
@@ -386,6 +1275,30 @@ def tree_is_clean(files: set[str]) -> bool:
     return True
 
 
+def forget_bytecode(path: Path) -> None:
+    """Remove every cached bytecode file for `path`, whatever the interpreter.
+
+    Python trusts a cached .pyc while the source's size and mtime match what the
+    .pyc recorded, and the mtime is kept in whole seconds. A mutant is usually
+    one token wide, so two mutants of one file -- or a mutant and the restored
+    original -- are often the same size, and a targeted run can finish inside a
+    second. The next run then imports the bytecode of the PREVIOUS text: a
+    mutant is judged by code it did not contain, and a CAUGHT can belong to the
+    mutant before it. Measured on a hand-run harness of this shape: two
+    one-digit mutants reported each other's failing assertion.
+    """
+    cached = Path(importlib.util.cache_from_source(str(path)))
+    for pyc in cached.parent.glob(f"{path.stem}.*.pyc"):
+        pyc.unlink(missing_ok=True)
+
+
+def restore_mutation(m: Mutation, original: str) -> None:
+    """Write the original text back, and forget the mutant's bytecode with it."""
+    path = REPO / m.file
+    path.write_text(original)
+    forget_bytecode(path)
+
+
 def apply_mutation(m: Mutation) -> str:
     """Write the mutant, returning the original text for restoration."""
     path = REPO / m.file
@@ -403,7 +1316,33 @@ def apply_mutation(m: Mutation) -> str:
             )
         text = text.replace(find, replace)
     path.write_text(text)
+    forget_bytecode(path)
     return original
+
+
+# pytest exit codes a TARGETED run may count as caught: tests failed (1), or the
+# run was interrupted, which is how a mutant that breaks an import surfaces (2).
+# "No tests collected" (5), internal (3) and usage (4) errors say nothing about
+# the mutant, so they fall through to the full suite instead of becoming CAUGHT.
+TARGETED_CAUGHT_CODES = frozenset({1, 2})
+
+
+def verdict(m: Mutation, run_tests) -> tuple[bool, str]:
+    """Whether the test suite catches the applied mutant, and which run decided.
+
+    `run_tests(paths)` runs pytest over `paths` (all tests when empty) and returns
+    its exit code. The full suite decides unless the mutant's own test files
+    are already red: an equivalent mutant must survive the WHOLE suite, so it
+    never takes the shortcut.
+    """
+    if m.tests and not m.equivalent:
+        if run_tests(list(m.tests)) in TARGETED_CAUGHT_CODES:
+            return True, "targeted"
+    return run_tests([]) != 0, "full"
+
+
+def missing_test_files(selected: list[Mutation]) -> list[str]:
+    return sorted({f"{m.id}: {t}" for m in selected for t in m.tests if not (REPO / t).is_file()})
 
 
 def main() -> int:
@@ -416,6 +1355,13 @@ def main() -> int:
         raise SystemExit(f"no mutation matches --id {args.id}")
 
     if not tree_is_clean({m.file for m in selected}):
+        return 2
+
+    missing = missing_test_files(selected)
+    if missing:
+        print("!! mutation test files do not exist — update the `tests` field:")
+        for line in missing:
+            print(f"   {line}")
         return 2
 
     print(f"Baseline: running the suite unmutated ({len(selected)} mutations queued)...")
@@ -431,11 +1377,12 @@ def main() -> int:
         original = apply_mutation(m)
         try:
             # -x: the first failure is enough to prove the mutant is caught.
-            result = run(["uv", "run", "pytest", "-q", "-x"])
+            caught, decided_by = verdict(
+                m, lambda paths: run(["uv", "run", "pytest", "-q", "-x", *paths]).returncode
+            )
         finally:
-            (REPO / m.file).write_text(original)
+            restore_mutation(m, original)
 
-        caught = result.returncode != 0
         if m.equivalent:
             # Inverted expectation: an equivalent mutant that gets CAUGHT means a
             # test is asserting the redundant layer itself, which will break the
@@ -445,6 +1392,7 @@ def main() -> int:
             status = "CAUGHT     " if caught else "SURVIVED   "
         print(f"[{status}] {m.id}  {m.target}")
         print(f"           {m.breaks}")
+        print(f"           decided by: {decided_by} run")
         if not caught and not m.equivalent:
             survived.append(m)
             print(f"           !! no test failed. Expected pin: {m.expect}")

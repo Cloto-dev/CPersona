@@ -1,11 +1,12 @@
 # Research notes
 
-The design pages say what the server builds and why. These notes hold what
-those pages rest on: the derivations, the measurements and the refutations,
-each written so that a reader can check it rather than trust it. A design
-page cites a note; a note never overrides a design page. Where a note and a
-design page disagree, the design page is wrong or the note is stale, and the
-disagreement is the finding.
+The design pages say what the server builds and why. These notes hold what those
+pages rest on: the derivations, the measurements and the refutations, each
+written so that a reader can check it rather than trust it.
+
+A design page cites a note; a note never overrides a design page. Where a note
+and a design page disagree, the design page is wrong or the note is stale, and
+the disagreement is the finding.
 
 Every note opens with a **status** line from this vocabulary:
 
@@ -30,13 +31,13 @@ through the [release lifecycle](../RELEASE_LIFECYCLE_STANDARD.md).
 
 ## How a note is written
 
-- **Assumptions first, each with its refutation.** A derivation that cannot
-  say what would prove it wrong is not one.
-- **Numbers carry their instrument.** The model, the cache, the flags, the
-  commit, and the command; a table a reader cannot regenerate is a claim,
-  not a measurement.
-- **Corrections stay visible.** When a later check tightens a number (a
-  rounded "±0.1" that was 0.21, a "0 %" that was two queries), the note says
-  so instead of silently replacing it.
-- **No internal pointers.** A note explains its reasons in full; it does not
+- **Assumptions first, each with its refutation.** A derivation that cannot say
+  what would prove it wrong is not one.
+- **Numbers carry their instrument**: the model, the cache, the flags, the
+  commit, and the command. A table a reader cannot regenerate is a claim, not a
+  measurement.
+- **Corrections stay visible.** When a later check tightens a number — a
+  rounded "±0.1" that was 0.21, a "0%" that was two queries — the note says so
+  rather than replacing it and moving on.
+- **No internal pointers.** A note explains its reasons in full. It does not
   refer to anything a reader of this site cannot open.

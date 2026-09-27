@@ -1,0 +1,136 @@
+{
+  "task": "KnowMeBench",
+  "memory_type": "Episodic",
+  "mean_ndcg_at_10": 47.4,
+  "subtasks": {
+    "event_driven/adversarial_abstention": 49.69,
+    "event_driven/information_extraction": 66.22,
+    "event_driven/mind-body_interaction": 33.74,
+    "event_driven/mnestic_trigger_analysis": 25.15,
+    "event_driven/temporal_reasoning": 36.75,
+    "flashback_intensive/adversarial_abstention": 51.36,
+    "flashback_intensive/information_extraction": 55.66,
+    "flashback_intensive/mind-body_interaction": 35.32,
+    "flashback_intensive/mnestic_trigger_analysis": 50.5,
+    "flashback_intensive/temporal_reasoning": 17.43,
+    "psychological_depth/adversarial_abstention": 61.88,
+    "psychological_depth/information_extraction": 79.78,
+    "psychological_depth/mind-body_interaction": 40.75,
+    "psychological_depth/mnestic_trigger_analysis": 44.46,
+    "psychological_depth/temporal_reasoning": 62.37
+  },
+  "num_subtasks": 15,
+  "time_s": 608.4,
+  "recall_latency_full": {
+    "n": 2162,
+    "p50_ms": 197.56,
+    "p95_ms": 453.62,
+    "p99_ms": 558.73,
+    "mean_ms": 238.59
+  },
+  "recall_latency_limit10": {
+    "n": 2162,
+    "p50_ms": 30.32,
+    "p95_ms": 58.9,
+    "p99_ms": 77.75,
+    "mean_ms": 33.33
+  },
+  "calibration": [
+    {
+      "subtasks": [
+        "event_driven/adversarial_abstention",
+        "event_driven/information_extraction",
+        "event_driven/mind-body_interaction",
+        "event_driven/mnestic_trigger_analysis",
+        "event_driven/temporal_reasoning"
+      ],
+      "corpus_size": 11995,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6828,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6214,
+        "std": 0.0566,
+        "median": 0.6187,
+        "p95": 0.7168
+      },
+      "null_admit_rate": 0.1219,
+      "pos_admit_rate": 0.8291,
+      "pos_mean": 0.7594,
+      "youden_j": 0.7073,
+      "fusion_admission_floor": 0.3414,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "flashback_intensive/adversarial_abstention",
+        "flashback_intensive/information_extraction",
+        "flashback_intensive/mind-body_interaction",
+        "flashback_intensive/mnestic_trigger_analysis",
+        "flashback_intensive/temporal_reasoning"
+      ],
+      "corpus_size": 6644,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6258,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.5431,
+        "std": 0.0603,
+        "median": 0.5403,
+        "p95": 0.6461
+      },
+      "null_admit_rate": 0.0854,
+      "pos_admit_rate": 0.7236,
+      "pos_mean": 0.6788,
+      "youden_j": 0.6382,
+      "fusion_admission_floor": 0.3129,
+      "rrf_threshold_factor": 0.5
+    },
+    {
+      "subtasks": [
+        "psychological_depth/adversarial_abstention",
+        "psychological_depth/information_extraction",
+        "psychological_depth/mind-body_interaction",
+        "psychological_depth/mnestic_trigger_analysis",
+        "psychological_depth/temporal_reasoning"
+      ],
+      "corpus_size": 8423,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.7022,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6527,
+        "std": 0.0576,
+        "median": 0.6519,
+        "p95": 0.7473
+      },
+      "null_admit_rate": 0.1936,
+      "pos_admit_rate": 0.8492,
+      "pos_mean": 0.7559,
+      "youden_j": 0.6557,
+      "fusion_admission_floor": 0.3511,
+      "rrf_threshold_factor": 0.5
+    }
+  ]
+}

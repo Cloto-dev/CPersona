@@ -114,6 +114,7 @@ async def test_do_recall_surfaces_vector_hit(monkeypatch, fake_embedding_client,
     """
     monkeypatch.setattr(M, "RECALL_MODE", recall_mode)
     monkeypatch.setattr(M, "CONFIDENCE_ENABLED", confidence)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "legacy")  # the pre-2.6.0a7 confidence ordering
     await _store(MEM_PI)
     await _store(MEM_BREAD)
     # Query identical to the stored text -> cosine ~1.0, so the quality gate keeps it

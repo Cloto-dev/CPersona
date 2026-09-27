@@ -1,0 +1,50 @@
+{
+  "task": "ToolBench",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 50.11,
+  "subtasks": {
+    ".": 50.11
+  },
+  "num_subtasks": 1,
+  "time_s": 478.3,
+  "recall_latency_full": {
+    "n": 1100,
+    "p50_ms": 398.94,
+    "p95_ms": 677.37,
+    "p99_ms": 838.91,
+    "mean_ms": 424.04
+  },
+  "recall_latency_limit10": null,
+  "calibration": [
+    {
+      "subtasks": [
+        "."
+      ],
+      "corpus_size": 13862,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.6963,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.6162,
+        "std": 0.0582,
+        "median": 0.6171,
+        "p95": 0.7098
+      },
+      "null_admit_rate": 0.0747,
+      "pos_admit_rate": 0.7487,
+      "pos_mean": 0.7799,
+      "youden_j": 0.674,
+      "fusion_admission_floor": 0.3482,
+      "rrf_threshold_factor": 0.5
+    }
+  ],
+  "accel": true,
+  "latency_note": "run with --fast acceleration; latency numbers are not representative of as-shipped recall"
+}

@@ -9,11 +9,13 @@ lazy queue dispatch.
 Accesses `vector._embedding_client` as a module attribute (set by server.main()).
 """
 
+import asyncio
 import json
 import logging
 import math
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -21,8 +23,16 @@ import httpx
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
+from cpersona import blocks
+from cpersona import budget
+from cpersona import cue
+from cpersona import excerpts
 from cpersona import health
+from cpersona import nodes
+from cpersona import propagation
+from cpersona import providers
 from cpersona import scope_stats
+from cpersona import recall_trace
 from cpersona import session
 from cpersona import update_check
 from cpersona import vector
@@ -32,12 +42,17 @@ from cpersona.config import (
     AUTOCUT_MIN_GAP_RATIO,
     AUTOCUT_MIN_RESULTS,
     CONFIDENCE_ENABLED,
+    CONFIDENCE_ORDERING,
     EPISODE_DECAY_FLOOR,
     EPISODE_DECAY_RATE,
     EPISODE_PENALTY_ENABLED,
     FTS_ENABLED,
     MAX_MEMORIES,
     MAX_METADATA_LENGTH,
+    PRIOR_AGE_ANCHOR,
+    PRIOR_AGE_FLOOR,
+    PRIOR_AGE_RATE,
+    PRIOR_FAR_WEIGHT,
     RECALL_LIBRARY_MAX_LIMIT,
     RECALL_MODE,
     REMOTE_INDEX_TIMEOUT_SECS,
@@ -66,6 +81,10 @@ from cpersona.utils import (
 from cpersona.vector import _search_vector
 
 logger = logging.getLogger(__name__)
+
+# Resolve the provider seams now, so that a selection the registry refuses stops
+# the server at import rather than failing its first recall (cpersona/providers.py).
+providers.active()
 
 #: Set once the missing-client warning below has been emitted. The condition is a
 #: property of the process, not of the row being written: the client is installed
@@ -269,6 +288,13 @@ async def do_store(
             # v2.5.2 additive: same id echo as the msg_id branch above.
             return _store_skipped("duplicate content", existing[0][0])
 
+    # Overflow tree (docs/OVERFLOW_TREE_DESIGN.md §3): whether this text runs past
+    # the embedding window decides whether its nodes are queued. Asked alongside the
+    # embedding rather than after it, so the write waits for the slower of the two
+    # requests instead of their sum. The probe never raises, so a result nobody
+    # collects (a duplicate below, or a raise out of the insert) leaves nothing to log.
+    window_probe = asyncio.ensure_future(nodes.runs_past_window(content)) if nodes.building_enabled() else None
+
     embedding_blob = None
     if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
@@ -369,6 +395,18 @@ async def do_store(
         result["truncated"] = True
     if future_timestamp and future_mode == "warn":
         result["timestamp_ahead_of_clock"] = future_timestamp
+    if window_probe is not None and await window_probe:
+        queued = await nodes.queue_build("mem", mem_id, agent_id, key)
+        if queued:
+            result["nodes"] = queued
+    # Blocks are queued for every record, not only the ones that run past the
+    # window: a short record still divides into clauses, and the build declines
+    # by itself when the division yields a single block. The gate is checked
+    # first, so a deployment that has not opted in does no work here at all.
+    if blocks.building_enabled():
+        queued = await blocks.queue_build("mem", mem_id, agent_id, key)
+        if queued:
+            result["blocks"] = queued
     return result
 
 
@@ -425,6 +463,8 @@ async def _recall_cascade(
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
+    query_vec_out: list | None = None,
 ) -> list[dict]:
     """Original cascading recall: stages fill remaining slots sequentially.
 
@@ -437,10 +477,15 @@ async def _recall_cascade(
     results: list[dict] = []
     seen_ids: set = set()
     _excl = exclude_set or set()
+    rec = recall_trace.current()
+    vector_results: list[dict] = []
+    fts_results: list[dict] = []
+    memory_rows: list[dict] = []
 
     if vector._embedding_client and query.strip():
         vector_results = await _search_vector(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, limit, channel=channel, project_id=project_id,
+            source_id=source_id, query_vec_out=query_vec_out,
         )
         for row in vector_results:
             rid = row.get("_rid", row["id"])
@@ -455,7 +500,7 @@ async def _recall_cascade(
     # source_id set.
     if FTS_ENABLED and query.strip() and (not source_id or channel):
         fts_results = await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
+            db, agent_id, query, limit, channel=channel, project_id=project_id, extra_terms=lexical_terms
         )
         for row in fts_results:
             rid = ("ep", row["id"])
@@ -468,7 +513,8 @@ async def _recall_cascade(
     remaining = max(0, limit - len(results))
     if remaining > 0:
         memory_rows = await _search_memories_keyword(
-            db, agent_id, query, remaining, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, remaining, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
         )
         for row in memory_rows:
             rid = ("mem", row["id"])
@@ -476,6 +522,12 @@ async def _recall_cascade(
                 results.append(row)
                 seen_ids.add(rid)
 
+    if rec is not None:
+        # Cascade fills stage by stage; it computes no fused score.
+        rec.arm("vector_near", vector_results, "_cosine")
+        rec.arm("episode_fts", fts_results, "_bm25")
+        rec.arm("memory_keyword", memory_rows, "_bm25")
+        rec.fusion(results, "_none")
     return results
 
 
@@ -483,31 +535,45 @@ async def _recall_rrf(
     db,
     agent_id: str,
     query: str,
-    limit: int,
+    depth: int,
     deep: bool,
     channel: str = "",
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
+    query_vec_out: list | None = None,
 ) -> list[dict]:
     """v2.4 RRF recall: run vector and FTS5 independently, merge with
     Reciprocal Rank Fusion. Avoids cascade's positional bias.
+
+    `depth` is the Recall Depth (2.6): the top-K each arm hands to the fusion.
+    It is not the response count -- `do_recall` cuts the fused list to `limit`
+    afterwards -- so the fusion may consider more rows than the caller receives.
+    The fused list is returned whole; nothing here knows the count.
     """
     k = RRF_K
     doc_map: dict[tuple, dict] = {}
     rrf_scores: dict[tuple, float] = {}
     _excl = exclude_set or set()
+    # The recall trace (docs/RECALL_PROCESS_DESIGN.md §1): each arm's list and each
+    # row's votes, recorded only when the caller asked for a trace.
+    rec = recall_trace.current()
+    votes: dict[str, dict] | None = {} if rec is not None else None
+    fts_ep_results: list[dict] = []
+    fts_mem_results: list[dict] = []
+    vector_results: list[dict] = []
+    far_results: list[dict] = []
 
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # One call to the vector retriever, as always. `far_out` collects the
         # second ranked list it produces when CPERSONA_VECTOR_REACH is set above
         # the scan window, and stays empty otherwise.
-        far_results: list[dict] = []
         vector_results = await _search_vector(
-            db, agent_id, query, limit, min_similarity=rrf_min_sim,
+            db, agent_id, query, depth, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_results,
+            far_out=far_results, query_vec_out=query_vec_out,
         )
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -516,6 +582,8 @@ async def _recall_rrf(
             if rid not in doc_map:
                 doc_map[rid] = row
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            if votes is not None:
+                votes.setdefault(f"{rid[0]}:{rid[1]}", {})["vector_near"] = 1.0 / (k + rank + 1)
 
         # The far list (CPERSONA_VECTOR_REACH, empty unless it is set above the
         # scan window) is one more ranked list, fused exactly like the others: a
@@ -525,30 +593,39 @@ async def _recall_rrf(
         # row is counted twice and the most a single row can still reach is three
         # votes — which is the per-row maximum the legacy quality gate rescales
         # its threshold by. See docs/SCAN_WINDOW_REACH_DESIGN.md §3.1.
+        #
+        # 2.6.0a7 (docs/PRIOR_FUNCTION_DESIGN.md §2): a far vote is worth
+        # CPERSONA_PRIOR_FAR_WEIGHT of a near one. At the default of 1 this is
+        # the unpriced far vote above; at 0 a far row contributes nothing.
         for rank, row in enumerate(far_results):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
             rid = row.get("_rid", ("mem", row["id"]))
             if rid not in doc_map:
                 doc_map[rid] = row
-            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            rrf_scores[rid] = rrf_scores.get(rid, 0.0) + PRIOR_FAR_WEIGHT / (k + rank + 1)
+            if votes is not None:
+                votes.setdefault(f"{rid[0]}:{rid[1]}", {})["vector_far"] = PRIOR_FAR_WEIGHT / (k + rank + 1)
 
     # Episodes lack per-user source tagging, so a per-user source_id filter
     # normally suppresses them; a channel filter (v2.4.22) scopes episodes to
     # one channel and is allowed even with source_id set (grounding path).
     if FTS_ENABLED and (not source_id or channel):
         fts_ep_results = await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
         )
         for rank, row in enumerate(fts_ep_results):
             rid = ("ep", row["id"])
             if rid not in doc_map:
                 doc_map[rid] = row
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            if votes is not None:
+                votes.setdefault(f"ep:{row['id']}", {})["episode_fts"] = 1.0 / (k + rank + 1)
 
     if FTS_ENABLED:
         fts_mem_results = await _search_memories_keyword(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
         )
         for rank, row in enumerate(fts_mem_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -557,6 +634,8 @@ async def _recall_rrf(
             if rid not in doc_map:
                 doc_map[rid] = row
             rrf_scores[rid] = rrf_scores.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            if votes is not None:
+                votes.setdefault(f"mem:{row['id']}", {})["memory_keyword"] = 1.0 / (k + rank + 1)
 
     sorted_rids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)
     results = []
@@ -564,6 +643,12 @@ async def _recall_rrf(
         row = doc_map[rid]
         row["_rrf_score"] = rrf_scores[rid]
         results.append(row)
+    if rec is not None:
+        rec.arm("vector_near", vector_results, "_cosine")
+        rec.arm("vector_far", far_results, "_cosine")
+        rec.arm("episode_fts", fts_ep_results, "_bm25")
+        rec.arm("memory_keyword", fts_mem_results, "_bm25")
+        rec.fusion(results, "_rrf_score", votes)
 
     await _append_profile_rows(db, agent_id, results)
 
@@ -593,16 +678,19 @@ async def _recall_rsf(
     db,
     agent_id: str,
     query: str,
-    limit: int,
+    depth: int,
     deep: bool,
     channel: str = "",
     exclude_set: set[str] | None = None,
     project_id: str | None = None,
     source_id: str = "",
+    lexical_terms: list[str] | None = None,
+    query_vec_out: list | None = None,
 ) -> list[dict]:
     """Relative-Score-Fusion recall: like RRF but fuse the per-query min-max
     normalized *raw* score of each channel (cosine for vector, -bm25 for FTS)
-    instead of rank.
+    instead of rank. `depth` is the Recall Depth, as in `_recall_rrf`: the
+    per-arm top-K, not the response count.
 
     RRF's rank-only fusion crushes large score margins — a rank-1 vs rank-4
     bm25 gap collapses to ~5% at K=60 — so a near-tie vector channel can
@@ -626,14 +714,18 @@ async def _recall_rsf(
     ep_raw: dict[tuple, float | None] = {}
     mem_raw: dict[tuple, float | None] = {}
     _excl = exclude_set or set()
+    rec = recall_trace.current()
+    near_rows: list[dict] = []
+    far_rows: list[dict] = []
+    ep_rows: list[dict] = []
+    mem_rows: list[dict] = []
 
     rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
-        far_rows: list[dict] = []
         near_rows = await _search_vector(
-            db, agent_id, query, limit, min_similarity=rsf_min_sim,
+            db, agent_id, query, depth, min_similarity=rsf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_rows,
+            far_out=far_rows, query_vec_out=query_vec_out,
         )
         for row in near_rows:
             if _content_excluded(row.get("content", ""), _excl):
@@ -661,18 +753,21 @@ async def _recall_rsf(
 
     # Episodes lack per-user source tagging (mirrors _recall_rrf gating).
     if FTS_ENABLED and (not source_id or channel):
-        for row in await _search_episodes_fts(
-            db, agent_id, query, limit, channel=channel, project_id=project_id
-        ):
+        ep_rows = await _search_episodes_fts(
+            db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
+        )
+        for row in ep_rows:
             rid = ("ep", row["id"])
             doc_map.setdefault(rid, row)
             bm = row.get("_bm25")
             ep_raw[rid] = -bm if bm is not None else None
 
     if FTS_ENABLED:
-        for row in await _search_memories_keyword(
-            db, agent_id, query, limit, channel=channel, project_id=project_id, source_id=source_id
-        ):
+        mem_rows = await _search_memories_keyword(
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
+        )
+        for row in mem_rows:
             if _content_excluded(row.get("content", ""), _excl):
                 continue
             rid = ("mem", row["id"])
@@ -683,15 +778,28 @@ async def _recall_rsf(
     active = [ch for ch in (vec_raw, far_raw, ep_raw, mem_raw) if ch]
     n_active = len(active) or 1
     fused: dict[tuple, float] = {}
+    votes: dict[str, dict] | None = {} if rec is not None else None
+    names = {id(vec_raw): "vector_near", id(far_raw): "vector_far", id(ep_raw): "episode_fts", id(mem_raw): "memory_keyword"}
     for ch in active:
+        # 2.6.0a7: the far channel is weighted by CPERSONA_PRIOR_FAR_WEIGHT; the
+        # divisor stays the channel count (docs/PRIOR_FUNCTION_DESIGN.md §2).
+        channel_weight = PRIOR_FAR_WEIGHT if ch is far_raw else 1.0
         for rid, w in _minmax_norm(ch).items():
-            fused[rid] = fused.get(rid, 0.0) + w
+            fused[rid] = fused.get(rid, 0.0) + w * channel_weight
+            if votes is not None:
+                votes.setdefault(f"{rid[0]}:{rid[1]}", {})[names[id(ch)]] = w * channel_weight / n_active
 
     results = []
     for rid in sorted(fused, key=fused.get, reverse=True):
         row = doc_map[rid]
         row["_rsf_score"] = fused[rid] / n_active
         results.append(row)
+    if rec is not None:
+        rec.arm("vector_near", near_rows, "_cosine")
+        rec.arm("vector_far", far_rows, "_cosine")
+        rec.arm("episode_fts", ep_rows, "_bm25")
+        rec.arm("memory_keyword", mem_rows, "_bm25")
+        rec.fusion(results, "_rsf_score", votes)
 
     await _append_profile_rows(db, agent_id, results)
 
@@ -856,6 +964,8 @@ def _apply_quality_gate(
 
     filtered = []
     stats = {"confidence": 0, "rsf": 0, "cosine": 0, "rrf": 0, "unscored": 0, "profile": 0, "blocked": 0}
+    # The recall trace records each decision with its reason; None outside a traced recall.
+    rec = recall_trace.current()
 
     for r in results:
         # Profile — gate by memory count (unchanged)
@@ -865,6 +975,8 @@ def _apply_quality_gate(
                 stats["profile"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "profile", None, 50, memory_count >= 50, "profile_small_pool")
             continue
 
         confidence = r.get("_confidence_score")
@@ -881,6 +993,8 @@ def _apply_quality_gate(
                 stats["confidence"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "confidence", confidence, conf_threshold, confidence >= conf_threshold, "below_gate")
         elif rsf is not None:
             # RSF fused scores lie in [0, 1] but not on the cosine scale: min-max
             # normalization makes them relative to the rest of this query's
@@ -893,6 +1007,8 @@ def _apply_quality_gate(
                 stats["rsf"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "rsf", rsf, rsf_threshold, rsf >= rsf_threshold, "below_gate")
         elif cosine is not None:
             cos_threshold = gate if (gate is not None and gate_signal == "cosine") else min_score
             if cosine >= cos_threshold:
@@ -900,6 +1016,8 @@ def _apply_quality_gate(
                 stats["cosine"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "cosine", cosine, cos_threshold, cosine >= cos_threshold, "below_gate")
         elif rrf is not None:
             # Calibrated gate is on the raw RRF scale (calibrated on raw _rrf_score), so
             # compare directly; otherwise rescale the cosine-scale heuristic min_score.
@@ -909,6 +1027,8 @@ def _apply_quality_gate(
                 stats["rrf"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, "rrf", rrf, rrf_threshold, rrf >= rrf_threshold, "below_gate")
         else:
             # Unscored (cascade FTS/keyword without confidence) — volume rule
             # bug-125: an empty query is a pure-recency listing with no relevance
@@ -919,6 +1039,8 @@ def _apply_quality_gate(
                 stats["unscored"] += 1
             else:
                 stats["blocked"] += 1
+            if rec is not None:
+                rec.gate_decision(r, None, None, None, pure_recency or memory_count >= 100, "unscored_volume")
 
     logger.debug(
         "quality_gate: in=%d out=%d (conf=%d rsf=%d cos=%d rrf=%d uns=%d prof=%d) min_score=%.3f count=%d",
@@ -935,6 +1057,83 @@ def _apply_quality_gate(
     )
 
     return filtered
+
+
+def _confidence_orders() -> bool:
+    """Whether the confidence score orders and gates recall (2.6.0a7).
+
+    Only under ``CPERSONA_CONFIDENCE_ORDERING=legacy``. From 2.6.0a7 the default is
+    ``fusion``: with confidence enabled, recall keeps the fusion order and the fusion
+    gate, and the confidence value is only returned beside each row. Measured on a
+    real store, confidence on made the rrf and rsf modes return identical responses
+    -- the re-sort discarded the fusion order -- while leaving answer accuracy where
+    confidence off had it (docs/PRIOR_FUNCTION_DESIGN.md §1, §5). Read at call time
+    so a test can set either global.
+    """
+    return CONFIDENCE_ENABLED and CONFIDENCE_ORDERING == "legacy"
+
+
+def _age_weight(age_hours: float) -> float:
+    """The age weight ``p_age = max(floor, 1 / (1 + age_hours * rate))``.
+
+    The same family as the time decay inside the confidence score, so an arm with
+    confidence's own rate and floor isolates the time term confidence used to apply.
+    Exactly 1.0 while CPERSONA_PRIOR_AGE_RATE is 0 (the default).
+    """
+    if PRIOR_AGE_RATE <= 0:
+        return 1.0
+    return max(PRIOR_AGE_FLOOR, 1.0 / (1.0 + max(0.0, age_hours) * PRIOR_AGE_RATE))
+
+
+def _apply_prior(
+    results: list[dict],
+    span: tuple[datetime | None, datetime | None],
+    now: datetime,
+) -> list[dict]:
+    """Order the admitted rows by fused score x p(row) (docs/PRIOR_FUNCTION_DESIGN.md §2-§4).
+
+    Called after the quality gate and autocut, before the count cut, so it moves rows
+    within what was admitted and never admits or removes one (§3). Returns ``results``
+    untouched -- the same list, in the same order -- when the age rate is 0, when
+    confidence still orders (``legacy``), when the list is not uniformly fusion-scored
+    (cascade keeps its stage order, bug-018), or when the scope has no dated row.
+
+    ``span`` is ``(oldest, newest)`` over the scope's memories. Age is measured from
+    ``newest`` (CPERSONA_PRIOR_AGE_ANCHOR=newest, the default) or from ``now``; a row
+    newer than the anchor counts as age 0, and a row without a usable timestamp is
+    placed at the middle of the scope's age range so that an unknown age cannot win
+    (the bug-207 rule the confidence score already follows). The weight is recorded on
+    each scored row as ``_prior`` for ``match_reason``.
+    """
+    if PRIOR_AGE_RATE <= 0 or not results or _confidence_orders():
+        return results
+    scored = [r for r in results if r.get("id") != -1]
+    key = None
+    for candidate in ("_rrf_score", "_rsf_score"):
+        if scored and all(r.get(candidate) is not None for r in scored):
+            key = candidate
+            break
+    oldest, newest = span
+    if key is None or newest is None:
+        return results
+    width_hours = max(0.0, (newest - oldest).total_seconds() / 3600) if oldest else 0.0
+    if PRIOR_AGE_ANCHOR == "now":
+        anchor = now
+        unknown_age = max(0.0, (now - newest).total_seconds() / 3600) + width_hours / 2.0
+    else:
+        anchor = newest
+        unknown_age = width_hours / 2.0
+    for r in scored:
+        ts = _parse_timestamp_utc(r.get("timestamp") or "")
+        age = (anchor - ts).total_seconds() / 3600 if ts else unknown_age
+        r["_prior"] = _age_weight(age)
+    # Stable, so rows the weight leaves tied keep the fusion order; the profile
+    # sentinel sinks, as in the episode-penalty re-sort.
+    results.sort(
+        key=lambda r: r[key] * r["_prior"] if r.get("id") != -1 else float("-inf"),
+        reverse=True,
+    )
+    return results
 
 
 def _episode_boundary_factor(
@@ -1210,7 +1409,9 @@ async def _apply_recall_scoring(
     # confidence-off the backfill is a no-op — nothing downstream reads _cosine
     # in a way that would change ordering, and materialising one would perturb
     # `match_reason.cosine` and `_gate_score`.
-    if CONFIDENCE_ENABLED:
+    # 2.6.0a7: the backfill exists to give the confidence score and the confidence
+    # gate a real cosine, so it runs only where confidence still orders and gates.
+    if _confidence_orders():
         await _backfill_cosines(db, results, query, project_id, channel)
 
     if CONFIDENCE_ENABLED:
@@ -1288,6 +1489,9 @@ async def _apply_recall_scoring(
                 if _is_episode_result(r):
                     continue
                 factor = _episode_boundary_factor(r.get("timestamp"), episode_boundary_ts)
+                trace_rec = recall_trace.current()
+                if trace_rec is not None:
+                    trace_rec.penalty(r, factor)
                 if factor < 1.0:
                     penalized = True
                     if "_cosine" in r:
@@ -1302,7 +1506,7 @@ async def _apply_recall_scoring(
             # ignored by output order and downstream truncation). Re-sort here for
             # homogeneous fusion-ordered lists. Cascade results (no fusion score on
             # every row) intentionally keep stage order — bug-018 doctrine.
-            if penalized and not CONFIDENCE_ENABLED:
+            if penalized and not _confidence_orders():
                 # bug-126: a profile injection row (id == -1) carries no fusion score, so the
                 # bare all(...) below saw None and skipped the re-sort whenever a profile was
                 # present — silently defeating the bug-115 penalty re-order under default config.
@@ -1314,7 +1518,7 @@ async def _apply_recall_scoring(
                         results.sort(key=lambda r, k=score_key: r.get(k, float("-inf")), reverse=True)
                         break
 
-    if CONFIDENCE_ENABLED:
+    if _confidence_orders():
         for r in results:
             ts = r.get("timestamp", "")
             raw_cos = r.get("_cosine")
@@ -1340,6 +1544,373 @@ async def _apply_recall_scoring(
     return results, time_range_hours, recall_counts, newest_age_hours
 
 
+def _propagation_applies(requested: bool, query: str) -> bool:
+    """Whether a recall runs the propagation seat: asked for, a fusion mode, a real query.
+
+    The cascade fuses nothing, so it has no deeper order to draw a candidate from,
+    and an empty query is a recency listing with no first row to follow.
+    """
+    return bool(requested) and RECALL_MODE in {"rrf", "rsf"} and bool(query.strip())
+
+
+async def _propagation_seat_rows(
+    p,
+    ledger: budget.Ledger,
+    window: list[dict],
+    present: set,
+    *,
+    agent_id: str,
+    query: str,
+    depth: int,
+    limit: int,
+    deep: bool,
+    channel: str,
+    exclude_set: set[str],
+    project_id: str | None,
+    source_id: str,
+    lexical_terms: list[str] | None,
+    gate,
+    gate_signal,
+    effective_min: float,
+    memory_count: int,
+    pure_recency: bool,
+    prior_span,
+) -> tuple[list[dict], dict]:
+    """The propagation seat (cpersona/propagation.py): the row, if any, that takes it.
+
+    The same recall is ranked again at propagation.DEPTH -- the ordinary arms, the
+    scoring, the gate, autocut and the prior, exactly as the window was -- and the
+    rows of that order not already in the answer are the candidates. The Core
+    decides which rows are eligible and how many places there are; the provider in
+    the propagation_selector slot only chooses among them. Nothing here is recorded
+    on the trace except the note it returns: the deeper ranking is the seat's own,
+    and the trace's arms, fusion and gate stay the answer's.
+    """
+
+    def rid_of(r: dict) -> tuple:
+        return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
+
+    ledger.spend(budget.PROPAGATION_FETCH)
+    deeper = _clamp_limit(max(propagation.DEPTH, depth), RECALL_LIBRARY_MAX_LIMIT)
+    anchor_row = next((r for r in window if isinstance(r.get("id"), int) and r["id"] > 0), None)
+    note: dict = {"policy": propagation.POLICY, "depth": deeper, "candidates": 0, "seated": []}
+    if anchor_row is None:
+        return [], note
+    with recall_trace.suspended():
+        async with connection() as db:
+            order = await p.fusion.retrieve(
+                db, agent_id=agent_id, query=query, depth=deeper, limit=limit, deep=deep,
+                channel=channel, exclude_set=exclude_set, project_id=project_id,
+                source_id=source_id, query_vec_out=[], lexical_terms=lexical_terms,
+            )
+            order, *_ = await p.scoring.score(
+                db, agent_id, order, deep, project_id=project_id, channel=channel, query=query
+            )
+            order = _apply_quality_gate(
+                order, effective_min, memory_count, gate=gate, gate_signal=gate_signal,
+                pure_recency=pure_recency,
+            )
+            if AUTOCUT_ENABLED:
+                order = _autocut(order)
+            admitted = list(order)
+            order = p.prior.apply(order, prior_span, datetime.now(timezone.utc))
+            providers.check_reorder("prior.apply", admitted, order)
+            candidates = [
+                r for r in order
+                if isinstance(r.get("id"), int) and r["id"] > 0 and rid_of(r) not in present
+            ]
+            note["candidates"] = len(candidates)
+            if not candidates:
+                return [], note
+            wanted = {("mem", "memories"): [], ("ep", "episodes"): []}
+            for r in [anchor_row, *candidates]:
+                kind = rid_of(r)[0]
+                wanted[(kind, "memories" if kind == "mem" else "episodes")].append(r["id"])
+            blobs: dict[tuple, bytes] = {}
+            for (kind, table), ids in wanted.items():
+                if not ids:
+                    continue
+                marks = ",".join("?" * len(ids))
+                async with db.execute(
+                    f"SELECT id, embedding FROM {table} WHERE agent_id = ? AND id IN ({marks})",
+                    (agent_id, *ids),
+                ) as cur:
+                    for row_id, blob in await cur.fetchall():
+                        blobs[(kind, row_id)] = blob
+    anchor = propagation.unit(blobs.get(rid_of(anchor_row)))
+    if anchor is None:
+        return [], note
+    vectors = {}
+    for i, r in enumerate(candidates):
+        vec = propagation.unit(blobs.get(rid_of(r)), anchor.size)
+        if vec is not None:
+            vectors[i] = vec
+    seated = p.propagation_selector.seat(candidates, anchor, vectors, propagation.SEATS)
+    providers.check_seats(seated, candidates, propagation.SEATS, stage="propagation_selector.seat")
+    cosine_rank = propagation.ranks(candidates, anchor, vectors)
+    position = {id(r): i for i, r in enumerate(candidates)}
+    for r in seated:
+        i = position[id(r)]
+        r["_propagation_seat"] = True
+        r["_propagation_fused_rank"] = i + 1
+        r["_propagation_cosine_rank"] = cosine_rank[i]
+    note["anchor"] = recall_trace.ref_of(anchor_row)
+    note["seated"] = [
+        {"ref": recall_trace.ref_of(r), "fused_rank": r["_propagation_fused_rank"],
+         "cosine_rank": r["_propagation_cosine_rank"]}
+        for r in seated
+    ]
+    return seated, note
+
+
+def _recall_depth(limit: int) -> int:
+    """Recall Depth for a response count of `limit` (2.6, "Depth is not count").
+
+    `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)`, clamped to the library ceiling.
+    Read from `config` at call time so a process can be pointed at a floor
+    without a restart of the module graph (tests do this; an operator changes
+    the env and restarts). The floor never lowers the depth below the count:
+    a caller asking for 200 rows still gets a fusion at least 200 deep.
+    """
+    return _clamp_limit(max(limit, config.RECALL_DEPTH_FLOOR), RECALL_LIBRARY_MAX_LIMIT)
+
+
+async def _block_reserved_rows(
+    db,
+    hits: list,
+    agent_id: str,
+    *,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
+    exclude_set: set[str],
+    wanted: int,
+) -> list[dict]:
+    """Hydrate the records the block arm reached, best block first (§4, §5).
+
+    The block index is not the authority on what a caller may see. Its rows
+    carry a copy of their parent's isolation axes so the Hamming cut is not
+    spent on rows that will be dropped, and this re-applies the real predicate
+    against the record tables: a row the copies admitted and the authority does
+    not is dropped here, fail-closed, and the reservation goes unfilled rather
+    than being filled with it.
+
+    The caller's other restrictions apply exactly as they do to every other arm:
+    a source-id prefix filters memories, and it suppresses episodes unless a
+    channel is also set, because episodes carry no per-user source tag. An
+    excluded content is excluded here too.
+    """
+    mem_ids = [h.parent_id for h in hits if h.kind == "mem"]
+    ep_ids = [h.parent_id for h in hits if h.kind == "ep"]
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    src = source_id_where(source_id)
+
+    mem_rows = await vector._fetch_rows_by_id(
+        db,
+        "SELECT id, msg_id, content, source, timestamp FROM memories "
+        f"WHERE id IN ({{ph}}){iso.and_clause}{src.and_clause}",
+        mem_ids,
+        (*iso.params, *src.params),
+    )
+    # The episode rule mirrors the fused arms: no per-user source tag exists, so
+    # a source-scoped recall sees episodes only when a channel scopes them too.
+    ep_rows = {}
+    if ep_ids and (not source_id or channel):
+        ep_rows = await vector._fetch_rows_by_id(
+            db,
+            "SELECT id, summary, start_time, resolved, created_at FROM episodes "
+            f"WHERE id IN ({{ph}}){iso.and_clause}",
+            ep_ids,
+            iso.params,
+        )
+
+    out: list[dict] = []
+    for hit in hits:
+        if len(out) >= wanted:
+            break
+        if hit.kind == "mem":
+            row = mem_rows.get(hit.parent_id)
+            if row is None or _content_excluded(row[2] or "", exclude_set):
+                continue
+            built = {
+                "id": row[0],
+                "msg_id": row[1],
+                "content": row[2],
+                "source": row[3],
+                "timestamp": row[4],
+                "_rid": ("mem", row[0]),
+            }
+        else:
+            row = ep_rows.get(hit.parent_id)
+            if row is None:
+                continue
+            built = {
+                "id": row[0],
+                "content": f"[Episode] {row[1]}",
+                "source": {"System": "episode"},
+                "timestamp": episode_timestamp(row[2], row[4]),
+                "_rid": ("ep", row[0]),
+                "_resolved": bool(row[3]),
+            }
+        # Why this row is here, carried on the row and rendered in the response.
+        # It is deliberately not a score: no number from this arm reaches the
+        # quality gate, and one that appeared beside the gate's own signals would
+        # be read as comparable to them.
+        built["_block_distance"] = hit.distance
+        built["_block_index"] = hit.block_index
+        built["_block_order"] = "hamming" if hit.cosine is None else "vector"
+        out.append(built)
+    return out
+
+
+async def _episode_rows(db, iso, ranked: list[tuple[int, float | None]]) -> list[dict]:
+    """Episode ids, in the given order, as recall rows (the shape every arm returns)."""
+    payload = await vector._fetch_rows_by_id(
+        db,
+        f"SELECT id, summary, start_time, resolved, created_at FROM episodes e WHERE id IN ({{ph}}){iso.and_clause}",
+        [ep_id for ep_id, _ in ranked],
+        tuple(iso.params),
+    )
+    out = []
+    for ep_id, score in ranked:
+        row = payload.get(ep_id)
+        if row is None:
+            continue
+        built = {
+            "id": ep_id,
+            "_rid": ("ep", ep_id),
+            "content": f"[Episode] {row[1]}",
+            "source": {"System": "episode"},
+            "timestamp": episode_timestamp(row[2], row[4]),
+            "_resolved": bool(row[3]),
+        }
+        if score is not None:
+            built["_cosine"] = score
+        out.append(built)
+    return out
+
+
+async def _search_cue_arm(
+    db,
+    agent_id: str,
+    query: str,
+    depth: int,
+    window: tuple[datetime, datetime],
+    *,
+    channel: str,
+    project_id: str | None,
+    source_id: str,
+    exclude_set: set[str],
+    query_vec: list,
+    lexical_terms: list[str] | None = None,
+) -> list[dict]:
+    """The cue arm (docs/RECALL_PROCESS_DESIGN.md §2.2): the memories and episodes whose
+    time falls in `window`, ranked against the query.
+
+    Vector and keyword search over the period only, each to `depth`, merged into one
+    ranked list by reciprocal rank. The list orders rows for the bounded move and the
+    held seat; none of its numbers reaches a fused score or the gate. The vector half
+    reuses the query vector the ordinary vector arm embedded (`query_vec`), so a cue
+    costs no second embedding; where no local vector was produced it is empty and the
+    arm is keyword only. Isolation and the source filter are the recall's own; an
+    episode carries no per-user source, so with a source filter episodes are searched
+    only when a channel also scopes them, as in the ordinary arms (bug-080).
+
+    Episodes are searched since cued-v0.2 (§2.10): searching memories only lifted the
+    other memories of a period past an episode that held the answer.
+    """
+    start, end = (cue.sql_instant(w) for w in window)
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    src = source_id_where(source_id)
+    in_window = "datetime(timestamp) >= datetime(?) AND datetime(timestamp) < datetime(?)"
+    lists: list[list[dict]] = []
+
+    if query_vec and query.strip():
+        import numpy as np
+
+        qv = np.array(query_vec[0], dtype=np.float32)
+        survivors = await vector._chunked_cosine_scan(
+            db,
+            f"""SELECT id, embedding FROM memories
+               WHERE {iso.clause} AND embedding IS NOT NULL{src.and_clause} AND {in_window}
+               ORDER BY created_at DESC, id ASC
+               LIMIT ?""",
+            (*iso.params, *src.params, start, end, MAX_MEMORIES),
+            qv,
+            len(qv),
+            vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR,
+            depth,
+        )
+        ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
+        payload = await vector._fetch_rows_by_id(
+            db,
+            f"SELECT id, msg_id, content, source, timestamp FROM memories WHERE id IN ({{ph}})"
+            f"{iso.and_clause}{src.and_clause}",
+            [mem_id for _, mem_id, _ in ranked],
+            (*iso.params, *src.params),
+        )
+        lists.append([
+            {"id": mem_id, "_rid": ("mem", mem_id), "_cosine": score, "msg_id": payload[mem_id][1],
+             "content": payload[mem_id][2], "source": payload[mem_id][3], "timestamp": payload[mem_id][4]}
+            for _, mem_id, score in ranked
+            if mem_id in payload
+        ])
+
+    # An empty query has no ranking to offer, so the keyword half returns the period's
+    # newest records, as the ordinary recall does for an empty query.
+    if FTS_ENABLED or not query.strip():
+        keyword = await _search_memories_keyword(
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms, window=(start, end),
+        )
+        lists.append([{**row, "_rid": ("mem", row["id"])} for row in keyword])
+
+    if not source_id or channel:
+        ep_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
+        if query_vec and query.strip():
+            import numpy as np
+
+            qv = np.array(query_vec[0], dtype=np.float32)
+            survivors = await vector._chunked_cosine_scan(
+                db,
+                f"""SELECT e.id, e.embedding FROM episodes e
+                   WHERE {ep_iso.clause} AND e.embedding IS NOT NULL{_EPISODE_IN_WINDOW}
+                   ORDER BY e.created_at DESC, e.id ASC
+                   LIMIT ?""",
+                (*ep_iso.params, start, end, MAX_MEMORIES),
+                qv,
+                len(qv),
+                vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR,
+                depth,
+            )
+            ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
+            lists.append(await _episode_rows(db, ep_iso, [(ep_id, score) for _, ep_id, score in ranked]))
+        if FTS_ENABLED and query.strip():
+            lists.append(await _search_episodes_fts(
+                db, agent_id, query, depth, channel=channel, project_id=project_id,
+                extra_terms=lexical_terms, window=(start, end),
+            ))
+        elif not query.strip():
+            rows_ = await db.execute_fetchall(
+                f"""SELECT e.id FROM episodes e WHERE {ep_iso.clause}{_EPISODE_IN_WINDOW}
+                   ORDER BY datetime(COALESCE(NULLIF(e.start_time, ''), e.created_at)) DESC, e.id ASC
+                   LIMIT ?""",
+                (*ep_iso.params, start, end, depth),
+            )
+            lists.append(await _episode_rows(db, ep_iso, [(r[0], None) for r in rows_]))
+
+    votes: dict[tuple, float] = {}
+    rows: dict[tuple, dict] = {}
+    for ranked_list in lists:
+        for rank, row in enumerate(ranked_list):
+            if _content_excluded(row.get("content", ""), exclude_set):
+                continue
+            rows.setdefault(row["_rid"], row)
+            votes[row["_rid"]] = votes.get(row["_rid"], 0.0) + 1.0 / (cue.RANK_CONSTANT + rank)
+    ordered = sorted(votes, key=lambda rid: -votes[rid])  # stable: first-seen breaks ties
+    return [rows[rid] for rid in ordered[:depth]]
+
+
 async def do_recall(
     agent_id: str,
     query: str,
@@ -1350,6 +1921,108 @@ async def do_recall(
     project_id: str | None = None,
     source_id: str = "",
     session_key: str = "",
+    lexical_terms: list[str] | None = None,
+    excerpt_chars: int = 0,
+    trace: bool = False,
+    time_cue: dict | None = None,
+    iteration_budget: int | None = None,
+    propagation_seat: bool = False,
+) -> dict:
+    """Recall, optionally returning the recall trace (docs/RECALL_PROCESS_DESIGN.md §1).
+
+    Without ``trace`` this is exactly ``_do_recall``. With it, a recorder is active for
+    the duration of the call and the response carries ``trace``: references, ranks,
+    scores and reasons per stage, never stored text. The recall itself is unchanged.
+
+    ``time_cue`` (§2) says when the answer was stored, with a confidence; see
+    ``cpersona/cue.py``. A cue that cannot be read is refused with ``error`` and no
+    messages rather than ignored, so a caller never believes a cue it did not send
+    was applied.
+
+    ``iteration_budget`` is how many hypotheses the recall may evaluate on the rows
+    it holds (cpersona/budget.py); None takes the default. It is a library
+    argument, not a tool argument: a recall evaluates one hypothesis today, and a
+    traced recall reports what was requested, what was evaluated and why it stopped.
+
+    ``propagation_seat`` holds one more place after the window for the row a deeper
+    ranking finds nearest the answer's first row (cpersona/propagation.py). It is a
+    library argument the ``recall`` tool sets from CPERSONA_RECALL_PROPAGATION_SEAT;
+    reconstruct and recall_with_context never pass it, so it changes only the tool
+    it was measured on. It applies to the fusion modes and to a non-blank query.
+    """
+    propagation_seat = _propagation_applies(propagation_seat, query)
+    try:
+        ledger = budget.Ledger.for_recall(iteration_budget, propagation=propagation_seat)
+    except ValueError as exc:
+        return error_response(str(exc), messages=[])
+    # The providers this recall runs with, read once, here: a set installed while
+    # it runs applies to the recalls that start after it (cpersona/providers.py).
+    active = providers.active()
+    try:
+        parsed_cue = active.cue_interpreter.parse(time_cue)
+    except cue.TimeCueError as exc:
+        return error_response(str(exc), messages=[])
+    kwargs = dict(
+        deep=deep, channel=channel, exclude_contents=exclude_contents, project_id=project_id,
+        source_id=source_id, session_key=session_key, lexical_terms=lexical_terms,
+        excerpt_chars=excerpt_chars, **({"time_cue": parsed_cue} if parsed_cue is not None else {}),
+        providers_=active,
+        ledger_=ledger,
+        **({"propagation_seat": True} if propagation_seat else {}),
+    )
+    if not trace:
+        return await _do_recall(agent_id, query, limit, **kwargs)
+    from cpersona import __version__
+    from cpersona import utils as _utils
+
+    rec = recall_trace.TraceRecorder()
+    rec.set("policy", {
+        "scoring": _utils.SCORING_VERSION,
+        "process": cue.POLICY if parsed_cue is not None else recall_trace.PROCESS_SINGLE_PASS,
+        **({"propagation": propagation.POLICY} if propagation_seat else {}),
+    })
+    rec.set("server_version", __version__)
+    rec.set("providers", {"digest": active.digest, "slots": active.describe()})
+    rec.set("scope", {"agent_id": agent_id, "project_id": project_id, "channel": channel, "source_id": source_id})
+    rec.set("request", {
+        "limit": limit, "deep": deep, "mode": RECALL_MODE,
+        "confidence_enabled": CONFIDENCE_ENABLED, "confidence_ordering": CONFIDENCE_ORDERING,
+        "prior": {"far_weight": PRIOR_FAR_WEIGHT, "age_rate": PRIOR_AGE_RATE,
+                  "age_floor": PRIOR_AGE_FLOOR, "age_anchor": PRIOR_AGE_ANCHOR},
+        "episode_penalty": EPISODE_PENALTY_ENABLED,
+        **({"time_cue": parsed_cue.echo()} if parsed_cue is not None else {}),
+        **({"propagation_seat": True} if propagation_seat else {}),
+    })
+    rec.set("config", {
+        "embedding_mode": config.EMBEDDING_MODE, "embedding_model": config.EMBEDDING_MODEL, "scan_window": MAX_MEMORIES,
+        "vector_reach": config.VECTOR_REACH, "vector_far_limit": config.VECTOR_FAR_LIMIT,
+        "fused_gate_enabled": config.FUSED_GATE_ENABLED, "autocut_enabled": AUTOCUT_ENABLED,
+    })
+    token = rec.activate()
+    try:
+        result = await _do_recall(agent_id, query, limit, **kwargs)
+    finally:
+        rec.deactivate(token)
+    result["trace"] = rec.finish()
+    return result
+
+
+async def _do_recall(
+    agent_id: str,
+    query: str,
+    limit: int,
+    deep: bool = False,
+    channel: str = "",
+    exclude_contents: list | None = None,
+    project_id: str | None = None,
+    source_id: str = "",
+    session_key: str = "",
+    lexical_terms: list[str] | None = None,
+    excerpt_chars: int = 0,
+    time_cue: cue.TimeCue | None = None,
+    providers_: providers.Providers | None = None,
+    ledger_: budget.Ledger | None = None,
+    propagation_seat: bool = False,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -1368,6 +2041,19 @@ async def do_recall(
     ``source_id`` is non-empty — unless a ``channel`` filter (v2.4.22) is also
     set, in which case channel-scoped episodes are still recalled (the
     session-start grounding path).
+
+    lexical_terms (2.6): additional terms for the two lexical arms ONLY -- the
+    episode FTS and the memory keyword search. The vector arm, the scoring and
+    the gate see ``query`` unchanged. Reconstructive recall passes the declared
+    names and aliases of the entities a query mentions here
+    (docs/ASSOCIATIVE_MEMORY_DESIGN.md §3); the ``recall`` tool never does, and
+    with ``None`` or an empty list every statement is the one it was before.
+
+    excerpt_chars (2.6): when positive, a row whose content is longer than the
+    preview tier (config.RECALL_PREVIEW_CHARS) also carries ``excerpt`` — the
+    part of the record that matched the query, at most this many characters —
+    and ``excerpt_basis`` (cpersona/excerpts.py). Zero, the default, leaves every
+    row exactly as before: the MCP boundary asks for it, library callers do not.
     """
     # bug-032: clamp the caller-supplied limit like the list handlers do. A
     # negative limit otherwise flows to SQLite as `LIMIT -1` (unbounded full-corpus
@@ -1386,6 +2072,14 @@ async def do_recall(
     # looks, and how many rows one call may materialise — and while they shared a
     # constant, widening the window for a larger corpus widened this bound by the
     # same factor without anyone choosing to.
+    started = time.perf_counter()
+    # The set do_recall read at its start; read here only for a direct library call.
+    p = providers_ if providers_ is not None else providers.active()
+    propagation_seat = _propagation_applies(propagation_seat, query)
+    # What this recall may spend, declared before it spends any (cpersona/budget.py).
+    ledger = ledger_ if ledger_ is not None else budget.Ledger.for_recall(propagation=propagation_seat)
+    # Each stage's input is recorded on a traced recall (recall_trace.stage_input).
+    trace_rec = recall_trace.current()
     requested = limit
     limit = _clamp_limit(limit, RECALL_LIBRARY_MAX_LIMIT)
     if requested > limit:
@@ -1400,6 +2094,16 @@ async def do_recall(
             limit,
         )
 
+    # 2.6 (Depth is not count): `limit` is how many rows come back; `depth` is
+    # how far the fusion digs -- the per-arm top-K. They were one number, and the
+    # coupling cost accuracy in a measurable way (a limit of 5 put rows
+    # structurally out of reach at every gate value, see Goal-level notes in
+    # docs/RELIABLE_RECALL_2_6.md section 4). At the default floor the two are
+    # still equal, so nothing about today's ranking moves until the floor does.
+    # The cascade path is untouched: it fills `limit` slots stage by stage and
+    # fuses nothing, so a depth has no list to deepen there.
+    depth = _recall_depth(limit) if RECALL_MODE in {"rrf", "rsf"} and query.strip() else limit
+
     # Detect the static degraded case (mode=none) before dispatch; the runtime fault case
     # is observed at the embedding boundary in vector._search_vector. See health.py.
     health.observe_config()
@@ -1408,30 +2112,49 @@ async def do_recall(
     if exclude_contents:
         exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
 
+    # Filled by whichever fusion ran, with the one vector it embedded. Empty
+    # wherever no local vector was produced -- no client, a remote search that
+    # answered for itself, an embed that failed -- and the block arm reads that
+    # emptiness as "nothing to rank on" rather than embedding the query again.
+    query_vec_out: list = []
     async with connection() as db:
-        if RECALL_MODE == "rrf" and query.strip():
-            results = await _recall_rrf(
-                db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
-            )
-        elif RECALL_MODE == "rsf" and query.strip():
-            results = await _recall_rsf(
-                db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
-            )
-        else:
-            results = await _recall_cascade(
-                db, agent_id, query, limit, deep, channel, exclude_set,
-                project_id=project_id, source_id=source_id,
-            )
+        ledger.spend(budget.ORDINARY_FETCH)
+        results = await p.fusion.retrieve(
+            db, agent_id=agent_id, query=query, depth=depth, limit=limit, deep=deep,
+            channel=channel, exclude_set=exclude_set, project_id=project_id,
+            source_id=source_id, query_vec_out=query_vec_out, lexical_terms=lexical_terms,
+        )
+        if trace_rec is not None:
+            trace_rec.stage_input("scoring", results)
+
+        # Every row an ordinary arm reached, whatever the gate later decides: the
+        # cue's held seat is only for a record no other arm found (§2.4), so a row
+        # the gate refused cannot come back through it.
+        reached = {r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id")) for r in results}
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
         # produces the exact same per-row gate score the runtime gate keys on).
         # time_range_hours / recall_counts are reused below for the response metadata + the
         # recall-count update, so they are returned rather than recomputed.
-        results, time_range_hours, recall_counts, newest_age_hours = await _apply_recall_scoring(
+        results, time_range_hours, recall_counts, newest_age_hours = await p.scoring.score(
             db, agent_id, results, deep, project_id=project_id, channel=channel, query=query
         )
+        trace_rec = recall_trace.current()
+        if trace_rec is not None:
+            trace_rec.data["request"]["depth"] = depth
+            trace_rec.mark("retrieve_and_score")
+
+        # 2.6.0a7: the span the age weight is measured against, read inside this
+        # connection (cached per scope). Nothing is read while the weight is off.
+        prior_span: tuple[datetime | None, datetime | None] = (None, None)
+        if PRIOR_AGE_RATE > 0 and not _confidence_orders():
+            span_min, span_max = await scope_stats.get_span(
+                db, agent_id, project_id=project_id, channel=channel
+            )
+            prior_span = (
+                _parse_timestamp_utc(span_min) if span_min else None,
+                _parse_timestamp_utc(span_max) if span_max else None,
+            )
 
         # bug-216: count the pool the gate actually GOVERNS. The heuristic threshold was
         # computed over `memories` alone but applied to every row the retrievers found —
@@ -1446,6 +2169,91 @@ async def do_recall(
             db, agent_id, project_id=project_id, channel=channel
         )
         memory_count = pool_memories + pool_episodes
+
+        # The block arm (docs/BLOCK_REACH_DESIGN.md §4-§5). It runs beside the
+        # arms above and is fused with none of them: its hits are admitted by
+        # reservation after the gate, so no score from here reaches a gate that
+        # was calibrated on another population. Hydrated inside this connection
+        # and filtered after the cut, because what the gate will admit is not
+        # known yet and a hit whose record the gate admits anyway is not a
+        # reserved row -- it is a row that was already there.
+        block_rows: list[dict] = []
+        if blocks.retrieval_enabled() and query.strip() and query_vec_out:
+            ledger.spend(budget.BLOCK_FETCH)
+            block_rows = await p.block_candidates.reserved_rows(
+                db,
+                query_vec_out[0],
+                agent_id=agent_id,
+                project_id=project_id,
+                channel=channel,
+                source_id=source_id,
+                exclude_set=exclude_set,
+                limit=limit,
+            )
+            if trace_rec is not None:
+                trace_rec.arm("block", block_rows, "_block_distance")
+
+        # The time cue (docs/RECALL_PROCESS_DESIGN.md §2): the cue arm searches the
+        # period, and if it finds nothing the loop suspects the period is wrong and
+        # widens it once, running only the cue arm again. The ordinary arms above are
+        # not run a second time.
+        cue_rows: list[dict] = []
+        cue_note: dict | None = None
+        cue_ignored: dict | None = None
+        if time_cue is not None:
+            span_min, span_max = await scope_stats.get_span(
+                db, agent_id, project_id=project_id, channel=channel
+            )
+            span = (cue.utc(span_min), cue.utc(span_max))
+            now = datetime.now(timezone.utc)
+            confidence = time_cue.confidence
+            stages: list[dict] = []
+            suspected: list[dict] = []
+            if p.cue_interpreter.recent_only(time_cue, now, span):
+                # §2.8: a cue that points only at today or later is not used. The rows
+                # are exactly those of a recall without one; the response says so.
+                own = p.envelope_planner.period(time_cue, "sure", now, span)
+                cue_ignored = {"reason": "recent_only", "period": [w.isoformat() for w in own]}
+                if trace_rec is not None:
+                    trace_rec.set("cue_ignored", dict(cue_ignored))
+            while cue_ignored is None:
+                ledger.spend(budget.CUE_STAGE)
+                window = p.envelope_planner.period(time_cue, confidence, now, span)
+                if window is not None:
+                    cue_rows = await p.cue_candidates.search(
+                        db, agent_id=agent_id, query=query, depth=depth, window=window,
+                        channel=channel, project_id=project_id, source_id=source_id,
+                        exclude_set=exclude_set, query_vec=query_vec_out, lexical_terms=lexical_terms,
+                    )
+                stage = {
+                    "stage": len(stages),
+                    "searched": "all arms and the cue period" if not stages else "the cue period only",
+                    "confidence": confidence,
+                    "period": [w.isoformat() for w in window] if window is not None else None,
+                    "found": len(cue_rows),
+                    "next": None,
+                }
+                stages.append(stage)
+                if trace_rec is not None:
+                    trace_rec.arm("cue" if len(stages) == 1 else f"cue_stage_{len(stages) - 1}", cue_rows, "_cosine")
+                if cue_rows or not ledger.allows(budget.CUE_STAGE):
+                    break
+                wider = p.envelope_planner.wider(confidence)
+                suspected.append({"stage": stage["stage"], "code": "CANDIDATE_MISS",
+                                  "reason": "the cue period holds no candidate"})
+                if wider is None:
+                    stage["next"] = "stop: no wider period (a vague cue widens to no period)"
+                    break
+                if (time.perf_counter() - started) * 1000 > config.RECALL_CUE_TIME_LIMIT_MS:
+                    stage["next"] = "stop: time limit"
+                    break
+                stage["next"] = f"widen to the {wider} margin"
+                confidence = wider
+            if cue_ignored is None:
+                cue_note = {"stages": stages, "suspected": suspected, "confidence": confidence}
+                if trace_rec is not None:
+                    trace_rec.set("stages", [dict(st) for st in stages])
+                    trace_rec.set("suspected", suspected)
     min_score = _adaptive_min_score(memory_count)
     effective_min = min_score * 0.5 if deep else min_score
     # v2.4.26/27: use the calibrated gate for whichever branch is active.
@@ -1460,6 +2268,8 @@ async def do_recall(
         if gate is not None and deep:
             gate = gate * 0.5  # mirror the deep relaxation of min_score
     pre_gate = results
+    if trace_rec is not None:
+        trace_rec.stage_input("gate", results)
     results = _apply_quality_gate(
         results,
         effective_min,
@@ -1535,10 +2345,124 @@ async def do_recall(
     # (confidence 1.0) the gap between it and the rescued rows is the whole scale: autocut
     # cuts at index 1 and the response says gate_fallback=true while containing nothing but
     # the profile row. Skip it whenever the rescue fired; the gate already did the cutting.
+    trace_rec = recall_trace.current()
+    if trace_rec is not None:
+        trace_rec.gate_summary(
+            signal=gate_signal, calibrated=gate, heuristic_min=effective_min,
+            origin="heuristic" if gate is None else "calibrated",
+            pool=memory_count, gate_fallback=gate_fallback,
+        )
+        trace_rec.mark("gate")
     if AUTOCUT_ENABLED and not gate_fallback:
+        before_autocut = results
+        if trace_rec is not None:
+            trace_rec.stage_input("autocut", results)
         results = _autocut(results)
+        if trace_rec is not None:
+            trace_rec.autocut(before_autocut, results)
+
+    # 2.6.0a7: the prior orders what the gate and autocut admitted; it never
+    # admits or removes (docs/PRIOR_FUNCTION_DESIGN.md §3).
+    if trace_rec is not None:
+        trace_rec.stage_input("prior", results)
+    admitted = list(results)
+    results = p.prior.apply(results, prior_span, datetime.now(timezone.utc))
+    providers.check_reorder("prior.apply", admitted, results)
+
+    def _rid_of(r: dict) -> tuple:
+        return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
+
+    cue_rank = {_rid_of(r): c for c, r in enumerate(cue_rows)}
+    if trace_rec is not None:
+        trace_rec.stage_input("cut", results)
+        trace_rec.order(results, limit)
+        trace_rec.mark("order")
 
     results = results[:limit]
+    # The window as the count cut it, before the cue's move reorders it: the
+    # propagation seat follows this order's first row.
+    window = list(results)
+
+    # The cue's bounded move (§2.3): after the gate, autocut, prior and the count
+    # have decided which rows are returned and in what order, a row the cue arm
+    # also found moves up by at most L places among them. The move comes after the
+    # cut so that it cannot push a row out of the answer: the rows returned are
+    # those of a recall without the cue, reordered, plus at most the one seat below.
+    if cue_note is not None:
+        if trace_rec is not None:
+            trace_rec.stage_input("selector", results)
+        bound = cue.LIFT[cue_note["confidence"]]
+        lifted, moves = p.evidence_selector.lift(results, cue_rank, bound, _rid_of)
+        providers.check_lift(results, lifted, bound)
+        results = lifted
+        for r in results:
+            if _rid_of(r) in cue_rank:
+                r["_cue_rank"] = cue_rank[_rid_of(r)]
+        cue_note["lifted"] = moves
+
+    # The reservation (§5). A fixed, small number of places are held for records
+    # the block arm reached, filled in Hamming order, and the quality gate is not
+    # consulted for them. They displace nothing: the gate's own rows keep every
+    # place they had, so turning the feature on adds rows and removes none, and a
+    # reservation that cannot be filled leaves the result shorter rather than
+    # padding it. A record the gate already admitted is not reserved for -- it is
+    # in the answer, which is the outcome the reservation exists to produce.
+    if block_rows:
+        present = {
+            r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
+            for r in results
+        }
+        reserved = [row for row in block_rows if row["_rid"] not in present]
+        results.extend(reserved[: blocks.BLOCK_RESERVATION])
+        if trace_rec is not None:
+            trace_rec.reservation(reserved[: blocks.BLOCK_RESERVATION], "block")
+
+    # The cue's held seat (§2.4): the best record only the cue arm found. The bounded
+    # move cannot reach it because it is not in the admitted order; the seat adds it
+    # and displaces nothing. A record an ordinary arm reached is not eligible, so a
+    # row the gate refused does not come back this way.
+    if cue_note is not None:
+        present = {_rid_of(r) for r in results}
+        eligible = [r for r in cue_rows if r["_rid"] not in reached and r["_rid"] not in present]
+        seated = p.evidence_selector.seats(eligible, cue.SEATS)
+        providers.check_seats(seated, eligible, cue.SEATS)
+        for r in seated:
+            r["_cue_seat"] = True
+            r["_cue_rank"] = cue_rank[r["_rid"]]
+        results.extend(seated)
+        cue_note["seated"] = seated
+        if trace_rec is not None:
+            trace_rec.reservation(seated, "cue")
+            trace_rec.cue(cue_note, cue.LIFT[cue_note["confidence"]])
+
+    # The propagation seat (cpersona/propagation.py): one held place after
+    # everything above, for the best row of a deeper ranking of the same recall.
+    # Like the cue's seat it displaces nothing. Not after a gate rescue: those rows
+    # are below-gate by construction, and there is no answer's first row to follow.
+    if propagation_seat and not gate_fallback:
+        seated, propagation_note = await _propagation_seat_rows(
+            p, ledger, window, {_rid_of(r) for r in results},
+            agent_id=agent_id, query=query, depth=depth, limit=limit, deep=deep,
+            channel=channel, exclude_set=exclude_set, project_id=project_id,
+            source_id=source_id, lexical_terms=lexical_terms, gate=gate,
+            gate_signal=gate_signal, effective_min=effective_min,
+            memory_count=memory_count, pure_recency=pure_recency, prior_span=prior_span,
+        )
+        results.extend(seated)
+        if trace_rec is not None:
+            trace_rec.reservation(seated, "propagation")
+            trace_rec.set("propagation", propagation_note)
+            trace_rec.mark("propagation")
+
+    providers.check_recall_count(
+        len(results), limit, cue.SEATS + (propagation.SEATS if propagation_seat else 0),
+        blocks.BLOCK_RESERVATION,
+    )
+    # The one hypothesis a recall evaluates today: the order its stages produced.
+    ledger.spend(budget.ITERATION)
+    if trace_rec is not None:
+        trace_rec.set("budget", ledger.report())
+        trace_rec.stage_input("output", results)
     results.reverse()
 
     messages = []
@@ -1585,7 +2509,23 @@ async def do_recall(
         # Scoring reshape lives in 2.6.0 (charter §5 soak isolation); this exposes
         # only what the existing scoring layer already computed.
         gate_score, gate_signal = _gate_score(r)
-        if gate_signal is not None:
+        if r.get("_cue_seat"):
+            # A held seat for the time cue (docs/RECALL_PROCESS_DESIGN.md §2.4). Checked
+            # before the gate branches: a cue-arm row may carry a cosine, but no gate
+            # read it, so it must not be reported as having passed one.
+            msg["match_reason"] = {"signal": "cue", "admission": "reservation", "cue_rank": r["_cue_rank"]}
+        elif r.get("_propagation_seat"):
+            # The propagation seat (cpersona/propagation.py). Its row passed the gate
+            # on the deeper ranking, not on this one's count, so it says which places
+            # chose it: its rank in that deeper order among the candidates, and its
+            # rank by closeness to the answer's first row.
+            msg["match_reason"] = {
+                "signal": "propagation",
+                "admission": "reservation",
+                "fused_rank": r["_propagation_fused_rank"],
+                "cosine_rank": r["_propagation_cosine_rank"],
+            }
+        elif gate_signal is not None:
             match_reason: dict = {"signal": gate_signal, "score": gate_score}
             if r.get("_cosine") is not None:
                 match_reason["cosine"] = r["_cosine"]
@@ -1593,7 +2533,31 @@ async def do_recall(
                 match_reason["rrf"] = r["_rrf_score"]
             if r.get("_rsf_score") is not None:
                 match_reason["rsf"] = r["_rsf_score"]
+            if r.get("_prior") is not None:
+                # 2.6.0a7: the age weight that ordered this row, when one was applied.
+                match_reason["prior"] = round(r["_prior"], 4)
+            if r.get("_cue_rank") is not None:
+                # The row's rank on the cue arm, which bounded how far it could move.
+                match_reason["cue_rank"] = r["_cue_rank"]
             msg["match_reason"] = match_reason
+        elif r.get("_block_distance") is not None:
+            # A reserved row (docs/BLOCK_REACH_DESIGN.md §5) has no gate signal,
+            # because no signal from the block arm is allowed to reach the gate.
+            # It says why it is here in its own terms: `hamming` is a distance
+            # where the branches above carry scores, so the two cannot be read
+            # off against each other, and `admission` says the row occupied a
+            # held place rather than passing anything. `order` says which order
+            # filled the places (§4b): `vector` when the stored vectors re-ranked
+            # the Hamming pass's best rows, `hamming` when some of them had no
+            # vector yet. The re-rank's cosine is not shown, for the reason the
+            # distance is shown instead of a score.
+            msg["match_reason"] = {
+                "signal": "block",
+                "admission": "reservation",
+                "order": r["_block_order"],
+                "hamming": r["_block_distance"],
+                "block": r["_block_index"],
+            }
         # b1-4 residual: the response is built by allowlist above (`msg`), so these
         # pops are hygiene on the internal row, not the thing that keeps private
         # keys out of the payload. _rsf_score was missing from the list — harmless
@@ -1605,8 +2569,33 @@ async def do_recall(
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
         r.pop("_rsf_score", None)
+        r.pop("_prior", None)
         r.pop("_resolved", None)
+        r.pop("_block_distance", None)
+        r.pop("_block_index", None)
+        r.pop("_block_order", None)
+        r.pop("_cue_seat", None)
+        r.pop("_cue_rank", None)
+        r.pop("_propagation_seat", None)
+        r.pop("_propagation_fused_rank", None)
+        r.pop("_propagation_cosine_rank", None)
         messages.append(msg)
+
+    # The excerpt a preview-cut row carries beside its prefix (cpersona/excerpts.py).
+    # Only rows the preview will cut: a row the preview shows whole needs none, and
+    # with the preview disabled nothing is cut.
+    preview = config.RECALL_PREVIEW_CHARS
+    if excerpt_chars > 0 and preview > 0 and query.strip():
+        cut = [m for m in messages if m.get("ref") and len(m.get("content") or "") > preview]
+        if cut:
+            found = await excerpts.for_refs(
+                agent_id, [m["ref"] for m in cut], query,
+                query_vec_out[0] if query_vec_out else None, excerpt_chars,
+            )
+            for m in cut:
+                if m["ref"] in found:
+                    m["excerpt"] = found[m["ref"]]["excerpt"]
+                    m["excerpt_basis"] = found[m["ref"]]["basis"]
 
     # bug-038: the recall_count/last_recalled_at bump is a write that feeds
     # _compute_confidence ranking, so it must honor no-persist even though recall
@@ -1665,10 +2654,32 @@ async def do_recall(
                 logger.warning("recall_count bump failed (non-fatal): %s", e)
 
     result: dict = {"messages": messages}
+    # 2.6: say how deep the fusion looked, but only when that is not the count
+    # the caller already knows. At the default floor the two are equal and the
+    # key is absent, so every response recorded before the depth existed is
+    # unchanged byte for byte; once a floor is set, the caller can see that the
+    # ranking behind a 5-row answer considered more than 5 candidates per arm.
+    if depth != limit:
+        result["depth"] = depth
     # bug-183: present ONLY when the rescue fired. A `false` on every other recall would
     # change the payload of the whole surface (and every recorded golden) to say nothing.
     if gate_fallback:
         result["gate_fallback"] = True
+    # The time cue (docs/RECALL_PROCESS_DESIGN.md §2), present only when one was
+    # given: the period that was searched last, whether the loop widened it, how
+    # many returned rows it moved, and whether it filled its seat.
+    if cue_note is not None:
+        last = cue_note["stages"][-1]
+        result["time_cue"] = {
+            "policy": cue.POLICY,
+            "period": last["period"],
+            "confidence": cue_note["confidence"],
+            "revised": len(cue_note["stages"]) > 1,
+            "moved": len(cue_note.get("lifted", [])),
+            "seated": len(cue_note.get("seated", [])),
+        }
+    elif cue_ignored is not None:
+        result["time_cue"] = {"policy": cue.POLICY, "ignored": cue_ignored["reason"], "period": cue_ignored["period"]}
     advisory = health.maybe_advisory(session_key_resolved, session_key_declared)
     if advisory is not None:
         result["advisory"] = advisory
@@ -1833,6 +2844,7 @@ async def do_recall_with_context(
     source_id: str = "",
     session_key: str = "",
     context_mode: str | None = None,
+    excerpt_chars: int = 0,
 ) -> dict:
     """Recall memories and merge with external conversation context.
 
@@ -1874,6 +2886,7 @@ async def do_recall_with_context(
         project_id=project_id,
         source_id=source_id,
         session_key=session_key,
+        excerpt_chars=excerpt_chars,
     )
     messages = recall_result.get("messages", [])
 
@@ -2022,6 +3035,143 @@ def _item_budget_cost(item: dict) -> int:
     return cost
 
 
+# Range expansion (reconstruction v1.1). A ref may name part of its record
+# instead of the whole row: {"ref": ..., "node": i | [first, last]} for overflow-tree
+# nodes, or {"ref": ..., "span": [start, end]} for characters. Offsets are in the
+# stored text -- a memory's content, an episode's summary -- which is what a
+# reconstruct quote's node span is measured in, so a quote's span expands as given.
+#
+# A range the server cannot serve exactly is reported, never widened: returning
+# the whole row for a node that does not exist would hand back the payload the
+# caller asked to avoid, with nothing saying the request was not honoured.
+RANGE_INVALID = "invalid_range"
+RANGE_NO_CURRENT_NODES = "no_current_nodes"
+RANGE_NODE_OUT_OF_RANGE = "node_out_of_range"
+RANGE_SPAN_OUT_OF_RANGE = "span_out_of_range"
+RANGE_NO_CURRENT_BLOCKS = "no_current_blocks"
+RANGE_BLOCK_OUT_OF_RANGE = "block_out_of_range"
+#: The record was rewritten since the offsets were handed out. Reported rather
+#: than served: the same offsets in new text are a different passage, and a
+#: caller quoting it would be quoting something nothing ever said.
+RANGE_STALE_REVISION = "stale_revision"
+
+
+def _is_index(value) -> bool:
+    # bool is an int subclass; `True` is not a position.
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _parse_ref_entry(entry) -> tuple[str, dict | None, str | None]:
+    """`entry` -> (ref, range request or None, invalid-range reason or None).
+
+    A string is a whole-row ref, as before. An object carries `ref` and at most one
+    of `node` / `span`; an object with neither is a whole-row ref too. The range is
+    only checked for shape here -- whether it fits the record needs the record.
+    """
+    if not isinstance(entry, dict):
+        return str(entry), None, None
+    ref = entry.get("ref")
+    ref = ref if isinstance(ref, str) else str(ref)
+    has_node, has_span, has_block = "node" in entry, "span" in entry, "block" in entry
+    if sum((has_node, has_span, has_block)) > 1:
+        return ref, None, RANGE_INVALID
+    # The revision the offsets were measured in, when the caller was given one
+    # (a reconstruct quote's expand attaches it). Checked against the record
+    # before anything is served.
+    revision = entry.get("revision")
+    if revision is not None and not isinstance(revision, str):
+        return ref, None, RANGE_INVALID
+    if has_node or has_block:
+        key = "node" if has_node else "block"
+        value = entry[key]
+        if _is_index(value):
+            first = last = value
+        elif isinstance(value, list) and len(value) == 2 and all(_is_index(v) for v in value):
+            first, last = value
+        else:
+            return ref, None, RANGE_INVALID
+        if first < 0 or last < first:
+            return ref, None, RANGE_INVALID
+        request = {key: (first, last)}
+        if revision is not None:
+            request["revision"] = revision
+        return ref, request, None
+    if has_span:
+        span = entry["span"]
+        if not (isinstance(span, list) and len(span) == 2 and all(_is_index(v) for v in span)):
+            return ref, None, RANGE_INVALID
+        start, end = span
+        if start < 0 or end <= start:
+            return ref, None, RANGE_INVALID
+        request = {"span": (start, end)}
+        if revision is not None:
+            request["revision"] = revision
+        return ref, request, None
+    return ref, None, None
+
+
+def _partitions(rows: list, text: str) -> bool:
+    """Whether `(index, start, end)` rows cover `text` exactly, in order.
+
+    One answer for nodes and for blocks: both are derived sets whose offsets are
+    only usable when they partition the text as it is stored now, and two
+    spellings of that test would eventually disagree about a set that is half
+    there.
+    """
+    return (
+        bool(rows)
+        and [r[0] for r in rows] == list(range(len(rows)))
+        and rows[0][1] == 0
+        and rows[-1][2] == len(text)
+        and all(a[2] == b[1] for a, b in zip(rows, rows[1:]))
+    )
+
+
+async def _resolve_range(db, kind: str, row_id: int, text: str, request: dict) -> tuple[dict | None, str | None]:
+    """The characters a range request names in `text`: ({"span": [s, e], ...}, None) or (None, reason).
+
+    A node range needs the record's node set to partition the text as it is stored
+    now (tree invariant 4). The embedding model is not required to be current: the
+    offsets depend on the text alone, and the triggers delete every node of a text
+    that changed. A span's end past the text is clamped, and the span actually
+    served is reported; a start at or past the end of the text serves nothing.
+    """
+    # A revision names the text the offsets were measured in. It is checked
+    # before the range is resolved, so a rewritten record refuses rather than
+    # serving different characters under the same numbers.
+    revision = request.get("revision")
+    if revision is not None and revision != blocks.text_revision(text):
+        return None, RANGE_STALE_REVISION
+    if "span" in request:
+        start, end = request["span"]
+        if start >= len(text):
+            return None, RANGE_SPAN_OUT_OF_RANGE
+        return {"span": [start, min(end, len(text))]}, None
+    if "block" in request:
+        rows = await db.execute_fetchall(
+            "SELECT block_index, start_char, end_char FROM record_blocks "
+            "WHERE parent_kind = ? AND parent_id = ? ORDER BY block_index",
+            (kind, row_id),
+        )
+        if not _partitions(rows, text):
+            return None, RANGE_NO_CURRENT_BLOCKS
+        first, last = request["block"]
+        if last >= len(rows):
+            return None, RANGE_BLOCK_OUT_OF_RANGE
+        return {"span": [rows[first][1], rows[last][2]], "block": [first, last], "of": len(rows)}, None
+    rows = await db.execute_fetchall(
+        "SELECT node_index, start_char, end_char FROM record_nodes "
+        "WHERE parent_kind = ? AND parent_id = ? ORDER BY node_index",
+        (kind, row_id),
+    )
+    if not _partitions(rows, text):
+        return None, RANGE_NO_CURRENT_NODES
+    first, last = request["node"]
+    if last >= len(rows):
+        return None, RANGE_NODE_OUT_OF_RANGE
+    return {"span": [rows[first][1], rows[last][2]], "node": [first, last], "of": len(rows)}, None
+
+
 async def do_get_contents(agent_id: str, refs: list) -> dict:
     """Resolve recall preview refs back to full, untrimmed rows (2.5.0).
 
@@ -2033,27 +3183,36 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
     so a ref belonging to another agent lands in ``missing``, never in a leak.
     Malformed refs also land in ``missing`` (fail-soft: one bad ref must not
     abort the batch).
+
+    A ref may be an object naming part of its record (reconstruction v1.1):
+    ``{"ref", "node": i | [first, last]}`` or ``{"ref", "span": [start, end]}``.
+    The item then carries that slice as ``content`` and a ``range`` object with
+    the span served, the node range and node count when nodes were named, and
+    the stored text's full length. A range that cannot be served exactly lands
+    in ``unresolved`` with a reason, and is never widened to the whole row.
     """
     if not agent_id:
         return error_response("agent_id is required")
     if not isinstance(refs, list) or not refs:
-        return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' strings")
+        return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' refs or range objects")
     if len(refs) > GET_CONTENTS_MAX_REFS:
         return error_response(f"too many refs ({len(refs)}; max {GET_CONTENTS_MAX_REFS}) — split the fetch")
 
     items: list[dict] = []
     missing: list[str] = []
-    deferred: list[str] = []
+    unresolved: list[dict] = []
+    deferred: list = []
     used = 0
     async with connection() as db:
-        for position, ref in enumerate(refs):
-            kind, _, raw = str(ref).partition(":")
+        for position, entry in enumerate(refs):
+            ref, request, invalid = _parse_ref_entry(entry)
+            kind, _, raw = ref.partition(":")
             try:
                 row_id = int(raw)
             except (TypeError, ValueError):
                 row_id = -1
             if kind not in ("mem", "ep") or row_id <= 0:
-                missing.append(str(ref))
+                missing.append(ref)
                 continue
             if kind == "mem":
                 rows = await db.execute_fetchall(
@@ -2064,6 +3223,7 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     missing.append(ref)
                     continue
                 msg_id, content, source, timestamp = rows[0]
+                text = content
                 # Mirror the recall message shape so callers can splice items in.
                 item: dict = {"ref": ref, "content": content}
                 if source:
@@ -2082,6 +3242,7 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     missing.append(ref)
                     continue
                 summary, start_time, resolved, created_at = rows[0]
+                text = summary
                 item = {
                     "ref": ref,
                     "content": f"[Episode] {summary}",
@@ -2092,6 +3253,20 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                     "timestamp": episode_timestamp(start_time, created_at),
                     "resolved": bool(resolved),
                 }
+            # Checked after the ownership read, so a range on another agent's row
+            # lands in `missing` like any other foreign ref and says nothing about
+            # whether that row has nodes.
+            if invalid is not None:
+                unresolved.append({"ref": ref, "reason": invalid})
+                continue
+            if request is not None:
+                served, reason = await _resolve_range(db, kind, row_id, text, request)
+                if served is None:
+                    unresolved.append({"ref": ref, "reason": reason})
+                    continue
+                start, end = served["span"]
+                item["content"] = text[start:end]
+                item["range"] = dict(served, content_len=len(text))
             # Whole rows only — the budget never cuts a content
             # string. get_contents is the ONLY path back to full text, so a
             # trimmed answer here would be indistinguishable from the preview it
@@ -2111,11 +3286,17 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
             # transport spells the object.
             cost = _item_budget_cost(item)
             if items and used + cost > GET_CONTENTS_MAX_CHARS:
-                deferred = [str(r) for r in refs[position:]]
+                # Deferred entries are echoed as they were sent, range objects
+                # included, so the re-fetch is the same request.
+                deferred = [r if isinstance(r, dict) else str(r) for r in refs[position:]]
                 break
             used += cost
             items.append(item)
     result: dict = {"items": items, "missing": missing, "count": len(items)}
+    if unresolved:
+        # Absent unless a range was refused, so a caller that sends only string
+        # refs sees the response shape it always has.
+        result["unresolved"] = unresolved
     if deferred:
         # Absent unless the budget actually stopped the batch: a caller that
         # never meets it sees the same response shape as before.
@@ -2170,6 +3351,30 @@ def _build_fts_query(query: str) -> str:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in dict.fromkeys(terms))
 
 
+def _build_fts_recall_query(query: str, extra_terms: list[str] | None = None) -> str:
+    """Experimental edges policy; the literal FTS compiler stays unchanged.
+
+    ``extra_terms`` (2.6, associative memory stage 1) are OR-ed in as whole
+    phrases: a declared alias names one thing, so ``Miz Eye`` must not match a
+    row that merely contains ``Eye``. A phrase shorter than a trigram cannot
+    match the index and is left to the LIKE fallback, as short query terms are.
+    Without extra terms the expression is exactly the one it always was.
+    """
+    normalized = " ".join(token.strip("\"'`.,;:!?()[]{}") for token in query.split())
+    expression = _build_fts_query(normalized)
+    phrases = ['"' + t.replace('"', '""') + '"' for t in dict.fromkeys(extra_terms or ()) if len(t) >= 3]
+    if not phrases:
+        return expression
+    return " OR ".join([expression, *phrases] if expression else phrases)
+
+
+# An episode's time as ``episode_timestamp`` reads it, compared as SQLite datetimes.
+_EPISODE_IN_WINDOW = (
+    " AND datetime(COALESCE(NULLIF(e.start_time, ''), e.created_at)) >= datetime(?)"
+    " AND datetime(COALESCE(NULLIF(e.start_time, ''), e.created_at)) < datetime(?)"
+)
+
+
 async def _search_episodes_fts(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -2177,14 +3382,20 @@ async def _search_episodes_fts(
     limit: int,
     channel: str = "",
     project_id: str | None = None,
+    extra_terms: list[str] | None = None,
+    window: tuple[str, str] | None = None,
 ) -> list[dict]:
     """Search episodes using FTS5.
+
+    window (2.6, the cue arm) keeps episodes whose time -- ``start_time``, else
+    ``created_at``, the rule ``episode_timestamp`` applies -- is in ``[start, end)``,
+    both bounds as SQLite ``datetime()`` reads them.
 
     project_id (v2.4.17) applies the γ filter. channel (v2.4.22) applies an
     exact-match filter on the episode's channel — empty means no channel
     filter (all channels), mirroring the memory search paths.
     """
-    fts_query = _build_fts_query(query)
+    fts_query = _build_fts_recall_query(query, extra_terms)
     if not fts_query:
         return []
     # isolation_where composes all three axes: exact agent, γ project,
@@ -2198,10 +3409,10 @@ async def _search_episodes_fts(
            FROM episodes_fts f
            JOIN episodes e ON f.rowid = e.id
            WHERE episodes_fts MATCH ?
-           AND {iso.clause}
+           AND {iso.clause}{_EPISODE_IN_WINDOW if window is not None else ""}
            ORDER BY rank
            LIMIT ?""",
-        (fts_query, *iso.params, limit),
+        (fts_query, *iso.params, *(window or ()), limit),
     )
 
     return [
@@ -2228,11 +3439,17 @@ async def _search_memories_keyword(
     channel: str = "",
     project_id: str | None = None,
     source_id: str = "",
+    extra_terms: list[str] | None = None,
+    window: tuple[str, str] | None = None,
 ) -> list[dict]:
     """Search memories using FTS5 (preferred) or LIKE fallback.
 
     project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
     source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
+    extra_terms (2.6) are matched as well as the query, by FTS phrase and by the
+    LIKE fallback; see ``_build_fts_recall_query``.
+    window (2.6, the cue arm) keeps rows whose timestamp is in ``[start, end)``,
+    both bounds as SQLite ``datetime()`` reads them; see ``cpersona/cue.py``.
     """
     # isolation_where composes all three axes: exact agent, γ project,
     # and the knob2 v2 channel contract (stored channel '' matches every
@@ -2247,6 +3464,12 @@ async def _search_memories_keyword(
     src_params_bare = src_bare.params
     src_clause_m = src_m.and_clause
     src_params_m = src_m.params
+    if window is not None:
+        # Compared as instants, not as text: stored timestamps mix spellings (bug-394).
+        src_clause_bare += " AND datetime(timestamp) >= datetime(?) AND datetime(timestamp) < datetime(?)"
+        src_clause_m += " AND datetime(m.timestamp) >= datetime(?) AND datetime(m.timestamp) < datetime(?)"
+        src_params_bare = (*src_params_bare, *window)
+        src_params_m = (*src_params_m, *window)
 
     if not query.strip():
         rows = await db.execute_fetchall(
@@ -2260,7 +3483,7 @@ async def _search_memories_keyword(
         return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows]
 
     if FTS_ENABLED:
-        fts_query = _build_fts_query(query)
+        fts_query = _build_fts_recall_query(query, extra_terms)
         if fts_query:
             try:
                 rows = await db.execute_fetchall(
@@ -2290,14 +3513,19 @@ async def _search_memories_keyword(
     # so it caps how many *matching* rows are fetched (always >= limit; the
     # return slices to limit). Old rows stay reachable; no decoupling needed.
     scan_limit = min(MAX_MEMORIES, max(limit * 5, 50))
+    patterns = [_like_escape_contains(query)]
+    patterns += [_like_escape_contains(t) for t in dict.fromkeys(extra_terms or ()) if t.strip() and t != query]
+    like_clause = " OR ".join("content LIKE ? ESCAPE '\\'" for _ in patterns)
+    if len(patterns) > 1:
+        like_clause = f"({like_clause})"
     rows = await db.execute_fetchall(
         f"""SELECT id, msg_id, content, source, timestamp
            FROM memories
            WHERE {iso.clause}{src_clause_bare}
-           AND content LIKE ? ESCAPE '\\'
+           AND {like_clause}
            ORDER BY created_at DESC
            LIMIT ?""",
-        (*iso.params, *src_params_bare, _like_escape_contains(query), scan_limit),
+        (*iso.params, *src_params_bare, *patterns, scan_limit),
     )
     return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows[:limit]]
 
@@ -2359,6 +3587,20 @@ async def do_archive_episode(
         agent_id, [{"id": f"ep:{episode_id}", "text": row[2]}]
     )
     result = {"ok": True, "episode_id": episode_id}
+    # Overflow tree (§3). Measured on row[2] for the same reason as the index push:
+    # the stored summary is the text the nodes will span.
+    if await nodes.runs_past_window(row[2]):
+        queued = await nodes.queue_build("ep", episode_id, agent_id, key)
+        if queued:
+            result["nodes"] = queued
+    # Blocks (BLOCK_REACH_DESIGN.md §6), on the same text and for the same reason
+    # do_store queues them: an episode divides into clauses whether or not it runs
+    # past the window, and a write path that skipped them would leave every
+    # episode to the backfill sweep.
+    if blocks.building_enabled():
+        queued = await blocks.queue_build("ep", episode_id, agent_id, key)
+        if queued:
+            result["blocks"] = queued
     # Same signal do_store gives for capped content — and, since bug-175, the same
     # definition: the flag reports whether the cap CUT, not whether the caller's
     # raw string (annotation included) happened to exceed it.

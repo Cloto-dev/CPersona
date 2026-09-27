@@ -164,11 +164,133 @@ VECTOR_FAR_LIMIT = max(0, _parse_int("CPERSONA_VECTOR_FAR_LIMIT", 0))
 # Schema declares `maximum: 100`, and that is what bounds a context window. This
 # one bounds resource use for callers that legitimately ask for full depth —
 # benchmark full-ranking, bulk export, a future rerank — and in rrf mode the
-# fusion-list depth tracks `limit`, so a ceiling that bites collapses deep-ranking
-# quality rather than merely trimming a response. It bit once already, at 100
-# (bge-m3 LongMemEval 81.17 -> 48.98), which is why a bench that reaches it is
+# fusion-list depth tracks `limit`, so a ceiling that bites cuts both the list a
+# caller gets back and the depth it was fused from. It bit once already, at 100:
+# a full-ranking bench (bge-m3 LongMemEval) fell from 81.17 to 48.98 because
+# its returned list was cut to 100 rows, which is why a bench that reaches it is
 # told so rather than left to read the damage off its own scores.
 RECALL_LIBRARY_MAX_LIMIT = max(1, _parse_int("CPERSONA_RECALL_LIBRARY_MAX_LIMIT", 10000))
+# 2.6: Recall Depth, separated from the response count. `limit` on the recall
+# tools is the number of rows that come back; the depth is the per-arm top-K the
+# fusion sees (vector near list, far list, episode FTS, memory keyword), and it
+# is `max(limit, RECALL_DEPTH_FLOOR)`, clamped to the library ceiling above.
+# Default 0 keeps the depth equal to the count -- the coupling the 2.5 line
+# shipped with, bit for bit -- so a caller who sets nothing gets the ranking
+# they got yesterday. The default is the measured one: the pre-registered sweep
+# at a count of ten found no gain from any floor, so it stays 0
+# (benchmarks/measurements/results-recall-depth-floor-sweep.md). See
+# docs/RELIABLE_RECALL_2_6.md section 4.
+RECALL_DEPTH_FLOOR = max(0, _parse_int("CPERSONA_RECALL_DEPTH_FLOOR", 0))
+
+# 2.6: the propagation seat (cpersona/propagation.py). One held place after the
+# window for the row that best combines its place in a deeper ranking with its
+# closeness to the window's first row -- measured on two-record questions, where
+# the second record is often admitted just below the cut. Off by default: off,
+# no deeper ranking runs and the recall is the one it was before, bit for bit.
+# On, a recall also ranks at propagation.DEPTH and may return one more row.
+RECALL_PROPAGATION_SEAT = (
+    os.environ.get("CPERSONA_RECALL_PROPAGATION_SEAT", "false").lower() == "true"
+)
+
+# 2.6: the Reconstruction Window and the bounds of the reconstruct tool
+# (docs/RELIABLE_RECALL_2_6.md section 7). `count` is the CEILING on how many
+# recall items come back -- not a fill target and not a search depth:
+#
+#     base      = forced_count ?? requested_count ?? default_count
+#     effective = min(base, max_count)
+#     0 <= returned <= effective
+#
+# RECONSTRUCT_FORCED_COUNT pins the base for every call and is None unless an
+# operator sets it. A configuration whose default or forced value exceeds the
+# maximum is a STARTUP ERROR, not a silent clamp -- see validate_reconstruct_counts().
+RECONSTRUCT_DEFAULT_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", 1))
+RECONSTRUCT_MAX_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_MAX_COUNT", 10))
+_forced_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_COUNT")
+RECONSTRUCT_FORCED_COUNT = (
+    max(1, _parse_int("CPERSONA_RECONSTRUCT_FORCED_COUNT", 1))
+    if _forced_raw not in (None, "")
+    else None
+)
+# Breadth. Invariant 7 of section 7: none of these may be derived from `count`.
+# They are the bounds the caller declares (or the server defaults), and the test
+# that holds the line is "change count alone and the candidate id set does not
+# move" -- tests/test_reconstruct.py::test_count_alone_does_not_move_the_pool.
+RECONSTRUCT_TOP_K = max(1, _parse_int("CPERSONA_RECONSTRUCT_TOP_K", 20))
+RECONSTRUCT_MAX_HOPS = max(0, _parse_int("CPERSONA_RECONSTRUCT_MAX_HOPS", 2))
+RECONSTRUCT_MAX_EVIDENCE = max(1, _parse_int("CPERSONA_RECONSTRUCT_MAX_EVIDENCE", 40))
+# Stage 2 bundling: how close two rows from the SAME source must sit in time to
+# count as one conversational moment. A constant in seconds because the key is
+# "adjacent timestamps, same source" -- source alone is not a bundling key (in a
+# single-agent store it is constant, and would fold the whole pool into one item).
+RECONSTRUCT_ADJACENCY_SECONDS = max(0, _parse_int("CPERSONA_RECONSTRUCT_ADJACENCY_SECONDS", 60))
+# The payload budget (section 7, "Breadth before depth"): characters of quoted text
+# -- item `content` and `excerpts` -- a response may carry. `count` bounds breadth,
+# this bounds depth, and breadth takes precedence when the two compete.
+#
+#     budget_base      = forced_budget ?? requested_budget ?? default_budget
+#     effective_budget = min(budget_base, max_budget)
+#
+# Section 9's sweep chooses the default and the maximum; until it runs these are
+# provisional. The default matches the design's worked example and the maximum
+# is five times it. A default or forced budget above the maximum, or one below a
+# single preview-tier excerpt, is a startup error (validate_reconstruct_counts).
+# 2.6: an item's head quote is the parts of its record that matched, filled in ranking order
+# up to this many characters (the same filling as the recall excerpt, cpersona/excerpts.py).
+# Measured on LongMemEval with an answer reader: 116 -> 154 of 500 at count 1, 223 -> 321 at
+# count 5, against the single governing passage cut at the preview tier. 0 keeps that single
+# passage, which is what every quote was before.
+RECONSTRUCT_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_QUOTE_CHARS", 800))
+RECONSTRUCT_DEFAULT_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", 4000)
+RECONSTRUCT_MAX_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_MAX_BUDGET", 20000)
+_forced_budget_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_BUDGET")
+RECONSTRUCT_FORCED_BUDGET = (
+    _parse_int("CPERSONA_RECONSTRUCT_FORCED_BUDGET", RECONSTRUCT_DEFAULT_BUDGET)
+    if _forced_budget_raw not in (None, "")
+    else None
+)
+
+
+def validate_reconstruct_counts() -> None:
+    """Refuse a count configuration that can only lie about what it will do.
+
+    Section 7: "A configuration in which the default or the forced value exceeds
+    the maximum is a startup error, not a silent clamp." Called at server start;
+    raising here is the point -- a server that clamps quietly reports an
+    effective_count the operator never chose.
+    """
+    if RECONSTRUCT_DEFAULT_COUNT > RECONSTRUCT_MAX_COUNT:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_DEFAULT_COUNT={RECONSTRUCT_DEFAULT_COUNT} exceeds "
+            f"CPERSONA_RECONSTRUCT_MAX_COUNT={RECONSTRUCT_MAX_COUNT}"
+        )
+    if RECONSTRUCT_FORCED_COUNT is not None and RECONSTRUCT_FORCED_COUNT > RECONSTRUCT_MAX_COUNT:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_FORCED_COUNT={RECONSTRUCT_FORCED_COUNT} exceeds "
+            f"CPERSONA_RECONSTRUCT_MAX_COUNT={RECONSTRUCT_MAX_COUNT}"
+        )
+    # The budget has the same rule, plus a floor: below one preview-tier excerpt
+    # the first item could not fit, and section 7 guarantees that it does.
+    floor = RECALL_PREVIEW_CHARS if RECALL_PREVIEW_CHARS > 0 else 1
+    for name, value in (
+        ("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", RECONSTRUCT_DEFAULT_BUDGET),
+        ("CPERSONA_RECONSTRUCT_MAX_BUDGET", RECONSTRUCT_MAX_BUDGET),
+        ("CPERSONA_RECONSTRUCT_FORCED_BUDGET", RECONSTRUCT_FORCED_BUDGET),
+    ):
+        if value is not None and value < floor:
+            raise ValueError(
+                f"{name}={value} is below one preview-tier excerpt "
+                f"(CPERSONA_RECALL_PREVIEW_CHARS={RECALL_PREVIEW_CHARS})"
+            )
+    if RECONSTRUCT_DEFAULT_BUDGET > RECONSTRUCT_MAX_BUDGET:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_DEFAULT_BUDGET={RECONSTRUCT_DEFAULT_BUDGET} exceeds "
+            f"CPERSONA_RECONSTRUCT_MAX_BUDGET={RECONSTRUCT_MAX_BUDGET}"
+        )
+    if RECONSTRUCT_FORCED_BUDGET is not None and RECONSTRUCT_FORCED_BUDGET > RECONSTRUCT_MAX_BUDGET:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_FORCED_BUDGET={RECONSTRUCT_FORCED_BUDGET} exceeds "
+            f"CPERSONA_RECONSTRUCT_MAX_BUDGET={RECONSTRUCT_MAX_BUDGET}"
+        )
 # How many embedding rows the fallback vector scan turns into a matrix at a
 # time. The scan reads `MAX_MEMORIES` rows of `(id, embedding)`; it used to
 # fetch all of them in one call and then join the blobs, which holds TWO copies
@@ -528,6 +650,40 @@ RECENT_RECALL_WINDOW_MIN = _parse_float("CPERSONA_RECENT_RECALL_WINDOW_MIN", 5.0
 TASK_MAX_RETRIES = _parse_int("CPERSONA_TASK_MAX_RETRIES", 3)
 TASK_RETRY_DELAY = _parse_int("CPERSONA_TASK_RETRY_DELAY", 30)
 
+# docs/BLOCK_REACH_DESIGN.md §7. Opt-in for the whole of this step, and off means
+# no embedding calls, no rows and no queue work rather than "built but unread":
+# a deployment not using the feature should not pay the backfill for it.
+# Promotion to a default is deliberately out of scope here — what would justify
+# one is a measured net gain, and §0 records the quantity that decides it as
+# unmeasured.
+BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "false").lower() == "true"
+
+# The other half of the same opt-in (§7): whether the block arm runs during
+# recall. Split from construction because one switch would charge a deployment
+# for the half it is not using — an index nothing reads, or a reader with no
+# index. Off means the rows may exist and nothing looks at them.
+BLOCK_RETRIEVAL_ENABLED = (
+    os.environ.get("CPERSONA_BLOCK_RETRIEVAL_ENABLED", "false").lower() == "true"
+)
+
+
+def validate_block_gates() -> None:
+    """Refuse retrieval without construction (docs/BLOCK_REACH_DESIGN.md §7).
+
+    Reading an index nothing fills is not a no-op the caller can see: recall
+    would run the arm, find nothing, and return the rows it would have returned
+    anyway — so the operator who turned the feature on would conclude it does
+    not help, having never had it. A startup error says which half is missing.
+
+    An index that exists but is not read is the other way round and is allowed:
+    it is how a deployment builds coverage before it starts reading.
+    """
+    if BLOCK_RETRIEVAL_ENABLED and not BLOCK_BUILD_ENABLED:
+        raise ValueError(
+            "CPERSONA_BLOCK_RETRIEVAL_ENABLED=true needs "
+            "CPERSONA_BLOCK_BUILD_ENABLED=true: there is no block index to read"
+        )
+
 # bug-371: read unvalidated and unnormalised, this setting had a third state
 # its two consumers both miss — the remote push tests `== "remote"` exactly and
 # the local write gate tests `== "local"` exactly, so a mis-cased or misspelt
@@ -669,9 +825,35 @@ AUTOCUT_MIN_RESULTS = max(2, _parse_int("CPERSONA_AUTOCUT_MIN_RESULTS", 3))
 # Episode boundary soft penalty (L3 — v2.4.14)
 # Memories created before the latest archived episode are penalised by a
 # multiplicative factor so cross-session noise is filtered by the quality gate.
-EPISODE_PENALTY_ENABLED = os.environ.get("CPERSONA_EPISODE_PENALTY_ENABLED", "true").lower() == "true"
+# Off by default from 2.6.0a7. An agent that archives an episode at the end of
+# every session puts nearly its whole history behind the boundary, so the
+# penalty halves the score of every earlier memory and lets unrelated rows
+# outrank them. On a real long-term memory store, turning the penalty off about
+# doubled how often the record holding the answer came first. Public benchmarks
+# never create episodes, so they could not see this. Deployments that want the
+# cross-session damping opt in with CPERSONA_EPISODE_PENALTY_ENABLED=true.
+EPISODE_PENALTY_ENABLED = os.environ.get("CPERSONA_EPISODE_PENALTY_ENABLED", "false").lower() == "true"
 EPISODE_DECAY_RATE = _parse_float("CPERSONA_EPISODE_DECAY_RATE", 0.01)
 EPISODE_DECAY_FLOOR = _parse_float("CPERSONA_EPISODE_DECAY_FLOOR", 0.5)
+
+# One prior function (2.6.0a7, docs/PRIOR_FUNCTION_DESIGN.md). Every weight that
+# ranks a row by where it sits lives here. The far weight prices a vote from the
+# far list inside the fusion; the age weight p_age multiplies the fused score for
+# the final order only, after the quality gate and autocut have decided which
+# rows remain, so it can reorder rows but never remove one. At these defaults
+# both are identities: the far weight is 1 (today's far vote) and the age rate is
+# 0 (p_age = 1).
+PRIOR_FAR_WEIGHT = min(1.0, max(0.0, _parse_float("CPERSONA_PRIOR_FAR_WEIGHT", 1.0)))
+PRIOR_AGE_RATE = max(0.0, _parse_float("CPERSONA_PRIOR_AGE_RATE", 0.0))
+PRIOR_AGE_FLOOR = min(1.0, max(0.0, _parse_float("CPERSONA_PRIOR_AGE_FLOOR", 0.3)))
+# Age is measured from the newest record in the recall's scope, so a store left
+# idle ranks as it did when last used; `now` measures from the current time.
+PRIOR_AGE_ANCHOR = _parse_choice("CPERSONA_PRIOR_AGE_ANCHOR", "newest", ("newest", "now"))
+# Whether the confidence score orders and gates recall. `fusion` (the default
+# from 2.6.0a7): it does neither, and is returned beside each row as a separate
+# value. `legacy`: the re-sort by confidence and the confidence gate of earlier
+# releases, kept so a deployment can go back by setting rather than by code.
+CONFIDENCE_ORDERING = _parse_choice("CPERSONA_CONFIDENCE_ORDERING", "fusion", ("fusion", "legacy"))
 
 RECALL_MODE = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
 # 2.5.0: MCP-boundary preview tier for recall responses. Message
@@ -681,6 +863,17 @@ RECALL_MODE = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
 # disables trimming. Boundary-layer only — library callers (do_recall) always
 # receive full content, same layering as the limit cap.
 RECALL_PREVIEW_CHARS = _parse_int("CPERSONA_RECALL_PREVIEW_CHARS", 500)
+# 2.6: the length of the query-relevant excerpt a recall row carries beside its
+# preview when the preview cuts it (cpersona/excerpts.py). Measured on
+# LongMemEval with an answer reader: the preview's first 500 characters answered
+# 260 of 500 questions, an excerpt filled to 800 characters answered 341, and the
+# full records 351. Boundary-layer only, like the preview. 0 disables it.
+RECALL_EXCERPT_CHARS = _parse_int("CPERSONA_RECALL_EXCERPT_CHARS", 800)
+
+# 2.6 time cue (docs/RECALL_PROCESS_DESIGN.md §2.5): the one revision -- widening the
+# cue's period and running the cue arm again -- is skipped once the recall has taken
+# this long, and the trace says it stopped at the limit. Milliseconds.
+RECALL_CUE_TIME_LIMIT_MS = max(0, _parse_int("CPERSONA_RECALL_CUE_TIME_LIMIT_MS", 1000))
 RRF_K = max(1, _parse_int("CPERSONA_RRF_K", 60))
 RRF_THRESHOLD_FACTOR = _parse_float("CPERSONA_RRF_THRESHOLD_FACTOR", 0.5)
 # v2.4.12: Max theoretical _rrf_score ≈ num_retrievers / (RRF_K + 1), with 3

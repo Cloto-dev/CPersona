@@ -34,6 +34,9 @@ from pydantic import AnyHttpUrl, ValidationError
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 from cpersona import acl
+from cpersona import associations as associations_module
+from cpersona import blocks
+from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
@@ -98,6 +101,7 @@ from cpersona.memory_handlers import (
     do_recall_with_context,
     do_store,
 )
+from cpersona.reconstruct import do_reconstruct
 from cpersona import checks as checks_module
 from cpersona.checks import HEALTH_CHECK_NAMES
 from cpersona.utils import CANONICAL_SOURCE_TYPES, error_response, source_type_alias_summary
@@ -202,6 +206,7 @@ async def do_store_boundary(
     channel: str = "",
     project_id: str = "",
     session_key: str = "",
+    associations: dict | None = None,
 ) -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
@@ -213,7 +218,76 @@ async def do_store_boundary(
     result = await do_store(
         agent_id, message, channel=channel, project_id=resolved, session_key=session_key
     )
+    # The associative-memory rider (docs/ASSOCIATIVE_MEMORY_DESIGN.md §2). It
+    # is declared against whichever row the store resolved to — a new row, or
+    # the pre-existing one a dedup branch echoed — because the declaration is
+    # about that memory either way. A paused or rejected store resolved to no
+    # row, so there is nothing to anchor and the rider is not recorded.
+    if associations is not None and isinstance(result.get("id"), int) and result["id"] > 0:
+        result["associations"] = await associations_module.declare(
+            agent_id,
+            associations,
+            project_id=resolved,
+            channel=channel,
+            anchor_ref=f"mem:{result['id']}",
+        )
     return _oc_annotate(result, project_id, resolved, warning)
+
+
+async def do_declare_associations_boundary(
+    agent_id: str,
+    associations: dict | None = None,
+    anchor_ref: str = "",
+    retract: dict | None = None,
+    channel: str = "",
+    project_id: str = "",
+    session_key: str = "",
+) -> dict:
+    resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
+    if error:
+        return {**_oc_reject(error), "entities": [], "mentions": 0, "relations": [], "dropped": []}
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response(
+            {"ok": True, "result": "skipped", "entities": [], "mentions": 0, "relations": [], "dropped": []},
+            "declare_associations",
+            key,
+        )
+    result: dict = {"ok": True, "result": "declared"}
+    if associations is not None:
+        result.update(await associations_module.declare(
+            agent_id, associations, project_id=resolved, channel=channel, anchor_ref=anchor_ref
+        ))
+    else:
+        result.update({"entities": [], "mentions": 0, "relations": [], "dropped": []})
+    if retract is not None:
+        if isinstance(retract, dict):
+            retracted = await associations_module.retract(
+                agent_id, relations=retract.get("relations"), mentions=retract.get("mentions")
+            )
+            result["dropped"].extend(retracted.pop("dropped"))
+            result["retracted"] = retracted
+        else:
+            result["dropped"].append({"item": "retract", "reason": "must be an object"})
+    return _oc_annotate(result, project_id, resolved, warning)
+
+
+async def do_traverse_boundary(
+    agent_id: str,
+    entity: str,
+    max_hops: int = 1,
+    limit: int = 20,
+    channel: str = "",
+    project_id: str | None = None,
+    source_id: str = "",
+) -> dict:
+    pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+    if error:
+        return {**_oc_reject(error), "entity": entity, "entities": [], "relations": []}
+    result = await associations_module.traverse(
+        agent_id, entity, max_hops=max_hops, limit=limit, project_id=pid, channel=channel, source_id=source_id
+    )
+    return _oc_annotate(result, project_id, pid, warning)
 
 
 async def do_archive_episode_boundary(
@@ -383,6 +457,8 @@ async def do_recall_boundary(
     source_id: str,
     full_content: bool = False,
     session_key: str = "",
+    trace: bool = False,
+    time_cue: dict | None = None,
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -400,8 +476,84 @@ async def do_recall_boundary(
         project_id=pid,
         source_id=source_id,
         session_key=session_key,
+        # A full_content response shows every row whole, so it needs no excerpt.
+        excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
+        **({"trace": True} if trace else {}),
+        **({"time_cue": time_cue} if time_cue is not None else {}),
+        # The propagation seat is measured on this tool only (cpersona/propagation.py);
+        # passed only when on, so a recall with it off is called exactly as before.
+        **({"propagation_seat": True} if config.RECALL_PROPAGATION_SEAT else {}),
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
+    return _oc_annotate(result, project_id, pid, warning)
+
+
+def _apply_reconstruct_preview(result: dict) -> dict:
+    """Trim recall-item content to the preview tier, as `_apply_preview` does.
+
+    Same layering as recall: the library layer returns full text (a bench or a
+    reranker wants it), and the MCP boundary shapes the agent-facing payload.
+    Section 7 says `content` is "cut as the preview tier cuts", and this is that
+    cut — a PURE prefix with content_len / content_truncated markers, expandable
+    through the head claim's `ref` via get_contents. It applies to the single-passage
+    quote (CPERSONA_RECONSTRUCT_QUOTE_CHARS=0); a filled quote carries `quote_basis`
+    and is left as the library layer made it.
+    """
+    cap = config.RECALL_PREVIEW_CHARS
+    if cap <= 0:
+        return result
+    for item in result.get("items", []):
+        if "quote_basis" in item:
+            # 2.6: a filled head quote is already bounded by CPERSONA_RECONSTRUCT_QUOTE_CHARS and
+            # is not a prefix, so cutting it here would drop exactly the part that matched.
+            continue
+        content = item.get("content")
+        if isinstance(content, str) and len(content) > cap:
+            item["content_len"] = len(content)
+            item["content"] = content[:cap]
+            item["content_truncated"] = True
+    return result
+
+
+async def do_reconstruct_boundary(
+    agent_id: str,
+    query: str,
+    count: int | None,
+    top_k: int | None,
+    max_hops: int | None,
+    max_evidence: int | None,
+    deep: bool,
+    channel: str,
+    project_id: str | None,
+    source_id: str,
+    session_key: str = "",
+    trace: bool = False,
+    budget: int | None = None,
+    time_cue: dict | None = None,
+) -> dict:
+    pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+    if error:
+        # Same reasoning as do_recall_boundary: `items` is the documented shape of
+        # every reconstruct response, so a refusal carries the empty collection
+        # rather than making one path KeyError.
+        return {**_oc_reject(error), "items": [], "returned_count": 0}
+    result = await do_reconstruct(
+        agent_id,
+        query,
+        count=count,
+        top_k=top_k,
+        max_hops=max_hops,
+        max_evidence=max_evidence,
+        deep=deep,
+        channel=channel,
+        project_id=pid,
+        source_id=source_id,
+        session_key=session_key,
+        trace=trace,
+        budget=budget,
+        **({"time_cue": time_cue} if time_cue else {}),
+    )
+    result = _apply_reconstruct_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
 
 
@@ -430,6 +582,7 @@ async def do_recall_with_context_boundary(
         project_id=pid,
         source_id=source_id,
         session_key=session_key,
+        excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
     )
     result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
@@ -504,6 +657,51 @@ _SESSION_KEY_PROPERTY_SHORT = {
     "default": "",
 }
 
+# The associative-memory declaration (docs/ASSOCIATIVE_MEMORY_DESIGN.md §2),
+# shared by the `store` rider and `declare_associations`.
+_ASSOCIATIONS_PROPERTY = {
+    "type": "object",
+    "description": (
+        "Associative memory to declare alongside this call: entities the text mentions, "
+        "with their aliases, and subject–predicate–object relations. Stored verbatim; the "
+        "server extracts nothing and infers nothing. On store, the stored memory is "
+        "recorded as mentioning every entity named here and anchors every relation. "
+        "Malformed items are reported in the response's associations.dropped and skipped; "
+        "the memory is stored regardless. Optional."
+    ),
+    "properties": {
+        "entities": {
+            "type": "array",
+            "description": "Entities to register (if new) and mark as mentioned. Names are compared after normalization (NFKC, case-folded, whitespace collapsed).",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The canonical name, kept as written."},
+                    "aliases": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Other names for the same entity. An alias resolves to at most one entity per scope; a second claim on it is dropped.",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+        "relations": {
+            "type": "array",
+            "description": "Declared relations. subject / object are entity names (registered if new) or record refs 'mem:<id>' / 'ep:<id>' of this agent; predicate is free text, normalized. A predicate from the role vocabulary (supports, supersedes, corrects, qualifies, contradicts, temporal_predecessor) on a record → record relation is read by reconstruct as that role.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "object": {"type": "string"},
+                },
+                "required": ["subject", "predicate", "object"],
+            },
+        },
+    },
+}
+
 # Session no-persist controls — registered first for discoverability.
 async def do_pause_persistence(
     ttl_seconds: int = no_persist.DEFAULT_TTL_SECONDS, session_key: str = ""
@@ -548,8 +746,8 @@ registry.auto_tool(
     # `persisted: false` is the one field every skipped write carries, so it is
     # the field to branch on; the id sentinel and the dry-run downgrade are
     # per-tool details, stated here as such rather than as a blanket rule.
-    "paused, every write tool — store, archive_episode, update_memory, delete_memory, "
-    "delete_episode, delete_agent_data, lock_memory, unlock_memory, update_profile, "
+    "paused, every write tool — store, declare_associations, archive_episode, update_memory, "
+    "delete_memory, delete_episode, delete_agent_data, lock_memory, unlock_memory, update_profile, "
     "import_memories, merge_memories, calibrate_threshold, set_recall_precision — "
     "returns a no-op response carrying `persisted: false`, `dry_run: true` and a "
     "`reason` (with the TTL remaining) instead of writing to the database. "
@@ -693,7 +891,10 @@ registry.auto_tool(
     "'stored' (a new row was written; {ok:true, result:'stored', id:<row-id>, "
     "embedded:<bool>}, embedded true iff a local blob was persisted or the remote "
     "index push succeeded — false under EMBEDDING_MODE=none; the response also "
-    "carries truncated:true when content exceeded the length cap and was shortened), "
+    "carries truncated:true when content exceeded the length cap and was shortened, "
+    "and nodes:{status:'queued'} when the text runs past the embedding window and its "
+    "overflow-tree nodes were queued for construction — absent when it fits, when the "
+    "embedding server cannot report tokens, or with the task queue disabled), "
     "'skipped' (nothing written and nothing wrong: {ok:true, result:'skipped', "
     "reason:...}; the msg_id / content dedup branches echo the pre-existing row's id, "
     "the OR IGNORE fallback reason='duplicate (unique index)' omits id by design — "
@@ -824,6 +1025,7 @@ registry.auto_tool(
                 ),
             },
             "session_key": _SESSION_KEY_PROPERTY_SHORT,
+            "associations": _ASSOCIATIONS_PROPERTY,
         },
         "required": ["agent_id", "message"],
     },
@@ -834,8 +1036,139 @@ registry.auto_tool(
         ("channel", str, ""),
         ("project_id", str, ""),
         ("session_key", str, ""),
+        ("associations", dict, None),
     ],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+)
+
+registry.auto_tool(
+    "declare_associations",
+    "Declare associative memory after the fact: entities with aliases, and "
+    "subject–predicate–object relations, recorded verbatim and walked by "
+    "reconstruct. The server extracts nothing and infers nothing — coverage is "
+    "exactly what was declared. Names, aliases and predicates are compared after "
+    "normalization (NFKC, case-folded, whitespace collapsed), so two declarations "
+    "that normalize alike are one entity. An alias resolves to at most one entity "
+    "per scope; a second claim on it is dropped. `anchor_ref` names the record "
+    "(`mem:<id>` / `ep:<id>`) the declaration is evidenced by: every entity named "
+    "is recorded as mentioned by it and every relation carries it. A relation's "
+    "endpoint is an entity name (registered if new) or a record ref of this agent. "
+    "Malformed items are reported in `dropped` and skipped; nothing else in the call "
+    "is refused for them. `retract` removes relations by id and mentions by "
+    "{entity, ref} — the only way a declaration leaves the store. "
+    "Response: {ok, result:'declared', entities:[{id, name, created}], mentions, "
+    "relations:[ids], dropped:[{item, reason}], retracted?:{relations, mentions}}. "
+    "Under pause_persistence nothing is written (result:'skipped', persisted:false).",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent identifier"},
+            "associations": _ASSOCIATIONS_PROPERTY,
+            "anchor_ref": {
+                "type": "string",
+                "description": "The record this declaration is evidenced by: 'mem:<id>' or 'ep:<id>' of this agent. Optional.",
+                "default": "",
+            },
+            "retract": {
+                "type": "object",
+                "description": "Declarations to remove: {relations: [relation ids], mentions: [{entity: <entity id>, ref: 'mem:<id>'}]}. Only this agent's rows are touched.",
+                "properties": {
+                    "relations": {"type": "array", "items": {"type": "integer"}},
+                    "mentions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"entity": {"type": "integer"}, "ref": {"type": "string"}},
+                        },
+                    },
+                },
+            },
+            "channel": {
+                "type": "string",
+                "description": "Memory channel the declaration belongs to. Default: '' (shared).",
+            },
+            "project_id": {
+                "type": "string",
+                "description": "Project the declaration belongs to. Optional — omit or pass '' for the global pool. " + _AUTO_PROJECT_ID_CLAUSE,
+            },
+            "session_key": _SESSION_KEY_PROPERTY_SHORT,
+        },
+        "required": ["agent_id"],
+    },
+    do_declare_associations_boundary,
+    [
+        ("agent_id", str),
+        ("associations", dict, None),
+        ("anchor_ref", str, ""),
+        ("retract", dict, None),
+        ("channel", str, ""),
+        ("project_id", str, ""),
+        ("session_key", str, ""),
+    ],
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+)
+
+registry.auto_tool(
+    "traverse",
+    "The neighbourhood of a declared entity, as a graph: the entity named, its aliases, "
+    "the entity -> entity relations declared on it and on what they reach, up to `max_hops` "
+    "in either direction, and the refs of the records that mention each entity. Only what "
+    "was declared (declare_associations, or `associations` on store); nothing is inferred. "
+    "No record text: expand a ref with get_contents. "
+    "`entity` is a name or an alias, compared after normalization; when it names more than "
+    "one entity this call can read (a project's and the global pool's), all are starts. "
+    "ORDER: entities by hops, then by the most recently declared relation that reached them, "
+    "then by id; mentions by record id; relations most recently declared first. "
+    "`limit` bounds both the entities returned and the refs listed per entity. "
+    "Response: {entity, max_hops, limit, entities:[{id, name, hops, aliases?, mentions?, "
+    "mentions_omitted?}], relations:[{id, subject, predicate, object, declared_by, "
+    "declared_at, anchor_ref?}] (subject/object are entity ids from `entities`; a relation "
+    "is listed when both ends are), entities_omitted?, bounds?:{omitted:[max_hops | limit]}, "
+    "reason?:'no_such_entity'}. Relation ids are what declare_associations' `retract` takes. "
+    "Records are listed only when this call could read them: the project, channel and "
+    "source_id filters apply as in recall.",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent identifier"},
+            "entity": {"type": "string", "description": "A declared entity name or alias."},
+            "max_hops": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 5,
+                "default": 1,
+                "description": "Relations to follow from the entity, in either direction. 0 returns the entity alone.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 20,
+                "description": "Maximum entities returned, and maximum mentioning refs listed per entity.",
+            },
+            "channel": {"type": "string", "description": "Memory channel filter -- same semantics as in `recall`."},
+            "project_id": {
+                "type": "string",
+                "description": "γ filter -- same semantics as in `recall`. " + _AUTO_PROJECT_ID_CLAUSE,
+            },
+            "source_id": {
+                "type": "string",
+                "description": "Per-user source filter on the mentioning records -- same semantics as in `recall`.",
+            },
+        },
+        "required": ["agent_id", "entity"],
+    },
+    do_traverse_boundary,
+    [
+        ("agent_id", str),
+        ("entity", str),
+        ("max_hops", int, 1),
+        ("limit", int, 20),
+        ("channel", str, ""),
+        ("project_id", str, None),
+        ("source_id", str, ""),
+    ],
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 
 registry.auto_tool(
@@ -846,10 +1179,19 @@ registry.auto_tool(
     "full_content is itself budgeted (200k chars per response, bug-211): rows "
     "past the budget degrade to the preview tier and the response carries "
     "full_content_budget_chars (absent when the budget never bites). "
+    "2.6 additive: a message whose content the preview cut also carries excerpt — the part of "
+    "the record that matched the query, at most 800 characters (CPERSONA_RECALL_EXCERPT_CHARS), "
+    "separate passages joined by ' … ' in text order — and excerpt_basis (blocks: the record's "
+    "block set; lexical: divided at read time, ranked by shared words; start: the record is one "
+    "block, so its start). Read the excerpt before deciding to expand a row; content stays the "
+    "record's start. Absent under full_content and on rows shown whole. "
     "v2.5.2 additive: each scored message carries match_reason={signal, score, ...} where "
-    "signal is the branch the ranking / quality gate keyed on (confidence > rsf > cosine > rrf) "
-    "and the remaining keys (cosine / rrf / rsf) surface the internal per-retriever "
-    "contributions present on that row. Unscored rows (cascade FTS/keyword) omit match_reason. "
+    "signal is the branch the quality gate keyed on (rsf > cosine > rrf; confidence only under "
+    "CPERSONA_CONFIDENCE_ORDERING=legacy — from 2.6.0a7 an enabled confidence score is returned "
+    "beside each row but neither orders nor gates) and the remaining keys (cosine / rrf / rsf) "
+    "surface the internal per-retriever contributions present on that row; prior, when present, "
+    "is the age weight that ordered the row (CPERSONA_PRIOR_AGE_RATE). Unscored rows (cascade "
+    "FTS/keyword) omit match_reason. "
     "A response carrying gate_fallback=true (absent otherwise) means every candidate fell below "
     "the quality gate and the below-gate lexical matches were returned instead of an empty "
     "result — treat them as low-confidence.",
@@ -926,6 +1268,66 @@ registry.auto_tool(
                     "each message's `ref` expands via get_contents. true returns full text."
                 ),
             },
+            "trace": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "2.6 recall trace: true adds `trace` to the response — which rows each stage "
+                    "(retrieval arms, fusion, quality gate, autocut, final order, count cut, reserved "
+                    "seats) kept, dropped or reordered, and why, with ranks and scores. It carries "
+                    "references only, never stored text, and is not stored on the server. "
+                    "trace_version identifies its shape. False (the default) returns the response "
+                    "unchanged."
+                ),
+            },
+            "time_cue": {
+                "type": "object",
+                "description": (
+                    "2.6: when the answer was stored, as far as you remember. Give after and/or "
+                    "before (a date YYYY-MM-DD, which includes that whole day, or an ISO-8601 "
+                    "timestamp), or ago, plus confidence. The server also searches that period. "
+                    "Among the rows it returns anyway, one found there moves up by at most 3 / 2 / 1 "
+                    "places (sure / likely / vague), and one extra seat holds the best record only "
+                    "that search found. The returned rows are those of a recall without the cue, "
+                    "reordered, plus at most that seat: no row is removed or re-scored, and which rows "
+                    "pass the quality gate does not change. If the period holds nothing it is widened once, one "
+                    "confidence step. likely widens the period by half its length on each side, "
+                    "vague by its whole length. The response then carries time_cue: the period "
+                    "searched, whether it was widened, how many rows moved and how many seats were "
+                    "used. Pass it only when the request itself says when (a date, a month, "
+                    "\"last week\", \"in the spring\"); omit it when the request names no time, and "
+                    "never fill it with today's date or a guess. A cue whose own period starts "
+                    "within the last 24 hours (today, or later) is not used: the rows are those of "
+                    "a recall without a cue, and time_cue in the response says ignored. A cue that "
+                    "cannot be read returns an error and no messages."
+                ),
+                "properties": {
+                    "after": {"type": "string"},
+                    "before": {"type": "string"},
+                    "ago": {
+                        "description": (
+                            'Relative to now: {"unit": "days" | "weeks" | "months", "value": N} '
+                            "names the unit-long period centred N units ago (a month is 30 days); "
+                            '"long_ago" names the oldest third of what this scope holds.'
+                        ),
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "unit": {"type": "string", "enum": ["days", "weeks", "months"]},
+                                    "value": {"type": "integer", "minimum": 0},
+                                },
+                                "required": ["unit", "value"],
+                                "additionalProperties": False,
+                            },
+                            {"type": "string", "enum": ["long_ago"]},
+                        ],
+                    },
+                    "confidence": {"type": "string", "enum": ["sure", "likely", "vague"]},
+                },
+                "required": ["confidence"],
+                "additionalProperties": False,
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -941,6 +1343,8 @@ registry.auto_tool(
         ("source_id", str, ""),
         ("full_content", bool, False),
         ("session_key", str, ""),
+        ("trace", bool, False),
+        ("time_cue", dict, None),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -951,7 +1355,8 @@ registry.auto_tool(
     "Automatically deduplicates, sorts chronologically, and returns a unified list. "
     "Replaces separate recall + manual merge in the caller. "
     "Content is preview-tiered by default — see recall's full_content / get_contents "
-    "(full_content shares recall's 200k-char response budget, bug-211). "
+    "(full_content shares recall's 200k-char response budget, bug-211); a recalled row the "
+    "preview cut carries excerpt / excerpt_basis as recall's do. "
     # audit C13: disclose the asymmetry instead of leaving it invisible.
     "Every external_context entry's content filters the recall (the caller already "
     "holds that text), but only role=user / role=assistant entries are merged into "
@@ -1073,7 +1478,23 @@ registry.auto_tool(
     "is spent the remaining refs come back in `deferred` (absent otherwise) "
     "alongside `budget_chars`; re-fetch them in a second call. A single row larger "
     "than the budget is still returned in full, because this tool is the only path "
-    "back to a row's complete text.",
+    "back to a row's complete text. "
+    "RANGES: a ref may instead be an object that names part of its record -- "
+    "{ref, node: i} or {ref, node: [first, last]} (inclusive) for overflow-tree nodes, "
+    "e.g. the `node.index` of a reconstruct quote and its neighbours, or {ref, span: "
+    "[start, end]} for characters. Offsets are in the stored text (a memory's content, "
+    "an episode's summary without the '[Episode] ' label). The item then carries that "
+    "slice as `content` and `range` = {span, content_len, and node + of when nodes "
+    "were named, or block + of when blocks were}; a span end past the text is clamped and "
+    "`range.span` says what was served. A ref may also carry `revision`, the digest a "
+    "reconstruct quote's `expand` hands out for the text its offsets were measured in: "
+    "a record rewritten since refuses rather than serving different characters under the "
+    "same numbers. A range that cannot be served exactly is never widened to the whole "
+    "row: it comes back in `unresolved` (absent otherwise) as {ref, reason}, reason one of "
+    "invalid_range, no_current_nodes (the record has no complete node set -- short "
+    "records have none, and a new long one gets them shortly after store), "
+    "node_out_of_range, span_out_of_range, no_current_blocks, block_out_of_range, "
+    "stale_revision. Only the slice counts against the budget.",
     {
         "type": "object",
         "properties": {
@@ -1083,15 +1504,285 @@ registry.auto_tool(
             },
             "refs": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {
+                            "type": "object",
+                            "properties": {
+                                "ref": {"type": "string"},
+                                "node": {
+                                    "anyOf": [
+                                        {"type": "integer", "minimum": 0},
+                                        {
+                                            "type": "array",
+                                            "items": {"type": "integer", "minimum": 0},
+                                            "minItems": 2,
+                                            "maxItems": 2,
+                                        },
+                                    ]
+                                },
+                                "block": {
+                                    "anyOf": [
+                                        {"type": "integer", "minimum": 0},
+                                        {
+                                            "type": "array",
+                                            "items": {"type": "integer", "minimum": 0},
+                                            "minItems": 2,
+                                            "maxItems": 2,
+                                        },
+                                    ]
+                                },
+                                "span": {
+                                    "type": "array",
+                                    "items": {"type": "integer", "minimum": 0},
+                                    "minItems": 2,
+                                    "maxItems": 2,
+                                },
+                                "revision": {"type": "string"},
+                            },
+                            "required": ["ref"],
+                        },
+                    ]
+                },
                 "maxItems": 20,
-                "description": "Refs from recall messages, e.g. ['mem:123', 'ep:45'] (max 20 per call)",
+                "description": (
+                    "Refs from recall messages ('mem:<id>' / 'ep:<id>'), or range objects such as "
+                    "{'ref': 'mem:<id>', 'node': [2, 3]} / {'ref': 'ep:<id>', 'span': [0, 800]} / "
+                    "{'ref': 'mem:<id>', 'block': 4, 'revision': '<from an expand>'} (max 20 per call). "
+                    "At most one of node / span / block"
+                ),
             },
         },
         "required": ["agent_id", "refs"],
     },
     do_get_contents,
     [("agent_id", str), ("refs", list, [])],
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+
+registry.auto_tool(
+    "reconstruct",
+    "Assemble recall ITEMS from the candidate rows a recall produces: units of memory, "
+    "each traceable to the canonical rows that support it. Reconstruction means select, "
+    "order and assign roles -- never compose. No model is called and nothing is "
+    "summarised: `content` quotes the item's head claim verbatim -- the parts of its record "
+    "that matched, filled up to a fixed size -- and expands through `head_ref` via get_contents. "
+    "HEAD CLAIM: the most relevant row in the item; if newer versions of that record (same "
+    "message id in the same stored project) are present, their latest version. When "
+    "max_evidence cuts an item, the head is kept and the most relevant remaining rows fill "
+    "the rest. "
+    "Stored rows are never modified. "
+    "COUNT IS A CEILING, NOT A FILL TARGET AND NOT A SEARCH DEPTH: "
+    "base = forced ?? requested ?? server default, effective = min(base, maximum), and "
+    "0 <= returned <= effective. Every response states effective_count and returned_count. "
+    "ONE EXCEPTION, WITH THE BLOCK ARM ON: records only that arm reached are held beside the "
+    "window, as in recall -- up to the block reservation, after the window's items, each marked "
+    "admission='reservation' and counted in reserved_count (a held item the budget left out is "
+    "counted in reserved_omitted). They never take or displace a place in the window, so "
+    "returned_count may exceed effective_count by reserved_count. "
+    "A RESPONSE SAYS MORE ONLY WHEN THE SERVER DID SOMETHING OTHER THAN WHAT WAS ASKED: "
+    "requested_count + count_policy {source, clamped, reason} when the count was clamped or "
+    "operator-forced; requested_budget + budget_policy when the budget was clamped, raised or "
+    "forced; effective_budget + used_budget when the budget withheld an item or an excerpt; "
+    "`bounds` when a bound dropped rows, was reached, or was lowered by the library ceiling; "
+    "reconstruction.excluded_without_provenance when rows were excluded. A response without "
+    "them was served as asked. `trace=true` returns the full audit every time. "
+    "Fewer items than the window is a NORMAL "
+    "result and carries `shortfall_reason` (no_relevant_evidence / "
+    "below_quality_threshold / exhausted_candidates); a shortfall is never padded with "
+    "duplicates, fragments, or a cluster split in two. "
+    "BREADTH IS SEPARATE FROM COUNT: `top_k` (candidate depth), `max_hops` (relation "
+    "hops) and `max_evidence` are declared independently and none is derived from "
+    "`count` -- changing `count` alone does not move the candidate id set. "
+    "WHAT THE RESPONSE ADMITS: `bounds.omitted` names a bound that DROPPED rows the tool held "
+    "(`max_evidence` -- each cut item also counts them in `claims_omitted` -- or `max_hops`: a "
+    "declared relation was left unfollowed); "
+    "`bounds.reached` names a bound that was only MET (`top_k`: retrieval returned as many rows "
+    "as it was allowed; `max_evidence`: an entity the walk reached is mentioned by more records "
+    "than were read -- whether more lay beyond is not known). Both are absent when empty. "
+    "`quote_selection: lexical_only` appears when no query embedding was available and nodes "
+    "were ranked by shared trigrams alone; an item whose cut quote is merely the start of its "
+    "record carries `node_unavailable` (`no_nodes`, or `not_current` when nodes exist but are "
+    "partial or another model's). ABSENCE IS NOT A VERDICT: a response without these fields "
+    "does not say its items suffice to answer, that the whole store was searched, or that the "
+    "rows were checked for contradiction -- `conflicts` detects one narrow case only. "
+    "BREADTH BEFORE DEPTH: `budget` bounds the characters of quoted text -- each item's "
+    "`content` and its `excerpts` -- where `count` bounds how many items. The quoted text is "
+    "one fixed sequence: every head in item order, then each item's most relevant remaining "
+    "excerpt, then the next, and the response is its longest prefix that fits. An excerpt the "
+    "budget cannot carry is omitted (counted in `excerpts_omitted`, absent when zero; its "
+    "claim and ref stay); "
+    "an item is dropped only when its head does not fit, with shortfall_reason "
+    "budget_exhausted. Raising the budget alone never removes an item or an excerpt. When "
+    "`budget` is omitted the default is the configured default or one quote per item of the "
+    "window, whichever is more, so a count you name is not cut by a budget you did not set; a "
+    "budget you do name is taken as given. "
+    "QUOTES: `content` quotes the head claim and each `excerpts[]` entry quotes another "
+    "retained claim, most relevant first; all are verbatim. The head quote is the record's "
+    "passages that matched the query, taken in ranking order while they fit "
+    "CPERSONA_RECONSTRUCT_QUOTE_CHARS (800 by default) and shown in text order joined by ' … ' "
+    "-- the recall excerpt's filling; `quote_basis` says how they were chosen (blocks, lexical, "
+    "start, or whole when the record fits) and `ranges` gives their character spans in the "
+    "record. A best passage longer than the size is cut and carries `context_incomplete` and "
+    "`expand` ({ref, span}) for get_contents. Excerpts of the other claims -- and the head "
+    "when CPERSONA_RECONSTRUCT_QUOTE_CHARS=0 -- are quoted as before 2.6 and cut as the preview "
+    "tier cuts: a long record with overflow-tree nodes is quoted from the node that best matches the "
+    "query (rank by embedding similarity and by shared character trigrams, fused), and "
+    "`node` gives its index, node count and character span in the stored text; a record "
+    "without nodes is quoted from its start. READ FURTHER IN STEPS, SMALLEST FIRST: a node "
+    "quote is the start of a node several times its length, and an item whose quote was cut "
+    "carries `expand` -- pass it to get_contents as it is to read the rest of that node. If "
+    "that is not enough, read its neighbours with {ref, node: [index - 1, index + 1]}. Pass "
+    "the bare ref, the whole record, only when the parts did not answer: a record can be "
+    "tens of times a node. Nodes are read after items are chosen, so "
+    "they never change which items come back or their order. No relevance score is returned. "
+    "ITEM SHAPE (the same for every item): `claims` carries one entry per retained row, "
+    "newest first, each with `ref`, `as_of`, `why` (the key that admitted the row; "
+    "`relation:<predicate>` when a declared relation did), `hops` when the relation walk reached "
+    "the row, and `roles` when it has any -- sort by `as_of` for a chronological view. `excerpts` and "
+    "`excerpts_omitted` are absent when empty. `trace=true` adds `reconstruction` (policy, "
+    "candidate / cluster / selected counts), candidate refs, clusters and, for each "
+    "record quoted by node, `node_order` -- its best few node indices, best first, as places to "
+    "read next (an order, not a confidence). "
+    "Gate fallback remains visible even when count is filled; zero count states count_zero. "
+    "Retrieval degradation and update notices are delivered unchanged. If the library "
+    "ceiling clamps top_k, bounds.effective_top_k reports the applied bound, including when "
+    "the candidate pool is empty. "
+    "`independence_reason` says why this is a separate item; `conflicts` "
+    "appears only when two rows cannot be ordered. "
+    "ROLE DIRECTION: `roles[].role` names what the REFERENCED row is to this claim (the "
+    "ref is the subject, the claim is the object): the referenced episode SUPPORTS this "
+    "claim, the referenced newer row SUPERSEDES it. The vocabulary is fixed at supports / supersedes "
+    "/ corrects / qualifies / contradicts / temporal_predecessor. The server derives `supersedes` "
+    "(same message id, time order) and `supports` (episode span containment); any role word can "
+    "also be DECLARED as a record -> record relation (declare_associations), whose subject is the "
+    "ref. Ignore a role you do not know. "
+    "BUNDLING KEYS are deterministic and never semantic: same message id within the "
+    "same stored project (unknown project context cannot establish identity), containment in "
+    "a candidate episode's time span, and adjacent timestamps FROM THE SAME SOURCE "
+    "within the same project and channel, with the entire burst bounded by the time window "
+    "(source alone is not a key -- in a single-agent store it is constant and would fold "
+    "the whole pool into one item), and a declared record -> record relation between two "
+    "candidates. Sharing a declared entity does not bundle. "
+    "DECLARED ASSOCIATIONS (declare_associations, or `associations` on store) are read here and "
+    "nowhere else, and change nothing when none apply: the names and aliases of entities the "
+    "query mentions are added to the LEXICAL search only (the query's meaning, and so the vector "
+    "search, is unchanged; the extra match is a vote, not a pass through the quality gate); and "
+    "from each item's candidates the relation walk follows declared entity -> entity relations, "
+    "either direction, up to `max_hops`, adding records that mention an entity it reached as "
+    "evidence inside that item -- never as an item, never twice in one response, kept fewest hops "
+    "first, then most recently declared relation, then lowest record id. "
+    "This tool is additive: the `recall` contract is untouched.",
+    {
+        "type": "object",
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent identifier"},
+            "query": {"type": "string", "description": "Search query (empty returns recent memories)"},
+            "count": {
+                "type": "integer",
+                "minimum": 0,
+                "description": (
+                    "Ceiling on recall items returned -- not a fill target, not a search depth. "
+                    "Declare per call; omit to take the server default (1 unless configured). "
+                    "An operator-forced value overrides both. Requesting 5 with only 2 valid "
+                    "items returns 2; neither setting requires filling the window. "
+                    "Clamped to the server maximum, and the clamp is reported in count_policy "
+                    "rather than applied silently."
+                ),
+            },
+            "top_k": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": (
+                    "Candidate depth: how many rows the retrieval hands to bundling. This is the "
+                    "breadth knob; it is independent of `count` and is what to raise when items "
+                    "are missing evidence."
+                ),
+            },
+            "max_hops": {
+                "type": "integer",
+                "minimum": 0,
+                "description": (
+                    "Relation hops the walk may follow from an item's candidates through declared "
+                    "entity -> entity relations. 0 adds no walked evidence. A relation left "
+                    "unfollowed at the bound is named in bounds.omitted."
+                ),
+            },
+            "max_evidence": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Maximum retained rows per item, bounding its claims and role targets. A cut is named in bounds.omitted and counted in the item's claims_omitted.",
+            },
+            "deep": {
+                "type": "boolean",
+                "description": "Deep recall for the candidate stage -- same semantics as in `recall`.",
+            },
+            "channel": {"type": "string", "description": "Memory channel filter"},
+            "project_id": {
+                "type": "string",
+                "description": (
+                    "γ filter -- same semantics as in `recall`, including the '@auto' "
+                    "sentinel, which resolves this agent's default from the server's "
+                    "operating context and echoes the resolution as resolved_project_id. "
+                    "With no configured operating context the sentinel is NOT resolved: "
+                    "it is filtered as the literal project_id '@auto'. Read "
+                    "resolved_project_id before relying on the resolution."
+                ),
+            },
+            "source_id": {
+                "type": "string",
+                "description": "Per-user source filter -- same semantics as in `recall`.",
+            },
+            "trace": {"type": "boolean", "description": "Include candidate refs and cluster membership for local diagnosis, and the trace of the recall it made as trace.recall; no full text is added."},
+            "budget": {
+                "type": "integer",
+                "minimum": 1,
+                "description": (
+                    "Payload budget: characters of quoted text (item `content` plus `excerpts`) "
+                    "the response may carry. Bounds depth, where `count` bounds breadth, and "
+                    "breadth wins: excerpts are omitted before any item is. Omit for the server "
+                    "default, which is never less than one quote per item of the window; "
+                    "an operator-forced value overrides both; clamped to the server "
+                    "maximum and raised to one preview-tier excerpt, and budget_policy says which."
+                ),
+            },
+            "session_key": {
+                "type": "string",
+                "description": (
+                    "Opaque session identity you declare: a partition hint, not authentication "
+                    "and not a data filter. Forwarded to the candidate recall."
+                ),
+            },
+            "time_cue": {
+                "type": "object",
+                "description": (
+                    "2.6: when the answer was stored, as far as you remember — the same object "
+                    "recall takes (see recall's time_cue), applied to the candidate recall this "
+                    "reconstruction reads. The response carries time_cue when one was applied."
+                ),
+            },
+        },
+        "required": ["agent_id", "query"],
+    },
+    do_reconstruct_boundary,
+    [
+        ("agent_id", str),
+        ("query", str),
+        ("count", int, None),
+        ("top_k", int, None),
+        ("max_hops", int, None),
+        ("max_evidence", int, None),
+        ("deep", bool, False),
+        ("channel", str, ""),
+        ("project_id", str, None),
+        ("source_id", str, ""),
+        ("session_key", str, ""),
+        ("trace", bool, False),
+        ("budget", int, None),
+        ("time_cue", dict, None),
+    ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
 
@@ -1144,7 +1835,8 @@ registry.auto_tool(
 registry.auto_tool(
     "archive_episode",
     "Archive a conversation episode with pre-computed summary, keywords, and resolved status. "
-    "All LLM processing is performed by the caller.",
+    "All LLM processing is performed by the caller. A summary that runs past the embedding "
+    "window adds nodes:{status:'queued'} to the response, as on store.",
     {
         "type": "object",
         "properties": {
@@ -1433,7 +2125,8 @@ registry.auto_tool(
     "agent_id provided. The new content passes through the same sanitizer as store: "
     "it is capped at the content length limit (the response carries truncated:true "
     "when the cap bit) and [Memory from ...] annotations are stripped, so content "
-    "consisting only of those is refused rather than written as an empty row.",
+    "consisting only of those is refused rather than written as an empty row. A new "
+    "text that runs past the embedding window gets nodes:{status:'queued'}, as on store.",
     {
         "type": "object",
         "properties": {
@@ -2964,6 +3657,12 @@ async def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
+    # Section 7: a count configuration whose default or forced value exceeds the
+    # maximum is a startup error, not a silent clamp. Validated before anything
+    # expensive, with the same failure posture as the ACL table below.
+    config.validate_reconstruct_counts()
+    config.validate_block_gates()
+
     # ACL mode (docs/ACL_DESIGN.md): load and validate the grant table before
     # anything expensive, failing closed on any defect — the server refuses to
     # start rather than serve a policy other than the one written (§7).
@@ -3025,6 +3724,11 @@ async def main():
         )
         await vector._embedding_client.initialize()
         logger.info("Embedding client ready (mode=%s)", EMBEDDING_MODE)
+        # Learn what is behind /embed before anything derives a vector from it, so
+        # the first node or block written in this process carries the backend's
+        # identity rather than this server's configured guess at it. A backend that
+        # cannot say stays unknown and the write keys fall back to what they were.
+        await generation.refresh(vector._embedding_client)
         if not local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
             # bug-180: state the trade at boot. In this configuration the local
             # cosine scan — the fallback for a remote /search outage — has no rows
@@ -3112,6 +3816,12 @@ async def main():
         if TASK_QUEUE_ENABLED:
             tasks._task_queue = tasks.MemoryTaskQueue()
             await tasks._task_queue.start()
+            # docs/BLOCK_REACH_DESIGN.md §7: turning block construction on starts
+            # a bounded backfill of the existing corpus. Two statements and a
+            # no-op unless the deployment opted in, so it is awaited here rather
+            # than scheduled — and it queues one task, whose own bounds decide how
+            # much of the corpus a run does.
+            await blocks.queue_backfill()
         else:
             logger.info("Task queue disabled")
 

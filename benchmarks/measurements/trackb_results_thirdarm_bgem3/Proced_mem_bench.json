@@ -1,0 +1,58 @@
+{
+  "task": "Proced_mem_bench",
+  "memory_type": "Procedural",
+  "mean_ndcg_at_10": 52.13,
+  "subtasks": {
+    "easy": 46.82,
+    "hard": 50.02,
+    "medium": 59.57
+  },
+  "num_subtasks": 3,
+  "time_s": 0.7,
+  "recall_latency_full": {
+    "n": 40,
+    "p50_ms": 7.96,
+    "p95_ms": 11.51,
+    "p99_ms": 12.0,
+    "mean_ms": 8.24
+  },
+  "recall_latency_limit10": {
+    "n": 40,
+    "p50_ms": 4.3,
+    "p95_ms": 5.4,
+    "p99_ms": 5.69,
+    "mean_ms": 4.28
+  },
+  "calibration": [
+    {
+      "subtasks": [
+        "easy",
+        "hard",
+        "medium"
+      ],
+      "corpus_size": 336,
+      "ok": true,
+      "method": "separation",
+      "proxy_source": "temporal",
+      "old_threshold": 0.3,
+      "new_threshold": 0.8303,
+      "sampled_embeddings": 200,
+      "num_pairs": 19900,
+      "z_factor": 1.0,
+      "percentile": 0.95,
+      "embedding_dim": 1024,
+      "distribution": {
+        "mean": 0.7839,
+        "std": 0.0617,
+        "median": 0.7745,
+        "p95": 0.8985
+      },
+      "null_admit_rate": 0.2181,
+      "pos_admit_rate": 0.2764,
+      "pos_mean": 0.785,
+      "youden_j": 0.0581,
+      "fusion_admission_floor": 0.4152,
+      "rrf_threshold_factor": 0.5
+    }
+  ]
+}

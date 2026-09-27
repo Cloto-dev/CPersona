@@ -11,6 +11,8 @@ agent's episodes, ignoring the recall's project_id/channel scope, and runs by
 default (EPISODE_PENALTY_ENABLED=true). A recall scoped to one bucket was
 decayed against another bucket's most-recent episode, so in-scope
 current-session memories got penalised against an unrelated project/channel.
+The penalty is off by default from 2.6.0a7, so every bug-147 test turns it on:
+with it off, the two scoping tests would pass because nothing is penalised at all.
 """
 import os
 import tempfile
@@ -142,13 +144,18 @@ async def _insert_episode(db, project_id: str, channel: str, created_at: str):
     await db.commit()
 
 
+@pytest.fixture
+def penalty_on(monkeypatch):
+    monkeypatch.setattr(M, "EPISODE_PENALTY_ENABLED", True)
+
+
 def _memory_row(rrf_score: float, timestamp: str) -> dict:
     # source is a JSON string (never a dict) so _is_episode_result() -> False.
     return {"id": 1, "timestamp": timestamp, "_rrf_score": rrf_score, "source": '{"User": "x"}'}
 
 
 @pytest.mark.asyncio
-async def test_bug147_boundary_scoped_to_recall_project():
+async def test_bug147_boundary_scoped_to_recall_project(penalty_on):
     """An episode only in project A must not penalise a recall scoped to project B.
 
     Fail-first (unfixed): _get_episode_boundary_ts ignores project_id and returns
@@ -168,7 +175,7 @@ async def test_bug147_boundary_scoped_to_recall_project():
 
 
 @pytest.mark.asyncio
-async def test_bug147_boundary_scoped_to_recall_channel():
+async def test_bug147_boundary_scoped_to_recall_channel(penalty_on):
     """The same scoping must hold on the channel axis.
 
     Fail-first (unfixed): the channel of the episode is ignored, so a recall
@@ -186,7 +193,7 @@ async def test_bug147_boundary_scoped_to_recall_channel():
 
 
 @pytest.mark.asyncio
-async def test_bug147_in_scope_episode_still_penalises():
+async def test_bug147_in_scope_episode_still_penalises(penalty_on):
     """Non-vacuity guard: an IN-scope episode must still penalise prior-session rows.
 
     Proves the bug-147 fix scopes the boundary rather than disabling the penalty

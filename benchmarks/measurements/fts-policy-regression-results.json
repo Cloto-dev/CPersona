@@ -1,0 +1,161 @@
+{
+  "date": "2026-09-15",
+  "runs": {
+    "initial_candidate": {
+      "collected": 2416,
+      "passed": 2397,
+      "failures": [
+        "tests.test_255_repairable_contract::test_fix_capable_check_declares_repairable[False-file_permissions]",
+        "tests.test_255_repairable_contract::test_fix_capable_check_declares_repairable[True-file_permissions]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[corpus-nonfinite-health]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[corpus-mixed-spellings-health]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[corpus-future-timestamp-health]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[corpus-unnormalized-health]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[health-clean]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[health-info-only-asymmetry]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[health-warn-degraded]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[health-fix-repairs-warn]",
+        "tests.test_oauth_verification::test_the_fetch_is_bounded_by_a_deadline_and_not_by_each_read",
+        "tests.test_superauditor_findings::test_empty_database_delivers_no_findings_with_the_full_response_shape",
+        "tests.test_superauditor_findings::test_caps_are_observed_at_the_boundary",
+        "tests.test_superauditor_findings::test_summary_is_rendered_from_the_trimmed_set_and_is_optional"
+      ],
+      "skips": [
+        "tests.test_task_queue::test_queue_processes_update_profile",
+        "tests.test_task_queue::test_queue_processes_archive_episode",
+        "tests.test_task_queue::test_crash_recovery",
+        "tests.test_task_queue::test_tool_update_profile_queues",
+        "tests.test_task_queue::test_tool_sync_when_queue_disabled"
+      ],
+      "modules": 139,
+      "golden_scenarios": 93,
+      "junit_sha256": "c93e661593eeb848cbf17daf96ebc5c59ad9a62bb5fcba64f22b472fc5a82c3b",
+      "suite_time_s": 71.493
+    },
+    "initial_control": {
+      "collected": 2392,
+      "passed": 2373,
+      "failures": [
+        "tests.test_255_repairable_contract::test_fix_capable_check_declares_repairable[False-file_permissions]",
+        "tests.test_255_repairable_contract::test_fix_capable_check_declares_repairable[True-file_permissions]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[corpus-nonfinite-health]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[corpus-mixed-spellings-health]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[corpus-future-timestamp-health]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[corpus-unnormalized-health]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[health-clean]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[health-info-only-asymmetry]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[health-warn-degraded]",
+        "tests.test_equivalence_252::test_behaviour_matches_the_pre_refactor_golden[health-fix-repairs-warn]",
+        "tests.test_oauth_verification::test_the_fetch_is_bounded_by_a_deadline_and_not_by_each_read",
+        "tests.test_superauditor_findings::test_empty_database_delivers_no_findings_with_the_full_response_shape",
+        "tests.test_superauditor_findings::test_caps_are_observed_at_the_boundary",
+        "tests.test_superauditor_findings::test_summary_is_rendered_from_the_trimmed_set_and_is_optional"
+      ],
+      "skips": [
+        "tests.test_task_queue::test_queue_processes_update_profile",
+        "tests.test_task_queue::test_queue_processes_archive_episode",
+        "tests.test_task_queue::test_crash_recovery",
+        "tests.test_task_queue::test_tool_update_profile_queues",
+        "tests.test_task_queue::test_tool_sync_when_queue_disabled"
+      ],
+      "modules": 138,
+      "golden_scenarios": 93,
+      "junit_sha256": "4985906e7be600a70ba27af4edc0caf679db21b45f42cc322f9e231d66f9c5dc",
+      "suite_time_s": 68.95
+    },
+    "e43_edges_python311": {
+      "collected": 2416,
+      "passed": 2411,
+      "failures": [],
+      "skips": [
+        "tests.test_task_queue::test_queue_processes_update_profile",
+        "tests.test_task_queue::test_queue_processes_archive_episode",
+        "tests.test_task_queue::test_crash_recovery",
+        "tests.test_task_queue::test_tool_update_profile_queues",
+        "tests.test_task_queue::test_tool_sync_when_queue_disabled"
+      ],
+      "modules": 139,
+      "golden_scenarios": 93,
+      "junit_sha256": "95fee3eab641306cf0245c6b38b501534bca0e58f29bb9885da28bbf968275c7",
+      "suite_time_s": 66.64
+    },
+    "b4_edges_python311": {
+      "collected": 2418,
+      "passed": 2413,
+      "failures": [],
+      "skips": [
+        "tests.test_task_queue::test_queue_processes_update_profile",
+        "tests.test_task_queue::test_queue_processes_archive_episode",
+        "tests.test_task_queue::test_crash_recovery",
+        "tests.test_task_queue::test_tool_update_profile_queues",
+        "tests.test_task_queue::test_tool_sync_when_queue_disabled"
+      ],
+      "modules": 140,
+      "golden_scenarios": 93,
+      "junit_sha256": "50d3d8970ff457223a4642f1e74067f6c058410bca126ffba57fcb9e6e105c9d",
+      "suite_time_s": 67.679
+    },
+    "b4_edges_python313": {
+      "collected": 2418,
+      "passed": 2412,
+      "failures": [
+        "tests.test_2512b2_handlers::test_short_content_repair_survives_a_corpus_past_the_variable_ceiling"
+      ],
+      "skips": [
+        "tests.test_task_queue::test_queue_processes_update_profile",
+        "tests.test_task_queue::test_queue_processes_archive_episode",
+        "tests.test_task_queue::test_crash_recovery",
+        "tests.test_task_queue::test_tool_update_profile_queues",
+        "tests.test_task_queue::test_tool_sync_when_queue_disabled"
+      ],
+      "modules": 140,
+      "golden_scenarios": 93,
+      "junit_sha256": "3b5907a44675bf467671f44f4493c15daf11d4ebe3ba9389d030f7e79c6b539c",
+      "suite_time_s": 82.653
+    },
+    "b4_edges_repaired_fixture_python311": {
+      "collected": 2418,
+      "passed": 2413,
+      "failures": [],
+      "skips": [
+        "tests.test_task_queue::test_queue_processes_update_profile",
+        "tests.test_task_queue::test_queue_processes_archive_episode",
+        "tests.test_task_queue::test_crash_recovery",
+        "tests.test_task_queue::test_tool_update_profile_queues",
+        "tests.test_task_queue::test_tool_sync_when_queue_disabled"
+      ],
+      "modules": 140,
+      "golden_scenarios": 93,
+      "junit_sha256": "650800bb0d746d4ddda5e03a7179291e5c62ba293679ddad3a49e838b5e58ea3",
+      "suite_time_s": 71.79
+    },
+    "b4_edges_repaired_fixture_python313": {
+      "collected": 2418,
+      "passed": 2413,
+      "failures": [],
+      "skips": [
+        "tests.test_task_queue::test_queue_processes_update_profile",
+        "tests.test_task_queue::test_queue_processes_archive_episode",
+        "tests.test_task_queue::test_crash_recovery",
+        "tests.test_task_queue::test_tool_update_profile_queues",
+        "tests.test_task_queue::test_tool_sync_when_queue_disabled"
+      ],
+      "modules": 140,
+      "golden_scenarios": 93,
+      "junit_sha256": "0979ea020ecec036d6011391ddc444f6659071bcc519dafe9f3c35866f6c7edb",
+      "suite_time_s": 88.516
+    }
+  },
+  "initial_failure_ids_equal": true,
+  "fixture_repair": {
+    "native_variable_limit_python313": 250000,
+    "seeded_rows_python313": 250001,
+    "content": "short",
+    "uniqueness_axis": "channel",
+    "production_checks_sha256_restored": "e8246adc688923b8ab735b1faefdf227712b1aac3e6955b00bbc9325e2a1ec4a",
+    "mutation": "_SHORT_CONTENT_DELETE_CHUNK = 2**31",
+    "mutation_result": "sqlite3.OperationalError: too many SQL variables",
+    "focused_fixed_pass": true,
+    "focused_restored_pass": true
+  }
+}

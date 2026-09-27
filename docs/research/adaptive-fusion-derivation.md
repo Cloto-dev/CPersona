@@ -1,62 +1,74 @@
 # Adaptive fusion — a derivation
 
 Status: derivation under stated assumptions, not behaviour. Nothing here is
-implemented. The equations were produced for the
+implemented.
+
+The equations were produced for the
 [adaptive fusion](../RELIABLE_RECALL_2_6.md#5-adaptive-fusion) section of the
-2.6 design page, whose success condition they do not change; the transcribed
+2.6 design page, whose success condition they do not change. The transcribed
 facts about the code and the benchmark files were spot-checked against the
 tree, and the equations have not yet been re-derived independently. Every
 assumption in section 1 names the observation that would refute it, and
 section 9 lists the measurements that must come before an implementation.
 
-The one-paragraph result: fusing arms by their **exceedance probability
+The result in one paragraph. Fusing arms by their **exceedance probability
 against each arm's own null** is defensible, and a **mixture likelihood ratio**
 over those probabilities gives, without any fitted weight, a closed-form
 per-row influence for each arm and an identifiable limit that reproduces
-today's reciprocal rank fusion exactly. What the mathematics does *not* give is
-the claim that a small null p-value means the arm is reliable, or that a
-confident dense arm suppresses lexical errors across a whole query: the first
-is an assumption about the relevant class, the second holds for the mixture
-rule and fails for Fisher's rule.
+today's reciprocal rank fusion exactly.
+
+What the mathematics does *not* give is the claim that a small null p-value
+means the arm is reliable, or that a confident dense arm suppresses lexical
+errors across a whole query. The first is an assumption about the relevant
+class; the second holds for the mixture rule and fails for Fisher's rule.
 
 ## 1. Assumptions, each with its refutation
 
 1. **The measured pipeline must be identified before a loss is attributed to
-   fusion.** Two premises in the record needed correction. First, a row does
-   not receive three votes: `_recall_rrf` fuses the vector list, the episode
-   FTS list and the memory keyword list, but a memory row can only appear in
-   the vector and memory-keyword lists, and an episode row only in the vector
-   and episode-FTS lists, so each row has two applicable arms. Second,
-   `CPERSONA_FUSED_GATE_ENABLED=false` disables the *calibrated* gate only;
-   `do_recall` still runs `_apply_quality_gate` with its heuristic threshold,
-   so the benchmark regime is not a gate-free ranking experiment.
-   *Refuted if* a frozen-candidate replay shows that post-fusion filtering,
-   duplicate handling or candidate coverage explains a material part of the
-   Track B − Track A difference.
-2. **Null samples represent irrelevant query–document scores in the
-   deployment scope** — same model, same encoder roles, same corpus snapshot,
-   same row type, same isolation scope, and a declared query population.
-   Random documents approximate irrelevant ones; random query–document pairs
-   can contain positives. *Refuted if* held-out irrelevant pairs show excess
-   small-p rates, or calibration moves materially across query language,
-   length, corpus group or retrieval eligibility.
+   fusion.** Two premises in the record needed correction.
+
+    First, a row does not receive three votes. `_recall_rrf` fuses the vector
+    list, the episode FTS list and the memory keyword list, but a memory row
+    can only appear in the vector and memory-keyword lists, and an episode row
+    only in the vector and episode-FTS lists, so each row has two applicable
+    arms.
+
+    Second, `CPERSONA_FUSED_GATE_ENABLED=false` disables the *calibrated* gate
+    only. `do_recall` still runs `_apply_quality_gate` with its heuristic
+    threshold, so the benchmark regime is not a gate-free ranking experiment.
+
+    *Refuted if* a frozen-candidate replay shows that post-fusion filtering,
+    duplicate handling or candidate coverage explains a material part of the
+    Track B − Track A difference.
+2. **Null samples represent irrelevant query–document scores in the deployment
+   scope**: same model, same encoder roles, same corpus snapshot, same row
+   type, same isolation scope, and a declared query population. Random
+   documents approximate irrelevant ones, and random query–document pairs can
+   contain positives.
+
+    *Refuted if* held-out irrelevant pairs show excess small-p rates, or
+    calibration moves materially across query language, length, corpus group
+    or retrieval eligibility.
 3. **Relevance changes the score distribution measurably.** A valid null
-   identifies \(f_0\), not \(f_1\); any Bayesian reliability statement needs an
-   alternative distribution or a structural stand-in for one. *Refuted if*
-   gold/non-gold likelihood ratios do not increase with the fused statistic,
-   or extremely small lexical p-values mostly identify distractors.
+   identifies \(f_0\), not \(f_1\), and any Bayesian reliability statement
+   needs an alternative distribution, or a structural stand-in for one.
+
+    *Refuted if* gold and non-gold likelihood ratios do not increase with the
+    fused statistic, or extremely small lexical p-values mostly identify
+    distractors.
 4. **Bayes ranking is evaluated on a fixed eligible candidate universe.** For
    expected DCG, rank by expected gain; for binary relevance the posterior
-   probability suffices. Expected *normalised* DCG is a different quantity.
-   The Track B metric uses binary membership in the relevant set.
-5. **Candidate-set independence is required; query conditioning is
-   permitted.** \(S(q,d;\mathcal C_1)=S(q,d;\mathcal C_2)\) whenever query,
-   row, snapshot and scope are identical. A reference distribution may depend
-   on \(q\), provided it is not estimated from the returned candidates.
-   *Refuted if* changing retrieval depth, adding an unrelated row or
-   activating another list changes an existing row's score.
+   probability suffices. Expected *normalised* DCG is a different quantity. The
+   Track B metric uses binary membership in the relevant set.
+5. **Candidate-set independence is required; query conditioning is permitted.**
+   \(S(q,d;\mathcal C_1)=S(q,d;\mathcal C_2)\) whenever query, row, snapshot
+   and scope are identical. A reference distribution may depend on \(q\),
+   provided it is not estimated from the returned candidates.
+
+    *Refuted if* changing retrieval depth, adding an unrelated row, or
+    activating another list changes an existing row's score.
 6. **Finite-sample guarantees use independent sampling units.** All-pairs
-   products over a document sample reuse vectors; they are not independent
+   products over a document sample reuse vectors, so they are not independent
    observations. *Refuted if* an uncertainty calculation uses pair counts as
    sample counts.
 7. **Historical cross-model comparisons are hypotheses, not controlled
@@ -65,12 +77,26 @@ rule and fails for Fisher's rule.
    disappears when both models run identical candidates, flags, code and
    labels.
 
+    First, a row does not receive three votes. `_recall_rrf` fuses the vector
+    list, the episode FTS list and the memory keyword list, but a memory row
+    can only appear in the vector and memory-keyword lists, and an episode row
+    only in the vector and episode-FTS lists, so each row has two applicable
+    arms.
+
+    Second, `CPERSONA_FUSED_GATE_ENABLED=false` disables the *calibrated* gate
+    only. `do_recall` still runs `_apply_quality_gate` with its heuristic
+    threshold, so the benchmark regime is not a gate-free ranking experiment.
+
+    *Refuted if* a frozen-candidate replay shows that post-fusion filtering,
+    duplicate handling or candidate coverage explains a material part of the
+    Track B − Track A difference.
+
 ## 2. Scores, nulls and the Bayes-optimal combination
 
-For each applicable arm \(a\) define a higher-is-better score: the cosine for
-the dense arm, and the negated FTS5 bm25 for the lexical arms (SQLite returns
-lower values for better matches). A short-query `LIKE` fallback is a separate
-discrete measurement, not a missing bm25 value.
+For each applicable arm \(a\), define a higher-is-better score: the cosine for
+the dense arm, and the negated FTS5 bm25 for the lexical arms, since SQLite
+returns lower values for better matches. A short-query `LIKE` fallback is a
+separate discrete measurement, not a missing bm25 value.
 
 Let \(F^0_a(t)\) be the null law of the arm's score and define the inclusive
 exceedance probability
@@ -86,7 +112,7 @@ With a finite reference sample of size \(m_a\),
 \tag{1}
 \]
 
-The added one prevents an unsupported zero; it does not repair domain shift or
+The added one prevents an unsupported zero. It does not repair domain shift or
 selection bias, and finite-sample validity needs exchangeability of the test
 score with the reference scores.
 
@@ -105,8 +131,8 @@ conditionally independent in **both** classes,
 \tag{3}
 \]
 
-This is a sum of likelihood ratios — not of raw scores and not of p-values.
-Two special cases name the classical rules. If \(p_a\mid R=1\sim
+This is a sum of likelihood ratios, not of raw scores and not of p-values. Two
+special cases name the classical rules. If \(p_a\mid R=1\sim
 \operatorname{Beta}(\alpha_a,1)\),
 
 \[
@@ -163,12 +189,14 @@ Marginalising \(A\),
 \tag{9,10}
 \]
 
-Equal \(\pi_a\) over the arms applicable to the row type is an equal prior,
-not a learned weight. Equation (8) permits correlated null arms: under the
-alternative the other coordinates keep their null conditional law given the
-explanatory one. The unverified step is the single-coordinate tilt itself —
-multi-arm agreement may carry extra evidence, and lexical distractors may not
-follow the tilt at all; gold-conditioned joint distributions decide.
+Equal \(\pi_a\) over the arms applicable to the row type is an equal prior, not
+a learned weight. Equation (8) permits correlated null arms: under the
+alternative, the other coordinates keep their null conditional law given the
+explanatory one.
+
+The unverified step is the single-coordinate tilt itself. Multi-arm agreement
+may carry extra evidence, and lexical distractors may not follow the tilt at
+all. Gold-conditioned joint distributions decide.
 
 A first experimental choice is \(\kappa=0,\beta=\tfrac12\):
 
@@ -211,15 +239,15 @@ distractor with its own extreme p-value still outranks a dense hit; and the
 finite reference caps suppression — with \(p_v\ge1/(m+1)\) and \(\beta=\tfrac12\),
 \(\omega_v\le\sqrt{m+1}/(\sqrt{m+1}+1)\).
 
-For Fisher's rule \(\partial S_F/\partial(-\log p_a)=1\): the dense arm can
+For Fisher's rule, \(\partial S_F/\partial(-\log p_a)=1\). The dense arm can
 *contribute* more, but the marginal lexical influence never shrinks. "A
 confident dense arm silences lexical votes" is a property of the mixture rule,
 not of p-value combination in general.
 
-*Correction (September 2026).* "Silences" describes the influence on one
-row's score, not the fused order. The rule is symmetric in the arms: a row
-that is extreme on the lexical arm alone outranks a row that is extreme on
-the dense arm alone, as the worked pair in the
+*Correction (September 2026).* "Silences" describes the influence on one row's
+score, not the fused order. The rule is symmetric in the arms: a row that is
+extreme on the lexical arm alone outranks a row that is extreme on the dense
+arm alone, as the worked pair in the
 [identifiability note](adaptive-fusion-identifiability.md#2-the-mixture-rule-is-symmetric-in-the-arms-a-correction)
 shows. Read \(\omega_a\) as a per-row derivative, and nothing more.
 
@@ -243,11 +271,11 @@ reversal condition is
 \tag{16}
 \]
 
-No unconditional theorem follows from per-arm separations alone: means, AUCs
-or marginal separations do not fix the alignment of the arms' errors, the
-near-top margins, candidate censoring or the position relative to the cutoff.
-Two systems with identical separations can fuse differently. The exact
-pairwise statement is \(\Pr(\sum_a M_a>0)<\Pr(M_v>0)\) (17).
+No unconditional theorem follows from per-arm separations alone. Means, AUCs or
+marginal separations do not fix the alignment of the arms' errors, the near-top
+margins, candidate censoring or the position relative to the cutoff. Two
+systems with identical separations can fuse differently. The exact pairwise
+statement is \(\Pr(\sum_a M_a>0)<\Pr(M_v>0)\) (17).
 
 Under a Gaussian approximation of the vote margins,
 \(\mathbf M\approx N(\boldsymbol\mu,\Sigma_M)\), with equal margin variances,
@@ -259,12 +287,13 @@ pairwise accuracy exactly when
 \tag{18}
 \]
 
-(three equal arms: \(\delta_l+\delta_k<(\sqrt{3+6\rho}-1)\delta_v\), (19)).
-Equation (18) matches the two-arms-per-row structure of the implementation.
-It explains *how* QASPER's sign can flip — lexical separation above the
-threshold for a weak dense arm, below it for a strong one — and how Gorilla
-can lose on every model; it does not establish that those separations
-occurred, which only a frozen replay can.
+(For three equal arms: \(\delta_l+\delta_k<(\sqrt{3+6\rho}-1)\delta_v\), (19).)
+
+Equation (18) matches the two-arms-per-row structure of the implementation. It
+explains *how* QASPER's sign can flip — lexical separation above the threshold
+for a weak dense arm, below it for a strong one — and how Gorilla can lose on
+every model. It does not establish that those separations occurred, which only
+a frozen replay can.
 
 Pairwise loss is not NDCG@10 loss. For a judged query compute exactly
 
@@ -287,23 +316,27 @@ E(\mathbf p)\propto\sum_a\frac1{K+r_a},
 \tag{21}
 \]
 
-and since the logarithm is increasing, (10) produces **exactly the RRF
-order** in this limit. The path \(\beta(t)=1-t/2\), \(\kappa(t)=(1-t)K/N\)
-for \(t\in[0,1]\) connects RRF (\(t=0\)) to the square-root mixture on genuine
-null p-values (\(t=1\)). It is an analytic bridge, not a knob to tune on
-benchmark outcomes. The identification does not cover truncated lists or
-unequal eligible universes: today's RRF gives an absent list entry a zero
-vote, and a genuine non-match, an inapplicable arm and a censored score are
-three different observations.
+and since the logarithm is increasing, (10) produces **exactly the RRF order**
+in this limit.
 
-**Flat distributions.** Identical raw scores get identical p-values, so the
-rule creates no artificial within-arm separation; scores inside the null bulk
-get no exceptional evidence; a degenerate finite reference gives \(p=1\)
-rather than a full-strength vote. This removes the artificial promotion of
-flat or singleton lists that per-query min-max produces (`_minmax_norm` maps
-an all-equal list to one). It cannot fix contamination caused by a
-misspecified null or by an alternative that mistakes topical unusualness for
-relevance.
+The path \(\beta(t)=1-t/2\), \(\kappa(t)=(1-t)K/N\) for \(t\in[0,1]\)
+connects RRF (\(t=0\)) to the square-root mixture on genuine null p-values
+(\(t=1\)). It is an analytic bridge, not a knob to tune on benchmark outcomes.
+
+The identification does not cover truncated lists or unequal eligible
+universes. Today's RRF gives an absent list entry a zero vote, and a genuine
+non-match, an inapplicable arm and a censored score are three different
+observations.
+
+**Flat distributions.** Identical raw scores get identical p-values, so the rule
+creates no artificial within-arm separation. Scores inside the null bulk get no
+exceptional evidence, and a degenerate finite reference gives \(p=1\) rather
+than a full-strength vote.
+
+This removes the artificial promotion of flat or singleton lists that per-query
+min-max produces (`_minmax_norm` maps an all-equal list to one). It cannot fix
+contamination caused by a misspecified null, or by an alternative that mistakes
+topical unusualness for relevance.
 
 ## 6. Query–document versus document–document nulls
 
@@ -333,7 +366,7 @@ t_{QD,\alpha}\approx\mu_{QD}+\frac{\sigma_{QD}}{\sigma_{DD}}\,(t_{DD,\alpha}-\mu
 
 so a purely multiplicative factor additionally assumes the intercept is
 negligible. Today's `RRF_THRESHOLD_FACTOR` of 0.5 is a crude operating-point
-transport of this kind; the measured p95 ratios in the
+transport of this kind. The measured p95 ratios in the
 [calibration note](calibration-admission-floor-2026-09.md) already vary from
 0.64 to 0.86 across tasks, so no constant can be right for all of them.
 
@@ -357,19 +390,21 @@ and the true null.
 | Doc–doc null with learned transport | Only after held-out quantile-transport validation | Non-affine shift, changed model/prompt/corpus |
 | **Current query against a fixed document panel** | Cold-start estimator that needs no new model call: a query-conditional random-document null | Contamination \(\eta_q\) of the panel by relevant documents enters (25) as an extra term |
 
-The recommendation is retained real queries in the steady state and the
+The recommendation is retained real queries in the steady state, and the
 query-against-panel estimator at cold start. Using the whole small corpus as
 the panel reduces the score to a rank and erases the cross-query absolute
 separation that motivated adaptivity; a finite panel also saturates its tail.
 
 ## 7. Small corpora, proxy degeneration and starvation
 
-A null-only fusion does not need a temporal positive proxy; keep the proxy out
-of the p-value transform. Where a separation threshold is still used, with
-\(J(t)=F_0(t)-F_1(t)\) estimated from independent samples of sizes
-\(m_0,m_1\), two DKW bounds and a union bound give
-\(|\widehat J(t)-J(t)|\le\epsilon_0+\epsilon_1\) uniformly, with
-\(\epsilon_y=\sqrt{\log(4/\delta)/(2m_y)}\). A defensible acceptance rule is
+A null-only fusion does not need a temporal positive proxy, so keep the proxy
+out of the p-value transform.
+
+Where a separation threshold is still used, with \(J(t)=F_0(t)-F_1(t)\)
+estimated from independent samples of sizes \(m_0,m_1\), two DKW bounds and a
+union bound give \(|\widehat J(t)-J(t)|\le\epsilon_0+\epsilon_1\) uniformly,
+with \(\epsilon_y=\sqrt{\log(4/\delta)/(2m_y)}\). A defensible acceptance
+rule is
 
 \[
 \boxed{\widehat J(\widehat t)-\epsilon_0-\epsilon_1\ge J_{\min},}
@@ -381,17 +416,19 @@ with \(J_{\min}=0.2\) as declared policy, not a mathematical boundary. At
 observed \(\widehat J\ge0.4\) is needed to certify \(J\ge0.2\). Thousands of
 overlapping pairs are not thousands of observations.
 
-**Starvation.** A fixed-p test cannot guarantee both precision and a
-non-empty result: under an all-null query with \(n\) independent uniform
-p-values, \(\Pr(\text{no admission})=(1-\alpha)^n\). The policy
+**Starvation.** A fixed-p test cannot guarantee both precision and a non-empty
+result. Under an all-null query with \(n\) independent uniform p-values,
+\(\Pr(\text{no admission})=(1-\alpha)^n\). The policy
 \(\alpha(n)=\max\{\alpha_0,1-\eta^{1/n}\}\) (27) bounds that by \(\eta\)
-under those assumptions only. The recommended fallback is deterministic:
-retain the top \(L_{\mathrm{reserve}}\) dense rows inside the declared
-candidate budget, mark rows failing the p criterion as fallback candidates,
-keep their calibrated scores, and separate candidate retention from any claim
-of relevance. Choose \(L_{\mathrm{reserve}}\) before evaluating; retaining at
-least the evaluation depth stops an admission rule from silently removing the
-raw dense top ten.
+under those assumptions only.
+
+The recommended fallback is deterministic: retain the top
+\(L_{\mathrm{reserve}}\) dense rows inside the declared candidate budget, mark
+rows failing the p criterion as fallback candidates, keep their calibrated
+scores, and separate candidate retention from any claim of relevance. Choose
+\(L_{\mathrm{reserve}}\) before evaluating; retaining at least the evaluation
+depth stops an admission rule from removing the raw dense top ten with nothing
+to show for it.
 
 ## 8. Invariants an implementation must keep
 
@@ -497,14 +534,16 @@ All identifiers below are proposals, not settings the code reads today.
 | benchmark runner | Add the mode only once implemented; record every effective gate, arm coverage, reference fingerprint and per-query stage outcome. |
 
 Stored artefacts need a fingerprint over: model identity and revision,
-dimension, query/document prompts; normalisation, chunking, dtype, scoring
-version; corpus/index generation and isolation scope; row type and near/far
-eligibility; FTS tokenizer, query builder, bm25 configuration, fallback
-policy; null definition, reference population, strata, sampled ids, seed,
-effective sampling units; tail convention, clipping, combiner parameters, arm
-applicability, candidate-depth contract; timestamp and schema version. The
-existing sidecar checks dimension and scoring version; dimension alone cannot
-detect a same-width model or prompt replacement.
+dimension, and query/document prompts; normalisation, chunking, dtype, and
+scoring version; corpus and index generation, and isolation scope; row type and
+near/far eligibility; FTS tokenizer, query builder, bm25 configuration, and
+fallback policy; null definition, reference population, strata, sampled ids,
+seed, and effective sampling units; tail convention, clipping, combiner
+parameters, arm applicability, and candidate-depth contract; timestamp and
+schema version.
+
+The existing sidecar checks dimension and scoring version. Dimension alone
+cannot detect a same-width model or a prompt replacement.
 
 ## 11. What this note would not do
 
