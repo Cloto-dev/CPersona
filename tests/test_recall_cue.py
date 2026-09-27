@@ -2,7 +2,7 @@
 
 The invariants of §2.6 are the point of these tests: without a cue nothing changes;
 with one, the rows that pass the quality gate are the same, no row moves up more
-than L places, at most one seat is added, and isolation is never widened.
+than L places, at most L seats are added, and isolation is never widened.
 """
 import random
 from datetime import datetime, timedelta, timezone
@@ -162,7 +162,7 @@ async def test_a_cue_changes_order_not_admission(fake_embedding_client, monkeypa
         return sorted((d["ref"], d["passed"]) for d in out["trace"]["gate"]["decisions"])
 
     assert decisions(cued) == decisions(plain)  # the gate decided the same
-    assert cued["trace"]["policy"]["process"] == "cued-v0.2"
+    assert cued["trace"]["policy"]["process"] == "cued-v0.3"
     # The count cuts the order the cue did not touch; the cue then reorders what was returned.
     assert cued["trace"]["order"]["before_cut"] == plain["trace"]["order"]["before_cut"]
     before, after = _refs(plain)[::-1], _refs(cued)[::-1]  # best first
@@ -182,21 +182,28 @@ SEAT_CORPUS = [(f"{QUERY} {d}", d) for d in range(1, 7)] + [(f"harbor lighthouse
 
 
 @pytest.mark.asyncio
-async def test_a_record_only_the_cue_arm_found_takes_the_one_seat(fake_embedding_client, monkeypatch):
+async def test_records_only_the_cue_arm_found_take_the_seats_the_confidence_holds(fake_embedding_client, monkeypatch):
     refs = await _seed(SEAT_CORPUS)
     monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
-    time_cue = {"after": _ts(115)[:10], "before": _ts(95)[:10], "confidence": "sure"}
+    # likely holds two seats, and the period (widened by half its length) holds three
+    # cue-only records, so the seats are the limit and the best two take them.
+    time_cue = {"after": _ts(115)[:10], "before": _ts(95)[:10], "confidence": "likely"}
     plain = await memory_handlers.do_recall(AGENT, QUERY, limit=2)
     cued = await memory_handlers.do_recall(AGENT, QUERY, limit=2, trace=True, time_cue=time_cue)
     cue_only = {row["ref"] for row in cued["trace"]["arms"]["cue"]} - {
         row["ref"] for name, rows in cued["trace"]["arms"].items() if name != "cue" for row in rows}
-    assert len(cue_only) >= 2, "the fixture must offer more cue-only records than seats"
-    assert set(_refs(plain)) < set(_refs(cued)), "the seat displaced a row"
+    assert len(cue_only) > cue.SEATS["likely"], "the fixture must offer more cue-only records than seats"
+    assert set(_refs(plain)) < set(_refs(cued)), "a seat displaced a row"
     seated = [m for m in cued["messages"] if m.get("match_reason", {}).get("signal") == "cue"]
-    assert len(seated) == 1 and seated[0]["ref"] in cue_only and seated[0]["ref"] in set(refs[-3:])
-    assert seated[0]["match_reason"]["admission"] == "reservation"
-    assert cued["time_cue"]["seated"] == 1
-    assert [r for r in cued["trace"]["reservation"] if r["kind"] == "cue"] == [{"ref": seated[0]["ref"], "kind": "cue"}]
+    assert len(seated) == cue.SEATS["likely"] == 2
+    assert {m["ref"] for m in seated} <= cue_only and {m["ref"] for m in seated} <= set(refs[-3:])
+    assert all(m["match_reason"]["admission"] == "reservation" for m in seated)
+    # The seats go to the cue arm's best eligible rows, in its order.
+    cue_order = [row["ref"] for row in cued["trace"]["arms"]["cue"] if row["ref"] in cue_only]
+    assert sorted(m["match_reason"]["cue_rank"] for m in seated) == sorted(
+        next(r["rank"] for r in cued["trace"]["arms"]["cue"] if r["ref"] == ref) for ref in cue_order[:2])
+    assert cued["time_cue"]["seated"] == 2
+    assert {r["ref"] for r in cued["trace"]["reservation"] if r["kind"] == "cue"} == {m["ref"] for m in seated}
 
 
 @pytest.mark.asyncio
@@ -291,7 +298,7 @@ async def test_reconstruct_passes_the_cue_to_its_recall(fake_embedding_client):
     await _seed(CORPUS)
     time_cue = {"after": _ts(125)[:10], "before": _ts(95)[:10], "confidence": "likely"}
     out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, trace=True, time_cue=time_cue)
-    assert out["trace"]["recall"]["policy"]["process"] == "cued-v0.2"
+    assert out["trace"]["recall"]["policy"]["process"] == "cued-v0.3"
     assert out["time_cue"]["confidence"] == "likely"
     assert "time_cue" not in await reconstruct.do_reconstruct(AGENT, QUERY, count=3)
     refused = await server.do_reconstruct_boundary(
@@ -355,7 +362,7 @@ async def test_a_cue_for_only_today_is_not_used_and_the_response_says_so(fake_em
     traced = await memory_handlers.do_recall(AGENT, QUERY, limit=5, trace=True, time_cue=time_cue)
     assert traced["trace"]["cue_ignored"]["reason"] == "recent_only"
     assert "cue" not in traced["trace"]["arms"] and not traced["trace"].get("suspected")
-    assert traced["trace"]["policy"]["process"] == cue.POLICY == "cued-v0.2"
+    assert traced["trace"]["policy"]["process"] == cue.POLICY == "cued-v0.3"
 
 
 @pytest.mark.asyncio
@@ -390,7 +397,7 @@ async def test_reconstruct_reports_a_cue_it_did_not_use(fake_embedding_client):
 @pytest.mark.parametrize("mode", ["rrf", "rsf"])
 async def test_a_cue_never_pushes_a_row_out_of_the_answer(fake_embedding_client, monkeypatch, mode):
     """The move happens after the count, so every row a recall without the cue returns
-    is still returned; the only row the cue can add is the one seat."""
+    is still returned; the only rows the cue can add are its seats."""
     await _seed(CORPUS)
     monkeypatch.setattr(memory_handlers, "RECALL_MODE", mode)
     # Arms deeper than the count, so admitted rows sit below the cut. The cue names
@@ -407,7 +414,7 @@ async def test_a_cue_never_pushes_a_row_out_of_the_answer(fake_embedding_client,
         cued = await memory_handlers.do_recall(AGENT, QUERY, limit=limit, trace=True, time_cue=time_cue)
         returned, base = set(_refs(cued)), set(_refs(plain))
         assert base <= returned, f"limit {limit}: the cue pushed {sorted(base - returned)} out"
-        assert len(returned - base) <= cue.SEATS
+        assert len(returned - base) <= cue.SEATS["sure"]
         assert set(cued["trace"]["order"]["cut_by_count"]) == set(plain["trace"]["order"]["cut_by_count"])
 
 
@@ -434,7 +441,7 @@ async def test_the_cue_arm_finds_episodes_in_the_period_and_only_there(fake_embe
     found = {row["ref"] for row in out["trace"]["arms"]["cue"]}
     assert inside in found, "an episode whose time is in the period must be searched"
     assert outside not in found
-    assert out["time_cue"]["policy"] == "cued-v0.2"
+    assert out["time_cue"]["policy"] == "cued-v0.3"
 
 
 @pytest.mark.asyncio
@@ -474,3 +481,75 @@ async def test_an_empty_query_returns_the_periods_newest_episodes_too(fake_embed
     time_cue = {"after": _ts(75)[:10], "before": _ts(46)[:10], "confidence": "sure"}
     out = await memory_handlers.do_recall(AGENT, "", limit=3, trace=True, time_cue=time_cue)
     assert ep in {row["ref"] for row in out["trace"]["arms"]["cue"]}
+
+
+# --- cued-v0.3: seats for rows the count cut, as many as L, and a cue arm of its own depth (§2.11) ---------
+
+
+def _cut_period(confidence: str) -> dict:
+    # The records at 61 to 111 days: the six the count cuts first below a count of three.
+    return {"after": _ts(112)[:10], "before": _ts(60)[:10], "confidence": confidence}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["rrf", "rsf"])
+async def test_a_row_the_count_cut_can_take_a_seat(fake_embedding_client, monkeypatch, mode):
+    """Since cued-v0.3 a seat may hold a row an ordinary arm reached and the gate admitted,
+    when the count cut it. Every row seated here is one of those, so the seat rule of
+    cued-v0.2 (rows no ordinary arm reached) would have refused all of them."""
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", mode)
+    monkeypatch.setattr(config, "RECALL_DEPTH_FLOOR", 12)  # arms deeper than the count
+    plain = await memory_handlers.do_recall(AGENT, QUERY, limit=3, trace=True)
+    cut = set(plain["trace"]["order"]["cut_by_count"])
+    cued = await memory_handlers.do_recall(AGENT, QUERY, limit=3, trace=True, time_cue=_cut_period("sure"))
+    seated = [m["ref"] for m in cued["messages"] if m.get("match_reason", {}).get("signal") == "cue"]
+    ordinary = {row["ref"] for name, rows in cued["trace"]["arms"].items() if name != "cue" for row in rows}
+    assert len(seated) == cue.SEATS["sure"] == 3
+    assert set(seated) <= cut, "a seat held a row the count had not cut"
+    assert set(seated) <= ordinary, "the fixture must seat rows an ordinary arm reached"
+    assert set(_refs(plain)) <= set(_refs(cued)) and len(_refs(cued)) == len(_refs(plain)) + 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confidence", ["sure", "likely", "vague"])
+async def test_the_seats_are_as_many_as_the_confidence_holds(fake_embedding_client, monkeypatch, confidence):
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
+    monkeypatch.setattr(config, "RECALL_DEPTH_FLOOR", 12)
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=3, trace=True, time_cue=_cut_period(confidence))
+    assert out["time_cue"]["confidence"] == confidence
+    eligible = [row["ref"] for row in out["trace"]["arms"]["cue"] if row["ref"] not in _refs(out)[-3:]]
+    assert len(eligible) > cue.SEATS[confidence], "the fixture must offer more eligible rows than seats"
+    assert out["time_cue"]["seated"] == cue.SEATS[confidence] == {"sure": 3, "likely": 2, "vague": 1}[confidence]
+
+
+@pytest.mark.asyncio
+async def test_the_cue_arm_searches_to_its_own_depth_whatever_the_count(fake_embedding_client, monkeypatch):
+    """Change the count alone and the cue arm's candidates do not move (breadth is not
+    derived from count). At the count's depth the arm held two rows at a count of two."""
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
+    time_cue = _cut_period("sure")
+    arms = []
+    for limit in (2, 5, 12):
+        out = await memory_handlers.do_recall(AGENT, QUERY, limit=limit, trace=True, time_cue=time_cue)
+        arms.append([row["ref"] for row in out["trace"]["arms"]["cue"]])
+    assert arms[0] == arms[1] == arms[2]
+    assert len(arms[0]) == 6  # every record in the period, well within cue.DEPTH
+    assert cue.DEPTH == 50
+
+
+@pytest.mark.asyncio
+async def test_reconstruct_returns_every_cue_seat_beside_its_window(fake_embedding_client, monkeypatch):
+    """The count contract of reconstruct allows as many held items as recall can hold
+    places: with no block places, the three sure seats are three items after the window."""
+    from cpersona import blocks, reconstruct
+
+    await _seed(CORPUS)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
+    monkeypatch.setattr(blocks, "BLOCK_RESERVATION", 0)
+    out = await reconstruct.do_reconstruct(AGENT, QUERY, count=1, top_k=3, time_cue=_cut_period("sure"))
+    held = [item for item in out["items"] if item.get("admission") == "reservation"]
+    assert len(held) == cue.SEATS["sure"] == 3
+    assert out["reserved_count"] == 3 and out["returned_count"] == 1 + 3

@@ -14,7 +14,7 @@ import random
 import numpy as np
 import pytest
 
-from cpersona import budget, builtin_providers, config, memory_handlers, propagation, providers, reconstruct
+from cpersona import budget, builtin_providers, config, cue, memory_handlers, propagation, providers, reconstruct
 from cpersona.database import get_db
 
 from test_providers import AGENT, CORPUS, QUERY, _seed, _with
@@ -288,13 +288,13 @@ async def test_the_count_allows_both_held_seats_at_once(fake_embedding_client, m
     from cpersona import blocks
 
     monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
-    # No block places, so the bound is exactly limit + the two held seats and a
-    # count that forgot one of them refuses this answer.
+    # No block places, so the bound is exactly limit + the cue's three sure seats + the
+    # propagation seat, and a count that forgot any of them refuses this answer.
     monkeypatch.setattr(blocks, "BLOCK_RESERVATION", 0)
     await _seed(SEAT_CORPUS)
     out = await memory_handlers.do_recall(
         AGENT, QUERY, limit=2, time_cue=_period(115, 95), propagation_seat=True
     )
     signals = [m["match_reason"]["signal"] for m in out["messages"]]
-    assert signals.count("cue") == 1 and signals.count("propagation") == 1
-    assert len(out["messages"]) == 2 + 2
+    assert signals.count("cue") == cue.SEATS["sure"] == 3 and signals.count("propagation") == 1
+    assert len(out["messages"]) == 2 + 3 + 1

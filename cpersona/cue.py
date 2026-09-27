@@ -4,12 +4,14 @@ A caller that half-remembers *when* something happened passes `time_cue`. The
 server turns it into a period, searches that period with one more retrieval arm
 (the cue arm), and then, after the quality gate and autocut have decided which
 rows remain, moves a row the cue arm also found up by a bounded number of
-places. One seat is held for the best row only the cue arm found. If the period
-holds nothing, the loop widens it once and runs the cue arm again.
+places. Up to `L` seats are held for the best rows the cue arm found that the
+answer does not hold and the gate did not refuse. If the period holds nothing,
+the loop widens it once and runs the cue arm again.
 
 The cue never touches a fused score, the quality gate or autocut, so the set of
 rows that pass the gate is the same with and without it. What it can change is
-the order (no row moves up more than `L` places) and at most one held seat.
+the order (no row moves up more than `L` places) and at most `L` held seats.
+The cue arm searches to its own depth, `DEPTH`, whatever the count.
 
 Everything here that a measurement could move -- the margins, `L`, the widening
 steps -- is part of the policy version, `POLICY`, which every traced recall
@@ -21,7 +23,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-POLICY = "cued-v0.2"
+POLICY = "cued-v0.3"
 
 CONFIDENCES = ("sure", "likely", "vague")
 # How far a period is widened on each side, as a fraction of its own length.
@@ -33,7 +35,15 @@ WIDER = {"sure": "likely", "likely": "vague", "vague": None}
 # The rank constant of the bound: key = p - L * K / (K + c), with c counted from 0,
 # the same 61 the fusion's reciprocal rank uses (k = 60, rank + 1).
 RANK_CONSTANT = 61
-SEATS = 1
+# Seats held for rows the cue arm found, per confidence (§2.11): as many as the
+# places a found row may move up. A seat takes a row the answer does not hold and
+# the quality gate and autocut did not refuse -- a row no ordinary arm reached, or
+# one they admitted that the count cut.
+SEATS = {"sure": 3, "likely": 2, "vague": 1}
+MAX_SEATS = max(SEATS.values())
+# How deep the cue arm searches the period, independent of the count (§2.11): at
+# the count's own depth it ranked the rows the ordinary arms already returned.
+DEPTH = 50
 # A cue whose own period (before any margin) starts no earlier than this long before
 # now points only at today or the future. Such a cue is not used: an agent that fills
 # the cue with today's date for a request that named no time is the observed way a

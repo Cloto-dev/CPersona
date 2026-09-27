@@ -1807,9 +1807,10 @@ async def _search_cue_arm(
     """The cue arm (docs/RECALL_PROCESS_DESIGN.md §2.2): the memories and episodes whose
     time falls in `window`, ranked against the query.
 
-    Vector and keyword search over the period only, each to `depth`, merged into one
-    ranked list by reciprocal rank. The list orders rows for the bounded move and the
-    held seat; none of its numbers reaches a fused score or the gate. The vector half
+    Vector and keyword search over the period only, each to `depth` (the caller passes
+    `cue.DEPTH`, which the count does not move), merged into one ranked list by
+    reciprocal rank. The list orders rows for the bounded move and the held seats; none
+    of its numbers reaches a fused score or the gate. The vector half
     reuses the query vector the ordinary vector arm embedded (`query_vec`), so a cue
     costs no second embedding; where no local vector was produced it is empty and the
     arm is keyword only. Isolation and the source filter are the recall's own; an
@@ -2221,7 +2222,7 @@ async def _do_recall(
                 window = p.envelope_planner.period(time_cue, confidence, now, span)
                 if window is not None:
                     cue_rows = await p.cue_candidates.search(
-                        db, agent_id=agent_id, query=query, depth=depth, window=window,
+                        db, agent_id=agent_id, query=query, depth=cue.DEPTH, window=window,
                         channel=channel, project_id=project_id, source_id=source_id,
                         exclude_set=exclude_set, query_vec=query_vec_out, lexical_terms=lexical_terms,
                     )
@@ -2378,6 +2379,9 @@ async def _do_recall(
         trace_rec.order(results, limit)
         trace_rec.mark("order")
 
+    # Every row the gate and autocut admitted, including those the count is about
+    # to cut: since cued-v0.3 a cue seat may hold one of the latter (§2.11).
+    admitted_rids = {_rid_of(r) for r in results}
     results = results[:limit]
     # The window as the count cut it, before the cue's move reorders it: the
     # propagation seat follows this order's first row.
@@ -2387,7 +2391,7 @@ async def _do_recall(
     # have decided which rows are returned and in what order, a row the cue arm
     # also found moves up by at most L places among them. The move comes after the
     # cut so that it cannot push a row out of the answer: the rows returned are
-    # those of a recall without the cue, reordered, plus at most the one seat below.
+    # those of a recall without the cue, reordered, plus at most the seats below.
     if cue_note is not None:
         if trace_rec is not None:
             trace_rec.stage_input("selector", results)
@@ -2417,15 +2421,22 @@ async def _do_recall(
         if trace_rec is not None:
             trace_rec.reservation(reserved[: blocks.BLOCK_RESERVATION], "block")
 
-    # The cue's held seat (§2.4): the best record only the cue arm found. The bounded
-    # move cannot reach it because it is not in the admitted order; the seat adds it
-    # and displaces nothing. A record an ordinary arm reached is not eligible, so a
-    # row the gate refused does not come back this way.
+    # The cue's held seats (§2.4, §2.11): the best records the cue arm found that the
+    # answer does not hold -- one no ordinary arm reached, or one the gate and autocut
+    # admitted and the count cut. The bounded move cannot reach them because they are
+    # not in the returned order; the seats add them and displace nothing. A record an
+    # ordinary arm reached that the gate or autocut refused is not eligible, so a
+    # refused row does not come back this way. As many seats as the places a found
+    # row may move up: L for the confidence the period was searched at.
     if cue_note is not None:
         present = {_rid_of(r) for r in results}
-        eligible = [r for r in cue_rows if r["_rid"] not in reached and r["_rid"] not in present]
-        seated = p.evidence_selector.seats(eligible, cue.SEATS)
-        providers.check_seats(seated, eligible, cue.SEATS)
+        eligible = [
+            r for r in cue_rows
+            if r["_rid"] not in present and (r["_rid"] not in reached or r["_rid"] in admitted_rids)
+        ]
+        places = cue.SEATS[cue_note["confidence"]]
+        seated = p.evidence_selector.seats(eligible, places)
+        providers.check_seats(seated, eligible, places)
         for r in seated:
             r["_cue_seat"] = True
             r["_cue_rank"] = cue_rank[r["_rid"]]
@@ -2455,7 +2466,7 @@ async def _do_recall(
             trace_rec.mark("propagation")
 
     providers.check_recall_count(
-        len(results), limit, cue.SEATS + (propagation.SEATS if propagation_seat else 0),
+        len(results), limit, cue.MAX_SEATS + (propagation.SEATS if propagation_seat else 0),
         blocks.BLOCK_RESERVATION,
     )
     # The one hypothesis a recall evaluates today: the order its stages produced.

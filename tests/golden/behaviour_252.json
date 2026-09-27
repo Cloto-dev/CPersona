@@ -11202,6 +11202,33 @@
       },
       "messages": [
         {
+          "content": "harbor lighthouse keeper logbook entry 6",
+          "match_reason": {
+            "admission": "reservation",
+            "cue_rank": 2,
+            "signal": "cue"
+          },
+          "ref": "mem:7",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-11-01T00:00:00Z"
+        },
+        {
+          "content": "[Episode] harbor lighthouse keeper review inside the period",
+          "match_reason": {
+            "admission": "reservation",
+            "cue_rank": 1,
+            "signal": "cue"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-11-02T00:00:00Z"
+        },
+        {
           "content": "harbor lighthouse keeper logbook entry 5",
           "match_reason": {
             "admission": "reservation",
@@ -11250,9 +11277,9 @@
           "2026-10-18T00:00:00+00:00",
           "2026-11-17T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
-        "seated": 1
+        "seated": 3
       },
       "trace": {
         "arms": {
@@ -11271,6 +11298,11 @@
               "rank": 2,
               "raw": null,
               "ref": "mem:7"
+            },
+            {
+              "rank": 3,
+              "raw": null,
+              "ref": "mem:8"
             }
           ],
           "episode_fts": [],
@@ -11312,7 +11344,9 @@
           "confidence": "sure",
           "lifted": [],
           "seated": [
-            "mem:6"
+            "mem:6",
+            "ep:1",
+            "mem:7"
           ]
         },
         "fusion": [
@@ -11376,7 +11410,7 @@
           "limit": 3
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -11403,6 +11437,14 @@
           {
             "kind": "cue",
             "ref": "mem:6"
+          },
+          {
+            "kind": "cue",
+            "ref": "ep:1"
+          },
+          {
+            "kind": "cue",
+            "ref": "mem:7"
           }
         ],
         "scope": {
@@ -11416,7 +11458,7 @@
         "stages": [
           {
             "confidence": "sure",
-            "found": 3,
+            "found": 4,
             "next": null,
             "period": [
               "2026-10-18T00:00:00+00:00",
@@ -11884,7 +11926,7 @@
           "2026-10-18T00:00:00+00:00",
           "2026-11-17T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
         "seated": 0
       },
@@ -12397,7 +12439,7 @@
           "limit": 14
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -12870,7 +12912,7 @@
           "2026-08-29T00:00:00+00:00",
           "2026-09-29T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
         "seated": 0
       },
@@ -13213,7 +13255,7 @@
           "limit": 12
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -13511,7 +13553,7 @@
           "2026-08-29T00:00:00+00:00",
           "2026-09-29T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
         "seated": 0
       },
@@ -13854,7 +13896,7 @@
           "limit": 12
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -14063,6 +14105,34 @@
     "result": {
       "messages": [
         {
+          "content": "harbor lighthouse note 1",
+          "match_reason": {
+            "admission": "reservation",
+            "cue_rank": 2,
+            "signal": "cue"
+          },
+          "ref": "mem:8",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-09-18T00:00:00Z"
+        },
+        {
+          "content": "harbor lighthouse note 2",
+          "match_reason": {
+            "admission": "reservation",
+            "cue_rank": 1,
+            "signal": "cue"
+          },
+          "ref": "mem:9",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-09-13T00:00:00Z"
+        },
+        {
           "content": "harbor lighthouse note 0",
           "match_reason": {
             "admission": "reservation",
@@ -14114,9 +14184,9 @@
           "2026-09-08T00:00:00+00:00",
           "2026-09-29T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
-        "seated": 1
+        "seated": 3
       },
       "trace": {
         "arms": {
@@ -14130,6 +14200,11 @@
               "rank": 1,
               "raw": 0.5740500093,
               "ref": "mem:9"
+            },
+            {
+              "rank": 2,
+              "raw": 0.4686695933,
+              "ref": "mem:8"
             }
           ],
           "episode_fts": [],
@@ -14178,7 +14253,9 @@
           "confidence": "sure",
           "lifted": [],
           "seated": [
-            "mem:7"
+            "mem:7",
+            "mem:9",
+            "mem:8"
           ]
         },
         "fusion": [
@@ -14250,7 +14327,7 @@
           "limit": 2
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -14277,6 +14354,14 @@
           {
             "kind": "cue",
             "ref": "mem:7"
+          },
+          {
+            "kind": "cue",
+            "ref": "mem:9"
+          },
+          {
+            "kind": "cue",
+            "ref": "mem:8"
           }
         ],
         "scope": {
@@ -14290,7 +14375,7 @@
         "stages": [
           {
             "confidence": "sure",
-            "found": 2,
+            "found": 3,
             "next": null,
             "period": [
               "2026-09-08T00:00:00+00:00",
@@ -14728,7 +14813,7 @@
           "2026-08-29T00:00:00+00:00",
           "2026-09-29T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
         "seated": 0
       },
@@ -15205,7 +15290,7 @@
           "limit": 12
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -15634,7 +15719,7 @@
           "2026-10-18T00:00:00+00:00",
           "2026-11-17T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
         "seated": 0
       }
@@ -15955,7 +16040,7 @@
           "2027-01-01T00:00:00+00:00",
           "2027-01-01T00:00:01+00:00"
         ],
-        "policy": "cued-v0.2"
+        "policy": "cued-v0.3"
       },
       "trace": {
         "arms": {
@@ -16243,7 +16328,7 @@
           "limit": 5
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -16602,7 +16687,7 @@
           "2019-12-30T00:00:00+00:00",
           "2020-01-05T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
         "seated": 0
       },
@@ -16892,7 +16977,7 @@
           "limit": 5
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -17264,7 +17349,7 @@
           "2026-12-21T00:00:00+00:00",
           "2027-01-02T00:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": true,
         "seated": 0
       },
@@ -17566,7 +17651,7 @@
           "limit": 5
         },
         "policy": {
-          "process": "cued-v0.2",
+          "process": "cued-v0.3",
           "scoring": "260a7-confidence-gates-nothing"
         },
         "request": {
@@ -19561,7 +19646,7 @@
           "2026-08-13T12:00:00+00:00",
           "2026-10-14T12:00:00+00:00"
         ],
-        "policy": "cued-v0.2",
+        "policy": "cued-v0.3",
         "revised": false,
         "seated": 0
       },
@@ -20125,7 +20210,7 @@
             "limit": 20
           },
           "policy": {
-            "process": "cued-v0.2",
+            "process": "cued-v0.3",
             "scoring": "260a7-confidence-gates-nothing"
           },
           "request": {

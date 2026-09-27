@@ -17,7 +17,7 @@ before anything relies on it, and then the basic form of the loop.
   say so (`time_cue`), with a confidence of `sure`, `likely` or `vague`. The
   server searches that period as well as everywhere else, and lets a row found
   there move up by a bounded number of places. A wrong cue can cost at most
-  that bounded move and one seat. Without a cue, nothing changes.
+  that bounded move and as many seats as `L`. Without a cue, nothing changes.
 - **One revision.** If the period holds nothing, the server widens it once and
   looks again, inside the same call.
 
@@ -42,7 +42,7 @@ What a trace may contain when it leaves the machine is decided separately.
 | Field | Content |
 | --- | --- |
 | `trace_version` | `1`. Raised only when an existing field changes meaning; adding a field does not raise it |
-| `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0.2` with one; `cued-v0.1` before §2.10, `cued-v0` before §2.8) |
+| `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0.3` with one; `cued-v0.2` before §2.11, `cued-v0.1` before §2.10, `cued-v0` before §2.8) |
 | `server_version` | The version that answered |
 | `scope` | `agent_id`, `project_id`, `channel`, `source_id` as resolved |
 | `request` | `limit`, the recall depth, `deep`, the fusion mode, the confidence ordering, the prior's settings, whether the episode penalty is on, and the `time_cue` when given |
@@ -168,12 +168,14 @@ space.
 
 ### 2.4 The reserved seat
 
-A record that only the cue arm found is not in the admitted order, so the
-bounded move cannot reach it. One seat is held for it, filled in cue-arm
+A record the cue arm found that the answer does not hold is out of the
+bounded move's reach. Seats are held for such records, filled in cue-arm
 order, as the [block reservation](BLOCK_REACH_DESIGN.md) holds seats for
-records only the block arm reached. The seat displaces nothing, and the row
+records only the block arm reached. The seats displace nothing, and each row
 says it came from the cue (`match_reason.signal` = `cue`,
-`admission` = `reservation`).
+`admission` = `reservation`). Since `cued-v0.3` (§2.11) there are as many
+seats as `L` for the confidence searched, and a seat may hold a record the
+count cut; until then there was one seat, for a record no other arm reached.
 
 ### 2.5 One revision
 
@@ -190,7 +192,7 @@ trace.
 - Without `time_cue`, a recall is identical to today's, pinned by the golden.
 - With `time_cue`, the set of rows that pass the quality gate is identical to
   the set without it, and so are the rows the count returns. The cue reorders
-  those rows and adds at most one reserved row.
+  those rows and adds at most `L` reserved rows (one before `cued-v0.3`).
 - No row moves up more than `L` places.
 - Isolation (`agent_id`, `project_id`, `channel`) is never widened: it is the
   space the search happens in, not a cue.
@@ -271,8 +273,47 @@ memory, the evidence rose on 35 questions and fell on 3; where it was an
 episode, it rose on none and fell on 12. The cue arm could not find the
 episode, so it lifted the period's other memories past it. `cued-v0.2`
 searches episodes in the period with the same vector and keyword halves.
-This change was made after that result and has not yet been measured on
-fresh questions.
+
+Measured afterwards on fresh questions — the LongMemEval questions whose text
+places what they ask about in time, a pre-registered rule, 69 questions —
+`cued-v0.2` did not meet the rule (8 up, 5 down, one-sided p = 0.26;
+`benchmarks/measurements/results-longmemeval-time-cue.md`).
+The cues were right: the period held an evidence session on 64 of the 69.
+
+### 2.11 Seats for rows the count cut, and a cue arm of its own depth (`cued-v0.3`)
+
+Why `cued-v0.2` did little on those questions, read from the recall traces
+after the verdict: of 186 evidence sessions, 47 were lost — 19 admitted by the
+gate and cut by the count, 28 reached by no arm — and 34 of the lost ones lay
+inside the cue's period. The cue arm reached only 3 of them, for two reasons
+the policy itself set:
+
+- The cue arm searched only as deep as the count. When the period covers most
+  of what the scope holds, it then ranks what the ordinary arms already
+  returned.
+- A row the count cut was reached by an ordinary arm, so it was not eligible
+  for the seat, and the move, which comes after the cut (§2.9), cannot bring it
+  back either.
+
+`cued-v0.3` changes both, and nothing else:
+
+- **The cue arm searches to its own depth**, 50 records per half, whatever
+  the count. Changing the count alone does not change its candidates.
+- **The seats**: as many as `L` for the confidence searched (`sure` 3,
+  `likely` 2, `vague` 1). A seat takes the cue arm's best record that the
+  answer does not hold and that the quality gate and autocut did not refuse:
+  one no ordinary arm reached, or one they admitted that the count cut. A row
+  the gate or autocut refused still cannot come back this way.
+
+The bounds of §2.6 stay structural: the rows that pass the gate, and the rows
+the count returns, are those of a recall without the cue; the cue reorders them
+and adds at most `L` rows. A recall with a cue can therefore return up to three
+rows more than `limit`. Replayed on the same questions, the change returned all
+evidence on 43 questions instead of 39, but so did adding the same number of
+uncued rows on 40, so part of the gain is the extra places themselves. Whether
+the cue's places carry more than that is measured on questions that depend on
+time, under a rule that requires the cue to beat both no cue and the same
+number of uncued rows.
 
 ## 3. What v0 claims
 
@@ -282,10 +323,11 @@ within stated bounds. It does not yet claim to improve answer accuracy.
 A precision claim needs enough questions that carry a cue. Only questions
 whose text points at a time can carry one, and a few dozen cued questions give
 little power to detect a moderate effect. The claim therefore waits for a
-question set with at least sixty cued questions.
+question set with at least sixty cued questions. The first such measurement
+gave `cued-v0.2` no claim (§2.10).
 
-The harm a wrong cue can do is bounded by construction (`L` places and one
-seat) rather than by a statistical test. A test showing that a wrong cue costs
+The harm a wrong cue can do is bounded by construction (`L` places and `L`
+seats) rather than by a statistical test. A test showing that a wrong cue costs
 under three points would need more than a thousand questions.
 
 When the precision measurement runs, cues are extracted from the question

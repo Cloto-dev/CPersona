@@ -206,7 +206,7 @@ async def spied(fake_embedding_client, monkeypatch, installed):
     monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", True)
     await _seed(SEAT_CORPUS)
     seat = await memory_handlers.do_recall(AGENT, QUERY, limit=2, time_cue=_period(115, 95))
-    assert seat["time_cue"]["seated"] == 1
+    assert seat["time_cue"]["seated"] == 3  # the period's three records fill the three sure seats
     await _seed(CORPUS)
     # Days 3 to 8 hold nothing, so the loop asks for the next width.
     widened = await memory_handlers.do_recall(AGENT, QUERY, limit=5, time_cue=_period(8, 3))
@@ -321,8 +321,8 @@ async def test_the_set_is_read_before_the_cue_and_kept_after_it(fake_embedding_c
 
     installed(_with("cue_interpreter", parse=installs_while_parsing))
     out = await memory_handlers.do_recall(AGENT, QUERY, limit=3, time_cue=_period(75, 46))
-    # Three rows, plus the cue's seat when it fills one.
-    assert 3 <= len(out["messages"]) <= 4 and out["time_cue"]["policy"] == cue.POLICY
+    # Three rows, plus the cue's seats when it fills them.
+    assert 3 <= len(out["messages"]) <= 3 + cue.SEATS["sure"] and out["time_cue"]["policy"] == cue.POLICY
 
 
 # --- a provider that breaks its contract is stopped ------------------------------------
@@ -360,7 +360,8 @@ async def test_a_seat_beyond_the_held_one_or_for_another_row_is_stopped(
     monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
     installed(_with("evidence_selector", seats=seats))
     with pytest.raises(providers.ProviderContractError, match=message):
-        await memory_handlers.do_recall(AGENT, QUERY, limit=2, time_cue=_period(115, 95))
+        # vague holds one seat, and its period offers more eligible rows than that.
+        await memory_handlers.do_recall(AGENT, QUERY, limit=2, time_cue=_period(115, 95, "vague"))
 
 
 @pytest.mark.asyncio
