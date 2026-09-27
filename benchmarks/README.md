@@ -29,7 +29,7 @@ Two tracks are measured:
 | `frozen_replay.py` | Frozen-stage replay of the Track B path: scores the dense-only order, the admitted order, the fused order and the gated order per query on the same frozen embeddings and lexical scores, so Track B − Track A can be attributed to a stage. Reproduces Track A at the first stage and the recorded Track B at the last, and compares its fused/gated orders row for row with the live `_recall_rrf` / `do_recall` on a sample of queries |
 | `replay_summary.py` | Tabulates `frozen_replay.py` output across models: stage decomposition, lexical-weight sweep, top-ten move taxonomy, per-corpus calibration |
 | `replay_query_analysis.py` | Per-query view of the same output: fusion delta by top-cosine quartile, the one-parameter cosine switch and its oracle, gold visibility |
-| `longmemeval_time_cue.py` | LongMemEval with a time cue: stores each question's scene at its session dates, stops the clock at the question date, and compares `recall` with and without the cue the question states (and two wrong-cue controls) in one process; `judge` computes the pre-registered verdict (below) |
+| `longmemeval_time_cue.py` | A time cue on LongMemEval or TMD (`--task`): stores each question's scene at its record dates, stops the clock at the question date, and compares `recall` with and without the cue the question states (a determinism control, an as-many-rows control and two wrong-cue controls) in one process; `judge` computes the pre-registered verdict (below) |
 | `longmemeval_reader.py` | End-to-end answer accuracy on LongMemEval: reads the rankings a retrieval run dumped (`--dump_rankings`), rebuilds what a caller would have read, and has an isolated reader answer and a judge grade it (below) |
 | `benchmark_latency.py` | Production-stack latency runner: end-to-end `do_recall()` / `do_store()` wall clock against a REAL HTTP embedding backend (CEmbedding `/embed`), in both `local` and `remote` (matrix `/search`) vector-search modes |
 
@@ -317,6 +317,13 @@ model from the question text and date only; the extractor's prompt and schema
 are in `measurements/longmemeval_time_cue_extractor.json`, and every row carries
 their hash. The arms, the metric and the decision rule are fixed in
 `measurements/prereg-longmemeval-time-cue.md`.
+
+`--task TMD` runs the same measurement on LMEB's TMD task (dated conversations
+stored one turn per record; the nine subtasks that address a time), with
+questions keyed `<subtask>/<query id>` because TMD repeats query ids across
+subtasks, and a `control` arm that asks for as many more rows without a cue as
+the cue filled seats. Cues: `measurements/tmd_time_cues.jsonl`; rule:
+`measurements/prereg-tmd-time-cue.md`.
 
 ```bash
 PYTHONPATH=benchmarks EMB_CACHE_DIR=~/lmeb/embcache LMEB_DIR=~/lmeb \

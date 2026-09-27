@@ -1,10 +1,13 @@
-"""LongMemEval with a time cue: does the cue move the evidence up in what recall returns?
+"""A time cue on LMEB dialogue tasks: does the cue move the evidence up in what recall returns?
 
 A caller that half-remembers *when* something happened can pass `recall` a
-`time_cue` (docs/RECALL_PROCESS_DESIGN.md §2). This instrument asks it of
-LongMemEval's own questions: for each question whose text places what it asks
+`time_cue` (docs/RECALL_PROCESS_DESIGN.md §2). This instrument asks it of a
+benchmark's own questions: for each question whose text places what it asks
 about in time, recall is called with and without the cue that text states,
-and the evidence sessions' places in the returned rows are compared.
+and the evidence's places in the returned rows are compared. Two tasks:
+LongMemEval (`--task LongMemEval`, records are sessions) and TMD (`--task TMD`,
+records are turns of dated conversations; the nine subtasks that address a
+time, not the three that address sessions by number).
 
 Fixed here, and recorded in run.json:
 
@@ -13,10 +16,10 @@ Fixed here, and recorded in run.json:
   channel, limit 10, rrf, autocut and the fused gate at the build's defaults,
   the threshold calibrated once after storing. Only the scenes of questions
   that carry a cue are stored.
-- Each session is stored at the time in its title ("Data time: 03:22 AM on
-  Monday 29 May, 2023 - Session 390"), read as UTC. The stored text is the
-  title and the user turns, exactly as the Track B runner stores it, so the
-  embedding cache already holds every vector.
+- Each record is stored at the time in its title ("Data time: 03:22 AM on
+  Monday 29 May, 2023 - Session 390", TMD adds ", Turn 4"), read as UTC. The
+  stored text is exactly what the Track B runner stores (title and text), so
+  the embedding cache already holds every vector.
 - The clock every cpersona module reads is stopped at the question's date for
   every call of that question, so "now", an `ago` cue and an open end mean what
   they meant when the question was asked.
@@ -28,6 +31,9 @@ Arms, all asked of one store in one process, in this order per question:
   none        no cue: the recall a caller gets without one
   none_again  no cue again: the determinism control
   extracted   the cue the cue file carries for the question
+  control     no cue, and a count raised by the seats `extracted` filled
+              (limit 10 + k): as many rows as the cue returned, from asking
+              for more instead. With k = 0 it is `none` and makes no call.
   shifted     the extracted period moved, length kept, to a place it does not
               overlap once each is widened by its confidence's margin: first
               into the past; if that starts before the scene's oldest session,
@@ -39,18 +45,22 @@ Arms, all asked of one store in one process, in this order per question:
 `shifted` and `half` are built from the extracted cue, the scene's time span
 and the question date only; nothing about the evidence enters them.
 
-The cue file is JSONL, one row per LongMemEval question, with `question_id`,
-`question_type`, `question_date`, `question` and `time_cue` (null when the
-question carries none). Questions are matched to LMEB's query ids by text.
+The cue file is JSONL, one row per question, with `question_type`,
+`question_date`, `question` and `time_cue` (null when the question carries
+none). A LongMemEval row carries `question_id` and is matched to LMEB's query
+by text; a TMD row carries `key` = "<subtask>/<LMEB query id>", since TMD's
+query ids repeat across its subtasks.
 
     PYTHONPATH=benchmarks EMB_CACHE_DIR=~/lmeb/embcache LMEB_DIR=~/lmeb \\
-      python benchmarks/longmemeval_time_cue.py run --cues CUES.jsonl --out DIR
+      python benchmarks/longmemeval_time_cue.py run [--task TMD] --cues CUES.jsonl --out DIR
     python benchmarks/longmemeval_time_cue.py judge DIR
 
 `run` writes DIR/rows.jsonl (one row per question and arm) and DIR/run.json.
 `judge` reads them and prints the verdict of the pre-registered rule
-(benchmarks/measurements/prereg-longmemeval-time-cue.md) with the tables it
-reports. `judge` calls neither the server nor a model.
+(benchmarks/measurements/prereg-longmemeval-time-cue.md, and
+prereg-tmd-time-cue.md, which adds the control clause when a run has the
+control arm) with the tables it reports. `judge` calls neither the server nor
+a model.
 """
 from __future__ import annotations
 
@@ -69,7 +79,7 @@ import tempfile
 import time
 from pathlib import Path
 
-ARMS = ("none", "none_again", "extracted", "shifted", "half")
+ARMS = ("none", "none_again", "extracted", "control", "shifted", "half")
 LIMIT = 10
 TASK_SUBDIR = os.path.join("eval_data", "Dialogue", "LongMemEval")
 TYPES = {
@@ -80,15 +90,32 @@ TYPES = {
     "single_session_user": "single-session-user",
     "temporal_reasoning": "temporal-reasoning",
 }
-# The rule's constants (the pre-registration fixes them; see judge()).
+# TMD's subtasks that address a time. session_time_qs, rel_session_time_qs and
+# session_span_time_qs address sessions by number, which a time cue cannot name.
+TMD_SUBTASKS = (
+    "content_time_qs", "date_span_time_qs", "dates_time_qs", "day_span_time_qs", "earlier_today_time_qs",
+    "last_named_day_time_qs", "month_time_qs", "rel_day_time_qs", "rel_month_time_qs",
+)
+TASKS = {
+    "LongMemEval": (TASK_SUBDIR, tuple(TYPES)),
+    "TMD": (os.path.join("eval_data", "Dialogue", "TMD"), TMD_SUBTASKS),
+}
+# The rows a cue may add beyond those of no cue, per policy and the confidence it
+# searched at: the instrument's own table, not read from the package under test.
+SEAT_ALLOWANCE = {
+    "cued-v0.2": {"sure": 1, "likely": 1, "vague": 1},
+    "cued-v0.3": {"sure": 3, "likely": 2, "vague": 1},
+}
+# The rule's constants (the pre-registrations fix them; see judge()).
 MIN_TARGET = 60
 ALPHA = 0.05
-TYPE_GUARD = 2
+TYPE_GUARD = 2  # net questions down a type may have: max(TYPE_GUARD, ceil(TYPE_GUARD_SHARE * n))
+TYPE_GUARD_SHARE = 0.05
 PERMUTATIONS = 100_000
 SEED = 20260927
 EXACT_UP_TO = 20
 
-_TITLE = re.compile(r"Data time: (.+?) - Session \d+$")
+_TITLE = re.compile(r"Data time: (.+?) - Session \d+(?:, Turn \d+)?$")
 
 
 # --- time -------------------------------------------------------------------------
@@ -189,6 +216,11 @@ def moved_cue(cue_mod, raw: dict | None, now, span, arm: str) -> dict | None:
     return out
 
 
+def control_limit(seats: list[str]) -> int:
+    """The control arm's count: the limit raised by the seats the cue filled."""
+    return LIMIT + len(seats)
+
+
 # --- scoring ---------------------------------------------------------------------
 
 def score(returned: list[str], relevant: set[str]) -> dict:
@@ -240,10 +272,15 @@ def sign_flip_p(diffs: list[float], permutations: int = PERMUTATIONS, seed: int 
 
 # --- run -------------------------------------------------------------------------
 
-def _load_queries(task_dir: Path) -> dict[str, dict]:
-    """LMEB query id -> {type, text, relevant} over the six LongMemEval subtasks."""
-    out = {}
-    for sub in sorted(TYPES):
+def _load_queries(task_dir: Path, subtasks=tuple(TYPES), keyed: bool = False) -> dict[str, dict]:
+    """Question key -> {type, text, relevant, lmeb_qid} over the given subtasks.
+
+    The key is the LMEB query id, or "<subtask>/<query id>" when `keyed`: TMD
+    repeats query ids across its subtasks, and an id read alone would pair a
+    question with another subtask's evidence. Unkeyed, a repeated id is an error.
+    """
+    out: dict[str, dict] = {}
+    for sub in sorted(subtasks):
         d = task_dir / sub
         rel: dict[str, set[str]] = {}
         for line in (d / "qrels.tsv").read_text(encoding="utf-8").splitlines():
@@ -252,7 +289,11 @@ def _load_queries(task_dir: Path) -> dict[str, dict]:
                 rel.setdefault(parts[0], set()).add(parts[1])
         for line in (d / "queries.jsonl").read_text(encoding="utf-8").splitlines():
             q = json.loads(line)
-            out[str(q["id"])] = {"type": sub, "text": q["text"], "relevant": rel.get(str(q["id"]), set())}
+            qid = str(q["id"])
+            key = f"{sub}/{qid}" if keyed else qid
+            if key in out:
+                raise ValueError(f"query id {qid} repeats across subtasks; load it keyed")
+            out[key] = {"type": sub, "text": q["text"], "relevant": rel.get(qid, set()), "lmeb_qid": qid}
     return out
 
 
@@ -261,7 +302,10 @@ def _norm(text: str) -> str:
 
 
 def match_cues(queries: dict[str, dict], cue_rows: list[dict]) -> list[dict]:
-    """Pair each cued question with its LMEB query by text; an unmatched or ambiguous one is an error."""
+    """Pair each cued question with its LMEB query; an unmatched or ambiguous one is an error.
+
+    A row with `key` is matched by it (TMD); otherwise by its question text (LongMemEval).
+    """
     by_text: dict[str, list[str]] = {}
     for qid, q in queries.items():
         by_text.setdefault(_norm(q["text"]), []).append(qid)
@@ -269,13 +313,21 @@ def match_cues(queries: dict[str, dict], cue_rows: list[dict]) -> list[dict]:
     for row in cue_rows:
         if not row.get("time_cue"):
             continue
-        hits = by_text.get(_norm(row["question"]), [])
-        if len(hits) != 1:
-            raise ValueError(f"{row['question_id']}: {len(hits)} LMEB queries have its text")
-        qid = hits[0]
-        if TYPES[queries[qid]["type"]] != row["question_type"]:
-            raise ValueError(f"{row['question_id']}: type {row['question_type']} vs LMEB {queries[qid]['type']}")
-        out.append({"qid": qid, "question_id": row["question_id"], **queries[qid],
+        if "key" in row:
+            qid, name = row["key"], row["key"]
+            if qid not in queries:
+                raise ValueError(f"{qid}: no LMEB query has this key")
+            expected = queries[qid]["type"]
+        else:
+            name = row["question_id"]
+            hits = by_text.get(_norm(row["question"]), [])
+            if len(hits) != 1:
+                raise ValueError(f"{name}: {len(hits)} LMEB queries have its text")
+            qid = hits[0]
+            expected = TYPES[queries[qid]["type"]]
+        if expected != row["question_type"]:
+            raise ValueError(f"{name}: type {row['question_type']} vs LMEB {queries[qid]['type']}")
+        out.append({"qid": qid, "question_id": name, "lmeb_qid": queries[qid].get("lmeb_qid", qid), **queries[qid],
                     "question_date": row["question_date"], "time_cue": row["time_cue"]})
     return out
 
@@ -288,16 +340,17 @@ async def run(args) -> int:
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=False)
     lmeb = Path(args.lmeb_dir).expanduser()
-    task_dir = lmeb / TASK_SUBDIR
+    subdir, subtasks = TASKS[args.task]
+    task_dir = lmeb / subdir
     cues_path = Path(args.cues).expanduser()
     cue_rows = [json.loads(line) for line in cues_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    questions = match_cues(_load_queries(task_dir), cue_rows)
+    questions = match_cues(_load_queries(task_dir, subtasks, keyed=args.task == "TMD"), cue_rows)
     if args.limit_questions:
         questions = questions[: args.limit_questions]
 
     import benchmark_trackb_lmeb as tb
 
-    scenes = {tb.get_scene_id(q["qid"]) for q in questions}
+    scenes = {tb.get_scene_id(q["lmeb_qid"]) for q in questions}
     corpus = [d for d in tb.load_jsonl(str(task_dir / "corpus.jsonl")) if tb.get_scene_id(str(d["id"])) in scenes]
     times = {str(d["id"]): title_instant(d.get("title", "")) for d in corpus}
 
@@ -347,7 +400,7 @@ async def run(args) -> int:
                           timestamp_of=lambda d: times[str(d["id"])].isoformat())
     stored = (await db.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = ?", (tb.AGENT_ID,)))[0][0]
     cal = await server_mod.do_calibrate_threshold(tb.AGENT_ID)
-    texts = [q["text"] for q in questions]
+    texts = sorted({q["text"] for q in questions})
     emb.preload(texts, st.encode(texts, normalize_embeddings=True, show_progress_bar=False))
 
     patched = stop_clock()
@@ -361,7 +414,7 @@ async def run(args) -> int:
     n_calls = 0
     with rows_path.open("w", encoding="utf-8") as fh:
         for q in questions:
-            scene = tb.get_scene_id(q["qid"])
+            scene = tb.get_scene_id(q["lmeb_qid"])
             now = question_instant(q["question_date"])
             own = [t for d, t in times.items() if tb.get_scene_id(d) == scene]
             span = (min(own), max(own))
@@ -370,14 +423,29 @@ async def run(args) -> int:
                 "shifted": moved_cue(cue_mod, q["time_cue"], now, span, "shifted"),
                 "half": moved_cue(cue_mod, q["time_cue"], now, span, "half"),
             }
+            common = {
+                "qid": q["qid"], "question_id": q["question_id"], "lmeb_qid": q["lmeb_qid"], "type": q["type"],
+                "question_date": q["question_date"], "relevant": sorted(q["relevant"]),
+                "relevant_times": {d: times[d].isoformat() for d in sorted(q["relevant"]) if d in times},
+            }
+            done: dict[str, dict] = {}
             for arm in args.arms:
+                limit = LIMIT
+                if arm == "control":
+                    # As many rows as the cue returned, by asking for more without it.
+                    limit = control_limit(done["extracted"]["seat"])
+                    if limit == LIMIT:
+                        row = {**done["none"], "arm": arm, "limit": limit, "latency_ms": 0.0}
+                        done[arm] = row
+                        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                        continue
                 await db.execute("UPDATE memories SET recall_count = 0, last_recalled_at = NULL WHERE agent_id = ?",
                                  (tb.AGENT_ID,))
                 await db.commit()
                 Clock.at = now
                 t0 = time.perf_counter()
-                resp = await mh.do_recall(agent_id=tb.AGENT_ID, query=q["text"], limit=LIMIT, channel=scene,
-                                          **({"time_cue": sent[arm]} if sent[arm] else {}))
+                resp = await mh.do_recall(agent_id=tb.AGENT_ID, query=q["text"], limit=limit, channel=scene,
+                                          **({"time_cue": sent.get(arm)} if sent.get(arm) else {}))
                 ms = (time.perf_counter() - t0) * 1000
                 Clock.at = None
                 n_calls += 1
@@ -386,18 +454,14 @@ async def run(args) -> int:
                 msgs = list(reversed(resp.get("messages", [])))  # best first
                 seat = [m.get("id") for m in msgs
                         if (m.get("match_reason") or {}).get("signal") == "cue"]
-                fh.write(json.dumps({
-                    "qid": q["qid"], "question_id": q["question_id"], "type": q["type"], "arm": arm,
-                    "question_date": q["question_date"], "time_cue": sent[arm],
-                    "returned": [m.get("id") for m in msgs], "seat": seat,
-                    "response_time_cue": resp.get("time_cue"),
-                    "relevant": sorted(q["relevant"]),
-                    "relevant_times": {d: times[d].isoformat() for d in sorted(q["relevant"]) if d in times},
-                    "latency_ms": round(ms, 2),
-                }, ensure_ascii=False) + "\n")
+                row = {**common, "arm": arm, "time_cue": sent.get(arm), "returned": [m.get("id") for m in msgs],
+                       "seat": seat, "response_time_cue": resp.get("time_cue"), "limit": limit,
+                       "latency_ms": round(ms, 2)}
+                done[arm] = row
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     run_meta = {
-        "cpersona_version": getattr(cpersona, "__version__", "?"), "cpersona_commit": commit,
+        "task": args.task, "cpersona_version": getattr(cpersona, "__version__", "?"), "cpersona_commit": commit,
         "cue_policy": cue_mod.POLICY, "arms": list(args.arms), "limit": LIMIT,
         "questions": len(questions), "scenes": len(scenes), "sessions": len(corpus), "stored": stored,
         "cues_file": str(cues_path), "cues_sha256_16": _sha256(cues_path),
@@ -418,8 +482,21 @@ async def run(args) -> int:
 
 # --- judge -----------------------------------------------------------------------
 
+def type_guard_allowance(n: int) -> int:
+    """Net questions down a type may have: 2 at up to 40 questions, 5% of them beyond."""
+    return max(TYPE_GUARD, math.ceil(TYPE_GUARD_SHARE * n))
+
+
 def judge(rows: list[dict], policy: str) -> dict:
-    """The pre-registered verdict and the numbers it reports, from rows.jsonl."""
+    """The pre-registered verdict and the numbers it reports, from rows.jsonl.
+
+    With a `control` arm in the rows, the cue must also beat the same number of
+    uncued extra rows (prereg-tmd-time-cue.md); without one the rule is that of
+    prereg-longmemeval-time-cue.md, which the recorded LongMemEval run pins.
+    """
+    if policy not in SEAT_ALLOWANCE:
+        raise ValueError(f"no seat allowance recorded for policy {policy!r}")
+    allowance = SEAT_ALLOWANCE[policy]
     by = {(r["qid"], r["arm"]): r for r in rows}
     qids = sorted({r["qid"] for r in rows})
     pre: dict[str, object] = {}
@@ -435,13 +512,17 @@ def judge(rows: list[dict], policy: str) -> dict:
     pre["replicate_identical"] = all(by[(q, "none")]["returned"] == by[(q, "none_again")]["returned"] for q in qids)
     pre["returned_preserved"] = all(
         set(by[(q, "none")]["returned"]) <= set(by[(q, "extracted")]["returned"])
-        and len(by[(q, "extracted")]["returned"]) - len(by[(q, "none")]["returned"]) <= 1
+        and len(by[(q, "extracted")]["returned"]) - len(by[(q, "none")]["returned"])
+        <= allowance[(by[(q, "extracted")].get("response_time_cue") or {}).get("confidence", "sure")]
         for q in target)
     pre["positive_control"] = sum(by[(q, "none")]["returned"] != by[(q, "extracted")]["returned"] for q in target)
     pre["policy_reported"] = all((by[(q, "extracted")].get("response_time_cue") or {}).get("policy") == policy
                                  for q in qids)
+    has_control = any(r["arm"] == "control" for r in rows)
+    if has_control:
+        pre["control_complete"] = all((q, "control") in by for q in target)
     valid = (pre["target_at_least"] and pre["replicate_identical"] and pre["returned_preserved"]
-             and pre["positive_control"] >= 1 and pre["policy_reported"])
+             and pre["positive_control"] >= 1 and pre["policy_reported"] and pre.get("control_complete", True))
 
     diffs = {q: sc(q, "extracted")["ndcg"] - sc(q, "none")["ndcg"] for q in target}
     p, method = sign_flip_p([diffs[q] for q in target])
@@ -451,8 +532,17 @@ def judge(rows: list[dict], policy: str) -> dict:
         t["n"] += 1
         t["up"] += diffs[q] > 0
         t["down"] += diffs[q] < 0
-    guard = all(t["down"] - t["up"] <= TYPE_GUARD for t in per_type.values())
-    passed = valid and p < ALPHA and guard
+    guard = all(t["down"] - t["up"] <= type_guard_allowance(t["n"]) for t in per_type.values())
+    control = None
+    if has_control and valid:
+        cdiffs = [sc(q, "extracted")["ndcg"] - sc(q, "control")["ndcg"] for q in target]
+        cp, cmethod = sign_flip_p(cdiffs)
+        control = {"metric": "ndcg over the returned rows, extracted minus control", "sum": round(sum(cdiffs), 4),
+                   "up": sum(d > 0 for d in cdiffs), "down": sum(d < 0 for d in cdiffs),
+                   "p_one_sided": cp, "method": cmethod, "alpha": ALPHA,
+                   "fewer_rows_than_cue": sum(1 for q in target if len(by[(q, "control")]["returned"])
+                                              < len(by[(q, "extracted")]["returned"]))}
+    passed = valid and p < ALPHA and guard and (control is None or control["p_one_sided"] < ALPHA)
 
     def arm_table(arm):
         s = [sc(q, arm) for q in target]
@@ -480,18 +570,23 @@ def judge(rows: list[dict], policy: str) -> dict:
         "primary": {"metric": "ndcg over the returned rows, extracted minus none", "sum": round(sum(diffs.values()), 4),
                     "up": sum(d > 0 for d in diffs.values()), "down": sum(d < 0 for d in diffs.values()),
                     "p_one_sided": p, "method": method, "alpha": ALPHA},
-        "type_guard": {"max_net_down": TYPE_GUARD, "ok": guard, "by_type": per_type},
+        "control": control,
+        "type_guard": {"max_net_down": f"max({TYPE_GUARD}, ceil({TYPE_GUARD_SHARE} * n))", "ok": guard,
+                       "by_type": per_type},
         "report": {
             "ignored": len(ignored),
             "arms": {arm: arm_table(arm) for arm in ARMS if all((q, arm) in by for q in target)},
             "paired_vs_none": {arm: {k: paired(arm, k) for k in ("rr", "all_returned", "in_top5")}
-                               for arm in ("extracted", "shifted", "half") if all((q, arm) in by for q in target)},
+                               for arm in ("extracted", "control", "shifted", "half")
+                               if all((q, arm) in by for q in target)},
             "seat_carried_evidence": seat_evidence,
             "period_holds_evidence": period_holds,
             "confidence": {c: sum(1 for q in target if (by[(q, "extracted")]["time_cue"] or {}).get("confidence") == c)
                            for c in ("sure", "likely", "vague")},
             "latency_ms_median": {arm: sorted(by[(q, arm)]["latency_ms"] for q in qids)[len(qids) // 2]
-                                  for arm in ARMS if all((q, arm) in by for q in qids)},
+                                  for arm in ARMS if arm != "control" and all((q, arm) in by for q in qids)},
+            "rows_returned_mean": {arm: round(sum(len(by[(q, arm)]["returned"]) for q in target) / (len(target) or 1), 2)
+                                   for arm in ARMS if all((q, arm) in by for q in target)},
         },
     }
 
@@ -500,6 +595,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
+    r.add_argument("--task", default="LongMemEval", choices=sorted(TASKS))
     r.add_argument("--cues", required=True)
     r.add_argument("--out", required=True)
     r.add_argument("--lmeb_dir", default=os.environ.get("LMEB_DIR", "~/lmeb"))
@@ -517,6 +613,10 @@ def main() -> int:
         bad = [a for a in args.arms if a not in ARMS]
         if bad:
             ap.error(f"unknown arms {bad}")
+        if "control" in args.arms and not (
+            "none" in args.arms[: args.arms.index("control")] and "extracted" in args.arms[: args.arms.index("control")]
+        ):
+            ap.error("the control arm is built from none and extracted, which must come before it")
         return asyncio.run(run(args))
     d = Path(args.dir).expanduser()
     meta = json.loads((d / "run.json").read_text())

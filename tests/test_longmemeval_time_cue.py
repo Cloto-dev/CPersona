@@ -306,3 +306,109 @@ async def test_store_corpus_stores_each_record_at_the_time_it_is_given():
                               "scene_1_session_2": "2023-05-29T15:22:00+00:00"}
     await tb.store_corpus(None, None, _Encoder(), corpus, isolate_scenes=True)
     assert set((await stored()).values()) == {"2026-01-01T00:00:00Z"}  # without it, one fixed time as before
+
+
+# --- TMD and the control arm (prereg-tmd-time-cue.md) ------------------------------------
+
+
+def test_the_recorded_longmemeval_run_is_judged_as_it_was():
+    """The generalised judge reproduces the verdict the LongMemEval run was published with."""
+    path = BENCH / "measurements" / "longmemeval_time_cue" / "rows.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    v = T.judge(rows, "cued-v0.2")
+    assert v["verdict"] == "null" and v["valid"] and v["control"] is None
+    assert v["preconditions"]["target"] == 69
+    assert (v["primary"]["up"], v["primary"]["down"], v["primary"]["p_one_sided"]) == (8, 5, 0.26416015625)
+    assert v["type_guard"]["ok"]
+
+
+def test_a_turn_title_is_read_too():
+    assert T.title_instant("Data time: 08:56 AM on Thursday 20 July, 2023 - Session 10, Turn 1") == dt.datetime(
+        2023, 7, 20, 8, 56, tzinfo=UTC)
+
+
+def _task(tmp_path, subtasks):
+    for sub, (qid, text, rel) in subtasks.items():
+        d = tmp_path / sub
+        d.mkdir()
+        (d / "queries.jsonl").write_text(json.dumps({"id": qid, "text": text}) + "\n", encoding="utf-8")
+        (d / "qrels.tsv").write_text(f"{qid}\t{rel}\t1\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_a_query_id_repeated_across_subtasks_is_kept_apart_by_its_key(tmp_path):
+    task = _task(tmp_path, {"dates_time_qs": ("scene_0_q_0", "What did we chat about on May 8th?", "scene_0_session_1_turn_1"),
+                            "month_time_qs": ("scene_0_q_0", "What did we discuss in May?", "scene_0_session_2_turn_1")})
+    with pytest.raises(ValueError, match="repeats across subtasks"):
+        T._load_queries(task, ("dates_time_qs", "month_time_qs"))
+    q = T._load_queries(task, ("dates_time_qs", "month_time_qs"), keyed=True)
+    assert q["dates_time_qs/scene_0_q_0"]["relevant"] == {"scene_0_session_1_turn_1"}
+    assert q["month_time_qs/scene_0_q_0"]["relevant"] == {"scene_0_session_2_turn_1"}
+    assert q["month_time_qs/scene_0_q_0"]["lmeb_qid"] == "scene_0_q_0"
+    rows = [{"key": "month_time_qs/scene_0_q_0", "question_type": "month_time_qs", "question_date": "2023/10/22 (Sun) 11:17",
+             "question": "What did we discuss in May?", "time_cue": FEB}]
+    out = T.match_cues(q, rows)
+    assert [(m["qid"], m["lmeb_qid"], m["relevant"]) for m in out] == [
+        ("month_time_qs/scene_0_q_0", "scene_0_q_0", {"scene_0_session_2_turn_1"})]
+    with pytest.raises(ValueError):
+        T.match_cues(q, [{**rows[0], "question_type": "dates_time_qs"}])
+    with pytest.raises(ValueError):
+        T.match_cues(q, [{**rows[0], "key": "month_time_qs/scene_9_q_0"}])
+
+
+def test_the_control_asks_for_as_many_more_rows_as_the_cue_took_seats():
+    assert T.control_limit(["s1", "s2", "s3"]) == 13
+    assert T.control_limit(["s1"]) == 11
+    assert T.control_limit([]) == T.LIMIT == 10
+
+
+def test_the_type_guard_allowance_scales_past_forty_questions():
+    assert [T.type_guard_allowance(n) for n in (1, 33, 40, 41, 100, 330)] == [2, 2, 2, 3, 5, 17]
+
+
+V3 = "cued-v0.3"
+
+
+def _with_control(rows, how):
+    """Add a control arm: 'like_none' (no extra row helps) or 'like_cue' (the extra rows do what the cue did)."""
+    out = list(rows)
+    for r in rows:
+        if r["arm"] == "extracted":
+            src = next(x for x in rows if x["qid"] == r["qid"] and x["arm"] == ("none" if how == "like_none" else "extracted"))
+            out.append({**src, "arm": "control", "returned": list(src["returned"]), "response_time_cue": None})
+    return out
+
+
+def test_the_cue_must_beat_the_control_as_well():
+    base = _rows(n_up=62, policy=V3)
+    assert T.judge(_with_control(base, "like_none"), V3)["verdict"] == "pass"
+    v = T.judge(_with_control(base, "like_cue"), V3)
+    assert v["primary"]["p_one_sided"] < 0.05 and v["control"]["p_one_sided"] == 1.0 and v["verdict"] == "null"
+
+
+def test_a_control_missing_for_a_target_question_voids_the_run():
+    rows = _with_control(_rows(n_up=62, policy=V3), "like_none")
+    rows = [r for r in rows if not (r["arm"] == "control" and r["qid"] == "scene_up0_q_0")]
+    v = T.judge(rows, V3)
+    assert v["verdict"] == "void" and v["preconditions"]["control_complete"] is False
+
+
+@pytest.mark.parametrize("confidence, extra, ok", [("sure", 3, True), ("sure", 4, False), ("likely", 2, True),
+                                                   ("likely", 3, False), ("vague", 1, True), ("vague", 2, False)])
+def test_a_cue_may_add_as_many_rows_as_its_policy_holds_seats(confidence, extra, ok):
+    rows = _rows(n_up=62, policy=V3)
+    for r in rows:
+        if r["arm"] == "extracted":
+            r["returned"] = r["returned"] + [f"seat{k}" for k in range(extra)]
+            r["response_time_cue"] = {**r["response_time_cue"], "confidence": confidence}
+    assert T.judge(rows, V3)["preconditions"]["returned_preserved"] is ok
+    # The same rows under the one-seat policy: more than one extra row is never allowed.
+    for r in rows:
+        if r["arm"] == "extracted":
+            r["response_time_cue"]["policy"] = "cued-v0.2"
+    assert T.judge(rows, "cued-v0.2")["preconditions"]["returned_preserved"] is (extra <= 1)
+
+
+def test_a_policy_the_instrument_does_not_know_is_refused():
+    with pytest.raises(ValueError, match="no seat allowance"):
+        T.judge(_rows(n_up=62), "cued-v9")
