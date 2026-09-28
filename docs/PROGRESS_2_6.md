@@ -58,6 +58,7 @@ default is decided by its own A/B run; no result of that run is recorded yet.
 | What | What happened | Evidence |
 | --- | --- | --- |
 | The reference panel for adaptive fusion, as first specified | It identified no null: the two densities it specified were the same distribution, so the evidence it defined could not separate a mixture from its own null. The definition was replaced before any code was built on it. | [#262](https://github.com/Cloto-dev/cpersona/pull/262) |
+| `rsf` on a fixed channel scale (the bug-247 fix) | It passed its pre-registered rule on LongMemEval at ten rows, where it also returned more rows. On LMEB Track B it scored lower on 19 of 22 tasks (macro 58.53 → 57.51), so it was reverted before release. The gate defect it addressed is open again. | [results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-rsf-fixed-scale.md) |
 
 ## What is not on this page
 

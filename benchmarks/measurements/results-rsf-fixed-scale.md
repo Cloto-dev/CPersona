@@ -10,6 +10,13 @@ held on the test half: no type fell by more than its allowance, and the macro
 mean NDCG@10 did not fall (it rose by 2.14 points). The rise is not claimed as
 an improvement; see [what the numbers do not show](#what-the-numbers-do-not-show).
 
+**Withdrawn before release (2026-09-28).** The fix was merged but shipped in no
+release. [Track B](#track-b), reported after the decision, scored it lower on 19
+of the 22 tasks (macro 58.53 → 57.51), so it was reverted before the next
+pre-release, and bug-247 is open again. The rule above held, and it still
+answers only its own question: whether the fix holds ground at ten rows in the
+regime described under the setup.
+
 ## Setup as run
 
 - Instrument: `benchmarks/rsf_scale_measure.py`, LMEB LongMemEval, `rsf`,
