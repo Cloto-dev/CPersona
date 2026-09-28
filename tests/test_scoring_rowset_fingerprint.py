@@ -75,7 +75,7 @@ from cpersona.database import get_db
 from cpersona.utils import SCORING_VERSION
 
 # The golden pair. Re-pin BOTH together (see the decision table in the test below).
-GOLDEN_SCORING_VERSION = "260a7-confidence-gates-nothing"
+GOLDEN_SCORING_VERSION = "rsf-gate-fixed-scale"
 GOLDEN_ROWSET_FINGERPRINT = "a129a0683c4d7baf15252922e746723548db284182e1877d24329c3a20b99162"
 
 AGENT = "rowset-fingerprint-agent"

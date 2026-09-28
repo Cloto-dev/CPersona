@@ -682,6 +682,35 @@ def _minmax_norm(raw: dict) -> dict:
     return out
 
 
+# bug-247: the scale rsf's quality gate reads. A keyword score (-bm25, larger is better)
+# counts s / (s + H): monotone, bounded below 1, and H is the score that counts half a
+# vote. H and the undivided sum are the constants a pre-registered measurement chose on
+# its dev half (benchmarks/measurements/prereg-rsf-fixed-scale.md); the gate-only design
+# reuses them without choosing again (prereg-rsf-gate-scale.md).
+RSF_LEXICAL_HALF = 8.0
+
+
+def _fixed_norm(raw: dict, lexical: bool) -> dict:
+    """A channel's raw scores on a fixed [0, 1] scale (higher = better).
+
+    Unlike :func:`_minmax_norm` the value depends on the row's own score only, never
+    on the other rows this query retrieved: a cosine is clamped to [0, 1], a keyword
+    score ``s`` becomes ``s / (s + RSF_LEXICAL_HALF)``. The None rules are
+    ``_minmax_norm``'s: an all-None channel (the LIKE fallback, which has no bm25)
+    gives every row a full vote, and a None among scores gets 0.0.
+    """
+    vals = {rid: s for rid, s in raw.items() if s is not None}
+    if not vals:
+        return {rid: 1.0 for rid in raw}
+    if lexical:
+        out = {rid: max(0.0, s) / (max(0.0, s) + RSF_LEXICAL_HALF) for rid, s in vals.items()}
+    else:
+        out = {rid: min(1.0, max(0.0, s)) for rid, s in vals.items()}
+    for rid in raw:
+        out.setdefault(rid, 0.0)
+    return out
+
+
 async def _recall_rsf(
     db,
     agent_id: str,
@@ -707,13 +736,15 @@ async def _recall_rsf(
     separate them. Dividing the sum by the number of active channels keeps the
     result inside [0, 1] and rewards multi-channel agreement.
 
-    That range is not the cosine scale, and the quality gate is where the
-    difference bites. ``_minmax_norm`` rescales each channel against the min and
-    max of *this query's* candidates, so a fused score places a row among the
-    rows retrieved alongside it rather than measuring its similarity to the
-    query: the weakest survivor of a strong set is pinned to 0.0 however similar
-    it is, and a lone candidate normalizes to 1.0 however weak. Both then meet a
-    cosine-scale ``min_score`` in ``_apply_quality_gate``.
+    That range is not the cosine scale. ``_minmax_norm`` rescales each channel
+    against the min and max of *this query's* candidates, so the order score
+    places a row among the rows retrieved alongside it rather than measuring its
+    similarity to the query: the weakest survivor of a strong set is pinned to
+    0.0 however similar it is, and a lone candidate normalizes to 1.0 however
+    weak. An absolute gate cannot read that (bug-247), so each row also carries
+    ``_rsf_gate_score``: the same channels on a fixed scale (``_fixed_norm``),
+    the far channel weighted the same way, and the sum not divided. The quality
+    gate and its calibration read that score; the order is ``_rsf_score`` alone.
     See ClotoCore/docs/RECALL_CONTAMINATION_AB_2026-06-14.md.
     """
     doc_map: dict[tuple, dict] = {}
@@ -788,6 +819,7 @@ async def _recall_rsf(
     active = [ch for ch in (vec_raw, far_raw, ep_raw, mem_raw) if ch]
     n_active = len(active) or 1
     fused: dict[tuple, float] = {}
+    gate_fused: dict[tuple, float] = {}
     votes: dict[str, dict] | None = {} if rec is not None else None
     names = {id(vec_raw): "vector_near", id(far_raw): "vector_far", id(ep_raw): "episode_fts", id(mem_raw): "memory_keyword"}
     for ch in active:
@@ -798,11 +830,15 @@ async def _recall_rsf(
             fused[rid] = fused.get(rid, 0.0) + w * channel_weight
             if votes is not None:
                 votes.setdefault(f"{rid[0]}:{rid[1]}", {})[names[id(ch)]] = w * channel_weight / n_active
+        # bug-247: the gate's score, beside the order's and never feeding it.
+        for rid, w in _fixed_norm(ch, lexical=ch is ep_raw or ch is mem_raw).items():
+            gate_fused[rid] = gate_fused.get(rid, 0.0) + w * channel_weight
 
     results = []
     for rid in sorted(fused, key=fused.get, reverse=True):
         row = doc_map[rid]
         row["_rsf_score"] = fused[rid] / n_active
+        row["_rsf_gate_score"] = gate_fused[rid]
         results.append(row)
     if rec is not None:
         rec.arm("vector_near", near_rows, "_cosine")
@@ -915,7 +951,8 @@ def _gate_score(row: dict) -> tuple[float | None, str | None]:
         return confidence, "confidence"
     rsf = row.get("_rsf_score")
     if rsf is not None:
-        return rsf, "rsf"
+        # bug-247: the rsf branch gates on the fixed-scale score when the row has one.
+        return row.get("_rsf_gate_score", rsf), "rsf"
     cosine = row.get("_cosine")
     if cosine is not None:
         return cosine, "cosine"
@@ -1006,11 +1043,12 @@ def _apply_quality_gate(
             if rec is not None:
                 rec.gate_decision(r, "confidence", confidence, conf_threshold, confidence >= conf_threshold, "below_gate")
         elif rsf is not None:
-            # RSF fused scores lie in [0, 1] but not on the cosine scale: min-max
-            # normalization makes them relative to the rest of this query's
-            # candidates (weakest survivor pins to 0.0, a lone candidate to 1.0),
-            # so this comparison against a cosine-scale threshold is
-            # query-dependent. See _recall_rsf.
+            # bug-247: the order score is min-max normalised against the rest of this
+            # query's candidates (weakest survivor pins to 0.0, a lone candidate to
+            # 1.0), which an absolute threshold cannot read. The gate compares the
+            # row's fixed-scale score instead; a row without one (a caller that set
+            # only _rsf_score) is compared as before. See _recall_rsf.
+            rsf = r.get("_rsf_gate_score", rsf)
             rsf_threshold = gate if (gate is not None and gate_signal == "rsf") else min_score
             if rsf >= rsf_threshold:
                 filtered.append(r)
@@ -1510,6 +1548,8 @@ async def _apply_recall_scoring(
                         r["_rrf_score"] = r["_rrf_score"] * factor
                     if "_rsf_score" in r:
                         r["_rsf_score"] = r["_rsf_score"] * factor
+                    if "_rsf_gate_score" in r:
+                        r["_rsf_gate_score"] = r["_rsf_gate_score"] * factor
             # bug-115: with confidence off (the default), the penalised scores never
             # re-ordered anything — the confidence block below owns the only re-sort,
             # so under default config the penalty was a ranking no-op (computed, then
@@ -2593,6 +2633,7 @@ async def _do_recall(
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
         r.pop("_rsf_score", None)
+        r.pop("_rsf_gate_score", None)
         r.pop("_prior", None)
         r.pop("_resolved", None)
         r.pop("_block_distance", None)

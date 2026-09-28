@@ -11411,7 +11411,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -12440,7 +12440,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -13256,7 +13256,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -13897,7 +13897,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -14328,7 +14328,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -15291,7 +15291,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -15574,11 +15574,56 @@
     "result": {
       "messages": [
         {
+          "content": "harbor lighthouse keeper logbook entry 10",
+          "match_reason": {
+            "cosine": 0.7384849787,
+            "rsf": 0.0120692941,
+            "score": 0.7384854742,
+            "signal": "rsf"
+          },
+          "ref": "mem:11",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-09-22T00:00:00Z"
+        },
+        {
+          "content": "harbor lighthouse keeper logbook entry 4",
+          "match_reason": {
+            "cosine": 0.7352844477,
+            "rsf": 0.3333333333,
+            "score": 0.7352849486,
+            "signal": "rsf"
+          },
+          "ref": "mem:5",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-11-21T00:00:00Z"
+        },
+        {
+          "content": "harbor lighthouse keeper logbook entry 11",
+          "match_reason": {
+            "cosine": 0.823677659,
+            "rsf": 0.3333333333,
+            "score": 0.8236781546,
+            "signal": "rsf"
+          },
+          "ref": "mem:12",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-09-12T00:00:00Z"
+        },
+        {
           "content": "harbor lighthouse keeper logbook entry 1",
           "match_reason": {
             "cosine": 0.7628725767,
             "rsf": 0.4373689586,
-            "score": 0.4373689586,
+            "score": 0.7628730776,
             "signal": "rsf"
           },
           "ref": "mem:2",
@@ -15593,7 +15638,7 @@
           "match_reason": {
             "cosine": 0.766953826,
             "rsf": 0.4527594664,
-            "score": 0.4527594664,
+            "score": 0.7669543268,
             "signal": "rsf"
           },
           "ref": "mem:4",
@@ -15608,7 +15653,7 @@
           "match_reason": {
             "cosine": 0.7822899818,
             "rsf": 0.5105925498,
-            "score": 0.5105925498,
+            "score": 0.7822904827,
             "signal": "rsf"
           },
           "ref": "mem:9",
@@ -15623,7 +15668,7 @@
           "match_reason": {
             "cosine": 0.7840166092,
             "rsf": 0.5171037111,
-            "score": 0.5171037111,
+            "score": 0.7840171101,
             "signal": "rsf"
           },
           "ref": "mem:1",
@@ -15638,7 +15683,7 @@
           "match_reason": {
             "cosine": 0.7993612885,
             "rsf": 0.5749689367,
-            "score": 0.5749689367,
+            "score": 0.7993617894,
             "signal": "rsf"
           },
           "ref": "mem:10",
@@ -15654,7 +15699,7 @@
             "cosine": 0.7966907024,
             "cue_rank": 3,
             "rsf": 0.5648980799,
-            "score": 0.5648980799,
+            "score": 0.7966912033,
             "signal": "rsf"
           },
           "ref": "mem:7",
@@ -15669,7 +15714,7 @@
           "match_reason": {
             "cosine": 0.8081727624,
             "rsf": 0.6081972571,
-            "score": 0.6081972571,
+            "score": 0.8081732633,
             "signal": "rsf"
           },
           "ref": "mem:3",
@@ -15685,7 +15730,7 @@
             "cosine": 0.8017895818,
             "cue_rank": 1,
             "rsf": 0.5841261,
-            "score": 0.5841261,
+            "score": 0.8017900827,
             "signal": "rsf"
           },
           "ref": "mem:6",
@@ -15701,7 +15746,7 @@
             "cosine": 0.8020077944,
             "cue_rank": 2,
             "rsf": 0.584948986,
-            "score": 0.584948986,
+            "score": 0.8020082953,
             "signal": "rsf"
           },
           "ref": "mem:8",
@@ -16329,7 +16374,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -16978,7 +17023,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -17652,7 +17697,7 @@
         },
         "policy": {
           "process": "cued-v0.3",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -18428,7 +18473,7 @@
         },
         "policy": {
           "process": "single-pass-v0",
-          "scoring": "260a7-confidence-gates-nothing"
+          "scoring": "rsf-gate-fixed-scale"
         },
         "request": {
           "confidence_enabled": false,
@@ -19281,7 +19326,7 @@
           },
           "policy": {
             "process": "single-pass-v0",
-            "scoring": "260a7-confidence-gates-nothing"
+            "scoring": "rsf-gate-fixed-scale"
           },
           "request": {
             "confidence_enabled": false,
@@ -20211,7 +20256,7 @@
           },
           "policy": {
             "process": "cued-v0.3",
-            "scoring": "260a7-confidence-gates-nothing"
+            "scoring": "rsf-gate-fixed-scale"
           },
           "request": {
             "confidence_enabled": false,
@@ -21039,7 +21084,7 @@
           },
           "policy": {
             "process": "single-pass-v0",
-            "scoring": "260a7-confidence-gates-nothing"
+            "scoring": "rsf-gate-fixed-scale"
           },
           "request": {
             "confidence_enabled": false,
