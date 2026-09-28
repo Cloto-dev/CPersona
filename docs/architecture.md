@@ -120,10 +120,9 @@ Four stages deserve individual attention, because each one has a consequence
 the caller can see:
 
 1. **Fusion** (`CPERSONA_RECALL_MODE`). `rrf` merges by rank alone. It is
-   robust and scale-free, and it discards score magnitude. `rsf` puts each
-   channel's raw score on a fixed scale and sums them, so bm25 magnitude
-   survives the merge and a row's score does not depend on what else the query
-   retrieved. That magnitude is the discriminating signal on
+   robust and scale-free, and it discards score magnitude. `rsf` normalizes
+   each channel's raw score per query and sums them, so bm25 magnitude
+   survives the merge. That magnitude is the discriminating signal on
    [Japanese corpora](operations.md#japanese-and-cjk-corpora), which is why
    `rsf` is recommended there. `cascade` fills channels one after another and
    is legacy.

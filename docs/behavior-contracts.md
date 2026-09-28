@@ -160,12 +160,10 @@ than fusing lists, so it ignores the setting), and it is **local vector search
 only** (with `CPERSONA_VECTOR_SEARCH_MODE=remote` the service ranks under its
 own window).
 
-Under `rsf` the far list is fused as a fourth channel. Before 2.6.0b1 that
-lowered every fused score against the cosine-scale `min_score`, because the sum
-was divided by the number of channels that returned anything. From 2.6.0b1 the
-sum is not divided, so a far vote adds to the rows it found and lowers no other
-row's score. The setting's measurement is registered for `rrf`, and no claim is made
-about `rsf`.
+Under `rsf` the far list is fused as a fourth channel. That lowers every fused
+score against the cosine-scale `min_score`, because the sum is divided by the
+number of active channels. The setting's measurement is registered for `rrf`,
+and no claim is made about `rsf`.
 
 `CPERSONA_VECTOR_FAR_LIMIT` (default `0`) bounds how many rows of that second
 list are handed to the fusion. At the default, the bound is the response

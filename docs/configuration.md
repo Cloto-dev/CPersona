@@ -255,29 +255,29 @@ and per-tool classification, see [ACL design](ACL_DESIGN.md).
 - **`rrf`** (default) — Reciprocal Rank Fusion. Merges the vector and FTS
   channels by rank alone. Robust and scale-free, but it discards score
   magnitude.
-- **`rsf`** — Relative Score Fusion. Puts each channel's raw score on a fixed
-  [0, 1] scale (cosine for vector, bm25 for keyword) and sums them, so the
+- **`rsf`** — Relative Score Fusion. Min-max-normalizes each channel's raw
+  score per query (cosine for vector, bm25 for keyword) and sums them, so the
   keyword channel's bm25 magnitude survives the merge. **Recommended for
   topic-drift-prone or space-less language (e.g. Japanese) contexts**, where
-  that magnitude is the discriminating signal `rrf` flattens away (see the
-  ClotoCore `RECALL_CONTAMINATION_AB_2026-06-14` report §10–12).
+  that magnitude is the discriminating signal `rrf` flattens away (≈
+  Weaviate's `relativeScoreFusion`; see the ClotoCore
+  `RECALL_CONTAMINATION_AB_2026-06-14` report §10–12).
 
-  A cosine is used as it is. A keyword score `s` (−bm25, larger is better)
-  becomes `s / (s + 8)`, so a score of 8 counts as half a vote. The sum is not
-  divided by the number of channels: a row found by the vector channel alone
-  keeps its cosine, so the cosine-scale gate a store uses before its fused
-  gate is calibrated still reads it, and each further channel that found the
-  row adds to its score. The constant 8 and the undivided sum were chosen on
-  one half of LongMemEval and checked on the other half under a rule
-  registered before either was run
-  (`benchmarks/measurements/prereg-rsf-fixed-scale.md`).
+  Note what the normalization costs. It pins each channel's lowest-scoring row
+  to 0.0, and a channel that returns a single candidate pins that row to 1.0.
+  A fused score therefore places a row among the candidates retrieved with it,
+  rather than measuring its similarity to the query.
 
-  **Before 2.6.0b1**, `rsf` min-max normalised each channel against the rows
-  the query retrieved and divided the sum by the number of channels that
-  returned anything. That pinned a channel's lowest-scoring row to 0.0 and a
-  channel's only row to 1.0, so the gate could drop a strongly matching row
-  for being the weakest of a strong set and pass a weak lone match. A row's
-  fused score now depends on its own scores only. `rrf` remains the default.
+  Autocut does not act on that pin — it fires only on similarity-scale signals
+  ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))
+  — but the quality gate still compares the fused score against a cosine-scale
+  threshold. So with `CPERSONA_CONFIDENCE_ENABLED=false`, which is the default
+  and what the [CJK guidance](operations.md#japanese-and-cjk-corpora) assumes,
+  a strongly matching row can be dropped for being the weakest of a strong set,
+  and a weak lone match can pass. Turning confidence on under
+  `CPERSONA_CONFIDENCE_ORDERING=legacy` moves the gate onto the confidence
+  score and avoids this, at the cost described just below. `rrf` remains the
+  default.
 - **`cascade`** — sequential channel fill (legacy).
 
 **From 2.6.0a7, `CPERSONA_CONFIDENCE_ENABLED=true` does not change the order
