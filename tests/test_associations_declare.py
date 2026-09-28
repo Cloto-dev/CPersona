@@ -359,3 +359,29 @@ async def test_declare_associations_without_retract_reports_no_retraction(clean_
     assert out["result"] == "declared" and "retracted" not in out, out
     empty = await server.registry._handlers["declare_associations"]({"agent_id": AGENT})
     assert empty["entities"] == [] and "retracted" not in empty, empty
+
+
+@pytest.mark.asyncio
+async def test_declare_associations_without_associations_runs_no_declaration(clean_db, monkeypatch):
+    """The response of an empty declaration equals the absent one, so it is the call that is pinned.
+
+    An omitted `associations` arrives as {} through the handler. Declaring {} returns the
+    same empty lists as not declaring, which is why only a count of the calls can tell
+    them apart: the empty declaration is a write transaction that declares nothing.
+    """
+    calls: list[dict] = []
+    real = associations.declare
+
+    async def counting(agent_id, declared, **kwargs):
+        calls.append(declared)
+        return await real(agent_id, declared, **kwargs)
+
+    monkeypatch.setattr(associations, "declare", counting)
+    await server.registry._handlers["declare_associations"](
+        {"agent_id": AGENT, "retract": {"relations": []}}
+    )
+    assert calls == [], f"an omitted associations object still ran a declaration: {calls}"
+    await server.registry._handlers["declare_associations"](
+        {"agent_id": AGENT, "associations": {"entities": [{"name": "MizEye"}]}}
+    )
+    assert len(calls) == 1, "the counter did not see a real declaration, so the check above proves nothing"
