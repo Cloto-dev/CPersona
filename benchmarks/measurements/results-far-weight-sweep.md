@@ -165,6 +165,13 @@ decided here.
 
 Two observations. Neither is part of the rule.
 
+The production arms ran on build `7d850d3`, whose `rsf` put each channel on a
+fixed scale. That scale was withdrawn before any release
+([results](results-rsf-fixed-scale.md)), and the `rsf` that ships normalises
+each channel per query as before. So these observations describe that build,
+not the shipped `rsf`. The decision above rests on the shipped fusion (`rrf`),
+and it does not change.
+
 - Under `rsf` with the confidence scorer on, the far list buys almost nothing
   on the far stratum (pooled +0.30 at `w = 1`, with 16 queries better and 15
   worse), and it costs the near stratum 5.40 points.
