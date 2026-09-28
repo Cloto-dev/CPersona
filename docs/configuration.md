@@ -265,19 +265,22 @@ and per-tool classification, see [ACL design](ACL_DESIGN.md).
 
   Note what the normalization costs. It pins each channel's lowest-scoring row
   to 0.0, and a channel that returns a single candidate pins that row to 1.0.
-  A fused score therefore places a row among the candidates retrieved with it,
-  rather than measuring its similarity to the query.
+  The fused score therefore places a row among the candidates retrieved with
+  it, rather than measuring its similarity to the query. It decides the order,
+  and nothing else.
 
-  Autocut does not act on that pin — it fires only on similarity-scale signals
-  ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))
-  — but the quality gate still compares the fused score against a cosine-scale
-  threshold. So with `CPERSONA_CONFIDENCE_ENABLED=false`, which is the default
-  and what the [CJK guidance](operations.md#japanese-and-cjk-corpora) assumes,
-  a strongly matching row can be dropped for being the weakest of a strong set,
-  and a weak lone match can pass. Turning confidence on under
-  `CPERSONA_CONFIDENCE_ORDERING=legacy` moves the gate onto the confidence
-  score and avoids this, at the cost described just below. `rrf` remains the
-  default.
+  The quality gate reads a second score. The same channels are put on a fixed
+  scale — a cosine counts as itself, a keyword score `s` (−bm25) as
+  `s / (s + 8)`, so a score of 8 is half a vote — and summed without dividing,
+  with the far channel weighted as in the order. That score depends on the
+  row's own scores only, so the gate does not drop a strongly matching row for
+  being the weakest of a strong set, and does not pass a weak match for being
+  the only one. `match_reason.score` reports the gate score and
+  `match_reason.rsf` the order score. Autocut acts on neither — it fires only
+  on similarity-scale signals
+  ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)).
+  Releases up to 2.6.0a8 gated on the order score itself, which had both
+  faults. `rrf` remains the default.
 - **`cascade`** — sequential channel fill (legacy).
 
 **From 2.6.0a7, `CPERSONA_CONFIDENCE_ENABLED=true` does not change the order

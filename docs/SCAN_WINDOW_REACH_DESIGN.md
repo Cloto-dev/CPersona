@@ -139,9 +139,12 @@ normalised per query, and the sum is divided by the number of active channels.
 
 A far list fused as a fourth channel keeps the near rows' normalised values
 (their min and max are computed within their own list), but changes the divisor
-from three to four for every row, which lowers every fused score against the
-cosine-scale gate. Merging the far rows into the vector channel instead would
-change the near rows' min and max.
+from three to four for every row, which lowers every row's order score. Merging
+the far rows into the vector channel instead would change the near rows' min
+and max. The quality gate does not read the order score: it reads the same
+channels on a fixed scale, summed without dividing, so a far vote adds to the
+rows it found and lowers no other row's gate score
+([configuration](configuration.md#recall-fusion-mode-cpersona_recall_mode)).
 
 Neither is bit-preserving once the far list exists, and the measurement below
 is registered for the shipped `rrf` mode only. Under `rsf` the far list is

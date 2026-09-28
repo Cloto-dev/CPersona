@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:5eb50cfe25479448f4a02e1b46c37af3a61ed364 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:85eb67088eb2e630ed9252f2f3d775380e1ac9c0 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -153,10 +153,12 @@ factor = max(exp(-RATE × hours_before_boundary), FLOOR)
 (`CPERSONA_VECTOR_SEARCH_MODE=remote` ではサービス側が自身のウィンドウで
 ランク付けします) です。
 
-`rsf` では遠方リストは第 4 のチャネルとして融合されます。合計がアクティブな
-チャネル数で割られる関係上、cosine スケールの `min_score` に対して融合スコア
-全体が下がります。この設定の事前登録された測定は `rrf` に対するもので、`rsf`
-については何の主張もしていません。
+`rsf` では遠方リストは第 4 のチャネルとして融合されます。並び順のスコアは合計を
+アクティブなチャネル数で割るので、全行で下がります。品質ゲートが読むスコアは
+各チャネルを固定の尺度に載せて割らずに合計するので下がらず、遠方の票は自分が
+見つけた行に加算されるだけです
+([設定](configuration.md#recall-fusion-mode-cpersona_recall_mode))。この設定の
+事前登録された測定は `rrf` に対するもので、`rsf` については何の主張もしていません。
 
 `CPERSONA_VECTOR_FAR_LIMIT` (既定 `0`) は、その第 2 のリストのうち何行を融合層に
 渡すかを制限します。既定では上限は応答の `limit` で、これは reach だけを設定した
