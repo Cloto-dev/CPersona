@@ -959,8 +959,9 @@ FAR_LIMIT_EXPLORATORY_SPEC = (
 # reach off and "S" the unpriced far list, so W0 must answer as A (a weight of 0
 # is the reach turned off) and W100 as S (the default written as a number). The
 # same arms under the production fusion carry a "-p" and have their own
-# baseline, "A-p". W875 / W90 / W95 are exploratory: they sit where rrf's
-# arithmetic puts the change (see the pre-registration) and cannot move the rule.
+# baseline, "A-p". W875 / W90 / W95 sit where rrf's arithmetic puts the change;
+# registered as exploratory, made candidates under both fusions by the
+# pre-registration's amendment 1, before any outcome was read.
 M1_SPEC = ",".join(
     [f"A:{NARROW_WINDOW}:0:10:0:-",
      f"A-rep:{NARROW_WINDOW}:0:10:0:-"]
@@ -972,7 +973,8 @@ M1_SPEC = ",".join(
        for tag, w in (("875", 0.875), ("90", 0.9), ("95", 0.95))]
     + [f"A-p:{NARROW_WINDOW}:0:10:0:-:production"]
     + [f"W{tag}-p:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0:{w}:production"
-       for tag, w in (("0", 0.0), ("25", 0.25), ("50", 0.5), ("75", 0.75))]
+       for tag, w in (("0", 0.0), ("25", 0.25), ("50", 0.5), ("75", 0.75),
+                      ("875", 0.875), ("90", 0.9), ("95", 0.95))]
     + [f"S-p:{NARROW_WINDOW}:{WIDE_WINDOW}:10:0:-:production"]
 )
 M1_IDENTITY = "A:W0,S:W100,A-p:W0-p"

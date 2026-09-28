@@ -190,4 +190,26 @@ No weight has been compared with another on this instrument.
 
 ## Amendments
 
-None.
+### 1 — the finer weights become candidates (2026-09-28, before any outcome was read)
+
+Seen: no outcome. The registered run had started and had written one arm file
+(rotation 0, arm A). No file had been scored or read. The run was stopped,
+this amendment was written, and the run resumed with that file kept.
+
+Changed:
+
+- **The candidates are `w ∈ {0, 0.25, 0.5, 0.75, 0.875, 0.9, 0.95, 1}`**
+  (W0, W25, W50, W75, W875, W90, W95, S). The three finer weights were
+  registered as exploratory. Under `rrf`, the arithmetic under "Prediction"
+  places the contest the record's loss came from between 0.871 and 1, and
+  none of the plan's candidates lies there. The rule would then choose among
+  weights that the prediction says behave alike. Selecting on dev and judging
+  once on test protects a larger candidate set just as it protects a smaller
+  one. This run uses 480 of the instrument's 500 questions, so a later
+  confirmatory run of the finer weights would have no fresh questions.
+- **Production arms W875-p, W90-p and W95-p are added**, so that every
+  candidate can be judged under both fusions, as the rule requires.
+
+The rule, the tie-breaking, the split and the controls are unchanged. The
+finer weights listed as exploratory under "Reported, not part of the rule"
+are candidates now.
