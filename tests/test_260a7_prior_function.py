@@ -179,12 +179,9 @@ async def test_rsf_weights_only_the_far_channel(fake_embedding_client, monkeypat
     monkeypatch.setattr(memory_handlers, "_search_vector", _fake_search(near, far))
     out = await memory_handlers._recall_rsf(await get_db(), AGENT, "q", 10, False)
     score = {r["id"]: r["_rsf_score"] for r in out if r["id"] > 0}
-    # Each row is in one channel, so all four share one divisor whatever RSF_DIVISOR is:
-    # a near row keeps its cosine's share, a far row carries the weight on top (bug-247
-    # put every channel on its raw, fixed scale).
-    assert score[2] / score[1] == pytest.approx(0.5 / 0.9)
-    assert score[3] / score[1] == pytest.approx(weight * 0.7 / 0.9)
-    assert score[4] / score[1] == pytest.approx(weight * 0.6 / 0.9)
+    # Two active channels: near normalises to 1.0 / 0.0, far to 1.0 / 0.0, divisor 2.
+    assert score[1] == pytest.approx(0.5) and score[2] == pytest.approx(0.0)
+    assert score[3] == pytest.approx(weight / 2) and score[4] == pytest.approx(0.0)
 
 
 # --- the age weight --------------------------------------------------------------

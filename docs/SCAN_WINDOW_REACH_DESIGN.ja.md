@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/SCAN_WINDOW_REACH_DESIGN.md@blob:e1f6dd61186a51aca1627ce890c78fca7a3b8039 -->
+<!-- i18n-source: docs/SCAN_WINDOW_REACH_DESIGN.md@blob:b72d44cd4f616b5776326842016adc8e8e77bf5f -->
 
 # ベクトル走査窓の「到達範囲」と「新しさの優遇」
 
@@ -130,11 +130,6 @@ near の行の min と max が変わる。
 far リストが存在する時点でどちらもビット保存ではなく、下の測定は出荷モード `rrf` にのみ
 登録されている。`rsf` では far リストは 4 本目のチャネルとして融合し、測定されるまで何も
 主張しない。
-
-2.6.0b1 から `rsf` は各チャネルを固定の尺度に載せ、合計を割らない。したがって 4 本目の
-チャネルは自分が見つけた行に足されるだけで、ほかの行のスコアは変えない
-([設定](configuration.md#recall-fusion-mode-cpersona_recall_mode))。上の段落は、この
-ページを書いた時点の尺度を述べている。
 
 ### 3.3 ふたつの供給元 { #33-the-two-suppliers }
 

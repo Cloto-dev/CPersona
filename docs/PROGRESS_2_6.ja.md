@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:1c5b7fa85d8eb74d06faf74b0a3fe42f5af9f7e5 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:133c6920a71bc1777e6234906eda0890929c47e8 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -60,6 +60,7 @@
 | 何が | 何が起きたか | 証拠 |
 | --- | --- | --- |
 | 適応的融合の reference panel (最初の仕様) | null を特定できませんでした。指定した 2 つの密度が同じ分布だったため、定義した証拠では、混合をそれ自身の null から区別できませんでした。この定義の上にコードが書かれる前に、定義を置き換えました。 | [#262](https://github.com/Cloto-dev/cpersona/pull/262) |
+| `rsf` の固定の尺度 (bug-247 の修正) | LongMemEval の 10 行で事前登録した判定則を満たしましたが、そこでは返す行も増えていました。LMEB Track B では 22 タスク中 19 で下がり (macro 58.53 → 57.51)、リリース前に元に戻しました。対象だったゲートの欠陥は未修正に戻っています。 | [結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-rsf-fixed-scale.md) |
 
 ## このページに無いもの { #what-is-not-on-this-page }
 

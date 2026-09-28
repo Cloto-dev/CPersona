@@ -10,6 +10,13 @@ held on the test half: no type fell by more than its allowance, and the macro
 mean NDCG@10 did not fall (it rose by 2.14 points). The rise is not claimed as
 an improvement; see [what the numbers do not show](#what-the-numbers-do-not-show).
 
+**Withdrawn before release (2026-09-28).** The fix was merged but shipped in no
+release. [Track B](#track-b), reported after the decision, scored it lower on 19
+of the 22 tasks (macro 58.53 → 57.51), so it was reverted before the next
+pre-release, and bug-247 is open again. The rule above held, and it still
+answers only its own question: whether the fix holds ground at ten rows in the
+regime described under the setup.
+
 ## Setup as run
 
 - Instrument: `benchmarks/rsf_scale_measure.py`, LMEB LongMemEval, `rsf`,
@@ -86,4 +93,55 @@ counts in every type.
 
 Reported after the decision, not part of the rule: LMEB Track B (22 tasks,
 `rsf`, `--fast`) for `legacy` (the checkout before the fix, `8d124bc`) and for
-the fix. Pending.
+the fix (`ed31dfd`), bge-m3, launched with `benchmarks/run_trackb.sh`. That
+regime turns the calibrated fused gate and autocut off, keeps the shipped
+pool-size gate, and calibrates the vector threshold per subtask. It scores
+NDCG@10 of the ranking over the whole corpus, not of ten rows under the
+calibrated gate as the decision above did.
+
+**The fix scores lower on 19 of the 22 tasks. The macro falls by 1.03 points,
+from 58.53 to 57.51.** Two tasks rise (MLDR, LMEB_SciFact) and one is unchanged
+(MemGovern).
+
+| Type | Task | legacy | fix | Δ |
+| --- | --- | ---: | ---: | ---: |
+| Episodic | EPBench | 90.58 | 88.27 | −2.31 |
+| Episodic | KnowMeBench | 53.88 | 53.48 | −0.40 |
+| Episodic | ReMe | 59.29 | 58.55 | −0.74 |
+| Dialogue | ConvoMem | 61.26 | 60.27 | −0.99 |
+| Dialogue | LoCoMo | 48.60 | 46.28 | −2.32 |
+| Dialogue | LongMemEval | 81.34 | 80.45 | −0.89 |
+| Dialogue | MemBench | 65.19 | 58.23 | −6.96 |
+| Dialogue | REALTALK | 43.69 | 41.47 | −2.22 |
+| Dialogue | TMD | 23.48 | 22.09 | −1.39 |
+| Semantic | CovidQA | 85.13 | 85.09 | −0.04 |
+| Semantic | ESGReports | 46.24 | 45.22 | −1.02 |
+| Semantic | LMEB_SciFact | 74.38 | 75.03 | +0.65 |
+| Semantic | LooGLE | 66.49 | 65.88 | −0.61 |
+| Semantic | MLDR | 82.27 | 83.94 | +1.67 |
+| Semantic | NovelQA | 37.02 | 36.50 | −0.52 |
+| Semantic | PeerQA | 30.14 | 29.55 | −0.59 |
+| Semantic | QASPER | 47.66 | 46.27 | −1.39 |
+| Procedural | DeepPlanning | 58.68 | 56.88 | −1.80 |
+| Procedural | Gorilla | 35.06 | 34.76 | −0.30 |
+| Procedural | MemGovern | 90.70 | 90.70 | 0.00 |
+| Procedural | Proced_mem_bench | 52.18 | 52.05 | −0.13 |
+| Procedural | ToolBench | 54.51 | 54.25 | −0.26 |
+| **Macro** | 22 tasks | **58.53** | **57.51** | **−1.03** |
+
+How to read it:
+
+- A single task's change of up to about two points is within this harness's
+  run-to-run calibration noise ([README](../README.md), measurement regime,
+  item 3), and neither arm was replicated. The noise has no direction, though,
+  and 19 of the 22 tasks moved the same way. MemBench (−6.96) is well outside
+  it.
+- This regime does not separate the order of the fused list from what the
+  pool-size gate admits, so it does not say which of the two moved.
+- The test half above is a different question: ten rows under the calibrated
+  gate's regime, where the fix also returned more rows. The two results do not
+  contradict each other, and neither answers the other's question.
+- The runs were resumed across processes. The harness reuses one database per
+  process, and a long-lived process ranks several times slower. Scores do not
+  depend on it: two MemGovern subtasks re-run in a fresh process gave the same
+  NDCG@10 to the second decimal.

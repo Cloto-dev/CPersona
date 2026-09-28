@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:d3e7b215e10e6defdd2edcc39ba00f2266587519 -->
+<!-- i18n-source: docs/configuration.md@blob:b5e335ff29cb9a6f67d4e773974f8e223c2da516 -->
 
 # 設定リファレンス
 
@@ -254,27 +254,29 @@ v2.5.3 以降、サーバーはこれを強制します。`CPERSONA_TRANSPORT=st
 - **`rrf`** (既定) — Reciprocal Rank Fusion。vector と FTS のチャネルを
   **順位のみ**で融合します。頑健でスケール非依存ですが、スコアの大きさは捨てます。
 - **`rsf`** — Relative Score Fusion。各チャネルの生スコア (vector はコサイン、
-  keyword は bm25) を固定の [0, 1] の尺度に載せて加算するため、keyword
+  keyword は bm25) をクエリ単位で min-max 正規化して加算するため、keyword
   チャネルの bm25 の大きさが融合後も残ります。**話題ドリフトが起きやすい文脈や、
   分かち書きのない言語 (日本語など) で推奨**です。`rrf` が平坦化してしまう
-  その大きさこそが、そこでの識別シグナルだからです (ClotoCore の
-  `RECALL_CONTAMINATION_AB_2026-06-14` レポート §10–12 を参照)。
+  その大きさこそが、そこでの識別シグナルだからです (≈ Weaviate の
+  `relativeScoreFusion`。ClotoCore の `RECALL_CONTAMINATION_AB_2026-06-14`
+  レポート §10–12 を参照)。
 
-  コサインはそのまま使います。keyword のスコア `s` (−bm25、大きいほど良い) は
-  `s / (s + 8)` になり、スコア 8 がちょうど半票に当たります。合計はチャネル数で
-  割りません。vector チャネルだけが見つけた行はコサインをそのまま持つので、融合
-  ゲートを較正する前のストアが使うコサインスケールのゲートでもそのまま読めます。
-  ほかのチャネルもその行を見つけていれば、その分だけスコアが足されます。定数 8 と
-  割らない合計は、LongMemEval の半分で選び、残りの半分で確かめました。規則は
-  どちらを走らせるよりも前に登録してあります
-  (`benchmarks/measurements/prereg-rsf-fixed-scale.md`)。
+  この正規化の代償に注意してください。各チャネルの最下行は 0.0 に固定され、
+  候補が 1 件しかないチャネルではその行が 1.0 に固定されます。つまり融合スコアが
+  表すのは「クエリへの類似度」ではなく「一緒に retrieve された候補の中での位置」
+  です。
 
-  **2.6.0b1 より前**の `rsf` は、各チャネルをそのクエリが retrieve した行の中で
-  min-max 正規化し、合計を「何かを返したチャネルの数」で割っていました。そのため
-  各チャネルの最下行は 0.0 に、1 件しか返さなかったチャネルのその行は 1.0 に固定され、
-  ゲートは強く一致している行を「強い集合の中で最弱だった」という理由で落とし、弱い
-  単独一致を通すことがありました。いまは行の融合スコアがその行自身のスコアだけで
-  決まります。既定は `rrf` のままです。
+  autocut はこの固定に対しては働きません。類似度スケールのシグナルにしか発火
+  しないためです
+  ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。
+  ただし品質ゲートは、依然として融合スコアをコサインスケールの閾値と比較します。
+  したがって `CPERSONA_CONFIDENCE_ENABLED=false` (既定であり、
+  [CJK の指針](operations.md#japanese-and-cjk-corpora) が前提とする構成) のとき、
+  強く一致している行が「強い集合の中で最弱だった」という理由で落ち、逆に弱い単独
+  一致が通ることがあります。`CPERSONA_CONFIDENCE_ORDERING=legacy` で confidence を
+  有効にするとゲートは confidence スコア側に移り、この問題は避けられますが、その代償は
+  すぐ下に書いたとおりです。
+  既定は `rrf` のままです。
 - **`cascade`** — チャネルを順番に埋める方式 (レガシー)。
 
 **2.6.0a7 からは、`CPERSONA_CONFIDENCE_ENABLED=true` にしても返却順は変わりません。**

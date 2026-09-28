@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:5279677923fcb28f9ce4e4520f3d0dcf8ea105a6 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:ab10203ec852fa75eb87ddd5e04d9449c0f58f1c -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -45,7 +45,7 @@
 
 ### ゲートの較正がやり直される { #the-gate-is-recalibrated }
 
-2.6.0a7 と 2.6.0b1 は採点の版を変えたので、それより前の版が保存した較正は古いものとして扱われます。既定の
+2.6.0a7 は採点の版を変えたので、それより前の版が保存した較正は古いものとして扱われます。既定の
 `CPERSONA_CALIBRATE_ON_MODEL_CHANGE=true` なら、サーバーは起動時に全体のしきい値を較正し直します。
 それと `CPERSONA_AUTO_CALIBRATE` の両方が off の場合、古いゲートは適用されず、`calibrate_threshold`
 を実行するまで `deep_check` が `stale_scoring_version` を報告します。
@@ -102,10 +102,6 @@ Block による到達は既定で off で、off の間は費用がかかりま�
 - **時期の手がかりは最大 3 行を足しえます** (2.6.0a8)。`time_cue` を渡すと、`recall` は最大
   `limit` + 3 行 (手がかりの確かさ別に 3 / 2 / 1) を返し、直近 24 時間だけを指す手がかりは使われません
   (`time_cue.ignored`)。手がかりを渡さなければ何も変わりません。
-- **`rsf` は各チャネルを固定の尺度で採点します** (2.6.0b1)。`CPERSONA_RECALL_MODE=rsf` では、
-  行の融合スコアがそのクエリで retrieve されたほかの行に左右されなくなったので、ゲートは強い集合の
-  最弱の行を落とさなくなり、弱い単独一致を通さなくなります。融合ゲートは採点の版とともに較正し
-  直されます ([上記](#the-gate-is-recalibrated))。`rrf` と `cascade` は変わりません。
 
 2.6 で新しく入り、求めない限り何もしないもの: `reconstruct` ツール、recall の trace (`trace=true`)、
 時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、伝播の席

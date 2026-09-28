@@ -663,54 +663,8 @@ async def _recall_rrf(
     return results
 
 
-# bug-247: rsf puts each channel on a fixed [0, 1] scale, so a row's fused score is a
-# function of its own raw scores and an absolute gate can read it. A cosine is already
-# on that scale. A keyword score (-bm25, larger is better) is mapped by s / (s + H):
-# monotone, bounded below 1, and H is the score that counts half a vote. H and the
-# divisor were chosen on the dev half of LongMemEval under a pre-registered rule
-# (benchmarks/measurements/prereg-rsf-fixed-scale.md).
-RSF_LEXICAL_HALF = 8.0
-# What the fused sum is divided by: "none" (the plain sum) or "present" (the channels the
-# row itself appeared in). Either way a row found by one channel keeps that channel's
-# score, so a cosine-scale gate -- the one a store uses before its fused gate is
-# calibrated -- still reads it. "active" (the channels that returned anything in this
-# recall) is the divisor before 2.6.0b1, kept for measuring against: under it a strong
-# vector-only row is divided by the other channels that happened to answer.
-RSF_DIVISOR = "none"
-
-
-def _fixed_norm(raw: dict, lexical: bool) -> dict:
-    """A channel's raw scores on a fixed [0, 1] scale (higher = better).
-
-    Unlike :func:`_minmax_norm` the value depends on the row's own score only, never
-    on the other rows this query retrieved: a cosine is clamped to [0, 1], a keyword
-    score ``s`` becomes ``s / (s + RSF_LEXICAL_HALF)``. The None rules are
-    ``_minmax_norm``'s: an all-None channel (the LIKE fallback, which has no bm25)
-    gives every row a full vote, and a None among scores gets 0.0.
-    """
-    vals = {rid: s for rid, s in raw.items() if s is not None}
-    if not vals:
-        return {rid: 1.0 for rid in raw}
-    if lexical:
-        out = {rid: max(0.0, s) / (max(0.0, s) + RSF_LEXICAL_HALF) for rid, s in vals.items()}
-    else:
-        out = {rid: min(1.0, max(0.0, s)) for rid, s in vals.items()}
-    for rid in raw:
-        out.setdefault(rid, 0.0)
-    return out
-
-
-def _rsf_divisor(n_active: int, n_present: int) -> int:
-    """What a row's fused rsf sum is divided by, per :data:`RSF_DIVISOR`."""
-    return {"active": n_active, "present": n_present, "none": 1}[RSF_DIVISOR]
-
-
 def _minmax_norm(raw: dict) -> dict:
     """Min-max normalize a channel's raw scores to [0, 1] (higher = better).
-
-    rsf's normalization until 2.6.0b1 (bug-247: it made a fused score depend on the
-    other rows of the query, which an absolute gate cannot read); kept as the
-    reference a measurement compares :func:`_fixed_norm` against.
 
     All-None (e.g. the LIKE fallback, which has no bm25) → uniform 1.0, so an
     exact substring match still casts a full keyword vote. Degenerate input
@@ -834,29 +788,21 @@ async def _recall_rsf(
     active = [ch for ch in (vec_raw, far_raw, ep_raw, mem_raw) if ch]
     n_active = len(active) or 1
     fused: dict[tuple, float] = {}
-    seen_in: dict[tuple, int] = {}
     votes: dict[str, dict] | None = {} if rec is not None else None
     names = {id(vec_raw): "vector_near", id(far_raw): "vector_far", id(ep_raw): "episode_fts", id(mem_raw): "memory_keyword"}
     for ch in active:
         # 2.6.0a7: the far channel is weighted by CPERSONA_PRIOR_FAR_WEIGHT; the
-        # divisor is RSF_DIVISOR's (docs/PRIOR_FUNCTION_DESIGN.md §2).
+        # divisor stays the channel count (docs/PRIOR_FUNCTION_DESIGN.md §2).
         channel_weight = PRIOR_FAR_WEIGHT if ch is far_raw else 1.0
-        for rid, w in _fixed_norm(ch, lexical=ch is ep_raw or ch is mem_raw).items():
+        for rid, w in _minmax_norm(ch).items():
             fused[rid] = fused.get(rid, 0.0) + w * channel_weight
-            seen_in[rid] = seen_in.get(rid, 0) + 1
             if votes is not None:
-                votes.setdefault(f"{rid[0]}:{rid[1]}", {})[names[id(ch)]] = w * channel_weight
-    divisor = {rid: _rsf_divisor(n_active, seen_in[rid]) for rid in fused}
-    score = {rid: fused[rid] / divisor[rid] for rid in fused}
-    if votes is not None:
-        for rid in fused:
-            key = f"{rid[0]}:{rid[1]}"
-            votes[key] = {name: v / divisor[rid] for name, v in votes[key].items()}
+                votes.setdefault(f"{rid[0]}:{rid[1]}", {})[names[id(ch)]] = w * channel_weight / n_active
 
     results = []
-    for rid in sorted(score, key=score.get, reverse=True):
+    for rid in sorted(fused, key=fused.get, reverse=True):
         row = doc_map[rid]
-        row["_rsf_score"] = score[rid]
+        row["_rsf_score"] = fused[rid] / n_active
         results.append(row)
     if rec is not None:
         rec.arm("vector_near", near_rows, "_cosine")

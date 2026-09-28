@@ -1297,36 +1297,6 @@ MUTATIONS += [
         breaks="a trace over HTTP names the configured default, a model nothing ran",
         expect="test_trace_embedding_model.py::test_a_traced_recall_writes_it_and_an_untraced_one_does_not_ask",
     ),
-    Mutation(
-        id="M115",
-        tests=("tests/test_bug247_rsf_scale.py",),
-        target="rsf — each channel on a fixed scale, not min-max against the rows beside it (bug-247)",
-        file=_MH,
-        find="for rid, w in _fixed_norm(ch, lexical=ch is ep_raw or ch is mem_raw).items():",
-        replace="for rid, w in _minmax_norm(ch).items():",
-        breaks="the weakest row of a strong set scores 0.0 and is gated out, and a lone weak hit scores 1.0 and passes",
-        expect="test_bug247_rsf_scale.py::test_the_weakest_row_of_a_strong_set_passes_a_gate_it_clears",
-    ),
-    Mutation(
-        id="M116",
-        tests=("tests/test_bug247_rsf_scale.py",),
-        target="rsf — the keyword half-vote is the H the dev measurement chose (bug-247)",
-        file=_MH,
-        find="RSF_LEXICAL_HALF = 8.0\n",
-        replace="RSF_LEXICAL_HALF = 2.0\n",
-        breaks="the shipped keyword scale is not the one the test half judged",
-        expect="test_bug247_rsf_scale.py::test_the_shipped_constants_are_the_ones_the_dev_measurement_chose",
-    ),
-    Mutation(
-        id="M117",
-        tests=("tests/test_bug247_rsf_scale.py",),
-        target="rsf — the fused sum is not divided, as the dev measurement chose (bug-247)",
-        file=_MH,
-        find='RSF_DIVISOR = "none"\n',
-        replace='RSF_DIVISOR = "present"\n',
-        breaks="a row both channels found scores the mean of its votes, below a row the vector found alone",
-        expect="test_bug247_rsf_scale.py::test_the_shipped_constants_are_the_ones_the_dev_measurement_chose",
-    ),
 ]
 
 

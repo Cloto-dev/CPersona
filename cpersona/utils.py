@@ -288,10 +288,7 @@ def episode_timestamp(start_time: str | None, created_at: str | None) -> str:
 # compares the confidence score but the fused score (CPERSONA_CONFIDENCE_ORDERING=fusion,
 # docs/PRIOR_FUNCTION_DESIGN.md §5), so a gate calibrated on confidence gates a quantity
 # it was not measured on. The episode penalty's default also went off in 2.6.0a7.
-# The 2.6.0b1 rsf fixed scale (bug-247) is the sixth: rsf no longer min-max normalises
-# each channel against the rows a query retrieved, so the fused score a gate was
-# calibrated on is a different quantity.
-SCORING_VERSION = "260b1-rsf-fixed-scale"
+SCORING_VERSION = "260a7-confidence-gates-nothing"
 
 
 def _compute_confidence(
