@@ -1557,6 +1557,26 @@ MUTATIONS += [
         breaks="reconstruct accepts a key of any length while every other tool refuses it",
         expect="test_bug386_session_key_bound.py::test_every_tool_that_takes_the_key_declares_the_bound",
     ),
+    Mutation(
+        id="M141",
+        tests=("tests/test_bug329_index_chunks.py",),
+        target="index phase 1 — a copied window is built a chunk at a time (bug-329)",
+        file="cpersona/vector.py",
+        find="        for lo, hi in _scan_chunk_bounds(len(merged_ids), chunk_rows)\n",
+        replace="        for lo, hi in [(0, len(merged_ids))]\n",
+        breaks="the copied window is held whole, so its memory grows with the scan window and the reach",
+        expect="test_bug329_index_chunks.py::test_the_peak_does_not_grow_with_the_window",
+    ),
+    Mutation(
+        id="M142",
+        tests=("tests/test_bug329_index_chunks.py",),
+        target="index phase 1 — the chunks are the ranges the SQL scan scores (bug-329)",
+        file="cpersona/vector.py",
+        find="        bounds[-1] = (bounds[-1][0], rows)",
+        replace="        bounds.append((bounds[-1][1], rows))",
+        breaks="a short remainder is scored alone, in a shape the SQL scan never uses",
+        expect="test_bug329_index_chunks.py::test_the_bounds_are_the_ranges_the_scan_scores",
+    ),
 ]
 
 
