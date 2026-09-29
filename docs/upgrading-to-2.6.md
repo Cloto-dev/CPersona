@@ -1,7 +1,7 @@
 # Upgrading from 2.5 to 2.6
 
 This page takes an existing 2.5.x store to the current 2.6 pre-release,
-**2.6.0b1**, in one pass. Each 2.6 pre-release documented only its own step in
+**2.6.0b2**, in one pass. Each 2.6 pre-release documented only its own step in
 its release notes; this page puts the steps from 2.5.12 onward in one place.
 
 2.6 is still a pre-release line (Experimental in the
@@ -25,7 +25,7 @@ settled at the final.
    own:
 
    ```sh
-   pip install 'cpersona==2.6.0b1'
+   pip install 'cpersona==2.6.0b2'
    ```
 
 ## What the first start does
@@ -42,7 +42,7 @@ recorded as done, so it is retried on the next start.
 | 16 | 2.6.0a5 | `record_blocks`: block reach | Only if you turn block reach on ([below](#optional-turn-on-block-reach)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Only if you turn block reach on |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8 and 2.6.0b1 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1 and 2.6.0b2 changed no schema.
 
 ## After the first start
 
@@ -130,6 +130,25 @@ Check these against what your deployment relies on. Each is off, or equal to
   episode's `reconstruct` quote is measured in the stored summary, without the
   `[Episode] ` label; `check_health` reports and rebuilds node sets with a gap or
   a missing embedding.
+- **`session_key` is at most 256 characters** (2.6.0b2). Every tool that takes
+  it declares `maxLength: 256`, and a longer key is refused before the call
+  runs, with an input validation error. Keys minted from a process id and its
+  start time, or a UUID, are well under the bound.
+- **A listing the row cap cut says so** (2.6.0b2). `list_memories` and
+  `list_episodes` still clamp `limit` to 500 and 200 rows. When the caller asked
+  for more and rows past the cap exist, the response carries `budget_rows` (the
+  cap). A client that stops when it gets fewer rows than it asked for should
+  read this key.
+- **How far behind the vector index is counts every row a query reads from the
+  table** (2.6.0b2). `python -m cpersona.vector_index status` adds
+  `rows_read_exactly`, `excluded` and `unembedded`, and `build` adds
+  `unembedded`. `check_health`'s `vector_index_tail_grown` compares
+  `rows_read_exactly` against the rebuild ratio, so after `fix=true` fills
+  missing embeddings it can appear with `rows_past_watermark` at 0. Rebuilding
+  the index takes in the rows that have since gained an embedding.
+- **Smaller corrections** (2.6.0b2): on an in-memory database, `export_memories`
+  reads a consistent copy; the vector index path scores a window it has to copy
+  one chunk at a time, in the ranges the table scan uses.
 
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 (`trace=true`), the time cue (`time_cue`), associations declared with
