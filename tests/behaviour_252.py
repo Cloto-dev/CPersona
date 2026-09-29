@@ -562,8 +562,14 @@ async def observe_all() -> dict:
 # with and, for each stage, how many rows it received and a digest of their
 # order -- what a replay starting from a stage checks its input against.
 # Additive and trace-only, like `budget`. Pinned in tests/test_trace_seams.py.
+#
+# unembedded (bug-388): build_index reports the second group of named holes
+# beside `excluded`, the rows that had no embedding when it ran. Additive -- the
+# build, its row count and its watermark are unchanged, and the two recorded
+# builds had no such rows (0). Pinned in tests/test_bug388_index_behind.py.
 _KEYS_ADDED_SINCE_GOLDEN = {
     "repairable", "checks_run", "advisory_scope", "budget", "providers", "stage_inputs",
+    "unembedded",
 }
 
 

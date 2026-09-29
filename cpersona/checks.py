@@ -2729,14 +2729,25 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                 (index.watermark, *iso.params),
             )
         )[0][0]
-        if index.count and tail > index.count * INDEX_TAIL_RATIO:
+        # bug-388: the threshold is on every row a query reads exactly, not only
+        # the rows written since the build. The build's named holes are read by id
+        # on every query once they carry an embedding -- and filling a NULL
+        # embedding is what check_health(fix=True) does -- so counting the tail
+        # alone let the ordinary repair create a per-query cost this check never
+        # reported. One definition, shared with `vector_index status`.
+        read_exactly = await vector_index.rows_read_exactly(db, index, table, iso)
+        if index.count and read_exactly > index.count * INDEX_TAIL_RATIO:
             return [
                 {
                     "type": "vector_index_tail_grown",
                     "table": table,
                     "indexed_rows": index.count,
                     "rows_past_watermark": tail,
-                    "hint": "rebuild the index; a long tail is read exactly on every query",
+                    "rows_read_exactly": read_exactly,
+                    "hint": (
+                        "rebuild the index; the rows it cannot answer for -- written since "
+                        "the build, or named by it as holes -- are read exactly on every query"
+                    ),
                 }
             ]
         return []

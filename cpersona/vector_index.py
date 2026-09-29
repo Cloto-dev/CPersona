@@ -324,6 +324,10 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
         "dim": dim,
         "watermark": watermark,
         "excluded": len(excluded),
+        # bug-388: the other named hole. The cap above is checked against the
+        # sum of both, and both are read by id on every query, so reporting one
+        # of them made a build with thousands of holes look like a build with none.
+        "unembedded": len(unembedded),
         "bytes": os.path.getsize(out),
     }
 
@@ -498,6 +502,36 @@ def _build_parser():
     return ap
 
 
+async def rows_read_exactly(db, index: VectorIndex, table: str, iso) -> int:
+    """How far behind the database `index` is: the rows every query reads from the
+    table instead of from the index file.
+
+    bug-388: three groups, the ones ``vector._index_tail_rows`` reads -- rows
+    written since the build (``id > watermark``), and the two groups the build
+    named because it could not hold them (``excluded_ids``, a created_at the
+    format cannot spell; ``unembedded_ids``, no embedding yet when it ran). A
+    named hole costs a read only once it carries an embedding, and filling a
+    NULL embedding is what ``check_health(fix=True)`` does, so the ordinary
+    repair turns a hole the build named into a per-query cost. Counting only the
+    first group reported zero while every query paid for the other two.
+
+    The predicate is the query path's own, so this number and the rows a query
+    reads cannot disagree (tests/test_bug388_index_behind.py holds the two
+    together). ``status`` and the health check both call this, so "behind" has
+    one definition. ``iso`` is the caller's isolation filter: global for the
+    operator's ``status``, the checked agent's for the health check.
+    """
+    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids)
+    holes = " OR id IN (SELECT value FROM json_each(?))" if holes_ids else ""
+    holes_params = (json.dumps([int(i) for i in holes_ids]),) if holes_ids else ()
+    rows = await db.execute_fetchall(
+        f"SELECT COUNT(*) FROM {table}"
+        f" WHERE (id > ?{holes}) AND embedding IS NOT NULL{iso.and_clause}",
+        (index.watermark, *holes_params, *iso.params),
+    )
+    return int(rows[0][0])
+
+
 async def _status(table: str) -> dict:
     """What an operator can act on: present / usable / how far behind the database."""
     import datetime as _dt
@@ -516,15 +550,18 @@ async def _status(table: str) -> dict:
     assert index is not None
     from cpersona.database import connection
 
-    # Rows the index cannot answer for and the scan reads exactly: everything
-    # written since the build, on every axis. A deliberate global count, spelled
-    # the way the isolation gate requires one to be spelled.
+    # Deliberate global counts, spelled the way the isolation gate requires one to
+    # be spelled. `rows_since_build` keeps its meaning -- rows WRITTEN since the
+    # build -- and `rows_read_exactly` is how far behind the index is (bug-388):
+    # the named holes were written before the build, so folding them into the
+    # first number would make it answer the second question by misstating the first.
     iso = isolation_where(agent_id=None)
     async with connection() as db:
         row = await db.execute_fetchall(
             f"SELECT COUNT(*) FROM {table} WHERE id > ? AND embedding IS NOT NULL{iso.and_clause}",
             (index.watermark, *iso.params),
         )
+        read_exactly = await rows_read_exactly(db, index, table, iso)
     st = os.stat(path)
     return {
         "table": table,
@@ -535,6 +572,9 @@ async def _status(table: str) -> dict:
         "dim": index.dim,
         "watermark": index.watermark,
         "rows_since_build": int(row[0][0]),
+        "excluded": len(index.excluded_ids),
+        "unembedded": len(index.unembedded_ids),
+        "rows_read_exactly": read_exactly,
         "bytes": st.st_size,
         "built_at": _dt.datetime.fromtimestamp(st.st_mtime, tz=_dt.timezone.utc).isoformat(),
     }
@@ -557,7 +597,9 @@ def _render(result: dict, as_json: bool) -> str:
     return (
         f"index at {result['path']}: {result['rows']} rows x {result['dim']} dims, "
         f"watermark {result['watermark']}, {result['rows_since_build']} rows written since "
-        f"the build, built {result['built_at']}"
+        f"the build, {result['rows_read_exactly']} rows read exactly on every query "
+        f"({result['excluded'] + result['unembedded']} named at the build), "
+        f"built {result['built_at']}"
     )
 
 
