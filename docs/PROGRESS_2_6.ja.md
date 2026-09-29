@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:133c6920a71bc1777e6234906eda0890929c47e8 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:bdda3cfec9a29e7a39471212b0246fa7d61c9f83 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -61,6 +61,7 @@
 | --- | --- | --- |
 | 適応的融合の reference panel (最初の仕様) | null を特定できませんでした。指定した 2 つの密度が同じ分布だったため、定義した証拠では、混合をそれ自身の null から区別できませんでした。この定義の上にコードが書かれる前に、定義を置き換えました。 | [#262](https://github.com/Cloto-dev/cpersona/pull/262) |
 | `rsf` の固定の尺度 (bug-247 の修正) | LongMemEval の 10 行で事前登録した判定則を満たしましたが、そこでは返す行も増えていました。LMEB Track B では 22 タスク中 19 で下がり (macro 58.53 → 57.51)、リリース前に元に戻しました。対象だったゲートの欠陥は未修正に戻っています。 | [結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-rsf-fixed-scale.md) |
+| `rsf` のゲートだけを固定の尺度にし、順位はそのまま (bug-247 の第 2 案) | 事前登録した 2 つの判定則はどちらも満たしました (LMEB Track B で下がったタスクはなし、macro 57.96 → 57.97。LongMemEval の 10 行で下がった問いもなし)。それでも merge しませんでした。既定で動く校正済みの融合ゲートの下では、実運用の記憶を集めた非公開パックで、大半の答えを空にするか薄くする閾値を選んだためです (10 行で返る行 9.89 → 2.16、根拠への到達 389 件中 295 → 204)。bug-247 は未修正のままです。 | [結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-rsf-gate-scale.md) |
 
 ## このページに無いもの { #what-is-not-on-this-page }
 

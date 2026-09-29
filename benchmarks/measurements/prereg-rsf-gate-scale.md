@@ -152,4 +152,21 @@ run.
 
 ## Amendments
 
-None.
+**Amendment 1** (2026-09-29). Seen when written: the implementation and its
+tests; control 1's LoCoMo and EPBench, identical in both replicas (46.51 and
+90.34). No `gate` arm of either instrument had run.
+
+1. **Control 2 is read as relative order.** The rows both arms return must
+   appear in the same relative order. The gate may drop a row the legacy arm
+   admitted, or admit one it dropped, and either shifts every later position,
+   so a position-by-position comparison would flag questions whose order is
+   unchanged.
+2. **How T is run.** One harness process per task, because a long-lived
+   process slows its searches without changing NDCG. `--fast` on the numpy
+   backend on the CPU, which is exact, as the first fix's Track B ran.
+   `--dump_rankings` is on, for the rows reported per task.
+3. **How L's `legacy` is built.** It is the implementing checkout with
+   `_rsf_gate_score` removed after fusion, not the parent commit, so both
+   variants run in one process against one store and one calibration, as the
+   instrument requires. A row without a gate score is gated on `_rsf_score`
+   as in 2.6.0a8, and a unit test pins that.
