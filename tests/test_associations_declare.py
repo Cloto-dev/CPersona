@@ -318,6 +318,27 @@ async def test_retract_refuses_a_json_boolean_as_an_id(clean_db, flag):
     assert await _mentions(clean_db, entity) == {f"mem:{mine['id']}"}
 
 
+# The tools annotated destructive, as declared today. Pinned so that a change to any
+# of them is a decision someone makes on purpose. It records the current
+# declarations; it is not a review of every tool left off it.
+_DESTRUCTIVE_TOOLS = {
+    "declare_associations", "delete_agent_data", "delete_episode", "delete_memory",
+    "export_memories", "import_memories", "merge_memories",
+}
+
+
+def test_declare_associations_is_annotated_destructive():
+    """bug-458: `retract` deletes relations and mentions, and hosts decide whether to
+    ask for approval from destructiveHint, which said False."""
+    tool = next(t for t in server.registry._tools if t.name == "declare_associations")
+    assert tool.annotations is not None
+    assert tool.annotations.destructiveHint is True
+    assert tool.annotations.readOnlyHint is False
+    assert {t.name for t in server.registry._tools if t.annotations and t.annotations.destructiveHint} == (
+        _DESTRUCTIVE_TOOLS
+    )
+
+
 _GRAPH = {"entities": [{"name": "Kirari"}],
           "relations": [{"subject": "Kirari", "predicate": "likes", "object": "tea"}]}
 

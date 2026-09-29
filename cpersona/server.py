@@ -1112,7 +1112,9 @@ registry.auto_tool(
         ("project_id", str, ""),
         ("session_key", str, ""),
     ],
-    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+    # Destructive because of `retract`, which deletes relations and mentions (bug-458):
+    # hosts gate approval on the hint, so it names the worst thing a call can do.
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
 registry.auto_tool(
@@ -1142,7 +1144,7 @@ registry.auto_tool(
             "max_hops": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 5,
+                "maximum": associations_module.TRAVERSE_MAX_HOPS,
                 "default": 1,
                 "description": "Relations to follow from the entity, in either direction. 0 returns the entity alone.",
             },
@@ -1712,10 +1714,13 @@ registry.auto_tool(
             "max_hops": {
                 "type": "integer",
                 "minimum": 0,
+                "maximum": associations_module.TRAVERSE_MAX_HOPS,
                 "description": (
                     "Relation hops the walk may follow from an item's candidates through declared "
                     "entity -> entity relations. 0 adds no walked evidence. A relation left "
-                    "unfollowed at the bound is named in bounds.omitted."
+                    "unfollowed at the bound is named in bounds.omitted. At most "
+                    f"{associations_module.TRAVERSE_MAX_HOPS}, as for traverse: a larger value is "
+                    "lowered to it, and bounds.max_hops then states the value applied."
                 ),
             },
             "max_evidence": {

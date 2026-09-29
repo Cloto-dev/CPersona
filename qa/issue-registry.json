@@ -6693,11 +6693,13 @@
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
       "pattern": "text = block_entry\\[0\\] if block_entry is not None else claim\\.content",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "reconstructive-recall",
       "fix_sketch": "Quote episode heads in the stored summary (strip the display prefix before measuring), as the block path already does.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "Without a block set the head quote is now measured in the stored text: for an episode, recall's '[Episode] ' label is removed before ranking and filling, which is the text get_contents, nodes and blocks already measure in. The quote's content therefore no longer carries the label, as it did not on the block path either, so the two paths agree; the item's head_ref still says it is an episode. Keeping the label in content and shifting only the offsets was rejected: content would then not be the concatenation of its ranges, which is what the quote contract and the excerpt tests hold. tests/test_reconstruct_filled_quote.py quotes a long episode, reads every range back through get_contents and requires the joined text to equal the quote, and expands a severed quote and requires it to continue the quote; before the fix both read text 10 characters to the right."
     },
     {
       "id": "bug-457",
@@ -6720,12 +6722,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/server.py",
-      "pattern": "\\(\\\"retract\\\", dict, None\\),",
+      "pattern": "# Destructive because of `retract`, which deletes relations and mentions \\(bug-458\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "contract-drift",
       "fix_sketch": "Annotate the tool destructiveHint=True, or move retract to its own tool.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "The tool is annotated destructiveHint=True, the worst thing one call can do, as merge_memories already is for the delete it can reach. Moving retract to a tool of its own was rejected for this line: a new tool is a contract addition, and the annotation alone gives hosts the signal they gate approval on. idempotentHint stays True: declaring or retracting twice leaves the same rows. tests/test_associations_declare.py checks the annotation and pins the set of tools annotated destructive, so a change to any of them is a deliberate one."
     },
     {
       "id": "bug-459",
@@ -6734,12 +6738,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "else max\\(0, int\\(max_hops\\)\\)",
+      "pattern": "bounds_max_hops = min\\(requested_hops, associations\\.TRAVERSE_MAX_HOPS\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "resource-budget",
       "fix_sketch": "Share one cap with traverse and add a maximum to the schema.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "reconstruct lowers max_hops to associations.TRAVERSE_MAX_HOPS, the constant traverse already applies, and both tool schemas now read their maximum from it, so the ceiling lives in one place. A lowered value is reported through fields the response already has: bounds.max_hops states the value applied, and bounds is kept in the compact response when the value was lowered, which is what the contract means by a bound lowered by the library ceiling. Refusing the call was rejected: traverse clamps, and a read that errors on a large bound would differ from its sibling for no gain. The operator default (CPERSONA_RECONSTRUCT_MAX_HOPS) goes through the same ceiling. tests/test_associations_reconstruct.py walks a chain two links longer than the ceiling with max_hops 1,000,000 (before the fix it reached hop 7) and checks that a lowered call keeps bounds while the same call at the ceiling does not carry it."
     },
     {
       "id": "bug-460",
