@@ -73,6 +73,22 @@ def parse_ref(ref) -> tuple[str, int] | None:
     return (m.group(1), int(m.group(2))) if m else None
 
 
+def canonical_ref(ref) -> str | None:
+    """The one spelling of a record ref that is stored and compared: `mem:001` → `mem:1`.
+
+    parse_ref accepts leading zeros, but the delete triggers and the walk build refs
+    as `'mem:' || id`. A ref kept as the caller spelled it matched neither, so the
+    walk never reached it and it outlived its record (bug-449).
+    """
+    parsed = parse_ref(ref)
+    return f"{parsed[0]}:{parsed[1]}" if parsed else None
+
+
+def _is_id(value) -> bool:
+    """An integer id. JSON true / false arrive as bool, which Python counts as an int (bug-447)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -215,6 +231,8 @@ async def declare(
             if parsed is None or not await _record_exists(db, scope, *parsed):
                 dropped.append({"item": "anchor_ref", "reason": f"{anchor} is not a record of this agent"})
                 anchor = ""
+            else:
+                anchor = canonical_ref(anchor)
 
         for index, item in enumerate(entities):
             if index >= MAX_ITEMS:
@@ -292,7 +310,7 @@ async def retract(
     report = {"relations": 0, "mentions": 0, "dropped": []}
     async with transaction() as db:
         for index, relation_id in enumerate(relations or []):
-            if not isinstance(relation_id, int):
+            if not _is_id(relation_id):
                 report["dropped"].append({"item": f"retract.relations[{index}]", "reason": "must be an integer id"})
                 continue
             cur = await db.execute("DELETE FROM relations WHERE id = ? AND agent_id = ?", (relation_id, agent_id))
@@ -301,13 +319,13 @@ async def retract(
             label = f"retract.mentions[{index}]"
             entity_id = item.get("entity") if isinstance(item, dict) else None
             ref = item.get("ref") if isinstance(item, dict) else None
-            if not isinstance(entity_id, int) or parse_ref(ref) is None:
+            if not _is_id(entity_id) or parse_ref(ref) is None:
                 report["dropped"].append({"item": label, "reason": "needs an integer entity and a record ref"})
                 continue
             cur = await db.execute(
                 "DELETE FROM entity_mentions WHERE entity_id = ? AND ref = ? "
                 "AND entity_id IN (SELECT id FROM entities WHERE agent_id = ?)",
-                (entity_id, ref.strip(), agent_id),
+                (entity_id, canonical_ref(ref), agent_id),
             )
             report["mentions"] += cur.rowcount
     return report
