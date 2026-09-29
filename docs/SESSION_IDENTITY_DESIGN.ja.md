@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:3ef7ee18af787b4f10d791b855f043418b334f61 -->
+<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:6b5afbbde889577ccae1a966d85f99b8d1b2c007 -->
 
 # 申告型セッション同一性 (`session_key`)
 
@@ -87,8 +87,12 @@ def resolve_session_key(declared: str | None) -> tuple[str, bool]:
 - 空白のみでない非空文字列が実効 key となり、`declared` は true になります。
 - 不在・空・空白のみは transport fallback に落ち、`declared` は false になります。
   既存の全呼び出し元にとって、今日の挙動そのままです。
-- 長さ制限も、書式検証も、`strip()` を超えるサニタイズもありません。値は比較される
-  だけで、パースされず、SQL 識別子に展開されず、同一性の主張としてログにも残りません。
+- 書式検証も、`strip()` を超えるサニタイズもありません。値は比較されるだけで、
+  パースされず、SQL 識別子に展開されず、同一性の主張としてログにも残りません。
+- 長さには上限があります。すべてのツールのスキーマが `session_key` に
+  `maxLength: 256` を宣言しているので、それより長いキーはツールの入口で拒否されます
+  (2.6.0b2)。キーはエントリ数で上限を決めたプロセス全体のマップに保持されるので、
+  1 つのキーの重さがそのマップのメモリを決めます。
 
 fallback はプロセス単位の定数 (`TRANSPORT_KEY`) です。stdio ではプロセスが 1 セッション
 なので、それ自体が既にセッションです。streamable-HTTP では、key なしの呼び出し元が全員

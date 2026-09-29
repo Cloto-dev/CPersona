@@ -49,6 +49,19 @@ from cpersona._vendored_mcp_common import no_persist
 # partitioning nothing.
 TRANSPORT_KEY = "transport"
 
+# bug-386: the longest key the published parameter accepts, in characters. The
+# key is held as a dictionary key in three process-global maps (the pause and
+# the two advisory notices), each capped at 256 ENTRIES, so what one key may
+# weigh is what bounds their memory. Unbounded, 256 keys of 64 KiB held 16.8 MB
+# per map. Keys seen in practice -- a process id with its start time, or a
+# UUID -- are under 64 characters, so 256 refuses none of them and bounds each
+# map at 256 x 256 characters.
+#
+# Declared on the schema as `maxLength`, so the MCP boundary refuses a longer
+# key before any handler runs. resolve_session_key does not re-check it: its
+# callers inside the process are the library, which decides its own keys.
+SESSION_KEY_MAX_CHARS = 256
+
 
 def resolve_session_key(declared: str | None) -> tuple[str, bool]:
     """Return ``(effective_key, declared)`` for one call's ``session_key``.
@@ -58,9 +71,11 @@ def resolve_session_key(declared: str | None) -> tuple[str, bool]:
     :data:`TRANSPORT_KEY` with ``declared`` False — the behavior every existing
     caller already has.
 
-    No length limit, no format validation, no sanitization beyond ``strip()``:
-    the value is compared, never parsed, never interpolated into SQL, never
-    recorded as an identity claim. ``strip()`` is what makes "  " undeclared
+    No format validation and no sanitization beyond ``strip()``: the value is
+    compared, never parsed, never interpolated into SQL, never recorded as an
+    identity claim. Its length is bounded where callers from outside the process
+    send it, by the ``maxLength`` the tool schemas declare
+    (:data:`SESSION_KEY_MAX_CHARS`, bug-386). ``strip()`` is what makes "  " undeclared
     rather than a bucket of its own, which matters because a client template
     that renders an absent value can easily emit whitespace.
 
