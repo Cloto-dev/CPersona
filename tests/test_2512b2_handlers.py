@@ -3329,6 +3329,8 @@ async def test_get_profile_answers_empty_for_an_agent_that_has_none(db):
 # Declaring `maximum` in the schema (which would refuse calls that succeed today)
 # and attaching a truncation marker to the response (a new field in a documented
 # shape) both change what the published surface promises, so they stay open.
+# 2.6.0b2 added the marker (`budget_rows`, tests/test_bug385_row_cap_marker.py);
+# `maximum` is still not declared.
 #
 # The assertion is on "<N> rows" rather than the bare number: the preview cap's
 # own default is 500, so `"500" in description` passed before the fix.

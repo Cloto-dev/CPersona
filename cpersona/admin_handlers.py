@@ -256,12 +256,22 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
     """
     # Empty agent_id = all agents (the tool schema documents it) — hence `or None`.
     iso = isolation_where(agent_id=agent_id or None, project_id=project_id)
+    # bug-385: a listing clamped to its row cap looked exactly like one that had
+    # reached the end of the data -- "count < limit means the end" stops at the cap
+    # either way. When the caller asked for more than the cap, one row past it is
+    # read, only to learn whether the cap withheld anything; the response then
+    # carries budget_rows. At or under the cap it is the caller's own limit that
+    # cuts, which needs no marker, so nothing extra is read.
+    wanted = _clamp_limit(limit, LIST_MEMORIES_MAX_ROWS)
+    read = wanted + 1 if limit > LIST_MEMORIES_MAX_ROWS else wanted
     async with connection() as db:
         rows = await db.execute_fetchall(
             f"SELECT id, agent_id, project_id, msg_id, content, source, timestamp, created_at, locked, channel "
             f"FROM memories{iso.where} ORDER BY created_at DESC LIMIT ?",
-            (*iso.params, _clamp_limit(limit, LIST_MEMORIES_MAX_ROWS)),
+            (*iso.params, read),
         )
+    rows_withheld = len(rows) > wanted
+    rows = rows[:wanted]
     memories = []
     for row in rows:
         source = {}
@@ -290,6 +300,10 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
         # Absent unless the budget actually bit, so a caller that never meets it
         # sees the response shape it always saw (the get_contents convention).
         result["budget_chars"] = LIST_MEMORIES_MAX_CHARS
+    if rows_withheld:
+        # bug-385: the row cap reported the way the character budget is -- absent
+        # unless it withheld something, and naming the bound when it did.
+        result["budget_rows"] = LIST_MEMORIES_MAX_ROWS
     return result
 
 
@@ -309,12 +323,17 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
     """
     # Empty agent_id = all agents (the tool schema documents it) — hence `or None`.
     iso = isolation_where(agent_id=agent_id or None, project_id=project_id)
+    # bug-385: see do_list_memories.
+    wanted = _clamp_limit(limit, LIST_EPISODES_MAX_ROWS)
+    read = wanted + 1 if limit > LIST_EPISODES_MAX_ROWS else wanted
     async with connection() as db:
         rows = await db.execute_fetchall(
             f"SELECT id, agent_id, project_id, summary, keywords, start_time, end_time, created_at "
             f"FROM episodes{iso.where} ORDER BY created_at DESC LIMIT ?",
-            (*iso.params, _clamp_limit(limit, LIST_EPISODES_MAX_ROWS)),
+            (*iso.params, read),
         )
+    rows_withheld = len(rows) > wanted
+    rows = rows[:wanted]
     episodes = []
     for row in rows:
         episodes.append(
@@ -335,6 +354,8 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
     result = {"episodes": episodes, "count": len(episodes)}
     if over_budget:
         result["budget_chars"] = LIST_EPISODES_MAX_CHARS
+    if rows_withheld:
+        result["budget_rows"] = LIST_EPISODES_MAX_ROWS
     return result
 
 

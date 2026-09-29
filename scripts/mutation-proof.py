@@ -1507,6 +1507,36 @@ MUTATIONS += [
         breaks="a write outside the seam makes the copy retry forever on the process's only connection",
         expect="test_bug356_in_memory_snapshot.py::test_a_copy_refuses_to_wait_on_an_uncommitted_write",
     ),
+    Mutation(
+        id="M136",
+        tests=("tests/test_bug385_row_cap_marker.py",),
+        target="list_memories — a listing the row cap cut says so (bug-385)",
+        file="cpersona/admin_handlers.py",
+        find="    read = wanted + 1 if limit > LIST_MEMORIES_MAX_ROWS else wanted",
+        replace="    read = wanted",
+        breaks="a capped listing is indistinguishable from one that reached the end of the data",
+        expect="test_bug385_row_cap_marker.py::test_a_listing_the_cap_cut_carries_the_marker",
+    ),
+    Mutation(
+        id="M137",
+        tests=("tests/test_bug385_row_cap_marker.py",),
+        target="list_memories — the probe row is read, never returned (bug-385)",
+        file="cpersona/admin_handlers.py",
+        find="    rows = rows[:wanted]\n    memories = []",
+        replace="    memories = []",
+        breaks="a capped listing returns one row more than its cap",
+        expect="test_bug385_row_cap_marker.py::test_a_listing_the_cap_cut_carries_the_marker",
+    ),
+    Mutation(
+        id="M138",
+        tests=("tests/test_bug385_row_cap_marker.py",),
+        target="list_episodes — a listing the row cap cut says so (bug-385)",
+        file="cpersona/admin_handlers.py",
+        find="    read = wanted + 1 if limit > LIST_EPISODES_MAX_ROWS else wanted",
+        replace="    read = wanted",
+        breaks="a capped episode listing is indistinguishable from a complete one",
+        expect="test_bug385_row_cap_marker.py::test_the_episode_listing_carries_the_marker_too",
+    ),
 ]
 
 
