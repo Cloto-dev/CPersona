@@ -1,7 +1,7 @@
 # Upgrading from 2.5 to 2.6
 
 This page takes an existing 2.5.x store to the current 2.6 pre-release,
-**2.6.0a7**, in one pass. Each 2.6 pre-release documented only its own step in
+**2.6.0b1**, in one pass. Each 2.6 pre-release documented only its own step in
 its release notes; this page puts the steps from 2.5.12 onward in one place.
 
 2.6 is still a pre-release line (Experimental in the
@@ -25,7 +25,7 @@ settled at the final.
    own:
 
    ```sh
-   pip install 'cpersona==2.6.0a7'
+   pip install 'cpersona==2.6.0b1'
    ```
 
 ## What the first start does
@@ -42,7 +42,7 @@ recorded as done, so it is retried on the next start.
 | 16 | 2.6.0a5 | `record_blocks`: block reach | Only if you turn block reach on ([below](#optional-turn-on-block-reach)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Only if you turn block reach on |
 
-2.6.0a1, 2.6.0a2 and 2.6.0a7 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8 and 2.6.0b1 changed no schema.
 
 ## After the first start
 
@@ -114,6 +114,22 @@ Check these against what your deployment relies on. Each is off, or equal to
   returns up to `limit` + 3 rows (3 / 2 / 1 by the cue's confidence), and a cue
   that points only at the last 24 hours is not used (`time_cue.ignored`).
   Without a cue nothing changes.
+- **`declare_associations` is marked destructive** (2.6.0b1). Its `retract`
+  argument deletes, so a client that asks before running destructive tools now
+  asks before this one.
+- **`reconstruct` walks at most 5 hops**, as `traverse` does (2.6.0b1). A larger
+  `max_hops` is lowered, and `bounds.max_hops` states the value applied.
+- **An alias follows the scope it is declared in** (2.6.0b1). A declaration made
+  in a project that gives aliases to a name the global pool already has now
+  registers the project's own entity, so other projects do not read those
+  aliases. Aliases declared this way before 2.6.0b1 stay readable everywhere:
+  the stored data does not record which scope declared an alias.
+- **Smaller corrections** (2.6.0b1): a `store` without `associations` no longer
+  answers with an empty `associations` object; `retract` refuses `true` and
+  `false` as ids; a quote carries a qualifier that starts on the next line; an
+  episode's `reconstruct` quote is measured in the stored summary, without the
+  `[Episode] ` label; `check_health` reports and rebuilds node sets with a gap or
+  a missing embedding.
 
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 (`trace=true`), the time cue (`time_cue`), associations declared with

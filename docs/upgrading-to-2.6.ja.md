@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:ab10203ec852fa75eb87ddd5e04d9449c0f58f1c -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:8d3501e3b47151bdf343f666f263dd88b9b58ac4 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
-このページは、既存の 2.5.x のストアを、現在の 2.6 の pre-release である **2.6.0a7** まで
+このページは、既存の 2.5.x のストアを、現在の 2.6 の pre-release である **2.6.0b1** まで
 一度に移行する手順をまとめたものです。2.6 の各 pre-release は、リリースノートに自分の段の
 手順しか書いていません。このページは、2.5.12 からの手順を 1 か所に集めます。
 
@@ -23,7 +23,7 @@
 3. **pre-release を明示してインストールする。** pip は自分からは pre-release を選びません:
 
    ```sh
-   pip install 'cpersona==2.6.0a7'
+   pip install 'cpersona==2.6.0b1'
    ```
 
 ## 最初の起動で起きること { #what-the-first-start-does }
@@ -39,7 +39,7 @@
 | 16 | 2.6.0a5 | `record_blocks`: Block による到達 | Block による到達を on にした場合だけ ([下記](#optional-turn-on-block-reach)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block による到達を on にした場合だけ |
 
-2.6.0a1、2.6.0a2、2.6.0a7 はスキーマを変えていません。
+2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1 はスキーマを変えていません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
@@ -102,6 +102,18 @@ Block による到達は既定で off で、off の間は費用がかかりま�
 - **時期の手がかりは最大 3 行を足しえます** (2.6.0a8)。`time_cue` を渡すと、`recall` は最大
   `limit` + 3 行 (手がかりの確かさ別に 3 / 2 / 1) を返し、直近 24 時間だけを指す手がかりは使われません
   (`time_cue.ignored`)。手がかりを渡さなければ何も変わりません。
+- **`declare_associations` は destructive と示されます** (2.6.0b1)。`retract` 引数が削除を行うため、
+  destructive なツールの前に確認を求めるクライアントは、このツールの前にも確認を求めます。
+- **`reconstruct` がたどるのは最大 5 段です** (2.6.0b1)。`traverse` と同じです。これより大きい
+  `max_hops` は引き下げられ、`bounds.max_hops` が実際に使った値を示します。
+- **別名は宣言したスコープにとどまります** (2.6.0b1)。グローバルにすでにある名前へ、プロジェクトの中から
+  別名を付ける宣言は、そのプロジェクト自身の実体を登録するようになり、他のプロジェクトはその別名を
+  読みません。2.6.0b1 より前にこの形で宣言された別名は、どこからでも読めるまま残ります。
+  別名をどのスコープが宣言したかは、保存されたデータに記録されていないためです。
+- **細かな修正** (2.6.0b1): `associations` を渡さない `store` は、空の `associations` を返さなく
+  なりました。`retract` は `true` / `false` を id として受けません。次の行から始まる限定句も
+  引用に付きます。エピソードの `reconstruct` の引用は保存された要約で測られ、`[Episode] ` の
+  ラベルを含みません。`check_health` は、隙間や欠けた埋め込みのあるノード集合を報告して作り直します。
 
 2.6 で新しく入り、求めない限り何もしないもの: `reconstruct` ツール、recall の trace (`trace=true`)、
 時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、伝播の席

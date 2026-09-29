@@ -1,16 +1,16 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:bdda3cfec9a29e7a39471212b0246fa7d61c9f83 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:66b2c51b9e91818043311d62343102855ee7e292 -->
 
 # 2.6 系はいまどこまで来ているか
 
 > **翻訳について**: 正本は英語版です。この日本語版は参照用の翻訳で、内容が食い違う場合は英語版が優先されます。
 
-更新日: 2026-09-27。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
+更新日: 2026-09-29。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
 示します。このラインが何を建て、何をもって完了とするかは
 [ラインのページ](RELIABLE_RECALL_2_6.md) が、各リリースに何が入っているかは
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6 系は pre-release のラインです。リリースは `2.6.0aN` として PyPI にあり、`--pre` を
+2.6 系は pre-release のラインです。リリースは `2.6.0aN` と `2.6.0bN` として PyPI にあり、`--pre` を
 付けて導入します。最新の final リリースは 2.5 系にあります
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -51,6 +51,7 @@
 | 2.6.0a7 | エピソード境界ペナルティを既定で無効化: セッションごとにエピソードの要約が残る記憶では、答えを持つ記録を順位の下へ押し下げていたため | [#320](https://github.com/Cloto-dev/cpersona/pull/320) |
 | 2.6.0a8 | opt-in の伝播の席: 同じ recall をより深く並べた時に、答えの最初の行から導かれる行のために 1 席を取る (`CPERSONA_RECALL_PROPAGATION_SEAT`、既定は off) | [#338](https://github.com/Cloto-dev/cpersona/pull/338) |
 | 2.6.0a8 | recall と reconstruct は各段を provider の枠を通して呼び、trace は宣言した予算と各段が受け取ったものを記録する。呼び出し側が受け取るものは変わらない | [#335](https://github.com/Cloto-dev/cpersona/pull/335)、[#336](https://github.com/Cloto-dev/cpersona/pull/336) |
+| 2.6.0b1 | 機能の追加はなし: 2.6.0a1〜a8 のレビューで見つかった MEDIUM の欠陥 11 件の修正。他のプロジェクトから読めていたプロジェクトの別名、引用から漏れていた次の行の限定句、段数に上限のなかった `reconstruct` のたどり、10 字ずれて測られていたエピソードの引用、読み手が拒否するのに誰も作り直さなかったノード集合などです | [#356](https://github.com/Cloto-dev/cpersona/pull/356), [#357](https://github.com/Cloto-dev/cpersona/pull/357), [#358](https://github.com/Cloto-dev/cpersona/pull/358), [#359](https://github.com/Cloto-dev/cpersona/pull/359), [#361](https://github.com/Cloto-dev/cpersona/pull/361) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
