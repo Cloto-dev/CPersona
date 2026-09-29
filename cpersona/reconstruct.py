@@ -148,7 +148,7 @@ NODES_NOT_CURRENT = "not_current"  # nodes exist but are partial or another mode
 _ASKED = ("caller", "server_default")
 
 
-def _compact(response: dict) -> dict:
+def _compact(response: dict, *, bound_lowered: bool = False) -> dict:
     out = dict(response)
     count_policy, budget_policy = out["count_policy"], out["budget_policy"]
     if not count_policy["clamped"] and count_policy["source"] in _ASKED:
@@ -162,7 +162,7 @@ def _compact(response: dict) -> dict:
     )
     if not budget_cut:
         del out["effective_budget"], out["used_budget"]
-    if not any(key in out["bounds"] for key in ("omitted", "reached", "effective_top_k")):
+    if not bound_lowered and not any(key in out["bounds"] for key in ("omitted", "reached", "effective_top_k")):
         del out["bounds"]
     excluded = out.pop("reconstruction")["excluded_without_provenance"]
     if excluded:
@@ -1169,7 +1169,13 @@ async def do_reconstruct(
     # bug-437: report the effective retrieval bound, not only the larger request.
     effective_top_k = min(bounds_top_k, RECALL_LIBRARY_MAX_LIMIT)
     candidate_bound_clamped = effective_top_k < bounds_top_k
-    bounds_max_hops = config.RECONSTRUCT_MAX_HOPS if max_hops is None else max(0, int(max_hops))
+    requested_hops = config.RECONSTRUCT_MAX_HOPS if max_hops is None else max(0, int(max_hops))
+    # bug-459: the walk visits every entity within the hops, so its cost grows with
+    # the connected graph. It shares traverse's ceiling so one read stays bounded
+    # (invariant 4); a lowered value is the one bounds.max_hops states, and it keeps
+    # `bounds` in the compact response.
+    bounds_max_hops = min(requested_hops, associations.TRAVERSE_MAX_HOPS)
+    hops_lowered = bounds_max_hops < requested_hops
     bounds_max_evidence = config.RECONSTRUCT_MAX_EVIDENCE if max_evidence is None else max(1, int(max_evidence))
 
     # Stage 1: the declared names and aliases of the entities the query mentions go
@@ -1249,7 +1255,7 @@ async def do_reconstruct(
                 else SHORTFALL_NO_RELEVANT_EVIDENCE
             )
         )
-        return response if trace else _compact(response)
+        return response if trace else _compact(response, bound_lowered=hops_lowered)
 
     await _candidate_context(agent_id, candidates)
     spans = await _episode_spans(agent_id, [c.row_id for c in candidates if c.kind == "ep" and c.row_id > 0])
@@ -1433,4 +1439,4 @@ async def do_reconstruct(
             if recall_result.get("gate_fallback")
             else SHORTFALL_EXHAUSTED_CANDIDATES
         )
-    return response if trace else _compact(response)
+    return response if trace else _compact(response, bound_lowered=hops_lowered)

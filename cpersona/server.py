@@ -1142,7 +1142,7 @@ registry.auto_tool(
             "max_hops": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 5,
+                "maximum": associations_module.TRAVERSE_MAX_HOPS,
                 "default": 1,
                 "description": "Relations to follow from the entity, in either direction. 0 returns the entity alone.",
             },
@@ -1712,10 +1712,13 @@ registry.auto_tool(
             "max_hops": {
                 "type": "integer",
                 "minimum": 0,
+                "maximum": associations_module.TRAVERSE_MAX_HOPS,
                 "description": (
                     "Relation hops the walk may follow from an item's candidates through declared "
                     "entity -> entity relations. 0 adds no walked evidence. A relation left "
-                    "unfollowed at the bound is named in bounds.omitted."
+                    "unfollowed at the bound is named in bounds.omitted. At most "
+                    f"{associations_module.TRAVERSE_MAX_HOPS}, as for traverse: a larger value is "
+                    "lowered to it, and bounds.max_hops then states the value applied."
                 ),
             },
             "max_evidence": {

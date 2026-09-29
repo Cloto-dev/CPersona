@@ -164,6 +164,52 @@ async def test_the_hop_bound_is_reported_when_it_left_a_relation_unfollowed():
     assert "max_hops" in none["bounds"].get("omitted", [])
 
 
+_LINKS = ("harbor cranes unload at dawn", "orchard pears ripen in august", "violin strings snap in winter",
+          "glacier ice cores hold old air", "lantern wicks need trimming", "copper roofs turn green",
+          "falcon chicks fledge in june", "quarry stone splits along grain")
+
+
+async def _seed_long_chain(length: int) -> dict[str, str]:
+    """Billing -> Link1 -> ... -> Link<length>, one record per entity, none sharing a query word."""
+    refs = {"direct": await _mem("rollback of the billing deploy", 0)}
+    await _mention(refs["direct"], "Billing")
+    previous = "Billing"
+    for i in range(1, length + 1):
+        refs[f"hop{i}"] = await _mem(_LINKS[i - 1], 5 * i)
+        await _mention(refs[f"hop{i}"], f"Link{i}")
+        await _relate(previous, "feeds", f"Link{i}")
+        previous = f"Link{i}"
+    return refs
+
+
+@pytest.mark.asyncio
+async def test_the_hops_share_traverse_s_ceiling():
+    """bug-459: reconstruct took any max_hops, so one read walked as far as the
+    connected graph went. It is now held to traverse's ceiling (invariant 4)."""
+    ceiling = associations.TRAVERSE_MAX_HOPS
+    refs = await _seed_long_chain(ceiling + 2)
+    huge = await _reconstruct(count=1, max_hops=1_000_000)
+    _assert_not_candidates(huge, *(refs[f"hop{i}"] for i in range(1, ceiling + 3)))
+    reached = [c["hops"] for c in huge["items"][0]["claims"] if "hops" in c]
+    assert max(reached) == ceiling, reached
+    assert huge["bounds"]["max_hops"] == ceiling
+    assert huge["items"] == (await _reconstruct(count=1, max_hops=ceiling))["items"]
+
+
+@pytest.mark.asyncio
+async def test_a_lowered_hop_bound_is_reported_even_when_nothing_else_is():
+    """The compact response drops `bounds` when the call was served as asked. A
+    lowered max_hops was not, so bounds stays and states the value applied."""
+    await _seed_chain()  # three hops: nothing is left unfollowed at the ceiling
+    kw = {"count": 1, "top_k": 100}  # deeper than the store, so top_k is never reached
+    asked = await R.do_reconstruct(AGENT, QUERY, max_hops=associations.TRAVERSE_MAX_HOPS, **kw)
+    assert "bounds" not in asked, asked.get("bounds")
+    lowered = await R.do_reconstruct(AGENT, QUERY, max_hops=1_000_000, **kw)
+    assert lowered["bounds"] == {"top_k": 100, "max_hops": associations.TRAVERSE_MAX_HOPS,
+                                 "max_evidence": lowered["bounds"]["max_evidence"]}
+    assert lowered["items"] == asked["items"]
+
+
 @pytest.mark.asyncio
 async def test_relations_are_followed_in_both_directions():
     """From Payments the walk reaches Billing's record through the same relation."""

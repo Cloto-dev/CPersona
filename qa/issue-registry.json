@@ -6734,12 +6734,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "else max\\(0, int\\(max_hops\\)\\)",
+      "pattern": "bounds_max_hops = min\\(requested_hops, associations\\.TRAVERSE_MAX_HOPS\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "resource-budget",
       "fix_sketch": "Share one cap with traverse and add a maximum to the schema.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "reconstruct lowers max_hops to associations.TRAVERSE_MAX_HOPS, the constant traverse already applies, and both tool schemas now read their maximum from it, so the ceiling lives in one place. A lowered value is reported through fields the response already has: bounds.max_hops states the value applied, and bounds is kept in the compact response when the value was lowered, which is what the contract means by a bound lowered by the library ceiling. Refusing the call was rejected: traverse clamps, and a read that errors on a large bound would differ from its sibling for no gain. The operator default (CPERSONA_RECONSTRUCT_MAX_HOPS) goes through the same ceiling. tests/test_associations_reconstruct.py walks a chain two links longer than the ceiling with max_hops 1,000,000 (before the fix it reached hop 7) and checks that a lowered call keeps bounds while the same call at the ceiling does not carry it."
     },
     {
       "id": "bug-460",

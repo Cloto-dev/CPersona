@@ -1367,6 +1367,26 @@ MUTATIONS += [
         breaks="'Enable caching.' is quoted alone and complete when 'However, never in production.' follows on the next line",
         expect="test_blocks_quotation.py::test_a_qualifier_on_the_next_line_is_still_attached",
     ),
+    Mutation(
+        id="M121",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="reconstruct — max_hops shares traverse's ceiling (bug-459)",
+        file=_RC,
+        find="bounds_max_hops = min(requested_hops, associations.TRAVERSE_MAX_HOPS)",
+        replace="bounds_max_hops = requested_hops",
+        breaks="a large max_hops walks the whole connected entity graph in one read",
+        expect="test_associations_reconstruct.py::test_the_hops_share_traverse_s_ceiling",
+    ),
+    Mutation(
+        id="M122",
+        tests=("tests/test_associations_reconstruct.py",),
+        target="reconstruct — a lowered hop bound keeps `bounds` in the compact response (bug-459)",
+        file=_RC,
+        find="if not bound_lowered and not any(",
+        replace="if not any(",
+        breaks="a call whose max_hops was lowered reads as served as asked",
+        expect="test_associations_reconstruct.py::test_a_lowered_hop_bound_is_reported_even_when_nothing_else_is",
+    ),
 ]
 
 
