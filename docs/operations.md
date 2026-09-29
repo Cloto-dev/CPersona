@@ -278,9 +278,17 @@ transient state of a model change; build again when the re-embedding has
 finished).
 
 `status` reports whether an index is present and usable, how many rows it
-holds, and how many rows have been written since it was built. It exits 1 when
-there is no index, and 2 when the file exists but cannot be used. Add `--json`
-to either for a machine-readable line.
+holds, and how many rows have been written since it was built. It also reports
+how many rows every query reads from the database instead of the index
+(`rows_read_exactly`). That count includes the rows written since the build,
+and the rows the build named because it could not hold them: rows whose
+`created_at` is not in the standard form (`excluded`), and rows with no
+embedding yet (`unembedded`). A named row costs a read only once it has an
+embedding, and filling missing embeddings is what `check_health` with
+`fix=true` does. So after that repair, `rows_read_exactly` can grow while
+`rows_since_build` stays at 0. It exits 1 when there is no index, and 2 when
+the file exists but cannot be used. Add `--json` to either for a
+machine-readable line.
 
 **What happens between builds.** The index knows the highest row id that
 existed when it was built. Rows written after that are not in it, and are not
@@ -291,7 +299,7 @@ So a late rebuild never changes an answer. It only grows the part of each query
 that is still read row by row, until latency drifts back toward the unindexed
 figure. Rebuild frequency is a performance setting, not a correctness one.
 Nightly is a reasonable default, hourly for a corpus that grows fast, and
-`status` shows how far behind the index is at any moment.
+`status` shows how far behind the index is at any moment: `rows_read_exactly`.
 
 **When the index is not used.** The scan the index replaces is still there,
 and is the fallback. Recall falls back to it — slower, and still correct — when

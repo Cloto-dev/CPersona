@@ -1447,6 +1447,36 @@ MUTATIONS += [
         breaks="the scan keeps a long record's last blocks, which the design does not describe",
         expect="test_blocks_retrieval.py::test_a_record_s_share_is_its_first_blocks",
     ),
+    Mutation(
+        id="M132",
+        tests=("tests/test_bug388_index_behind.py",),
+        target="vector_index — how far behind counts the unembedded holes (bug-388)",
+        file="cpersona/vector_index.py",
+        find="    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids)\n    holes = ",
+        replace="    holes_ids = tuple(index.excluded_ids)\n    holes = ",
+        breaks="a hole filled by check_health(fix=True) is read on every query and reported as nothing",
+        expect="test_bug388_index_behind.py::test_an_unembedded_hole_filled_after_the_build_is_counted",
+    ),
+    Mutation(
+        id="M133",
+        tests=("tests/test_bug388_index_behind.py",),
+        target="vector_index — how far behind counts the excluded holes (bug-388)",
+        file="cpersona/vector_index.py",
+        find="    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids)\n    holes = ",
+        replace="    holes_ids = tuple(index.unembedded_ids)\n    holes = ",
+        breaks="a row with a non-canonical created_at is read on every query and reported as nothing",
+        expect="test_bug388_index_behind.py::test_an_excluded_row_is_counted",
+    ),
+    Mutation(
+        id="M134",
+        tests=("tests/test_bug388_index_behind.py",),
+        target="check_vector_index — the tail finding uses the shared definition of behind (bug-388)",
+        file="cpersona/checks.py",
+        find="if index.count and read_exactly > index.count * INDEX_TAIL_RATIO:",
+        replace="if index.count and tail > index.count * INDEX_TAIL_RATIO:",
+        breaks="the health check stays quiet while every query reads the filled holes",
+        expect="test_bug388_index_behind.py::test_the_health_check_reports_filled_holes",
+    ),
 ]
 
 
