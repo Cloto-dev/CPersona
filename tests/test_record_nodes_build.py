@@ -359,6 +359,77 @@ async def test_a_second_build_finds_the_nodes_current(windowed):
         assert await tmp.nodes_of("mem", mem) == first
 
 
+# bug-471: the builder, the missing_nodes check and the reader each decided whether
+# a node set was current, and only the reader looked for gaps and NULL embeddings.
+# A set it rejected (and quoted from the record's start) was current to the other
+# two, so nothing rebuilt it. Each damage below leaves count, first, last and model
+# as a healthy set has them, which is exactly what the looser test read.
+_DAMAGE = {
+    "healthy": None,
+    "gap": "DELETE FROM record_nodes WHERE parent_kind = 'mem' AND parent_id = ? AND node_index = 1",
+    "null_embedding": "UPDATE record_nodes SET embedding = NULL "
+    "WHERE parent_kind = 'mem' AND parent_id = ? AND node_index = 1",
+    "overlap": "UPDATE record_nodes SET start_char = start_char - 1 "
+    "WHERE parent_kind = 'mem' AND parent_id = ? AND node_index = 1",
+}
+
+
+async def _damaged(tmp, damage):
+    mem = (await memory_handlers.do_store(AGENT, {"content": LONG}))["id"]
+    await tmp.drain()
+    assert len(await tmp.nodes_of("mem", mem)) >= 3, "the damage needs a middle node"
+    if _DAMAGE[damage]:
+        db = await database.get_db()
+        await db.execute(_DAMAGE[damage], (mem,))
+        await db.commit()
+    return mem
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", list(_DAMAGE))
+async def test_the_builder_the_check_and_the_reader_agree_on_a_current_set(windowed, damage):
+    from cpersona import reconstruct
+    from cpersona.isolation import isolation_where
+
+    async with _TempDB() as tmp:
+        mem = await _damaged(tmp, damage)
+        current = damage == "healthy"
+        db = await database.get_db()
+
+        found = await nodes.records_without_current_nodes(db, isolation_where(agent_id=AGENT))
+        assert (("mem", mem) in {(k, i) for k, i, _ in found}) is not current
+
+        claim = reconstruct._Candidate({"ref": f"mem:{mem}", "content": LONG}, rank=0)
+        usable, not_current = await reconstruct._current_node_sets(AGENT, [claim])
+        assert (f"mem:{mem}" in usable) is current
+        assert (f"mem:{mem}" in not_current) is not current
+
+        outcome = await nodes.build_nodes({"kind": "mem", "id": mem})
+        assert (outcome == "nodes already current") is current
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", [d for d in _DAMAGE if d != "healthy"])
+async def test_a_set_the_reader_rejects_is_rebuilt_whole(windowed, damage):
+    async with _TempDB() as tmp:
+        mem = await _damaged(tmp, damage)
+        assert (await nodes.build_nodes({"kind": "mem", "id": mem})).startswith("built")
+        _assert_partition(await tmp.nodes_of("mem", mem), LONG)
+
+
+def test_the_currency_rule_reads_every_span():
+    keys = ("m", "m-alt")
+    whole = [(0, 4, True, "m"), (4, 9, True, "m"), (9, 12, True, "m-alt")]
+    assert nodes.node_set_is_current(whole, 12, keys)
+    assert not nodes.node_set_is_current([], 12, keys)
+    assert not nodes.node_set_is_current(whole, 13, keys)  # short of the end
+    assert not nodes.node_set_is_current([(1, 4, True, "m"), *whole[1:]], 12, keys)  # late start
+    assert not nodes.node_set_is_current([whole[0], whole[2]], 12, keys)  # gap
+    assert not nodes.node_set_is_current([whole[0], (3, 9, True, "m"), whole[2]], 12, keys)  # overlap
+    assert not nodes.node_set_is_current([whole[0], (4, 9, False, "m"), whole[2]], 12, keys)  # NULL
+    assert not nodes.node_set_is_current([whole[0], (4, 9, True, "x"), whole[2]], 12, keys)  # model
+
+
 @pytest.mark.asyncio
 async def test_nodes_from_another_model_are_rebuilt(windowed, monkeypatch):
     async with _TempDB() as tmp:

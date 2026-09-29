@@ -212,14 +212,33 @@ async def _parent_text(db, kind: str, parent_id: int) -> str | None:
     return rows[0][0] if rows else None
 
 
+def node_set_is_current(spans, text_len: int, keys) -> bool:
+    """Whether a record's node set can be used as it stands.
+
+    ``spans`` is the set's ``(start_char, end_char, has_embedding, embedding_model)``
+    rows in node order. Current means the spans cover the stored text from 0 to its
+    length with no gap or overlap, and every node carries an embedding from a model
+    this server reports. The builder, the missing_nodes check and the reader all ask
+    this one question (bug-471): when the reader applied a stricter test than the
+    other two, a set with a gap or a NULL embedding was quoted from the record's
+    start and yet counted as current, so nothing ever rebuilt it.
+    """
+    if not spans or spans[0][0] != 0 or spans[-1][1] != text_len:
+        return False
+    if any(a[1] != b[0] for a, b in zip(spans, spans[1:])):
+        return False
+    return all(has_embedding and model in keys for _, _, has_embedding, model in spans)
+
+
+_SPAN_COLUMNS = "start_char, end_char, embedding IS NOT NULL, embedding_model"
+
+
 async def _nodes_current(db, kind: str, parent_id: int, text_len: int, keys: tuple[str, str]) -> bool:
     rows = await db.execute_fetchall(
-        "SELECT MIN(start_char), MAX(end_char), COUNT(*), SUM(embedding_model IN (?, ?)) "
-        "FROM record_nodes WHERE parent_kind = ? AND parent_id = ?",
-        (*keys, kind, parent_id),
+        f"SELECT {_SPAN_COLUMNS} FROM record_nodes WHERE parent_kind = ? AND parent_id = ? ORDER BY node_index",
+        (kind, parent_id),
     )
-    first, last, count, current = rows[0]
-    return bool(count) and first == 0 and last == text_len and current == count
+    return node_set_is_current(rows, text_len, keys)
 
 
 @dataclass(frozen=True)
@@ -325,12 +344,8 @@ async def build_nodes(payload: dict) -> str:
 _COUNT_BATCH = 64
 
 
-def _current(count, first, last, current, text_len) -> bool:
-    return bool(count) and first == 0 and last == text_len and current == count
-
-
 async def records_without_current_nodes(db, iso) -> list[tuple[str, int, str]]:
-    """Every record in scope whose node set is absent, incomplete or from another model.
+    """Every record in scope whose node set is not current (``node_set_is_current``).
 
     Includes records that fit the window (they have no nodes by design); the caller
     tells them apart with the token report, which this function does not ask for.
@@ -339,16 +354,22 @@ async def records_without_current_nodes(db, iso) -> list[tuple[str, int, str]]:
     keys = generation.node_keys()
     out: list[tuple[str, int, str]] = []
     for kind, (table, column) in PARENT_TEXT.items():
-        rows = await db.execute_fetchall(
-            f"SELECT r.id, r.{column}, n.cnt, n.first, n.last, n.cur FROM {table} r "
-            "LEFT JOIN (SELECT parent_id, COUNT(*) AS cnt, MIN(start_char) AS first, "
-            "MAX(end_char) AS last, SUM(embedding_model IN (?, ?)) AS cur FROM record_nodes "
-            "WHERE parent_kind = ? GROUP BY parent_id) n ON n.parent_id = r.id "
-            f"WHERE 1=1{iso.and_clause} ORDER BY r.id",
-            (*keys, kind, *iso.params),
+        records = await db.execute_fetchall(
+            f"SELECT r.id, r.{column} FROM {table} r WHERE 1=1{iso.and_clause} ORDER BY r.id",
+            iso.params,
         )
-        for row_id, text, count, first, last, current in rows:
-            if text and not _current(count, first, last, current, len(text)):
+        # Spans only, never the blobs: whether an embedding is there is all the rule reads.
+        # Joined to the parent so the scan stays inside the same scope as the records.
+        spans: dict[int, list] = {}
+        for parent_id, *span in await db.execute_fetchall(
+            "SELECT n.parent_id, n.start_char, n.end_char, n.embedding IS NOT NULL, n.embedding_model "
+            f"FROM record_nodes n JOIN {table} r ON r.id = n.parent_id "
+            f"WHERE n.parent_kind = ?{iso.and_clause} ORDER BY n.parent_id, n.node_index",
+            (kind, *iso.params),
+        ):
+            spans.setdefault(parent_id, []).append(span)
+        for row_id, text in records:
+            if text and not node_set_is_current(spans.get(row_id, []), len(text), keys):
                 out.append((kind, row_id, text))
     return out
 

@@ -1297,6 +1297,36 @@ MUTATIONS += [
         breaks="a trace over HTTP names the configured default, a model nothing ran",
         expect="test_trace_embedding_model.py::test_a_traced_recall_writes_it_and_an_untraced_one_does_not_ask",
     ),
+    Mutation(
+        id="M115",
+        tests=("tests/test_record_blocks_schema.py",),
+        target="health — every expected schema object names a severity the runner counts (bug-452)",
+        file="cpersona/checks.py",
+        find='"severity": "warn",\n        "sql": "CREATE INDEX idx_record_blocks_axes "',
+        replace='"severity": "warning",\n        "sql": "CREATE INDEX idx_record_blocks_axes "',
+        breaks="a missing axis index raises KeyError out of run_health_checks, and a fix run is rolled back with it",
+        expect="test_record_blocks_schema.py::test_a_missing_axis_index_is_counted_by_the_health_runner",
+    ),
+    Mutation(
+        id="M116",
+        tests=("tests/test_record_nodes_build.py",),
+        target="overflow tree — one currency rule: a node set with a gap or an overlap is not current (bug-471)",
+        file="cpersona/nodes.py",
+        find="    if any(a[1] != b[0] for a, b in zip(spans, spans[1:])):\n        return False\n",
+        replace="",
+        breaks="a set the reader rejects is current to the builder and the missing_nodes check, so it is never rebuilt",
+        expect="test_record_nodes_build.py::test_the_builder_the_check_and_the_reader_agree_on_a_current_set",
+    ),
+    Mutation(
+        id="M117",
+        tests=("tests/test_record_nodes_build.py",),
+        target="overflow tree — one currency rule: a node without its embedding is not current (bug-471)",
+        file="cpersona/nodes.py",
+        find="return all(has_embedding and model in keys for",
+        replace="return all(model in keys for",
+        breaks="a set with a NULL embedding is kept by every path, and the reader ranks a node it cannot score",
+        expect="test_record_nodes_build.py::test_the_builder_the_check_and_the_reader_agree_on_a_current_set",
+    ),
 ]
 
 

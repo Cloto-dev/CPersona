@@ -808,9 +808,9 @@ async def _current_node_sets(
     """`ref -> (stored text, nodes)` for the claims whose record has a current node set,
     and the refs whose record has nodes that are not current.
 
-    Current means complete over the stored text and built by the embedding model this
-    server runs; anything else is quoted from the record's start, which is exactly
-    what a record without nodes gets. Reads are keyed on refs retrieval already
+    Current is ``nodes.node_set_is_current``, the rule the builder and the
+    missing_nodes check apply too; anything else is quoted from the record's start,
+    which is exactly what a record without nodes gets. Reads are keyed on refs retrieval already
     scoped to this agent.
     """
     keys = generation.node_keys()
@@ -841,9 +841,8 @@ async def _current_node_sets(
                     text = texts.get(parent_id)
                     if text is None:
                         continue
-                    contiguous = all(a[2] == b[1] for a, b in zip(group, group[1:]))
-                    complete = group[0][1] == 0 and group[-1][2] == len(text) and contiguous
-                    if complete and all(g[4] in keys and g[3] is not None for g in group):
+                    spans = [(g[1], g[2], g[3] is not None, g[4]) for g in group]
+                    if nodes.node_set_is_current(spans, len(text), keys):
                         out[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
                     else:
                         not_current.add(f"{kind}:{parent_id}")

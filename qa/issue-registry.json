@@ -6629,11 +6629,13 @@
       "version": "2.6.0a8",
       "file": "cpersona/checks.py",
       "pattern": "\\\"severity\\\": \\\"warning\\\",",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "health-check",
       "fix_sketch": "Use 'warn', as every other entry does.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "The entry now says 'warn'. The runner's tally was left strict on purpose: counting an unknown severity under some default would have turned this crash into a finding reported at the wrong level, which no gate reads. The guard went into the tests instead: tests/test_record_blocks_schema.py drives run_health_checks with the index dropped (the check alone never reaches the tally, which is why the existing test passed) and holds every entry of the expected-object table to checks.SEVERITIES, because a wrong severity there fails only when its object is missing or drifted, which no ordinary run exercises. Before the fix the first test failed with KeyError: 'warning' at the tally."
     },
     {
       "id": "bug-453",
@@ -6895,11 +6897,13 @@
       "version": "2.6.0a8",
       "file": "cpersona/nodes.py",
       "pattern": "return bool\\(count\\) and first == 0 and last == text_len and current == count",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "data-integrity",
       "fix_sketch": "One helper applying the strict rule, used by all three.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "nodes.node_set_is_current is now the only rule: the spans cover the stored text from 0 to its length with no gap or overlap, and every node has an embedding from a model this server reports. The builder, the missing_nodes scan and the reader all call it. The strict rule was taken, not the loose one, because the reader's strictness is what protects a quote: a gap puts an offset into text no node was measured over, and a NULL embedding is a node nothing can rank. The health scan now reads per-node spans (never the blobs) instead of an aggregate, since contiguity cannot be read from MIN/MAX/COUNT, and joins them to the parent so an agent-scoped run stays in scope. tests/test_record_nodes_build.py damages one built set three ways (gap, NULL embedding, overlap), each keeping count, first, last and model as a healthy set has them, and requires the three judges to agree and the builder to rebuild; before the fix the scan did not list the record and the builder answered 'nodes already current'. The block-set copy of the reader (the duplication entry of the same review) is left for its own change."
     },
     {
       "id": "bug-472",

@@ -514,3 +514,32 @@ async def test_a_missing_axis_index_is_reported_and_repaired():
         await db.commit()
         assert [i.get("fixed") for i in fixed] == [True]
         assert await checks.check_schema_objects(db, "", fix=False) == []
+
+
+@pytest.mark.asyncio
+async def test_a_missing_axis_index_is_counted_by_the_health_runner():
+    """bug-452: the index's severity was 'warning', which is not a key of the
+    runner's summary. The summary is counted outside the per-check try, so the
+    KeyError left run_health_checks itself and a fix run's writes were rolled
+    back with it. Drive the runner, not the check, because the check alone
+    never reaches the count."""
+    async with _TempDB():
+        db = await database.get_db()
+        await db.execute("DROP INDEX idx_record_blocks_axes")
+        await db.commit()
+
+        issues, summary = await checks.run_health_checks(db, "", False, checks=["schema_objects"])
+        assert [(i["object"], i["severity"]) for i in issues] == [("idx_record_blocks_axes", "warn")]
+        assert summary == {"critical": 0, "warn": 1, "info": 0}
+
+
+def test_every_expected_object_names_a_severity_the_runner_counts():
+    """The expected-object table is read by one check, so a severity outside the
+    runner's vocabulary only fails when that object is missing or drifted, which
+    no ordinary run exercises. Hold the whole table to the vocabulary instead."""
+    bad = {
+        name: spec["severity"]
+        for name, spec in checks._EXPECTED_OBJECTS.items()
+        if spec["severity"] not in checks.SEVERITIES
+    }
+    assert bad == {}

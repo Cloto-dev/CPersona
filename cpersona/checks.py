@@ -1246,7 +1246,7 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
     },
     "idx_record_blocks_axes": {
         "kind": "index",
-        "severity": "warning",
+        "severity": "warn",
         "sql": "CREATE INDEX idx_record_blocks_axes "
         "ON record_blocks(agent_id, project_id, channel)",
     },
