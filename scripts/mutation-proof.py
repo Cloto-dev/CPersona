@@ -1335,7 +1335,7 @@ MUTATIONS += [
         tests=("tests/test_bug247_rsf_gate_scale.py",),
         target="quality gate — the rsf branch compares the gate score (bug-247)",
         file=_MH,
-        find='            rsf = r.get("_rsf_gate_score", rsf)\n',
+        find="            rsf, _ = _gate_score(r)\n",
         replace="",
         breaks="the gate compares the min-max order score, so bug-247's two defects return at the gate",
         expect="test_bug247_rsf_gate_scale.py::test_the_heuristic_gate_admits_by_the_gate_score",

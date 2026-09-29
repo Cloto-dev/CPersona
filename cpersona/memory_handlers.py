@@ -1047,8 +1047,9 @@ def _apply_quality_gate(
             # query's candidates (weakest survivor pins to 0.0, a lone candidate to
             # 1.0), which an absolute threshold cannot read. The gate compares the
             # row's fixed-scale score instead; a row without one (a caller that set
-            # only _rsf_score) is compared as before. See _recall_rsf.
-            rsf = r.get("_rsf_gate_score", rsf)
+            # only _rsf_score) is compared as before. The value comes from
+            # _gate_score, which calibration also reads, so the two cannot drift apart.
+            rsf, _ = _gate_score(r)
             rsf_threshold = gate if (gate is not None and gate_signal == "rsf") else min_score
             if rsf >= rsf_threshold:
                 filtered.append(r)

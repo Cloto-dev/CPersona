@@ -69,7 +69,7 @@ TYPES = ("knowledge_update", "multi_session", "single_session_assistant", "singl
 
 
 def parse_variant(spec: str) -> tuple[str, float | None]:
-    """`legacy`, `gate` or `<divisor>:<half>` -> (divisor, 'legacy' or 'gate', half)."""
+    """`legacy`, `gate` or `<divisor>:<half>` -> ('legacy' or 'gate' or the divisor, half or None)."""
     if spec in ("legacy", "gate"):
         return spec, None
     divisor, half = spec.split(":")
@@ -236,6 +236,10 @@ async def run(args) -> int:
     first_fix = hasattr(mh, "RSF_DIVISOR")
     if any(d not in ("legacy", "gate") for d, _ in variants) and not first_fix:
         raise SystemExit("the <divisor>:<half> variants need a checkout of the withdrawn first fix")
+    if any(d == "gate" for d, _ in variants) and first_fix:
+        # There the fixed scale orders the list too, and a legacy variant run before it would
+        # leave its patches in place, so `gate` would measure something else under its name.
+        raise SystemExit("the gate variant needs a checkout of the second design, not the first fix")
 
     async def recall_rsf_without_gate_score(*a, **k):
         # The second design's legacy: drop the gate's score, so the gate reads _rsf_score
