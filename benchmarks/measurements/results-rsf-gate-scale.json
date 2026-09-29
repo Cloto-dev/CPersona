@@ -1,0 +1,523 @@
+{
+ "registration": "benchmarks/measurements/prereg-rsf-gate-scale.md",
+ "implementation": {
+  "pull_request": 354,
+  "merged": false,
+  "design_commit": "4b31265",
+  "harness_commit": "d84b437"
+ },
+ "outcome": "withdrawn before release; both registered rules held; bug-247 stays open",
+ "control_1_determinism": {
+  "held": true,
+  "tasks": {
+   "LoCoMo": {
+    "runs": [
+     46.51,
+     46.51
+    ],
+    "queries": 1976
+   },
+   "EPBench": {
+    "runs": [
+     90.34,
+     90.34
+    ],
+    "queries": 3644
+   },
+   "REALTALK": {
+    "runs": [
+     41.09,
+     41.09
+    ],
+    "queries": 679
+   }
+  },
+  "rankings_identical": true
+ },
+ "rule_t": {
+  "instrument": "LMEB Track B, bge-m3, rsf, --fast, numpy on CPU, fused gate and autocut off, vector threshold 0.3",
+  "legacy_commit": "7cfdb59",
+  "gate_commit": "4b31265",
+  "tasks": [
+   {
+    "task": "EPBench",
+    "memory_type": "Episodic",
+    "legacy": 90.34,
+    "gate": 90.35,
+    "delta": 0.01,
+    "queries": 3644,
+    "rows_legacy": 15.63,
+    "rows_gate": 19.2
+   },
+   {
+    "task": "KnowMeBench",
+    "memory_type": "Episodic",
+    "legacy": 53.33,
+    "gate": 53.33,
+    "delta": 0.0,
+    "queries": 2162,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "LoCoMo",
+    "memory_type": "Dialogue",
+    "legacy": 46.51,
+    "gate": 46.51,
+    "delta": 0.0,
+    "queries": 1976,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "LongMemEval",
+    "memory_type": "Dialogue",
+    "legacy": 81.42,
+    "gate": 81.42,
+    "delta": 0.0,
+    "queries": 500,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "REALTALK",
+    "memory_type": "Dialogue",
+    "legacy": 41.09,
+    "gate": 41.09,
+    "delta": 0.0,
+    "queries": 679,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "TMD",
+    "memory_type": "Dialogue",
+    "legacy": 22.89,
+    "gate": 22.89,
+    "delta": 0.0,
+    "queries": 2134,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "MemBench",
+    "memory_type": "Dialogue",
+    "legacy": 63.75,
+    "gate": 63.86,
+    "delta": 0.11,
+    "queries": 10000,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "ConvoMem",
+    "memory_type": "Dialogue",
+    "legacy": 60.77,
+    "gate": 60.78,
+    "delta": 0.01,
+    "queries": 5867,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "QASPER",
+    "memory_type": "Semantic",
+    "legacy": 47.44,
+    "gate": 47.48,
+    "delta": 0.04,
+    "queries": 1335,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "NovelQA",
+    "memory_type": "Semantic",
+    "legacy": 36.54,
+    "gate": 36.54,
+    "delta": 0.0,
+    "queries": 1541,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "PeerQA",
+    "memory_type": "Semantic",
+    "legacy": 29.79,
+    "gate": 29.79,
+    "delta": 0.0,
+    "queries": 136,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "CovidQA",
+    "memory_type": "Semantic",
+    "legacy": 85.16,
+    "gate": 85.16,
+    "delta": 0.0,
+    "queries": 1111,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "ESGReports",
+    "memory_type": "Semantic",
+    "legacy": 45.46,
+    "gate": 45.46,
+    "delta": 0.0,
+    "queries": 36,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "MLDR",
+    "memory_type": "Semantic",
+    "legacy": 82.25,
+    "gate": 82.25,
+    "delta": 0.0,
+    "queries": 100,
+    "rows_legacy": 19.97,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "LooGLE",
+    "memory_type": "Semantic",
+    "legacy": 66.0,
+    "gate": 66.0,
+    "delta": 0.0,
+    "queries": 3052,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "LMEB_SciFact",
+    "memory_type": "Semantic",
+    "legacy": 73.2,
+    "gate": 73.2,
+    "delta": 0.0,
+    "queries": 188,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "Gorilla",
+    "memory_type": "Procedural",
+    "legacy": 34.62,
+    "gate": 34.62,
+    "delta": 0.0,
+    "queries": 598,
+    "rows_legacy": 19.62,
+    "rows_gate": 19.98
+   },
+   {
+    "task": "ToolBench",
+    "memory_type": "Procedural",
+    "legacy": 54.1,
+    "gate": 54.1,
+    "delta": 0.0,
+    "queries": 1100,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "ReMe",
+    "memory_type": "Episodic",
+    "legacy": 59.16,
+    "gate": 59.23,
+    "delta": 0.07,
+    "queries": 1217,
+    "rows_legacy": 18.69,
+    "rows_gate": 19.99
+   },
+   {
+    "task": "Proced_mem_bench",
+    "memory_type": "Procedural",
+    "legacy": 51.92,
+    "gate": 51.92,
+    "delta": 0.0,
+    "queries": 40,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "MemGovern",
+    "memory_type": "Procedural",
+    "legacy": 90.65,
+    "gate": 90.65,
+    "delta": 0.0,
+    "queries": 121475,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   },
+   {
+    "task": "DeepPlanning",
+    "memory_type": "Procedural",
+    "legacy": 58.68,
+    "gate": 58.68,
+    "delta": 0.0,
+    "queries": 120,
+    "rows_legacy": 20.0,
+    "rows_gate": 20.0
+   }
+  ],
+  "macro": {
+   "legacy": 57.9577,
+   "gate": 57.9686,
+   "delta": 0.0109
+  },
+  "tasks_fell": 0,
+  "tasks_rose": 5,
+  "rule1_macro_falls_less_than_0_20": true,
+  "rule2_no_task_falls_1_00": true,
+  "pass": true,
+  "note": "Per-task NDCG@10 is the harness's value, reported to two decimals."
+ },
+ "rule_l": {
+  "cpersona_version": "2.6.0a8",
+  "split": "all",
+  "split_seed": 20260928,
+  "questions": 500,
+  "variants": [
+   "legacy",
+   "gate"
+  ],
+  "stored": 237655,
+  "vector_threshold": 0.4796,
+  "first_calibration": {
+   "new_threshold": 0.4796,
+   "method": "separation"
+  },
+  "calibrations": {
+   "first_fused_gate": null,
+   "legacy": {
+    "fused_gate": null
+   },
+   "gate": {
+    "fused_gate": null
+   }
+  },
+  "seconds": 6511.9,
+  "summary": {
+   "gate": {
+    "by_type": {
+     "knowledge_update": 93.5,
+     "multi_session": 78.3,
+     "single_session_assistant": 91.29,
+     "single_session_preference": 59.65,
+     "single_session_user": 84.88,
+     "temporal_reasoning": 79.81
+    },
+    "macro": 81.24,
+    "n": 500,
+    "rows_mean": 10.0
+   },
+   "legacy": {
+    "by_type": {
+     "knowledge_update": 93.5,
+     "multi_session": 75.35,
+     "single_session_assistant": 91.29,
+     "single_session_preference": 56.46,
+     "single_session_user": 84.4,
+     "temporal_reasoning": 77.18
+    },
+    "macro": 79.7,
+    "n": 500,
+    "rows_mean": 4.39
+   }
+  },
+  "order_agreement": {
+   "questions": 500,
+   "disagree": 0,
+   "examples": []
+  },
+  "rule_l": {
+   "per_type": {
+    "knowledge_update": {
+     "n": 78,
+     "fell": 0,
+     "rose": 0,
+     "net_fell": 0,
+     "allowed": 4,
+     "ok": true
+    },
+    "multi_session": {
+     "n": 133,
+     "fell": 0,
+     "rose": 22,
+     "net_fell": -22,
+     "allowed": 7,
+     "ok": true
+    },
+    "single_session_assistant": {
+     "n": 56,
+     "fell": 0,
+     "rose": 0,
+     "net_fell": 0,
+     "allowed": 3,
+     "ok": true
+    },
+    "single_session_preference": {
+     "n": 30,
+     "fell": 0,
+     "rose": 3,
+     "net_fell": -3,
+     "allowed": 2,
+     "ok": true
+    },
+    "single_session_user": {
+     "n": 70,
+     "fell": 0,
+     "rose": 1,
+     "net_fell": -1,
+     "allowed": 4,
+     "ok": true
+    },
+    "temporal_reasoning": {
+     "n": 133,
+     "fell": 0,
+     "rose": 18,
+     "net_fell": -18,
+     "allowed": 7,
+     "ok": true
+    }
+   },
+   "rule1_no_type_falls": true,
+   "macro": {
+    "legacy": 79.7,
+    "gate": 81.24,
+    "delta": 1.54,
+    "delta_unrounded": 1.5414324535452408
+   },
+   "rule2_mean_holds": true,
+   "pass": true
+  },
+  "added_rows": {
+   "more": 493,
+   "more_with_answer_added": 44,
+   "fewer": 0
+  }
+ },
+ "calibrated_gate_exploratory": {
+  "registered": false,
+  "pack": "private pack of real agent memories: 4,478 records, 300 questions with evidence records",
+  "fusion": "rsf with confidence on",
+  "count": 10,
+  "calibrated_fused_gate": {
+   "2.6.0a8": 0.05,
+   "design": 0.8913
+  },
+  "pairs_are": "[2.6.0a8, design]",
+  "by_type": {
+   "T1": {
+    "n": 50,
+    "rows": [
+     9.72,
+     1.92
+    ],
+    "empty": [
+     0,
+     11
+    ],
+    "evidence_reached": [
+     46,
+     32
+    ],
+    "evidence_records": 51
+   },
+   "T2": {
+    "n": 50,
+    "rows": [
+     9.94,
+     1.6
+    ],
+    "empty": [
+     0,
+     15
+    ],
+    "evidence_reached": [
+     43,
+     21
+    ],
+    "evidence_records": 56
+   },
+   "T3": {
+    "n": 50,
+    "rows": [
+     10.0,
+     1.98
+    ],
+    "empty": [
+     0,
+     18
+    ],
+    "evidence_reached": [
+     36,
+     17
+    ],
+    "evidence_records": 64
+   },
+   "T4": {
+    "n": 50,
+    "rows": [
+     10.0,
+     3.02
+    ],
+    "empty": [
+     0,
+     4
+    ],
+    "evidence_reached": [
+     83,
+     62
+    ],
+    "evidence_records": 114
+   },
+   "T5": {
+    "n": 50,
+    "rows": [
+     9.9,
+     2.54
+    ],
+    "empty": [
+     0,
+     4
+    ],
+    "evidence_reached": [
+     87,
+     72
+    ],
+    "evidence_records": 104
+   },
+   "T6": {
+    "n": 50,
+    "rows": [
+     9.8,
+     1.88
+    ],
+    "empty": [
+     0,
+     11
+    ],
+    "evidence_reached": [
+     0,
+     0
+    ],
+    "evidence_records": 0
+   }
+  },
+  "questions_losing_evidence": 81,
+  "questions_gaining_evidence": 6,
+  "english_paraphrases": {
+   "questions": 20,
+   "evidence_reached": [
+    14,
+    7
+   ],
+   "evidence_records": 21,
+   "empty": [
+    0,
+    7
+   ]
+  }
+ }
+}

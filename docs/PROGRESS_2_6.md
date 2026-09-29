@@ -59,6 +59,7 @@ default is decided by its own A/B run; no result of that run is recorded yet.
 | --- | --- | --- |
 | The reference panel for adaptive fusion, as first specified | It identified no null: the two densities it specified were the same distribution, so the evidence it defined could not separate a mixture from its own null. The definition was replaced before any code was built on it. | [#262](https://github.com/Cloto-dev/cpersona/pull/262) |
 | `rsf` on a fixed channel scale (the bug-247 fix) | It passed its pre-registered rule on LongMemEval at ten rows, where it also returned more rows. On LMEB Track B it scored lower on 19 of 22 tasks (macro 58.53 → 57.51), so it was reverted before release. The gate defect it addressed is open again. | [results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-rsf-fixed-scale.md) |
+| `rsf` gated on a fixed scale with its order unchanged (the second bug-247 design) | It passed both of its pre-registered rules: no LMEB Track B task fell (macro 57.96 → 57.97) and no LongMemEval question fell at ten rows. It was not merged: under the calibrated fused gate a deployment runs by default, it chose a threshold that emptied or thinned most answers on a private pack of real agent memories (rows at ten 9.89 → 2.16, evidence reached 295 → 204 of 389). bug-247 stays open. | [results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-rsf-gate-scale.md) |
 
 ## What is not on this page
 
