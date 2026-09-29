@@ -1387,6 +1387,16 @@ MUTATIONS += [
         breaks="a call whose max_hops was lowered reads as served as asked",
         expect="test_associations_reconstruct.py::test_a_lowered_hop_bound_is_reported_even_when_nothing_else_is",
     ),
+    Mutation(
+        id="M123",
+        tests=("tests/test_associations_declare.py",),
+        target="declare_associations — annotated destructive, because retract deletes (bug-458)",
+        file="cpersona/server.py",
+        find="can do.\n    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,",
+        replace="can do.\n    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,",
+        breaks="hosts that gate approval on destructiveHint let retract delete relations and mentions unasked",
+        expect="test_associations_declare.py::test_declare_associations_is_annotated_destructive",
+    ),
 ]
 
 

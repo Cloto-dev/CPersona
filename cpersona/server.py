@@ -1112,7 +1112,9 @@ registry.auto_tool(
         ("project_id", str, ""),
         ("session_key", str, ""),
     ],
-    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+    # Destructive because of `retract`, which deletes relations and mentions (bug-458):
+    # hosts gate approval on the hint, so it names the worst thing a call can do.
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True),
 )
 
 registry.auto_tool(

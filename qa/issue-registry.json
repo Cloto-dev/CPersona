@@ -6720,12 +6720,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/server.py",
-      "pattern": "\\(\\\"retract\\\", dict, None\\),",
+      "pattern": "# Destructive because of `retract`, which deletes relations and mentions \\(bug-458\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "contract-drift",
       "fix_sketch": "Annotate the tool destructiveHint=True, or move retract to its own tool.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "The tool is annotated destructiveHint=True, the worst thing one call can do, as merge_memories already is for the delete it can reach. Moving retract to a tool of its own was rejected for this line: a new tool is a contract addition, and the annotation alone gives hosts the signal they gate approval on. idempotentHint stays True: declaring or retracting twice leaves the same rows. tests/test_associations_declare.py checks the annotation and pins the set of tools annotated destructive, so a change to any of them is a deliberate one."
     },
     {
       "id": "bug-459",
