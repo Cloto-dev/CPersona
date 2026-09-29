@@ -6576,12 +6576,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/associations.py",
-      "pattern": "INSERT OR IGNORE INTO entity_aliases \\(entity_id, alias, normalized\\) VALUES",
+      "pattern": "exact=carries_aliases",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "isolation",
       "fix_sketch": "Store the declaring scope with each alias and filter aliases by the reader's scope, or register a scoped entity instead of extending the global one.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it.",
+      "fix_note": "A declaration that carries aliases now registers, or reuses, an entity of its own scope, and its aliases and mention attach there; the wider entity is not touched. Readers of that scope see both entities, which traverse already treats as starts (a project's and the global pool's). Adding a scope column to entity_aliases was the other option, and was not taken because it is a schema change, outside a beta. A declaration without aliases still reuses the wider entity, since a mention or a relation carries its own scope. Aliases stored before this fix are not changed: entity_aliases records no scope, so an alias a project hung on a global entity cannot be told apart from one declared globally, and neither a report nor a move is possible from the stored data. tests/test_associations_traverse.py declares an alias in P on a name that exists globally and checks that Q and the global pool cannot resolve it, P can, and query_terms follows the same line; before the fix Q resolved it. The control declares an alias in the entity's own scope and checks that no second entity appears."
     },
     {
       "id": "bug-449",
@@ -6606,12 +6608,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/associations.py",
-      "pattern": "for project_id, channel in \\(\\(scope\\.project_id, scope\\.channel\\), \\(\\\"\\\", \\\"\\\"\\)\\):",
+      "pattern": "return \\[\\(p, c\\) for p in projects for c in channels\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "isolation",
       "fix_sketch": "Resolve through the same axis union the readers use, in the same precedence.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "_visible_scopes gives the scopes a reader of the declaring scope sees, most specific first: (P, C), (P, ''), ('', C), ('', ''). Resolution, and the alias conflict check, search them in that order, so a (P, C) declaration reuses the (P, '') entity its reader resolves and an alias that reader already resolves cannot name a second entity. A declaration without a channel does not reuse a single channel's entity, because readers of other channels would not see it. Together with bug-448 an alias still attaches only to an entity of the declaring scope. tests/test_associations_traverse.py checks the reuse and the refused alias (before the fix a second entity was created) and the channel-less direction."
     },
     {
       "id": "bug-451",

@@ -239,3 +239,77 @@ def test_the_schema_states_the_bounds_the_library_enforces():
     library = inspect.signature(associations.traverse).parameters
     for name in ("max_hops", "limit"):
         assert props[name]["default"] == boundary[name].default == library[name].default, name
+
+
+# --------------------------------------------------------------------------
+# An alias follows the scope it was declared in (bug-448), and a declaration
+# resolves over every scope its reader sees (bug-450)
+# --------------------------------------------------------------------------
+
+
+async def _entity_rows(db, agent: str = AGENT) -> list[tuple]:
+    return await db.execute_fetchall(
+        "SELECT project_id, channel, normalized FROM entities WHERE agent_id = ? ORDER BY id", (agent,)
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_project_s_alias_is_not_read_from_another_project(clean_db):
+    """bug-448: the declaration reused the global entity and hung its alias on it,
+    and entity_aliases has no scope, so project Q read an alias declared in P."""
+    await associations.declare(AGENT, {"entities": [{"name": "Glob"}]})
+    report = await associations.declare(
+        AGENT, {"entities": [{"name": "Glob", "aliases": ["secretcode"]}]}, project_id="P"
+    )
+    assert not report["dropped"], report
+
+    in_q = await associations.traverse(AGENT, "secretcode", project_id="Q")
+    assert in_q.get("reason") == "no_such_entity", in_q
+    in_global = await associations.traverse(AGENT, "secretcode", project_id="")
+    assert in_global.get("reason") == "no_such_entity", in_global
+    in_p = await associations.traverse(AGENT, "secretcode", project_id="P")
+    assert "Glob" in _by_name(in_p)
+    terms_q, _ = await associations.query_terms(AGENT, "what is secretcode", project_id="Q")
+    assert terms_q == []
+    terms_p, _ = await associations.query_terms(AGENT, "what is secretcode", project_id="P")
+    assert "Glob" in terms_p
+    # The project got an entity of its own; the global one is untouched.
+    assert await _entity_rows(clean_db) == [("", "", "glob"), ("P", "", "glob")]
+
+
+@pytest.mark.asyncio
+async def test_an_alias_declared_in_the_entity_s_own_scope_still_extends_it(clean_db):
+    """The control: the global pool declaring an alias on its own entity makes no
+    second entity, and every project reads the alias."""
+    await associations.declare(AGENT, {"entities": [{"name": "Glob"}]})
+    await associations.declare(AGENT, {"entities": [{"name": "Glob", "aliases": ["gl"]}]})
+    assert await _entity_rows(clean_db) == [("", "", "glob")]
+    assert "Glob" in _by_name(await associations.traverse(AGENT, "gl", project_id="Q"))
+
+
+@pytest.mark.asyncio
+async def test_a_channel_declaration_reuses_its_project_s_entity(clean_db):
+    """bug-450: resolution searched the exact scope and the global pool only, so a
+    (P, C) declaration did not see the (P, '') entity its reader resolves."""
+    await associations.declare(AGENT, {"entities": [{"name": "Glob", "aliases": ["gl"]}]}, project_id="P")
+    report = await associations.declare(AGENT, {"entities": [{"name": "Glob"}]}, project_id="P", channel="C")
+    assert report["entities"][0]["created"] is False
+    assert await _entity_rows(clean_db) == [("P", "", "glob")]
+
+    # An alias the reader of (P, C) already resolves cannot name a second entity there.
+    other = await associations.declare(
+        AGENT, {"entities": [{"name": "Other", "aliases": ["gl"]}]}, project_id="P", channel="C"
+    )
+    assert [d["item"] for d in other["dropped"]] == ["entities[0].aliases[0]"]
+    starts = await associations.traverse(AGENT, "gl", project_id="P", channel="C")
+    assert set(_by_name(starts)) == {"Glob"}
+
+
+@pytest.mark.asyncio
+async def test_a_channel_less_declaration_does_not_reuse_one_channel_s_entity(clean_db):
+    """The other direction: an entity of (P, C) is not visible to a (P, C2) reader,
+    so a declaration without a channel registers its own rather than reusing it."""
+    await associations.declare(AGENT, {"entities": [{"name": "Glob"}]}, project_id="P", channel="C")
+    report = await associations.declare(AGENT, {"entities": [{"name": "Glob"}]}, project_id="P")
+    assert report["entities"][0]["created"] is True
+    assert await _entity_rows(clean_db) == [("P", "C", "glob"), ("P", "", "glob")]

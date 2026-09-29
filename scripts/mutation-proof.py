@@ -1407,6 +1407,26 @@ MUTATIONS += [
         breaks="an episode's ranges and expand span point 10 characters right of the passage they name",
         expect="test_reconstruct_filled_quote.py::test_an_episode_is_quoted_in_the_text_get_contents_serves",
     ),
+    Mutation(
+        id="M126",
+        tests=("tests/test_associations_traverse.py",),
+        target="associations — an alias attaches only to an entity of the declaring scope (bug-448)",
+        file="cpersona/associations.py",
+        find="db, scope, name, declared_by, now, exact=carries_aliases",
+        replace="db, scope, name, declared_by, now, exact=False",
+        breaks="a project's alias hangs on the global entity and every other project reads it",
+        expect="test_associations_traverse.py::test_a_project_s_alias_is_not_read_from_another_project",
+    ),
+    Mutation(
+        id="M127",
+        tests=("tests/test_associations_traverse.py",),
+        target="associations — a declaration resolves over every scope its reader sees (bug-450)",
+        file="cpersona/associations.py",
+        find="    return [(p, c) for p in projects for c in channels]",
+        replace="    return [(scope.project_id, scope.channel), (\"\", \"\")]",
+        breaks="a (P, C) declaration registers a second entity under a name its reader already resolves",
+        expect="test_associations_traverse.py::test_a_channel_declaration_reuses_its_project_s_entity",
+    ),
 ]
 
 
