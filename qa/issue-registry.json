@@ -6681,13 +6681,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
-      "file": "cpersona/blocks.py",
-      "pattern": "PARTITION BY parent_kind, parent_id ORDER BY block_index",
+      "file": "docs/BLOCK_REACH_DESIGN.md",
+      "pattern": "each record contributes at most its",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "gate-reach",
       "fix_sketch": "Rank within each parent by distance before applying the cap, or document the first-N rule and measure what it loses.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "Resolved by making the design describe the code, not the other way round: each record contributes its first BLOCK_PER_PARENT_CAP (64) blocks in text order, and only then is the examined set ranked and each record represented by its best block. Ranking inside each record before the cut was the other option; it means reading every block's bits and changes the scan's cost, which is not a beta change. What the rule gives up was measured and is stated in the design: on a private pack of real agent memories (4,478 records) 82 records (1.8%) run past 64 blocks, 1.4% of block rows lie beyond the share, and 2 of 389 evidence passages of its 300 questions are among them (one question has all its evidence there). The block arm is off by default. tests/test_blocks_retrieval.py pins the first-blocks share and that the design states the constant's value."
     },
     {
       "id": "bug-456",

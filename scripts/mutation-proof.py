@@ -1427,6 +1427,26 @@ MUTATIONS += [
         breaks="a (P, C) declaration registers a second entity under a name its reader already resolves",
         expect="test_associations_traverse.py::test_a_channel_declaration_reuses_its_project_s_entity",
     ),
+    Mutation(
+        id="M128",
+        tests=("tests/test_blocks_retrieval.py",),
+        target="blocks — the design states the per-record share the code applies (bug-455)",
+        file="cpersona/blocks.py",
+        find="BLOCK_PER_PARENT_CAP = 64\n",
+        replace="BLOCK_PER_PARENT_CAP = 65\n",
+        breaks="the design names a share the scan no longer applies, and nothing says so",
+        expect="test_blocks_retrieval.py::test_the_design_states_the_share_the_code_applies",
+    ),
+    Mutation(
+        id="M129",
+        tests=("tests/test_blocks_retrieval.py",),
+        target="blocks — a record's share is its first blocks in text order (bug-455)",
+        file="cpersona/blocks.py",
+        find="PARTITION BY parent_kind, parent_id ORDER BY block_index\"",
+        replace="PARTITION BY parent_kind, parent_id ORDER BY block_index DESC\"",
+        breaks="the scan keeps a long record's last blocks, which the design does not describe",
+        expect="test_blocks_retrieval.py::test_a_record_s_share_is_its_first_blocks",
+    ),
 ]
 
 
