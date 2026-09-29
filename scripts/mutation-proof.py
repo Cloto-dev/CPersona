@@ -1327,6 +1327,36 @@ MUTATIONS += [
         breaks="a set with a NULL embedding is kept by every path, and the reader ranks a node it cannot score",
         expect="test_record_nodes_build.py::test_the_builder_the_check_and_the_reader_agree_on_a_current_set",
     ),
+    Mutation(
+        id="M118",
+        tests=("tests/test_associations_declare.py",),
+        target="associations — retract refuses a JSON boolean as an id (bug-447)",
+        file="cpersona/associations.py",
+        find="return isinstance(value, int) and not isinstance(value, bool)",
+        replace="return isinstance(value, int)",
+        breaks="retract with `true` deletes relation 1 and a mention of entity 1, and reports nothing dropped",
+        expect="test_associations_declare.py::test_retract_refuses_a_json_boolean_as_an_id",
+    ),
+    Mutation(
+        id="M119",
+        tests=("tests/test_associations_declare.py",),
+        target="associations — an anchor is stored as the canonical ref of its record (bug-449)",
+        file="cpersona/associations.py",
+        find="                anchor = canonical_ref(anchor)\n",
+        replace="                anchor = anchor.strip()\n",
+        breaks="`mem:001` is stored as spelled: the walk never reaches it and the record's delete leaves it behind",
+        expect="test_associations_declare.py::test_an_anchor_with_leading_zeros_is_stored_as_the_record_it_names",
+    ),
+    Mutation(
+        id="M120",
+        tests=("tests/test_associations_declare.py",),
+        target="associations — retract compares a mention by its canonical ref (bug-449)",
+        file="cpersona/associations.py",
+        find="(entity_id, canonical_ref(ref), agent_id)",
+        replace="(entity_id, ref.strip(), agent_id)",
+        breaks="retracting `mem:01` leaves the stored `mem:1` mention in place and reports 0 retracted",
+        expect="test_associations_declare.py::test_retract_finds_a_mention_by_any_spelling_of_its_ref",
+    ),
 ]
 
 

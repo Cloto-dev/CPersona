@@ -6559,11 +6559,13 @@
       "version": "2.6.0a8",
       "file": "cpersona/associations.py",
       "pattern": "if not isinstance\\(relation_id, int\\):",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "data-loss",
       "fix_sketch": "Reject bool explicitly (isinstance(x, bool) or not isinstance(x, int)) for relation and entity ids.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it.",
+      "fix_note": "Both ids in retract (the relation id and a mention's entity id) go through associations._is_id, which excludes bool the way the shared validate_int does; a boolean is dropped with the same reason as any other non-integer. validate_int itself was not reused because it returns a default instead of saying the value was refused, and retract has to report the item. tests/test_associations_declare.py retracts with true and with false on a store where relation 1 and entity 1 exist; before the fix true deleted both and neither case was reported."
     },
     {
       "id": "bug-448",
@@ -6586,12 +6588,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/associations.py",
-      "pattern": "anchor = anchor_ref\\.strip\\(\\) if isinstance\\(anchor_ref, str\\) else \\\"\\\"",
+      "pattern": "anchor = canonical_ref\\(anchor\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "data-integrity",
       "fix_sketch": "Store the canonical f'{kind}:{id}' built from parse_ref's result, here and in retract.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. The stored value was reproduced; the walk and delete consequences come from the review's own run."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. The stored value was reproduced; the walk and delete consequences come from the review's own run.",
+      "fix_note": "associations.canonical_ref builds the one spelling the triggers and the walk use ('mem:' || id). declare stores the anchor in that spelling once it has been validated, and retract compares a mention by it, so any spelling of a record names the same row. Normalising at the write, rather than teaching the triggers and the walk to accept leading zeros, keeps one spelling in the table, which is what makes the unique index on mentions collapse 'mem:1' and 'mem:01' into one row. tests/test_associations_declare.py stores through 'mem:001' and 'mem:01', checks one mention and one relation anchored at 'mem:1', deletes the record and checks both are gone, and retracts through 'mem:00<id>'. Rows written before the fix keep the spelling they were given; this change does not rewrite them."
     },
     {
       "id": "bug-450",

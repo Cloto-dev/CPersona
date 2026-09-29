@@ -300,6 +300,64 @@ async def test_retract_removes_only_this_agents_relations_and_mentions(clean_db)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [True, False])
+async def test_retract_refuses_a_json_boolean_as_an_id(clean_db, flag):
+    """bug-447: JSON true arrives as a bool, which Python counts as the int 1 (false
+    as 0), so `retract` deleted relation 1 and reported nothing."""
+    mine = await _store("mine", {"entities": [{"name": "Kirari"}],
+                                 "relations": [{"subject": "Kirari", "predicate": "likes", "object": "tea"}]})
+    entity = (await _entities(clean_db))["Kirari"]
+    # A clean store numbers from 1, so `true` names a real relation and a real entity.
+    assert mine["associations"]["relations"] == [1] and entity == 1
+    res = await server.do_declare_associations_boundary(
+        AGENT, retract={"relations": [flag], "mentions": [{"entity": flag, "ref": f"mem:{mine['id']}"}]}
+    )
+    assert res["retracted"] == {"relations": 0, "mentions": 0}
+    assert [d["item"] for d in res["dropped"]] == ["retract.relations[0]", "retract.mentions[0]"]
+    assert len(await _relations(clean_db)) == 1
+    assert await _mentions(clean_db, entity) == {f"mem:{mine['id']}"}
+
+
+_GRAPH = {"entities": [{"name": "Kirari"}],
+          "relations": [{"subject": "Kirari", "predicate": "likes", "object": "tea"}]}
+
+
+@pytest.mark.asyncio
+async def test_an_anchor_with_leading_zeros_is_stored_as_the_record_it_names(clean_db):
+    """bug-449: parse_ref accepts `mem:001`, but the anchor was stored as spelled.
+    The delete triggers and the walk build `'mem:' || id`, so the mention and the
+    relation's anchor were unreachable and outlived their record."""
+    target = await _store("the record")
+    assert target["id"] == 1
+    await server.do_declare_associations_boundary(AGENT, _GRAPH, anchor_ref="mem:001")
+    entity = (await _entities(clean_db))["Kirari"]
+    assert await _mentions(clean_db, entity) == {"mem:1"}
+    assert [r[5] for r in await _relations(clean_db)] == ["mem:1"]
+
+    # Another spelling of the same record is the same mention and the same relation.
+    await server.do_declare_associations_boundary(AGENT, _GRAPH, anchor_ref="mem:01")
+    assert await _mentions(clean_db, entity) == {"mem:1"}
+    assert len(await _relations(clean_db)) == 1
+
+    await clean_db.execute("DELETE FROM memories WHERE id = ?", (target["id"],))
+    await clean_db.commit()
+    assert await _mentions(clean_db, entity) == set()
+    assert await _relations(clean_db) == []
+
+
+@pytest.mark.asyncio
+async def test_retract_finds_a_mention_by_any_spelling_of_its_ref(clean_db):
+    target = await _store("the record", _GRAPH)
+    entity = (await _entities(clean_db))["Kirari"]
+    assert await _mentions(clean_db, entity) == {f"mem:{target['id']}"}
+    res = await server.do_declare_associations_boundary(
+        AGENT, retract={"mentions": [{"entity": entity, "ref": f"mem:00{target['id']}"}]}
+    )
+    assert res["retracted"]["mentions"] == 1
+    assert await _mentions(clean_db, entity) == set()
+
+
+@pytest.mark.asyncio
 async def test_a_call_is_bounded_and_says_where_it_cut(clean_db):
     many = [{"name": f"E{i}"} for i in range(associations.MAX_ITEMS + 2)]
     res = await server.do_declare_associations_boundary(AGENT, {"entities": many})
