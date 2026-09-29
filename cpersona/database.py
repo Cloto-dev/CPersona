@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import sqlite3
 import stat
 
 import aiosqlite
@@ -141,17 +142,8 @@ async def read_snapshot():
     for the whole scope — for long streaming reads (bug-073 export) that must
     see a stable row set across a COUNT header + the streamed body.
 
-    ON A FILE DATABASE. bug-356: the ``:memory:`` branch below yields the shared
-    write connection and opens no transaction, so on that deployment this helper
-    offers NO isolation and a commit landing mid-scope is visible to the rest of
-    it — measured end to end as an export whose header claims one memory while
-    its body carries two, which is exactly the inconsistency the import path
-    refuses. The branch's reason is sound (a second connect to an in-memory
-    database is a different, empty database) and the missing transaction is not
-    fixable by adding a BEGIN here: the commit boundary on that connection belongs
-    to the write seam, and taking it would either nest a transaction or hand a
-    reader the power to commit a writer's work. What this line does is stop the
-    promise above from covering a branch that does not keep it.
+    An in-memory database gets the same guarantee a different way; see
+    ``_in_memory_snapshot``.
 
     Why not connection(): that yields the shared _read_db singleton. A long
     explicit transaction there (a) is rolled back by any other read scope's exit
@@ -162,13 +154,9 @@ async def read_snapshot():
     boundary; the DEFERRED snapshot is established at the first read (the COUNT)
     and held until rollback. Read-only, so exit always rolls back. The connection
     is closed on exit so its worker thread is joined (bug-124)."""
-    # bug-235: ":memory:" shares the write connection, exactly as _get_read_db does —
-    # a second connect(":memory:") opens a DIFFERENT, empty database, so the streaming
-    # export would read a schema-less file instead of the live corpus. The shared
-    # connection gets no private BEGIN/ROLLBACK (that boundary belongs to the write
-    # seam) and is never closed here (it is the process's only database).
     if DB_PATH == ":memory:":
-        yield await get_db()
+        async with _in_memory_snapshot() as snap:
+            yield snap
         return
     db = await aiosqlite.connect(DB_PATH, isolation_level=None)
     try:
@@ -179,6 +167,86 @@ async def read_snapshot():
         with contextlib.suppress(Exception):
             await db.execute("ROLLBACK")
         await db.close()
+
+
+@contextlib.asynccontextmanager
+async def _in_memory_snapshot():
+    """``read_snapshot`` for ``DB_PATH == ":memory:"``: a private copy of the live
+    database, taken once at scope entry.
+
+    bug-235: a second ``connect(":memory:")`` opens a DIFFERENT, empty database, so
+    this branch used to yield the shared write connection itself. bug-356: that
+    connection has no snapshot to give. A commit landing mid-scope was visible to
+    the rest of it -- measured end to end as an export whose header claimed one
+    memory while its body carried two, the inconsistency the import path refuses.
+    A BEGIN on the shared connection is not the fix: its commit boundary belongs
+    to the write seam, so a reader's BEGIN would either nest inside a writer's
+    transaction or let the reader commit the writer's work. Holding the write lock
+    for the whole scope is not the fix either: an export streams to disk for as
+    long as the corpus takes, and every writer would wait on it.
+
+    So the snapshot is a copy. SQLite's online backup copies the whole database
+    into a second in-memory connection in one step (``pages`` <= 0), and the scope
+    reads the copy, which nothing else can write. The copy is taken inside
+    ``transaction()`` so that no writer is between its first write and its commit:
+    the backup reads through the shared connection, which sees its own
+    uncommitted rows, and without the lock a writer's half-done work -- work a
+    rollback may still undo -- would be copied as if it had been committed. The
+    lock is held for the copy only, not for the scope. The transaction writes
+    nothing, so it is ``scope_stats_neutral`` and its commit is empty. A write
+    that bypassed the seam would make the backup wait on it forever, so the copy
+    refuses to wait instead (``_refuse_to_wait``).
+
+    The cost is a second copy of the database for the life of the scope. An
+    in-memory deployment already holds the whole database in memory, and it is
+    not the shipped default.
+
+    ``check_same_thread=False`` because the backup runs on the source
+    connection's worker thread and writes into the copy's ``sqlite3`` object,
+    which aiosqlite created on the copy's own thread. Nothing else touches the copy
+    until the backup has returned. The copy is closed on exit so its worker thread
+    is joined (bug-124)."""
+    snap = await aiosqlite.connect(":memory:", check_same_thread=False)
+    try:
+        async with transaction(scope_stats_neutral=True) as db:
+            await _copy_database(db, snap)
+        yield snap
+    finally:
+        await snap.close()
+
+
+class SnapshotUnavailable(RuntimeError):
+    """The database could not be copied without waiting on an uncommitted write."""
+
+
+def _refuse_to_wait(status: int, remaining: int, total: int) -> None:
+    """Backup progress callback: abort a step that could not read the source.
+
+    Measured: a backup whose source connection holds an uncommitted WRITE gets
+    SQLITE_BUSY on every step, and the driver's loop sleeps and retries it for as
+    long as that write stays open. In an in-memory deployment the source is the
+    process's only connection, and its worker thread is the one the backup is
+    running on, so nothing can ever commit that write and the loop never ends:
+    every later read and write queues behind it. An open read transaction, or a
+    cursor part-way through its rows, completes normally.
+
+    ``transaction()`` makes that state unreachable through the write seam, which
+    commits or rolls back before it lets the next caller in. This is for a write
+    that bypassed the seam: the snapshot fails at once, naming the reason, rather
+    than stopping the database for good. Raising from the callback is how the
+    driver is told to abandon the backup; the source connection is untouched.
+    """
+    if status in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+        raise SnapshotUnavailable(
+            "the database has an uncommitted write outside the write seam, so it "
+            f"cannot be copied without waiting on it (backup step status {status}, "
+            f"{remaining} of {total} pages left)"
+        )
+
+
+async def _copy_database(source: aiosqlite.Connection, target: aiosqlite.Connection) -> None:
+    """Copy ``source`` into ``target`` in one backup step, refusing to wait."""
+    await source.backup(target, progress=_refuse_to_wait)
 
 
 @contextlib.asynccontextmanager
