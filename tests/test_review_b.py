@@ -367,7 +367,9 @@ async def test_bug235_read_snapshot_shares_the_connection_for_an_in_memory_db(
 
     monkeypatch.setattr(database, "DB_PATH", ":memory:")
     async with read_snapshot() as snap:
-        assert snap is db
+        # bug-356: the scope reads a private copy of the shared connection's
+        # database, not the connection itself (which had no snapshot to give), so
+        # what this pins is the reason bug-235 was filed: the live corpus is read.
         rows = await snap.execute_fetchall(
             "SELECT COUNT(*) FROM memories WHERE agent_id = 'snap'"
         )

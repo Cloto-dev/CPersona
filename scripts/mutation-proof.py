@@ -1477,6 +1477,36 @@ MUTATIONS += [
         breaks="the health check stays quiet while every query reads the filled holes",
         expect="test_bug388_index_behind.py::test_the_health_check_reports_filled_holes",
     ),
+    Mutation(
+        id="M130",
+        tests=("tests/test_bug356_in_memory_snapshot.py",),
+        target="read_snapshot — an in-memory database gets a private copy (bug-356)",
+        file="cpersona/database.py",
+        find="        async with _in_memory_snapshot() as snap:\n            yield snap\n        return",
+        replace="        yield await get_db()\n        return",
+        breaks="the scope reads the shared connection, so a commit landing mid-scope is visible to it",
+        expect="test_bug356_in_memory_snapshot.py::test_a_commit_inside_the_scope_is_not_seen_by_it",
+    ),
+    Mutation(
+        id="M131",
+        tests=("tests/test_bug356_in_memory_snapshot.py",),
+        target="read_snapshot — the in-memory copy is taken under the write seam (bug-356)",
+        file="cpersona/database.py",
+        find="        async with transaction(scope_stats_neutral=True) as db:\n            await _copy_database(db, snap)",
+        replace="        db = await get_db()\n        if True:\n            await _copy_database(db, snap)",
+        breaks="a snapshot taken while a writer is mid-transaction fails instead of waiting for its commit",
+        expect="test_bug356_in_memory_snapshot.py::test_a_writers_uncommitted_work_is_not_copied",
+    ),
+    Mutation(
+        id="M135",
+        tests=("tests/test_bug356_in_memory_snapshot.py",),
+        target="read_snapshot — the in-memory copy refuses to wait on an uncommitted write (bug-356)",
+        file="cpersona/database.py",
+        find="    await source.backup(target, progress=_refuse_to_wait)",
+        replace="    await source.backup(target)",
+        breaks="a write outside the seam makes the copy retry forever on the process's only connection",
+        expect="test_bug356_in_memory_snapshot.py::test_a_copy_refuses_to_wait_on_an_uncommitted_write",
+    ),
 ]
 
 
