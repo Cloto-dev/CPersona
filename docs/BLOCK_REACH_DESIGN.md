@@ -162,9 +162,19 @@ they are correlated observations of one source, and summing them would convert
 the length of a record into evidence.
 
 The number of blocks examined is capped, and the cap is applied so that it
-cannot be consumed by a single long record — a per-parent best is retained
-within the examined set rather than a global top-k being cut and then
-deduplicated, because the latter lets one long record occupy the pool.
+cannot be consumed by a single long record: each record contributes at most its
+first 64 blocks in text order (`BLOCK_PER_PARENT_CAP`), and only then is the
+examined set ranked and each record represented by its best block. Cutting a
+global top-k and then deduplicating would let one long record occupy the pool.
+
+The per-record share is its first blocks, not its best ones: the blocks past it
+are never examined, so a paraphrase of the tail of a very long record cannot be
+reached through this arm. Choosing each record's best blocks instead would mean
+reading every block's bits and ranking inside each record before the cut, which
+changes what the scan costs. On a private pack of real agent memories (4,478
+records, 20.1 blocks each on average) 82 records (1.8%) run past 64 blocks, 1.4%
+of block rows lie beyond the share, and 2 of the 389 evidence passages of its
+300 questions are among them; one question has all of its evidence there.
 
 None of these bounds is derived from the number of items the caller asked for.
 Changing the response count alone must leave the set of examined blocks, and

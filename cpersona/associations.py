@@ -119,15 +119,30 @@ async def _record_exists(db, scope: _Scope, kind: str, row_id: int) -> bool:
     return bool(rows)
 
 
-async def _resolve_entity(db, scope: _Scope, normalized: str) -> int | None:
+def _visible_scopes(scope: _Scope) -> list[tuple[str, str]]:
+    """The scopes whose entities a reader of `scope` sees, most specific first.
+
+    Per axis the reader sees its own value and the empty one, so a declaration in
+    (P, C) can reuse an entity of (P, C), (P, ''), ('', C) or ('', '') in that order.
+    Searching only the exact scope and the global pool (bug-450) missed (P, '') and
+    ('', C): the declaration registered a second entity under a name its reader
+    already resolved, and an alias could name two entities that reader sees.
+    """
+    projects = [scope.project_id, ""] if scope.project_id else [""]
+    channels = [scope.channel, ""] if scope.channel else [""]
+    return [(p, c) for p in projects for c in channels]
+
+
+async def _resolve_entity(db, scope: _Scope, normalized: str, *, exact: bool = False) -> int | None:
     """The entity a normalized name or alias resolves to, in this scope.
 
-    The exact scope is searched first, then the global pool of the same agent
-    (`project_id = ''`, `channel = ''`), so a project's declaration reuses an
-    entity the agent already registered for everyone. Names and aliases are one
-    namespace: two declarations that normalize alike are one entity.
+    Searched over `_visible_scopes`, so a project's declaration reuses an entity
+    the agent already registered for everyone. `exact` searches the declaring
+    scope alone. Names and aliases are one namespace: two declarations that
+    normalize alike are one entity.
     """
-    for project_id, channel in ((scope.project_id, scope.channel), ("", "")):
+    scopes = _visible_scopes(scope)
+    for project_id, channel in scopes[:1] if exact else scopes:
         rows = await db.execute_fetchall(
             "SELECT e.id FROM entities e WHERE e.agent_id = ? AND e.project_id = ? AND e.channel = ? "
             "AND (e.normalized = ? OR EXISTS (SELECT 1 FROM entity_aliases a "
@@ -139,10 +154,19 @@ async def _resolve_entity(db, scope: _Scope, normalized: str) -> int | None:
     return None
 
 
-async def _register_entity(db, scope: _Scope, name: str, declared_by: str, now: str) -> tuple[int, bool]:
-    """The entity for `name`, registering it in the exact scope when new."""
+async def _register_entity(
+    db, scope: _Scope, name: str, declared_by: str, now: str, *, exact: bool = False
+) -> tuple[int, bool]:
+    """The entity for `name`, registering it in the exact scope when new.
+
+    `exact` reuses only an entity of the declaring scope itself. An alias is
+    attached to the entity it is declared with and entity_aliases carries no
+    scope, so an alias added to an entity of a wider scope would be read in every
+    scope that entity is (bug-448): a declaration that carries aliases gets an
+    entity of its own scope, which its reader sees beside the wider one.
+    """
     normalized = normalize(name)
-    existing = await _resolve_entity(db, scope, normalized)
+    existing = await _resolve_entity(db, scope, normalized, exact=exact)
     if existing is not None:
         return existing, False
     cur = await db.execute(
@@ -242,12 +266,15 @@ async def declare(
             if name is None:
                 dropped.append({"item": f"entities[{index}]", "reason": "name must be a nonempty string"})
                 continue
-            entity_id, created = await _register_entity(db, scope, name, declared_by, now)
-            entry = {"id": entity_id, "name": name, "created": created}
             aliases = item.get("aliases", [])
             if not isinstance(aliases, list):
                 dropped.append({"item": f"entities[{index}].aliases", "reason": "must be a list"})
                 aliases = []
+            carries_aliases = any(_text(a) is not None for a in aliases[:MAX_ALIASES])
+            entity_id, created = await _register_entity(
+                db, scope, name, declared_by, now, exact=carries_aliases
+            )
+            entry = {"id": entity_id, "name": name, "created": created}
             for a_index, alias in enumerate(aliases):
                 label = f"entities[{index}].aliases[{a_index}]"
                 if a_index >= MAX_ALIASES:

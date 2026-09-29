@@ -1036,6 +1036,8 @@ async def _examined(db, iso, keys: tuple[str, str]) -> list[tuple]:
 
     The per-parent cap is applied before the examined cap, so a long record
     spends at most its share and the cap cannot be consumed by one parent. The
+    share is the record's first blocks in text order, not its best ones: the
+    rest are never examined (docs/BLOCK_REACH_DESIGN.md §4, bug-455). The
     isolation axes on the row filter here rather than after ranking: a bucket
     that is one per cent of the corpus would otherwise spend the whole cut on
     rows the authority then drops.

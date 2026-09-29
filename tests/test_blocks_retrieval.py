@@ -10,6 +10,7 @@ reaches a gate calibrated on another population.
 
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -175,6 +176,24 @@ async def test_the_per_parent_cap_bounds_what_one_record_takes(monkeypatch, read
             db, isolation_where(agent_id=AGENT), generation.block_keys()
         )
         assert len(rows) == 1, "the cap did not bound one parent's share"
+
+
+@pytest.mark.asyncio
+async def test_a_record_s_share_is_its_first_blocks(monkeypatch, reading):
+    """bug-455: the share is taken in text order, not by distance. The design now
+    says so; this pins it, so a change to the other rule has to change the doc too."""
+    async with _TempDB() as tmp:
+        await _store(tmp, [LONG_RECORD])
+        monkeypatch.setattr(blocks, "BLOCK_PER_PARENT_CAP", 2)
+        db = await database.get_db()
+        rows = await blocks._examined(db, isolation_where(agent_id=AGENT), generation.block_keys())
+        assert [r[2] for r in rows] == [0, 1]
+
+
+def test_the_design_states_the_share_the_code_applies():
+    """The design gives the share's size; it has to be the constant's."""
+    design = (Path(__file__).resolve().parent.parent / "docs" / "BLOCK_REACH_DESIGN.md").read_text()
+    assert f"first {blocks.BLOCK_PER_PARENT_CAP} blocks in text order" in design
 
 
 # --------------------------------------------------------------------------
