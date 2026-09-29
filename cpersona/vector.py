@@ -3,6 +3,7 @@
 Holds the module-level `_embedding_client` singleton, set by `server.main()` at startup.
 """
 
+import bisect
 import heapq
 import json
 import logging
@@ -553,6 +554,7 @@ async def _index_phase1(
     source_id: str,
     scan_limit: int,
     query_dim: int,
+    query_vec,
     table: str = "memories",
     scan_offset: int = 0,
 ):
@@ -563,9 +565,11 @@ async def _index_phase1(
     carry no `source`, so `source_id` is meaningless there and the caller passes
     it empty (the episode scan applies its own source rule before it gets here).
 
-    Returns `(ids, matrix)` in the scan's own order — `created_at` DESC, then
-    `id` ASC — so everything downstream (the threshold, the stable top-`limit`
-    cut, the hydrate) is handed exactly what the SQL read used to hand it.
+    Returns `(ids, similarities)` in the scan's own order — `created_at` DESC,
+    then `id` ASC — so everything downstream (the threshold, the stable
+    top-`limit` cut, the hydrate) is handed exactly what the SQL read used to
+    hand it. It scores the window itself (`_score_merged_window`), so that a
+    copied window never has to exist whole (bug-329).
 
     `scan_offset` names where in that order the returned rows start: the far
     list of `docs/SCAN_WINDOW_REACH_DESIGN.md` asks for scan positions
@@ -667,8 +671,8 @@ async def _index_phase1(
         if tail is None:
             return None
 
-        return _merge_index_and_tail(
-            index, positions, tail, scan_limit, query_dim, scan_offset=scan_offset
+        return _score_merged_window(
+            index, positions, tail, scan_limit, query_dim, query_vec, scan_offset=scan_offset
         )
     except Exception:  # noqa: BLE001 — fail open, deliberately
         # bug-316: the last two statements of the phase were the only ones
@@ -929,68 +933,156 @@ def _merge_index_and_tail(index, positions, tail, scan_limit: int, query_dim: in
     afterwards: the empty-tail shape then still selects a contiguous run of the
     file and still answers with a view of it, so the far list costs one matmul
     over the rows it actually ranks rather than over everything above them too.
+
+    Returns the window as ONE matrix. Recall scores the window through
+    `_score_merged_window`, which reads the same rows but builds a copied window
+    a chunk at a time (bug-329); this whole-window form is the reference that
+    path is compared with.
+    """
+    import numpy as np
+
+    merged_ids, from_index, index_slots, from_tail = _window_selection(
+        index, positions, tail, scan_limit, scan_offset=scan_offset
+    )
+    if not merged_ids:
+        return [], np.empty((0, query_dim), dtype=np.float32)
+    view = _window_view(index, from_index, from_tail)
+    if view is not None:
+        return merged_ids, view
+    return merged_ids, _window_rows(
+        index, from_index, index_slots, from_tail, 0, len(merged_ids), query_dim
+    )
+
+
+def _window_selection(index, positions, tail, scan_limit: int, *, scan_offset: int = 0):
+    """Which rows the window holds, in scan order, and where each comes from.
+
+    Returns `(merged_ids, from_index, index_slots, from_tail)`: the ids in output
+    order, the index positions taken and the output slots they land in (both
+    ascending), and the tail rows taken with their slots. See
+    `_merge_index_and_tail` for why the tail is interleaved rather than prepended.
     """
     import numpy as np
 
     if not tail:
         positions = np.asarray(positions, dtype=np.int64)[scan_offset:scan_offset + scan_limit]
-        merged_ids = index.ids[positions].tolist()
-        from_index = positions
-        from_tail: list[tuple[int, bytes]] = []
-        index_slots = np.arange(len(positions))
-    else:
-        merged_ids, from_index, index_slots, from_tail = _interleave_index_and_tail(
-            index, positions, tail, scan_limit, scan_offset=scan_offset
-        )
+        return index.ids[positions].tolist(), positions, np.arange(len(positions)), []
+    return _interleave_index_and_tail(index, positions, tail, scan_limit, scan_offset=scan_offset)
 
+
+def _window_view(index, from_index, from_tail):
+    """The window as a slice of the mapped file, or None when it cannot be one."""
+    if from_tail or not _is_ascending_run(from_index):
+        return None
+    # The ordinary shape -- one agent, no axis narrowing, nothing written
+    # since the build -- selects a contiguous run of the file in file order,
+    # and the gather then copies that run out of the mapped file one
+    # scattered row at a time to rebuild a matrix that is already there.
+    # Measured at 100,000 rows x 1024 dims, the gather is 440 ms of a 498 ms
+    # vector arm against 26 ms for the same matmul over a view of the same
+    # rows -- 4.8x on the term that is 88% of the time. A scattered gather
+    # faults the mapped pages in scattered order; a matmul over a view
+    # streams them (benchmarks/measurements/results-contiguous-index.md).
+    #
+    # A view of exactly the selected rows, and never "multiply the whole file
+    # and then take the scores that were wanted": for a contiguous run the
+    # view is the same bytes in the same order with the same row count, so
+    # the scores are identical bit for bit, while the same measurement shows
+    # a scattered selection scored that way DIFFERS -- it changes the
+    # summation order, which is the exactness this design is built on. Hence
+    # a condition this narrow rather than a general fast path.
+    #
+    # The slice is a read-only view into the mapped file, which is safe
+    # because the candidate matrix is only ever read: its one consumer is
+    # `_cosine_matrix`, whose `mat @ query_vec` allocates its own result.
+    # Anything that wrote into the matrix would have to copy first.
+    start = int(from_index[0])
+    return index.embeddings[start:start + len(from_index)]
+
+
+def _window_rows(index, from_index, index_slots, from_tail, lo: int, hi: int, query_dim: int):
+    """Output slots `[lo, hi)` of a copied window, as one matrix of `hi - lo` rows.
+
+    A copy, not an arithmetic: every row receives the same bytes it would hold
+    in the whole-window matrix, in the same order, so a matrix built from
+    `[0, len)` is that matrix exactly.
+    """
+    import numpy as np
+
+    mat = np.empty((hi - lo, query_dim), dtype=np.float32)
+    from_index = np.asarray(from_index, dtype=np.int64)
+    index_slots = np.asarray(index_slots, dtype=np.int64)
+    first, last = (int(i) for i in np.searchsorted(index_slots, [lo, hi]))
+    # One vectorised gather: a memcpy out of the mapped file, never a Python
+    # object per row, which is the 72.9% this whole design is about.
+    #
+    # bug-329: `index.embeddings[from_index]` materialises a SECOND array the
+    # size of what it gathers before the assignment copies it out again.
+    # Gathering in blocks bounds that temporary by the block.
+    for block in range(first, last, _GATHER_BLOCK_ROWS):
+        stop = min(block + _GATHER_BLOCK_ROWS, last)
+        mat[index_slots[block:stop] - lo] = index.embeddings[from_index[block:stop]]
+    for slot, blob in from_tail[bisect.bisect_left(from_tail, lo, key=lambda t: t[0]):]:
+        if slot >= hi:
+            break
+        mat[slot - lo] = np.frombuffer(blob, dtype=np.float32)
+    return mat
+
+
+def _scan_chunk_bounds(rows: int, chunk_rows: int) -> list[tuple[int, int]]:
+    """The row ranges `_chunked_cosine_scan` scores a window of `rows` rows in.
+
+    Chunks of `chunk_rows`, except that a short remainder is carried into the
+    chunk before it rather than scored alone -- the lookahead in that scan, and
+    the reason for it is written there: the BLAS picks its kernel from the row
+    count, and a small matrix scores differently from the same rows inside a
+    larger one. A window that fits in one chunk is one range.
+    """
+    if rows <= chunk_rows:
+        return [(0, rows)] if rows else []
+    bounds = [(start, start + chunk_rows) for start in range(0, rows - chunk_rows + 1, chunk_rows)]
+    if bounds[-1][1] < rows:
+        bounds[-1] = (bounds[-1][0], rows)
+    return bounds
+
+
+def _score_merged_window(index, positions, tail, scan_limit: int, query_dim: int, query_vec,
+                         *, scan_offset: int = 0):
+    """`(merged_ids, similarities)` for the window `_merge_index_and_tail` names.
+
+    bug-329: the copied window used to be built whole, so this path held a
+    matrix the size of the scan window -- growing with the memory cap and the
+    reach -- where the SQL scan it stands in for holds one chunk. A copied window
+    is now built and scored a chunk at a time, in the ranges the SQL scan scores
+    (`_scan_chunk_bounds`), so the peak is one chunk plus the scores. Each
+    chunk reaches `_cosine_matrix` with the rows, the bytes and the row count
+    the SQL scan hands it for the same window, so the two phase-1 suppliers
+    score identically by construction on any platform, not only where the
+    chunked scan was measured to match a single matmul.
+
+    A window that is a view of the file stays one matmul: it copies nothing,
+    and its exactness against the copy is pinned on its own.
+    """
+    import numpy as np
+
+    merged_ids, from_index, index_slots, from_tail = _window_selection(
+        index, positions, tail, scan_limit, scan_offset=scan_offset
+    )
     if not merged_ids:
-        return [], np.empty((0, query_dim), dtype=np.float32)
-
-    if not from_tail and _is_ascending_run(from_index):
-        # The ordinary shape -- one agent, no axis narrowing, nothing written
-        # since the build -- selects a contiguous run of the file in file order,
-        # and the gather below then copies that run out of the mapped file one
-        # scattered row at a time to rebuild a matrix that is already there.
-        # Measured at 100,000 rows x 1024 dims, the gather is 440 ms of a 498 ms
-        # vector arm against 26 ms for the same matmul over a view of the same
-        # rows -- 4.8x on the term that is 88% of the time. A scattered gather
-        # faults the mapped pages in scattered order; a matmul over a view
-        # streams them (benchmarks/measurements/results-contiguous-index.md).
-        #
-        # A view of exactly the selected rows, and never "multiply the whole file
-        # and then take the scores that were wanted": for a contiguous run the
-        # view is the same bytes in the same order with the same row count, so
-        # the scores are identical bit for bit, while the same measurement shows
-        # a scattered selection scored that way DIFFERS -- it changes the
-        # summation order, which is the exactness this design is built on. Hence
-        # a condition this narrow rather than a general fast path.
-        #
-        # The slice is a read-only view into the mapped file, which is safe
-        # because the candidate matrix is only ever read: its one consumer is
-        # `_cosine_matrix`, whose `mat @ query_vec` allocates its own result.
-        # Anything here that wrote into the matrix would have to copy first.
-        start = int(from_index[0])
-        return merged_ids, index.embeddings[start:start + len(from_index)]
-
-    mat = np.empty((len(merged_ids), query_dim), dtype=np.float32)
-    if len(from_index):
-        # One vectorised gather: a memcpy out of the mapped file, never a Python
-        # object per row, which is the 72.9% this whole change is about.
-        #
-        # bug-329: `index.embeddings[from_index]` materialises a SECOND array the
-        # size of the whole window before the assignment copies it out again, so
-        # this path peaked at roughly 2.2x the window bytes and grew with both
-        # the memory cap and the reach. Gathering in blocks bounds that temporary
-        # by the block instead of the window. It is a copy, not an arithmetic:
-        # `mat` receives the same bytes in the same slots, so `_cosine_matrix`
-        # still sees one array of one shape and the scores are identical by
-        # construction rather than by measurement.
-        for lo in range(0, len(from_index), _GATHER_BLOCK_ROWS):
-            hi = lo + _GATHER_BLOCK_ROWS
-            mat[index_slots[lo:hi]] = index.embeddings[from_index[lo:hi]]
-    for slot, blob in from_tail:
-        mat[slot] = np.frombuffer(blob, dtype=np.float32)
-    return merged_ids, mat
+        return [], np.empty(0, dtype=np.float32)
+    view = _window_view(index, from_index, from_tail)
+    if view is not None:
+        return merged_ids, _cosine_matrix(query_vec, view)
+    # Read at call time, like the scan, so the two cannot disagree on the size.
+    chunk_rows = max(1, VECTOR_SCAN_CHUNK_ROWS)
+    scores = [
+        _cosine_matrix(
+            query_vec,
+            _window_rows(index, from_index, index_slots, from_tail, lo, hi, query_dim),
+        )
+        for lo, hi in _scan_chunk_bounds(len(merged_ids), chunk_rows)
+    ]
+    return merged_ids, np.concatenate(scores)
 
 
 def _interleave_index_and_tail(index, positions, tail, scan_limit: int, *, scan_offset: int = 0):
@@ -1331,14 +1423,14 @@ async def _scan_memories_local(
         source_id=source_id,
         scan_limit=scan_limit,
         query_dim=query_dim,
+        query_vec=query_vec,
         scan_offset=scan_offset,
     )
     from_index = supplied is not None
     if supplied is not None:
-        valid_ids, mat = supplied
+        valid_ids, sims = supplied
         if not valid_ids:
             return []
-        sims = _cosine_matrix(query_vec, mat)
         # Survivors keep the scan's order (created_at DESC): heapq.nlargest in
         # _search_vector is stable, so this order is what breaks a tie between two
         # equally-similar rows, and nothing below may reorder them.
@@ -1530,15 +1622,15 @@ async def _scan_episodes_local(
         source_id="",
         scan_limit=scan_limit,
         query_dim=query_dim,
+        query_vec=query_vec,
         table="episodes",
         scan_offset=scan_offset,
     )
     from_index = supplied is not None
     if supplied is not None:
-        valid_ids, mat = supplied
+        valid_ids, ep_sims = supplied
         if not valid_ids:
             return []
-        ep_sims = _cosine_matrix(query_vec, mat)
         # Survivors keep the scan's order, for the same reason as in the memory
         # scan: the caller's nlargest is stable, and this order is its tie-break.
         survivors = [

@@ -187,8 +187,11 @@ rows than it does today.
 With the contiguous vector index built, that read is the index's fast path.
 Without one, it is the chunked table scan, whose latency at a reach of 200,000
 on a 237,654-row corpus was roughly double the default's, with the keyword
-channel as the floor in both cases. Memory does not grow with either number
-beyond the chunk the scan holds and the index file it maps.
+channel as the floor in both cases. The embeddings a recall holds in memory do
+not grow with either number beyond one chunk and the index file it maps; what
+grows is an id and a score per row. (Before 2.6.0b2, an index window that had to
+be copied, because a row had been written since the build or the selection had
+a gap, was held whole.)
 
 No archival or thinning routine is required. The long-term model is *no
 physical deletion — old rows sink via windows and decay*.
