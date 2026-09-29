@@ -1277,6 +1277,19 @@ def _ends_a_sentence(fragment: str) -> bool:
     return bool(stripped) and stripped.endswith(_TERMINATORS)
 
 
+def _following(text: str, spans: list[tuple[int, int]], after: int) -> str:
+    """The text from block ``after`` through the first block from there that is not blank.
+
+    bug-445: the divider can leave a block of whitespace between two sentences
+    (a sentence end followed by a line break). A qualifier behind it is still the
+    next thing a reader meets, so the forward check reads through the blank.
+    """
+    for k in range(after, len(spans)):
+        if text[spans[k][0] : spans[k][1]].strip():
+            return text[spans[after][0] : spans[k][1]]
+    return text[spans[after][0] : spans[-1][1]]
+
+
 def context_range(
     text: str, spans: list[tuple[int, int]], index: int, max_chars: int = 0
 ) -> tuple[int, int, bool]:
@@ -1310,7 +1323,7 @@ def context_range(
         )
         wants_after = last + 1 < len(spans) and (
             not _ends_a_sentence(text[start:end])
-            or _starts_with_qualifier(text[spans[last + 1][0] : spans[last + 1][1]])
+            or _starts_with_qualifier(_following(text, spans, last + 1))
         )
         if not wants_before and not wants_after:
             return start, end, complete

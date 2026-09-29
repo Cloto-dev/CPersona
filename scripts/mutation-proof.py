@@ -1357,6 +1357,16 @@ MUTATIONS += [
         breaks="retracting `mem:01` leaves the stored `mem:1` mention in place and reports 0 retracted",
         expect="test_associations_declare.py::test_retract_finds_a_mention_by_any_spelling_of_its_ref",
     ),
+    Mutation(
+        id="M125",
+        tests=("tests/test_blocks_quotation.py",),
+        target="blocks — a qualifier behind a line break is still attached (bug-445)",
+        file="cpersona/blocks.py",
+        find="or _starts_with_qualifier(_following(text, spans, last + 1))",
+        replace="or _starts_with_qualifier(text[spans[last + 1][0] : spans[last + 1][1]])",
+        breaks="'Enable caching.' is quoted alone and complete when 'However, never in production.' follows on the next line",
+        expect="test_blocks_quotation.py::test_a_qualifier_on_the_next_line_is_still_attached",
+    ),
 ]
 
 
