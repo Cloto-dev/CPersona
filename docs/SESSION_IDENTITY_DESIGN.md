@@ -87,9 +87,13 @@ from the dict because its dispatch hands one over. Same seam, different host.)
 - Absent, empty or whitespace-only falls through to the transport fallback with
   `declared` false. That is byte-for-byte today's behaviour for every existing
   caller.
-- There is no length limit, no format validation, and no sanitization beyond
-  `strip()`. The value is compared, never parsed, never rendered into SQL
-  identifiers, and never logged as an identity claim.
+- There is no format validation and no sanitization beyond `strip()`. The
+  value is compared, never parsed, never rendered into SQL identifiers, and
+  never logged as an identity claim.
+- The length is bounded: every tool schema declares `maxLength: 256` on
+  `session_key`, so a longer key is refused at the tool boundary (2.6.0b2). The
+  key is held in process-wide maps that are capped by entry count, so what one
+  key may weigh is what bounds their memory.
 
 The fallback is a per-process constant (`TRANSPORT_KEY`). Under stdio that is
 already a session, because the process is one. Under streamable-HTTP it is a

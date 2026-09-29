@@ -85,7 +85,7 @@ from cpersona import config
 from cpersona import utils
 from cpersona import operating_context
 from cpersona import update_check
-from cpersona.session import resolve_session_key
+from cpersona.session import SESSION_KEY_MAX_CHARS, resolve_session_key
 from cpersona.database import close_db, init_db
 from cpersona.maintenance_handlers import (
     do_check_health,
@@ -643,6 +643,8 @@ _SESSION_KEY_PROPERTY = {
         "caller that omits it, which is the behaviour that predates this parameter."
     ),
     "default": "",
+    # bug-386: the key is held in process-global maps, so its length is bounded.
+    "maxLength": SESSION_KEY_MAX_CHARS,
 }
 
 # Arm D of the stage 2 cost decision (design §6): the full text above is kept only
@@ -662,6 +664,7 @@ _SESSION_KEY_PROPERTY_SHORT = {
         "recall."
     ),
     "default": "",
+    "maxLength": SESSION_KEY_MAX_CHARS,
 }
 
 # The associative-memory declaration (docs/ASSOCIATIVE_MEMORY_DESIGN.md §2),
@@ -1767,6 +1770,7 @@ registry.auto_tool(
                     "Opaque session identity you declare: a partition hint, not authentication "
                     "and not a data filter. Forwarded to the candidate recall."
                 ),
+                "maxLength": SESSION_KEY_MAX_CHARS,
             },
             "time_cue": {
                 "type": "object",
@@ -2448,6 +2452,7 @@ registry.auto_tool(
                 "authentication). Empty on a non-stdio transport marks the response "
                 "identity_shared.",
                 "default": "",
+                "maxLength": SESSION_KEY_MAX_CHARS,
             },
             "per_kind_limit": {
                 "type": "integer",

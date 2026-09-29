@@ -1537,6 +1537,26 @@ MUTATIONS += [
         breaks="a capped episode listing is indistinguishable from a complete one",
         expect="test_bug385_row_cap_marker.py::test_the_episode_listing_carries_the_marker_too",
     ),
+    Mutation(
+        id="M139",
+        tests=("tests/test_bug386_session_key_bound.py",),
+        target="session_key — a key past the bound is refused at the tool boundary (bug-386)",
+        file="cpersona/session.py",
+        find="SESSION_KEY_MAX_CHARS = 256",
+        replace="SESSION_KEY_MAX_CHARS = 1_000_000",
+        breaks="a caller chooses how much memory each key holds in the process-global maps",
+        expect="test_bug386_session_key_bound.py::test_a_key_past_the_bound_is_refused_at_the_boundary",
+    ),
+    Mutation(
+        id="M140",
+        tests=("tests/test_bug386_session_key_bound.py",),
+        target="session_key — every schema that takes the key declares the bound (bug-386)",
+        file="cpersona/server.py",
+        find='''"and not a data filter. Forwarded to the candidate recall."\n                ),\n                "maxLength": SESSION_KEY_MAX_CHARS,''',
+        replace='''"and not a data filter. Forwarded to the candidate recall."\n                ),''',
+        breaks="reconstruct accepts a key of any length while every other tool refuses it",
+        expect="test_bug386_session_key_bound.py::test_every_tool_that_takes_the_key_declares_the_bound",
+    ),
 ]
 
 
