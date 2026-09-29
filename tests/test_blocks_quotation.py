@@ -111,6 +111,36 @@ def test_independent_sentences_are_left_apart(index):
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "Enable caching.\nHowever, never in production.",
+        "Enable caching.\n\nHowever, never in production.",
+        "本番でキャッシュを有効にする。\nただし、夜間は無効にする。",
+        # Joined without a line break, the qualifier was already attached.
+        "Enable caching. However, never in production.",
+        "本番でキャッシュを有効にする。ただし、夜間は無効にする。",
+    ],
+)
+def test_a_qualifier_on_the_next_line_is_still_attached(text):
+    """bug-445: a sentence end followed by a line break leaves a block of whitespace
+    between the two sentences, and the forward check read only that block. The
+    first sentence was quoted alone and called complete, the opposite of the text."""
+    spans = _spans(text)
+    start, end, complete = blocks.context_range(text, spans, 0)
+    assert text[start:end] == text
+    assert complete
+
+
+@pytest.mark.parametrize("text", ["Enable caching.\nDeploy on Monday.", "Enable caching.\n\nDeploy on Monday."])
+def test_a_line_break_does_not_join_independent_sentences(text):
+    """The control: reading through the blank must not take whatever comes next."""
+    spans = _spans(text)
+    start, end, complete = blocks.context_range(text, spans, 0)
+    assert text[start:end] == "Enable caching."
+    assert complete
+
+
+@pytest.mark.parametrize(
     "index, expected",
     [
         # The rule is reaching forwards for the qualification, and cannot have it.

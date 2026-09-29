@@ -6530,12 +6530,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "^def context_range\\(",
+      "pattern": "or _starts_with_qualifier\\(_following\\(text, spans, last \\+ 1\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "correctness",
       "fix_sketch": "Skip whitespace-only blocks when looking for the following qualifier (and fix the block that produces them).",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it.",
+      "fix_note": "The forward check now reads from the next block through the first block that is not blank, so a qualifier behind a line break is seen as the next thing a reader meets; the extension still proceeds one block at a time and still reports incomplete when the limit cannot hold it. The whitespace block itself comes from the divider (bug-444, left open): removing it would change every record's division and so the stored block sets and read-time ranges, a larger change than this one, which only alters what one direction reads. The backward check was already right because it strips leading whitespace from the combined text. tests/test_blocks_quotation.py covers English and Japanese with one and two line breaks (failing before the fix) and the same text joined without one (passing before and after), plus independent sentences on separate lines that must stay apart."
     },
     {
       "id": "bug-446",
