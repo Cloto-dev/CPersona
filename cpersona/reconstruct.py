@@ -1011,6 +1011,23 @@ def _quote(
     return quote
 
 
+# How recall shows an episode: this label, then the stored summary. get_contents,
+# nodes and blocks all measure offsets in the summary alone.
+_EPISODE_LABEL = "[Episode] "
+
+
+def _stored_text(claim: _Candidate) -> str:
+    """The record's text as stored, so a range into it is one get_contents can serve.
+
+    bug-456: an episode quoted without a block set was measured in recall's display
+    string, and every range and expand span landed 10 characters right of the text
+    they named.
+    """
+    if claim.kind == "ep" and claim.content.startswith(_EPISODE_LABEL):
+        return claim.content[len(_EPISODE_LABEL):]
+    return claim.content
+
+
 def _filled_quote(claim: _Candidate, block_entry: tuple | None, query_bits, query_grams: set[str], cap: int) -> dict:
     """An item's head quote: the parts of its record that matched, filled to `cap` (2.6).
 
@@ -1024,7 +1041,7 @@ def _filled_quote(claim: _Candidate, block_entry: tuple | None, query_bits, quer
     `quote_basis` says which of those it was and `ranges` gives the quoted spans in the
     record's text, in text order; the spans are joined by `excerpts.SEPARATOR`.
     """
-    text = block_entry[0] if block_entry is not None else claim.content
+    text = block_entry[0] if block_entry is not None else _stored_text(claim)
     if len(text) <= cap:
         return {"content": text, "quote_basis": "whole", "ranges": [[0, len(text)]]}
     if block_entry is not None:

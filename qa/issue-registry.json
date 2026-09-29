@@ -6693,11 +6693,13 @@
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
       "pattern": "text = block_entry\\[0\\] if block_entry is not None else claim\\.content",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
+      "fixed_in": "2.6.0b1",
       "category": "reconstructive-recall",
       "fix_sketch": "Quote episode heads in the stored summary (strip the display prefix before measuring), as the block path already does.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "Without a block set the head quote is now measured in the stored text: for an episode, recall's '[Episode] ' label is removed before ranking and filling, which is the text get_contents, nodes and blocks already measure in. The quote's content therefore no longer carries the label, as it did not on the block path either, so the two paths agree; the item's head_ref still says it is an episode. Keeping the label in content and shifting only the offsets was rejected: content would then not be the concatenation of its ranges, which is what the quote contract and the excerpt tests hold. tests/test_reconstruct_filled_quote.py quotes a long episode, reads every range back through get_contents and requires the joined text to equal the quote, and expands a severed quote and requires it to continue the quote; before the fix both read text 10 characters to the right."
     },
     {
       "id": "bug-457",

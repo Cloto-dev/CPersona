@@ -1397,6 +1397,16 @@ MUTATIONS += [
         breaks="hosts that gate approval on destructiveHint let retract delete relations and mentions unasked",
         expect="test_associations_declare.py::test_declare_associations_is_annotated_destructive",
     ),
+    Mutation(
+        id="M124",
+        tests=("tests/test_reconstruct_filled_quote.py",),
+        target="reconstruct — an episode head is measured in its stored summary (bug-456)",
+        file=_RC,
+        find="text = block_entry[0] if block_entry is not None else _stored_text(claim)",
+        replace="text = block_entry[0] if block_entry is not None else claim.content",
+        breaks="an episode's ranges and expand span point 10 characters right of the passage they name",
+        expect="test_reconstruct_filled_quote.py::test_an_episode_is_quoted_in_the_text_get_contents_serves",
+    ),
 ]
 
 

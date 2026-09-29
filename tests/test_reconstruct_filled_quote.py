@@ -163,6 +163,41 @@ async def test_a_best_passage_longer_than_the_cap_says_it_was_cut(filling, monke
         assert passage.startswith(item["content"]) and len(passage) > 20, "the handover does not read the rest"
 
 
+async def _episode(tmp, summary):
+    for text in FILLER:
+        await memory_handlers.do_store(AGENT, {"content": text})
+    out = await memory_handlers.do_archive_episode(
+        AGENT, [{"role": "user", "content": "notes"}], summary=summary, keywords="notes"
+    )
+    await tmp.drain()
+    return f"ep:{out['episode_id']}"
+
+
+@pytest.mark.asyncio
+async def test_an_episode_is_quoted_in_the_text_get_contents_serves(filling):
+    """bug-456: without a block set, an episode was measured in recall's display
+    string ('[Episode] ' + summary), so every range pointed 10 characters right of
+    the passage it named. Each range, read back, must be what the quote shows."""
+    async with _TempDB() as tmp:
+        ref = await _episode(tmp, LONG)
+        item, _ = await _item(ref)
+        assert item["quote_basis"] == "lexical" and TAIL in item["content"]
+        back = await memory_handlers.do_get_contents(AGENT, [{"ref": ref, "span": r} for r in item["ranges"]])
+        assert excerpts.SEPARATOR.join(i["content"] for i in back["items"]) == item["content"]
+        assert item["content_len"] == len(LONG)
+
+
+@pytest.mark.asyncio
+async def test_an_episode_s_cut_passage_expands_to_its_own_rest(filling, monkeypatch):
+    monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 20)
+    async with _TempDB() as tmp:
+        ref = await _episode(tmp, LONG)
+        item, _ = await _item(ref)
+        assert item["context_incomplete"] is True and item["expand"]["ref"] == ref
+        passage = (await memory_handlers.do_get_contents(AGENT, [item["expand"]]))["items"][0]["content"]
+        assert passage.startswith(item["content"]) and len(passage) > 20
+
+
 @pytest.mark.asyncio
 async def test_zero_brings_back_the_single_passage(filling, monkeypatch):
     async with _TempDB() as tmp:
