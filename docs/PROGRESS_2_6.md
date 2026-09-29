@@ -1,6 +1,6 @@
 # Where the 2.6 line stands
 
-Updated: 2026-09-29. This page says how far the 2.6 line has come, item by
+Updated: 2026-09-30. This page says how far the 2.6 line has come, item by
 item, with the evidence for each. The [line's page](RELIABLE_RECALL_2_6.md)
 says what the line builds and what "done" means; the
 [release notes](https://github.com/Cloto-dev/cpersona/releases) say what each
@@ -50,6 +50,7 @@ The numbering follows
 | 2.6.0a8 | An opt-in propagation seat: one held place for the row a deeper ranking of the same recall leads to from the answer's first row (`CPERSONA_RECALL_PROPAGATION_SEAT`, off by default) | [#338](https://github.com/Cloto-dev/cpersona/pull/338) |
 | 2.6.0a8 | Recall and reconstruct call each stage through a provider slot, and a traced recall records the budget it declared and what each stage received; nothing a caller receives changes | [#335](https://github.com/Cloto-dev/cpersona/pull/335), [#336](https://github.com/Cloto-dev/cpersona/pull/336) |
 | 2.6.0b1 | No feature: fixes for the eleven MEDIUM defects a review of 2.6.0a1..a8 found, among them a project's alias other projects could read, a qualifier on the next line left out of a quote, `reconstruct` walking with no bound on its hops, an episode quote measured 10 characters off, and node sets the reader rejected that nothing rebuilt | [#356](https://github.com/Cloto-dev/cpersona/pull/356), [#357](https://github.com/Cloto-dev/cpersona/pull/357), [#358](https://github.com/Cloto-dev/cpersona/pull/358), [#359](https://github.com/Cloto-dev/cpersona/pull/359), [#361](https://github.com/Cloto-dev/cpersona/pull/361) |
+| 2.6.0b2 | No feature: fixes for the five remaining MEDIUM defects, among them an in-memory export whose header could disagree with its body, an index status that reported rows each query reads as none, a list cut by its row cap that looked complete, a `session_key` with no length bound, and an index path that held a copied window whole | [#363](https://github.com/Cloto-dev/cpersona/pull/363), [#364](https://github.com/Cloto-dev/cpersona/pull/364), [#365](https://github.com/Cloto-dev/cpersona/pull/365), [#366](https://github.com/Cloto-dev/cpersona/pull/366) |
 
 The associative layer is released and off by default. Whether it becomes the
 default is decided by its own A/B run; no result of that run is recorded yet.

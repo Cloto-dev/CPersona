@@ -1,10 +1,10 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:66b2c51b9e91818043311d62343102855ee7e292 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:3ce8d2529187592a3d40b8192b1d9ff844d42e6f -->
 
 # 2.6 系はいまどこまで来ているか
 
 > **翻訳について**: 正本は英語版です。この日本語版は参照用の翻訳で、内容が食い違う場合は英語版が優先されます。
 
-更新日: 2026-09-29。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
+更新日: 2026-09-30。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
 示します。このラインが何を建て、何をもって完了とするかは
 [ラインのページ](RELIABLE_RECALL_2_6.md) が、各リリースに何が入っているかは
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
@@ -52,6 +52,7 @@
 | 2.6.0a8 | opt-in の伝播の席: 同じ recall をより深く並べた時に、答えの最初の行から導かれる行のために 1 席を取る (`CPERSONA_RECALL_PROPAGATION_SEAT`、既定は off) | [#338](https://github.com/Cloto-dev/cpersona/pull/338) |
 | 2.6.0a8 | recall と reconstruct は各段を provider の枠を通して呼び、trace は宣言した予算と各段が受け取ったものを記録する。呼び出し側が受け取るものは変わらない | [#335](https://github.com/Cloto-dev/cpersona/pull/335)、[#336](https://github.com/Cloto-dev/cpersona/pull/336) |
 | 2.6.0b1 | 機能の追加はなし: 2.6.0a1〜a8 のレビューで見つかった MEDIUM の欠陥 11 件の修正。他のプロジェクトから読めていたプロジェクトの別名、引用から漏れていた次の行の限定句、段数に上限のなかった `reconstruct` のたどり、10 字ずれて測られていたエピソードの引用、読み手が拒否するのに誰も作り直さなかったノード集合などです | [#356](https://github.com/Cloto-dev/cpersona/pull/356), [#357](https://github.com/Cloto-dev/cpersona/pull/357), [#358](https://github.com/Cloto-dev/cpersona/pull/358), [#359](https://github.com/Cloto-dev/cpersona/pull/359), [#361](https://github.com/Cloto-dev/cpersona/pull/361) |
+| 2.6.0b2 | 機能の追加はなし: 残っていた MEDIUM の欠陥 5 件の修正。ヘッダと本文が食い違いうるメモリ上 DB のエクスポート、毎クエリ読む行を 0 と報告していた索引の status、行の上限で切られても完全に見えていた一覧、長さに上限のなかった `session_key`、コピーが要る窓を丸ごと保持していた索引の経路などです | [#363](https://github.com/Cloto-dev/cpersona/pull/363), [#364](https://github.com/Cloto-dev/cpersona/pull/364), [#365](https://github.com/Cloto-dev/cpersona/pull/365), [#366](https://github.com/Cloto-dev/cpersona/pull/366) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。

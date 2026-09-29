@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:8d3501e3b47151bdf343f666f263dd88b9b58ac4 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:41ee7acab2caf6d09c3905dd377acd93f8aa735c -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
-このページは、既存の 2.5.x のストアを、現在の 2.6 の pre-release である **2.6.0b1** まで
+このページは、既存の 2.5.x のストアを、現在の 2.6 の pre-release である **2.6.0b2** まで
 一度に移行する手順をまとめたものです。2.6 の各 pre-release は、リリースノートに自分の段の
 手順しか書いていません。このページは、2.5.12 からの手順を 1 か所に集めます。
 
@@ -23,7 +23,7 @@
 3. **pre-release を明示してインストールする。** pip は自分からは pre-release を選びません:
 
    ```sh
-   pip install 'cpersona==2.6.0b1'
+   pip install 'cpersona==2.6.0b2'
    ```
 
 ## 最初の起動で起きること { #what-the-first-start-does }
@@ -39,7 +39,7 @@
 | 16 | 2.6.0a5 | `record_blocks`: Block による到達 | Block による到達を on にした場合だけ ([下記](#optional-turn-on-block-reach)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block による到達を on にした場合だけ |
 
-2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1 はスキーマを変えていません。
+2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2 はスキーマを変えていません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
@@ -114,6 +114,21 @@ Block による到達は既定で off で、off の間は費用がかかりま�
   なりました。`retract` は `true` / `false` を id として受けません。次の行から始まる限定句も
   引用に付きます。エピソードの `reconstruct` の引用は保存された要約で測られ、`[Episode] ` の
   ラベルを含みません。`check_health` は、隙間や欠けた埋め込みのあるノード集合を報告して作り直します。
+- **`session_key` は 256 文字までです** (2.6.0b2)。これを受けるすべてのツールが `maxLength: 256`
+  を宣言し、それより長いキーは呼び出しが走る前に入力検証のエラーで拒否されます。プロセス id と
+  開始時刻から作るキーや UUID は、この上限を大きく下回ります。
+- **行の上限で切られた一覧はそう言います** (2.6.0b2)。`list_memories` と `list_episodes` は、
+  これまでどおり `limit` を 500 行と 200 行に抑えます。呼び出し側がそれより多くを求め、上限の先に
+  行がある時は、応答に `budget_rows` (上限の値) が付きます。求めた数より少なければ終わりと
+  みなすクライアントは、このキーを読んでください。
+- **ベクトル索引の遅れは、毎クエリがテーブルから読む行をすべて数えます** (2.6.0b2)。
+  `python -m cpersona.vector_index status` に `rows_read_exactly`、`excluded`、`unembedded` が
+  加わり、`build` に `unembedded` が加わります。`check_health` の `vector_index_tail_grown` は
+  `rows_read_exactly` を再 build の比率と比べるので、`fix=true` が欠けた埋め込みを埋めた後は、
+  `rows_past_watermark` が 0 のままでも現れることがあります。索引を build し直すと、その後に埋め込みを得た行は索引に入ります。
+- **細かな修正** (2.6.0b2): メモリ上のデータベースでは、`export_memories` が一貫した複製を
+  読みます。ベクトル索引の経路は、コピーが要る窓を、テーブル走査と同じ範囲で 1 チャンクずつ
+  採点します。
 
 2.6 で新しく入り、求めない限り何もしないもの: `reconstruct` ツール、recall の trace (`trace=true`)、
 時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、伝播の席
