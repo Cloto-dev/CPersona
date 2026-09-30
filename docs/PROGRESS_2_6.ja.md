@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:4e9f218e1cd3ac40c4dccb4bb3f9c35489b19742 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:2b5f03ced5aedca0e2fa31bdc266450217ccaacf -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,7 +10,7 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6.0 はこのラインの最初の final リリースで、版を指定しない導入はこれになります。
+2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1 が続き、版を指定しない導入はこれになります。
 pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -54,6 +54,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.0b1 | 機能の追加はなし: 2.6.0a1〜a8 のレビューで見つかった MEDIUM の欠陥 11 件の修正。他のプロジェクトから読めていたプロジェクトの別名、引用から漏れていた次の行の限定句、段数に上限のなかった `reconstruct` のたどり、10 字ずれて測られていたエピソードの引用、読み手が拒否するのに誰も作り直さなかったノード集合などです | [#356](https://github.com/Cloto-dev/cpersona/pull/356), [#357](https://github.com/Cloto-dev/cpersona/pull/357), [#358](https://github.com/Cloto-dev/cpersona/pull/358), [#359](https://github.com/Cloto-dev/cpersona/pull/359), [#361](https://github.com/Cloto-dev/cpersona/pull/361) |
 | 2.6.0b2 | 機能の追加はなし: 残っていた MEDIUM の欠陥 5 件の修正。ヘッダと本文が食い違いうるメモリ上 DB のエクスポート、毎クエリ読む行を 0 と報告していた索引の status、行の上限で切られても完全に見えていた一覧、長さに上限のなかった `session_key`、コピーが要る窓を丸ごと保持していた索引の経路などです | [#363](https://github.com/Cloto-dev/cpersona/pull/363), [#364](https://github.com/Cloto-dev/cpersona/pull/364), [#365](https://github.com/Cloto-dev/cpersona/pull/365), [#366](https://github.com/Cloto-dev/cpersona/pull/366) |
 | 2.6.0 | このラインの最初の final リリース。機能の追加はなし: Block による到達を既定で on にし、`count` を省略した `reconstruct` を 10 項目にし (この 2 つで、記憶から答えるためにこのリリースが推奨する構成になります)、alpha のレビューが登録した LOW の欠陥 43 件を修正。ノードの境界をまたいでいた Block の集合、表せる範囲を超えて例外になっていた時期の手がかり、待ち行列の全タスクを止めていた失敗する構築、どのゲートも認めていない脇の行に記録されていた recall の回数など。 |
+| 2.6.1 | 実運用の報告から入れた修正と追加: サーバーが開いたままでも Windows で連続配置索引を再構築できる (bug-503)。recall のスコアが何を意味し、なぜ「一致するものは無い」を示せないか ([契約 §12](behavior-contracts.md#12-scores-order-one-response-they-do-not-say-whether-an-answer-exists))。recall を促す Claude Code フックの例 ([運用](operations.md#prompting-recall-from-claude-code-hooks))。`get_session_findings` が準拠する SuperAuditor の版 (1.1) を示す | [#377](https://github.com/Cloto-dev/cpersona/pull/377)、[#378](https://github.com/Cloto-dev/cpersona/pull/378)、[#379](https://github.com/Cloto-dev/cpersona/pull/379)、[#380](https://github.com/Cloto-dev/cpersona/pull/380) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。

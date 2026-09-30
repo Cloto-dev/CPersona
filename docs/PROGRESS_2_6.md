@@ -7,7 +7,8 @@ says what the line builds and what "done" means; the
 release contains. Where this page and a release disagree, the release is
 right.
 
-2.6.0 is the line's first final release, and a plain install resolves to it.
+2.6.0 is the line's first final release. 2.6.1 followed the same day, and a plain
+install resolves to it.
 Its pre-releases are on PyPI as `2.6.0aN` and `2.6.0bN`; the 2.5 line is now
 Candidate ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md)).
 
@@ -52,6 +53,7 @@ The numbering follows
 | 2.6.0b1 | No feature: fixes for the eleven MEDIUM defects a review of 2.6.0a1..a8 found, among them a project's alias other projects could read, a qualifier on the next line left out of a quote, `reconstruct` walking with no bound on its hops, an episode quote measured 10 characters off, and node sets the reader rejected that nothing rebuilt | [#356](https://github.com/Cloto-dev/cpersona/pull/356), [#357](https://github.com/Cloto-dev/cpersona/pull/357), [#358](https://github.com/Cloto-dev/cpersona/pull/358), [#359](https://github.com/Cloto-dev/cpersona/pull/359), [#361](https://github.com/Cloto-dev/cpersona/pull/361) |
 | 2.6.0b2 | No feature: fixes for the five remaining MEDIUM defects, among them an in-memory export whose header could disagree with its body, an index status that reported rows each query reads as none, a list cut by its row cap that looked complete, a `session_key` with no length bound, and an index path that held a copied window whole | [#363](https://github.com/Cloto-dev/cpersona/pull/363), [#364](https://github.com/Cloto-dev/cpersona/pull/364), [#365](https://github.com/Cloto-dev/cpersona/pull/365), [#366](https://github.com/Cloto-dev/cpersona/pull/366) |
 | 2.6.0 | The line's first final release, and no feature: block reach on by default, `reconstruct` at 10 items when `count` is omitted (together, the configuration the release recommends for answering from memory), and fixes for forty-three LOW defects the alpha review registered, among them block sets that crossed a node end, a time cue past the representable range that raised, a failing build that held every queued task, and held rows that earned a recall count no gate granted. |
+| 2.6.1 | Fixes and additions from a production report: the contiguous index can be rebuilt on Windows while a server holds it (bug-503); what a recall score means, and why it cannot say that nothing matches ([contract §12](behavior-contracts.md#12-scores-order-one-response-they-do-not-say-whether-an-answer-exists)); an example Claude Code hook that prompts recall ([runbook](operations.md#prompting-recall-from-claude-code-hooks)); `get_session_findings` names the SuperAuditor version it conforms to (1.1) | [#377](https://github.com/Cloto-dev/cpersona/pull/377), [#378](https://github.com/Cloto-dev/cpersona/pull/378), [#379](https://github.com/Cloto-dev/cpersona/pull/379), [#380](https://github.com/Cloto-dev/cpersona/pull/380) |
 
 The associative layer is released and off by default. Whether it becomes the
 default is decided by its own A/B run; no result of that run is recorded yet.
