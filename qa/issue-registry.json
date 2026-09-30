@@ -6674,12 +6674,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "if isinstance\\(r\\.get\\(\\\"id\\\"\\), int\\) and r\\[\\\"id\\\"\\] > 0 and not _is_episode_result\\(r\\)",
+      "pattern": "credited_ids = _memory_ids\\(results\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "recall-ranking",
       "fix_sketch": "Leave out rows admitted by reservation (_cue_seat, _propagation_seat, _block_distance) when building returned_ids.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "The rows the bump credits are fixed at the point where the gate, autocut, the prior, the count and the cue's bounded move have decided the answer -- before the block reservation, the cue's seats and the propagation seat are added beside it. Those rows passed no quality gate, and crediting them fed the loop bug-183 closed for rescued rows. Fixing the set there, rather than filtering the returned rows by their markers afterwards, means a future held place is excluded without anyone remembering to add its marker to a list. Regression: tests/test_recall_cue.py::test_a_seated_row_earns_no_recall_count and tests/test_blocks_retrieval.py::test_a_reserved_row_earns_no_recall_count_credit_with_confidence_on, each with the window's own row as the control that the bump ran (with confidence off nothing is bumped at all, which is why the older block test could not see this)."
     },
     {
       "id": "bug-454",
@@ -6687,13 +6689,15 @@
       "severity": "LOW",
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
-      "file": "cpersona/builtin_providers.py",
-      "pattern": "hits\\[: limit \\+ blocks\\.BLOCK_RESERVATION\\],",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "looked_at = hits\\[:BLOCK_HYDRATE_CAP\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Filter before cutting, or keep reading hits until the reservation is filled or the list ends.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Only with block retrieval on (off by default)."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Only with block retrieval on (off by default).",
+      "fixed_in": "2.6.0",
+      "fix_note": "The provider hands _block_reserved_rows the hits uncut, and the function hydrates them `wanted` at a time, applying the isolation, source, episode and exclude rules to each page, until `wanted` rows are built or BLOCK_HYDRATE_CAP hits have been looked at. The cap is the re-rank's own depth (BLOCK_RERANK_DEPTH): the ordered hits a recall normally has are the parents of at most that many rows, and the Hamming fallback's longer list is not read further than the re-ranked one would be, so a scope whose filters drop almost everything cannot turn one recall into hundreds of hydration queries. Regression: tests/test_blocks_retrieval.py::test_hits_the_filters_drop_do_not_use_up_the_reservation -- four other users' records whose tail is a block of its own rank first (checked on an unscoped recall), and the caller's record below them is now reserved."
     },
     {
       "id": "bug-455",
@@ -6780,12 +6784,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "await _backfill_cosines\\(db, results, query, project_id, channel\\)",
+      "pattern": "await _backfill_cosines\\(db, results, query, project_id, channel, into=\"_shown_cosine\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape-consistency",
       "fix_sketch": "Backfill whenever a confidence value is returned, or stop returning confidence for rows without a cosine.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Display only: under the default ordering confidence neither orders nor gates."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Display only: under the default ordering confidence neither orders nor gates.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Under the default fusion ordering the cosine is now taken for the returned rows, after the gate, and written to _shown_cosine, which only the returned confidence and match_reason.cosine read. Running the scoring pass's backfill under fusion as well was rejected: _gate_score reads _cosine before _rrf_score, so a backfilled cosine would have changed what the rrf gate compares -- the ordering a7 set out to leave alone -- and the bug-183 rescue keys on the backfill's marker. The rows are fetched on one read connection with the bug-472 counts, only with confidence enabled. Regression: tests/test_bug155_cosine_backfill.py::test_bug460_a_lexical_row_is_shown_on_its_real_cosine_under_fusion, and ::test_bug460_the_shown_cosine_moves_no_gate_order_or_signal, which holds the rows, their order and each gate signal equal with confidence off and on."
     },
     {
       "id": "bug-461",
@@ -6920,12 +6926,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "channel_weight = PRIOR_FAR_WEIGHT if ch is far_raw else 1\\.0",
+      "pattern": "def calibration_fingerprint\\(\\) -> str:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration-staleness",
       "fix_sketch": "Include the far weight in the calibration identity, or recalibrate when it changes.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Only with the vector reach set above the scan window."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Only with the vector reach set above the scan window.",
+      "fixed_in": "2.6.0",
+      "fix_note": "memory_handlers.calibration_fingerprint() is SCORING_VERSION, with '+far_weight=<w>' appended when CPERSONA_PRIOR_FAR_WEIGHT is not the default. The sidecar is stamped with it, and the restore guard, the carry of other agents' values and deep_calibration_staleness compare against it, so a gate calibrated at one weight is not restored at another and the startup guard recalibrates. Appending only off the default keeps every sidecar written so far valid: a deployment at the default sees no change and loses no per-agent calibration. Read from memory_handlers' copy of the weight, the one the fusion reads. Regression: tests/test_gate_remediation.py::test_the_far_weight_is_part_of_the_calibration_fingerprint and ::test_a_gate_calibrated_at_another_far_weight_is_not_restored (both directions)."
     },
     {
       "id": "bug-471",
@@ -6950,12 +6958,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "rc_data = \\(0, \\\"\\\"\\) if _is_episode_result\\(r\\) else recall_counts\\.get\\(r\\.get\\(\\\"id\\\", -1\\), \\(0, \\\"\\\"\\)\\)",
+      "pattern": "unread = \\[i for i in _memory_ids\\(results\\) if i not in recall_counts\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Read the seat rows' counts too, or omit confidence for seat rows.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Display only."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Display only.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Before the response is built, the memories returned without an entry in recall_counts -- the rows no scoring pass read: cue-only seats, the propagation seat, reserved rows -- have their counts read (_read_recall_counts, the chunked read scoring uses, extracted so the two cannot drift). The time range was never the window's: it is the scope's span, the same for every row. Regression: tests/test_recall_cue.py::test_a_seated_row_shows_the_confidence_of_its_own_history, on seats no ordinary arm reached (a seat the count cut was scored, which is why the count-cut scenario could not show this)."
     },
     {
       "id": "bug-473",
@@ -7024,12 +7034,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "r\\.get\\(\\\"_rid\\\"\\) or \\(\\(\\\"ep\\\" if _is_episode_result\\(r\\) else \\\"mem\\\"\\), r\\.get\\(\\\"id\\\"\\)\\)",
+      "pattern": "^def _row_rid\\(r: dict\\) -> tuple:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "One module-level _rid_of used at every site; the expressions are identical, so the output does not change.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "One module-level _row_rid; the reached set, the window's helper, the block reservation's present set and the propagation seat all use it. Behaviour-preserving: the existing cue, block and propagation tests pin what the four copies decided."
     },
     {
       "id": "bug-478",
@@ -7038,12 +7050,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "^async def _block_reserved_rows\\(",
+      "pattern": "ep_rows = \\{row\\[\"id\"\\]: row for row in await _episode_rows\\(db, iso, \\[\\(i, None\\) for i in ep_ids\\]\\)\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "Call _episode_rows for block episode hits; same rows, no output change.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "_block_reserved_rows reads episodes through _episode_rows and adds the block fields to a copy of the row it returns. Behaviour-preserving: the episode reservation tests (reserved like a memory, not under a source scope) pin the row it builds."
     },
     {
       "id": "bug-479",
@@ -7096,12 +7110,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "^def _calibration_signal\\(",
+      "pattern": "    from cpersona.memory_handlers import _confidence_orders",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "Call _confidence_orders(); identical behaviour.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "_calibration_signal asks memory_handlers._confidence_orders(), the predicate the runtime gate uses, instead of re-spelling it from config. The existing parametrised test patched config only; it now patches both copies (its assertions are unchanged), and a new test sets the gate's copy alone and requires calibration to follow it, which failed before. Regression: tests/test_260a7_prior_function.py::test_calibration_follows_the_gates_own_predicate."
     },
     {
       "id": "bug-483",
@@ -7129,7 +7145,7 @@
       "status": "open",
       "category": "duplicated-rule",
       "fix_sketch": "Return the cosine ranks from order(); both use the same argsort on the same sims.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Re-judged 2026-09-30 and left with bug-486. The duplicate exists because the seat is chosen by a provider slot (propagation_selector.seat) and the response is labelled by the core: the core cannot reuse the provider's arrays without either widening the slot's interface or assuming which provider is installed. Whether the slots stay is bug-486's decision, and this resolves with it -- a direct call would compute the ranks once."
     },
     {
       "id": "bug-485",
@@ -7238,12 +7254,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "window = list\\(results\\)",
+      "pattern": "window = list\\(results\\) if propagation_seat and not gate_fallback else \\[\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Build each only when its feature is on (time_cue, propagation_seat, a non-built-in prior) and reuse one span read; each value is consumed only in those branches.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "The reached set and the admitted set are built only when a time cue is given, and the window copy only when the propagation seat will run. The prior's copy and its reorder check are kept: the prior is a provider slot, and the check is the contract an installed provider is held to, whatever the rate. The scope span stays read where each consumer reads it -- every read after the first is a cache hit (scope_stats), and threading one value through the provider slots would change their signatures for no measured gain. Regression: tests/test_recall_cue.py::test_a_plain_recall_builds_no_seat_bookkeeping (no row identity is computed for a plain recall; the cued recall is the control)."
     },
     {
       "id": "bug-493",

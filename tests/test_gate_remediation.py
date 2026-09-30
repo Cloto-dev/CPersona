@@ -732,3 +732,49 @@ async def test_recall_with_context_forwards_the_flag(monkeypatch, fake_embedding
     assert out.get("gate_fallback") is True, (
         f"the rescue was invisible through recall_with_context: {out!r}"
     )
+
+
+# --- bug-470: the far weight is part of what a calibration was measured on ---------
+
+
+def test_the_far_weight_is_part_of_the_calibration_fingerprint(monkeypatch):
+    """At the default the fingerprint is the bare version, so every sidecar written so
+    far stays valid; any other weight is named in it."""
+    monkeypatch.setattr(M, "PRIOR_FAR_WEIGHT", 1.0)
+    assert M.calibration_fingerprint() == SCORING_VERSION
+    monkeypatch.setattr(M, "PRIOR_FAR_WEIGHT", 0.5)
+    assert M.calibration_fingerprint() == f"{SCORING_VERSION}+far_weight=0.5"
+    monkeypatch.setattr(M, "PRIOR_FAR_WEIGHT", 0.0)
+    assert M.calibration_fingerprint() == f"{SCORING_VERSION}+far_weight=0"
+
+
+@pytest.mark.asyncio
+async def test_a_gate_calibrated_at_another_far_weight_is_not_restored(monkeypatch, fake_embedding_client):
+    """bug-470: the weight moves the fused score, and at 0 the channel count, while the
+    sidecar recorded neither -- so a restored gate filtered a quantity it was not
+    calibrated on. A weight change now reads as a scoring change."""
+    db = await get_db()
+    await _seed_embeddings(db, "agent-far", 15, dim=8)
+    monkeypatch.setattr(M, "PRIOR_FAR_WEIGHT", 1.0)
+    admin_handlers._save_calibration_state(
+        embedding_dim=8,
+        embedding_model="bge-m3",
+        global_threshold=0.61,
+        agent_thresholds={"agent-far": 0.58},
+        global_fused_gate=0.45,
+        fused_gate_signal="rrf",
+    )
+    assert admin_handlers._load_calibration_state()["scoring_version"] == SCORING_VERSION
+
+    monkeypatch.setattr(M, "PRIOR_FAR_WEIGHT", 0.5)
+    status = await admin_handlers.ensure_calibrated_on_startup(auto_calibrate=False, on_model_change=True)
+    assert status["action"] == "recalibrated_scoring" and status["scoring_stale"] is True, status
+    assert admin_handlers._load_calibration_state()["scoring_version"] == f"{SCORING_VERSION}+far_weight=0.5"
+    fresh = await checks.deep_calibration_staleness(db, "agent-far", fix=False)
+    assert fresh["status"] not in ("stale_scoring_version", "not_applicable"), fresh
+
+    # And back: a sidecar stamped at 0.5 is stale for a process at the default.
+    monkeypatch.setattr(M, "PRIOR_FAR_WEIGHT", 1.0)
+    result = await checks.deep_calibration_staleness(db, "agent-far", fix=False)
+    assert result["status"] == "stale_scoring_version"
+    assert result["runtime_scoring_version"] == SCORING_VERSION

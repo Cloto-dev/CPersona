@@ -49,7 +49,6 @@ from cpersona.config import (
 )
 from cpersona.database import connection, read_snapshot, transaction
 from cpersona.utils import (
-    SCORING_VERSION,
     _clamp_limit,
     _parse_timestamp_utc,
     _try_parse_json,
@@ -1166,7 +1165,7 @@ def _stored_agent_maps_to_carry(embedding_dim: int, state: dict | None = None) -
         return {}
     if state.get("embedding_dim") != embedding_dim:
         return {}
-    if state.get("scoring_version") != SCORING_VERSION:
+    if state.get("scoring_version") != _live_fingerprint():
         return {}
     return {
         axis: {
@@ -1212,6 +1211,18 @@ def _stored_calibration_to_carry(embedding_dim: int) -> dict:
     return carried
 
 
+#: "Stamp the live fingerprint": distinct from None, which a rewrite may pass through.
+_LIVE = object()
+
+
+def _live_fingerprint() -> str:
+    """The fingerprint the running scoring produces (bug-470). Imported lazily:
+    memory_handlers imports this module's neighbours at load."""
+    from cpersona.memory_handlers import calibration_fingerprint
+
+    return calibration_fingerprint()
+
+
 def _save_calibration_state(
     embedding_dim: int,
     embedding_model: str,
@@ -1221,7 +1232,7 @@ def _save_calibration_state(
     agent_fused_gates: dict | None = None,
     fused_gate_signal: str | None = None,
     agent_betas: dict | None = None,
-    scoring_version: str | None = SCORING_VERSION,
+    scoring_version: str | None | object = _LIVE,
 ) -> bool:
     """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
 
@@ -1242,12 +1253,15 @@ def _save_calibration_state(
     fingerprint answers "was this measured on the same vectors?", the scoring
     fingerprint answers "was it measured on the same score?". Additive and
     rollback-safe: older code ignores the key, newer code reads its absence as stale.
-    It defaults to the live ``utils.SCORING_VERSION`` because every caller that
+    It defaults to the live fingerprint (``memory_handlers.calibration_fingerprint``,
+    SCORING_VERSION plus a non-default far weight, bug-470) because every caller that
     MEASURES thresholds measures them on the running scoring function; the one caller
     that only REWRITES an existing payload (``_purge_agent_calibration``) passes the
     stored value through, so dropping an agent cannot launder a stale sidecar into
     looking freshly calibrated.
     """
+    if scoring_version is _LIVE:
+        scoring_version = _live_fingerprint()
     payload = {
         "embedding_dim": embedding_dim,
         "embedding_model": embedding_model,
@@ -1430,7 +1444,12 @@ def _calibration_signal() -> str | None:
     whose signal matches and store no gate. Cascade with confidence off has no fusion gate
     (the cosine vector threshold owns precision there): None.
     """
-    if config.CONFIDENCE_ENABLED and config.CONFIDENCE_ORDERING == "legacy":
+    # bug-482: asked of the runtime gate's own predicate. This read config's values
+    # while the gate reads memory_handlers' copies, so the two spellings could be
+    # patched apart and the calibration would measure a signal the gate never keys on.
+    from cpersona.memory_handlers import _confidence_orders
+
+    if _confidence_orders():
         return "confidence"
     if config.RECALL_MODE in ("rsf", "rrf"):
         return config.RECALL_MODE
@@ -2177,7 +2196,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
     dim_changed = (
         state is not None and live_dim is not None and state.get("embedding_dim") != live_dim
     )
-    scoring_stale = state is not None and state.get("scoring_version") != SCORING_VERSION
+    scoring_stale = state is not None and state.get("scoring_version") != _live_fingerprint()
 
     restored = False
     if state and not dim_changed and not scoring_stale and not auto_calibrate:
@@ -2210,7 +2229,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
                 "gate stays uncalibrated and deep_check will keep reporting "
                 "stale_scoring_version until calibration is enabled or run manually.",
                 state.get("scoring_version"),
-                SCORING_VERSION,
+                _live_fingerprint(),
             )
         return {"action": "noop"}
 
@@ -2280,7 +2299,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             "recalibrating. A gate restored across a scoring change gates a different "
             "quantity than it was calibrated on and silently over-filters recall.",
             state.get("scoring_version"),
-            SCORING_VERSION,
+            _live_fingerprint(),
         )
 
     global_result = await do_calibrate_threshold(agent_id="")

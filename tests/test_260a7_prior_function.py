@@ -130,10 +130,26 @@ async def test_enabled_confidence_changes_nothing_but_the_confidence_field(
 def test_calibration_measures_the_signal_the_runtime_gate_compares(
     monkeypatch, enabled, ordering, mode, expected
 ):
-    monkeypatch.setattr(config, "CONFIDENCE_ENABLED", enabled)
-    monkeypatch.setattr(config, "CONFIDENCE_ORDERING", ordering)
+    # Both copies: config's, and the one the runtime gate reads (bug-482).
+    for module in (config, memory_handlers):
+        monkeypatch.setattr(module, "CONFIDENCE_ENABLED", enabled)
+        monkeypatch.setattr(module, "CONFIDENCE_ORDERING", ordering)
     monkeypatch.setattr(config, "RECALL_MODE", mode)
     assert admin_handlers._calibration_signal() == expected
+
+
+@pytest.mark.parametrize("ordering, expected", [("legacy", "confidence"), ("fusion", "rsf")])
+def test_calibration_follows_the_gates_own_predicate(monkeypatch, ordering, expected):
+    """bug-482: calibration asked config whether confidence gates while the gate asked
+    memory_handlers, so setting the gate's copy alone left calibration measuring a
+    signal the gate does not key on. Only the gate's copy is set here."""
+    monkeypatch.setattr(config, "CONFIDENCE_ENABLED", False)
+    monkeypatch.setattr(config, "CONFIDENCE_ORDERING", "fusion")
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ORDERING", ordering)
+    monkeypatch.setattr(config, "RECALL_MODE", "rsf")
+    assert admin_handlers._calibration_signal() == expected
+    assert (expected == "confidence") == memory_handlers._confidence_orders()
 
 
 # --- far weight ------------------------------------------------------------------

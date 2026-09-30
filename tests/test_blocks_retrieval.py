@@ -547,3 +547,71 @@ def test_reading_without_building_is_a_startup_error(monkeypatch):
 
     monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
     config.validate_block_gates()
+
+
+@pytest.mark.asyncio
+async def test_a_reserved_row_earns_no_recall_count_credit_with_confidence_on(monkeypatch, reading, lexical_off):
+    """bug-453: with confidence off nothing is bumped at all, so the test above holds
+    without checking anything the bump decides. With it on, the reserved row was
+    credited; the gate's own row is the control that the bump ran."""
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    async with _TempDB() as tmp:
+        long_id, echo_id = await _store(tmp, [LONG_RECORD, ECHO_RECORD])
+        out = await memory_handlers.do_recall(AGENT, TAIL_SUBJECT, limit=3)
+        by_ref = {m["ref"]: m for m in out["messages"]}
+        assert by_ref[f"mem:{long_id}"]["match_reason"]["signal"] == "block"
+        assert by_ref[f"mem:{echo_id}"]["match_reason"]["signal"] != "block"
+        db = await database.get_db()
+        counts = dict(await db.execute_fetchall("SELECT id, recall_count FROM memories ORDER BY id"))
+        assert counts[echo_id] == 1, "the gate's own row was not credited, so the bump did not run"
+        assert counts[long_id] == 0, "a reserved row was credited with a recall"
+
+
+@pytest.mark.asyncio
+async def test_hits_the_filters_drop_do_not_use_up_the_reservation(reading, lexical_off):
+    """bug-454: the hits were cut to limit + BLOCK_RESERVATION before the source filter
+    ran, so a source-scoped recall whose best hits belonged to another user reserved
+    nothing although an eligible hit lay just below them."""
+    async with _TempDB() as tmp:
+        for i in range(4):  # other users' records, each with the tail as a block of its own
+            await memory_handlers.do_store(
+                AGENT,
+                {"content": f"{_FILLER}\n\nnote {i}\n\n{TAIL_SUBJECT}",
+                 "source": {"type": "User", "id": f"discord:other{i}", "name": "o"}},
+            )
+        ours = (await memory_handlers.do_store(
+            AGENT,
+            {"content": LONG_RECORD, "source": {"type": "User", "id": "discord:12345", "name": "u"}},
+        ))["id"]
+        await tmp.drain()
+
+        unfiltered = await memory_handlers.do_recall(AGENT, TAIL_SUBJECT, limit=1, trace=True)
+        reached = [r["ref"] for r in unfiltered["trace"]["reservation"]] if "reservation" in unfiltered["trace"] else []
+        assert f"mem:{ours}" not in reached, "the fixture must put other users' hits first"
+
+        out = await memory_handlers.do_recall(AGENT, TAIL_SUBJECT, limit=1, source_id="discord:12345")
+        assert f"mem:{ours}" in _refs(out), "an eligible hit below the dropped ones was not reserved"
+        reserved = [m for m in out["messages"] if m.get("ref") == f"mem:{ours}"]
+        assert reserved[0]["match_reason"]["signal"] == "block"
+
+
+@pytest.mark.asyncio
+async def test_hydrating_the_hits_stops_at_its_bound(monkeypatch, reading, lexical_off):
+    """bug-454's bound: reading further down the hits costs a query per page, so a
+    scope whose filters drop almost everything must not turn one recall into
+    hundreds of them. With the bound below the eligible hit, it is not reached."""
+    monkeypatch.setattr(memory_handlers, "BLOCK_HYDRATE_CAP", 3)
+    async with _TempDB() as tmp:
+        for i in range(4):
+            await memory_handlers.do_store(
+                AGENT,
+                {"content": f"{_FILLER}\n\nnote {i}\n\n{TAIL_SUBJECT}",
+                 "source": {"type": "User", "id": f"discord:other{i}", "name": "o"}},
+            )
+        ours = (await memory_handlers.do_store(
+            AGENT,
+            {"content": LONG_RECORD, "source": {"type": "User", "id": "discord:12345", "name": "u"}},
+        ))["id"]
+        await tmp.drain()
+        out = await memory_handlers.do_recall(AGENT, TAIL_SUBJECT, limit=1, source_id="discord:12345")
+        assert f"mem:{ours}" not in _refs(out)

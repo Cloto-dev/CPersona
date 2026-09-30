@@ -617,3 +617,86 @@ def test_a_clipped_bound_is_written_with_a_four_digit_year():
     # Non-UTC input is converted, as before.
     jst = timezone(timedelta(hours=9))
     assert cue.sql_instant(datetime(2026, 9, 30, 9, 0, 0, tzinfo=jst)) == "2026-09-30 00:00:00"
+
+# --- what a seat earns and shows (bug-453, bug-472), and what a plain recall builds (bug-492) ---
+
+
+async def _seated_recall(monkeypatch):
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(config, "RECALL_DEPTH_FLOOR", 12)
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=3, time_cue=_cut_period("sure"))
+    seated = {m["ref"] for m in out["messages"] if m.get("match_reason", {}).get("signal") == "cue"}
+    window = {m["ref"] for m in out["messages"] if m.get("ref") and m["ref"] not in seated}
+    assert seated and window, "the fixture must seat rows beside a window"
+    return out, seated, window
+
+
+async def _recall_counts():
+    db = await get_db()
+    return dict(await db.execute_fetchall(
+        "SELECT 'mem:' || id, recall_count FROM memories WHERE agent_id = ?", (AGENT,)
+    ))
+
+
+@pytest.mark.asyncio
+async def test_a_seated_row_earns_no_recall_count(fake_embedding_client, monkeypatch):
+    """bug-453: the bump credited every returned row, seats included, although no
+    quality gate admitted a seated row. The window's rows are the control: they are
+    credited, so the bump did run."""
+    await _seed(CORPUS)
+    _, seated, window = await _seated_recall(monkeypatch)
+    counts = await _recall_counts()
+    assert all(counts[ref] == 1 for ref in window), counts
+    assert all(counts[ref] == 0 for ref in seated), counts
+
+
+async def _cue_only_seats(monkeypatch):
+    monkeypatch.setattr(memory_handlers, "CONFIDENCE_ENABLED", True)
+    monkeypatch.setattr(memory_handlers, "RECALL_MODE", "rrf")
+    time_cue = {"after": _ts(115)[:10], "before": _ts(95)[:10], "confidence": "likely"}
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=2, trace=True, time_cue=time_cue)
+    ordinary = {row["ref"] for name, rows in out["trace"]["arms"].items() if name != "cue" for row in rows}
+    seated = {m["ref"] for m in out["messages"] if m.get("match_reason", {}).get("signal") == "cue"}
+    assert seated and not seated & ordinary, "the fixture must seat rows no ordinary arm reached"
+    return out, seated
+
+
+@pytest.mark.asyncio
+async def test_a_seated_row_shows_the_confidence_of_its_own_history(fake_embedding_client, monkeypatch):
+    """bug-472: a row only the cue arm found never passed through scoring, so its
+    confidence was computed as though it had never been recalled. A seated row
+    recalled a minute ago must show the recent-recall penalty its history earns."""
+    await _seed(SEAT_CORPUS)
+    before, seated = await _cue_only_seats(monkeypatch)
+    shown = {m["ref"]: m["confidence"]["score"] for m in before["messages"] if m["ref"] in seated}
+    db = await get_db()
+    await db.executemany(
+        # A minute ago: inside the recent-recall penalty's window.
+        "UPDATE memories SET recall_count = 1, last_recalled_at = datetime('now', '-1 minutes') WHERE id = ?",
+        [(int(ref.split(":")[1]),) for ref in seated],
+    )
+    await db.commit()
+    after, seated_again = await _cue_only_seats(monkeypatch)
+    assert seated_again == seated
+    moved = {m["ref"]: m["confidence"]["score"] for m in after["messages"] if m["ref"] in seated}
+    assert all(moved[ref] < shown[ref] for ref in seated), (shown, moved)
+
+
+@pytest.mark.asyncio
+async def test_a_plain_recall_builds_no_seat_bookkeeping(fake_embedding_client, monkeypatch):
+    """bug-492: every recall built the sets the seats read -- the reached rows, the
+    admitted rows -- with no cue and no propagation seat to read them."""
+    await _seed(CORPUS)
+    calls = []
+    real = memory_handlers._row_rid
+
+    def counting(row):
+        calls.append(1)
+        return real(row)
+
+    monkeypatch.setattr(memory_handlers, "_row_rid", counting)
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=3)
+    assert out["messages"]
+    assert calls == []
+    await memory_handlers.do_recall(AGENT, QUERY, limit=3, time_cue=_cut_period("sure"))
+    assert calls, "the cue path must still build what its seats read"
