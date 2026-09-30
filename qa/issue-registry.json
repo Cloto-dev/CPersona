@@ -7438,6 +7438,20 @@
       "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
       "fixed_in": "2.6.0",
       "fix_note": "_mentioning_records takes refs_only, which reads the ids alone and returns no row, and traverse passes it: the content and summary it read were dropped as soon as the refs were taken. walk_graph still reads the rows, because a walked claim quotes them. The count is a query only for a table whose read came back full (as many rows as the limit); a read that returned fewer has already counted itself, so an entity with few mentions costs no COUNT at all. Regression: tests/test_associations_traverse.py::test_traverse_reads_the_refs_and_not_the_text and ::test_traverse_counts_only_when_a_read_came_back_full, both read from the statements the read connection traces."
+    },
+    {
+      "id": "bug-502",
+      "summary": "(LOW) With an empty query, the time cue's keyword half orders the period's rows by created_at -- when the row was stored, at one-second resolution -- rather than by the timestamp the period itself is defined on, and rows stored within the same second tie and come back in rowid order. tests/test_recall_cue.py::test_an_empty_query_searches_the_period_by_recency therefore passes only while its twelve seeded rows are stored within one second: reproduced by setting created_at directly, the cue arm returns the period's rows as seed positions [5, 6, 7] when all twelve share a second and [7, 5, 6] when the second changes after the seventh -- the order observed when the test failed once in nine full-suite runs. The test expects the order of the rows' own timestamps, and so does the comment above the query ('the period's newest records'); the ordinary recall's empty-query path, which the comment cites as its model, orders by created_at.",
+      "severity": "LOW",
+      "discovered": "2026-09-30T00:00:00Z",
+      "version": "2.6.0b2",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "An empty query has no ranking to offer, so the keyword half returns the period's",
+      "expected": "present",
+      "status": "open",
+      "category": "nondeterministic-order",
+      "fix_sketch": "Either order the cue arm's empty-query list by the rows' own time (datetime(timestamp) DESC, id ASC), the axis the period is measured on -- a change to which rows a cue's seats take -- or keep created_at, give it a deterministic tie-break, and seed the test with distinct created_at values so it states the order it relies on.",
+      "note": "Found while running mutation baselines for the 2.6.0 LOW batch. Choosing between the two is a decision about which time a cue ranks by, not a test repair."
     }
   ]
 }
