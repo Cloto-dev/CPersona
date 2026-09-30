@@ -610,7 +610,7 @@ async def do_get_session_findings(
     _key, declared = resolve_session_key(session_key)
     if config.transport() != "stdio" and not declared:
         delivered["identity_shared"] = True
-    delivered["_meta"] = {"server_version": _server_version()}
+    delivered["_meta"] = {"server_version": _server_version(), "superauditor": findings_seam.SUPERAUDITOR_VERSION}
     return delivered
 
 
