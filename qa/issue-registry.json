@@ -4161,12 +4161,14 @@
       "discovered": "2026-09-03T01:00:00Z",
       "version": "2.5.11",
       "file": "cpersona/scope_stats.py",
-      "pattern": "bug-286",
+      "pattern": "ORDER BY julianday\\(timestamp\\) \\{order\\}, timestamp \\{order\\} LIMIT 1",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Order by the instant rather than by the text. Aggregating `datetime(timestamp)` is correct and gives up the index seek, which is what the current shape was built to get — so the candidates that keep both are a stored normalised column written at store time, or a generated column, either one indexed in place of the raw column. Both are schema changes and both alter what a scope's span is, so the change has to be made where scoring semantics are decided rather than alongside a cost fix. Whichever is taken, the test needs a scope holding at least two offsets whose byte order and chronological order disagree — a single-offset fixture cannot fail.",
-      "note": "Found while measuring the span statement for the covering index, by asking what the production corpus's timestamps actually look like before assuming they were uniform. The census is the evidence: five distinct spellings in one corpus, and the offsets are what break the ordering. Registered open rather than repaired in that change, which moves no scoring input; the split into two statements landing at the same time preserves this behaviour exactly rather than introducing or worsening it. bug-287 is the same mistake at a second seam and was repaired separately, which is the split worth explaining: there, the ordering is done in Python over a list already in memory, so reading the instant costs a parse per row and changes the order of what a caller is handed. Here it is done by SQLite over an indexed column, so reading the instant gives up the index seek on a statement in the recall path, and it changes a scoring input rather than a returned row. Same reasoning, two prices an order of magnitude apart -- fixing them together would have priced the cheap one at the expensive one's cost, and would have put a schema change in front of a correction that needed none."
+      "note": "Found while measuring the span statement for the covering index, by asking what the production corpus's timestamps actually look like before assuming they were uniform. The census is the evidence: five distinct spellings in one corpus, and the offsets are what break the ordering. Registered open rather than repaired in that change, which moves no scoring input; the split into two statements landing at the same time preserves this behaviour exactly rather than introducing or worsening it. bug-287 is the same mistake at a second seam and was repaired separately, which is the split worth explaining: there, the ordering is done in Python over a list already in memory, so reading the instant costs a parse per row and changes the order of what a caller is handed. Here it is done by SQLite over an indexed column, so reading the instant gives up the index seek on a statement in the recall path, and it changes a scoring input rather than a returned row. Same reasoning, two prices an order of magnitude apart -- fixing them together would have priced the cheap one at the expensive one's cost, and would have put a schema change in front of a correction that needed none.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Each end of the span is still found by a seek on idx_memories_span and is then settled chronologically among the rows that could be the true end: an offset is under 24 hours, so a stamp's local date is within a day of its UTC one, and the true oldest row's local date is at most two days after the text minimum's (the newest's at most two before the text maximum's). Only the rows inside that window are ordered by julianday(), and the window is a range over the same index (the plan is a SEARCH, pinned by a test), so the read stays proportional to the rows near each end rather than to the scope. Rejected: ordering the whole scope by julianday(), which is the walk the index was built to remove; and an expression index on julianday(timestamp), which is a schema change. A text minimum that does not start with a date has no window and stands, as before. This moves a scoring input -- the span scales the confidence time axis -- but only in a scope holding more than one offset, and it moves it to the value the code always meant. Regression: tests/test_span_index.py -- the finding's own pair, the -12:00/+14:00 extremes, one offset throughout, and the plan."
     },
     {
       "id": "bug-287",
@@ -6386,12 +6388,14 @@
       "severity": "LOW",
       "discovered": "2026-09-16T08:00:00Z",
       "version": "2.6.0a1",
-      "file": "scripts/check-version-selector.py",
-      "pattern": "if not target\\.is_file\\(\\):",
+      "file": "tests/test_docs_applies_to_banner.py",
+      "pattern": "def test_a_selector_row_whose_tree_was_not_built_is_reported",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
-      "note": "Found while repairing the positive control in the same test file, which had been red since a second version line was declared: the fixture published one line where the gate asks its question per line. That repair made the positive control assert the whole run is clean, so the tree it writes now exercises this branch in the passing direction -- a row pointing at a page that is not there would fail it. What is still missing is the negative: no test writes a tree whose selector points at a line the assembler did not build, so deleting the branch costs nothing. Left open rather than fixed with the repair, to keep a build-restoring change to the failure it restored."
+      "note": "Found while repairing the positive control in the same test file, which had been red since a second version line was declared: the fixture published one line where the gate asks its question per line. That repair made the positive control assert the whole run is clean, so the tree it writes now exercises this branch in the passing direction -- a row pointing at a page that is not there would fail it. What is still missing is the negative: no test writes a tree whose selector points at a line the assembler did not build, so deleting the branch costs nothing. Left open rather than fixed with the repair, to keep a build-restoring change to the failure it restored.",
+      "fixed_in": "2.6.0",
+      "fix_note": "A test publishes every declared line, removes one line's landing page while keeping a page below it (so the line is still published and the banner question stays satisfied), and asserts the gate reports the selector row by its href. Making the branch unreachable now turns exactly this test red. The pattern lives in the test file because the fix is the test: the gate's branch was already correct."
     },
     {
       "id": "bug-435",
@@ -6512,12 +6516,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/cue.py",
-      "pattern": "return day \\+ timedelta\\(days=1\\) if end_of_day else day",
+      "pattern": "return _earlier\\(start, margin\\), _later\\(end, margin\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Catch OverflowError and TypeError in parse() and re-raise as TimeCueError, and bound ago.value and the year range there so period() cannot overflow afterwards.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Two changes, because the escapes had two causes. A malformed unit (a list, say) is refused as TimeCueError: the membership test raised TypeError on an unhashable value, so the check is now isinstance-first. A period that reaches past the representable range is clipped to it rather than refused: _later / _earlier saturate at datetime.max / datetime.min, and so does the ago product when it passes the largest timedelta. Clipping rather than refusing because the reach is not always the caller's: an open end is closed by the scope's oldest stored stamp, and a record stamped in year 1 makes an ordinary vague cue reach past it -- no refusal of the cue could prevent that, and raising turned a recall into an undocumented error. sql_instant now formats with isoformat, because strftime's %Y does not pad a year below 1000 on every platform and a clipped bound at year 1 would compare as text in the wrong order. Regression: tests/test_recall_cue.py -- the finding's four cues through recall and reconstruct, a stored year-1 stamp, a list unit refused through both tools, and the four-digit year."
     },
     {
       "id": "bug-444",
@@ -6643,7 +6649,7 @@
       "status": "open",
       "category": "contract-drift",
       "fix_sketch": "Either drop the items that needed the anchor, as documented, or change the documented contract.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Re-judged 2026-09-30 and left open for a decision rather than for lack of a fix. Three sources disagree: the docstring says every item that needed the anchor is dropped; the tool description says malformed items are reported and skipped and nothing else in the call is refused for them; and tests/test_associations_declare.py::test_an_anchor_that_is_not_this_agents_record_is_dropped_and_nothing_is_anchored pins the unanchored insert. Dropping the relations avoids the duplicate a later, correct declaration creates, but it refuses items the published description says are not refused and rewrites a test written to hold the present behaviour; making the docstring match the code keeps the contract and leaves the duplicate. Either is a contract decision, which a fix release does not take on its own."
     },
     {
       "id": "bug-452",
@@ -6988,12 +6994,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/server.py",
-      "pattern": "result\\[\\\"dropped\\\"\\]\\.append\\(\\{\\\"item\\\": \\\"retract\\\", \\\"reason\\\": \\\"must be an object\\\"\\}\\)",
-      "expected": "present",
-      "status": "open",
+      "pattern": "result\\[\"dropped\"\\]\\.append\\(\\{\"item\": \"retract\", \"reason\": \"must be an object\"\\}\\)",
+      "expected": "absent",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Check the raw argument before validate_dict, or remove the dead branches.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Measured before changing anything: over MCP a malformed retract is not silently ignored. The schema declares it an object and the MCP layer refuses a list, a string or a number with 'Input validation error' before the handler runs. What the finding did establish is that the handler's own report was unreachable, and that the report therefore rests on the schema alone -- validate_dict would turn a non-object into {} had the schema not caught it. The dead branch is removed with a comment saying where the report comes from, and a test drives the tool boundary with three non-object values so that dropping `type: object` from the schema turns it red. associations.declare keeps its non-dict report: it is a library entry point as well, and a direct caller does reach it. Regression: tests/test_associations_declare.py::test_a_retract_that_is_not_an_object_is_refused_at_the_boundary."
     },
     {
       "id": "bug-476",
@@ -7186,12 +7194,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/server.py",
-      "pattern": "^_ASSOCIATIONS_PROPERTY = \\{",
+      "pattern": "^_DECLARE_ASSOCIATIONS_PROPERTY = \\{",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "tool-description-drift",
       "fix_sketch": "Keep the store-only sentence in store's copy and remove the repeated sentences.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "declare_associations takes the same object as store's rider with a description of its own (_DECLARE_ASSOCIATIONS_PROPERTY): it no longer speaks of a stored memory or of associations.dropped, since this tool's drops are top-level. The tool description stops restating the normalization and alias sentences, which the nested entity and alias descriptions carry and which are sent with the tool anyway; the entity description now says names and aliases are compared after normalization, so nothing the tool description said is lost. declare_associations' description and schema together are about 430 characters shorter; the nested object is still sent once per tool, as MCP has no shared definitions across tools. Regression: tests/test_associations_declare.py::test_declare_associations_describes_its_own_object and ::test_declare_associations_does_not_restate_the_nested_descriptions."
     },
     {
       "id": "bug-490",
@@ -7356,12 +7366,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/associations.py",
-      "pattern": "found, total = await _mentioning_records\\(",
+      "pattern": "source_id=source_id, excluded=\\[\\], limit=limit, count=True, refs_only=True,",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Select ids only, fetch limit + 1 rows as walk_graph does, and count only when the extra row is present.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "_mentioning_records takes refs_only, which reads the ids alone and returns no row, and traverse passes it: the content and summary it read were dropped as soon as the refs were taken. walk_graph still reads the rows, because a walked claim quotes them. The count is a query only for a table whose read came back full (as many rows as the limit); a read that returned fewer has already counted itself, so an entity with few mentions costs no COUNT at all. Regression: tests/test_associations_traverse.py::test_traverse_reads_the_refs_and_not_the_text and ::test_traverse_counts_only_when_a_read_came_back_full, both read from the statements the read connection traces."
     }
   ]
 }

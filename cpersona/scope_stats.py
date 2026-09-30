@@ -170,20 +170,46 @@ async def get_span(
     # for a scope with one row. Both are far inside what this cache already
     # accepts: a TTL that serves BOTH numbers up to a minute stale.
     #
-    # bug-286, open and deliberately not fixed here: both aggregates order the
-    # column as TEXT, and an ISO-8601 stamp's byte order is its chronological
-    # order only while every stamp in the scope carries the same UTC offset. A
-    # corpus holding both '+00:00' and '+09:00' therefore has scopes whose
-    # reported span is a pair of real stamps that are not its oldest and newest.
-    # This predates the split above and is unchanged by it; repairing it moves a
-    # scoring input, which is a different decision from making the read cheap.
+    # bug-286: both aggregates order the column as TEXT, and an ISO-8601 stamp's
+    # byte order is its chronological order only while every stamp compared
+    # carries the same UTC offset -- '2026-05-31T15:00:30+09:00' is 06:00:30Z and
+    # sorts after '2026-05-31T11:05:00+00:00'. The seeks stay (they are what makes
+    # this cheap) and each end is then settled chronologically among the rows that
+    # could be the true end. An offset is under 24 hours, so a stamp's local date
+    # is within a day of its UTC one and the true oldest row's local date is at
+    # most two days after the text minimum's (the newest's, two before the text
+    # maximum's). Only the rows in that window are ordered by julianday(), which
+    # is a range over the same index rather than a walk of the scope. Settling it
+    # in SQL rather than here keeps this function returning the strings SQLite
+    # gave back, as its docstring promises.
     sql = (
         f"SELECT {{agg}}(timestamp) FROM memories "
         f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause}"
     )
     lo = await db.execute_fetchall(sql.format(agg="MIN"), iso.params)
     hi = await db.execute_fetchall(sql.format(agg="MAX"), iso.params)
-    span = (lo[0][0] if lo else None, hi[0][0] if hi else None)
+    lo_text = lo[0][0] if lo else None
+    hi_text = hi[0][0] if hi else None
+    window = (
+        "SELECT timestamp FROM memories "
+        f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause} AND {{edge}} "
+        "ORDER BY julianday(timestamp) {order}, timestamp {order} LIMIT 1"
+    )
+    if lo_text is not None:
+        rows = await db.execute_fetchall(
+            window.format(order="ASC", edge="timestamp < date(substr(?, 1, 10), '+3 days')"),
+            (*iso.params, lo_text),
+        )
+        # No row means the text minimum does not start with a date (a julian-day
+        # string, say): there is no window to settle it in, so it stands.
+        lo_text = rows[0][0] if rows else lo_text
+    if hi_text is not None:
+        rows = await db.execute_fetchall(
+            window.format(order="DESC", edge="timestamp >= date(substr(?, 1, 10), '-2 days')"),
+            (*iso.params, hi_text),
+        )
+        hi_text = rows[0][0] if rows else hi_text
+    span = (lo_text, hi_text)
     _store(key, "span", span, generation, now)
     return span
 

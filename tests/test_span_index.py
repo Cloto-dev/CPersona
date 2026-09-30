@@ -268,3 +268,64 @@ async def test_the_span_is_read_over_the_recall_s_own_scope(corpus):
     assert await scope_stats.get_span(corpus, OTHER) == (
         "2020-01-01T00:00:00+00:00", "2030-01-01T00:00:00+00:00"
     ), "the agent axis is not a filter here"
+
+
+# --------------------------------------------------------------------------
+# bug-286: the ends are chronological, not the byte order of the text
+# --------------------------------------------------------------------------
+
+
+async def _only(db, stamps):
+    await db.execute("DELETE FROM memories WHERE agent_id = ?", (AGENT,))
+    for ts in stamps:
+        await _store(db, ts)
+    await db.commit()
+    scope_stats.clear()
+    return await scope_stats.get_span(db, AGENT)
+
+
+@pytest.mark.asyncio
+async def test_a_span_across_offsets_names_the_oldest_and_newest_rows(corpus):
+    """The finding's own pair: 15:00:30+09:00 is 06:00:30Z and sorts after 11:05Z."""
+    span = await _only(corpus, [
+        "2026-05-31T15:00:30+09:00",  # 06:00:30Z, the oldest
+        "2026-05-31T11:05:00+00:00",  # the text minimum
+        "2026-06-01T01:00:00+09:00",  # the text maximum, 16:00Z
+        "2026-05-31T20:00:00Z",  # the newest
+    ])
+    assert span == ("2026-05-31T15:00:30+09:00", "2026-05-31T20:00:00Z")
+
+
+@pytest.mark.asyncio
+async def test_the_widest_offsets_are_inside_the_window(corpus):
+    """-12:00 and +14:00, the extremes: a true end whose local date is a day past the
+    text end's, which is what the window has to reach."""
+    span = await _only(corpus, [
+        "2026-05-31T23:30:00-12:00",  # text minimum, 2026-06-01T11:30Z
+        "2026-06-01T12:00:00+14:00",  # the oldest, 2026-05-31T22:00Z
+        "2026-06-10T20:00:00-12:00",  # the newest, 2026-06-11T08:00Z
+        "2026-06-11T10:00:00+14:00",  # text maximum, 2026-06-10T20:00Z
+    ])
+    assert span == ("2026-06-01T12:00:00+14:00", "2026-06-10T20:00:00-12:00")
+
+
+@pytest.mark.asyncio
+async def test_one_offset_throughout_answers_as_before(corpus):
+    stamps = ["2026-03-01T00:00:00+09:00", "2026-03-02T00:00:00+09:00", "2026-04-01T00:00:00+09:00"]
+    assert await _only(corpus, stamps) == (stamps[0], stamps[-1])
+
+
+@pytest.mark.asyncio
+async def test_settling_an_end_is_a_range_over_the_span_index(corpus):
+    """Ordering by julianday() cannot use the index, so it must see only the window's
+    rows: the plan has to be a SEARCH on idx_memories_span, not a SCAN."""
+    iso = isolation_where(agent_id=AGENT, project_id=None, channel="")
+    for edge in ("timestamp < date(substr(?, 1, 10), '+3 days')", "timestamp >= date(substr(?, 1, 10), '-2 days')"):
+        plan = await corpus.execute_fetchall(
+            "EXPLAIN QUERY PLAN SELECT timestamp FROM memories "
+            f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause} AND {edge} "
+            "ORDER BY julianday(timestamp), timestamp LIMIT 1",
+            (*iso.params, GOOD_LO),
+        )
+        detail = " ".join(row[3] for row in plan)
+        assert "SEARCH memories USING COVERING INDEX idx_memories_span" in detail, detail

@@ -348,3 +348,23 @@ def test_the_matching_line_is_accepted(selector_gate, tmp_path, capsys):
     code = selector_gate.main(["check-version-selector.py", str(tmp_path)])
 
     assert code == 0, capsys.readouterr().err
+
+
+def test_a_selector_row_whose_tree_was_not_built_is_reported(selector_gate, tmp_path, capsys):
+    """bug-434: a selector that renders, names the right line and links to a tree the
+    assembler never built. Every row looks correct and one of them is a 404, and the
+    link check is the only thing between that and a reader.
+
+    The line keeps a page below its landing page, so it is still published and the
+    per-line banner question stays satisfied: what is missing is exactly the page the
+    selector's row points at.
+    """
+    current, titles, root = _map(selector_gate)
+    _published(selector_gate, tmp_path)
+    other = next(line for line in sorted(titles) if line != current)
+    (tmp_path / other / "index.html").unlink()
+
+    code = selector_gate.main(["check-version-selector.py", str(tmp_path)])
+
+    assert code == 1
+    assert f"selector link has no page in the tree: {root}{other}/" in capsys.readouterr().err

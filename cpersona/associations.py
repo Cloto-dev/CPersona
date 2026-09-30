@@ -577,7 +577,8 @@ async def _mentioning_records(
     excluded: list[str],
     limit: int,
     count: bool = False,
-) -> tuple[list[tuple[int, str, str, dict]], int | None]:
+    refs_only: bool = False,
+) -> tuple[list[tuple[int, str, str, dict | None]], int | None]:
     """The readable records that mention `entity_id`, lowest id first, at most `limit`.
 
     Readable means the call could read the record directly: this agent's, in the
@@ -587,6 +588,11 @@ async def _mentioning_records(
     content, timestamp, `context`) -- and, when `count` is set, how many readable
     records there are in all. No message id: versions of one record cannot share
     a project (the dedup index), so it would never order a walked row.
+
+    `refs_only` reads the ids alone and returns None for `row`: traverse keeps only
+    the refs, and read every memory's content and episode's summary to drop them
+    (bug-501). The count is a query only for a table whose read came back full --
+    one that returned fewer than `limit` rows has already counted itself.
     """
     excl_marks = ",".join("?" for _ in excluded) or "''"
     iso_m = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="t")
@@ -605,30 +611,44 @@ async def _mentioning_records(
     ep_params = (entity_id, *excluded, *iso_m.params)
     episodes_readable = not source_id or bool(channel)
 
-    found: list[tuple[int, str, str, dict]] = []
-    for row_id, content, stamp, project, chan in await db.execute_fetchall(
-        "SELECT t.id, t.content, t.timestamp, t.project_id, t.channel "
-        f"{mem_where} ORDER BY t.id LIMIT ?",
-        (*mem_params, limit),
-    ):
-        row = {"ref": f"mem:{row_id}", "content": content or "", "timestamp": stamp or "",
-               "context": (project or "", chan or "")}
-        found.append((row_id, "mem", row["ref"], row))
+    found: list[tuple[int, str, str, dict | None]] = []
+    mem_cols = "t.id" if refs_only else "t.id, t.content, t.timestamp, t.project_id, t.channel"
+    mem_rows = await db.execute_fetchall(
+        f"SELECT {mem_cols} {mem_where} ORDER BY t.id LIMIT ?", (*mem_params, limit)
+    )
+    for fields in mem_rows:
+        row_id, ref = fields[0], f"mem:{fields[0]}"
+        row = None
+        if not refs_only:
+            _, content, stamp, project, chan = fields
+            row = {"ref": ref, "content": content or "", "timestamp": stamp or "",
+                   "context": (project or "", chan or "")}
+        found.append((row_id, "mem", ref, row))
+    ep_rows: list = []
     if episodes_readable:
-        for row_id, summary, start, created, project, chan in await db.execute_fetchall(
-            "SELECT t.id, t.summary, t.start_time, t.created_at, t.project_id, t.channel "
-            f"{ep_where} ORDER BY t.id LIMIT ?",
-            (*ep_params, limit),
-        ):
-            row = {"ref": f"ep:{row_id}", "content": f"[Episode] {summary}",
-                   "timestamp": episode_timestamp(start, created), "context": (project or "", chan or "")}
-            found.append((row_id, "ep", row["ref"], row))
+        ep_cols = "t.id" if refs_only else "t.id, t.summary, t.start_time, t.created_at, t.project_id, t.channel"
+        ep_rows = await db.execute_fetchall(
+            f"SELECT {ep_cols} {ep_where} ORDER BY t.id LIMIT ?", (*ep_params, limit)
+        )
+        for fields in ep_rows:
+            row_id, ref = fields[0], f"ep:{fields[0]}"
+            row = None
+            if not refs_only:
+                _, summary, start, created, project, chan = fields
+                row = {"ref": ref, "content": f"[Episode] {summary}",
+                       "timestamp": episode_timestamp(start, created), "context": (project or "", chan or "")}
+            found.append((row_id, "ep", ref, row))
     found.sort(key=lambda f: (f[0], f[1]))
     total = None
     if count:
-        total = (await db.execute_fetchall(f"SELECT COUNT(*) {mem_where}", mem_params))[0][0]
+        total = len(mem_rows)
+        if len(mem_rows) >= limit:
+            total = (await db.execute_fetchall(f"SELECT COUNT(*) {mem_where}", mem_params))[0][0]
         if episodes_readable:
-            total += (await db.execute_fetchall(f"SELECT COUNT(*) {ep_where}", ep_params))[0][0]
+            ep_total = len(ep_rows)
+            if len(ep_rows) >= limit:
+                ep_total = (await db.execute_fetchall(f"SELECT COUNT(*) {ep_where}", ep_params))[0][0]
+            total += ep_total
     return found[:limit], total
 
 
@@ -772,7 +792,7 @@ async def traverse(
                 entry["aliases"] = aliases[entity_id]
             found, total = await _mentioning_records(
                 db, entity_id, agent_id=agent_id, project_id=project_id, channel=channel,
-                source_id=source_id, excluded=[], limit=limit, count=True,
+                source_id=source_id, excluded=[], limit=limit, count=True, refs_only=True,
             )
             if found:
                 entry["mentions"] = [ref for _, _, ref, _ in found]
