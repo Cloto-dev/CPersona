@@ -156,6 +156,13 @@ Fixed-width ASCII is what makes the merge safe. SQLite compares these values as
 text, and for equal-length strings in this form, a byte comparison and a
 chronological comparison are the same comparison.
 
+The loader maps each array with `np.memmap`, except on Windows, where it reads
+them into memory. Windows refuses to replace a file that is still mapped, and a
+server keeps the index it loaded for as long as it runs, so a mapped index made
+every rebuild fail with `PermissionError` while a server that had searched was
+running. Reading the arrays costs about what the scan already touches on every
+query, and it leaves no handle open on the file a rebuild replaces.
+
 ## 5. Freshness: the watermark
 
 A stale index is worse for a memory system than a slow one. An index built an

@@ -2236,6 +2236,15 @@ MUTATIONS += [
         replace='}',
         breaks='a consumer reads a v1.1 response as v1 and cannot tell which rules apply',
         expect='test_superauditor_findings.py::test_the_response_states_the_standard_version_it_conforms_to',
+    ),    Mutation(
+        id='M210',
+        tests=('tests/test_vector_index_rebuild_while_loaded.py',),
+        target='vector_index — the Windows read path reads each array at its own offset (bug-503)',
+        file='cpersona/vector_index.py',
+        find='        return np.fromfile(src, dtype=dtype, count=items, offset=offset).reshape(shape)\n',
+        replace='        return np.fromfile(src, dtype=dtype, count=items, offset=0).reshape(shape)\n',
+        breaks='on Windows every array is read from the start of the file: the index loads garbage',
+        expect='test_vector_index_rebuild_while_loaded.py::test_read_mode_loads_the_same_arrays_and_maps_nothing',
     ),
 ]
 
