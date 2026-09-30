@@ -120,7 +120,8 @@ jobs:
     # Windows refuses to replace a file another handle still maps, which POSIX
     # allows — so a defect in how the contiguous index is held while it is
     # rebuilt cannot show on the Ubuntu jobs. A production user runs on Windows.
-    # The index files only; the rest of the suite assumes POSIX file modes.
+    # It also runs the Claude Code hook example, whose point is to survive a
+    # Windows console's encoding. The rest of the suite assumes POSIX file modes.
     if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: windows-latest
     timeout-minutes: 15
@@ -134,7 +135,7 @@ jobs:
         run: uv sync --dev --python 3.13
       - name: Run the index tests
         # pyproject's timeout_method is "signal", which needs SIGALRM; Windows has none.
-        run: uv run pytest tests/test_vector_index_rebuild_while_loaded.py tests/test_vector_index_builder.py -q -o timeout_method=thread
+        run: uv run pytest tests/test_vector_index_rebuild_while_loaded.py tests/test_vector_index_builder.py tests/test_claude_code_hook_example.py -q -o timeout_method=thread
 
   docs-facts:
     # Goal: hand-written numbers in current-state docs (README, the bundled
