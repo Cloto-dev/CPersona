@@ -2187,6 +2187,26 @@ MUTATIONS += [
         breaks='a set divided from text the record no longer holds is written',
         expect='test_blocks_backfill.py::test_a_record_that_moved_under_the_build_is_not_counted_as_built',
     ),
+    Mutation(
+        id='M205',
+        tests=('tests/test_config_parsing.py',),
+        target='config — block reach is on by default (2.6.0)',
+        file='cpersona/config.py',
+        find='BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "true").lower() == "true"\n',
+        replace='BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "false").lower() == "true"\n',
+        breaks='a deployment that sets nothing ships without block reach',
+        expect='test_config_parsing.py::test_block_reach_is_on_by_default',
+    ),
+    Mutation(
+        id='M206',
+        tests=('tests/test_config_parsing.py',),
+        target='config — the reader follows construction when it is not set',
+        file='cpersona/config.py',
+        find='        "CPERSONA_BLOCK_RETRIEVAL_ENABLED", "true" if BLOCK_BUILD_ENABLED else "false"\n',
+        replace='        "CPERSONA_BLOCK_RETRIEVAL_ENABLED", "true"\n',
+        breaks='turning construction off alone becomes a startup error',
+        expect='test_config_parsing.py::test_turning_construction_off_alone_turns_the_reader_off_too',
+    ),
 ]
 
 

@@ -650,20 +650,25 @@ RECENT_RECALL_WINDOW_MIN = _parse_float("CPERSONA_RECENT_RECALL_WINDOW_MIN", 5.0
 TASK_MAX_RETRIES = _parse_int("CPERSONA_TASK_MAX_RETRIES", 3)
 TASK_RETRY_DELAY = _parse_int("CPERSONA_TASK_RETRY_DELAY", 30)
 
-# docs/BLOCK_REACH_DESIGN.md §7. Opt-in for the whole of this step, and off means
-# no embedding calls, no rows and no queue work rather than "built but unread":
-# a deployment not using the feature should not pay the backfill for it.
-# Promotion to a default is deliberately out of scope here — what would justify
-# one is a measured net gain, and §0 records the quantity that decides it as
-# unmeasured.
-BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "false").lower() == "true"
+# docs/BLOCK_REACH_DESIGN.md §7. On by default from 2.6.0: the configuration
+# that reads blocks answered more questions with a reader on a pack of real
+# agent memories than the same release without them (§0). Off still means no
+# embedding calls, no rows and no queue work rather than "built but unread", so
+# a deployment that does not want the backfill sets this one switch to false.
+BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "true").lower() == "true"
 
-# The other half of the same opt-in (§7): whether the block arm runs during
-# recall. Split from construction because one switch would charge a deployment
-# for the half it is not using — an index nothing reads, or a reader with no
-# index. Off means the rows may exist and nothing looks at them.
+# The other half (§7): whether the block arm runs during recall. Split from
+# construction because one switch would charge a deployment for the half it is
+# not using — an index nothing reads, or a reader with no index. Off means the
+# rows may exist and nothing looks at them. Left unset it follows construction:
+# with both on by default, turning construction off alone would otherwise ask
+# to read an index nothing fills, which validate_block_gates() refuses at
+# startup. Set explicitly, it is taken as written and that refusal stands.
 BLOCK_RETRIEVAL_ENABLED = (
-    os.environ.get("CPERSONA_BLOCK_RETRIEVAL_ENABLED", "false").lower() == "true"
+    os.environ.get(
+        "CPERSONA_BLOCK_RETRIEVAL_ENABLED", "true" if BLOCK_BUILD_ENABLED else "false"
+    ).lower()
+    == "true"
 )
 
 

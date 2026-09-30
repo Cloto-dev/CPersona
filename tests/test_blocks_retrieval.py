@@ -80,6 +80,7 @@ class _TempDB:
 @pytest.fixture
 def building(monkeypatch, fake_embedding_client):
     monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", False)
     return fake_embedding_client
 
 

@@ -146,6 +146,7 @@ def test_the_sweep_walks_every_kind_that_has_text():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_nothing_is_queued_when_construction_is_off(fake_embedding_client):
     async with _TempDB() as tmp:

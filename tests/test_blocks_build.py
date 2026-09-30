@@ -77,6 +77,7 @@ def enabled(monkeypatch, fake_embedding_client):
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_a_store_queues_nothing_when_the_feature_is_off(fake_embedding_client):
     async with _TempDB() as tmp:

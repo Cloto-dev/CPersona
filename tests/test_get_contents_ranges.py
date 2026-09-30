@@ -263,6 +263,7 @@ async def test_only_the_slice_counts_against_the_budget_and_deferred_echoes_the_
         assert out["deferred"] == [{"ref": ref, "node": 0}, ref]
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_a_reconstruct_node_quote_expands_to_itself_and_its_neighbours(windowed, monkeypatch):
     # A node quote is the single-passage head quote, kept behind CPERSONA_RECONSTRUCT_QUOTE_CHARS=0.

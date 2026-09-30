@@ -11932,6 +11932,7 @@
       },
       "trace": {
         "arms": {
+          "block": [],
           "cue": [
             {
               "rank": 0,
@@ -12918,6 +12919,7 @@
       },
       "trace": {
         "arms": {
+          "block": [],
           "cue": [
             {
               "rank": 0,
@@ -14190,6 +14192,7 @@
       },
       "trace": {
         "arms": {
+          "block": [],
           "cue": [
             {
               "rank": 0,
@@ -14819,6 +14822,7 @@
       },
       "trace": {
         "arms": {
+          "block": [],
           "cue": [
             {
               "rank": 0,
@@ -16044,6 +16048,7 @@
       },
       "trace": {
         "arms": {
+          "block": [],
           "episode_fts": [
             {
               "rank": 0,
@@ -16693,6 +16698,7 @@
       },
       "trace": {
         "arms": {
+          "block": [],
           "cue": [],
           "episode_fts": [
             {
@@ -17355,6 +17361,7 @@
       },
       "trace": {
         "arms": {
+          "block": [],
           "cue": [],
           "cue_stage_1": [
             {
@@ -18000,6 +18007,7 @@
       ],
       "trace": {
         "arms": {
+          "block": [],
           "episode_fts": [
             {
               "rank": 0,
@@ -18847,6 +18855,7 @@
         ],
         "recall": {
           "arms": {
+            "block": [],
             "episode_fts": [
               {
                 "rank": 0,
@@ -19713,6 +19722,7 @@
         ],
         "recall": {
           "arms": {
+            "block": [],
             "cue": [
               {
                 "rank": 0,
@@ -20605,6 +20615,7 @@
         ],
         "recall": {
           "arms": {
+            "block": [],
             "episode_fts": [
               {
                 "rank": 0,
