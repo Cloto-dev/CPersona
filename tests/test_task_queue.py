@@ -437,3 +437,96 @@ async def test_the_reconcile_survives_the_older_variable_ceiling():
         "the reconcile did not prune: it either raised and was swallowed, or it "
         f"kept {len(queue._task_sessions)} attributions for one live row"
     )
+
+
+# ============================================================
+# bug-463: a failing derived build does not hold the work behind it
+# ============================================================
+
+
+def _failing_build(events):
+    async def build(payload):
+        events.append("build")
+        raise RuntimeError("embedding backend down")
+
+    return build
+
+
+@pytest.mark.asyncio
+async def test_a_failing_build_does_not_hold_a_profile_update(monkeypatch):
+    """A build retried in place held every task behind it for the retry delay, about
+    90 s per failing build through an embedding outage. With other work waiting, the
+    build goes to the back of the queue with its retry counted."""
+    from cpersona import nodes
+
+    events = []
+
+    async def profile(agent_id, history, session_key=""):
+        events.append("profile")
+        return {"ok": True, "profiles_updated": 0}
+
+    monkeypatch.setattr(nodes, "build_nodes", _failing_build(events))
+    monkeypatch.setattr(admin_handlers, "do_update_profile", profile)
+    monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
+    queue = tasks.MemoryTaskQueue()
+    queue._running = True
+    build_id = await queue.enqueue(nodes.TASK_TYPE, "agent-A", {"kind": "mem", "id": 1}, session_key="s-1")
+    await queue.enqueue("update_profile", "agent-B", [])
+
+    await queue._drain(admin_handlers, memory_handlers, nodes)
+
+    # Retried and discarded exactly as before -- three attempts in all -- but the
+    # profile update ran after the first failure instead of after the last.
+    assert events == ["build", "profile", "build", "build"]
+    db = await get_db()
+    assert (await db.execute_fetchall("SELECT COUNT(*) FROM pending_memory_tasks"))[0][0] == 0
+    assert build_id not in queue._task_sessions
+
+
+@pytest.mark.asyncio
+async def test_a_moved_build_keeps_its_session_and_its_place_is_new(monkeypatch):
+    from cpersona import nodes
+
+    monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
+    queue = tasks.MemoryTaskQueue()
+    build_id = await queue.enqueue(nodes.TASK_TYPE, "agent-A", {"kind": "mem", "id": 1}, session_key="s-1")
+    await queue.enqueue("update_profile", "agent-B", [])
+
+    await queue._requeue_at_tail(build_id)
+
+    db = await get_db()
+    rows = await db.execute_fetchall("SELECT id, task_type, retries FROM pending_memory_tasks ORDER BY id")
+    assert [r[1] for r in rows] == ["update_profile", nodes.TASK_TYPE]
+    moved_id, _, retries = rows[-1]
+    assert moved_id > build_id and retries == 1
+    assert queue._session_for(moved_id) == "s-1" and build_id not in queue._task_sessions
+    later = await queue.enqueue("update_profile", "agent-C", [])
+    assert later > moved_id, "an id handed out after the move collided with the moved row"
+
+
+@pytest.mark.asyncio
+async def test_builds_waiting_only_behind_builds_keep_the_delay(monkeypatch):
+    """Rotating builds among themselves would spend their retries in a second, so a
+    build with only other builds behind it retries in place, after the delay."""
+    from cpersona import nodes
+
+    events = []
+    moved = []
+    monkeypatch.setattr(nodes, "build_nodes", _failing_build(events))
+    monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
+    queue = tasks.MemoryTaskQueue()
+    queue._running = True
+    original = queue._requeue_at_tail
+
+    async def spy(task_id):
+        moved.append(task_id)
+        await original(task_id)
+
+    monkeypatch.setattr(queue, "_requeue_at_tail", spy)
+    await queue.enqueue(nodes.TASK_TYPE, "agent-A", {"kind": "mem", "id": 1})
+    await queue.enqueue(nodes.TASK_TYPE, "agent-A", {"kind": "mem", "id": 2})
+
+    await queue._drain(admin_handlers, memory_handlers, nodes)
+
+    assert moved == []
+    assert len(events) == 6  # each build: three attempts, in place

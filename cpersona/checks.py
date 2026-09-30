@@ -86,7 +86,7 @@ import stat
 
 import aiosqlite
 
-from cpersona import blocks, config, fileperms, health, nodes, operating_context, vector
+from cpersona import blocks, config, fileperms, generation, health, nodes, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
@@ -2860,8 +2860,57 @@ NODE_REPAIR_RECORD_CAP = 50
 
 
 def _node_report_available() -> bool:
-    client = vector._embedding_client
-    return client is not None and callable(getattr(client, "count_tokens", None))
+    return nodes.token_report_available()
+
+
+async def _prepare_first(candidates: list, prepare, cap: int, label: str) -> tuple[list, int]:
+    """Prepare the first ``cap`` candidates; ``(prepared, failed)``.
+
+    ``prepare`` takes a candidate's fields and returns the build, or None when there
+    is nothing to build. One record's failure must not cost the rest, so it is
+    counted and passed over. bug-483: shared by the node and block scans, which
+    carried the same loop twice.
+    """
+    prepared, failed = [], 0
+    for candidate in candidates[:cap]:
+        try:
+            built = await prepare(*candidate)
+        except Exception as e:
+            logger.warning("%s build failed for %s:%s: %s", label, candidate[0], candidate[1], e)
+            failed += 1
+            continue
+        if built is not None:
+            prepared.append(built)
+    return prepared, failed
+
+
+async def _missing_issue(db, issue_type: str, scan: dict, fix: bool, write, cap: int) -> list[dict]:
+    """The finding for a scan's ``missing`` candidates, and under ``fix`` the writes.
+
+    bug-483: shared by missing_nodes and missing_blocks, which built the same
+    finding and ran the same write loop in two copies.
+    """
+    missing = scan["missing"]
+    if not missing:
+        return []
+    issue = {
+        "type": issue_type,
+        "count": len(missing),
+        "memories": sum(1 for kind, *_ in missing if kind == "mem"),
+        "episodes": sum(1 for kind, *_ in missing if kind == "ep"),
+        # Bounded by one run's reach, like null_embedding: the rest converge on later runs.
+        "repairable": min(len(missing), cap),
+    }
+    if fix:
+        built = 0
+        for prepared in scan["prepared"]:
+            if await write(db, prepared):
+                built += 1
+        # Zero is an outcome under fix (bug-379), so the key is always present then.
+        issue["built"] = built
+        if scan["failed"]:
+            issue["build_failed"] = scan["failed"]
+    return [issue]
 
 
 async def _scan_missing_nodes(candidates: list, prepare: bool) -> dict:
@@ -2877,15 +2926,7 @@ async def _scan_missing_nodes(candidates: list, prepare: bool) -> dict:
         return {"unknown": getattr(vector._embedding_client, "mode", "") == "http"}
     prepared, failed = [], 0
     if prepare:
-        for kind, row_id, text in missing[:NODE_REPAIR_RECORD_CAP]:
-            try:
-                built = await nodes.prepare_nodes(kind, row_id, text)
-            except Exception as e:  # one record's failure must not cost the rest
-                logger.warning("node build failed for %s:%s: %s", kind, row_id, e)
-                failed += 1
-                continue
-            if built is not None:
-                prepared.append(built)
+        prepared, failed = await _prepare_first(missing, nodes.prepare_nodes, NODE_REPAIR_RECORD_CAP, "node")
     return {"missing": missing, "prepared": prepared, "failed": failed}
 
 
@@ -2898,6 +2939,7 @@ async def prefetch_missing_nodes(agent_id: str = "") -> dict | None:
     """
     if not _node_report_available():
         return None
+    await generation.refresh()  # bug-461: judge currency by the backend's current identity
     async with connection() as db:
         candidates = await nodes.records_without_current_nodes(db, isolation_where(agent_id=agent_id or None))
     return await _scan_missing_nodes(candidates, prepare=True)
@@ -2918,12 +2960,13 @@ async def check_missing_nodes(db, agent_id: str, fix: bool, embedding_cache=None
     Info, not warn: a record without nodes returns the same answers, quoted from its
     start instead of from its most relevant part.
     """
-    if embedding_cache is not None and "nodes" in embedding_cache:
+    if embedding_cache is not None and embedding_cache.get("nodes") is not None:
         scan = embedding_cache["nodes"]
     elif not _node_report_available():
         scan = None
     else:
         # No prefetch (a report-only run, or the checkup CLI): scan live on this connection.
+        await generation.refresh()  # bug-461
         candidates = await nodes.records_without_current_nodes(db, isolation_where(agent_id=agent_id or None))
         scan = await _scan_missing_nodes(candidates, prepare=fix)
     if scan is None:
@@ -2943,27 +2986,7 @@ async def check_missing_nodes(db, agent_id: str, fix: bool, embedding_cache=None
                 ),
             }
         ]
-    missing = scan["missing"]
-    if not missing:
-        return []
-    issue = {
-        "type": "missing_nodes",
-        "count": len(missing),
-        "memories": sum(1 for kind, _, _ in missing if kind == "mem"),
-        "episodes": sum(1 for kind, _, _ in missing if kind == "ep"),
-        # Bounded by one run's reach, like null_embedding: the rest converge on later runs.
-        "repairable": min(len(missing), NODE_REPAIR_RECORD_CAP),
-    }
-    if fix:
-        built = 0
-        for prepared in scan["prepared"]:
-            if await nodes.write_nodes(db, prepared):
-                built += 1
-        # Zero is an outcome under fix (bug-379), so the key is always present then.
-        issue["built"] = built
-        if scan["failed"]:
-            issue["build_failed"] = scan["failed"]
-    return [issue]
+    return await _missing_issue(db, "missing_nodes", scan, fix, nodes.write_nodes, NODE_REPAIR_RECORD_CAP)
 
 
 #: Records one fix run builds blocks for, like NODE_REPAIR_RECORD_CAP and for the
@@ -2993,15 +3016,7 @@ async def _scan_missing_blocks(candidates: list, prepare: bool) -> dict:
     """
     prepared, failed = [], 0
     if prepare:
-        for kind, row_id, text, node_bounds in candidates[:BLOCK_REPAIR_RECORD_CAP]:
-            try:
-                built = await blocks.prepare_blocks(kind, row_id, text, node_bounds)
-            except Exception as e:  # one record's failure must not cost the rest
-                logger.warning("block build failed for %s:%s: %s", kind, row_id, e)
-                failed += 1
-                continue
-            if built is not None:
-                prepared.append(built)
+        prepared, failed = await _prepare_first(candidates, blocks.prepare_blocks, BLOCK_REPAIR_RECORD_CAP, "block")
     return {"missing": candidates, "prepared": prepared, "failed": failed}
 
 
@@ -3012,6 +3027,7 @@ async def prefetch_missing_blocks(agent_id: str = "") -> dict | None:
     """
     if not _block_build_available():
         return None
+    await generation.refresh()  # bug-461
     async with connection() as db:
         candidates = await blocks.records_without_current_blocks(
             db, isolation_where(agent_id=agent_id or None)
@@ -3042,31 +3058,12 @@ async def check_missing_blocks(db, agent_id: str, fix: bool, embedding_cache=Non
         scan = embedding_cache["blocks"]
     else:
         # No prefetch (a report-only run, or the checkup CLI): scan live on this connection.
+        await generation.refresh()  # bug-461
         candidates = await blocks.records_without_current_blocks(
             db, isolation_where(agent_id=agent_id or None)
         )
         scan = await _scan_missing_blocks(candidates, prepare=fix)
-    missing = scan["missing"]
-    if not missing:
-        return []
-    issue = {
-        "type": "missing_blocks",
-        "count": len(missing),
-        "memories": sum(1 for kind, *_ in missing if kind == "mem"),
-        "episodes": sum(1 for kind, *_ in missing if kind == "ep"),
-        # Bounded by one run's reach, like missing_nodes: the rest converge on later runs.
-        "repairable": min(len(missing), BLOCK_REPAIR_RECORD_CAP),
-    }
-    if fix:
-        built = 0
-        for prepared in scan["prepared"]:
-            if await blocks.write_blocks(db, prepared):
-                built += 1
-        # Zero is an outcome under fix (bug-379), so the key is always present then.
-        issue["built"] = built
-        if scan["failed"]:
-            issue["build_failed"] = scan["failed"]
-    return [issue]
+    return await _missing_issue(db, "missing_blocks", scan, fix, blocks.write_blocks, BLOCK_REPAIR_RECORD_CAP)
 
 
 class Check:
