@@ -11,18 +11,51 @@ from cpersona.database import get_db
 AGENT = "reconstruction-v1"
 
 
-def test_unconfigured_count_policy_is_the_declared_experimental_default():
-    import json
+def _count_policy_in_a_fresh_process(**env_overrides):
+    """resolve_count(None) and resolve_count(99), with only the given reconstruct settings."""
     import os
     import subprocess
     import sys
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("CPERSONA_RECONSTRUCT_")}
-    code = "from cpersona.reconstruct import resolve_count; import json; print(json.dumps([resolve_count(None),resolve_count(99)]))"
-    result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+    env.update(env_overrides)
+    code = (
+        "from cpersona import config; config.validate_reconstruct_counts();"
+        "from cpersona.reconstruct import resolve_count; import json;"
+        "print(json.dumps([resolve_count(None),resolve_count(99)]))"
+    )
+    result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    return result
+
+
+def test_unconfigured_count_policy_is_the_measured_default():
+    """2.6.0: a caller that omits `count` gets 10, the configuration measured with a reader."""
+    import json
+
+    result = _count_policy_in_a_fresh_process()
+    assert result.returncode == 0, result.stderr
     default, maximum = json.loads(result.stdout)
-    assert default == [1, {"source": "server_default", "clamped": False, "reason": "count_omitted"}]
+    assert default == [10, {"source": "server_default", "clamped": False, "reason": "count_omitted"}]
     assert maximum == [10, {"source": "caller", "clamped": True, "reason": "count_requested"}]
+
+
+def test_an_unset_default_follows_a_lowered_maximum():
+    """Lowering only the maximum must not become a startup error over a default nobody set."""
+    import json
+
+    result = _count_policy_in_a_fresh_process(CPERSONA_RECONSTRUCT_MAX_COUNT="4")
+    assert result.returncode == 0, result.stderr
+    default, maximum = json.loads(result.stdout)
+    assert default[0] == 4
+    assert maximum[0] == 4
+
+
+def test_an_explicit_default_above_the_maximum_is_still_refused():
+    result = _count_policy_in_a_fresh_process(
+        CPERSONA_RECONSTRUCT_MAX_COUNT="4", CPERSONA_RECONSTRUCT_DEFAULT_COUNT="6"
+    )
+    assert result.returncode != 0
+    assert "CPERSONA_RECONSTRUCT_DEFAULT_COUNT=6 exceeds" in result.stderr
 
 
 @pytest_asyncio.fixture(autouse=True)

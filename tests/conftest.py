@@ -135,6 +135,19 @@ def fake_embedding_client(monkeypatch):
     return client
 
 
+@pytest.fixture
+def blocks_off(monkeypatch):
+    """Both block reach gates closed.
+
+    2.6.0 ships block reach on (docs/BLOCK_REACH_DESIGN.md §7), so a test of the
+    path a deployment takes with it switched off -- or of the node and lexical
+    quotation it falls back to -- has to say so rather than inherit the default."""
+    from cpersona import config
+
+    monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", False)
+    monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", False)
+
+
 @pytest.fixture(autouse=True)
 def _clear_scope_stats_cache():
     """Empty the per-scope aggregate cache around every test.

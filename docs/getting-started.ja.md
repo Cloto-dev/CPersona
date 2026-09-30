@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:2cd10710f961831817a39f5b9dc589f1e62abbc3 -->
+<!-- i18n-source: docs/getting-started.md@blob:b7f180074a705ccfcd8c4f333257965aed6a6187 -->
 
 # はじめに
 
@@ -411,17 +411,17 @@ Codex はサーバーごとにツールを拒否リストにできます (同じ
 skill 側にあり、このコピーは CI でそれと照合されます。
 
 ```markdown
-<!-- BEGIN cpersona-policy v3 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v4 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
 
-**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before the
-first substantive action; `recall_with_context` when conversation history is at hand, `deep=true`
-when the first pass comes back thin. Skip only for trivial one-shot questions.
+**Session start** → `reconstruct(agent_id, query="<opening-topic keywords>")` before the first
+substantive action; with no topic yet, `recall(agent_id, query="", limit=10)` for the latest.
+`deep=true` when the first pass comes back thin. Skip only for trivial one-shot questions.
 
-**Past context mid-session** → `reconstruct(agent_id, query, count=<items you need>)`, not `recall`:
-`count` caps the items without shrinking the search. No score comes back; read an item to judge it.
+**Answering from memory** → `reconstruct(agent_id, query)`, not `recall`: 10 items by default, each
+quoting the rows behind it, at fewer reader tokens per correct answer. Read an item to judge it.
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
 "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".

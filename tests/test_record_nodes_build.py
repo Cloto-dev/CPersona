@@ -239,6 +239,7 @@ async def test_a_long_store_reports_queued_and_the_drain_builds_its_nodes(window
         assert await db.execute_fetchall("SELECT * FROM memories WHERE id = ?", (result["id"],)) == before
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_a_store_that_fits_reports_nothing_and_queues_nothing(windowed):
     async with _TempDB() as tmp:
@@ -248,6 +249,7 @@ async def test_a_store_that_fits_reports_nothing_and_queues_nothing(windowed):
         assert await tmp.pending() == []
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_an_unknown_token_report_queues_nothing(fake_embedding_client):
     assert fake_embedding_client.token_window is None
@@ -466,6 +468,7 @@ def _ranking(response):
     return [(m.get("ref") or m.get("id"), m.get("content")) for m in response["messages"]]
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_recall_returns_the_same_records_in_the_same_order_with_nodes(windowed):
     corpus = [

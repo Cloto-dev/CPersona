@@ -1,14 +1,14 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:41ee7acab2caf6d09c3905dd377acd93f8aa735c -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:73b2baf0a453903513d99027fbb8d50db464fe52 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
-このページは、既存の 2.5.x のストアを、現在の 2.6 の pre-release である **2.6.0b2** まで
-一度に移行する手順をまとめたものです。2.6 の各 pre-release は、リリースノートに自分の段の
-手順しか書いていません。このページは、2.5.12 からの手順を 1 か所に集めます。
+このページは、既存の 2.5.x のストアを **2.6.0** まで一度に移行する手順をまとめたものです。
+2.6 の各 pre-release は、リリースノートに自分の段の手順しか書いていません。このページは、
+2.5.12 からの手順を 1 か所に集めます。
 
-2.6 はまだ pre-release の系列です ([サポート方針](https://github.com/Cloto-dev/CPersona/blob/master/SUPPORT.md)
-では Experimental)。opt-in で、final リリースの保証はありません。以下の手順は 2.6.0 final までに
-まだ変わりえます。このページは pre-release ごとに更新し、final の時点で確定します。
+2.6.0 は 2.6 系の最初の final リリースです ([サポート方針](https://github.com/Cloto-dev/CPersona/blob/master/SUPPORT.md)
+では Current)。2.5 系は Candidate になります: どのチャネルからも配られず、版を指定すれば
+引き続き導入できます。
 
 ## 始める前に { #before-you-start }
 
@@ -20,10 +20,11 @@
 2. **埋め込みサーバーを確かめる。** すでに保存されている記録の溢れ分のノードを作るには、トークン数を
    報告するサーバー (CEmbedding 0.8.0 以降) が必要です。古いサーバーは `count: null` を返し、
    これはゼロではありません。
-3. **pre-release を明示してインストールする。** pip は自分からは pre-release を選びません:
+3. **2.6.0 をインストールする。** 版を指定しない更新でも 2.6.0 になります。どの版を動かしているかが
+   分かるよう、版を固定してください:
 
    ```sh
-   pip install 'cpersona==2.6.0b2'
+   pip install 'cpersona==2.6.0'
    ```
 
 ## 最初の起動で起きること { #what-the-first-start-does }
@@ -36,10 +37,10 @@
 | --- | --- | --- | --- |
 | 14 | 2.6.0a3 | `record_nodes`: 溢れ分の tree (埋め込み窓を超えた部分の断片) | **あり**: すでに保存されている長い記録のノード ([下記](#build-the-overflow-nodes)) |
 | 15 | 2.6.0a4 | `entities`、`entity_aliases`、`entity_mentions`、`relations`: 宣言された連想 | なし |
-| 16 | 2.6.0a5 | `record_blocks`: Block による到達 | Block による到達を on にした場合だけ ([下記](#optional-turn-on-block-reach)) |
-| 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block による到達を on にした場合だけ |
+| 16 | 2.6.0a5 | `record_blocks`: Block による到達 | **自動で作られます**: すでに保存されている記録の Block。Block による到達を off にした場合を除く ([下記](#block-reach-is-on-by-default)) |
+| 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block と一緒に作られます |
 
-2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2 はスキーマを変えていません。
+2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0 はスキーマを変えていません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
@@ -68,17 +69,27 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 この修復は記録を変更しないので、ロックされた記憶にも使えます。埋め込みモデルを変えた後は、
 もう一度実行してください。
 
-### 任意: Block による到達を on にする { #optional-turn-on-block-reach }
+### Block による到達は既定で on です { #block-reach-is-on-by-default }
 
-Block による到達は既定で off で、off の間は費用がかかりません (埋め込みの呼び出しも、行も、キューの
-仕事もありません)。長い記録の埋め込み窓を超えた部分の本文を、検索で到達できるようにします
-([設計](BLOCK_REACH_DESIGN.md))。
+2.6.0 から、Block による到達は off にしない限り on です。長い記録の埋め込み窓を超えた部分の本文を
+検索で到達できるようにし、`reconstruct` は一致した Block を引用します ([設計](BLOCK_REACH_DESIGN.md))。
 
-- `CPERSONA_BLOCK_BUILD_ENABLED=true` は Block の索引を作って保ち、すでに保存されている記録の
-  上限つきのバックフィルを始めます。進み具合は `check_health` が `missing_blocks` として示し、
-  `fix=true` で先へ進めます。
-- `CPERSONA_BLOCK_RETRIEVAL_ENABLED=true` は、recall の中で索引を読みます。構築のゲートが必要です:
-  何も埋めない索引を読む設定は起動時のエラーになります。ベクトル検索がリモートの場合は効果がありません。
+- **最初の起動で、上限つきのバックフィルが始まります**。すでに保存されている記録の Block を、記録を
+  埋め込むのと同じ埋め込みサーバーで、Block のまとまりごとに 1 回の呼び出しで埋め込みます。この
+  プロジェクト自身のストアでは、4,478 件の記録が 70,130 個の Block に分かれました。進み具合は
+  `check_health` が `missing_blocks` として示し、`fix=true` で先へ進めます。記録の Block ができる
+  までは、recall はその記録にほかの腕で到達します (Block による到達が off の時と同じです)。
+- **Block は 2 通りに保存されます**。次元ごとに 1 ビットと、次元ごとに 1 バイトです。1,024 次元の
+  モデルで Block あたり 1,152 バイトのベクトルです (128 + 1,024)。
+- **recall は、ベクトルのある問い合わせのたびに索引を読み**、Block の腕だけが到達した記録のために
+  `limit` を最大 2 行超えて返すことがあります。ベクトル検索がリモートの場合は効果がありません。
+- **recall は遅くなり、メモリも増えます**。そのストアを 1 台のマシンで測ると、`recall` の中央値は
+  Block の腕ありで 138 ms (2.5.12 は 17 ms。質問の埋め込みの時間は含みません)、プロセスのピークメモリは 180 MB (2.5.12 は 106 MB)
+  でした。費用は Block の数とともに増えます。10 倍大きいストアは測っていません。
+- **off にするには** `CPERSONA_BLOCK_BUILD_ENABLED=false` を設定します。埋め込みの呼び出しも、行も、
+  キューの仕事も無くなり、読む側も一緒に off になります。`CPERSONA_BLOCK_RETRIEVAL_ENABLED=false`
+  だけなら、索引は作られたまま読まれません。構築を off にして読む側だけを on にする設定は、起動時の
+  エラーになります。
 
 2.6.0a5 で Block の構築を on にしていた場合、その Block の集合はベクトルを持たないので、同じ
 バックフィルが作り直します。
@@ -86,6 +97,14 @@ Block による到達は既定で off で、off の間は費用がかかりま�
 ## 変わった挙動 { #behaviour-that-changed }
 
 配備が頼っているものと照らし合わせてください。特に断りのない限り、どれも off か、2.5 と同じです。
+
+- **Block による到達は既定で on です** (2.6.0)。store は記録の Block をキューに入れてそう伝え
+  (`blocks: {"status": "queued"}`)、recall は `limit` を最大 2 行超える予約の行を返すことがあり、
+  `reconstruct` は一致した Block を引用します。off にする方法は[上](#block-reach-is-on-by-default)です。
+- **`count` を省略した `reconstruct` は 10 項目を返します** (2.6.0。以前は 1)。Block による到達が on
+  の状態で、これが 2.6.0 の推奨する、記憶から答えるための構成です。1 項目を前提にしていた配備は
+  `CPERSONA_RECONSTRUCT_DEFAULT_COUNT=1` を設定してください。`CPERSONA_RECONSTRUCT_MAX_COUNT` だけを
+  下げると、既定も一緒に下がります。
 
 - **`limit` は返す行数です** (2.6.0a2)。融合がどこまで深く見るかは
   `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)` で、floor の既定は 0 なので、順位は 2.5 と同じです。
@@ -129,9 +148,31 @@ Block による到達は既定で off で、off の間は費用がかかりま�
 - **細かな修正** (2.6.0b2): メモリ上のデータベースでは、`export_memories` が一貫した複製を
   読みます。ベクトル索引の経路は、コピーが要る窓を、テーブル走査と同じ範囲で 1 チャンクずつ
   採点します。
+- **`reconstruct` の予算は、見出しの引用 1 つ分に満たなければそこまで引き上げます** (2.6.0)。
+  既定の `CPERSONA_RECONSTRUCT_QUOTE_CHARS` 800 では、それより小さい `budget` は 800 になり、
+  `budget_policy` がそう申告します。以前は 500 までしか引き上げず、見出しが 800 まで伸びても
+  超過は報告されませんでした。
+- **recall の抜粋は、Block の検索が on のときだけ Block 索引を読みます** (2.6.0)。
+  `reconstruct` の引用と同じ扱いです。`CPERSONA_BLOCK_BUILD_ENABLED=true` で
+  `CPERSONA_BLOCK_RETRIEVAL_ENABLED=false` なら、`excerpt_basis` は `lexical` になります。
+- **Block の集合は、ノードの区切りを守り、再順位付けのベクトルがすべてそろっているときだけ
+  最新とみなします** (2.6.0)。Block の構築が on の配備では、レコードのノードができる前に作られた
+  集合を、移行後に backfill と `check_health(fix=true)` が作り直します。
+- **既定以外の `CPERSONA_PRIOR_FAR_WEIGHT` は較正の一部になります** (2.6.0)。1 以外を設定した
+  配備は、2.6.0 の最初の起動で較正し直します。別の重みで測ったゲートは復元されないためです。
+  既定のままなら何も変わりません。
+- **答えの脇に置いた行は recall の回数を得ません** (2.6.0)。confidence が有効なとき、Block の
+  別枠、時期の別枠、関連の別枠は `recall_count` を増やさず、その `confidence` は
+  その行自身の履歴を読みます。
+- **細かな修正** (2.6.0): preview の長さで切られた `reconstruct` の引用は、`expand` で
+  それが始まった範囲全体を渡します。`shortfall_reason` は、予算が窓の中の項目を切ったときだけ
+  予算のせいにします。`bounds.reached` は recall の上限の内側の行だけを数えます。表せる範囲を
+  超える `time_cue` は例外にせず範囲の端で止め、文字列でない単位は拒否します。失敗するノードや
+  Block の構築が、待ち行列の他のタスクを止めなくなりました。`api` の埋め込みモードでは、ノードの
+  点検が全レコードの本文を読まなくなりました。
 
 2.6 で新しく入り、求めない限り何もしないもの: `reconstruct` ツール、recall の trace (`trace=true`)、
-時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、伝播の席
+時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、関連の別枠
 (`CPERSONA_RECALL_PROPAGATION_SEAT`)。
 
 ## 結果を確かめる { #checking-the-result }

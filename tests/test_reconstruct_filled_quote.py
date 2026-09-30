@@ -83,6 +83,7 @@ async def _item(ref, **kw):
     return next(i for i in out["items"] if i["head_ref"] == ref), out
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_a_long_record_is_quoted_from_the_part_that_matched_past_the_cap(filling):
     async with _TempDB() as tmp:
@@ -126,6 +127,7 @@ async def test_a_record_no_longer_than_the_cap_is_quoted_whole(filling):
         assert "content_truncated" not in item
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_the_head_quote_is_the_recall_excerpt_of_the_same_record(filling, monkeypatch):
     monkeypatch.setattr(config, "RECALL_EXCERPT_CHARS", 800)
@@ -173,6 +175,7 @@ async def _episode(tmp, summary):
     return f"ep:{out['episode_id']}"
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_an_episode_is_quoted_in_the_text_get_contents_serves(filling):
     """bug-456: without a block set, an episode was measured in recall's display
@@ -198,6 +201,7 @@ async def test_an_episode_s_cut_passage_expands_to_its_own_rest(filling, monkeyp
         assert passage.startswith(item["content"]) and len(passage) > 20
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_zero_brings_back_the_single_passage(filling, monkeypatch):
     async with _TempDB() as tmp:
@@ -224,6 +228,7 @@ async def test_raising_the_budget_does_not_replace_a_filled_quote(filling):
         assert ids[LONG] in {i["head_ref"] for i in large["items"]}
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_the_mcp_boundary_delivers_the_filled_quote_uncut(filling):
     """The library quote is not what a client receives unless the boundary lets it through:
@@ -239,6 +244,7 @@ async def test_the_mcp_boundary_delivers_the_filled_quote_uncut(filling):
         assert item["quote_basis"] == "lexical" and item["content_len"] == len(LONG)
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_the_mcp_boundary_still_cuts_the_single_passage(filling, monkeypatch):
     from cpersona import server
@@ -387,6 +393,7 @@ async def test_an_episode_head_quote_is_the_recall_excerpt_of_the_same_episode(f
         assert item["quote_basis"] == row["excerpt_basis"]
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_excerpts_read_no_record_the_recall_row_already_carries(filling):
     """bug-491: each record without a current block set was read again, one SELECT per

@@ -22,7 +22,7 @@
     "apart from having forgotten a line that does have documentation."
   ],
   "site_url": "https://cloto-dev.github.io/CPersona/",
-  "current": "2.5",
+  "current": "2.6",
   "lines_without_docs": [
     {
       "line": "2.4.x",

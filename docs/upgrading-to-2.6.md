@@ -1,14 +1,13 @@
 # Upgrading from 2.5 to 2.6
 
-This page takes an existing 2.5.x store to the current 2.6 pre-release,
-**2.6.0b2**, in one pass. Each 2.6 pre-release documented only its own step in
-its release notes; this page puts the steps from 2.5.12 onward in one place.
+This page takes an existing 2.5.x store to **2.6.0** in one pass. Each 2.6
+pre-release documented only its own step in its release notes; this page puts
+the steps from 2.5.12 onward in one place.
 
-2.6 is still a pre-release line (Experimental in the
-[support policy](https://github.com/Cloto-dev/CPersona/blob/master/SUPPORT.md)):
-opt-in, and without the guarantees of a final release. The steps below can
-still change before 2.6.0 final. This page is updated with each pre-release and
-settled at the final.
+2.6.0 is the 2.6 line's first final release (Current in the
+[support policy](https://github.com/Cloto-dev/CPersona/blob/master/SUPPORT.md)),
+and the 2.5 line becomes Candidate: no channel serves it, and it stays
+reachable by exact version.
 
 ## Before you start
 
@@ -21,11 +20,11 @@ settled at the final.
 2. **Check the embedding server.** Building the overflow nodes for records
    already stored needs a server that reports token counts: CEmbedding 0.8.0 or
    later. An older server answers `count: null`, which is not zero.
-3. **Install the pre-release explicitly.** pip does not pick pre-releases on its
-   own:
+3. **Install 2.6.0.** A plain upgrade now resolves to it; pin the version so you
+   know which one you are running:
 
    ```sh
-   pip install 'cpersona==2.6.0b2'
+   pip install 'cpersona==2.6.0'
    ```
 
 ## What the first start does
@@ -39,10 +38,10 @@ recorded as done, so it is retried on the next start.
 | --- | --- | --- | --- |
 | 14 | 2.6.0a3 | `record_nodes`: the overflow tree, pieces of a record past the embedding window | **Yes**: nodes for long records already stored ([below](#build-the-overflow-nodes)) |
 | 15 | 2.6.0a4 | `entities`, `entity_aliases`, `entity_mentions`, `relations`: declared associations | No |
-| 16 | 2.6.0a5 | `record_blocks`: block reach | Only if you turn block reach on ([below](#optional-turn-on-block-reach)) |
-| 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Only if you turn block reach on |
+| 16 | 2.6.0a5 | `record_blocks`: block reach | **Built for you**: blocks for the records already stored, unless you turn block reach off ([below](#block-reach-is-on-by-default)) |
+| 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1 and 2.6.0b2 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2 and 2.6.0 changed no schema.
 
 ## After the first start
 
@@ -75,18 +74,34 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 The repair never modifies a record, so it also covers locked memories. Run it
 again after changing the embedding model.
 
-### Optional: turn on block reach
+### Block reach is on by default
 
-Block reach is off by default and costs nothing while off: no embedding calls,
-no rows, no queued work. It makes text past a long record's embedding window
-reachable by search ([design](BLOCK_REACH_DESIGN.md)).
+From 2.6.0, block reach is on unless you turn it off. It makes text past a long
+record's embedding window reachable by search, and `reconstruct` quotes the
+block that matched ([design](BLOCK_REACH_DESIGN.md)).
 
-- `CPERSONA_BLOCK_BUILD_ENABLED=true` builds and maintains the block index and
-  starts a bounded backfill of the records already stored. `check_health` shows
-  the progress as `missing_blocks` and moves it along under `fix=true`.
-- `CPERSONA_BLOCK_RETRIEVAL_ENABLED=true` reads the index during recall. It
-  needs the build gate: reading an index nothing fills is a startup error. It
-  has no effect where vector search is remote.
+- **The first start begins a bounded backfill** of the records already stored.
+  It embeds every block through the same embedding server that embeds your
+  records, one call per batch of blocks; on this project's own store, 4,478
+  records divided into 70,130 blocks. `check_health` shows the progress as
+  `missing_blocks` and moves it along under `fix=true`. Until a record's blocks
+  exist, recall reaches it through the other arms, as it does with block reach
+  off.
+- **Each block is stored twice**, as one bit per dimension and as one byte per
+  dimension: 1,152 bytes of vector per block with a 1,024-dimension model
+  (128 + 1,024).
+- **Recall reads the index** on every query that has a vector, and may return
+  up to 2 rows beyond `limit` for records only the block arm reached. It has no
+  effect where vector search is remote.
+- **Recall gets slower and larger.** On that store, on one machine, the median
+  `recall` took 138 ms with the block arm against 17 ms for 2.5.12 (the query's
+  embedding excluded), and the
+  process peaked at 180 MB against 106 MB. The cost grows with the number of
+  blocks; a store ten times larger has not been measured.
+- **To turn it off**, set `CPERSONA_BLOCK_BUILD_ENABLED=false`: no embedding
+  calls, no rows and no queued work, and the reader follows it off.
+  `CPERSONA_BLOCK_RETRIEVAL_ENABLED=false` alone keeps the index built and
+  unread. Setting the reader on with construction off is a startup error.
 
 If you ran 2.6.0a5 with block construction on, its block sets have no vectors
 and are rebuilt by the same backfill.
@@ -95,6 +110,16 @@ and are rebuilt by the same backfill.
 
 Check these against what your deployment relies on. Each is off, or equal to
 2.5, unless noted.
+
+- **Block reach is on by default** (2.6.0). A store queues the record's
+  blocks and says so (`blocks: {"status": "queued"}`), recall can return up to
+  2 reserved rows beyond `limit`, and `reconstruct` quotes the block that
+  matched. [Above](#block-reach-is-on-by-default) is how to turn it off.
+- **`reconstruct` returns 10 items when `count` is omitted** (2.6.0; it
+  returned 1). With block reach on, this is the configuration 2.6.0 recommends
+  for answering from memory. A deployment that relied on one item sets
+  `CPERSONA_RECONSTRUCT_DEFAULT_COUNT=1`; lowering
+  `CPERSONA_RECONSTRUCT_MAX_COUNT` alone lowers the default with it.
 
 - **`limit` is the number of rows returned** (2.6.0a2). How deep fusion looks
   is `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)`; the floor defaults to 0, so the
@@ -149,6 +174,32 @@ Check these against what your deployment relies on. Each is off, or equal to
 - **Smaller corrections** (2.6.0b2): on an in-memory database, `export_memories`
   reads a consistent copy; the vector index path scores a window it has to copy
   one chunk at a time, in the ranges the table scan uses.
+- **A `reconstruct` budget below one head quote is raised to it** (2.6.0). With
+  the default `CPERSONA_RECONSTRUCT_QUOTE_CHARS` of 800, a smaller `budget`
+  becomes 800 and `budget_policy` says so. It used to be raised only to 500,
+  while the head could run to 800 without the overrun being reported.
+- **A recall excerpt reads the block index only while block retrieval is on**
+  (2.6.0), as `reconstruct`'s quote does. With `CPERSONA_BLOCK_BUILD_ENABLED=true`
+  and `CPERSONA_BLOCK_RETRIEVAL_ENABLED=false`, `excerpt_basis` is now `lexical`.
+- **A block set is current only if it respects the node layout and has every
+  re-rank vector** (2.6.0). Where block building is on, sets built before their
+  record's nodes existed are rebuilt by the sweep and by
+  `check_health(fix=true)` after the upgrade.
+- **A non-default `CPERSONA_PRIOR_FAR_WEIGHT` is part of the calibration**
+  (2.6.0). A deployment that sets it to anything but 1 recalibrates on its first
+  start of 2.6.0, because a gate measured at another weight is no longer
+  restored. At the default nothing changes.
+- **Rows held beside the answer earn no recall count** (2.6.0). With confidence
+  enabled, the block reservation, the time cue's seats and the propagation seat
+  no longer raise `recall_count`, and their `confidence` reads their own history.
+- **Smaller corrections** (2.6.0): a `reconstruct` quote cut to the preview
+  tier hands over the whole range it began in `expand`; `shortfall_reason`
+  blames the budget only when it cut an item of the window; `bounds.reached`
+  counts only the rows inside recall's limit; a `time_cue` past the
+  representable range is clipped rather than raising, and a unit that is not a
+  string is refused; a failing node or block build no longer holds the other
+  queued tasks; in `api` embedding mode the node check no longer reads every
+  record's text.
 
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 (`trace=true`), the time cue (`time_cue`), associations declared with

@@ -193,17 +193,17 @@ The block (keep it verbatim apart from the substitution — it is budgeted at
 is chosen to change behavior the agent would *not* show by default):
 
 ```markdown
-<!-- BEGIN cpersona-policy v3 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v4 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
 
-**Session start** → `recall(agent_id, query="<opening-topic keywords or ''>", limit=10)` before the
-first substantive action; `recall_with_context` when conversation history is at hand, `deep=true`
-when the first pass comes back thin. Skip only for trivial one-shot questions.
+**Session start** → `reconstruct(agent_id, query="<opening-topic keywords>")` before the first
+substantive action; with no topic yet, `recall(agent_id, query="", limit=10)` for the latest.
+`deep=true` when the first pass comes back thin. Skip only for trivial one-shot questions.
 
-**Past context mid-session** → `reconstruct(agent_id, query, count=<items you need>)`, not `recall`:
-`count` caps the items without shrinking the search. No score comes back; read an item to judge it.
+**Answering from memory** → `reconstruct(agent_id, query)`, not `recall`: 10 items by default, each
+quoting the rows behind it, at fewer reader tokens per correct answer. Read an item to judge it.
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
 "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".

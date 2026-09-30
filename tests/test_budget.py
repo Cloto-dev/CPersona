@@ -91,6 +91,7 @@ def test_an_iteration_budget_below_one_is_refused(bad):
 # --- what a recall spends -----------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_a_plain_recall_spends_one_fetch_and_one_iteration(fake_embedding_client):
     await _seed()

@@ -68,7 +68,7 @@ import numpy as np  # noqa: E402
 
 from cpersona import session  # noqa: E402
 from cpersona import admin_handlers, health, maintenance_handlers, memory_handlers  # noqa: E402
-from cpersona import scope_stats, utils, vector  # noqa: E402
+from cpersona import scope_stats, tasks, utils, vector  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient, EmbedOutcome  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
@@ -444,6 +444,14 @@ async def observe(scenario: Scenario) -> dict:
             ctx.out.record("remote_index_upsert", agent_id=agent_id, items=items)
 
         ctx.patch(vector, "remote_index_upsert", _fake_upsert)
+        # No task queue, whatever the process holds. The harness never starts
+        # one, but a test elsewhere in the same pytest process can leave
+        # `tasks._task_queue` set, and a write consults it: with block reach on
+        # by default (2.6.0), a store that finds a queue reports
+        # `blocks: {status: queued}` and one that does not reports nothing. Left
+        # to inheritance, which of the two a store scenario records was a fact
+        # about the order the suite ran in (passing alone, failing in full).
+        ctx.patch(tasks, "_task_queue", None)
         # Freeze the wall clock so the do_store timestamp default
         # and every _compute_confidence age_hours/score is deterministic. See
         # the module-level `_install_frozen_clock` docstring for why this is a

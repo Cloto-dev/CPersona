@@ -1,10 +1,10 @@
 # Block Reach — design
 
-**Status:** shipped, off by default. 2.6.0a5 released this step behind two
-gates, `CPERSONA_BLOCK_BUILD_ENABLED` and `CPERSONA_BLOCK_RETRIEVAL_ENABLED`,
-both off unless set; 2.6.0a6 added a vector per block (schema v17) and let
-`reconstruct` return what the block arm reaches. The default stays off: the
-quantity that would justify turning it on is still unmeasured (section 0).
+**Status:** shipped, **on by default from 2.6.0**. 2.6.0a5 released this step
+behind two gates, `CPERSONA_BLOCK_BUILD_ENABLED` and
+`CPERSONA_BLOCK_RETRIEVAL_ENABLED`; 2.6.0a6 added a vector per block (schema
+v17) and let `reconstruct` return what the block arm reaches. 2.6.0 turned both
+gates on by default, on the measurement section 7 describes.
 Numbers marked as estimates are estimates, and the section that says how the
 step is judged says which ones must be replaced by measurement before the work
 is called done.
@@ -414,14 +414,21 @@ treated as current on the strength of a configured default that happens to
 match — an unknown is an unknown, and a separate piece of work exists to make
 the embedding service state its identity.
 
-## 7. Opt-in, and the two gates
+## 7. The two gates, and the default { #7-opt-in-and-the-two-gates }
 
-The feature is opt-in — not "off by default until it looks good", but opt-in
-for the whole of this step, with promotion to a default deliberately out of
-scope. What would justify a default is a measured net gain, and the quantity
-that decides it is the one section 0 says is unmeasured.
+Through the 2.6 pre-releases the feature was opt-in, with promotion to a default
+out of scope until a net gain was measured, since the quantity that decides it
+is the one section 0 says is unmeasured. For 2.6.0 the net was measured end to
+end instead of through `P`: on a private pack of a real coding agent's memory
+(4,478 records), a model reader answered the 150 questions set aside for
+choosing configurations from what each configuration returned. For `recall`,
+every configuration that read blocks answered more than the same one without
+them (114 → 126 under `rsf`, 115 → 122 under `rrf`); for `reconstruct` the two
+were within one question. The best configuration 2.6.0 offered read blocks, and
+2.6.0 turned both gates on by default. The pack cannot be published, so this
+is one store's questions, and a measurement on public data follows.
 
-Opt-in is split across two switches, because a single one would still charge a
+The switch is split in two, because a single one would still charge a
 deployment for the half it is not using:
 
 | Switch | Governs | Off means |

@@ -212,6 +212,7 @@ def _shape(result):
     return [(i["head_ref"], [c["ref"] for c in i["claims"]]) for i in result["items"]]
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_do_not_move(windowed):
     async with _TempDB() as tmp:
@@ -250,6 +251,7 @@ async def test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_
         assert stored["id"] == int(item["head_ref"].split(":")[1])
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_nodes_from_another_model_are_not_quoted(windowed, monkeypatch):
     async with _TempDB() as tmp:
@@ -261,6 +263,7 @@ async def test_nodes_from_another_model_are_not_quoted(windowed, monkeypatch):
         assert item["node_unavailable"] == "not_current"
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_an_incomplete_node_set_is_not_quoted(windowed):
     async with _TempDB() as tmp:
@@ -406,6 +409,7 @@ async def test_a_one_row_item_carries_its_row_once(windowed):
         }
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_its_node(windowed, monkeypatch):
     # The node that matches is several times the preview width, so its quote is cut

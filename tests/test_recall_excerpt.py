@@ -111,6 +111,7 @@ def test_fill_never_repeats_text_a_taken_range_already_covers():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
 async def test_a_cut_row_carries_the_part_that_matched(fake_embedding_client):
     async with _TempDB() as tmp:

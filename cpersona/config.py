@@ -203,8 +203,19 @@ RECALL_PROPAGATION_SEAT = (
 # RECONSTRUCT_FORCED_COUNT pins the base for every call and is None unless an
 # operator sets it. A configuration whose default or forced value exceeds the
 # maximum is a STARTUP ERROR, not a silent clamp -- see validate_reconstruct_counts().
-RECONSTRUCT_DEFAULT_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", 1))
+#
+# The default is 10 from 2.6.0: the configuration a caller gets by omitting
+# `count` is the one measured with a reader on a pack of a real agent's memory,
+# which asked for 10. Left unset it follows the maximum down, so an operator who
+# lowers only the maximum is not refused at startup for a default nobody set; a
+# default set explicitly is taken as written and that refusal stands.
 RECONSTRUCT_MAX_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_MAX_COUNT", 10))
+_default_count_raw = os.environ.get("CPERSONA_RECONSTRUCT_DEFAULT_COUNT")
+RECONSTRUCT_DEFAULT_COUNT = (
+    max(1, _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", 10))
+    if _default_count_raw not in (None, "")
+    else min(10, RECONSTRUCT_MAX_COUNT)
+)
 _forced_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_COUNT")
 RECONSTRUCT_FORCED_COUNT = (
     max(1, _parse_int("CPERSONA_RECONSTRUCT_FORCED_COUNT", 1))
@@ -650,20 +661,25 @@ RECENT_RECALL_WINDOW_MIN = _parse_float("CPERSONA_RECENT_RECALL_WINDOW_MIN", 5.0
 TASK_MAX_RETRIES = _parse_int("CPERSONA_TASK_MAX_RETRIES", 3)
 TASK_RETRY_DELAY = _parse_int("CPERSONA_TASK_RETRY_DELAY", 30)
 
-# docs/BLOCK_REACH_DESIGN.md §7. Opt-in for the whole of this step, and off means
-# no embedding calls, no rows and no queue work rather than "built but unread":
-# a deployment not using the feature should not pay the backfill for it.
-# Promotion to a default is deliberately out of scope here — what would justify
-# one is a measured net gain, and §0 records the quantity that decides it as
-# unmeasured.
-BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "false").lower() == "true"
+# docs/BLOCK_REACH_DESIGN.md §7. On by default from 2.6.0: on a pack of a real
+# agent's memory, with a reader, every recall configuration that read blocks
+# answered more questions than the same one without them. Off still means no
+# embedding calls, no rows and no queue work rather than "built but unread", so
+# a deployment that does not want the backfill sets this one switch to false.
+BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "true").lower() == "true"
 
-# The other half of the same opt-in (§7): whether the block arm runs during
-# recall. Split from construction because one switch would charge a deployment
-# for the half it is not using — an index nothing reads, or a reader with no
-# index. Off means the rows may exist and nothing looks at them.
+# The other half (§7): whether the block arm runs during recall. Split from
+# construction because one switch would charge a deployment for the half it is
+# not using — an index nothing reads, or a reader with no index. Off means the
+# rows may exist and nothing looks at them. Left unset it follows construction:
+# with both on by default, turning construction off alone would otherwise ask
+# to read an index nothing fills, which validate_block_gates() refuses at
+# startup. Set explicitly, it is taken as written and that refusal stands.
 BLOCK_RETRIEVAL_ENABLED = (
-    os.environ.get("CPERSONA_BLOCK_RETRIEVAL_ENABLED", "false").lower() == "true"
+    os.environ.get(
+        "CPERSONA_BLOCK_RETRIEVAL_ENABLED", "true" if BLOCK_BUILD_ENABLED else "false"
+    ).lower()
+    == "true"
 )
 
 

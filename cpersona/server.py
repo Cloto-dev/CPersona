@@ -1168,6 +1168,8 @@ registry.auto_tool(
 registry.auto_tool(
     "recall",
     "Recall relevant memories using multi-strategy search (vector + FTS5 + keyword). "
+    "To answer a question from memory, prefer `reconstruct`, the recommended way to read it: "
+    "it returns items that quote the rows supporting them, within a character budget. "
     "Message content is returned as a preview tier by default — expand selected rows "
     "with get_contents(refs), or opt out wholesale with full_content=true. "
     "full_content is itself budgeted (200k chars per response, bug-211): rows "
@@ -1558,6 +1560,8 @@ registry.auto_tool(
 
 registry.auto_tool(
     "reconstruct",
+    "The recommended way to answer a question from memory (10 items unless `count` says "
+    "otherwise). "
     "Assemble recall ITEMS from the candidate rows a recall produces: units of memory, "
     "each traceable to the canonical rows that support it. Reconstruction means select, "
     "order and assign roles -- never compose. No model is called and nothing is "
@@ -1679,7 +1683,7 @@ registry.auto_tool(
                 "minimum": 0,
                 "description": (
                     "Ceiling on recall items returned -- not a fill target, not a search depth. "
-                    "Declare per call; omit to take the server default (1 unless configured). "
+                    "Declare per call; omit to take the server default (10 unless configured). "
                     "An operator-forced value overrides both. Requesting 5 with only 2 valid "
                     "items returns 2; neither setting requires filling the window. "
                     "Clamped to the server maximum, and the clamp is reported in count_policy "

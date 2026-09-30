@@ -21,13 +21,14 @@ CPersona is an MCP persistent memory server that stores AI agent memories in a l
 > **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, Codex CLI, Cursor, VS Code, and any other MCP client ([registration table](https://cloto-dev.github.io/CPersona/getting-started/#3-register-cpersona-with-your-mcp-client)).
 > If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
 
-> **Project status** — **2.4.x is Stable**; **2.5.x is Current**, an internal
-> stabilization line where all fixes land, pending production-soak
-> certification. The DB schema is preserved across the line. Additive,
-> rollback-safe features may land here as well ([lifecycle standard
-> §2.6](https://cloto-dev.github.io/CPersona/RELEASE_LIFECYCLE_STANDARD/#26-feature-releases-within-a-line));
-> a change that cannot be rolled back waits for 2.6. Which version to run, and
-> how long each line keeps receiving fixes:
+> **Project status** — **2.4.x is Stable**; **2.6.x is Current**, where all
+> fixes land, pending production-soak certification. Its first final, 2.6.0,
+> migrates the schema from version 13 to 17 on its first start and changes some
+> tool behaviour, so take a 2.5 store across with
+> [Upgrading from 2.5 to 2.6](https://cloto-dev.github.io/CPersona/upgrading-to-2.6/).
+> **2.5.x is Candidate**: no longer the newest line and not yet certified,
+> reachable by exact version. Which version to run, and how long each line
+> keeps receiving fixes:
 > [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
 > Where the lines are heading: the [roadmap](https://cloto-dev.github.io/CPersona/roadmap/).
 
@@ -105,6 +106,10 @@ walkthrough: [Getting Started](https://cloto-dev.github.io/CPersona/getting-star
   (trigram, so it works on Japanese and other space-less scripts) and keyword,
   fused by rank or relative score. The FTS and keyword layers rescue what vectors
   miss: identifiers, error strings, exact names.
+- **Evidence you can trace** — `reconstruct`, the recommended way to answer from
+  memory, returns items that quote the stored rows behind them, within a
+  character budget. Text past a long record's embedding window stays reachable
+  (block reach, on by default).
 - **Three memory types** — facts, session summaries and an accumulated profile.
 - **Zero LLM dependency** — cpersona never calls a generative model; your agent
   summarizes and hands over the result. Recall is deterministic given a calibrated

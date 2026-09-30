@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:3ce8d2529187592a3d40b8192b1d9ff844d42e6f -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:4e9f218e1cd3ac40c4dccb4bb3f9c35489b19742 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,8 +10,8 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6 系は pre-release のラインです。リリースは `2.6.0aN` と `2.6.0bN` として PyPI にあり、`--pre` を
-付けて導入します。最新の final リリースは 2.5 系にあります
+2.6.0 はこのラインの最初の final リリースで、版を指定しない導入はこれになります。
+pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
 ## 4 つの状態 { #the-four-states }
@@ -21,7 +21,7 @@
 
 | 状態 | 意味 |
 | --- | --- |
-| **リリース済み** | 公開された pre-release に入っている。誰でも導入して呼び出せる。 |
+| **リリース済み** | 公開されたリリースに入っている。誰でも導入して呼び出せる。 |
 | **開発中** | `master` にコードはあるが、未リリースか、既定を決める測定がまだ無いままリリースされている。 |
 | **研究中** | 仮説、実験、設計の比較の段階。サーバーのコードはまだ無い。 |
 | **不採用・修正中** | 測って退けたか、誤りが見つかって設計し直している。これらの行はページに残します。 |
@@ -32,7 +32,7 @@
 
 | # | 条件 | 状態 | 証拠 |
 | --- | --- | --- | --- |
-| 1 | 想起プロセスと Cued Recall がゲートの背後で出荷される | **リリース済み** 2.6.0a8、v0.3 | ループの基本形: 呼び出し側は `time_cue` (いつ頃か、確かさつき) を渡せます。サーバーはその期間も件数と無関係な深さで探し、そこで見つかった行を品質ゲートの後に最大 3 / 2 / 1 段上げ、その検索が見つけて答えに入っていない記録 (件数で切られた記録を含む) に同じ数の席を取り、期間に何も無ければ 1 回だけ広げます ([#325](https://github.com/Cloto-dev/cpersona/pull/325)、[#331](https://github.com/Cloto-dev/cpersona/pull/331)–[#333](https://github.com/Cloto-dev/cpersona/pull/333)、[#340](https://github.com/Cloto-dev/cpersona/pull/340)、[設計](RECALL_PROCESS_DESIGN.md#2-the-loops-basic-form))。呼び出しごとの opt-in です。事前登録した判定則で LMEB の TMD (時期を述べる 1,167 問) に対して測り、返る行の NDCG の平均は手がかりありで 0.189 から 0.281 に、同じ数の手がかり無しの行では 0.204 になりました ([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-tmd-time-cue.md))。LongMemEval では、前の方針は手がかり無しと区別できませんでした ([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-longmemeval-time-cue.md))。手がかりの伝播と多段の停止は後続です。 |
+| 1 | 想起プロセスと Cued Recall がゲートの背後で出荷される | **リリース済み** 2.6.0a8、v0.3 | ループの基本形: 呼び出し側は `time_cue` (いつ頃か、確かさつき) を渡せます。サーバーはその期間も件数と無関係な深さで探し、そこで見つかった行を品質ゲートの後に最大 3 / 2 / 1 段上げ、その検索が見つけて答えに入っていない記録 (件数で切られた記録を含む) に同じ数の行の別枠を取り、期間に何も無ければ 1 回だけ広げます ([#325](https://github.com/Cloto-dev/cpersona/pull/325)、[#331](https://github.com/Cloto-dev/cpersona/pull/331)–[#333](https://github.com/Cloto-dev/cpersona/pull/333)、[#340](https://github.com/Cloto-dev/cpersona/pull/340)、[設計](RECALL_PROCESS_DESIGN.md#2-the-loops-basic-form))。呼び出しごとの opt-in です。事前登録した判定則で LMEB の TMD (時期を述べる 1,167 問) に対して測り、返る行の NDCG の平均は手がかりありで 0.189 から 0.281 に、同じ数の手がかり無しの行では 0.204 になりました ([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-tmd-time-cue.md))。LongMemEval では、前の方針は手がかり無しと区別できませんでした ([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-longmemeval-time-cue.md))。手がかりの伝播と多段の停止は後続です。 |
 | 2 | 最後の再ソートの扱いが決まっている | **リリース済み** 2.6.0a7 | confidence を有効にしても、confidence スコアは recall を並べ直さず、ゲートにも使われません。`CPERSONA_CONFIDENCE_ORDERING=legacy` で戻せます。far の重みと年齢の重みは、ゲートが通したものの順序だけを決める一本化した事前分布で、計測まで恒等の既定値です ([#322](https://github.com/Cloto-dev/cpersona/pull/322)、[設計](PRIOR_FUNCTION_DESIGN.md))。その後、far の重みを事前登録した判定則で測りました。reach 200,000 では、far リストが得る分を保ちつつ新しい答えを守れる一定の重みは無く、既定は `1` のままです ([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-far-weight-sweep.md))。 |
 | 3 | 深さと件数が分離されている | 2.6.0a2 で **リリース済み** | [#274](https://github.com/Cloto-dev/cpersona/pull/274)。`CPERSONA_RECALL_DEPTH_FLOOR` の既定は `0` で、測定で深さが選ばれるまで 2.5 系の結合を保ちます。 |
 | 4 | 再構成想起がツールとして存在する | 2.6.0a2 で **リリース済み**、a3 で拡張 | ツール本体: [#274](https://github.com/Cloto-dev/cpersona/pull/274)。深さより広さ、payload の予算: [#280](https://github.com/Cloto-dev/cpersona/pull/280)、[#286](https://github.com/Cloto-dev/cpersona/pull/286)。item の形の統一と、何を落としたかを言う応答: [#288](https://github.com/Cloto-dev/cpersona/pull/288)、[#289](https://github.com/Cloto-dev/cpersona/pull/289)、[#290](https://github.com/Cloto-dev/cpersona/pull/290)。これまでの測定: 上限 1〜10 の [count replay](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1-count-replay.md) (記録自身が「既定を選ぶものではない」と述べています) と、事前登録した [reader study](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1_1-reader.md)。後者は 1 回目では reader が受け取る量が減らず、2 つの変更の後の再測定が、18 問で登録済みの判定則を満たしました。既定の件数は今も契約上の選択であり、測定された最適値ではありません。 |
@@ -49,10 +49,11 @@
 | 2.6.0a3 | 長いレコードを node に分け、検索索引の外に保つ。reconstruct の引用は最良の node から取る。レコードの一部を `get_contents` で展開する | [#282](https://github.com/Cloto-dev/cpersona/pull/282)–[#287](https://github.com/Cloto-dev/cpersona/pull/287)、[設計記録](OVERFLOW_TREE_DESIGN.md) |
 | 2.6.0a4 | 宣言された連想記憶: エージェントが述べるエンティティ・別名・関係。`reconstruct` はそれを手がかりとして読み、有界にたどる。`traverse` は宣言された近傍を返す | [#291](https://github.com/Cloto-dev/cpersona/pull/291)–[#295](https://github.com/Cloto-dev/cpersona/pull/295)、[設計記録](ASSOCIATIVE_MEMORY_DESIGN.md) |
 | 2.6.0a7 | エピソード境界ペナルティを既定で無効化: セッションごとにエピソードの要約が残る記憶では、答えを持つ記録を順位の下へ押し下げていたため | [#320](https://github.com/Cloto-dev/cpersona/pull/320) |
-| 2.6.0a8 | opt-in の伝播の席: 同じ recall をより深く並べた時に、答えの最初の行から導かれる行のために 1 席を取る (`CPERSONA_RECALL_PROPAGATION_SEAT`、既定は off) | [#338](https://github.com/Cloto-dev/cpersona/pull/338) |
+| 2.6.0a8 | opt-in の関連の別枠: 同じ recall をより深く並べた時に、答えの最初の行から導かれる行のために 1 行の別枠を取る (`CPERSONA_RECALL_PROPAGATION_SEAT`、既定は off) | [#338](https://github.com/Cloto-dev/cpersona/pull/338) |
 | 2.6.0a8 | recall と reconstruct は各段を provider の枠を通して呼び、trace は宣言した予算と各段が受け取ったものを記録する。呼び出し側が受け取るものは変わらない | [#335](https://github.com/Cloto-dev/cpersona/pull/335)、[#336](https://github.com/Cloto-dev/cpersona/pull/336) |
 | 2.6.0b1 | 機能の追加はなし: 2.6.0a1〜a8 のレビューで見つかった MEDIUM の欠陥 11 件の修正。他のプロジェクトから読めていたプロジェクトの別名、引用から漏れていた次の行の限定句、段数に上限のなかった `reconstruct` のたどり、10 字ずれて測られていたエピソードの引用、読み手が拒否するのに誰も作り直さなかったノード集合などです | [#356](https://github.com/Cloto-dev/cpersona/pull/356), [#357](https://github.com/Cloto-dev/cpersona/pull/357), [#358](https://github.com/Cloto-dev/cpersona/pull/358), [#359](https://github.com/Cloto-dev/cpersona/pull/359), [#361](https://github.com/Cloto-dev/cpersona/pull/361) |
 | 2.6.0b2 | 機能の追加はなし: 残っていた MEDIUM の欠陥 5 件の修正。ヘッダと本文が食い違いうるメモリ上 DB のエクスポート、毎クエリ読む行を 0 と報告していた索引の status、行の上限で切られても完全に見えていた一覧、長さに上限のなかった `session_key`、コピーが要る窓を丸ごと保持していた索引の経路などです | [#363](https://github.com/Cloto-dev/cpersona/pull/363), [#364](https://github.com/Cloto-dev/cpersona/pull/364), [#365](https://github.com/Cloto-dev/cpersona/pull/365), [#366](https://github.com/Cloto-dev/cpersona/pull/366) |
+| 2.6.0 | このラインの最初の final リリース。機能の追加はなし: Block による到達を既定で on にし、`count` を省略した `reconstruct` を 10 項目にし (この 2 つで、記憶から答えるためにこのリリースが推奨する構成になります)、alpha のレビューが登録した LOW の欠陥 43 件を修正。ノードの境界をまたいでいた Block の集合、表せる範囲を超えて例外になっていた時期の手がかり、待ち行列の全タスクを止めていた失敗する構築、どのゲートも認めていない脇の行に記録されていた recall の回数など。 |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。

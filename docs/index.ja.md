@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:5088a9cc506c9afe7cbee0faa94d442d161258ad -->
+<!-- i18n-source: docs/index.md@blob:2b208352f219078b5d4cb76271a2c1981dc76fc2 -->
 
 # CPersona ドキュメント
 
@@ -84,7 +84,7 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 
     ---
 
-    2.5.x のストアを現在の 2.6 pre-release へ一度に移行する手順: バックアップ、最初の起動で
+    2.5.x のストアを 2.6.0 へ一度に移行する手順: バックアップ、最初の起動で
     移行されるもの、後で作るもの、戻し方。
 
     [:octicons-arrow-right-24: 2.6 への移行](upgrading-to-2.6.md)
@@ -171,7 +171,7 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
   プールサイズ gate から順位カットを外すこと、そして「いま計測済みの lexical 重み」と
   「後の条件付き証拠の融合モード」のどちらを採るかを決める事前登録済みの比較。
 - [Block による到達](BLOCK_REACH_DESIGN.md) — 長いレコードを節に相当する Block へ分け、
-  1 次元 1 ビットの Hamming 距離で順位付けし、親へ畳んで予約席で通すことで、
+  1 次元 1 ビットの Hamming 距離で順位付けし、親へ畳んで別枠で通すことで、
   品質 gate に新しいスコアを入れずに末尾へ到達できるようにすること。
 - [溢れ分の tree](OVERFLOW_TREE_DESIGN.md) — 長いレコードを埋め込みの窓に収まる区間に分け、
   recall が返すものを変えずに、返されたレコードを関連する部分で引用できるようにすること。
