@@ -51,7 +51,7 @@ remove every alias, mention and relation that depended on a deleted entity or
 record, so nothing in the graph ever points at a row that is gone. One more,
 `record_blocks`, divides those same records into clause-sized spans and holds a
 sign-quantised vector for each ([block reach](BLOCK_REACH_DESIGN.md)); it is
-opt-in, and its triggers both drop a record's blocks when its text changes and
+on by default from 2.6.0, and its triggers both drop a record's blocks when its text changes and
 move their copy of the isolation axes when the record is retagged. Beside it,
 `record_block_vectors` keeps one byte per dimension for each block, read by
 primary key to re-rank what the block arm's Hamming pass ranks highest; a
@@ -90,8 +90,8 @@ reservation applied after the quality gate — a fixed, small number of result
 places held for records whose own whole-text vector cannot bring them back
 ([block reach](BLOCK_REACH_DESIGN.md)). Nothing it finds is fused with the three
 above, no score it produces reaches the gate, and the places it fills are extra
-to the ones the gate filled. Where the setting is off — which is everywhere by
-default — it does not run.
+to the ones the gate filled. Where the setting is off (it is on by default from
+2.6.0) it does not run.
 
 The pipeline in `rrf` mode:
 
@@ -227,7 +227,7 @@ worker that drains it at startup and retries failed tasks on a fixed delay
 (`CPERSONA_TASK_RETRY_DELAY`). Because it lives in the database rather than in
 memory, a crash or a restart resumes the work instead of losing it.
 
-**Two kinds of work are enqueued onto it, and the second is off by default.** When `store`,
+**Two kinds of work are enqueued onto it.** When `store`,
 `archive_episode` or `update_memory` writes a text that runs past the embedding
 window, the response carries `nodes: {"status": "queued"}` and a `build_nodes`
 task divides the record and embeds each span
@@ -240,11 +240,11 @@ The second is `build_blocks`, which runs only where
 `CPERSONA_BLOCK_BUILD_ENABLED` is on ([block reach](BLOCK_REACH_DESIGN.md)). It
 is queued for every record rather than only the long ones, because a short
 record still divides into clauses, and the task declines by itself when the
-division yields a single block. Where the setting is off — which is everywhere
-by default — nothing is queued and no embedding call is made.
+division yields a single block. Where the setting is off (it is on by default
+from 2.6.0) nothing is queued and no embedding call is made.
 
 The same setting puts one more task on the queue at startup: `backfill_blocks`
-sweeps the records that were already stored when the deployment opted in. One
+sweeps the records that were already stored when construction was turned on. One
 sweep exists at a time. It stops at a bound on records, characters, embedding
 calls or elapsed time and queues its own continuation, so a corpus is built over
 a series of bounded runs and a restart resumes near where the last one stopped

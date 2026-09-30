@@ -650,9 +650,9 @@ RECENT_RECALL_WINDOW_MIN = _parse_float("CPERSONA_RECENT_RECALL_WINDOW_MIN", 5.0
 TASK_MAX_RETRIES = _parse_int("CPERSONA_TASK_MAX_RETRIES", 3)
 TASK_RETRY_DELAY = _parse_int("CPERSONA_TASK_RETRY_DELAY", 30)
 
-# docs/BLOCK_REACH_DESIGN.md §7. On by default from 2.6.0: the configuration
-# that reads blocks answered more questions with a reader on a pack of real
-# agent memories than the same release without them (§0). Off still means no
+# docs/BLOCK_REACH_DESIGN.md §7. On by default from 2.6.0: on a pack of a real
+# agent's memory, with a reader, every recall configuration that read blocks
+# answered more questions than the same one without them. Off still means no
 # embedding calls, no rows and no queue work rather than "built but unread", so
 # a deployment that does not want the backfill sets this one switch to false.
 BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "true").lower() == "true"

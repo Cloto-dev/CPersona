@@ -38,8 +38,8 @@ recorded as done, so it is retried on the next start.
 | --- | --- | --- | --- |
 | 14 | 2.6.0a3 | `record_nodes`: the overflow tree, pieces of a record past the embedding window | **Yes**: nodes for long records already stored ([below](#build-the-overflow-nodes)) |
 | 15 | 2.6.0a4 | `entities`, `entity_aliases`, `entity_mentions`, `relations`: declared associations | No |
-| 16 | 2.6.0a5 | `record_blocks`: block reach | Only if you turn block reach on ([below](#optional-turn-on-block-reach)) |
-| 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Only if you turn block reach on |
+| 16 | 2.6.0a5 | `record_blocks`: block reach | **Built for you**: blocks for the records already stored, unless you turn block reach off ([below](#block-reach-is-on-by-default)) |
+| 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
 
 2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2 and 2.6.0 changed no schema.
 
@@ -74,18 +74,29 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 The repair never modifies a record, so it also covers locked memories. Run it
 again after changing the embedding model.
 
-### Optional: turn on block reach
+### Block reach is on by default
 
-Block reach is off by default and costs nothing while off: no embedding calls,
-no rows, no queued work. It makes text past a long record's embedding window
-reachable by search ([design](BLOCK_REACH_DESIGN.md)).
+From 2.6.0, block reach is on unless you turn it off. It makes text past a long
+record's embedding window reachable by search, and `reconstruct` quotes the
+block that matched ([design](BLOCK_REACH_DESIGN.md)).
 
-- `CPERSONA_BLOCK_BUILD_ENABLED=true` builds and maintains the block index and
-  starts a bounded backfill of the records already stored. `check_health` shows
-  the progress as `missing_blocks` and moves it along under `fix=true`.
-- `CPERSONA_BLOCK_RETRIEVAL_ENABLED=true` reads the index during recall. It
-  needs the build gate: reading an index nothing fills is a startup error. It
-  has no effect where vector search is remote.
+- **The first start begins a bounded backfill** of the records already stored.
+  It embeds every block through the same embedding server that embeds your
+  records, one call per batch of blocks; on this project's own store, 4,567
+  records divided into 92,807 blocks. `check_health` shows the progress as
+  `missing_blocks` and moves it along under `fix=true`. Until a record's blocks
+  exist, recall reaches it through the other arms, as it does with block reach
+  off.
+- **Each block is stored twice**, as one bit per dimension and as one byte per
+  dimension: 1,152 bytes of vector per block with a 1,024-dimension model
+  (128 + 1,024).
+- **Recall reads the index** on every query that has a vector, and may return
+  up to 2 rows beyond `limit` for records only the block arm reached. It has no
+  effect where vector search is remote.
+- **To turn it off**, set `CPERSONA_BLOCK_BUILD_ENABLED=false`: no embedding
+  calls, no rows and no queued work, and the reader follows it off.
+  `CPERSONA_BLOCK_RETRIEVAL_ENABLED=false` alone keeps the index built and
+  unread. Setting the reader on with construction off is a startup error.
 
 If you ran 2.6.0a5 with block construction on, its block sets have no vectors
 and are rebuilt by the same backfill.
@@ -94,6 +105,11 @@ and are rebuilt by the same backfill.
 
 Check these against what your deployment relies on. Each is off, or equal to
 2.5, unless noted.
+
+- **Block reach is on by default** (2.6.0). A store queues the record's
+  blocks and says so (`blocks: {"status": "queued"}`), recall can return up to
+  2 reserved rows beyond `limit`, and `reconstruct` quotes the block that
+  matched. [Above](#block-reach-is-on-by-default) is how to turn it off.
 
 - **`limit` is the number of rows returned** (2.6.0a2). How deep fusion looks
   is `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)`; the floor defaults to 0, so the

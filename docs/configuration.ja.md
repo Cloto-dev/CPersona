@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:b5e335ff29cb9a6f67d4e773974f8e223c2da516 -->
+<!-- i18n-source: docs/configuration.md@blob:18d95ba7208443ecc0bc82d6a4e2c9c0ad167946 -->
 
 # 設定リファレンス
 
@@ -25,8 +25,8 @@
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | 返す各行に `confidence` の値を含めます。2.6.0a7 からは、`CPERSONA_CONFIDENCE_ORDERING=legacy` でない限り、結果の順序も品質ゲートも決めません ([契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
 | `CPERSONA_CONFIDENCE_ORDERING` | `fusion` | `fusion`: confidence は各行の横に返されるだけで、他には何もしません。`legacy`: 2.6.0a7 より前の挙動 — confidence on のとき結果を confidence スコアで並べ直し、品質ゲートもそれを見るので、`CPERSONA_RECALL_MODE` は返却順を決めなくなります |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | 起動時に自動較正する |
-| `CPERSONA_BLOCK_BUILD_ENABLED` | `false` | 各レコードを節に相当する Block へ分け、Block ごとに符号量子化ベクトルを 1 本保存する ([Block による到達](BLOCK_REACH_DESIGN.md))。off は「作るが読まない」ではなく、埋め込み呼び出しも行もキューの仕事も無いという意味。on にすると、すでに保存されているレコードに対する有界な backfill も始まる |
-| `CPERSONA_BLOCK_RETRIEVAL_ENABLED` | `false` | recall のときに Block 索引を読む ([Block による到達](BLOCK_REACH_DESIGN.md)) — Block の腕と、`reconstruct` が返す引用の両方。引用は一致した Block から取られ、それを支配する連続文脈を伴うか、不完全であると報告される。到達したレコードは**予約**で通す — 品質 gate の後に確保された少数の席で、その席について gate は参照されず、他のどの席の gate も変わらない。したがって応答は要求された `limit` を**超えて**その席数まで行を運び、直前のリリースが返した行はすべてそのまま返る。`CPERSONA_BLOCK_BUILD_ENABLED=true` が必要 — 何も入っていない索引を読む設定は静かな no-op ではなく起動時エラー。ベクトル検索が remote の構成では効かない (この腕はローカル検索が埋め込んだクエリベクトルで順位付けするが、remote 検索はそれを作らない) |
+| `CPERSONA_BLOCK_BUILD_ENABLED` | `true` | 各レコードを節に相当する Block へ分け、Block ごとに符号量子化ベクトルを 1 本保存する ([Block による到達](BLOCK_REACH_DESIGN.md))。2.6.0 から既定で on で、on の間は、すでに保存されているレコードに対する有界な backfill が Block を作る。`false` は「作るが読まない」ではなく、埋め込み呼び出しも行もキューの仕事も無いという意味で、下の読む側を明示していなければ、それも一緒に off にする |
+| `CPERSONA_BLOCK_RETRIEVAL_ENABLED` | `CPERSONA_BLOCK_BUILD_ENABLED` に従う | recall のときに Block 索引を読む ([Block による到達](BLOCK_REACH_DESIGN.md)) — Block の腕と、`reconstruct` が返す引用の両方。引用は一致した Block から取られ、それを支配する連続文脈を伴うか、不完全であると報告される。到達したレコードは**予約**で通す — 品質 gate の後に確保された少数の別枠で、その別枠について gate は参照されず、他のどの位置の gate も変わらない。したがって応答は要求された `limit` を**超えて**その別枠の行数まで行を運び、直前のリリースが返した行はすべてそのまま返る。`CPERSONA_BLOCK_BUILD_ENABLED=true` が必要 — 何も入っていない索引を読む設定は静かな no-op ではなく起動時エラー。ベクトル検索が remote の構成では効かない (この腕はローカル検索が埋め込んだクエリベクトルで順位付けするが、remote 検索はそれを作らない) |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | バックグラウンドタスクキュー (DB 永続・クラッシュ復帰可能) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | 直近に想起された記憶へのペナルティ |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | 上記ペナルティの対象時間窓 (分) |
@@ -34,7 +34,7 @@
 | `CPERSONA_VECTOR_REACH` | `0` | ベクトル検索が走査ウィンドウの先をどこまで見てよいか (行数)。効果を持たせるには **`CPERSONA_MAX_MEMORIES` より大きくする必要があります**: 同値以下 (既定の `0` を含む) では遠方リストは存在せず、追加の処理は一切走りません。大きくすると、2 つの数値の間にある行が**第 2 のリスト**としてランク付けされ、第 1 のリストと並んで融合されます。つまりウィンドウは新しさの事前分布として働き続けたまま、到達距離だけを独立に伸ばせます。ローカルのベクトル検索と `rrf`/`rsf` の融合モードでのみ有効です ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_FAR_LIMIT` | `0` | その第 2 のリストのうち何行を融合層に渡すか。`0` (既定) は**応答の `limit` と同じ**という意味で、この設定なしで構築される第 2 のリストそのものです。正の値を与えると `min(limit, N)` 行に切り詰められます。これは候補件数の上限であり、行のスコア計算は一切変わりません。したがって残るのは、フル長のリストが先頭に並べていた行そのものです。`CPERSONA_VECTOR_REACH` が `CPERSONA_MAX_MEMORIES` より大きくない限り無関係で、第 1 のリスト側の打ち切りは `limit` のままです ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_RECALL_DEPTH_FLOOR` | `0` | 想起深度: 応答の `limit` にかかわらず、各検索経路が融合に渡す候補数の下限です。深度は `max(limit, この値)` で、`CPERSONA_RECALL_LIBRARY_MAX_LIMIT` が上限です。`0` では `limit` と等しく、2.5 系の結合を維持します。設定しない限り順位は変わりません。`limit` を超える場合、応答の `depth` で候補の深さを確認できます。融合モードのみ有効です。`cascade` は段階的に `limit` 件を埋めるため対象外です ([設計](RELIABLE_RECALL_2_6.md#4-depth-is-not-count)) |
-| `CPERSONA_RECALL_PROPAGATION_SEAT` | `false` | 伝播の席: `recall` の答えの後ろに 1 つ場所を保持し、同じ問いを想起深度 100 でもう一度順位付けしたとき、その深い順での位置と答えの 1 行目への近さで最もよい行を置きます。何も押し出さないため、`recall` は `limit` より 1 行多く返ることがあり、その行には `match_reason.signal: "propagation"` が付きます。席を取る recall ごとに順位付けが もう 1 回加わります。`recall` のみ (`recall_with_context` と `reconstruct` は対象外)、融合モードのみ、空の問いは対象外です ([設計](RELIABLE_RECALL_2_6.md#the-propagation-seat)) |
+| `CPERSONA_RECALL_PROPAGATION_SEAT` | `false` | 関連の別枠: `recall` の答えの後ろに 1 行ぶんの場所を保持し、同じ問いを想起深度 100 でもう一度順位付けしたとき、その深い順での位置と答えの 1 行目への近さで最もよい行を置きます。何も押し出さないため、`recall` は `limit` より 1 行多く返ることがあり、その行には `match_reason.signal: "propagation"` が付きます。別枠を使う recall ごとに順位付けが もう 1 回加わります。`recall` のみ (`recall_with_context` と `reconstruct` は対象外)、融合モードのみ、空の問いは対象外です ([設計](RELIABLE_RECALL_2_6.md#the-propagation-seat)) |
 | `CPERSONA_RECALL_CUE_TIME_LIMIT_MS` | `1000` | 時期の手がかりの広げ直し (`time_cue` を渡した `recall` / `reconstruct`): 手がかりの期間に何も無いとき、期間を 1 回だけ広げて探し直します。ただし recall が既にこのミリ秒数かかっていれば行いません。上限で止まったことは想起の記録に残ります ([設計](RECALL_PROCESS_DESIGN.md#25-one-revision)) |
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。autocut は類似度スケールのシグナル — confidence による並べ替えの下 (`CPERSONA_CONFIDENCE_ORDERING=legacy`)、あるいは `cascade` が作る生 cosine だけの均質なリスト — に対して発火し、`rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。したがってこのつまみが働くかどうかを決めるのは融合モードです |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | 融合後の品質ゲート。無効化は最終手段です: フィルタはプール規模のヒューリスティックにフォールバックし、粗くはなりますが弱い一致は依然として弾かれます — 失うのはこのコーパスに対して測定された動作点です |

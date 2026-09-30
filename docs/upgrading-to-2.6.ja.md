@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:caf9dce72462d285d5ffd4b4acdee29453ac3766 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:75a3c180bb049301c89b5183da8ee4e7ea17fa6e -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -37,8 +37,8 @@
 | --- | --- | --- | --- |
 | 14 | 2.6.0a3 | `record_nodes`: 溢れ分の tree (埋め込み窓を超えた部分の断片) | **あり**: すでに保存されている長い記録のノード ([下記](#build-the-overflow-nodes)) |
 | 15 | 2.6.0a4 | `entities`、`entity_aliases`、`entity_mentions`、`relations`: 宣言された連想 | なし |
-| 16 | 2.6.0a5 | `record_blocks`: Block による到達 | Block による到達を on にした場合だけ ([下記](#optional-turn-on-block-reach)) |
-| 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block による到達を on にした場合だけ |
+| 16 | 2.6.0a5 | `record_blocks`: Block による到達 | **自動で作られます**: すでに保存されている記録の Block。Block による到達を off にした場合を除く ([下記](#block-reach-is-on-by-default)) |
+| 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block と一緒に作られます |
 
 2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0 はスキーマを変えていません。
 
@@ -69,17 +69,24 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 この修復は記録を変更しないので、ロックされた記憶にも使えます。埋め込みモデルを変えた後は、
 もう一度実行してください。
 
-### 任意: Block による到達を on にする { #optional-turn-on-block-reach }
+### Block による到達は既定で on です { #block-reach-is-on-by-default }
 
-Block による到達は既定で off で、off の間は費用がかかりません (埋め込みの呼び出しも、行も、キューの
-仕事もありません)。長い記録の埋め込み窓を超えた部分の本文を、検索で到達できるようにします
-([設計](BLOCK_REACH_DESIGN.md))。
+2.6.0 から、Block による到達は off にしない限り on です。長い記録の埋め込み窓を超えた部分の本文を
+検索で到達できるようにし、`reconstruct` は一致した Block を引用します ([設計](BLOCK_REACH_DESIGN.md))。
 
-- `CPERSONA_BLOCK_BUILD_ENABLED=true` は Block の索引を作って保ち、すでに保存されている記録の
-  上限つきのバックフィルを始めます。進み具合は `check_health` が `missing_blocks` として示し、
-  `fix=true` で先へ進めます。
-- `CPERSONA_BLOCK_RETRIEVAL_ENABLED=true` は、recall の中で索引を読みます。構築のゲートが必要です:
-  何も埋めない索引を読む設定は起動時のエラーになります。ベクトル検索がリモートの場合は効果がありません。
+- **最初の起動で、上限つきのバックフィルが始まります**。すでに保存されている記録の Block を、記録を
+  埋め込むのと同じ埋め込みサーバーで、Block のまとまりごとに 1 回の呼び出しで埋め込みます。この
+  プロジェクト自身のストアでは、4,567 件の記録が 92,807 個の Block に分かれました。進み具合は
+  `check_health` が `missing_blocks` として示し、`fix=true` で先へ進めます。記録の Block ができる
+  までは、recall はその記録にほかの腕で到達します (Block による到達が off の時と同じです)。
+- **Block は 2 通りに保存されます**。次元ごとに 1 ビットと、次元ごとに 1 バイトです。1,024 次元の
+  モデルで Block あたり 1,152 バイトのベクトルです (128 + 1,024)。
+- **recall は、ベクトルのある問い合わせのたびに索引を読み**、Block の腕だけが到達した記録のために
+  `limit` を最大 2 行超えて返すことがあります。ベクトル検索がリモートの場合は効果がありません。
+- **off にするには** `CPERSONA_BLOCK_BUILD_ENABLED=false` を設定します。埋め込みの呼び出しも、行も、
+  キューの仕事も無くなり、読む側も一緒に off になります。`CPERSONA_BLOCK_RETRIEVAL_ENABLED=false`
+  だけなら、索引は作られたまま読まれません。構築を off にして読む側だけを on にする設定は、起動時の
+  エラーになります。
 
 2.6.0a5 で Block の構築を on にしていた場合、その Block の集合はベクトルを持たないので、同じ
 バックフィルが作り直します。
@@ -87,6 +94,10 @@ Block による到達は既定で off で、off の間は費用がかかりま�
 ## 変わった挙動 { #behaviour-that-changed }
 
 配備が頼っているものと照らし合わせてください。特に断りのない限り、どれも off か、2.5 と同じです。
+
+- **Block による到達は既定で on です** (2.6.0)。store は記録の Block をキューに入れてそう伝え
+  (`blocks: {"status": "queued"}`)、recall は `limit` を最大 2 行超える予約の行を返すことがあり、
+  `reconstruct` は一致した Block を引用します。off にする方法は[上](#block-reach-is-on-by-default)です。
 
 - **`limit` は返す行数です** (2.6.0a2)。融合がどこまで深く見るかは
   `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)` で、floor の既定は 0 なので、順位は 2.5 と同じです。
@@ -144,7 +155,7 @@ Block による到達は既定で off で、off の間は費用がかかりま�
   配備は、2.6.0 の最初の起動で較正し直します。別の重みで測ったゲートは復元されないためです。
   既定のままなら何も変わりません。
 - **答えの脇に置いた行は recall の回数を得ません** (2.6.0)。confidence が有効なとき、Block の
-  予約席、時期の手がかりの席、伝播の席は `recall_count` を増やさず、その `confidence` は
+  別枠、時期の別枠、関連の別枠は `recall_count` を増やさず、その `confidence` は
   その行自身の履歴を読みます。
 - **細かな修正** (2.6.0): preview の長さで切られた `reconstruct` の引用は、`expand` で
   それが始まった範囲全体を渡します。`shortfall_reason` は、予算が窓の中の項目を切ったときだけ
@@ -154,7 +165,7 @@ Block による到達は既定で off で、off の間は費用がかかりま�
   点検が全レコードの本文を読まなくなりました。
 
 2.6 で新しく入り、求めない限り何もしないもの: `reconstruct` ツール、recall の trace (`trace=true`)、
-時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、伝播の席
+時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、関連の別枠
 (`CPERSONA_RECALL_PROPAGATION_SEAT`)。
 
 ## 結果を確かめる { #checking-the-result }
