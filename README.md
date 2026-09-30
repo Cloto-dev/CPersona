@@ -106,6 +106,10 @@ walkthrough: [Getting Started](https://cloto-dev.github.io/CPersona/getting-star
   (trigram, so it works on Japanese and other space-less scripts) and keyword,
   fused by rank or relative score. The FTS and keyword layers rescue what vectors
   miss: identifiers, error strings, exact names.
+- **Evidence you can trace** — `reconstruct`, the recommended way to answer from
+  memory, returns items that quote the stored rows behind them, within a
+  character budget. Text past a long record's embedding window stays reachable
+  (block reach, on by default).
 - **Three memory types** — facts, session summaries and an accumulated profile.
 - **Zero LLM dependency** — cpersona never calls a generative model; your agent
   summarizes and hands over the result. Recall is deterministic given a calibrated

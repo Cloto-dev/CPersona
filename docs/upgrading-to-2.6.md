@@ -82,8 +82,8 @@ block that matched ([design](BLOCK_REACH_DESIGN.md)).
 
 - **The first start begins a bounded backfill** of the records already stored.
   It embeds every block through the same embedding server that embeds your
-  records, one call per batch of blocks; on this project's own store, 4,567
-  records divided into 92,807 blocks. `check_health` shows the progress as
+  records, one call per batch of blocks; on this project's own store, 4,478
+  records divided into 70,130 blocks. `check_health` shows the progress as
   `missing_blocks` and moves it along under `fix=true`. Until a record's blocks
   exist, recall reaches it through the other arms, as it does with block reach
   off.
@@ -93,6 +93,11 @@ block that matched ([design](BLOCK_REACH_DESIGN.md)).
 - **Recall reads the index** on every query that has a vector, and may return
   up to 2 rows beyond `limit` for records only the block arm reached. It has no
   effect where vector search is remote.
+- **Recall gets slower and larger.** On that store, on one machine, the median
+  `recall` took 138 ms with the block arm against 17 ms for 2.5.12 (the query's
+  embedding excluded), and the
+  process peaked at 180 MB against 106 MB. The cost grows with the number of
+  blocks; a store ten times larger has not been measured.
 - **To turn it off**, set `CPERSONA_BLOCK_BUILD_ENABLED=false`: no embedding
   calls, no rows and no queued work, and the reader follows it off.
   `CPERSONA_BLOCK_RETRIEVAL_ENABLED=false` alone keeps the index built and
@@ -110,6 +115,11 @@ Check these against what your deployment relies on. Each is off, or equal to
   blocks and says so (`blocks: {"status": "queued"}`), recall can return up to
   2 reserved rows beyond `limit`, and `reconstruct` quotes the block that
   matched. [Above](#block-reach-is-on-by-default) is how to turn it off.
+- **`reconstruct` returns 10 items when `count` is omitted** (2.6.0; it
+  returned 1). With block reach on, this is the configuration 2.6.0 recommends
+  for answering from memory. A deployment that relied on one item sets
+  `CPERSONA_RECONSTRUCT_DEFAULT_COUNT=1`; lowering
+  `CPERSONA_RECONSTRUCT_MAX_COUNT` alone lowers the default with it.
 
 - **`limit` is the number of rows returned** (2.6.0a2). How deep fusion looks
   is `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)`; the floor defaults to 0, so the

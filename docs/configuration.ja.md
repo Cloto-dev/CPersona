@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:18d95ba7208443ecc0bc82d6a4e2c9c0ad167946 -->
+<!-- i18n-source: docs/configuration.md@blob:c47c18b582877002579a299c7670cb2ee7aa2492 -->
 
 # 設定リファレンス
 
@@ -60,7 +60,7 @@
 
 | 変数 | 既定 | 説明 |
 |----------|---------|-------------|
-| `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `1` | 呼び出し側が `count` を省略した時の上限 |
+| `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `10`。`CPERSONA_RECONSTRUCT_MAX_COUNT` がそれより小さければその値 | 呼び出し側が `count` を省略した時の上限。2.6.0 から 10 で、推奨の構成を計測した件数です。明示的に上限より大きく設定すると起動時のエラーになります |
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします。充足目標ではなく上限です |
 | `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | 絶対上限。超える要求は切り詰めて報告します。実験的な制限であり、実測で最適とされた件数ではありません |
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | item の先頭引用: そのレコードのうち一致した部分を、ランキング順にこの文字数まで詰め、本文中の順序で示します — recall の抜粋と同じ詰め方です。これ以下の長さのレコードは全体が引用されます。`0` にすると、2.6 より前と同様に、支配する 1 節をプレビュー階層で切って引用します |

@@ -57,7 +57,7 @@ the ceiling is **1**.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `1` | Ceiling used when the caller omits `count` |
+| `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `10`, or `CPERSONA_RECONSTRUCT_MAX_COUNT` if that is lower | Ceiling used when the caller omits `count`. 10 from 2.6.0, the count the recommended configuration was measured with; set explicitly above the maximum, it is a startup error |
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(unset)* | Override the caller's count and the default for every call; still a ceiling, never a fill target |
 | `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | Absolute ceiling; requests above it are clamped and reported. This is an experimental limit, not an empirically optimal count |
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | An item's head quote: the parts of its record that matched, filled in ranking order up to this many characters and shown in text order — the same filling as the recall excerpt. A record no longer than this is quoted whole. `0` quotes the single governing passage instead, cut at the preview tier, as before 2.6 |

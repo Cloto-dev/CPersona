@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:75a3c180bb049301c89b5183da8ee4e7ea17fa6e -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:73b2baf0a453903513d99027fbb8d50db464fe52 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -76,13 +76,16 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 
 - **最初の起動で、上限つきのバックフィルが始まります**。すでに保存されている記録の Block を、記録を
   埋め込むのと同じ埋め込みサーバーで、Block のまとまりごとに 1 回の呼び出しで埋め込みます。この
-  プロジェクト自身のストアでは、4,567 件の記録が 92,807 個の Block に分かれました。進み具合は
+  プロジェクト自身のストアでは、4,478 件の記録が 70,130 個の Block に分かれました。進み具合は
   `check_health` が `missing_blocks` として示し、`fix=true` で先へ進めます。記録の Block ができる
   までは、recall はその記録にほかの腕で到達します (Block による到達が off の時と同じです)。
 - **Block は 2 通りに保存されます**。次元ごとに 1 ビットと、次元ごとに 1 バイトです。1,024 次元の
   モデルで Block あたり 1,152 バイトのベクトルです (128 + 1,024)。
 - **recall は、ベクトルのある問い合わせのたびに索引を読み**、Block の腕だけが到達した記録のために
   `limit` を最大 2 行超えて返すことがあります。ベクトル検索がリモートの場合は効果がありません。
+- **recall は遅くなり、メモリも増えます**。そのストアを 1 台のマシンで測ると、`recall` の中央値は
+  Block の腕ありで 138 ms (2.5.12 は 17 ms。質問の埋め込みの時間は含みません)、プロセスのピークメモリは 180 MB (2.5.12 は 106 MB)
+  でした。費用は Block の数とともに増えます。10 倍大きいストアは測っていません。
 - **off にするには** `CPERSONA_BLOCK_BUILD_ENABLED=false` を設定します。埋め込みの呼び出しも、行も、
   キューの仕事も無くなり、読む側も一緒に off になります。`CPERSONA_BLOCK_RETRIEVAL_ENABLED=false`
   だけなら、索引は作られたまま読まれません。構築を off にして読む側だけを on にする設定は、起動時の
@@ -98,6 +101,10 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 - **Block による到達は既定で on です** (2.6.0)。store は記録の Block をキューに入れてそう伝え
   (`blocks: {"status": "queued"}`)、recall は `limit` を最大 2 行超える予約の行を返すことがあり、
   `reconstruct` は一致した Block を引用します。off にする方法は[上](#block-reach-is-on-by-default)です。
+- **`count` を省略した `reconstruct` は 10 項目を返します** (2.6.0。以前は 1)。Block による到達が on
+  の状態で、これが 2.6.0 の推奨する、記憶から答えるための構成です。1 項目を前提にしていた配備は
+  `CPERSONA_RECONSTRUCT_DEFAULT_COUNT=1` を設定してください。`CPERSONA_RECONSTRUCT_MAX_COUNT` だけを
+  下げると、既定も一緒に下がります。
 
 - **`limit` は返す行数です** (2.6.0a2)。融合がどこまで深く見るかは
   `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)` で、floor の既定は 0 なので、順位は 2.5 と同じです。
