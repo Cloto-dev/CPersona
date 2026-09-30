@@ -13,7 +13,6 @@ AGENT = "reconstruction-v1"
 
 def _count_policy_in_a_fresh_process(**env_overrides):
     """resolve_count(None) and resolve_count(99), with only the given reconstruct settings."""
-    import json
     import os
     import subprocess
     import sys
