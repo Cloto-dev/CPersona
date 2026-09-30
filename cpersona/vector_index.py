@@ -85,7 +85,7 @@ def index_path(table: str = "memories") -> str:
 
 @dataclass(frozen=True)
 class VectorIndex:
-    """A validated, memory-mapped index file."""
+    """A validated index file, memory-mapped (read into memory on Windows, see _maps_files)."""
 
     path: str
     dim: int
@@ -376,8 +376,23 @@ async def _stream_embeddings(db, fh, table: str, watermark: int, width: int) -> 
     return written
 
 
+def _maps_files() -> bool:
+    """Whether a loaded index maps its file (POSIX) or reads it into memory (Windows).
+
+    A server keeps the index it loaded for as long as it runs (``cached_index``), and
+    a rebuild moves a new file over the old one. Windows refuses to replace a file that
+    is still mapped — ``PermissionError: [WinError 5]`` at the ``os.replace`` in
+    ``build_index`` — so on Windows every rebuild failed while any process held the
+    index, which is whenever the server had searched since it started (a production
+    report; reproduced in CI). Reading the arrays costs what the scan already touches
+    on every query, and it leaves no handle open. POSIX allows the replace, so it keeps
+    the mapping.
+    """
+    return os.name != "nt"
+
+
 def load_index(table: str = "memories", path: str | None = None) -> VectorIndex | None:
-    """Map an index file, or return None when there is none.
+    """Map (or, on Windows, read) an index file, or return None when there is none.
 
     None means "no index", which is not an error — it is the ordinary state
     before the first build and after a deletion. A file that exists but does not
@@ -420,12 +435,17 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
         # a header that disagrees with its own body — all as the same condition.
         raise IndexUnusable(f"{src}: expected {expect} bytes for {count} rows of {dim}d, found {size}")
 
-    # One memmap per array, addressed by offset, rather than one uint8 map that is
+    # One array per field, addressed by offset, rather than one uint8 buffer that is
     # re-viewed: a view across a slice has to satisfy numpy's alignment rules for
     # the target dtype, and expressing the offsets here keeps the layout in the
     # code that reads it instead of in a chain of pointer arithmetic.
+    mapped = _maps_files()
+
     def _map(offset: int, dtype: str, shape) -> np.ndarray:
-        return np.memmap(src, dtype=dtype, mode="r", offset=offset, shape=shape)
+        if mapped:
+            return np.memmap(src, dtype=dtype, mode="r", offset=offset, shape=shape)
+        items = int(np.prod(shape))
+        return np.fromfile(src, dtype=dtype, count=items, offset=offset).reshape(shape)
 
     off = base
     ids = _map(off, "<i8", (count,))

@@ -63,3 +63,24 @@ async def test_a_rebuild_replaces_an_index_the_process_still_holds(db, tmp_path)
         assert np.array_equal(np.array(held.embeddings[0]), before)
     finally:
         vector_index._cache.pop(path, None)
+
+
+FIELDS = ("ids", "embeddings", "agent_code", "project_code", "channel_code", "source_code", "created_at")
+
+
+@pytest.mark.asyncio
+async def test_read_mode_loads_the_same_arrays_and_maps_nothing(db, tmp_path, monkeypatch):
+    """The Windows path (_maps_files() False) on every platform: the arrays equal the mapped ones, field by field,
+    and none of them is a mapping — a mapping is what kept the file from being replaced."""
+    path = str(tmp_path / "idx")
+    await vector_index.build_index(db, "memories", path)
+    reference = vector_index.load_index("memories", path)
+
+    monkeypatch.setattr(vector_index, "_maps_files", lambda: False)
+    read = vector_index.load_index("memories", path)
+    for field in FIELDS:
+        got, want = getattr(read, field), getattr(reference, field)
+        assert not isinstance(got, np.memmap), field
+        assert got.dtype == want.dtype and got.shape == want.shape, field
+        assert np.array_equal(got, want), field
+

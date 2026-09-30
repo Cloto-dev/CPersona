@@ -134,7 +134,7 @@ jobs:
         run: uv sync --dev --python 3.13
       - name: Run the index tests
         # pyproject's timeout_method is "signal", which needs SIGALRM; Windows has none.
-        run: uv run pytest tests/test_vector_index_rebuild_while_loaded.py -q -o timeout_method=thread
+        run: uv run pytest tests/test_vector_index_rebuild_while_loaded.py tests/test_vector_index_builder.py -q -o timeout_method=thread
 
   docs-facts:
     # Goal: hand-written numbers in current-state docs (README, the bundled
