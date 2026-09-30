@@ -71,10 +71,12 @@ dependencies = [
     # module it does not declare keeps working only for as long as somebody
     # else's dependency list happens to carry it, and a published wheel's
     # requires_dist cannot be corrected afterwards. The crypto extra is the
-    # part that matters (RS256/ES256 need it); the floor is the release that
-    # `mcp` itself requires, and the ceiling is the usual bet on a major that
-    # does not exist yet.
-    "pyjwt[crypto]>=2.10.1,<3",
+    # part that matters (RS256/ES256 need it). The floor is the first release
+    # that fixes the key-confusion and token-parsing advisories published
+    # against 2.13.0 and earlier: `mcp` itself accepts older releases, so
+    # without it `pip install -U cpersona` leaves a vulnerable PyJWT in place.
+    # The ceiling is the usual bet on a major that does not exist yet.
+    "pyjwt[crypto]>=2.14.0,<3",
 ]
 
 [project.urls]
