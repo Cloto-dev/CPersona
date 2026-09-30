@@ -90,10 +90,11 @@ class BlockCandidates:
         # Enough to survive every one of them already being in the result: the
         # reservation is a fixed number of places and is not derived from the
         # count, but how many candidates must be looked at to fill those places
-        # does depend on how many rows the cut can hold.
+        # does depend on how many rows the cut can hold. The hits go in uncut:
+        # the filters decide which of them count (bug-454).
         return await mh._block_reserved_rows(
             db,
-            hits[: limit + blocks.BLOCK_RESERVATION],
+            hits,
             agent_id,
             project_id=project_id,
             channel=channel,

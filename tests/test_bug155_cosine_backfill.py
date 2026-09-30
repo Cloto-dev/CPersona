@@ -493,3 +493,55 @@ async def test_bug155_episode_id_does_not_read_memory_blob(monkeypatch):
         f"memory id=7 was backfilled with cosine={mem_row['_cosine']:.4f}; "
         f"expected {cos_mem_at_ep_id:.4f}"
     )
+
+
+# ---------------------------------------------------------------------------
+# bug-460: under the default fusion ordering the confidence value is still
+# returned, so a lexical-only row must be shown on its real cosine -- without
+# the cosine reaching the gate, the order or the gate signal.
+# ---------------------------------------------------------------------------
+
+
+async def _fusion_pair(monkeypatch, confidence: bool) -> dict:
+    monkeypatch.setattr(V, "_embedding_client", _Counting())
+    monkeypatch.setattr(M, "CONFIDENCE_ENABLED", confidence)
+    monkeypatch.setattr(M, "CONFIDENCE_ORDERING", "fusion")
+    return await M.do_recall(AGENT, "apples", limit=5, deep=True)
+
+
+@pytest.mark.asyncio
+async def test_bug460_a_lexical_row_is_shown_on_its_real_cosine_under_fusion(monkeypatch):
+    """Unfixed, the lexical-only row took the cosine-less branch -- the upper bound of
+    the cosine branch -- so it showed a higher confidence than the real vector hit,
+    and it carried no match_reason.cosine."""
+    await _insert_mem(content="apples orchard hit", blob=_pack_of("apples orchard hit"))
+    await _insert_mem(
+        content="apples zzz yyy www",
+        blob=_pack_of("completely different unrelated content xxxx"),
+        ts="2026-01-01T00:00:01Z",
+    )
+    out = await _fusion_pair(monkeypatch, confidence=True)
+    by_content = {m["content"]: m for m in out["messages"]}
+    assert set(by_content) >= {"apples orchard hit", "apples zzz yyy www"}, "the fixture needs both rows returned"
+    strong, lexical = by_content["apples orchard hit"], by_content["apples zzz yyy www"]
+    assert "cosine" in lexical["match_reason"], lexical["match_reason"]
+    assert lexical["confidence"]["score"] < strong["confidence"]["score"], (strong, lexical)
+
+
+@pytest.mark.asyncio
+async def test_bug460_the_shown_cosine_moves_no_gate_order_or_signal(monkeypatch):
+    """The cosine is taken after the gate and kept apart from what the gate reads, so
+    turning confidence on changes the values shown and nothing else: the same rows,
+    in the same order, with the same gate signal each."""
+    await _insert_mem(content="apples orchard hit", blob=_pack_of("apples orchard hit"))
+    await _insert_mem(
+        content="apples zzz yyy www",
+        blob=_pack_of("completely different unrelated content xxxx"),
+        ts="2026-01-01T00:00:01Z",
+    )
+    off = await _fusion_pair(monkeypatch, confidence=False)
+    on = await _fusion_pair(monkeypatch, confidence=True)
+    assert [m["content"] for m in on["messages"]] == [m["content"] for m in off["messages"]]
+    assert [m["match_reason"]["signal"] for m in on["messages"]] == [
+        m["match_reason"]["signal"] for m in off["messages"]
+    ]

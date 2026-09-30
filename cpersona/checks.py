@@ -99,7 +99,6 @@ from cpersona.config import (
 )
 from cpersona.database import FTS_TABLE_SQL, SCHEMA_VERSION, connection, release_read_probe_transaction
 from cpersona.utils import (
-    SCORING_VERSION,
     _MEMORY_ANNOTATION_PATTERN,
     _MENTION_PATTERN,
     canonical_source_types_sql,
@@ -3532,11 +3531,15 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
             }
         return {"status": "ok", "reason": f"corpus too small to matter ({embedded} embedded rows)"}
     sidecar_scoring_version = state.get("scoring_version")
-    if sidecar_scoring_version != SCORING_VERSION:
+    # bug-470: the fingerprint the calibration was stamped with, not the bare version.
+    from cpersona.memory_handlers import calibration_fingerprint
+
+    runtime_scoring_version = calibration_fingerprint()
+    if sidecar_scoring_version != runtime_scoring_version:
         return {
             "status": "stale_scoring_version",
             "sidecar_scoring_version": sidecar_scoring_version,
-            "runtime_scoring_version": SCORING_VERSION,
+            "runtime_scoring_version": runtime_scoring_version,
             # Deliberately NOT "run calibrate_threshold": this status fires precisely when
             # nothing was restored, and a single-agent calibration then rewrites the whole
             # sidecar from empty in-memory state, dropping every other agent's thresholds

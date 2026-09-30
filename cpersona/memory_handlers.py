@@ -1069,6 +1069,23 @@ def _apply_quality_gate(
     return filtered
 
 
+def calibration_fingerprint() -> str:
+    """The scoring fingerprint a calibration is stamped with and restored against.
+
+    bug-470: SCORING_VERSION names the scoring function, and CPERSONA_PRIOR_FAR_WEIGHT
+    moves the fused score it produces -- a weight below 1 lowers every far row's
+    contribution, and 0 removes the channel -- so a gate calibrated at one weight
+    measures a quantity another weight does not produce. The weight is appended only
+    when it is not the default, so a sidecar written at the default stays valid
+    across this change. Read from this module's copy, the one the fusion reads.
+    """
+    from cpersona.utils import SCORING_VERSION
+
+    if PRIOR_FAR_WEIGHT == 1.0:
+        return SCORING_VERSION
+    return f"{SCORING_VERSION}+far_weight={PRIOR_FAR_WEIGHT:g}"
+
+
 def _confidence_orders() -> bool:
     """Whether the confidence score orders and gates recall (2.6.0a7).
 
@@ -1225,12 +1242,24 @@ def _is_episode_result(r: dict) -> bool:
     return isinstance(src, dict) and src.get("System") == "episode"
 
 
+def _row_rid(r: dict) -> tuple:
+    """A recall row's identity: ``(kind, id)``, kind 'mem' or 'ep'.
+
+    bug-477: written once. It was spelled out four times -- the reached set, the
+    window's own helper, the block reservation's present set and the propagation
+    seat -- and a copy that drifted would have let those disagree about which rows
+    are already in the answer.
+    """
+    return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
+
+
 async def _backfill_cosines(
     db,
     results: list[dict],
     query: str,
     project_id: str | None,
     channel: str,
+    into: str = "_cosine",
 ) -> None:
     """bug-155: backfill ``_cosine`` on rows that reached scoring cosine-less.
 
@@ -1258,6 +1287,10 @@ async def _backfill_cosines(
     change ordering, and materialising one here would (a) add a stray
     ``match_reason.cosine`` on rows that never had one, (b) flip ``_gate_score``
     on those rows from ``rrf``/``None`` to ``cosine`` — both silent perturbations.
+
+    ``into`` names the key the cosine is written to. Anything but ``_cosine`` is a
+    value for the response alone: no gate, sort or rescue reads it, and the bug-183
+    marker is not set (bug-460).
     """
     if not query.strip():
         return
@@ -1267,7 +1300,7 @@ async def _backfill_cosines(
 
     needy: list[tuple[dict, int, bool]] = []  # (row, id, is_episode)
     for r in results:
-        if r.get("_cosine") is not None:
+        if r.get("_cosine") is not None or r.get(into) is not None:
             continue
         rid = r.get("id")
         if not isinstance(rid, int) or rid <= 0:
@@ -1364,7 +1397,9 @@ async def _backfill_cosines(
         return
 
     for row, sim in zip(batch_rows, sims):
-        row["_cosine"] = float(sim)
+        row[into] = float(sim)
+        if into != "_cosine":
+            continue
         # bug-183: mark the rows whose gate verdict this backfill can change. Before
         # b2 these reached the gate cosine-less and passed by construction (the
         # `raw_cosine is None` branch is an upper bound on the cosine branch); now they
@@ -1372,6 +1407,42 @@ async def _backfill_cosines(
         # marker so it restores ONLY the membership b2 removed — a row that always
         # carried a native cosine was gated on unchanged grounds and stays gated.
         row["_cosine_backfilled"] = True
+
+
+def _memory_ids(rows: list[dict]) -> list[int]:
+    """The memory ids among recall rows.
+
+    bug-041: episode rows are left out -- their id collides with a memory id and
+    would otherwise pull that unrelated memory's recall_count/last_recalled_at into
+    the episode's confidence score (and, for the bump, write to it: bug-040).
+    """
+    return [
+        r["id"]
+        for r in rows
+        if isinstance(r.get("id"), int) and r["id"] > 0 and not _is_episode_result(r)
+    ]
+
+
+async def _read_recall_counts(db, mem_ids: list[int]) -> dict[int, tuple[int, str]]:
+    """``id -> (recall_count, last_recalled_at)`` for ``mem_ids``.
+
+    bug-318: chunked at the same width as _backfill_cosines, for the same reason and
+    on the same pass. Its width came from the fused result list before truncation
+    rather than from the caller's limit, so 1,001 results produced one statement
+    binding 1,001 parameters and 32,776 of them raised "too many SQL variables". The
+    bound belongs to the pair, and its sibling was the one that was reasoned about,
+    so the constant is imported rather than chosen again here.
+    """
+    counts: dict[int, tuple[int, str]] = {}
+    for start in range(0, len(mem_ids), vector._ID_FETCH_CHUNK):
+        chunk = mem_ids[start : start + vector._ID_FETCH_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        rc_rows = await db.execute_fetchall(
+            f"SELECT id, recall_count, last_recalled_at FROM memories WHERE id IN ({placeholders})",
+            chunk,
+        )
+        counts.update({r[0]: (r[1], r[2] or "") for r in rc_rows})
+    return counts
 
 
 async def _apply_recall_scoring(
@@ -1454,29 +1525,7 @@ async def _apply_recall_scoring(
                     0.0, (datetime.now(timezone.utc) - newest).total_seconds() / 3600
                 )
 
-        # bug-041: exclude episode rows — their id collides with a memory id and
-        # would otherwise pull that unrelated memory's recall_count/last_recalled_at
-        # into the episode's confidence score.
-        mem_ids = [
-            r["id"]
-            for r in results
-            if isinstance(r.get("id"), int) and r["id"] > 0 and not _is_episode_result(r)
-        ]
-        # bug-318: chunked at the same width as _backfill_cosines above, for the
-        # same reason and on the same pass. Its width came from the fused result
-        # list before truncation rather than from the caller's limit, so 1,001
-        # results produced one statement binding 1,001 parameters and 32,776 of
-        # them raised "too many SQL variables". The bound belongs to the pair,
-        # and its sibling was the one that was reasoned about, so the constant is
-        # imported rather than chosen again here.
-        for start in range(0, len(mem_ids), vector._ID_FETCH_CHUNK):
-            chunk = mem_ids[start : start + vector._ID_FETCH_CHUNK]
-            placeholders = ",".join("?" * len(chunk))
-            rc_rows = await db.execute_fetchall(
-                f"SELECT id, recall_count, last_recalled_at FROM memories WHERE id IN ({placeholders})",
-                chunk,
-            )
-            recall_counts.update({r[0]: (r[1], r[2] or "") for r in rc_rows})
+        recall_counts.update(await _read_recall_counts(db, _memory_ids(results)))
 
     # v2.4.14: Episode boundary soft penalty (L3) — weaken cross-session memories
     # before quality gate so current-session signals take precedence.
@@ -1597,9 +1646,7 @@ async def _propagation_seat_rows(
     and the trace's arms, fusion and gate stay the answer's.
     """
 
-    def rid_of(r: dict) -> tuple:
-        return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
-
+    rid_of = _row_rid
     ledger.spend(budget.PROPAGATION_FETCH)
     deeper = _clamp_limit(max(propagation.DEPTH, depth), RECALL_LIBRARY_MAX_LIMIT)
     anchor_row = next((r for r in window if isinstance(r.get("id"), int) and r["id"] > 0), None)
@@ -1709,68 +1756,76 @@ async def _block_reserved_rows(
     a source-id prefix filters memories, and it suppresses episodes unless a
     channel is also set, because episodes carry no per-user source tag. An
     excluded content is excluded here too.
+
+    bug-454: those restrictions are applied before the hits are counted, not
+    after. The caller used to cut the hits to ``wanted`` first, so hits the
+    filters then dropped used up the window and the reservation stayed empty
+    although eligible hits lay further down -- a source-scoped recall whose best
+    hits were episodes or other users' memories reserved nothing. The hits are
+    hydrated ``wanted`` at a time until ``wanted`` rows are built, and no further
+    than :data:`BLOCK_HYDRATE_CAP` hits.
     """
-    mem_ids = [h.parent_id for h in hits if h.kind == "mem"]
-    ep_ids = [h.parent_id for h in hits if h.kind == "ep"]
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     src = source_id_where(source_id)
-
-    mem_rows = await vector._fetch_rows_by_id(
-        db,
-        "SELECT id, msg_id, content, source, timestamp FROM memories "
-        f"WHERE id IN ({{ph}}){iso.and_clause}{src.and_clause}",
-        mem_ids,
-        (*iso.params, *src.params),
-    )
     # The episode rule mirrors the fused arms: no per-user source tag exists, so
     # a source-scoped recall sees episodes only when a channel scopes them too.
-    ep_rows = {}
-    if ep_ids and (not source_id or channel):
-        ep_rows = await vector._fetch_rows_by_id(
-            db,
-            "SELECT id, summary, start_time, resolved, created_at FROM episodes "
-            f"WHERE id IN ({{ph}}){iso.and_clause}",
-            ep_ids,
-            iso.params,
-        )
-
+    episodes_visible = not source_id or bool(channel)
+    page = max(wanted, 1)
+    looked_at = hits[:BLOCK_HYDRATE_CAP]
     out: list[dict] = []
-    for hit in hits:
+    for start in range(0, len(looked_at), page):
         if len(out) >= wanted:
             break
-        if hit.kind == "mem":
-            row = mem_rows.get(hit.parent_id)
-            if row is None or _content_excluded(row[2] or "", exclude_set):
-                continue
-            built = {
-                "id": row[0],
-                "msg_id": row[1],
-                "content": row[2],
-                "source": row[3],
-                "timestamp": row[4],
-                "_rid": ("mem", row[0]),
-            }
-        else:
-            row = ep_rows.get(hit.parent_id)
-            if row is None:
-                continue
-            built = {
-                "id": row[0],
-                "content": f"[Episode] {row[1]}",
-                "source": {"System": "episode"},
-                "timestamp": episode_timestamp(row[2], row[4]),
-                "_rid": ("ep", row[0]),
-                "_resolved": bool(row[3]),
-            }
-        # Why this row is here, carried on the row and rendered in the response.
-        # It is deliberately not a score: no number from this arm reaches the
-        # quality gate, and one that appeared beside the gate's own signals would
-        # be read as comparable to them.
-        built["_block_distance"] = hit.distance
-        built["_block_index"] = hit.block_index
-        built["_block_order"] = "hamming" if hit.cosine is None else "vector"
-        out.append(built)
+        chunk = looked_at[start : start + page]
+        mem_ids = [h.parent_id for h in chunk if h.kind == "mem"]
+        ep_ids = [h.parent_id for h in chunk if h.kind == "ep"]
+        mem_rows = await vector._fetch_rows_by_id(
+            db,
+            "SELECT id, msg_id, content, source, timestamp FROM memories "
+            f"WHERE id IN ({{ph}}){iso.and_clause}{src.and_clause}",
+            mem_ids,
+            (*iso.params, *src.params),
+        )
+        # bug-478: the same read and row shape the other episode arms use.
+        ep_rows: dict[int, dict] = {}
+        if ep_ids and episodes_visible:
+            ep_rows = {row["id"]: row for row in await _episode_rows(db, iso, [(i, None) for i in ep_ids])}
+        for hit in chunk:
+            if len(out) >= wanted:
+                break
+            if hit.kind == "mem":
+                row = mem_rows.get(hit.parent_id)
+                if row is None or _content_excluded(row[2] or "", exclude_set):
+                    continue
+                built = {
+                    "id": row[0],
+                    "msg_id": row[1],
+                    "content": row[2],
+                    "source": row[3],
+                    "timestamp": row[4],
+                    "_rid": ("mem", row[0]),
+                }
+            else:
+                episode = ep_rows.get(hit.parent_id)
+                if episode is None:
+                    continue
+                built = dict(episode)
+            # Why this row is here, carried on the row and rendered in the response.
+            # It is deliberately not a score: no number from this arm reaches the
+            # quality gate, and one that appeared beside the gate's own signals would
+            # be read as comparable to them.
+            built["_block_distance"] = hit.distance
+            built["_block_index"] = hit.block_index
+            built["_block_order"] = "hamming" if hit.cosine is None else "vector"
+            out.append(built)
     return out
+
+
+#: How many of the block arm's hits a recall hydrates while filling its reserved
+#: places (bug-454), at most. The re-rank's own depth: the ordered hits a recall
+#: normally has are the parents of at most that many rows, and the Hamming
+#: fallback's longer list is not read further than the re-ranked one would be.
+BLOCK_HYDRATE_CAP = blocks.BLOCK_RERANK_DEPTH
 
 
 async def _episode_rows(db, iso, ranked: list[tuple[int, float | None]]) -> list[dict]:
@@ -2144,7 +2199,8 @@ async def _do_recall(
         # Every row an ordinary arm reached, whatever the gate later decides: the
         # cue's held seat is only for a record no other arm found (§2.4), so a row
         # the gate refused cannot come back through it.
-        reached = {r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id")) for r in results}
+        # bug-492: built only when a cue can use it.
+        reached = {_row_rid(r) for r in results} if time_cue is not None else set()
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
         # produces the exact same per-row gate score the runtime gate keys on).
@@ -2383,8 +2439,7 @@ async def _do_recall(
     results = p.prior.apply(results, prior_span, datetime.now(timezone.utc))
     providers.check_reorder("prior.apply", admitted, results)
 
-    def _rid_of(r: dict) -> tuple:
-        return r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
+    _rid_of = _row_rid
 
     cue_rank = {_rid_of(r): c for c, r in enumerate(cue_rows)}
     if trace_rec is not None:
@@ -2394,11 +2449,13 @@ async def _do_recall(
 
     # Every row the gate and autocut admitted, including those the count is about
     # to cut: since cued-v0.3 a cue seat may hold one of the latter (§2.11).
-    admitted_rids = {_rid_of(r) for r in results}
+    # bug-492: the three sets below are read only by the cue's seats and the
+    # propagation seat, both off by default, and are built only when one is on.
+    admitted_rids = {_rid_of(r) for r in results} if cue_note is not None else set()
     results = results[:limit]
     # The window as the count cut it, before the cue's move reorders it: the
     # propagation seat follows this order's first row.
-    window = list(results)
+    window = list(results) if propagation_seat and not gate_fallback else []
 
     # The cue's bounded move (§2.3): after the gate, autocut, prior and the count
     # have decided which rows are returned and in what order, a row the cue arm
@@ -2417,6 +2474,14 @@ async def _do_recall(
                 r["_cue_rank"] = cue_rank[_rid_of(r)]
         cue_note["lifted"] = moves
 
+    # bug-453: the rows the recall_count bump credits -- the answer as the gate,
+    # autocut, the prior and the count left it. Everything added below is held
+    # beside it (block reservation, cue seats, propagation seat), and no quality gate
+    # admitted those rows: crediting them lets a seated record's count lift its
+    # confidence until it passes the gate on unrelated queries, the loop bug-183
+    # closed for rescued rows.
+    credited_ids = _memory_ids(results)
+
     # The reservation (§5). A fixed, small number of places are held for records
     # the block arm reached, filled in Hamming order, and the quality gate is not
     # consulted for them. They displace nothing: the gate's own rows keep every
@@ -2425,10 +2490,7 @@ async def _do_recall(
     # padding it. A record the gate already admitted is not reserved for -- it is
     # in the answer, which is the outcome the reservation exists to produce.
     if block_rows:
-        present = {
-            r.get("_rid") or (("ep" if _is_episode_result(r) else "mem"), r.get("id"))
-            for r in results
-        }
+        present = {_row_rid(r) for r in results}
         reserved = [row for row in block_rows if row["_rid"] not in present]
         results.extend(reserved[: blocks.BLOCK_RESERVATION])
         if trace_rec is not None:
@@ -2489,6 +2551,22 @@ async def _do_recall(
         trace_rec.stage_input("output", results)
     results.reverse()
 
+    if CONFIDENCE_ENABLED and results:
+        async with connection() as db:
+            # bug-472: the rows held beside the answer never passed through scoring,
+            # so recall_counts has no entry for them and their confidence was computed
+            # as though they had never been recalled.
+            unread = [i for i in _memory_ids(results) if i not in recall_counts]
+            if unread:
+                recall_counts.update(await _read_recall_counts(db, unread))
+            # bug-460: since 2.6.0a7 the scoring pass backfills a cosine only where
+            # confidence orders, but an enabled confidence is still returned beside
+            # every row, and a lexical-only row fell into the cosine-less branch,
+            # which scores above any cosine. The cosine is taken here, after the gate,
+            # for the returned rows only, under a key nothing ranks or gates on.
+            if not _confidence_orders():
+                await _backfill_cosines(db, results, query, project_id, channel, into="_shown_cosine")
+
     messages = []
     for r in results:
         content = r["content"]
@@ -2509,6 +2587,8 @@ async def _do_recall(
             msg["id"] = r["msg_id"]
         if CONFIDENCE_ENABLED:
             raw_cosine = r.get("_cosine")
+            if raw_cosine is None:
+                raw_cosine = r.get("_shown_cosine")
             ts = r.get("timestamp", "")
             is_resolved = r.get("_resolved", False)
             # bug-084: same episode guard as the ranking loop — see _apply_recall_scoring.
@@ -2553,6 +2633,8 @@ async def _do_recall(
             match_reason: dict = {"signal": gate_signal, "score": gate_score}
             if r.get("_cosine") is not None:
                 match_reason["cosine"] = r["_cosine"]
+            elif r.get("_shown_cosine") is not None:
+                match_reason["cosine"] = r["_shown_cosine"]
             if r.get("_rrf_score") is not None:
                 match_reason["rrf"] = r["_rrf_score"]
             if r.get("_rsf_score") is not None:
@@ -2590,6 +2672,7 @@ async def _do_recall(
         r.pop("_rid", None)
         r.pop("_cosine", None)
         r.pop("_cosine_backfilled", None)  # bug-183 marker — same hygiene rule
+        r.pop("_shown_cosine", None)
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
         r.pop("_rsf_score", None)
@@ -2646,11 +2729,7 @@ async def _do_recall(
         # bug-040: exclude episode rows — their id collides with a memory id, so
         # bumping `WHERE id IN (...)` on the memories table would falsely increment
         # an unrelated memory's recall_count and falsify its last_recalled_at.
-        returned_ids = [
-            r.get("id", -1)
-            for r in results
-            if isinstance(r.get("id"), int) and r["id"] > 0 and not _is_episode_result(r)
-        ]
+        returned_ids = credited_ids
         if returned_ids:
             # bug-052: this ranking-bookkeeping write is non-essential — recall is
             # readOnlyHint=true and degrades gracefully. A failure here (e.g. a
