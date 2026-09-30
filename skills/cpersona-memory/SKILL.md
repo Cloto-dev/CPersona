@@ -451,6 +451,11 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 - **Indexing documents into CPersona?** Use a dedicated `agent_id` and the
   rebuild or content-hash patterns in the runbook — and recalibrate after
   `delete_agent_data` (it drops calibration state too).
+- **A recall score cannot say "nothing here"** (rsf scores are relative per
+  query): confirm "no such record" with an exact search. To make the agent look
+  in memory on every prompt, a Claude Code `UserPromptSubmit` hook is in the
+  runbook's "Prompting recall from Claude Code hooks" — on Windows it must read
+  and write UTF-8 itself and use an absolute path.
 
 ---
 
