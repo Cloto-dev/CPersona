@@ -251,3 +251,70 @@ def test_covers_rejects_a_short_tail():
 def test_covers_accepts_the_real_thing():
     text = "一文。二文。\n\n段落。"
     assert covers(text, segment(text))
+
+
+# --------------------------------------------------------------------------
+# whitespace, fences and brackets (bug-444, bug-446, bug-473)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # A sentence end and a line break are two cuts, one either side of the
+        # break; the break alone was a block.
+        ("Remember this.\n", ["Remember this.\n"]),
+        ("A.\nB.", ["A.", "\nB."]),
+        ("x.\n\n\ny.", ["x.", "\n\n\ny."]),
+        ("\n\nHello. World.", ["\n\nHello.", " World."]),
+        ("一文目。\n二文目。", ["一文目。", "\n二文目。"]),
+    ],
+)
+def test_no_block_is_only_whitespace(text, expected):
+    """bug-444: every such block embeds to nearly the same vector, so they tied in
+    the Hamming pass; and a one-sentence record with a trailing break got a block
+    build it should not."""
+    spans = segment(text)
+    assert covers(text, spans)
+    assert _texts(text, spans) == expected
+
+
+def test_a_node_boundary_keeps_the_whitespace_block_it_bounds():
+    """Folding never crosses a node end: a block may not span two nodes (§2)."""
+    text = "abc.\n"
+    assert _texts(text, segment(text, node_bounds=(4,))) == ["abc.", "\n"]
+    text = "\nabc."
+    assert _texts(text, segment(text, node_bounds=(1,))) == ["\n", "abc."]
+
+
+def test_a_fold_that_would_pass_the_limit_is_not_made():
+    text = "a" * 10 + "\n"
+    assert _texts(text, segment(text, max_chars=10)) == ["a" * 10, "\n"]
+    assert _texts(text, segment(text, max_chars=11)) == [text]
+
+
+def test_a_closing_fence_stays_with_its_code():
+    """bug-446: the break just before the closing ``` was an allowed cut, so the
+    code block was divided from the fence that closes it."""
+    text = "intro\n```\ncode. more\n\nx\n```\nafter"
+    assert _texts(text, segment(text)) == ["intro\n", "```\ncode. more\n\nx\n```\n", "after"]
+
+
+def test_a_closing_fence_at_the_end_of_the_text_stays_with_its_code():
+    text = "intro\n```\ncode. more\n\nx\n```"
+    assert _texts(text, segment(text)) == ["intro\n", "```\ncode. more\n\nx\n```"]
+
+
+def test_an_unclosed_bracket_inside_a_quotation_does_not_open_the_quotation():
+    """bug-473: the ( that never closes held back the 」, so the quotation looked
+    unclosed and the divider cut inside it."""
+    text = "彼は「今日は休む。(たぶん」と言った。"
+    assert _texts(text, segment(text)) == [text]
+    # The control the finding compared against: the same text without the (.
+    plain = "彼は「今日は休む。たぶん」と言った。"
+    assert _texts(plain, segment(plain)) == [plain]
+
+
+def test_a_closing_bracket_closes_past_an_unclosed_one_and_no_further():
+    text = "「a(b」c)。d。"
+    assert _texts(text, segment(text)) == ["「a(b」c)。", "d。"]
