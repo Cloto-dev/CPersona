@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:3ce8d2529187592a3d40b8192b1d9ff844d42e6f -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:d1ebc6cb0036faf2f8c1d0e28e408888dd0647fe -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,8 +10,8 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6 系は pre-release のラインです。リリースは `2.6.0aN` と `2.6.0bN` として PyPI にあり、`--pre` を
-付けて導入します。最新の final リリースは 2.5 系にあります
+2.6.0 はこのラインの最初の final リリースで、版を指定しない導入はこれになります。
+pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
 ## 4 つの状態 { #the-four-states }
@@ -21,7 +21,7 @@
 
 | 状態 | 意味 |
 | --- | --- |
-| **リリース済み** | 公開された pre-release に入っている。誰でも導入して呼び出せる。 |
+| **リリース済み** | 公開されたリリースに入っている。誰でも導入して呼び出せる。 |
 | **開発中** | `master` にコードはあるが、未リリースか、既定を決める測定がまだ無いままリリースされている。 |
 | **研究中** | 仮説、実験、設計の比較の段階。サーバーのコードはまだ無い。 |
 | **不採用・修正中** | 測って退けたか、誤りが見つかって設計し直している。これらの行はページに残します。 |
@@ -53,6 +53,7 @@
 | 2.6.0a8 | recall と reconstruct は各段を provider の枠を通して呼び、trace は宣言した予算と各段が受け取ったものを記録する。呼び出し側が受け取るものは変わらない | [#335](https://github.com/Cloto-dev/cpersona/pull/335)、[#336](https://github.com/Cloto-dev/cpersona/pull/336) |
 | 2.6.0b1 | 機能の追加はなし: 2.6.0a1〜a8 のレビューで見つかった MEDIUM の欠陥 11 件の修正。他のプロジェクトから読めていたプロジェクトの別名、引用から漏れていた次の行の限定句、段数に上限のなかった `reconstruct` のたどり、10 字ずれて測られていたエピソードの引用、読み手が拒否するのに誰も作り直さなかったノード集合などです | [#356](https://github.com/Cloto-dev/cpersona/pull/356), [#357](https://github.com/Cloto-dev/cpersona/pull/357), [#358](https://github.com/Cloto-dev/cpersona/pull/358), [#359](https://github.com/Cloto-dev/cpersona/pull/359), [#361](https://github.com/Cloto-dev/cpersona/pull/361) |
 | 2.6.0b2 | 機能の追加はなし: 残っていた MEDIUM の欠陥 5 件の修正。ヘッダと本文が食い違いうるメモリ上 DB のエクスポート、毎クエリ読む行を 0 と報告していた索引の status、行の上限で切られても完全に見えていた一覧、長さに上限のなかった `session_key`、コピーが要る窓を丸ごと保持していた索引の経路などです | [#363](https://github.com/Cloto-dev/cpersona/pull/363), [#364](https://github.com/Cloto-dev/cpersona/pull/364), [#365](https://github.com/Cloto-dev/cpersona/pull/365), [#366](https://github.com/Cloto-dev/cpersona/pull/366) |
+| 2.6.0 | このラインの最初の final リリース。機能の追加はなし: alpha のレビューが登録した LOW の欠陥 43 件の修正。ノードの境界をまたいでいた Block の集合、表せる範囲を超えて例外になっていた時期の手がかり、待ち行列の全タスクを止めていた失敗する構築、どのゲートも認めていない脇の行に記録されていた recall の回数など。 |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。

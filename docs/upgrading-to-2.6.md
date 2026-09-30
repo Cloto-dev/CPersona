@@ -1,14 +1,13 @@
 # Upgrading from 2.5 to 2.6
 
-This page takes an existing 2.5.x store to the current 2.6 pre-release,
-**2.6.0b2**, in one pass. Each 2.6 pre-release documented only its own step in
-its release notes; this page puts the steps from 2.5.12 onward in one place.
+This page takes an existing 2.5.x store to **2.6.0** in one pass. Each 2.6
+pre-release documented only its own step in its release notes; this page puts
+the steps from 2.5.12 onward in one place.
 
-2.6 is still a pre-release line (Experimental in the
-[support policy](https://github.com/Cloto-dev/CPersona/blob/master/SUPPORT.md)):
-opt-in, and without the guarantees of a final release. The steps below can
-still change before 2.6.0 final. This page is updated with each pre-release and
-settled at the final.
+2.6.0 is the 2.6 line's first final release (Current in the
+[support policy](https://github.com/Cloto-dev/CPersona/blob/master/SUPPORT.md)),
+and the 2.5 line becomes Candidate: no channel serves it, and it stays
+reachable by exact version.
 
 ## Before you start
 
@@ -21,11 +20,11 @@ settled at the final.
 2. **Check the embedding server.** Building the overflow nodes for records
    already stored needs a server that reports token counts: CEmbedding 0.8.0 or
    later. An older server answers `count: null`, which is not zero.
-3. **Install the pre-release explicitly.** pip does not pick pre-releases on its
-   own:
+3. **Install 2.6.0.** A plain upgrade now resolves to it; pin the version so you
+   know which one you are running:
 
    ```sh
-   pip install 'cpersona==2.6.0b2'
+   pip install 'cpersona==2.6.0'
    ```
 
 ## What the first start does
@@ -42,7 +41,7 @@ recorded as done, so it is retried on the next start.
 | 16 | 2.6.0a5 | `record_blocks`: block reach | Only if you turn block reach on ([below](#optional-turn-on-block-reach)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Only if you turn block reach on |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1 and 2.6.0b2 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2 and 2.6.0 changed no schema.
 
 ## After the first start
 
@@ -149,6 +148,32 @@ Check these against what your deployment relies on. Each is off, or equal to
 - **Smaller corrections** (2.6.0b2): on an in-memory database, `export_memories`
   reads a consistent copy; the vector index path scores a window it has to copy
   one chunk at a time, in the ranges the table scan uses.
+- **A `reconstruct` budget below one head quote is raised to it** (2.6.0). With
+  the default `CPERSONA_RECONSTRUCT_QUOTE_CHARS` of 800, a smaller `budget`
+  becomes 800 and `budget_policy` says so. It used to be raised only to 500,
+  while the head could run to 800 without the overrun being reported.
+- **A recall excerpt reads the block index only while block retrieval is on**
+  (2.6.0), as `reconstruct`'s quote does. With `CPERSONA_BLOCK_BUILD_ENABLED=true`
+  and `CPERSONA_BLOCK_RETRIEVAL_ENABLED=false`, `excerpt_basis` is now `lexical`.
+- **A block set is current only if it respects the node layout and has every
+  re-rank vector** (2.6.0). Where block building is on, sets built before their
+  record's nodes existed are rebuilt by the sweep and by
+  `check_health(fix=true)` after the upgrade.
+- **A non-default `CPERSONA_PRIOR_FAR_WEIGHT` is part of the calibration**
+  (2.6.0). A deployment that sets it to anything but 1 recalibrates on its first
+  start of 2.6.0, because a gate measured at another weight is no longer
+  restored. At the default nothing changes.
+- **Rows held beside the answer earn no recall count** (2.6.0). With confidence
+  enabled, the block reservation, the time cue's seats and the propagation seat
+  no longer raise `recall_count`, and their `confidence` reads their own history.
+- **Smaller corrections** (2.6.0): a `reconstruct` quote cut to the preview
+  tier hands over the whole range it began in `expand`; `shortfall_reason`
+  blames the budget only when it cut an item of the window; `bounds.reached`
+  counts only the rows inside recall's limit; a `time_cue` past the
+  representable range is clipped rather than raising, and a unit that is not a
+  string is refused; a failing node or block build no longer holds the other
+  queued tasks; in `api` embedding mode the node check no longer reads every
+  record's text.
 
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 (`trace=true`), the time cue (`time_cue`), associations declared with

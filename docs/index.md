@@ -81,7 +81,7 @@ things that does not mean:
 
     ---
 
-    Taking a 2.5.x store to the current 2.6 pre-release in one pass: backup,
+    Taking a 2.5.x store to 2.6.0 in one pass: backup,
     what the first start migrates, what to build afterwards, how to go back.
 
     [:octicons-arrow-right-24: Upgrading to 2.6](upgrading-to-2.6.md)

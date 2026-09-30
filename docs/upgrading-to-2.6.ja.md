@@ -1,14 +1,14 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:41ee7acab2caf6d09c3905dd377acd93f8aa735c -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:caf9dce72462d285d5ffd4b4acdee29453ac3766 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
-このページは、既存の 2.5.x のストアを、現在の 2.6 の pre-release である **2.6.0b2** まで
-一度に移行する手順をまとめたものです。2.6 の各 pre-release は、リリースノートに自分の段の
-手順しか書いていません。このページは、2.5.12 からの手順を 1 か所に集めます。
+このページは、既存の 2.5.x のストアを **2.6.0** まで一度に移行する手順をまとめたものです。
+2.6 の各 pre-release は、リリースノートに自分の段の手順しか書いていません。このページは、
+2.5.12 からの手順を 1 か所に集めます。
 
-2.6 はまだ pre-release の系列です ([サポート方針](https://github.com/Cloto-dev/CPersona/blob/master/SUPPORT.md)
-では Experimental)。opt-in で、final リリースの保証はありません。以下の手順は 2.6.0 final までに
-まだ変わりえます。このページは pre-release ごとに更新し、final の時点で確定します。
+2.6.0 は 2.6 系の最初の final リリースです ([サポート方針](https://github.com/Cloto-dev/CPersona/blob/master/SUPPORT.md)
+では Current)。2.5 系は Candidate になります: どのチャネルからも配られず、版を指定すれば
+引き続き導入できます。
 
 ## 始める前に { #before-you-start }
 
@@ -20,10 +20,11 @@
 2. **埋め込みサーバーを確かめる。** すでに保存されている記録の溢れ分のノードを作るには、トークン数を
    報告するサーバー (CEmbedding 0.8.0 以降) が必要です。古いサーバーは `count: null` を返し、
    これはゼロではありません。
-3. **pre-release を明示してインストールする。** pip は自分からは pre-release を選びません:
+3. **2.6.0 をインストールする。** 版を指定しない更新でも 2.6.0 になります。どの版を動かしているかが
+   分かるよう、版を固定してください:
 
    ```sh
-   pip install 'cpersona==2.6.0b2'
+   pip install 'cpersona==2.6.0'
    ```
 
 ## 最初の起動で起きること { #what-the-first-start-does }
@@ -39,7 +40,7 @@
 | 16 | 2.6.0a5 | `record_blocks`: Block による到達 | Block による到達を on にした場合だけ ([下記](#optional-turn-on-block-reach)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block による到達を on にした場合だけ |
 
-2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2 はスキーマを変えていません。
+2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0 はスキーマを変えていません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
@@ -129,6 +130,28 @@ Block による到達は既定で off で、off の間は費用がかかりま�
 - **細かな修正** (2.6.0b2): メモリ上のデータベースでは、`export_memories` が一貫した複製を
   読みます。ベクトル索引の経路は、コピーが要る窓を、テーブル走査と同じ範囲で 1 チャンクずつ
   採点します。
+- **`reconstruct` の予算は、見出しの引用 1 つ分に満たなければそこまで引き上げます** (2.6.0)。
+  既定の `CPERSONA_RECONSTRUCT_QUOTE_CHARS` 800 では、それより小さい `budget` は 800 になり、
+  `budget_policy` がそう申告します。以前は 500 までしか引き上げず、見出しが 800 まで伸びても
+  超過は報告されませんでした。
+- **recall の抜粋は、Block の検索が on のときだけ Block 索引を読みます** (2.6.0)。
+  `reconstruct` の引用と同じ扱いです。`CPERSONA_BLOCK_BUILD_ENABLED=true` で
+  `CPERSONA_BLOCK_RETRIEVAL_ENABLED=false` なら、`excerpt_basis` は `lexical` になります。
+- **Block の集合は、ノードの区切りを守り、再順位付けのベクトルがすべてそろっているときだけ
+  最新とみなします** (2.6.0)。Block の構築が on の配備では、レコードのノードができる前に作られた
+  集合を、移行後に backfill と `check_health(fix=true)` が作り直します。
+- **既定以外の `CPERSONA_PRIOR_FAR_WEIGHT` は較正の一部になります** (2.6.0)。1 以外を設定した
+  配備は、2.6.0 の最初の起動で較正し直します。別の重みで測ったゲートは復元されないためです。
+  既定のままなら何も変わりません。
+- **答えの脇に置いた行は recall の回数を得ません** (2.6.0)。confidence が有効なとき、Block の
+  予約席、時期の手がかりの席、伝播の席は `recall_count` を増やさず、その `confidence` は
+  その行自身の履歴を読みます。
+- **細かな修正** (2.6.0): preview の長さで切られた `reconstruct` の引用は、`expand` で
+  それが始まった範囲全体を渡します。`shortfall_reason` は、予算が窓の中の項目を切ったときだけ
+  予算のせいにします。`bounds.reached` は recall の上限の内側の行だけを数えます。表せる範囲を
+  超える `time_cue` は例外にせず範囲の端で止め、文字列でない単位は拒否します。失敗するノードや
+  Block の構築が、待ち行列の他のタスクを止めなくなりました。`api` の埋め込みモードでは、ノードの
+  点検が全レコードの本文を読まなくなりました。
 
 2.6 で新しく入り、求めない限り何もしないもの: `reconstruct` ツール、recall の trace (`trace=true`)、
 時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、伝播の席

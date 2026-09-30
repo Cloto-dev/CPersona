@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:5088a9cc506c9afe7cbee0faa94d442d161258ad -->
+<!-- i18n-source: docs/index.md@blob:2b208352f219078b5d4cb76271a2c1981dc76fc2 -->
 
 # CPersona ドキュメント
 
@@ -84,7 +84,7 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 
     ---
 
-    2.5.x のストアを現在の 2.6 pre-release へ一度に移行する手順: バックアップ、最初の起動で
+    2.5.x のストアを 2.6.0 へ一度に移行する手順: バックアップ、最初の起動で
     移行されるもの、後で作るもの、戻し方。
 
     [:octicons-arrow-right-24: 2.6 への移行](upgrading-to-2.6.md)
