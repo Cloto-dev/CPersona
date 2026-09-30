@@ -1998,7 +1998,7 @@ async def _seed_spellings(ctx: Ctx) -> None:
     await db.commit()
 
 
-@scenario("corpus-mixed-spellings-recall-confidence", "store-recall-health", "recall (CONFIDENCE=on) over six timestamp spellings: the temporal span and every age_hours as computed today, with MIN/MAX taken over the column as TEXT", seed=_seed_spellings)
+@scenario("corpus-mixed-spellings-recall-confidence", "store-recall-health", "recall (CONFIDENCE=on) over six timestamp spellings: the temporal span and every age_hours, with each end of the span settled chronologically rather than by the column's TEXT order (bug-286)", seed=_seed_spellings)
 async def _(ctx):
     install_local(ctx)
     _install_confidence_on(ctx)

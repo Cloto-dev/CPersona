@@ -4705,7 +4705,7 @@
     "thresholds": {}
   },
   "corpus-mixed-spellings-recall-confidence": {
-    "covers": "recall (CONFIDENCE=on) over six timestamp spellings: the temporal span and every age_hours as computed today, with MIN/MAX taken over the column as TEXT",
+    "covers": "recall (CONFIDENCE=on) over six timestamp spellings: the temporal span and every age_hours, with each end of the span settled chronologically rather than by the column's TEXT order (bug-286)",
     "db": {
       "episodes": [],
       "memories": [
@@ -4841,7 +4841,7 @@
           "confidence": {
             "age_hours": 168.0,
             "cosine": 0.4589,
-            "score": 0.6085
+            "score": 0.6095
           },
           "content": "apples spelled fractional Z",
           "match_reason": {
@@ -4883,7 +4883,7 @@
           "confidence": {
             "age_hours": 528.0,
             "cosine": 0.5368,
-            "score": 0.5748
+            "score": 0.5769
           },
           "content": "apples spelled Z, early",
           "match_reason": {
@@ -4904,7 +4904,7 @@
           "confidence": {
             "age_hours": 7.0,
             "cosine": 0.5469,
-            "score": 0.7897
+            "score": 0.7898
           },
           "content": "apples spelled +09:00",
           "match_reason": {
@@ -4925,7 +4925,7 @@
           "confidence": {
             "age_hours": 276.0,
             "cosine": 0.5822,
-            "score": 0.6933
+            "score": 0.6949
           },
           "content": "apples spelled naive",
           "match_reason": {
@@ -4946,7 +4946,7 @@
           "confidence": {
             "age_hours": 527.0,
             "cosine": 0.5871,
-            "score": 0.6166
+            "score": 0.6187
           },
           "content": "apples spelled -05:00",
           "match_reason": {
