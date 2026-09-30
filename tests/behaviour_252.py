@@ -571,13 +571,20 @@ async def observe_all() -> dict:
 # order -- what a replay starting from a stage checks its input against.
 # Additive and trace-only, like `budget`. Pinned in tests/test_trace_seams.py.
 #
+# coverage (2.6): a traced recall and a traced reconstruct record which parts of
+# the question the returned records hold (spans and refs, no text) and what the
+# ledger cost under timing_ms. Additive and trace-only, like `budget`: computed
+# after the answer is final, so the messages, stages, arms, gate decisions and
+# seats the m1 scenarios recorded are unchanged. Pinned in
+# tests/test_coverage_ledger.py.
+#
 # unembedded (bug-388): build_index reports the second group of named holes
 # beside `excluded`, the rows that had no embedding when it ran. Additive -- the
 # build, its row count and its watermark are unchanged, and the two recorded
 # builds had no such rows (0). Pinned in tests/test_bug388_index_behind.py.
 _KEYS_ADDED_SINCE_GOLDEN = {
     "repairable", "checks_run", "advisory_scope", "budget", "providers", "stage_inputs",
-    "unembedded",
+    "unembedded", "coverage",
 }
 
 

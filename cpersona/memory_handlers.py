@@ -25,6 +25,7 @@ from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import blocks
 from cpersona import budget
+from cpersona import coverage
 from cpersona import cue
 from cpersona import excerpts
 from cpersona import generation
@@ -2084,6 +2085,17 @@ async def do_recall(
         result = await _do_recall(agent_id, query, limit, **kwargs)
     finally:
         rec.deactivate(token)
+    # The coverage ledger (docs/RECALL_PROCESS_DESIGN.md §1.5): which parts of the
+    # question the returned records hold. Computed after the answer is final, over
+    # each returned record's full stored text. The trace is an instrument, so a
+    # ledger that cannot be built is reported in the trace, never raised.
+    started = time.perf_counter()
+    try:
+        cov = await coverage.for_refs(agent_id, query, [m.get("ref") for m in result.get("messages") or []])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recall trace: coverage ledger not built: %s", type(exc).__name__)
+        cov = {"error": type(exc).__name__}
+    rec.coverage(cov, (time.perf_counter() - started) * 1000)
     result["trace"] = rec.finish()
     return result
 

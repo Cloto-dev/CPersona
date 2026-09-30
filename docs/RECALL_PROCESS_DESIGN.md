@@ -56,6 +56,7 @@ What a trace may contain when it leaves the machine is decided separately.
 | `reservation` | Rows admitted by a held seat (block reach, time cue) |
 | `stages` | One entry per stage of the loop: what the stage searched and why the next one was started |
 | `suspected` | Failures the loop suspected while it ran, with the stage and the action taken |
+| `coverage` | Which parts of the question the returned records hold: the parts (span and kind), the refs that hold each, and the parts none holds (§1.5) |
 | `timing_ms` | Time per stage |
 
 ### 1.3 Suspected and confirmed failure codes
@@ -96,6 +97,51 @@ relies on it:
 3. **It changes nothing when not requested.** The behaviour golden pins this.
    The cost of a requested trace is measured, with a target of no more than a
    fifth of the recall's own time.
+
+### 1.5 The coverage ledger
+
+A traced `recall` or `reconstruct` also records which parts of the question
+the returned records hold. It is recorded only: it is computed after the
+answer is final, and nothing in the recall reads it. It is the instrument for
+a later stage of the loop, one that would fetch what the answer does not yet
+cover. Counted over real traffic, it says how often a question has a part that
+no returned record holds.
+
+- **Parts** are the question's words, cut by script with no dependency: a run
+  of two or more kanji, a run of two or more katakana, or an ASCII identifier
+  of two or more characters (names, version numbers such as `2.5.5a1`,
+  `bug-218`, `#354`, paths). Hiragana runs are particles and endings and are
+  not parts. The question is normalized first (NFKC, then lower case), and a
+  repeated part counts once. At most 32 parts are kept.
+- **Coverage** is a substring match of the part in each record's full stored
+  text, not the preview the response carries. For `recall` the records are
+  the returned rows; for `reconstruct`, the records the returned items cite.
+- **No text.** A part is recorded as its span in the normalized question and
+  its kind; a record is its ref. A caller holding the question recovers a part
+  as `normalize(question)[start:end]`.
+
+| Field | Content |
+| --- | --- |
+| `normalization` | `nfkc-lower` |
+| `parts` | `[{span: [start, end], kind}]`, kind one of `kanji`, `katakana`, `identifier`, in order of first appearance |
+| `covered_by` | Per part, the refs whose text holds it, in the order the response lists the records |
+| `uncovered` | The indices of the parts no record holds |
+| `records` | How many records were read |
+| `parts_omitted` | Present when the question had more than 32 parts: how many were left out |
+
+When the ledger cannot be built, `coverage` is `{"error": <exception type>}`
+and the call answers as it would have. Its cost is `timing_ms.coverage`.
+
+What it does not say. An uncovered part is not proof that the answer is
+missing: a record can state the same fact in other words, and in English every
+word of two or more letters is a part, common words included. Measured on a
+private question set, words taken this way were found in the returned records
+for 82% of the parts, on average, of questions whose evidence was returned.
+Rare character trigrams, the first design, reached 8%, because in Japanese
+they are mostly fragments across word boundaries. The same measurement found
+that uncovered parts do not tell a question whose answer is absent from one
+whose answer is present, so the ledger is not a signal that an answer does
+not exist.
 
 ## 2. The loop's basic form
 
