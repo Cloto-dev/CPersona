@@ -198,6 +198,14 @@ class TraceRecorder:
     def reservation(self, rows: list[dict], kind: str) -> None:
         self.data["reservation"].extend({"ref": ref_of(r), "kind": kind} for r in rows)
 
+    def coverage(self, ledger: dict, ms: float) -> None:
+        """The coverage ledger over the returned records (cpersona/coverage.py) and its cost.
+
+        Recorded after the recall has answered, so nothing it holds reaches the answer.
+        """
+        self.data["coverage"] = ledger
+        self.data["timing_ms"]["coverage"] = round(ms, 3)
+
     # -- output -------------------------------------------------------------------
 
     def finish(self) -> dict:
