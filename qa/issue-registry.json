@@ -6738,12 +6738,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "floor = max\\(config\\.RECALL_PREVIEW_CHARS, 1\\)",
+      "pattern": "floor = max\\(_head_cap\\(\\), 1\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Use the head cap as the floor, here and in config.validate_reconstruct_counts.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "resolve_budget raises a caller's budget below one head quote -- RECONSTRUCT_QUOTE_CHARS, or the preview tier with filling off -- rather than below one preview-tier excerpt, so the first head always fits the budget reported. budget=600 with the default 800-character head is now raised to 800 and says so: requested_budget and budget_policy stay in the compact response. The startup refusal of configured values below one preview-tier excerpt is unchanged, so no configuration that starts today stops starting; a configured value between that and a head quote is raised at run time and reported like a caller's. The tool description, the docstrings and RELIABLE_RECALL_2_6 (English and Japanese) now name the head quote. The behaviour golden's m1-reconstruct-count-budget moved in effective_budget alone (500 to 800) and was re-recorded; two tests that named 500 or 600 as their budget were moved to the new floor and above it, their assertions unchanged. Regression: tests/test_reconstruct_filled_quote.py::test_a_budget_below_one_head_quote_is_raised_to_it and ::test_what_is_returned_fits_the_budget_it_reports."
     },
     {
       "id": "bug-458",
@@ -6848,12 +6850,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "if len\\(items\\) - held_returned < effective_count:",
+      "pattern": "window_cut = len\\(items\\) - held_returned < len\\(window\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Decide budget_exhausted from whether a window entry was cut.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "shortfall_reason blames the budget only when it cut one of the window's own items (fewer window items returned than the window held). A held item the budget cut is already reported as reserved_omitted, and a window short because the candidates ran out now says exhausted_candidates. Regression: tests/test_reconstruct_block_reservation.py::test_a_short_window_is_blamed_on_the_budget_only_when_it_cut_the_window."
     },
     {
       "id": "bug-465",
@@ -6862,12 +6866,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "total = len\\(messages\\)",
+      "pattern": "within_limit = sum\\(1 for m in messages if m\\.get\\(\"match_reason\", \\{\\}\\)\\.get\\(\"admission\"\\) != \"reservation\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Count only non-reserved candidates with a ref.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "bounds.reached=[top_k] is decided from the rows recall returned within its limit -- every row whose match_reason does not say admission 'reservation' -- rather than from every row. The block reservation, the cue's seats and the propagation seat sit beside the limit and all carry that marker; the profile row counts against the limit and is counted. Regression: tests/test_reconstruct_block_reservation.py::test_reserved_rows_do_not_make_a_short_retrieval_look_full, whose precondition asserts the recall filled its limit with one held row."
     },
     {
       "id": "bug-466",
@@ -6876,12 +6882,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "\\\"block\\\": quote\\[\\\"block\\\"\\]\\[\\\"index\\\"\\],",
+      "pattern": "\"block\": \\[starts\\.index\\(span_start\\), ends\\.index\\(span_end\\)\\],",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "reconstructive-recall",
       "fix_sketch": "Name the governing range [first, last] in expand, as the incomplete path does.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "A block quote cut to the cap now hands over the governing range it was the start of, as [first, last] -- the form the incomplete path already gave and get_contents already takes -- instead of the best block's index alone, which did not return the rest of what was cut. tests/test_blocks_quotation.py::test_a_cut_quote_says_it_is_no_longer_whole asserted that the handover read back less than the whole record; for its fixture the governing range is the whole record (the second block opens with a qualifier), so that assertion encoded this defect, and it now asserts the handover is the text the cut quote began."
     },
     {
       "id": "bug-467",
@@ -6890,12 +6898,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/excerpts.py",
-      "pattern": "basis, bits = \\\"blocks\\\", query_bits",
+      "pattern": "when the query was embedded at their width",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Report 'blocks' only when usable bits ranked the blocks.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Documentation, not a new value: 'blocks' says the stored division was used, and the module docstring and the head quote's now say the set is ranked by its bits only when the query vector has their width, and lexically alone otherwise. A fourth basis value was rejected: it would add a value to a documented field in a fix release, to distinguish two rankings of the same division."
     },
     {
       "id": "bug-468",
@@ -6904,12 +6914,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "^def _set_is_current\\(",
+      "pattern": "return all\\(end in ends for end in node_ends if 0 < end < text_len\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "index-divergence",
       "fix_sketch": "Record the node bounds a block set was cut against and treat a change as stale.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Block currency now includes the node layout: a set is current only if every node end inside the text is also a block end, so a set built before its record's nodes existed is found stale once they land, and the rebuild cuts at the node ends. The rule is blocks.block_set_is_current (see bug-479), which every reader applies; the builder, the sweep and the missing_blocks check read the node ends beside the block rows. Regression: tests/test_blocks_rerank.py::test_a_set_that_crosses_a_node_end_is_not_current (stale, listed by the check, rebuilt at the node end, then current) and ::test_the_rule_reads_the_node_ends_it_is_given."
     },
     {
       "id": "bug-469",
@@ -6918,12 +6930,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/excerpts.py",
-      "pattern": "block_sets = await reconstruct\\._current_block_sets\\(agent_id, parsed\\)",
+      "pattern": "block_sets = await reconstruct\\._current_block_sets\\(agent_id, parsed\\) if blocks\\.retrieval_enabled\\(\\) else \\{\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Gate both on the same switch (see the duplicated excerpt rule).",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Recall excerpts read a stored block set only while CPERSONA_BLOCK_RETRIEVAL_ENABLED is on, as the quotation does: off means the index may exist and nothing reads it (the configuration page says so). With building on and retrieval off, an excerpt is now divided at read time and reports 'lexical'. Two excerpt tests that asserted 'blocks' with only building on were moved onto retrieval on, where their assertions hold unchanged. Regression: tests/test_recall_excerpt.py::test_a_block_set_is_not_read_while_block_retrieval_is_off."
     },
     {
       "id": "bug-470",
@@ -6995,13 +7009,15 @@
       "severity": "LOW",
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "active = providers\\.active\\(\\)",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "providers_=p,",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Pass providers_ (and the parsed cue) from do_reconstruct into do_recall.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. No production caller installs another set today."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. No production caller installs another set today.",
+      "fixed_in": "2.6.0",
+      "fix_note": "do_recall takes the provider set, an already-read TimeCue and a list for the query vector as library arguments, and reconstruct passes the set it read, the cue it parsed and a list (bug-494) to its candidate recall. The pool and the items are built with one provider set, and the cue is read once. Regression: tests/test_reconstruct_filled_quote.py::test_one_provider_set_and_one_reading_of_the_cue."
     },
     {
       "id": "bug-475",
@@ -7072,12 +7088,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "^async def _current_block_sets\\(",
+      "pattern": "if blocks\\.block_set_is_current\\(rows, len\\(text\\), block_keys, node_ends\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "One helper parameterised by table and model keys, applying one currency rule.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Related: the node-currency divergence entry of the same review."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Related: the node-currency divergence entry of the same review.",
+      "fixed_in": "2.6.0",
+      "fix_note": "One rule decides whether a block set is current: blocks.block_set_is_current over (start, end, has_vector, model) rows -- contiguous and complete, every block's re-rank vector present, every model current, no node end crossed. The aggregate the builder and the sweep read (no contiguity) and the reader's own test (no vectors) are gone; _blocks_current, records_without_current_blocks, the sweep's page read and reconstruct's reader all read rows and apply it. reconstruct reads node and block sets in one function, on one connection, reading each record's text once. Regression: tests/test_reconstruct_filled_quote.py::test_a_block_set_missing_a_vector_is_not_quoted_from, and the sweep's half in tests/test_blocks_rerank.py, moved to the new rule."
     },
     {
       "id": "bug-480",
@@ -7086,12 +7104,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "^def _filled_quote\\(",
+      "pattern": "basis, ranges, severed, ranked, spans = excerpts\\.select\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "One shared helper returning ranges, basis and severed; behaviour stays the same wherever the copies agree today.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "excerpts.select is the one rule for which passages a record shows -- a current block set or a read-time division, ranked, filled, or its start -- and both the head quote and the recall excerpt call it. The episode label is stripped by one helper (excerpts.stored_text) for both, and both read block sets behind the same switch (bug-469). Regression: tests/test_reconstruct_filled_quote.py::test_the_head_quote_is_the_recall_excerpt_of_the_same_record and ::test_an_episode_head_quote_is_the_recall_excerpt_of_the_same_episode."
     },
     {
       "id": "bug-481",
@@ -7162,12 +7182,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "self\\.keys_used: set\\[str\\] = set\\(\\)",
-      "expected": "present",
-      "status": "open",
+      "pattern": "self\\.keys_used",
+      "expected": "absent",
+      "status": "fixed",
       "category": "dead-code",
       "fix_sketch": "Remove them; nothing observable reads them.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Removed: _Union.keys_used; best_node (tests now call rank_nodes and take its first node, the same assertions); V0_DERIVED_ROLES, which moved into the tests as their expectation of what v0 derives; and server._apply_reconstruct_preview, which could not fire because heads are cut where they are quoted. rank_blocks' local numpy import had already gone with bug-481. Kept: structure's second return value, which is part of the reconstructor provider slot's contract and belongs with bug-486's decision about the slots."
     },
     {
       "id": "bug-486",
@@ -7236,12 +7258,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "^async def _parent_text\\(",
+      "pattern": "^async def _parent_row\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "Reuse the nodes helpers and read text and axes in one SELECT.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "blocks uses nodes._parent_text rather than its own copy, and write_blocks reads the record's text and its isolation axes in one statement (_parent_row) inside its transaction, instead of two reads of the same row. The currency predicate is no longer a copy of the node one but the shared-shape block rule of bug-479. Behaviour-preserving: the compare-and-swap is pinned by the build and sweep tests of a record that moved under the build."
     },
     {
       "id": "bug-491",
@@ -7250,12 +7274,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/excerpts.py",
-      "pattern": "f\\\"SELECT \\{column\\} FROM \\{table\\} WHERE agent_id = \\? AND id = \\?\\\"",
+      "pattern": "known = \\{ref: stored_text\\(ref, shown\\) for ref, shown in \\(texts or \\{\\}\\)\\.items\\(\\) if shown\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Pass the texts in (or return them from _current_block_sets); the text is identical, so the excerpts are.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "excerpts.for_refs takes the texts the recall rows already carry, and recall passes them; a ref without one is read in one query per kind, not one SELECT per ref on its own connection. Regression: tests/test_reconstruct_filled_quote.py::test_excerpts_read_no_record_the_recall_row_already_carries, from the statements the read connection traces."
     },
     {
       "id": "bug-492",
@@ -7294,12 +7320,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "^async def _query_vector\\(",
+      "pattern": "query_vec = np\\.asarray\\(recalled_vec\\[0\\], dtype=np\\.float32\\) if recalled_vec else await _query_vector\\(query\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Return the recall's vector to reconstruct; same model, same input, same vector.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "reconstruct reads the query vector its candidate recall embedded (handed back through do_recall's query_vec_out), and embeds the query itself only when that recall produced none, as a remote vector search does. Regression: tests/test_reconstruct_filled_quote.py::test_a_reconstruction_embeds_its_query_once."
     },
     {
       "id": "bug-495",
@@ -7308,12 +7336,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "node_sets, not_current = await _current_node_sets\\(agent_id, all_claims\\)",
+      "pattern": "node_claims = \\[c for _, head, others in entries_claims for c in \\(\\(head,\\) if head_cap <= 0 else \\(\\)\\) \\+ tuple\\(others\\)\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Read node sets only for non-head claims (and heads only when the head cap is 0).",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Node sets are read only for the claims a node can quote: the other claims, and the heads only with filling off. Under the default head cap a filled head reads no node set, so no embeddings are read for it, and quote_selection 'lexical_only' is reported only when a node or block ranking actually lacked the vector. Regression: tests/test_reconstruct_filled_quote.py::test_a_head_quoted_by_filling_reads_no_node_set."
     },
     {
       "id": "bug-496",
@@ -7322,12 +7352,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/reconstruct.py",
-      "pattern": "^async def _episode_spans\\(",
+      "pattern": "^async def _read_candidates\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Merge _episode_spans into the candidate-context read and read parent text once for both node and block sets.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "The candidates' context and the episodes' spans are read on one connection, each episode once (_read_candidates replaces _candidate_context and _episode_spans), and the node and block sets on one connection with each text read once (_current_sets, bug-479). Behaviour-preserving: the bundling, containment and quotation tests pin what these reads feed."
     },
     {
       "id": "bug-497",

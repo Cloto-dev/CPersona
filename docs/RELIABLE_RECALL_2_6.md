@@ -550,7 +550,8 @@ declared relations ([associative memory](ASSOCIATIVE_MEMORY_DESIGN.md#3-where-th
 and is the identity where none are declared. Since v1.1 it implements the payload budget as
 described above, with a provisional default of 4,000 and maximum of 20,000
 characters until the section 9 sweep chooses them; a caller's budget below one
-preview-tier excerpt is raised to it and `budget_policy` says so. A claim whose
+head quote (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`, or one preview-tier excerpt with
+filling off) is raised to it and `budget_policy` says so. A claim whose
 record has a current overflow-tree node set is quoted from the node that best
 matches the query: nodes are ranked by cosine to the query embedding and by
 shared character trigrams, the two ranks are fused by reciprocal rank with

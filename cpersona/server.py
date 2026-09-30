@@ -497,33 +497,6 @@ async def do_recall_boundary(
     return _oc_annotate(result, project_id, pid, warning)
 
 
-def _apply_reconstruct_preview(result: dict) -> dict:
-    """Trim recall-item content to the preview tier, as `_apply_preview` does.
-
-    Same layering as recall: the library layer returns full text (a bench or a
-    reranker wants it), and the MCP boundary shapes the agent-facing payload.
-    Section 7 says `content` is "cut as the preview tier cuts", and this is that
-    cut — a PURE prefix with content_len / content_truncated markers, expandable
-    through the head claim's `ref` via get_contents. It applies to the single-passage
-    quote (CPERSONA_RECONSTRUCT_QUOTE_CHARS=0); a filled quote carries `quote_basis`
-    and is left as the library layer made it.
-    """
-    cap = config.RECALL_PREVIEW_CHARS
-    if cap <= 0:
-        return result
-    for item in result.get("items", []):
-        if "quote_basis" in item:
-            # 2.6: a filled head quote is already bounded by CPERSONA_RECONSTRUCT_QUOTE_CHARS and
-            # is not a prefix, so cutting it here would drop exactly the part that matched.
-            continue
-        content = item.get("content")
-        if isinstance(content, str) and len(content) > cap:
-            item["content_len"] = len(content)
-            item["content"] = content[:cap]
-            item["content_truncated"] = True
-    return result
-
-
 async def do_reconstruct_boundary(
     agent_id: str,
     query: str,
@@ -562,7 +535,9 @@ async def do_reconstruct_boundary(
         budget=budget,
         **({"time_cue": time_cue} if time_cue else {}),
     )
-    result = _apply_reconstruct_preview(result)
+    # bug-485: no preview cut here. Heads are already cut where they are quoted --
+    # to the preview tier with filling off, to RECONSTRUCT_QUOTE_CHARS with it on --
+    # so a cut at this boundary could never fire.
     return _oc_annotate(result, project_id, pid, warning)
 
 
@@ -1768,7 +1743,7 @@ registry.auto_tool(
                     "breadth wins: excerpts are omitted before any item is. Omit for the server "
                     "default, which is never less than one quote per item of the window; "
                     "an operator-forced value overrides both; clamped to the server "
-                    "maximum and raised to one preview-tier excerpt, and budget_policy says which."
+                    "maximum and raised to one head quote, and budget_policy says which."
                 ),
             },
             "session_key": {

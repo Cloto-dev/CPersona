@@ -2842,7 +2842,7 @@ async def _(ctx):
     return _without_volatile(out)
 
 
-@scenario("m1-reconstruct-count-budget", _SEAM_M1, "reconstruct at count 3 with a budget below one excerpt: raised to the floor (budget_policy), item shape, bounds", seed=seed_m1)
+@scenario("m1-reconstruct-count-budget", _SEAM_M1, "reconstruct at count 3 with a budget below one head quote: raised to the floor (budget_policy), item shape, bounds", seed=seed_m1)
 async def _(ctx):
     install_local(ctx)
     from cpersona import reconstruct

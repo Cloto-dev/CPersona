@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from cpersona import config, generation, tasks, vector
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where
-from cpersona.nodes import PARENT_TEXT
+from cpersona.nodes import PARENT_TEXT, _parent_text
 
 logger = logging.getLogger(__name__)
 
@@ -431,20 +431,15 @@ async def queue_build(kind: str, parent_id: int, agent_id: str, session_key: str
     return {"status": "queued"}
 
 
-async def _parent_text(db, kind: str, parent_id: int) -> str | None:
+async def _parent_row(db, kind: str, parent_id: int) -> tuple[str, tuple[str, str, str]] | None:
+    """The record's text and the isolation axes to copy onto its rows, in one read
+    inside the write's own transaction, so both match the record as it is at that
+    moment (bug-490: the text and the axes were two reads of the same row)."""
     table, column = PARENT_TEXT[kind]
-    rows = await db.execute_fetchall(f"SELECT {column} FROM {table} WHERE id = ?", (parent_id,))
-    return rows[0][0] if rows else None
-
-
-async def _parent_axes(db, kind: str, parent_id: int) -> tuple[str, str, str] | None:
-    """The isolation axes to copy onto the rows, read inside the write's own
-    transaction so they match the record as it is at that moment."""
-    table, _ = PARENT_TEXT[kind]
     rows = await db.execute_fetchall(
-        f"SELECT agent_id, project_id, channel FROM {table} WHERE id = ?", (parent_id,)
+        f"SELECT {column}, agent_id, project_id, channel FROM {table} WHERE id = ?", (parent_id,)
     )
-    return tuple(rows[0]) if rows else None
+    return (rows[0][0], tuple(rows[0][1:])) if rows else None
 
 
 async def _node_bounds(db, kind: str, parent_id: int) -> tuple[int, ...]:
@@ -461,41 +456,48 @@ async def _node_bounds(db, kind: str, parent_id: int) -> tuple[int, ...]:
     return tuple(r[0] for r in rows)
 
 
-def _set_is_current(count, first, last, current, text_len: int) -> bool:
-    """Whether a stored block set spans ``text_len`` characters and came from the
-    model it was asked about.
+def block_set_is_current(rows, text_len: int, keys, node_ends=()) -> bool:
+    """Whether a record's stored block set can be used as it stands.
 
-    One predicate, called from both the builder and the backfill sweep, because
-    two answers to "are this record's blocks current" would eventually disagree:
-    the builder would write a set the sweep keeps rebuilding, or the sweep would
-    pass over a record the builder thinks it still owes.
+    ``rows`` are the set's ``(start_char, end_char, has_vector, embedding_model)`` in
+    block order; ``node_ends`` are where the record's nodes end. Current means the
+    blocks cover the stored text from 0 to its length with no gap or overlap, every
+    block carries its re-rank vector (§4b) and comes from a model this server
+    reports, and no block crosses a node end (§2).
 
-    The model half is where the care is. ``current`` counts the rows written under
-    either key :func:`generation.block_keys` returns: the backend's own fingerprint
-    when it could be established, and the key this deployment wrote before it could
-    ask. Both are real values — the second still follows the configuration, so an
-    operator who renames the model invalidates the rows that named the old one —
-    and neither is a wildcard: a row from a backend this server never ran is not
-    current. What the pair deliberately does not do is declare the existing corpus
-    stale the day a fingerprint first arrives; see :mod:`cpersona.generation`.
+    One rule for the builder, the sweep, the missing_blocks check and the quotation's
+    reader (bug-479: the reader applied its own, which checked contiguity and not the
+    vectors, while the others checked the vectors and not contiguity -- two answers to
+    one question). The node half is bug-468: a set built before its record's nodes
+    existed stayed current after they landed although it may cross one.
 
-    When nothing could be established the two collapse to one empty string, which
-    compares equal to empty and never to a named model: the resolved default must
-    not stand in for an identity nobody reported (§6).
+    The model half is where the care is. ``keys`` are the two
+    :func:`generation.block_keys` returns: the backend's own fingerprint when it could
+    be established, and the key this deployment wrote before it could ask. Both are
+    real values -- the second still follows the configuration, so an operator who
+    renames the model invalidates the rows that named the old one -- and neither is a
+    wildcard: a row from a backend this server never ran is not current. What the pair
+    deliberately does not do is declare the existing corpus stale the day a
+    fingerprint first arrives; see :mod:`cpersona.generation`. When nothing could be
+    established the two collapse to one empty string, which compares equal to empty
+    and never to a named model (§6).
     """
-    return bool(count) and first == 0 and last == text_len and current == count
+    if not rows or rows[0][0] != 0 or rows[-1][1] != text_len:
+        return False
+    if any(a[1] != b[0] for a, b in zip(rows, rows[1:])):
+        return False
+    if not all(has_vector and model in keys for _, _, has_vector, model in rows):
+        return False
+    ends = {row[1] for row in rows}
+    return all(end in ends for end in node_ends if 0 < end < text_len)
 
 
-#: The aggregate both currentness reads compute over a record's block rows:
-#: count, first start, last end, and how many rows are current. A row is current
-#: when a known model produced it AND its re-rank vector is there (§4b) — a set
-#: built before the vectors existed is rebuilt rather than half-used, because a
-#: re-rank that finds any candidate without a vector falls back to Hamming order
-#: for the whole query. Written once so the builder and the sweep cannot drift
-#: apart on it (see :func:`_set_is_current`).
-_SET_AGGREGATE = (
-    "COUNT(*), MIN(b.start_char), MAX(b.end_char), "
-    "SUM(b.embedding_model IN (?, ?) AND v.block_index IS NOT NULL) "
+#: A stored block row as :func:`block_set_is_current` reads it. The vector's presence
+#: is part of it because a set built before the vectors existed is rebuilt rather than
+#: half-used: a re-rank that finds any candidate without a vector falls back to
+#: Hamming order for the whole query.
+_BLOCK_ROW = (
+    "b.start_char, b.end_char, v.block_index IS NOT NULL, b.embedding_model "
     "FROM record_blocks b LEFT JOIN record_block_vectors v "
     "ON v.parent_kind = b.parent_kind AND v.parent_id = b.parent_id "
     "AND v.block_index = b.block_index "
@@ -503,14 +505,13 @@ _SET_AGGREGATE = (
 
 
 async def _blocks_current(db, kind: str, parent_id: int, text_len: int, keys: tuple[str, str]) -> bool:
-    """Whether this record's stored blocks were built from its current text by a
-    known model. The one-record read behind :func:`_set_is_current`."""
+    """Whether this record's stored blocks are current. The one-record read behind
+    :func:`block_set_is_current`."""
     rows = await db.execute_fetchall(
-        f"SELECT {_SET_AGGREGATE}WHERE b.parent_kind = ? AND b.parent_id = ?",
-        (*keys, kind, parent_id),
+        f"SELECT {_BLOCK_ROW}WHERE b.parent_kind = ? AND b.parent_id = ? ORDER BY b.block_index",
+        (kind, parent_id),
     )
-    count, first, last, current = rows[0]
-    return _set_is_current(count, first, last, current, text_len)
+    return block_set_is_current(rows, text_len, keys, await _node_bounds(db, kind, parent_id))
 
 
 async def records_without_current_blocks(db, iso) -> list[tuple[str, int, str, tuple[int, ...]]]:
@@ -521,8 +522,8 @@ async def records_without_current_blocks(db, iso) -> list[tuple[str, int, str, t
     into more than one block under its current node layout. A record that
     divides into one block has none by design (see :func:`prepare_blocks`), so
     counting it would report a gap that no build can close. "Current" is
-    :func:`_set_is_current` over :data:`_SET_AGGREGATE`, the same predicate the
-    builder and the sweep read, so the three cannot disagree about a record.
+    :func:`block_set_is_current`, the rule the builder, the sweep and the
+    quotation's reader apply, so they cannot disagree about a record.
 
     Locked records are included: building blocks never modifies the record.
     """
@@ -530,29 +531,30 @@ async def records_without_current_blocks(db, iso) -> list[tuple[str, int, str, t
     out: list[tuple[str, int, str, tuple[int, ...]]] = []
     for kind in BACKFILL_KINDS:
         table, column = PARENT_TEXT[kind]
-        rows = await db.execute_fetchall(
-            f"SELECT r.id, r.{column}, s.* FROM {table} r "
-            f"LEFT JOIN (SELECT b.parent_id, {_SET_AGGREGATE}"
-            "WHERE b.parent_kind = ? GROUP BY b.parent_id) s ON s.parent_id = r.id "
-            f"WHERE 1=1{iso.and_clause} ORDER BY r.id",
-            (*keys, kind, *iso.params),
+        records = await db.execute_fetchall(
+            f"SELECT id, {column} FROM {table} WHERE 1=1{iso.and_clause} ORDER BY id", iso.params
         )
-        stale = [
-            (row_id, text)
-            for row_id, text, _, count, first, last, current in rows
-            if text and not _set_is_current(count, first, last, current, len(text))
-        ]
-        if not stale:
-            continue
+        # The block rows of the records in scope. Scoped through the parent table:
+        # the axes a block row carries are copies, not the authority.
+        in_scope = f"(SELECT id FROM {table} WHERE 1=1{iso.and_clause})"
+        sets: dict[int, list] = {}
+        for parent_id, *row in await db.execute_fetchall(
+            f"SELECT b.parent_id, {_BLOCK_ROW}WHERE b.parent_kind = ? AND b.parent_id IN {in_scope} "
+            "ORDER BY b.parent_id, b.block_index",
+            (kind, *iso.params),
+        ):
+            sets.setdefault(parent_id, []).append(row)
         bounds: dict[int, list[int]] = {}
         for parent_id, end_char in await db.execute_fetchall(
             "SELECT parent_id, end_char FROM record_nodes WHERE parent_kind = ? "
-            "ORDER BY parent_id, node_index",
-            (kind,),
+            f"AND parent_id IN {in_scope} ORDER BY parent_id, node_index",
+            (kind, *iso.params),
         ):
             bounds.setdefault(parent_id, []).append(end_char)
-        for row_id, text in stale:
+        for row_id, text in records:
             node_bounds = tuple(bounds.get(row_id, ()))
+            if not text or block_set_is_current(sets.get(row_id, []), len(text), keys, node_bounds):
+                continue
             if len(segment(text, node_bounds=node_bounds)) > 1:
                 out.append((kind, row_id, text, node_bounds))
     return out
@@ -626,12 +628,10 @@ async def write_blocks(db, prepared: PreparedBlocks) -> bool:
     transaction, so a crash between the delete and the inserts leaves the
     previous set intact rather than half of a new one.
     """
-    if await _parent_text(db, prepared.kind, prepared.parent_id) != prepared.text:
+    parent = await _parent_row(db, prepared.kind, prepared.parent_id)
+    if parent is None or parent[0] != prepared.text:
         return False
-    axes = await _parent_axes(db, prepared.kind, prepared.parent_id)
-    if axes is None:
-        return False
-    agent_id, project_id, channel = axes
+    agent_id, project_id, channel = parent[1]
     await db.execute(
         "DELETE FROM record_blocks WHERE parent_kind = ? AND parent_id = ?",
         (prepared.kind, prepared.parent_id),
@@ -843,21 +843,24 @@ async def _page(db, kind: str, after_id: int, limit: int) -> list[tuple[int, str
     return [(row[0], row[1] or "") for row in rows]
 
 
-async def _sets_for(db, kind: str, ids: list[int], keys: tuple[str, str]) -> dict[int, tuple]:
-    """The stored block sets of one page, keyed by parent id.
+async def _sets_for(db, kind: str, ids: list[int]) -> dict[int, list]:
+    """The stored block rows of one page, keyed by parent id, as
+    :func:`block_set_is_current` reads them.
 
-    One aggregate over a range of the primary key rather than a query per record.
-    The page is bounded, so the range is, and the sweep's cost stays in the
-    embedding calls, where it belongs.
+    One read over a range of the primary key rather than a query per record. The
+    page is bounded, so the range is, and the sweep's cost stays in the embedding
+    calls, where it belongs.
     """
     if not ids:
         return {}
-    rows = await db.execute_fetchall(
-        f"SELECT b.parent_id, {_SET_AGGREGATE}"
-        "WHERE b.parent_kind = ? AND b.parent_id BETWEEN ? AND ? GROUP BY b.parent_id",
-        (*keys, kind, ids[0], ids[-1]),
-    )
-    return {row[0]: tuple(row[1:]) for row in rows}
+    sets: dict[int, list] = {}
+    for parent_id, *row in await db.execute_fetchall(
+        f"SELECT b.parent_id, {_BLOCK_ROW}WHERE b.parent_kind = ? AND b.parent_id BETWEEN ? AND ? "
+        "ORDER BY b.parent_id, b.block_index",
+        (kind, ids[0], ids[-1]),
+    ):
+        sets.setdefault(parent_id, []).append(row)
+    return sets
 
 
 async def coverage(db, keys: tuple[str, str]) -> tuple[int, int]:
@@ -985,17 +988,15 @@ async def backfill(payload: dict) -> str:
             async with connection() as db:
                 page = await _page(db, kind, page_after, _BACKFILL_PAGE)
                 ids = [row_id for row_id, _ in page]
-                sets = await _sets_for(db, kind, ids, keys)
+                sets = await _sets_for(db, kind, ids)
                 bounds = await _bounds_for(db, kind, ids)
             if not page:
                 break
             for row_id, text in page:
-                # No row in the aggregate means no blocks, which the predicate
-                # reads as a count of zero rather than as an absence it has to
-                # have a second answer for.
-                stored = sets.get(row_id, (0, None, None, 0))
-                if text and not _set_is_current(*stored, len(text)):
-                    node_bounds = bounds.get(row_id, ())
+                # No rows means no blocks, which the rule reads as not current
+                # rather than as an absence it has to have a second answer for.
+                node_bounds = bounds.get(row_id, ())
+                if text and not block_set_is_current(sets.get(row_id, []), len(text), keys, node_bounds):
                     if len(segment(text, node_bounds=node_bounds)) <= 1:
                         # bug-498: a record that divides into one block has none by
                         # design, so it is never current and every sweep met it again,
@@ -1276,7 +1277,7 @@ def _rerank(
     All or nothing, because a cosine and a Hamming distance cannot be put in one
     order: a row with a vector would be compared on one scale and a row without
     on another. A set built before the vectors existed is found not current and
-    rebuilt (see :data:`_SET_AGGREGATE`), so the fallback is the state of a
+    rebuilt (see :data:`_BLOCK_ROW`), so the fallback is the state of a
     deployment part-way through that rebuild, and the answer it gives is the one
     the previous release gave.
 

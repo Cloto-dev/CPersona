@@ -423,11 +423,12 @@ async def test_a_reconstructor_that_breaks_its_contract_is_stopped(fake_embeddin
 @pytest.mark.asyncio
 async def test_an_allocation_past_the_budget_is_stopped(fake_embedding_client, installed):
     await _seed(LONG_CORPUS)
-    within = await reconstruct.do_reconstruct(AGENT, QUERY, count=4, budget=600)
+    # Above one head quote, so the budget is taken as named rather than raised to it.
+    within = await reconstruct.do_reconstruct(AGENT, QUERY, count=4, budget=900)
     assert within["returned_count"] < 4, "the budget must be what leaves items out"
     installed(_with("reconstructor", allocate=_over_budget))
-    with pytest.raises(providers.ProviderContractError, match="over a budget of 600"):
-        await reconstruct.do_reconstruct(AGENT, QUERY, count=4, budget=600)
+    with pytest.raises(providers.ProviderContractError, match="over a budget of 900"):
+        await reconstruct.do_reconstruct(AGENT, QUERY, count=4, budget=900)
 
 
 # --- the checks at their boundaries -------------------------------------------------------
