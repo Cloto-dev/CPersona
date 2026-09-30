@@ -1,0 +1,60 @@
+{
+ "registered_rules": "benchmarks/measurements/prereg-version-comparison-2512-to-260.md (commit 7b6e470)",
+ "split": "dev",
+ "split_seed": 20260930,
+ "validation": {
+  "arms_checked": 12,
+  "tasks_per_arm": 15,
+  "invalid_arms": {},
+  "checks": [
+   "every task completed and its last harness run exited 0",
+   "block-reach arms hold block rows in every corpus group whose records divide; block-off arms hold none",
+   "every dump header: recall_limit 10, autocut and fused gate on, scene_isolated true for exactly the seven per-conversation tasks, split dev, seed 20260930",
+   "every task log reports record-vector cache hits and no miss (180 of 180 logs carry the count)"
+  ],
+  "disclosure": "ReMe, the first task scheduled, failed for 8 arms on its first attempt before the harness started: the runner script expanded an empty array under `set -u`, which macOS bash 3.2 rejects. The runner was fixed and those 8 pairs were run again, each exiting 0; no harness run exited non-zero."
+ },
+ "best": {
+  "2.5.12": "A_rrf",
+  "2.6.0": "C_rsf_on"
+ },
+ "test_arms": [
+  "A_rrf",
+  "B_rrf_on",
+  "C_rrf_on",
+  "C_rsf_on"
+ ],
+ "shipped": {
+  "2.5.12": "A_rrf",
+  "2.6.0 recall": "B_rrf_on",
+  "2.6.0 reconstruct": "C_rrf_on"
+ },
+ "dev_macro_ndcg10": {
+  "C_rsf_on": 59.0433,
+  "B_rrf_on": 58.5673,
+  "B_rrf_off": 58.5573,
+  "C_rsf_off": 58.4733,
+  "C_rrf_on": 58.3947,
+  "C_rrf_off": 58.384,
+  "B_rsf_on": 57.782,
+  "A_rrf": 56.7233,
+  "B_rsf_off": 55.812,
+  "A_rsf": 54.3113,
+  "A_rsf_conf": 48.536,
+  "A_rrf_conf": 48.5313
+ },
+ "dev_mean_carried": {
+  "A_rrf": 9.9673,
+  "A_rsf": 5.4946,
+  "A_rrf_conf": 8.4507,
+  "A_rsf_conf": 8.4504,
+  "B_rrf_off": 9.9674,
+  "B_rsf_off": 5.3547,
+  "B_rrf_on": 11.9597,
+  "B_rsf_on": 7.3542,
+  "C_rrf_off": 9.9674,
+  "C_rsf_off": 7.5486,
+  "C_rrf_on": 11.9096,
+  "C_rsf_on": 9.5477
+ }
+}
