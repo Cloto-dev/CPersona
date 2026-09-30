@@ -291,6 +291,9 @@ def test_a_fold_that_would_pass_the_limit_is_not_made():
     text = "a" * 10 + "\n"
     assert _texts(text, segment(text, max_chars=10)) == ["a" * 10, "\n"]
     assert _texts(text, segment(text, max_chars=11)) == [text]
+    text = "a.\n" + "b" * 10
+    assert _texts(text, segment(text, max_chars=10)) == ["a.", "\n", "b" * 10]
+    assert _texts(text, segment(text, max_chars=11)) == ["a.", "\n" + "b" * 10]
 
 
 def test_a_closing_fence_stays_with_its_code():
