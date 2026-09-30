@@ -170,3 +170,39 @@ LoCoMo is one task of 15, and the first number includes its test queries.
   tenth place counts.
 - Latency and memory. The runs share one machine and are not isolated.
 - Stores with overflow-tree nodes, and vectors from a deployment's server.
+
+## Amendment 1 — a 2.4.41 reference arm, reported and not judged (2026-10-01)
+
+Added after the dev half was read and the choice of best arms was committed
+(`selection-version-comparison-2512-to-260.json`), and before any result of
+this arm was read.
+
+**Why.** The question whether 2.6.0 stands above the 2.4 line on LMEB came up
+after the dev half had been read. The earlier comparison with 2.4.40
+([results-version-comparison-2440-to-dev.md](results-version-comparison-2440-to-dev.md))
+ran all 22 tasks on all queries in Track B's fast mode, so its numbers do not
+sit beside this regime.
+
+**The arm.** `R_rrf`: v2.4.41 (`784807a`), `recall`, `rrf`, every other
+setting at its own default (the variables left unset), the harness at
+`8124f72`, the same 15 tasks with the registered scene isolation, **the test
+half only** — no selection involves it.
+
+**Status.** Reported, not judged. The verdict stays 2.6.0's best arm against
+2.5.12's best arm, as registered above.
+
+**What will be reported.** Macro NDCG@10 and the per-task table for 2.6.0's
+best arm and for the two shipped 2.6.0 configurations, each against `R_rrf`,
+with the same thresholds as the verdict (a task fell or rose by more than
+0.01) and the same wording rule applied descriptively ("above", "below",
+"mixed"), labelled as description rather than as a registered claim.
+
+**Invalidation.** The conditions above apply. 2.4.41 has no block table, so
+the block check reads it as a block-off arm.
+
+**What was seen before this amendment.** One smoke run of `R_rrf` on the dev
+half of ReMe checked only that it exits 0, that its dump header matches the
+regime (limit 10, autocut and fused gate on, no scene isolation for ReMe, the
+split and seed above), that every record vector hit the cache, and that it
+returns identifiers in the corpus's form (10 per query, no query empty, the
+same 606 queries in the same order as 2.5.12). Its score was not printed.
