@@ -1,6 +1,8 @@
 """SuperAuditor delivery seam for CPersona (the standard's second implementation).
 
-``docs/SUPERAUDITOR_STANDARD.md`` v1 specifies how a server *reports* the
+The SuperAuditor standard (v1.1, canonical at
+https://github.com/Cloto-dev/superauditor; ``docs/SUPERAUDITOR_STANDARD.md``
+points there) specifies how a server *reports* the
 findings it already computes about its own stored state — the seam — and
 deliberately says nothing about what a server detects. This module is that
 seam and nothing else: it turns the issues ``cpersona.checks`` already produces
@@ -50,6 +52,10 @@ whole pull.
 """
 
 from cpersona.checks import HEALTH_CHECKS, SEVERITIES
+
+# The version of the standard a response conforms to (§5.2, v1.1): a consumer
+# reads the response by these rules, whatever this server's own version is.
+SUPERAUDITOR_VERSION = "1.1"
 
 # Standard §4 rule 2: if a fallback exists it MUST be the weakest severity.
 FALLBACK_SEVERITY = "info"

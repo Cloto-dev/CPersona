@@ -2227,6 +2227,16 @@ MUTATIONS += [
         breaks='lowering only the maximum becomes a startup error',
         expect='test_reconstruct_v1.py::test_an_unset_default_follows_a_lowered_maximum',
     ),
+    Mutation(
+        id='M209',
+        tests=('tests/test_superauditor_findings.py',),
+        target='get_session_findings — the response names the SuperAuditor version it conforms to',
+        file='cpersona/maintenance_handlers.py',
+        find='"superauditor": findings_seam.SUPERAUDITOR_VERSION}',
+        replace='}',
+        breaks='a consumer reads a v1.1 response as v1 and cannot tell which rules apply',
+        expect='test_superauditor_findings.py::test_the_response_states_the_standard_version_it_conforms_to',
+    ),
 ]
 
 

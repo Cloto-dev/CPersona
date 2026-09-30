@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/CLAUDE_MD_POLICY_STANDARD.md@blob:3fef2708a76c00acf252680aa80630b560bb4e0d -->
+<!-- i18n-source: docs/CLAUDE_MD_POLICY_STANDARD.md@blob:1f372bd5e5699e33770bcf240554dbae1989caa9 -->
 
 # 常時ロードされるポリシーブロック標準 (v1.1)
 
@@ -139,6 +139,7 @@ Applicable なリポジトリの skill は、ポリシーの永続化を申し�
 | CEmbedding | **Applicable** | ブロックは `cembedding` skill が生成する: 埋め込みサーバーの生存確認 + 劣化した recall の runbook。 |
 | ClotoCore | N/A | カーネル自身がエージェントミドルウェアであり、エンドユーザーは instructions ファイル経由でそれを駆動しない。 |
 | mgp-spec / mgp-rs | N/A | 仕様 / ライブラリ — 永続化すべきエージェント側の挙動が無い。 |
+| superauditor | N/A | 標準と適合性チェッカー — エージェント側に入れるものが無い。利用者のエージェントに要る 1 段落は README に非規範として置いてある。 |
 | awesome-mcp-servers | N/A | キュレーションされたリスト。 |
 | clotohub-servers | Out of scope | monorepo — 独立性の前提条件を満たさない。 |
 
