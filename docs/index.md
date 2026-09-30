@@ -21,7 +21,7 @@ things that does not mean:
 > wins, and the disagreement is a bug worth
 > [reporting](https://github.com/Cloto-dev/cpersona/issues/new?template=bug_report.yml).
 
-> **Moving to the 2.6 pre-release?** [Upgrading from 2.5 to 2.6](https://cloto-dev.github.io/CPersona/2.6/upgrading-to-2.6/) takes a 2.5.x store there in one pass.
+> **Moving to 2.6?** 2.6.0 is the current release. [Upgrading from 2.5 to 2.6](https://cloto-dev.github.io/CPersona/2.6/upgrading-to-2.6/) takes a 2.5.x store there in one pass.
 
 ## Where to go
 
