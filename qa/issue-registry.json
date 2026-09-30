@@ -6526,12 +6526,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "cuts = _structural_cuts\\(text\\)",
+      "pattern": "return _fold_blank\\(text, spans, node_cuts, max_chars\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Drop or merge spans that are whitespace only before building the block list.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it.",
+      "fixed_in": "2.6.0",
+      "fix_note": "segment() folds a block that is only whitespace into the block after it (the last one, having none after it, into the block before), so 'Remember this.\\n' is one block and 'A.\\nB.' divides into 'A.' and '\\nB.'. Forward rather than backward because that is where a sentence end already leaves the whitespace after it ('Hello.' / ' World.'), and it keeps a quoted sentence free of a trailing break -- the backward fold was tried first and changed the quotation test_a_line_break_does_not_join_independent_sentences pins, which is a behaviour this fix has no reason to move. A fold never crosses a node end and is not made when it would pass max_chars; in those two cases the whitespace block stands, because both constraints outrank this one. Block sets already stored keep their division until their record is rebuilt: they are still partitions of the text, and the whitespace block only costs a place in the Hamming pass. Regression: tests/test_blocks_segment.py::test_no_block_is_only_whitespace and the node-bound and limit cases beside it."
     },
     {
       "id": "bug-445",
@@ -6556,12 +6558,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "if any\\(a < end < b for a, b in protected\\):",
+      "pattern": "ranges\\.append\\(\\(marks\\[i\\], len\\(text\\) if line_end == -1 else line_end \\+ 1\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Let the protected range end at the end of the closing fence line, or compare with <=.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it.",
+      "fixed_in": "2.6.0",
+      "fix_note": "A fence range now ends after the closing fence's line break (or at the end of the text), not at the start of that line, so the break before the closing ``` is inside the range and the cut after the closing line is the first one allowed. The strict a < end < b test is kept: widening the range is what moves the boundary, and the cut at the range's own end is exactly the one that should survive. Regression: tests/test_blocks_segment.py::test_a_closing_fence_stays_with_its_code (and the end-of-text variant)."
     },
     {
       "id": "bug-447",
@@ -6954,12 +6958,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "^def _bracket_depth\\(",
+      "pattern": "unmatched\\.update\\(pos for _, pos in pending\\[depth \\+ 1 :\\]\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Track each bracket kind separately, or reset inner depth when the enclosing quotation closes.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it.",
+      "fixed_in": "2.6.0",
+      "fix_note": "The first pass of _bracket_depth now lets a closing bracket close the nearest opening it matches, marking every opening left above it on the stack as unmatched; before, only the top of the stack could close, so one unclosed ( inside 「…」 held the 」 back and both were read as unclosed. The second pass is unchanged: with the true strays removed it pairs the rest exactly as the first pass did. A closer that matches nothing on the stack still closes nothing. Regression: tests/test_blocks_segment.py::test_an_unclosed_bracket_inside_a_quotation_does_not_open_the_quotation, with the finding's own control (the same text without the ( divides identically) and a case where the closer passes over an unclosed opening and no further."
     },
     {
       "id": "bug-474",
@@ -7066,12 +7072,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "^def _hamming_order\\(",
+      "pattern": "measured = _measured\\(rows, query_bits\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "One _distances(rows, query_bits) helper computed once per search; same function of the same inputs.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "The join, XOR and popcount are written once, in blocks.hamming_distances; _measured applies the width filter; _hamming and _hamming_order are _collapse and _order over measured rows, and reconstruct.rank_blocks calls hamming_distances instead of its own copy. search() measures the examined set once and hands the same distances to the re-rank's depth cut and to the Hamming fallback, which each measured the whole set before. The public order of every function is unchanged, which the existing Hamming and re-rank tests pin. Regression: tests/test_blocks_rerank.py::test_the_fallback_measures_the_examined_rows_once."
     },
     {
       "id": "bug-482",
@@ -7290,12 +7298,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "if vector\\.pack_for_storage\\(embedding\\) is None:",
+      "pattern": "forms = quantise\\(v\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Validate once and derive both the bits and the int8 bytes from one array.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "blocks.quantise returns both stored forms of a block vector after asking vector.pack_for_storage once; prepare_blocks uses it instead of calling pack_bits and pack_int8, which each asked it. The refusal itself stays delegated to pack_for_storage rather than restated, for the reason pack_bits gives: one answer to whether a vector is usable. pack_bits and pack_int8 are kept for their other callers (the query's bits, the tests). Regression: tests/test_blocks_rerank.py::test_a_build_asks_the_storage_refusal_once_per_block and test_quantise_is_the_two_packers."
     },
     {
       "id": "bug-498",

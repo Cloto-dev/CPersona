@@ -120,11 +120,17 @@ def _fence_ranges(text: str) -> list[tuple[int, int]]:
     An unterminated fence runs to the end of the text: a half-written code
     block is still code, and cutting into it on every blank line is the failure
     this protects against.
+
+    A range ends where the closing fence's line does, after its line break, so
+    the closing ``` stays with the code it closes. Ending it at the start of
+    that line left the line break before it as an allowed cut, and a block that
+    ends there is code without its fence (bug-446).
     """
     marks = [m.start() for m in _FENCE.finditer(text)]
     ranges: list[tuple[int, int]] = []
     for i in range(0, len(marks) - 1, 2):
-        ranges.append((marks[i], marks[i + 1]))
+        line_end = text.find("\n", marks[i + 1])
+        ranges.append((marks[i], len(text) if line_end == -1 else line_end + 1))
     if len(marks) % 2:
         ranges.append((marks[-1], len(text)))
     return ranges
@@ -141,14 +147,24 @@ def _bracket_depth(text: str) -> list[int]:
     pass finds the openings that never close, and the second pass counts depth
     without them. A stray closing bracket closes nothing, which needs no
     special case.
+
+    A closing bracket closes the nearest opening it matches, and every opening
+    left above that one on the stack never closed. Matching only the top of the
+    stack let one unclosed ( inside 「…」 hold the 」 back, so the quotation
+    looked unclosed too and the divider cut inside it (bug-473).
     """
     pending: list[tuple[str, int]] = []
+    unmatched: set[int] = set()
     for i, ch in enumerate(text):
         if ch in _BRACKETS:
             pending.append((_BRACKETS[ch], i))
-        elif pending and ch == pending[-1][0]:
-            pending.pop()
-    unmatched = {pos for _, pos in pending}
+            continue
+        for depth in range(len(pending) - 1, -1, -1):
+            if pending[depth][0] == ch:
+                unmatched.update(pos for _, pos in pending[depth + 1 :])
+                del pending[depth:]
+                break
+    unmatched.update(pos for _, pos in pending)
 
     depth = [0] * (len(text) + 1)
     stack: list[str] = []
@@ -239,8 +255,9 @@ def segment(
     if max_chars < 1:
         raise ValueError(f"max_chars must be at least 1, got {max_chars}")
 
+    node_cuts = {b for b in node_bounds if 0 < b < len(text)}
     cuts = _structural_cuts(text)
-    cuts.update(b for b in node_bounds if 0 < b < len(text))
+    cuts.update(node_cuts)
 
     bounds = [0, *sorted(cuts), len(text)]
     spans: list[BlockSpan] = []
@@ -251,7 +268,51 @@ def segment(
             spans.extend(_force_split(text, a, b, max_chars))
         else:
             spans.append(BlockSpan(a, b))
-    return spans
+    return _fold_blank(text, spans, node_cuts, max_chars)
+
+
+def _fold_blank(
+    text: str, spans: list[BlockSpan], node_cuts: set[int], max_chars: int
+) -> list[BlockSpan]:
+    """Fold each block that is only whitespace into the block after it.
+
+    bug-444: a sentence end followed by a line break is two cuts, one either side
+    of the break, so ``'Remember this.\\n'`` divided into the sentence and a block
+    holding only ``'\\n'``. Such a block says nothing, gave a one-sentence record
+    a block build it does not need, and every one of them embeds to nearly the
+    same vector, so they tied in the Hamming pass and competed for reserved
+    places.
+
+    Forward, because that is where a sentence end already leaves the whitespace
+    that follows it (``'Hello. World.'`` divides into ``'Hello.'`` and
+    ``' World.'``), and it keeps a quoted sentence free of a trailing break.
+    Trailing whitespace has no block after it and goes to the block before.
+
+    A node boundary is never folded across (a block may not span two nodes,
+    §2), and neither is a fold made that would exceed ``max_chars``: in those
+    two cases the whitespace block stands.
+    """
+    out: list[BlockSpan] = []
+    pending: BlockSpan | None = None
+    for s in spans:
+        if pending is not None:
+            if s.start not in node_cuts and s.end - pending.start <= max_chars:
+                s = BlockSpan(pending.start, s.end, s.forced)
+            else:
+                out.append(pending)
+            pending = None
+        if not text[s.start : s.end].strip():
+            pending = s
+        else:
+            out.append(s)
+    if pending is not None:
+        last = out[-1] if out else None
+        if last is not None and pending.start not in node_cuts and pending.end - last.start <= max_chars:
+            # The fold ends where the whitespace ended, so it is forced exactly when that was.
+            out[-1] = BlockSpan(last.start, pending.end, pending.forced)
+        else:
+            out.append(pending)
+    return out
 
 
 def covers(text: str, spans: list[BlockSpan]) -> bool:
@@ -304,6 +365,11 @@ def pack_int8(embedding: object) -> bytes | None:
     """
     if vector.pack_for_storage(embedding) is None:
         return None
+    return _int8_of(embedding)
+
+
+def _int8_of(embedding: object) -> bytes | None:
+    """:func:`pack_int8` after the storage refusal has been asked."""
     import numpy as np
 
     v = np.asarray(embedding, dtype=np.float32)
@@ -311,6 +377,24 @@ def pack_int8(embedding: object) -> bytes | None:
     if peak == 0.0:
         return None
     return np.round(v * (127.0 / peak)).astype(np.int8).tobytes()
+
+
+def quantise(embedding: object) -> tuple[bytes, bytes] | None:
+    """A block vector's two stored forms, :func:`pack_bits` and :func:`pack_int8`,
+    or None when either would be refused.
+
+    The storage refusal is asked once. Asked through each packer, it ran twice
+    per block, and it is a per-element Python loop whose bytes are thrown away:
+    a 1024-dimension, 20-block record paid for it forty times (bug-497).
+    """
+    if vector.pack_for_storage(embedding) is None:
+        return None
+    import numpy as np
+
+    quantised = _int8_of(embedding)
+    if quantised is None:
+        return None
+    return np.packbits(np.asarray(embedding, dtype=np.float32) > 0).tobytes(), quantised
 
 
 def building_enabled() -> bool:
@@ -518,12 +602,11 @@ async def prepare_blocks(
         if not vectors or len(vectors) != len(batch):
             raise RuntimeError("embedding request returned no vectors for the block spans")
         for v in vectors:
-            packed = pack_bits(v)
-            quantised = pack_int8(v)
-            if packed is None or quantised is None:
+            forms = quantise(v)
+            if forms is None:
                 raise RuntimeError("embedding for a block was refused for storage")
-            bits.append(packed)
-            vectors_i8.append(quantised)
+            bits.append(forms[0])
+            vectors_i8.append(forms[1])
     return PreparedBlocks(
         kind, parent_id, text, spans, bits, vectors_i8, generation.block_keys()[0]
     )
@@ -1056,27 +1139,49 @@ async def _examined(db, iso, keys: tuple[str, str]) -> list[tuple]:
     )
 
 
-def _hamming(rows: list[tuple], query_bits: bytes) -> list[BlockHit]:
-    """Rank the examined rows by Hamming distance, collapsed to their parent.
+def hamming_distances(bit_strings: list[bytes], query_bits: bytes):
+    """The Hamming distance from ``query_bits`` to each of ``bit_strings``.
 
-    Rows whose bit string is a different width are skipped rather than compared:
-    a different width is a different dimension, and a distance between the two
-    would be a number with no meaning rather than a large one.
-
-    The order is total and written down (invariant 3): distance, then kind, then
-    parent id, then block index. Nothing here consults the response count.
+    Every string must be the query's width; choosing which rows qualify is the
+    caller's decision. The one place the join, the XOR and the popcount are
+    written, which the search and the quotation's block ranking both read
+    (bug-481).
     """
     import numpy as np
 
     width = len(query_bits)
+    packed = np.frombuffer(b"".join(bit_strings), dtype=np.uint8).reshape(len(bit_strings), width)
+    query = np.frombuffer(query_bits, dtype=np.uint8)
+    return _popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
+
+
+def _measured(rows: list[tuple], query_bits: bytes) -> tuple[list[tuple], object]:
+    """The rows a distance can be taken for, and their distances.
+
+    Rows whose bit string is a different width are skipped rather than compared:
+    a different width is a different dimension, and a distance between the two
+    would be a number with no meaning rather than a large one.
+    """
+    width = len(query_bits)
     usable = [row for row in rows if row[3] is not None and len(row[3]) == width]
     if not usable:
-        return []
-    packed = np.frombuffer(b"".join(row[3] for row in usable), dtype=np.uint8).reshape(
-        len(usable), width
-    )
-    query = np.frombuffer(query_bits, dtype=np.uint8)
-    distances = _popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
+        return [], None
+    return usable, hamming_distances([row[3] for row in usable], query_bits)
+
+
+def _hamming(rows: list[tuple], query_bits: bytes) -> list[BlockHit]:
+    """Rank the examined rows by Hamming distance, collapsed to their parent.
+
+    Rows of another width are skipped (see :func:`_measured`).
+
+    The order is total and written down (invariant 3): distance, then kind, then
+    parent id, then block index. Nothing here consults the response count.
+    """
+    return _collapse(*_measured(rows, query_bits))
+
+
+def _collapse(usable: list[tuple], distances) -> list[BlockHit]:
+    """:func:`_hamming` over rows whose distances are already measured."""
     best: dict[tuple[str, int], BlockHit] = {}
     for row, distance in zip(usable, distances):
         kind, parent_id, block_index = row[0], row[1], row[2]
@@ -1097,17 +1202,15 @@ def _hamming_order(rows: list[tuple], query_bits: bytes) -> list[tuple[tuple, in
     read. Ties at the cut are settled by the same written-down order, so the set
     re-ranked is a function of the database and the query alone.
     """
+    return _order(*_measured(rows, query_bits))
+
+
+def _order(usable: list[tuple], distances) -> list[tuple[tuple, int]]:
+    """:func:`_hamming_order` over rows whose distances are already measured."""
     import numpy as np
 
-    width = len(query_bits)
-    usable = [row for row in rows if row[3] is not None and len(row[3]) == width]
     if not usable:
         return []
-    packed = np.frombuffer(b"".join(row[3] for row in usable), dtype=np.uint8).reshape(
-        len(usable), width
-    )
-    query = np.frombuffer(query_bits, dtype=np.uint8)
-    distances = _popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
     depth = min(BLOCK_RERANK_DEPTH, len(usable))
     # Every row no farther than the depth-th distance, then the full order over
     # that handful: sorting the whole examined set in Python to keep 200 of it
@@ -1202,12 +1305,15 @@ async def search(db, embedding: object, iso) -> list[BlockHit]:
         logger.warning("block arm: the query vector could not be quantised, skipping")
         return []
     rows = await _examined(db, iso, generation.block_keys())
-    near = _hamming_order(rows, query_bits)
+    # Measured once: the re-rank's depth cut and the Hamming fallback read the same
+    # distances, which were taken twice over the whole examined set (bug-481).
+    measured = _measured(rows, query_bits)
+    near = _order(*measured)
     stored = await _stored_vectors(db, [(row[0], row[1], row[2]) for row, _ in near])
     reranked = _rerank(near, stored, embedding)
     if reranked is not None:
         return reranked
-    return _hamming(rows, query_bits)
+    return _collapse(*measured)
 
 
 # --------------------------------------------------------------------------------------

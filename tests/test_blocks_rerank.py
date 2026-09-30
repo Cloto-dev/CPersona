@@ -449,3 +449,54 @@ async def test_a_fresh_database_reports_nothing_about_the_vector_trigger():
         db = await database.get_db()
         issues = await checks.check_schema_objects(db, "", fix=False)
         assert not [i for i in issues if i["object"] == "record_block_vectors_ad"]
+
+
+# --------------------------------------------------------------------------
+# work done once (bug-497, bug-481)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_build_asks_the_storage_refusal_once_per_block(building, monkeypatch):
+    """bug-497: each packer asked it, so every block paid for the per-element loop twice."""
+    calls = []
+    real = blocks.vector.pack_for_storage
+
+    def counting(embedding):
+        calls.append(1)
+        return real(embedding)
+
+    monkeypatch.setattr(blocks.vector, "pack_for_storage", counting)
+    prepared = await blocks.prepare_blocks("mem", 1, MANY, ())
+    assert prepared is not None and len(prepared.spans) > 1
+    assert len(calls) == len(prepared.spans)
+
+
+def test_quantise_is_the_two_packers():
+    v = [0.5, -2.0, 1.0, 0.0, 0.25, -0.1, 3.0, -1.0]
+    assert blocks.quantise(v) == (blocks.pack_bits(v), blocks.pack_int8(v))
+    assert blocks.quantise([0.0] * 8) is None
+    assert blocks.quantise([float("nan")] * 8) is None
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_measures_the_examined_rows_once(building, monkeypatch):
+    """bug-481: the depth cut and the Hamming fallback each measured the whole
+    examined set; the fallback now reads the distances the cut took."""
+    async with _TempDB() as tmp:
+        mem = await _store(tmp, MANY)
+        await _store(tmp, "五文目です。六文目です。\n\n七文目です。")
+        db = await database.get_db()
+        await db.execute("DELETE FROM record_block_vectors WHERE parent_id = ? AND block_index = 0", (mem,))
+        await db.commit()
+        calls = []
+        real = blocks.hamming_distances
+
+        def counting(bit_strings, query_bits):
+            calls.append(len(bit_strings))
+            return real(bit_strings, query_bits)
+
+        monkeypatch.setattr(blocks, "hamming_distances", counting)
+        hits = await _search("三文目です。")
+        assert hits and all(h.cosine is None for h in hits), "the fallback path did not run"
+        assert len(calls) == 1

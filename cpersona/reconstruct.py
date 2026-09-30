@@ -779,16 +779,10 @@ def rank_blocks(
     lexical = [float(len(query_grams & _trigrams(text[start:end]))) for _, start, end, _ in block_rows]
     ranks = [_shared_ranks(lexical)]
     if query_bits is not None:
-        import numpy as np
-
         width = len(query_bits)
         usable = all(bits is not None and len(bits) == width for _, _, _, bits in block_rows)
         if usable and block_rows:
-            packed = np.frombuffer(
-                b"".join(bits for _, _, _, bits in block_rows), dtype=np.uint8
-            ).reshape(len(block_rows), width)
-            query = np.frombuffer(query_bits, dtype=np.uint8)
-            distances = blocks._popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
+            distances = blocks.hamming_distances([bits for _, _, _, bits in block_rows], query_bits)
             # Ranked highest-first like the others, so a nearer block sorts first.
             ranks.append(_shared_ranks([-float(d) for d in distances]))
     k = config.RRF_K
