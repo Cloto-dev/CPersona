@@ -6800,12 +6800,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/nodes.py",
-      "pattern": "generation\\.node_keys\\(\\)\\[0\\]\\)",
+      "pattern": "await generation\\.refresh\\(\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "index-divergence",
       "fix_sketch": "Call generation.refresh() before stamping or judging currency in the build paths and the health check.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "build_nodes, build_blocks, the block backfill and the health repairs (the missing_nodes / missing_blocks prefetch and live scan) call generation.refresh() before they read a key. refresh already kept its answer for REFRESH_INTERVAL_SECONDS (300 s), so this costs at most one /capabilities request per interval, not one per build; it simply had no callers on these paths, only at boot and on traced recalls. A backend redeployed under the same URL is now picked up by the next build after the interval, and nodes and blocks written under the old fingerprint read as not current and are rebuilt. Regression: tests/test_generation_key.py::test_a_block_build_stamps_the_backend_as_it_is_now, ::test_a_node_build_stamps_the_backend_as_it_is_now and ::test_a_health_repair_judges_by_the_backend_as_it_is_now."
     },
     {
       "id": "bug-462",
@@ -6814,12 +6816,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/checks.py",
-      "pattern": "return client is not None and callable\\(getattr\\(client, \\\"count_tokens\\\", None\\)\\)",
+      "pattern": "    return nodes\\.token_report_available\\(\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Use one predicate: client is not None and client.mode == 'http'.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "nodes.token_report_available() is the one answer to whether the backend can report tokens: an EmbeddingClient only in http mode (the method exists in every mode and answers None without a request in the others), any other client by its method, as before, so test doubles and embedded hosts are unaffected. building_enabled, prepare_nodes, overflowing and the health check's _node_report_available all use it. In api mode the missing_nodes check now reads no record text and a store schedules no probe; the finding it reported there was already none, so no output changes. Regression: tests/test_record_nodes_build.py::test_only_an_http_client_has_a_token_report, ::test_a_client_that_is_not_an_embedding_client_is_taken_at_its_method and ::test_an_api_mode_health_check_reads_no_record_text."
     },
     {
       "id": "bug-463",
@@ -6828,12 +6832,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/tasks.py",
-      "pattern": "await asyncio\\.sleep\\(TASK_RETRY_DELAY\\)",
+      "pattern": "elif task_type in derived and await self\\._other_work_waits\\(task_id, derived\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Requeue derived-data builds at the tail, or drop them after the first failure and leave them to the repair.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "A failing derived build (build_nodes, build_blocks, backfill_blocks) that has a task of another type queued behind it is moved to the back of the queue with its retry counted (_requeue_at_tail: the row takes the next id, keeping its payload and its session attribution), instead of sleeping TASK_RETRY_DELAY at the head. Builds with only other builds behind them keep the delay: rotating among themselves would spend all their retries in a second of an outage, and they are what the delay is for. Discarding a failing build outright was rejected for the same reason -- a short outage would cost every queued build. Retry counting and the discard at TASK_MAX_RETRIES are unchanged. Regression: tests/test_task_queue.py::test_a_failing_build_does_not_hold_a_profile_update, ::test_a_moved_build_keeps_its_session_and_its_place_is_new and ::test_builds_waiting_only_behind_builds_keep_the_delay."
     },
     {
       "id": "bug-464",
@@ -7126,12 +7132,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/checks.py",
-      "pattern": "^async def check_missing_blocks\\(",
+      "pattern": "^async def _missing_issue\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "One generic helper taking prepare / write / records callables.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "The prepare loop and the finding-and-write tail are one helper each (_prepare_first, _missing_issue), called by both scans and both checks. The cache is read one way, `embedding_cache.get(key) is not None`, for both: for nodes a None prefetch now falls through to the live path, which asks the same availability predicate and answers the same empty list. Behaviour-preserving: the missing_nodes and missing_blocks tests pin the findings, the caps and the fix-run fields."
     },
     {
       "id": "bug-484",
@@ -7196,12 +7204,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/tasks.py",
-      "pattern": "async def _drain\\(self, admin_handlers, memory_handlers, nodes=None\\):",
+      "pattern": "derived = \\{nodes\\.TASK_TYPE, blocks\\.TASK_TYPE, blocks\\.BACKFILL_TASK_TYPE\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "duplicated-rule",
       "fix_sketch": "Import nodes inside _drain like the block branches and drop the parameter.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "_drain resolves both lazily imported modules once, at its start; the block branches no longer import inside themselves, and they dispatch on blocks.TASK_TYPE and blocks.BACKFILL_TASK_TYPE rather than repeating the strings. The nodes parameter stays, because tests hand in the module they patched. Behaviour-preserving: the queue and build tests pin the dispatch."
     },
     {
       "id": "bug-489",
@@ -7342,12 +7352,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "built = blocks_written = needed_none = refused = failed = 0",
+      "pattern": "if len\\(segment\\(text, node_bounds=node_bounds\\)\\) <= 1:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Fetch the page's node bounds in one query, segment inline, and skip single-block records without counting them.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "The sweep reads a page's node ends in one query (_bounds_for) and divides each non-current record offline before doing anything else with it. A record that divides into one block is counted as needing none and passed over without its own connection, node query or embedding call, and it no longer counts against the record and character caps, so a corpus of short records does not stop every run at its first few. _build_one takes the node ends it was handed. What is not changed: such a record still has no block rows, so the sweep still reads it on each process start -- recording that it needs none would be a new column -- but the read is now the page's own, and the time bound still ends a run. Regression: tests/test_blocks_backfill.py::test_records_that_need_no_blocks_do_not_use_up_the_record_cap and ::test_a_record_that_needs_no_blocks_opens_no_connection_of_its_own."
     },
     {
       "id": "bug-499",
@@ -7356,12 +7368,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/nodes.py",
-      "pattern": "info = await measure\\(rest\\)",
+      "pattern": "probe = rest if reach is None else rest\\[: 2 \\* reach\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Measure a bounded prefix of the rest once a span is accepted; each span is still re-measured on its own text.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fixed_in": "2.6.0",
+      "fix_note": "Only divide()'s first measurement reads the whole text. After it, the text ahead is measured in a prefix twice as long as the last window reached, widened while the window does not close inside it, so the characters posted grow linearly with the record rather than with its square. A prefix that reaches the end is the rest itself, so the last span is judged exactly as before, and a cut is still accepted only on its own report. The divisions are identical to the old algorithm's on every text the suite divides, checked against a copy of it kept in the test as the oracle. The repeat of the store-time probe is not removed: that report is taken before the record is queued and is not carried across the queue. Regression: tests/test_record_nodes_build.py::test_a_bounded_measurement_divides_as_the_whole_rest_did and ::test_only_the_first_measurement_reads_the_whole_text."
     },
     {
       "id": "bug-500",
@@ -7375,7 +7389,7 @@
       "status": "open",
       "category": "resource-budget",
       "fix_sketch": "Pass the prefetch's result into the residual run, and consider skipping records whose byte length cannot exceed the window.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Re-judged 2026-09-30 and left open as a design item. Not re-measuring a record that fits means recording that it fits, which is a column or a table. The half about check_health(fix=True) measuring twice is the residual re-run, and that re-run is the verdict bug-254 requires to come from post-repair state -- other repairs in the same run rewrite record text, so the first scan's answer cannot stand in for it without the same record of what was measured against which text."
     },
     {
       "id": "bug-501",

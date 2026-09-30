@@ -688,6 +688,9 @@ async def build_blocks(payload: dict) -> str:
         # no rows, and a queue that outlives a setting change would write them.
         return "block building is disabled"
 
+    # bug-461: the key this build stamps and judges by is the backend's current
+    # identity, not the one learned at boot (see nodes.build_nodes).
+    await generation.refresh()
     keys = generation.block_keys()
     async with connection() as db:
         text = await _parent_text(db, kind, parent_id)
@@ -903,7 +906,23 @@ def _bound_reached(processed: int, characters: int, requests: int, deadline: flo
     return None
 
 
-async def _build_one(kind: str, row_id: int, text: str) -> tuple[str, int, int]:
+async def _bounds_for(db, kind: str, ids: list[int]) -> dict[int, tuple[int, ...]]:
+    """The node ends of one page's records, keyed by parent id: one query, not one each."""
+    if not ids:
+        return {}
+    bounds: dict[int, list[int]] = {}
+    for parent_id, end_char in await db.execute_fetchall(
+        "SELECT parent_id, end_char FROM record_nodes WHERE parent_kind = ? "
+        "AND parent_id BETWEEN ? AND ? ORDER BY parent_id, node_index",
+        (kind, ids[0], ids[-1]),
+    ):
+        bounds.setdefault(parent_id, []).append(end_char)
+    return {parent_id: tuple(ends) for parent_id, ends in bounds.items()}
+
+
+async def _build_one(
+    kind: str, row_id: int, text: str, node_bounds: tuple[int, ...]
+) -> tuple[str, int, int]:
     """Divide and write one record's blocks. Returns (outcome, requests, blocks).
 
     The outcomes are "built", "none" (the division is the record, so there is
@@ -916,8 +935,6 @@ async def _build_one(kind: str, row_id: int, text: str) -> tuple[str, int, int]:
     if it managed nothing else, which is the shape of a backend being down rather
     than a record being awkward.
     """
-    async with connection() as db:
-        node_bounds = await _node_bounds(db, kind, row_id)
     try:
         prepared = await prepare_blocks(kind, row_id, text, node_bounds)
     except Exception as e:
@@ -952,6 +969,7 @@ async def backfill(payload: dict) -> str:
     if start is None:
         return "malformed payload, discarded"
     kind_index, after_id = start
+    await generation.refresh()  # bug-461, as in build_blocks
     keys = generation.block_keys()
     deadline = time.monotonic() + BACKFILL_SECONDS
 
@@ -966,7 +984,9 @@ async def backfill(payload: dict) -> str:
         while stopped_by is None:
             async with connection() as db:
                 page = await _page(db, kind, page_after, _BACKFILL_PAGE)
-                sets = await _sets_for(db, kind, [row_id for row_id, _ in page], keys)
+                ids = [row_id for row_id, _ in page]
+                sets = await _sets_for(db, kind, ids, keys)
+                bounds = await _bounds_for(db, kind, ids)
             if not page:
                 break
             for row_id, text in page:
@@ -975,14 +995,26 @@ async def backfill(payload: dict) -> str:
                 # have a second answer for.
                 stored = sets.get(row_id, (0, None, None, 0))
                 if text and not _set_is_current(*stored, len(text)):
-                    processed = built + needed_none + refused + failed
+                    node_bounds = bounds.get(row_id, ())
+                    if len(segment(text, node_bounds=node_bounds)) <= 1:
+                        # bug-498: a record that divides into one block has none by
+                        # design, so it is never current and every sweep met it again,
+                        # each time through its own connection, node query and
+                        # divider, counted against the caps. The division is offline,
+                        # so it is decided here, from the page's own reads, and costs
+                        # the run nothing.
+                        needed_none += 1
+                        page_after = row_id
+                        cursor = (kind, row_id)
+                        continue
+                    processed = built + refused + failed
                     if processed:
                         stopped_by = _bound_reached(processed, characters, requests, deadline)
                         if stopped_by is not None:
                             # Before the record, so the cursor still names the last
                             # one this run finished and the continuation starts here.
                             break
-                    outcome, spent, wrote = await _build_one(kind, row_id, text)
+                    outcome, spent, wrote = await _build_one(kind, row_id, text, node_bounds)
                     characters += len(text)
                     requests += spent
                     if outcome == "built":

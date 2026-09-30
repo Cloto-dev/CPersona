@@ -483,3 +483,38 @@ async def test_an_edited_memory_queues_its_blocks_again(enabled):
 
         rows = await tmp.blocks_of(parent_id=stored["id"])
         assert rows and rows[-1][2] == len(rewritten)
+
+
+# --------------------------------------------------------------------------
+# bug-498: a record that divides into one block is decided from the page
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_records_that_need_no_blocks_do_not_use_up_the_record_cap(monkeypatch, enabled):
+    """Such a record never has blocks, so every sweep met it again and counted it
+    against the caps: a run whose cap was one record stopped at it and built
+    nothing. It is decided offline now and costs the run nothing."""
+    async with _TempDB() as tmp:
+        seeded = await _seed(tmp, monkeypatch, [f"{ONE} {i}" for i in range(3)] + [_many(1)])
+        monkeypatch.setattr(blocks, "BACKFILL_RECORD_CAP", 1)
+        report = await blocks.backfill({})
+        assert "built 1 records" in report and "3 needed none" in report, report
+        assert len(await tmp.blocks_of(parent_id=seeded[-1][0])) > 1
+
+
+@pytest.mark.asyncio
+async def test_a_record_that_needs_no_blocks_opens_no_connection_of_its_own(monkeypatch, enabled):
+    """Its node ends come from the page's one query, not a query of its own."""
+    async with _TempDB() as tmp:
+        await _seed(tmp, monkeypatch, [f"{ONE} {i}" for i in range(3)] + [_many(1)])
+        asked = []
+
+        async def one_record(db, kind, parent_id):
+            asked.append(parent_id)
+            return ()
+
+        monkeypatch.setattr(blocks, "_node_bounds", one_record)
+        report = await blocks.backfill({})
+        assert "built 1 records" in report
+        assert asked == []

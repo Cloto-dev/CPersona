@@ -490,3 +490,119 @@ async def test_recall_returns_the_same_records_in_the_same_order_with_nodes(wind
         assert after == before
         assert any(before), "the queries retrieved nothing, so the comparison proves nothing"
         assert re.search("topic", str(before))
+
+
+# --------------------------------------------------------------------------------------
+# bug-499: after the first measurement, a prefix of the text ahead, not all of it
+# --------------------------------------------------------------------------------------
+
+
+async def _divide_measuring_the_whole_rest(text, measure):
+    """The division as it was before bug-499, kept as the oracle: every node
+    re-measured everything after it."""
+    spans = []
+    pos = 0
+    while pos < len(text):
+        rest = text[pos:]
+        info = await measure(rest)
+        if not info.truncated:
+            spans.append(Span(pos, len(text), info.count, info.window))
+            break
+        limit = info.window_end_char
+        while True:
+            cut = choose_cut(rest, limit)
+            span_info = await measure(rest[:cut])
+            if not span_info.truncated:
+                spans.append(Span(pos, pos + cut, span_info.count, span_info.window))
+                pos += cut
+                break
+            limit = min(span_info.window_end_char, cut - 1)
+    return spans
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", sorted(_TEXTS))
+async def test_a_bounded_measurement_divides_as_the_whole_rest_did(name):
+    text = _TEXTS[name]
+    assert await divide(text, _fake_measure(WINDOW)) == await _divide_measuring_the_whole_rest(
+        text, _fake_measure(WINDOW)
+    )
+
+
+@pytest.mark.asyncio
+async def test_only_the_first_measurement_reads_the_whole_text():
+    text = _TEXTS["prose"] * 3
+    inner = _fake_measure(WINDOW)
+    posted: list[int] = []
+
+    async def measure(t):
+        posted.append(len(t))
+        return await inner(t)
+
+    spans = await divide(text, measure)
+    assert len(spans) > 20, "the fixture must divide into many nodes"
+    assert posted[0] == len(text)
+    longest = max(s.end - s.start for s in spans)
+    # Every later request is a few windows long, not the rest of the text.
+    assert max(posted[1:]) <= 4 * longest, (max(posted[1:]), longest)
+    # Linear in the text: the old division posted about half the text per node.
+    old: list[int] = []
+
+    async def counting_old(t):
+        old.append(len(t))
+        return await inner(t)
+
+    await _divide_measuring_the_whole_rest(text, counting_old)
+    assert sum(posted) < 4 * len(text) < sum(old), (sum(posted), len(text), sum(old))
+
+
+# --------------------------------------------------------------------------------------
+# bug-462: an EmbeddingClient reports tokens only in http mode
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode, available", [("http", True), ("api", False), ("none", False)])
+def test_only_an_http_client_has_a_token_report(monkeypatch, mode, available):
+    from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+
+    monkeypatch.setattr(nodes.vector, "_embedding_client", EmbeddingClient(mode=mode, http_url="http://x/embed"))
+    monkeypatch.setattr(nodes.tasks, "_task_queue", object())
+    assert nodes.token_report_available() is available
+    assert nodes.building_enabled() is available
+
+
+def test_a_client_that_is_not_an_embedding_client_is_taken_at_its_method(monkeypatch, fake_embedding_client):
+    monkeypatch.setattr(nodes.vector, "_embedding_client", fake_embedding_client)
+    assert nodes.token_report_available() is True
+
+
+@pytest.mark.asyncio
+async def test_an_api_mode_health_check_reads_no_record_text(monkeypatch):
+    """In api mode the report is never there, so the missing_nodes check has nothing to
+    ask: it must not read every record's text to find that out."""
+    from cpersona import checks
+    from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+
+    monkeypatch.setattr(nodes.vector, "_embedding_client", EmbeddingClient(mode="api", api_url="http://x"))
+    read = []
+
+    async def spy(db, iso):
+        read.append(1)
+        return []
+
+    monkeypatch.setattr(nodes, "records_without_current_nodes", spy)
+    db = await database.get_db()
+    assert await checks.check_missing_nodes(db, "agent.api", fix=False) == []
+    assert await checks.prefetch_missing_nodes("agent.api") is None
+    assert read == []
+
+
+@pytest.mark.asyncio
+async def test_a_prefix_the_window_does_not_close_in_is_widened():
+    """Dense text first sets a short reach; the sparse text after it (a token per
+    twenty-one characters) does not fill the window inside twice that reach, so the
+    prefix must be widened -- and the division must still be the old one."""
+    text = "abc" * 60 + "".join(f"{'x' if i % 2 else 'y'}{' ' * 20}" for i in range(120))
+    spans = await divide(text, _fake_measure(WINDOW))
+    assert spans == await _divide_measuring_the_whole_rest(text, _fake_measure(WINDOW))
+    assert len(spans) > 2 and spans[-1].end == len(text)

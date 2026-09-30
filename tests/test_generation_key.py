@@ -434,3 +434,66 @@ async def test_the_quotation_path_refuses_blocks_from_a_generation_it_did_not_ru
         found = await reconstruct._current_block_sets("a", [candidate])
 
         assert found == {}, "blocks from another generation were offered for quotation"
+
+
+# --- bug-461: a build asks again rather than trusting what boot learned --------------
+
+
+@pytest.mark.asyncio
+async def test_a_block_build_stamps_the_backend_as_it_is_now(building, monkeypatch):
+    """The identity was refreshed only at boot and on traced recalls, so a backend
+    redeployed with another model under the same URL left builds stamping the old
+    fingerprint. Here boot learned one backend, and the builds meet another."""
+    async with _TempDB() as tmp:
+        from cpersona import database
+
+        await generation.refresh(Backend(_identity(FINGERPRINT)))
+        monkeypatch.setattr(generation, "REFRESH_INTERVAL_SECONDS", 0)
+        redeployed = Backend(_identity(OTHER))
+        monkeypatch.setattr(building, "capabilities_with_outcome", redeployed.capabilities_with_outcome, raising=False)
+        row_id = await _store_and_drain(tmp, LONG)
+
+        db = await database.get_db()
+        stored = await db.execute_fetchall(
+            "SELECT DISTINCT embedding_model FROM record_blocks WHERE parent_id = ?", (row_id,)
+        )
+        assert stored, "no blocks were built, so this proves nothing about their key"
+        assert [r[0] for r in stored] == [OTHER]
+        assert redeployed.asked >= 1
+
+
+@pytest.mark.asyncio
+async def test_a_node_build_stamps_the_backend_as_it_is_now(building, monkeypatch):
+    building.token_window = 16
+    async with _TempDB() as tmp:
+        from cpersona import database
+
+        await generation.refresh(Backend(_identity(FINGERPRINT)))
+        monkeypatch.setattr(generation, "REFRESH_INTERVAL_SECONDS", 0)
+        redeployed = Backend(_identity(OTHER))
+        monkeypatch.setattr(building, "capabilities_with_outcome", redeployed.capabilities_with_outcome, raising=False)
+        row_id = await _store_and_drain(tmp, LONG * 40)
+
+        db = await database.get_db()
+        stored = await db.execute_fetchall(
+            "SELECT DISTINCT embedding_model FROM record_nodes WHERE parent_id = ?", (row_id,)
+        )
+        assert stored, "no nodes were built, so this proves nothing about their key"
+        assert [r[0] for r in stored] == [OTHER]
+
+
+@pytest.mark.asyncio
+async def test_a_health_repair_judges_by_the_backend_as_it_is_now(building, monkeypatch):
+    """The repair asks too: nodes built under the boot-time identity are not current
+    once the backend has moved, and the repair rebuilds them under the new one."""
+    building.token_window = 16
+    async with _TempDB() as tmp:
+        from cpersona import checks
+
+        await generation.refresh(Backend(_identity(FINGERPRINT)))
+        await _store_and_drain(tmp, LONG * 40)
+        monkeypatch.setattr(generation, "REFRESH_INTERVAL_SECONDS", 0)
+        redeployed = Backend(_identity(OTHER))
+        monkeypatch.setattr(building, "capabilities_with_outcome", redeployed.capabilities_with_outcome, raising=False)
+        scan = await checks.prefetch_missing_nodes("agent.gen")
+        assert scan is not None and len(scan["missing"]) == 1, scan

@@ -215,9 +215,15 @@ class MemoryTaskQueue:
 
     async def _drain(self, admin_handlers, memory_handlers, nodes=None):
         """Drain all currently-pending tasks in FIFO order."""
+        # Lazy, for the reason _loop gives: nodes and blocks both import this module
+        # for _task_queue. Both are resolved here, once (bug-488 -- blocks was imported
+        # inside each of its branches). `nodes` stays a parameter so a caller can hand
+        # in the module it patched.
+        from cpersona import blocks
+
         if nodes is None:
-            # Same lazy import as _loop: nodes imports this module for _task_queue.
             from cpersona import nodes
+        derived = {nodes.TASK_TYPE, blocks.TASK_TYPE, blocks.BACKFILL_TASK_TYPE}
         try:
             while self._running:
                 task = await self._fetch_next()
@@ -308,25 +314,18 @@ class MemoryTaskQueue:
                         outcome = await nodes.build_nodes(payload)
                         logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
                         await self._delete_task(task_id)
-                    elif task_type == "build_blocks":
-                        # Same shape and the same idempotence as the nodes above. The
-                        # import is here rather than at the top because blocks imports
-                        # this module for _task_queue, and it is inside the branch
-                        # because a deployment that never opted in never reaches it.
-                        from cpersona import blocks
-
+                    elif task_type == blocks.TASK_TYPE:
+                        # Same shape and the same idempotence as the nodes above.
                         outcome = await blocks.build_blocks(payload)
                         logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
                         await self._delete_task(task_id)
-                    elif task_type == "backfill_blocks":
+                    elif task_type == blocks.BACKFILL_TASK_TYPE:
                         # The sweep that gives an opted-in deployment the corpus it
                         # already had. It is bounded, and it queues its own
                         # continuation when a bound stops it — which lands here
                         # before this row is deleted, so two sweep rows exist for
                         # that moment. Harmless: they hold different cursors, and a
                         # sweep passes over a record whose blocks are current.
-                        from cpersona import blocks
-
                         outcome = await blocks.backfill(payload)
                         logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
                         await self._delete_task(task_id)
@@ -341,6 +340,15 @@ class MemoryTaskQueue:
                     if retries + 1 >= TASK_MAX_RETRIES:
                         logger.error("MemoryTaskQueue: task %d exceeded max retries, discarding", task_id)
                         await self._delete_task(task_id)
+                    elif task_type in derived and await self._other_work_waits(task_id, derived):
+                        # bug-463: a derived build retried in place held every task behind
+                        # it -- profile updates and episode archives included -- for the
+                        # retry delay, about 90 s per failing build through an embedding
+                        # outage. With such work waiting, the build goes to the back of
+                        # the queue with its retry counted, and the waiting work runs.
+                        # Builds waiting only behind other builds keep the delay: rotating
+                        # among themselves would spend their retries in a second.
+                        await self._requeue_at_tail(task_id)
                     else:
                         await self._increment_retry(task_id)
                         await asyncio.sleep(TASK_RETRY_DELAY)
@@ -401,6 +409,41 @@ class MemoryTaskQueue:
             await db.execute("DELETE FROM pending_memory_tasks WHERE id = ?", (task_id,))
         # The row is gone, so its attribution has nothing left to describe.
         self._forget_session(task_id)
+
+    async def _other_work_waits(self, task_id: int, derived: set[str]) -> bool:
+        """Whether a task that is not a derived build is queued besides ``task_id``."""
+        iso_all = isolation_where(agent_id=None)
+        marks = ",".join("?" for _ in derived)
+        async with connection() as db:
+            rows = await db.execute_fetchall(
+                f"SELECT 1 FROM pending_memory_tasks WHERE id != ? AND task_type NOT IN ({marks})"
+                f"{iso_all.and_clause} LIMIT 1",
+                (task_id, *derived, *iso_all.params),
+            )
+        return bool(rows)
+
+    async def _requeue_at_tail(self, task_id: int) -> None:
+        """Move a row behind every other queued row, counting the retry.
+
+        The row keeps its payload, its type and its retry count plus one; only its
+        place changes, by taking the next id. Its session attribution moves with it,
+        so the pause that governed it still does.
+        """
+        # The queue is one global FIFO, so the tail is read across every agent.
+        iso_all = isolation_where(agent_id=None)
+        async with transaction() as db:
+            await db.execute(
+                "UPDATE pending_memory_tasks SET retries = retries + 1, "
+                "id = (SELECT MAX(id) + 1 FROM pending_memory_tasks) WHERE id = ?",
+                (task_id,),
+            )
+            rows = await db.execute_fetchall(
+                f"SELECT MAX(id) FROM pending_memory_tasks{iso_all.where}", iso_all.params
+            )
+        new_id = rows[0][0]
+        key = self._task_sessions.pop(task_id, None)
+        if key is not None and new_id is not None:
+            self._remember_session(new_id, key)
 
     async def _increment_retry(self, task_id: int):
         # bug-042/043: transaction() serialises write+commit on the shared connection.

@@ -111,18 +111,32 @@ async def divide(text: str, measure: Measure) -> list[Span]:
     for the longer text is where the search starts, not a promise about the span.
     When a span still runs past the window, the search continues from the span's
     own report, which strictly shrinks the candidate, so the loop ends.
+
+    Only the first measurement reads the whole text. After it, the text ahead is
+    measured in a prefix twice as long as the last window reached, and widened
+    while the window does not close inside it (bug-499: each node re-measured
+    everything after it, so an n-node record posted O(n^2) characters). A prefix
+    that reaches the end of the text is the rest itself, so the last span is
+    judged exactly as before; and a cut is still accepted only on its own report.
     """
     spans: list[Span] = []
     pos = 0
+    reach: int | None = None
     while pos < len(text):
         rest = text[pos:]
-        info = await measure(rest)
+        probe = rest if reach is None else rest[: 2 * reach]
+        info = await measure(probe)
         if info is None:
             raise TokensUnknown(f"no token report at offset {pos}")
         if not info.truncated:
+            if len(probe) < len(rest):
+                # The window did not close inside the prefix: look further ahead.
+                reach = len(probe)
+                continue
             spans.append(Span(pos, len(text), info.count, info.window))
             break
         limit = info.window_end_char
+        reach = max(limit, 1)
         while True:
             if limit < 1:
                 raise TokensUnknown(f"the window closes before the first character at offset {pos}")
@@ -151,18 +165,31 @@ def _client_measure(client) -> Measure:
 # --------------------------------------------------------------------------------------
 
 
+def token_report_available() -> bool:
+    """Whether the embedding client can report tokens at all.
+
+    bug-462: having a callable ``count_tokens`` is not the question. EmbeddingClient
+    has the method in every mode and answers None without a request in all but
+    ``http``, so in ``api`` mode every health check read the full text of every
+    record without current nodes, and every store scheduled a probe that could
+    only come back empty. A client that is not an EmbeddingClient (a test double,
+    an embedded host's own) is taken at its method, as before.
+    """
+    client = vector._embedding_client
+    if client is None or not callable(getattr(client, "count_tokens", None)):
+        return False
+    from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+
+    return not isinstance(client, EmbeddingClient) or client.mode == "http"
+
+
 def building_enabled() -> bool:
     """Whether a write may queue node construction at all.
 
     Needs a running task queue (§3: with the queue disabled nothing is built at
     write time) and an embedding client that can report tokens.
     """
-    client = vector._embedding_client
-    return (
-        tasks._task_queue is not None
-        and client is not None
-        and callable(getattr(client, "count_tokens", None))
-    )
+    return tasks._task_queue is not None and token_report_available()
 
 
 async def runs_past_window(text: str) -> bool:
@@ -261,7 +288,7 @@ async def prepare_nodes(kind: str, parent_id: int, text: str) -> PreparedNodes |
     Raises ``TokensUnknown`` or ``RuntimeError`` when the report or the embedding fails.
     """
     client = vector._embedding_client
-    if client is None or not callable(getattr(client, "count_tokens", None)):
+    if not token_report_available():
         raise TokensUnknown("no embedding client with a token report")
     spans = await divide(text, _client_measure(client))
     if len(spans) == 1:
@@ -319,6 +346,12 @@ async def build_nodes(payload: dict) -> str:
     if kind not in PARENT_TEXT or not isinstance(parent_id, int) or isinstance(parent_id, bool):
         return "malformed payload, discarded"
 
+    # bug-461: ask the backend what it is before stamping or judging a key. The
+    # identity was refreshed only at boot and on traced recalls, so a backend
+    # redeployed with another model under the same URL left builds stamping the
+    # old fingerprint and the old nodes reading as current. At most one request
+    # per generation.REFRESH_INTERVAL_SECONDS.
+    await generation.refresh()
     async with connection() as db:
         text = await _parent_text(db, kind, parent_id)
         if text is None:
@@ -377,7 +410,7 @@ async def records_without_current_nodes(db, iso) -> list[tuple[str, int, str]]:
 async def overflowing(records: list[tuple[str, int, str]]) -> list[tuple[str, int, str]] | None:
     """The records whose text runs past the window. None when the report is unavailable."""
     client = vector._embedding_client
-    if client is None or not callable(getattr(client, "count_tokens", None)):
+    if not token_report_available():
         return None
     out = []
     for start in range(0, len(records), _COUNT_BATCH):
