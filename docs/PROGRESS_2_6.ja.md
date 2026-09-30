@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:33f316cbd0c3e88d58bbba38b1d511a26d0ca2e6 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:4e9f218e1cd3ac40c4dccb4bb3f9c35489b19742 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -53,7 +53,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.0a8 | recall と reconstruct は各段を provider の枠を通して呼び、trace は宣言した予算と各段が受け取ったものを記録する。呼び出し側が受け取るものは変わらない | [#335](https://github.com/Cloto-dev/cpersona/pull/335)、[#336](https://github.com/Cloto-dev/cpersona/pull/336) |
 | 2.6.0b1 | 機能の追加はなし: 2.6.0a1〜a8 のレビューで見つかった MEDIUM の欠陥 11 件の修正。他のプロジェクトから読めていたプロジェクトの別名、引用から漏れていた次の行の限定句、段数に上限のなかった `reconstruct` のたどり、10 字ずれて測られていたエピソードの引用、読み手が拒否するのに誰も作り直さなかったノード集合などです | [#356](https://github.com/Cloto-dev/cpersona/pull/356), [#357](https://github.com/Cloto-dev/cpersona/pull/357), [#358](https://github.com/Cloto-dev/cpersona/pull/358), [#359](https://github.com/Cloto-dev/cpersona/pull/359), [#361](https://github.com/Cloto-dev/cpersona/pull/361) |
 | 2.6.0b2 | 機能の追加はなし: 残っていた MEDIUM の欠陥 5 件の修正。ヘッダと本文が食い違いうるメモリ上 DB のエクスポート、毎クエリ読む行を 0 と報告していた索引の status、行の上限で切られても完全に見えていた一覧、長さに上限のなかった `session_key`、コピーが要る窓を丸ごと保持していた索引の経路などです | [#363](https://github.com/Cloto-dev/cpersona/pull/363), [#364](https://github.com/Cloto-dev/cpersona/pull/364), [#365](https://github.com/Cloto-dev/cpersona/pull/365), [#366](https://github.com/Cloto-dev/cpersona/pull/366) |
-| 2.6.0 | このラインの最初の final リリース。機能の追加はなし: Block による到達を既定で on にし、alpha のレビューが登録した LOW の欠陥 43 件を修正。ノードの境界をまたいでいた Block の集合、表せる範囲を超えて例外になっていた時期の手がかり、待ち行列の全タスクを止めていた失敗する構築、どのゲートも認めていない脇の行に記録されていた recall の回数など。 |
+| 2.6.0 | このラインの最初の final リリース。機能の追加はなし: Block による到達を既定で on にし、`count` を省略した `reconstruct` を 10 項目にし (この 2 つで、記憶から答えるためにこのリリースが推奨する構成になります)、alpha のレビューが登録した LOW の欠陥 43 件を修正。ノードの境界をまたいでいた Block の集合、表せる範囲を超えて例外になっていた時期の手がかり、待ち行列の全タスクを止めていた失敗する構築、どのゲートも認めていない脇の行に記録されていた recall の回数など。 |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
