@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from cpersona import admin_handlers, config, database, memory_handlers, nodes, reconstruct, server, session, tasks
-from cpersona.reconstruct import allocate, best_node, resolve_budget
+from cpersona.reconstruct import allocate, rank_nodes, resolve_budget
 
 AGENT = "agent.excerpts"
 WINDOW = 24
@@ -126,7 +126,7 @@ def test_raising_the_budget_alone_never_removes_an_item_or_an_excerpt():
 
 
 # --------------------------------------------------------------------------------------
-# best_node
+# rank_nodes: the node a quote is taken from is the first it ranks
 # --------------------------------------------------------------------------------------
 
 
@@ -139,12 +139,12 @@ NODES = [(0, 0, 18, _blob([1, 0])), (1, 18, 38, _blob([0, 1])), (2, 38, len(TEXT
 
 
 def test_without_an_embedding_the_node_with_the_literal_match_wins():
-    chosen = best_node(TEXT, NODES, None, reconstruct._trigrams("unique-marker"))
+    chosen = rank_nodes(TEXT, NODES, None, reconstruct._trigrams("unique-marker"))[0]
     assert chosen[0] == 2
 
 
 def test_with_no_literal_match_the_embedding_decides_not_node_order():
-    chosen = best_node(TEXT, NODES, np.asarray([0, 1], dtype=np.float32), reconstruct._trigrams("zzzz"))
+    chosen = rank_nodes(TEXT, NODES, np.asarray([0, 1], dtype=np.float32), reconstruct._trigrams("zzzz"))[0]
     assert chosen[0] == 1
 
 
@@ -153,12 +153,12 @@ def test_equal_lexical_counts_do_not_give_the_earlier_node_a_head_start():
     # instead of sharing a rank, the first node would gain a lexical rank of 0 against
     # the second's 1, tie the fused score, and win on node order.
     two = [(0, 0, 18, _blob([1, 0])), (1, 18, 38, _blob([0, 1]))]
-    assert best_node(TEXT, two, np.asarray([0, 1], dtype=np.float32), set())[0] == 1
+    assert rank_nodes(TEXT, two, np.asarray([0, 1], dtype=np.float32), set())[0][0] == 1
 
 
 def test_a_full_tie_goes_to_the_earlier_node():
     same = [(0, 0, 18, _blob([1, 0])), (1, 18, 38, _blob([1, 0]))]
-    assert best_node(TEXT, same, np.asarray([1, 0], dtype=np.float32), set())[0] == 0
+    assert rank_nodes(TEXT, same, np.asarray([1, 0], dtype=np.float32), set())[0][0] == 0
 
 
 # --------------------------------------------------------------------------------------

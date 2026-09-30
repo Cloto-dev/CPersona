@@ -28,6 +28,9 @@ from cpersona import reconstruct as R  # noqa: E402
 from cpersona.database import connection, get_db  # noqa: E402
 
 AGENT = "agent.reconstruct"
+#: The roles v0 derives from the evidence it has. A test expectation rather than a
+#: constant the code reads: the code that emits roles is the thing under test.
+V0_DERIVED_ROLES: frozenset[str] = frozenset({"supports", "supersedes"})
 QUERY = "rollback"
 SEEDED = 30
 TOP_K = 25
@@ -482,7 +485,7 @@ def test_role_vocabulary_is_fixed_and_v0_fills_part_of_it():
         "contradicts",
         "temporal_predecessor",
     )
-    assert R.V0_DERIVED_ROLES < set(R.ROLE_VOCABULARY), "v0 must not invent a role outside the vocabulary"
+    assert V0_DERIVED_ROLES < set(R.ROLE_VOCABULARY), "v0 must not invent a role outside the vocabulary"
 
 
 @pytest.mark.asyncio
@@ -494,7 +497,7 @@ async def test_only_v0_roles_are_emitted():
     await _store_scoped_record("ticket-7", "rollback v2", "2026-06-02T10:00:00+00:00", "")
     out = await R.do_reconstruct(AGENT, QUERY, count=10, top_k=TOP_K, project_id="p1")
     emitted = {r["role"] for item in out["items"] for c in item["claims"] for r in c.get("roles", [])}
-    assert emitted <= R.V0_DERIVED_ROLES, emitted
+    assert emitted <= V0_DERIVED_ROLES, emitted
 
 
 @pytest.mark.asyncio

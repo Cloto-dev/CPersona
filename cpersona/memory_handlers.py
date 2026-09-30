@@ -1990,9 +1990,11 @@ async def do_recall(
     lexical_terms: list[str] | None = None,
     excerpt_chars: int = 0,
     trace: bool = False,
-    time_cue: dict | None = None,
+    time_cue: dict | cue.TimeCue | None = None,
     iteration_budget: int | None = None,
     propagation_seat: bool = False,
+    providers_: providers.Providers | None = None,
+    query_vec_out: list | None = None,
 ) -> dict:
     """Recall, optionally returning the recall trace (docs/RECALL_PROCESS_DESIGN.md §1).
 
@@ -2015,6 +2017,12 @@ async def do_recall(
     library argument the ``recall`` tool sets from CPERSONA_RECALL_PROPAGATION_SEAT;
     reconstruct and recall_with_context never pass it, so it changes only the tool
     it was measured on. It applies to the fusion modes and to a non-blank query.
+
+    ``providers_``, ``query_vec_out`` and an already-read ``TimeCue`` are for a caller
+    this recall serves (reconstruct, bug-474 / bug-494): the provider set that caller
+    read, so both use one set; a list the recall fills with the query vector it
+    embedded, so the caller need not embed the query again; and a cue the caller
+    already read, which is not read a second time. Library arguments, not tool ones.
     """
     propagation_seat = _propagation_applies(propagation_seat, query)
     try:
@@ -2023,11 +2031,14 @@ async def do_recall(
         return error_response(str(exc), messages=[])
     # The providers this recall runs with, read once, here: a set installed while
     # it runs applies to the recalls that start after it (cpersona/providers.py).
-    active = providers.active()
-    try:
-        parsed_cue = active.cue_interpreter.parse(time_cue)
-    except cue.TimeCueError as exc:
-        return error_response(str(exc), messages=[])
+    active = providers_ if providers_ is not None else providers.active()
+    if isinstance(time_cue, cue.TimeCue):
+        parsed_cue = time_cue
+    else:
+        try:
+            parsed_cue = active.cue_interpreter.parse(time_cue)
+        except cue.TimeCueError as exc:
+            return error_response(str(exc), messages=[])
     kwargs = dict(
         deep=deep, channel=channel, exclude_contents=exclude_contents, project_id=project_id,
         source_id=source_id, session_key=session_key, lexical_terms=lexical_terms,
@@ -2035,6 +2046,7 @@ async def do_recall(
         providers_=active,
         ledger_=ledger,
         **({"propagation_seat": True} if propagation_seat else {}),
+        **({"query_vec_out_": query_vec_out} if query_vec_out is not None else {}),
     )
     if not trace:
         return await _do_recall(agent_id, query, limit, **kwargs)
@@ -2092,6 +2104,7 @@ async def _do_recall(
     providers_: providers.Providers | None = None,
     ledger_: budget.Ledger | None = None,
     propagation_seat: bool = False,
+    query_vec_out_: list | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -2184,8 +2197,9 @@ async def _do_recall(
     # Filled by whichever fusion ran, with the one vector it embedded. Empty
     # wherever no local vector was produced -- no client, a remote search that
     # answered for itself, an embed that failed -- and the block arm reads that
-    # emptiness as "nothing to rank on" rather than embedding the query again.
-    query_vec_out: list = []
+    # emptiness as "nothing to rank on" rather than embedding the query again. A
+    # caller's list is filled in place, so the caller reads the same vector.
+    query_vec_out: list = query_vec_out_ if query_vec_out_ is not None else []
     async with connection() as db:
         ledger.spend(budget.ORDINARY_FETCH)
         results = await p.fusion.retrieve(
@@ -2698,6 +2712,7 @@ async def _do_recall(
             found = await excerpts.for_refs(
                 agent_id, [m["ref"] for m in cut], query,
                 query_vec_out[0] if query_vec_out else None, excerpt_chars,
+                texts={m["ref"]: m.get("content") or "" for m in cut},
             )
             for m in cut:
                 if m["ref"] in found:

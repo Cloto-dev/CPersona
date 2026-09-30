@@ -187,9 +187,36 @@ async def test_a_held_item_the_budget_leaves_out_is_reported(reading, lexical_of
     first, and the response says so rather than returning one item silently."""
     async with reach._TempDB() as tmp:
         _, echo_ref = await _long_and_echo(tmp)
-        floor = config.RECALL_PREVIEW_CHARS
+        floor = reconstruct._head_cap()  # one head quote (bug-457)
         out = await reconstruct.do_reconstruct(AGENT, QUERY, count=1, budget=floor)
         assert _heads(out) == [echo_ref]
         assert out["reserved_omitted"] == 1
         assert "reserved_count" not in out
         assert out["effective_budget"] == floor, "a named budget was widened for the held place"
+
+
+@pytest.mark.asyncio
+async def test_a_short_window_is_blamed_on_the_budget_only_when_it_cut_the_window(reading, lexical_off):
+    """bug-464: shortfall_reason said budget_exhausted whenever the budget cut any head,
+    a held one included. Here the window is short because only one cluster passed the
+    gate, and the budget cut only the held item -- which reserved_omitted reports."""
+    async with reach._TempDB() as tmp:
+        _, echo_ref = await _long_and_echo(tmp)
+        out = await reconstruct.do_reconstruct(AGENT, QUERY, count=2, budget=reconstruct._head_cap())
+        assert _ranked(out) == [echo_ref]
+        assert out["reserved_omitted"] == 1
+        assert out["shortfall_reason"] == "exhausted_candidates"
+
+
+@pytest.mark.asyncio
+async def test_reserved_rows_do_not_make_a_short_retrieval_look_full(reading, lexical_off):
+    """bug-465: bounds.reached=[top_k] was decided from every row recall returned,
+    reserved ones included, so a retrieval that filled its limit only with the
+    rows held beside it was reported as having reached it."""
+    async with reach._TempDB() as tmp:
+        await _long_and_echo(tmp)
+        recalled = await memory_handlers.do_recall(AGENT, QUERY, limit=2)
+        admissions = [m.get("match_reason", {}).get("admission") for m in recalled["messages"]]
+        assert len(admissions) == 2 and admissions.count("reservation") == 1, "the fixture must fill the limit with a held row"
+        out = await reconstruct.do_reconstruct(AGENT, QUERY, count=2, top_k=2, trace=True)
+        assert "top_k" not in out["bounds"].get("reached", []), out["bounds"]

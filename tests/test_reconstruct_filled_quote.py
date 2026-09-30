@@ -249,3 +249,156 @@ async def test_the_mcp_boundary_still_cuts_the_single_passage(filling, monkeypat
         out = await server.do_reconstruct_boundary(AGENT, QUERY, 3, None, None, None, True, "", None, "")
         item = next(i for i in out["items"] if i["head_ref"] == ids[LONG])
         assert item["content"] == LONG[:500] and item["content_truncated"] is True
+
+
+# --- what one reconstruction reads, and how often (bug-457, 474, 479, 480, 491, 494, 495) ---
+
+
+def test_a_budget_below_one_head_quote_is_raised_to_it(monkeypatch):
+    """bug-457: the floor was one preview-tier excerpt, 500, while a head is cut to 800,
+    so a budget of 600 returned about 800 characters and reported no overrun."""
+    monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 800)
+    monkeypatch.setattr(config, "RECALL_PREVIEW_CHARS", 500)
+    monkeypatch.setattr(config, "RECONSTRUCT_FORCED_BUDGET", None)
+    monkeypatch.setattr(config, "RECONSTRUCT_MAX_BUDGET", 20000)
+    budget, policy = reconstruct.resolve_budget(600, 1)
+    assert budget == 800 and policy == {"source": "caller", "clamped": True, "reason": "raised_to_one_excerpt"}
+    monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 0)
+    assert reconstruct.resolve_budget(600, 1)[0] == 600, "with filling off the floor is the preview tier again"
+
+
+@pytest.mark.asyncio
+async def test_what_is_returned_fits_the_budget_it_reports(filling):
+    async with _TempDB() as tmp:
+        await _store(tmp, LONG)
+        out = await reconstruct.do_reconstruct(AGENT, QUERY, count=1, deep=True, budget=600)
+        # The raise is reported (requested_budget + budget_policy stay in the compact
+        # response), and what came back is within what the budget was raised to.
+        assert out["requested_budget"] == 600
+        assert out["budget_policy"] == {"source": "caller", "clamped": True, "reason": "raised_to_one_excerpt"}
+        assert sum(len(item["content"]) for item in out["items"]) <= 800
+
+
+@pytest.mark.asyncio
+async def test_a_reconstruction_embeds_its_query_once(filling, monkeypatch):
+    """bug-494: the candidate recall embedded the query and reconstruct embedded it
+    again for its quotes; it now reads the vector the recall kept."""
+    monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", True)
+    async with _TempDB() as tmp:
+        await _store(tmp, LONG)
+        asked = []
+        real = filling.embed
+
+        async def counting(texts):
+            asked.extend(t for t in texts if t == QUERY)
+            return await real(texts)
+
+        monkeypatch.setattr(filling, "embed", counting)
+        out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, deep=True)
+        assert any(item.get("quote_basis") == "blocks" for item in out["items"]), "the quotes must use the vector"
+        assert len(asked) == 1, asked
+
+
+@pytest.mark.asyncio
+async def test_one_provider_set_and_one_reading_of_the_cue(filling, monkeypatch):
+    """bug-474: the candidate recall read the provider set again and parsed the cue
+    again; a set installed between the two reads built the pool with one set and the
+    items with another."""
+    from cpersona import providers
+
+    read = []
+    real_active = providers.active
+
+    def counting_active():
+        read.append(1)
+        return real_active()
+
+    monkeypatch.setattr(providers, "active", counting_active)
+    parsed = []
+    from cpersona import cue
+
+    real = cue.parse
+
+    def counting_parse(raw):
+        parsed.append(1)
+        return real(raw)
+
+    monkeypatch.setattr(cue, "parse", counting_parse)
+    async with _TempDB() as tmp:
+        await _store(tmp, LONG)
+        cue_arg = {"ago": {"unit": "days", "value": 30}, "confidence": "vague"}
+        await reconstruct.do_reconstruct(AGENT, QUERY, count=3, deep=True, time_cue=cue_arg)
+    assert len(read) == 1 and len(parsed) == 1, (read, parsed)
+
+
+@pytest.mark.asyncio
+async def test_a_head_quoted_by_filling_reads_no_node_set(filling, monkeypatch):
+    """bug-495: every head's node set, embeddings included, was read although a filled
+    head quote never uses nodes. With one item and no other claims nothing asks for one."""
+    seen = []
+    real = reconstruct._current_sets
+
+    async def spy(agent_id, node_claims, block_claims):
+        seen.append([c.ref for c in node_claims])
+        return await real(agent_id, node_claims, block_claims)
+
+    monkeypatch.setattr(reconstruct, "_current_sets", spy)
+    async with _TempDB() as tmp:
+        await _store(tmp, LONG)
+        out = await reconstruct.do_reconstruct(AGENT, QUERY, count=1, deep=True, max_evidence=1)
+        assert out["items"] and "quote_selection" not in out
+    assert all(refs == [] for refs in seen), seen
+
+
+@pytest.mark.asyncio
+async def test_a_block_set_missing_a_vector_is_not_quoted_from(filling, monkeypatch):
+    """bug-479: the reader held block sets to its own test, which did not ask for the
+    re-rank vectors the builder and the sweep require -- so a set they rebuild was
+    still quoted from. One rule now, and the quote falls back to dividing the text."""
+    monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", True)
+    async with _TempDB() as tmp:
+        ids = await _store(tmp, LONG)
+        item, _ = await _item(ids[LONG])
+        assert item["quote_basis"] == "blocks"
+        db = await database.get_db()
+        mem_id = int(ids[LONG].split(":")[1])
+        await db.execute("DELETE FROM record_block_vectors WHERE parent_id = ? AND block_index = 0", (mem_id,))
+        await db.commit()
+        item, _ = await _item(ids[LONG])
+        assert item["quote_basis"] == "lexical"
+
+
+@pytest.mark.asyncio
+async def test_an_episode_head_quote_is_the_recall_excerpt_of_the_same_episode(filling, monkeypatch):
+    """bug-480: the two copies of the excerpt rule had diverged; one rule now, and an
+    episode -- where the display label is what diverged -- gives the same passages."""
+    monkeypatch.setattr(config, "RECALL_EXCERPT_CHARS", 800)
+    async with _TempDB() as tmp:
+        await _store(tmp)
+        archived = await memory_handlers.do_archive_episode(AGENT, [], summary=LONG)
+        ref = f"ep:{archived['episode_id']}"
+        await tmp.drain()
+        item, _ = await _item(ref)
+        recalled = await memory_handlers.do_recall(AGENT, QUERY, limit=10, deep=True, excerpt_chars=800)
+        row = next(m for m in recalled["messages"] if m.get("ref") == ref)
+        assert item["content"] == row["excerpt"]
+        assert item["quote_basis"] == row["excerpt_basis"]
+
+
+@pytest.mark.asyncio
+async def test_excerpts_read_no_record_the_recall_row_already_carries(filling):
+    """bug-491: each record without a current block set was read again, one SELECT per
+    ref, although its text was in the row being turned into the message."""
+    async with _TempDB() as tmp:
+        ids = await _store(tmp, LONG)
+        reader = await database._get_read_db()
+        statements: list[str] = []
+        await reader.set_trace_callback(statements.append)
+        try:
+            found = await excerpts.for_refs(AGENT, [ids[LONG]], QUERY, None, 800, texts={ids[LONG]: LONG})
+        finally:
+            await reader.set_trace_callback(None)
+        assert TAIL in found[ids[LONG]]["excerpt"]
+        assert not [s for s in statements if "FROM memories" in s], statements

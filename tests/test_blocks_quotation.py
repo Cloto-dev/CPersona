@@ -284,10 +284,13 @@ async def test_a_cut_quote_says_it_is_no_longer_whole(monkeypatch, quoting):
         assert item["context_incomplete"], "a severed quote passed as whole evidence"
         assert item["expand"]["ref"] == f"mem:{stored['id']}"
         assert item["expand"]["revision"] == blocks.text_revision(DECISION)
-        # And the handover works: it reads back the block, not the whole record.
+        # And the handover works: it reads back what the cut quote was the start of.
+        # bug-466: that is the governing range -- here both blocks, because the second
+        # opens with a qualifier -- not the best block alone, which would not return
+        # the rest of what was cut.
         back = await memory_handlers.do_get_contents(AGENT, [item["expand"]])
-        assert back["items"][0]["content"] != DECISION
-        assert back["items"][0]["content"] in DECISION
+        assert back["items"][0]["content"].startswith(item["content"])
+        assert back["items"][0]["content"] == DECISION
 
 
 @pytest.mark.asyncio

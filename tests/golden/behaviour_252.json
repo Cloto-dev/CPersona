@@ -18469,7 +18469,7 @@
     "thresholds": {}
   },
   "m1-reconstruct-count-budget": {
-    "covers": "reconstruct at count 3 with a budget below one excerpt: raised to the floor (budget_policy), item shape, bounds",
+    "covers": "reconstruct at count 3 with a budget below one head quote: raised to the floor (budget_policy), item shape, bounds",
     "db": {
       "episodes": [
         {
@@ -18713,7 +18713,7 @@
         "reason": "count_requested",
         "source": "caller"
       },
-      "effective_budget": 500,
+      "effective_budget": 800,
       "effective_count": 3,
       "items": [
         {

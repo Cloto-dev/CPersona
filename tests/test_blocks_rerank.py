@@ -188,19 +188,19 @@ async def test_a_complete_set_is_still_current(building):
 
 @pytest.mark.asyncio
 async def test_the_sweep_counts_a_set_missing_a_vector_as_stale(building):
-    """The sweep and the builder read currentness through one aggregate; this
-    pins the sweep's half of it."""
+    """The sweep and the builder read currentness through one rule; this pins the
+    sweep's half of it."""
     async with _TempDB() as tmp:
         mem = await _store(tmp, MANY)
         db = await database.get_db()
         keys = blocks.generation.block_keys()
         text_len = len(MANY)
-        sets = await blocks._sets_for(db, "mem", [mem], keys)
-        assert blocks._set_is_current(*sets[mem], text_len)
+        sets = await blocks._sets_for(db, "mem", [mem])
+        assert blocks.block_set_is_current(sets[mem], text_len, keys)
         await db.execute("DELETE FROM record_block_vectors WHERE parent_id = ? AND block_index = 0", (mem,))
         await db.commit()
-        sets = await blocks._sets_for(db, "mem", [mem], keys)
-        assert not blocks._set_is_current(*sets[mem], text_len)
+        sets = await blocks._sets_for(db, "mem", [mem])
+        assert not blocks.block_set_is_current(sets[mem], text_len, keys)
 
 
 # --------------------------------------------------------------------------
@@ -500,3 +500,58 @@ async def test_the_fallback_measures_the_examined_rows_once(building, monkeypatc
         hits = await _search("三文目です。")
         assert hits and all(h.cosine is None for h in hits), "the fallback path did not run"
         assert len(calls) == 1
+
+
+# --------------------------------------------------------------------------
+# bug-468: a set that crosses a node end is not current
+# --------------------------------------------------------------------------
+
+
+async def _node_lands_inside_a_block(db, mem: int) -> int:
+    """Give the record a node layout whose first end falls inside a stored block, as
+    when a node build that failed lands after the blocks were built."""
+    blocks_rows = await db.execute_fetchall(
+        "SELECT start_char, end_char FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = ? "
+        "ORDER BY block_index",
+        (mem,),
+    )
+    start, end = blocks_rows[0]
+    inside = start + (end - start) // 2
+    assert start < inside < end
+    text_len = blocks_rows[-1][1]
+    await db.executemany(
+        "INSERT INTO record_nodes (parent_kind, parent_id, node_index, start_char, end_char, token_count, "
+        "window, embedding, embedding_model) VALUES ('mem', ?, ?, ?, ?, 1, 512, x'00', '')",
+        [(mem, 0, 0, inside), (mem, 1, inside, text_len)],
+    )
+    await db.commit()
+    return inside
+
+
+@pytest.mark.asyncio
+async def test_a_set_that_crosses_a_node_end_is_not_current(building):
+    async with _TempDB() as tmp:
+        mem = await _store(tmp, MANY)
+        db = await database.get_db()
+        keys = blocks.generation.block_keys()
+        assert await blocks._blocks_current(db, "mem", mem, len(MANY), keys)
+        inside = await _node_lands_inside_a_block(db, mem)
+        assert not await blocks._blocks_current(db, "mem", mem, len(MANY), keys)
+        stale = await blocks.records_without_current_blocks(db, isolation_where(agent_id=AGENT))
+        assert [(kind, row_id) for kind, row_id, _, _ in stale] == [("mem", mem)]
+        # The rebuild cuts at the node end, and is then current.
+        await blocks.build_blocks({"kind": "mem", "id": mem})
+        ends = [r[0] for r in await db.execute_fetchall(
+            "SELECT end_char FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = ?", (mem,))]
+        assert inside in ends
+        assert await blocks._blocks_current(db, "mem", mem, len(MANY), keys)
+
+
+def test_the_rule_reads_the_node_ends_it_is_given():
+    rows = [(0, 5, True, "m"), (5, 12, True, "m")]
+    assert blocks.block_set_is_current(rows, 12, ("m",), node_ends=(5, 12))
+    assert not blocks.block_set_is_current(rows, 12, ("m",), node_ends=(7, 12))
+    assert blocks.block_set_is_current(rows, 12, ("m",), node_ends=())
+    assert not blocks.block_set_is_current([(0, 5, True, "m"), (6, 12, True, "m")], 12, ("m",))  # gap
+    assert not blocks.block_set_is_current([(0, 5, True, "m"), (5, 12, False, "m")], 12, ("m",))  # vector
+    assert not blocks.block_set_is_current([(0, 5, True, "m"), (5, 12, True, "x")], 12, ("m",))  # model

@@ -134,11 +134,25 @@ async def test_every_passage_of_an_excerpt_is_text_the_record_holds(fake_embeddi
 @pytest.mark.asyncio
 async def test_a_record_with_a_block_set_is_ranked_by_it(fake_embedding_client, monkeypatch):
     monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", True)
     async with _TempDB() as tmp:
         await _store(tmp, LONG)
         row = _row(await _boundary(), LONG)
         assert row["excerpt_basis"] == "blocks"
         assert TAIL in row["excerpt"]
+
+
+@pytest.mark.asyncio
+async def test_a_block_set_is_not_read_while_block_retrieval_is_off(fake_embedding_client, monkeypatch):
+    """bug-469: the excerpt read stored block sets with retrieval off, while the head
+    quote of the same record read them only with it on, so the two disagreed. Off
+    means the index may exist and nothing reads it."""
+    monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", False)
+    async with _TempDB() as tmp:
+        await _store(tmp, LONG)
+        row = _row(await _boundary(), LONG)
+        assert row["excerpt_basis"] == "lexical"
 
 
 @pytest.mark.asyncio
@@ -149,6 +163,7 @@ async def test_a_block_set_is_ranked_with_the_query_vector_the_recall_embedded(
     from cpersona import reconstruct
 
     monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", True)
     seen = []
     real = reconstruct.rank_blocks
 

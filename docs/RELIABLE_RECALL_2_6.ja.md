@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:1e3fdb923bbf61b9b0e672ae1d53b727064c2291 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:43f23f17ba2ac351c8c7b1151d9edaefb30524c2 -->
 
 # Reliable Recall — 2.6 系
 
@@ -465,7 +465,8 @@ export。適応化は、固定 policy が再現可能な baseline と監査契�
 ([連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md#3-where-the-graph-is-read-reconstructive-recall))、
 宣言が無ければ恒等です。
 v1.1 からペイロード予算を上記のとおり実装しています。既定値 4,000 字と最大値 20,000 字は、
-§9 の掃引が選ぶまでの暫定値です。呼び出し側の予算がプレビュー層の抜粋 1 つ分に満たない場合は
+§9 の掃引が選ぶまでの暫定値です。呼び出し側の予算が見出しの引用 1 つ分
+(`CPERSONA_RECONSTRUCT_QUOTE_CHARS`。充填が off のときはプレビュー層の抜粋 1 つ分) に満たない場合は
 その分まで引き上げ、`budget_policy` で申告します。レコードが現行の overflow tree ノードを
 完全に持つ claim は、クエリに最も合うノードから引用します: ノードをクエリ埋め込みとの
 コサインと、共有する文字 3-gram の数でそれぞれ順位付けし (同じ値は同じ順位)、相互順位融合で

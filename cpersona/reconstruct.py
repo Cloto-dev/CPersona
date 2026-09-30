@@ -87,7 +87,6 @@ ROLE_VOCABULARY: tuple[str, ...] = (
     "contradicts",
     "temporal_predecessor",
 )
-V0_DERIVED_ROLES: frozenset[str] = frozenset({"supports", "supersedes"})
 
 # Stage 2 cluster keys, strongest first. The order is the tie-break for
 # `independence_reason` when a cluster was formed by more than one key, and it is
@@ -304,10 +303,14 @@ def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
     an operator names is taken as given, and a window of eight or fewer resolves
     exactly as before.
 
-    Counted in characters of quoted text. A caller's request below one
-    preview-tier excerpt is raised to it, because the first item must always fit;
-    configured values below it are refused at startup instead
-    (config.validate_reconstruct_counts). Returns `(effective, budget_policy)`.
+    Counted in characters of quoted text. A caller's request below one head quote
+    is raised to it, because the first item must always fit (bug-457: the floor was
+    one preview-tier excerpt, 500, while a head is cut to RECONSTRUCT_QUOTE_CHARS,
+    800 by default, so a budget of 600 returned about 800 characters and, nothing
+    having been cut, reported no overrun). Configured values below one preview-tier
+    excerpt are refused at startup (config.validate_reconstruct_counts); one between
+    that and a head quote is raised here, and budget_policy says so. Returns
+    `(effective, budget_policy)`.
     """
     maximum = config.RECONSTRUCT_MAX_BUDGET
     forced = config.RECONSTRUCT_FORCED_BUDGET
@@ -322,7 +325,7 @@ def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
             base, reason = heads, "default_fits_the_window"
     base = int(base)
     budget = min(base, maximum)
-    floor = max(config.RECALL_PREVIEW_CHARS, 1)
+    floor = max(_head_cap(), 1)
     if budget < floor:
         budget, reason = floor, "raised_to_one_excerpt"
     return budget, {"source": source, "clamped": budget != base, "reason": reason}
@@ -341,7 +344,6 @@ class _Union:
     def __init__(self, n: int) -> None:
         self._parent = list(range(n))
         self.why: dict[int, str] = {}
-        self.keys_used: set[str] = set()
 
     def find(self, i: int) -> int:
         while self._parent[i] != i:
@@ -356,7 +358,6 @@ class _Union:
         # Lower index wins so the representative does not depend on merge order.
         hi, lo = (rb, ra) if ra < rb else (ra, rb)
         self._parent[hi] = lo
-        self.keys_used.add(key)
         # The row that JOINED gets the why. Both endpoints may already carry one
         # from a stronger key; first key wins, which is why CLUSTER_KEYS is
         # ordered and iterated rather than applied as a set. A declared relation
@@ -365,51 +366,38 @@ class _Union:
             self.why.setdefault(idx, why or key)
 
 
-async def _episode_spans(agent_id: str, episode_ids: list[int]) -> dict[int, tuple[object, object]]:
-    """`[start_time, end_time]` for candidate episodes.
+async def _read_candidates(agent_id: str, candidates: list[_Candidate]) -> dict[int, tuple[object, object]]:
+    """Fill each candidate's ``context`` and return the episodes' ``[start, end]`` spans.
 
-    The recall response carries an episode's `timestamp` but not its `end_time`
-    (the episode FTS arm selects id / summary / start_time / resolved /
-    created_at), and stage 2 needs the span to decide containment. This is one
-    bounded lookup over ids the retrieval already scoped to this agent — it adds
-    no reach, only the column the key reads.
+    Recall deliberately omits project/channel from its public row shape. They are
+    nevertheless essential to distinguish simultaneous conversations. Missing rows
+    stay ungroupable; a deletion between reads is not provenance. Stage 2 also
+    needs an episode's span to decide containment, and the recall row carries its
+    start but not its end.
+
+    bug-496: one connection, and one read of each episode, where the context and the
+    spans were two readers each opening its own connection over the same rows. Reads
+    are keyed on refs retrieval already scoped to this agent: no reach is added.
     """
-    if not episode_ids:
-        return {}
-    placeholders = ",".join("?" for _ in episode_ids)
     spans: dict[int, tuple[object, object]] = {}
-    async with connection() as db:
-        cursor = await db.execute(
-            f"SELECT id, start_time, end_time FROM episodes WHERE agent_id = ? AND id IN ({placeholders})",
-            [agent_id, *episode_ids],
-        )
-        for row_id, start, end in await cursor.fetchall():
-            spans[row_id] = (_parse_timestamp_utc(start or ""), _parse_timestamp_utc(end or ""))
-    return spans
-
-
-async def _candidate_context(agent_id: str, candidates: list[_Candidate]) -> None:
-    """Read context for already selected refs, never discover additional rows.
-
-    Recall deliberately omits project/channel from its public row shape. They
-    are nevertheless essential to distinguish simultaneous conversations.
-    Missing rows stay ungroupable; a deletion between reads is not provenance.
-    """
     async with connection() as db:
         for kind, table in (("mem", "memories"), ("ep", "episodes")):
             rows = [c for c in candidates if c.kind == kind and c.row_id > 0]
             by_id = {c.row_id: c for c in rows}
             ids = list(by_id)
+            columns = "id, project_id, channel" + (", start_time, end_time" if kind == "ep" else "")
             for offset in range(0, len(ids), 500):
                 batch = ids[offset:offset + 500]
                 placeholders = ",".join("?" for _ in batch)
                 cursor = await db.execute(
-                    f"SELECT id, project_id, channel FROM {table} "
-                    f"WHERE agent_id = ? AND id IN ({placeholders})",
+                    f"SELECT {columns} FROM {table} WHERE agent_id = ? AND id IN ({placeholders})",
                     [agent_id, *batch],
                 )
-                for row_id, project, channel in await cursor.fetchall():
+                for row_id, project, channel, *times in await cursor.fetchall():
                     by_id[row_id].context = (project or "", channel or "")
+                    if times:
+                        spans[row_id] = (_parse_timestamp_utc(times[0] or ""), _parse_timestamp_utc(times[1] or ""))
+    return spans
 
 
 def bundle(
@@ -791,28 +779,32 @@ def rank_blocks(
     return [block_rows[i] for i in order]
 
 
-def best_node(text: str, node_rows: list[tuple], query_vec, query_grams: set[str]) -> tuple:
-    """The node of `text` to quote."""
-    return rank_nodes(text, node_rows, query_vec, query_grams)[0]
+async def _current_sets(
+    agent_id: str, node_claims: list[_Candidate], block_claims: list[_Candidate]
+) -> tuple[dict[str, tuple[str, list[tuple]]], set[str], dict[str, tuple[str, list[tuple]]]]:
+    """The current node sets of ``node_claims`` and block sets of ``block_claims``.
 
+    Returns ``(node_sets, not_current, block_sets)``: ``ref -> (stored text, rows)``
+    for each record whose set is current, and the refs whose record has nodes that are
+    not. Current is the rule the builders, the sweep and the health checks apply --
+    ``nodes.node_set_is_current`` and ``blocks.block_set_is_current`` -- so the reader
+    cannot hold a set to a test they do not (bug-479). Anything else is quoted the way
+    a record without that set is.
 
-async def _current_node_sets(
-    agent_id: str, claims: list[_Candidate]
-) -> tuple[dict[str, tuple[str, list[tuple]]], set[str]]:
-    """`ref -> (stored text, nodes)` for the claims whose record has a current node set,
-    and the refs whose record has nodes that are not current.
-
-    Current is ``nodes.node_set_is_current``, the rule the builder and the
-    missing_nodes check apply too; anything else is quoted from the record's start,
-    which is exactly what a record without nodes gets. Reads are keyed on refs retrieval already
-    scoped to this agent.
+    One connection, and each record's text read once for both kinds of set (bug-479,
+    bug-496: the two readers each opened a connection and read the same texts). Reads
+    are keyed on refs retrieval already scoped to this agent.
     """
-    keys = generation.node_keys()
-    out: dict[str, tuple[str, list[tuple]]] = {}
+    node_keys = generation.node_keys()
+    block_keys = generation.block_keys()
+    node_sets: dict[str, tuple[str, list[tuple]]] = {}
     not_current: set[str] = set()
+    block_sets: dict[str, tuple[str, list[tuple]]] = {}
     async with connection() as db:
         for kind, (table, column) in nodes.PARENT_TEXT.items():
-            ids = sorted({c.row_id for c in claims if c.kind == kind and c.row_id > 0})
+            node_ids = {c.row_id for c in node_claims if c.kind == kind and c.row_id > 0}
+            block_ids = {c.row_id for c in block_claims if c.kind == kind and c.row_id > 0}
+            ids = sorted(node_ids | block_ids)
             for offset in range(0, len(ids), 500):
                 batch = ids[offset : offset + 500]
                 marks = ",".join("?" for _ in batch)
@@ -822,71 +814,59 @@ async def _current_node_sets(
                         [agent_id, *batch],
                     )
                 )
-                rows = await db.execute_fetchall(
+                ends: dict[int, list[int]] = {}
+                for parent_id, index, start, end, blob, model in await db.execute_fetchall(
                     "SELECT parent_id, node_index, start_char, end_char, embedding, embedding_model "
                     f"FROM record_nodes WHERE parent_kind = ? AND parent_id IN ({marks}) "
                     "ORDER BY parent_id, node_index",
                     [kind, *batch],
-                )
-                grouped: dict[int, list] = {}
-                for parent_id, index, start, end, blob, node_model in rows:
-                    grouped.setdefault(parent_id, []).append((index, start, end, blob, node_model))
-                for parent_id, group in grouped.items():
+                ):
+                    ends.setdefault(parent_id, []).append((index, start, end, blob, model))
+                for parent_id, group in ends.items():
                     text = texts.get(parent_id)
-                    if text is None:
+                    if text is None or parent_id not in node_ids:
                         continue
                     spans = [(g[1], g[2], g[3] is not None, g[4]) for g in group]
-                    if nodes.node_set_is_current(spans, len(text), keys):
-                        out[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
+                    if nodes.node_set_is_current(spans, len(text), node_keys):
+                        node_sets[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
                     else:
                         not_current.add(f"{kind}:{parent_id}")
-    return out, not_current
-
-
-async def _current_block_sets(
-    agent_id: str, claims: list[_Candidate]
-) -> dict[str, tuple[str, list[tuple]]]:
-    """`ref -> (stored text, blocks)` for the claims whose record has a current
-    block set (docs/BLOCK_REACH_DESIGN.md §6).
-
-    Current is the same test the builder and the backfill share: the set covers
-    the stored text with no gap, and every row came from the model this server
-    reports. Anything else quotes the way it did before — from a node, or from
-    the record's start — because a partial set would put an offset into text it
-    was not measured in.
-    """
-    keys = generation.block_keys()
-    out: dict[str, tuple[str, list[tuple]]] = {}
-    async with connection() as db:
-        for kind, (table, column) in nodes.PARENT_TEXT.items():
-            ids = sorted({c.row_id for c in claims if c.kind == kind and c.row_id > 0})
-            for offset in range(0, len(ids), 500):
-                batch = ids[offset : offset + 500]
-                marks = ",".join("?" for _ in batch)
-                texts = dict(
-                    await db.execute_fetchall(
-                        f"SELECT id, {column} FROM {table} WHERE agent_id = ? AND id IN ({marks})",
-                        [agent_id, *batch],
-                    )
-                )
-                rows = await db.execute_fetchall(
-                    "SELECT parent_id, block_index, start_char, end_char, embedding_bits, "
-                    f"embedding_model FROM record_blocks WHERE parent_kind = ? AND parent_id IN ({marks}) "
-                    "ORDER BY parent_id, block_index",
-                    [kind, *batch],
-                )
+                wanted = [i for i in batch if i in block_ids]
+                if not wanted:
+                    continue
+                block_marks = ",".join("?" for _ in wanted)
                 grouped: dict[int, list] = {}
-                for parent_id, index, start, end, bits, block_model in rows:
-                    grouped.setdefault(parent_id, []).append((index, start, end, bits, block_model))
+                for parent_id, index, start, end, bits, has_vector, model in await db.execute_fetchall(
+                    "SELECT b.parent_id, b.block_index, b.start_char, b.end_char, b.embedding_bits, "
+                    "v.block_index IS NOT NULL, b.embedding_model FROM record_blocks b "
+                    "LEFT JOIN record_block_vectors v ON v.parent_kind = b.parent_kind "
+                    "AND v.parent_id = b.parent_id AND v.block_index = b.block_index "
+                    f"WHERE b.parent_kind = ? AND b.parent_id IN ({block_marks}) "
+                    "ORDER BY b.parent_id, b.block_index",
+                    [kind, *wanted],
+                ):
+                    grouped.setdefault(parent_id, []).append((index, start, end, bits, has_vector, model))
                 for parent_id, group in grouped.items():
                     text = texts.get(parent_id)
                     if text is None:
                         continue
-                    contiguous = all(a[2] == b[1] for a, b in zip(group, group[1:]))
-                    complete = group[0][1] == 0 and group[-1][2] == len(text) and contiguous
-                    if complete and all(g[4] in keys for g in group):
-                        out[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
-    return out
+                    node_ends = [g[2] for g in ends.get(parent_id, [])]
+                    rows = [(g[1], g[2], g[4], g[5]) for g in group]
+                    if blocks.block_set_is_current(rows, len(text), block_keys, node_ends):
+                        block_sets[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
+    return node_sets, not_current, block_sets
+
+
+async def _current_node_sets(agent_id: str, claims: list[_Candidate]):
+    """`(node_sets, not_current)` for ``claims`` (see :func:`_current_sets`)."""
+    node_sets, not_current, _ = await _current_sets(agent_id, claims, [])
+    return node_sets, not_current
+
+
+async def _current_block_sets(agent_id: str, claims: list[_Candidate]) -> dict[str, tuple[str, list[tuple]]]:
+    """``ref -> (stored text, blocks)`` for the claims with a current block set
+    (docs/BLOCK_REACH_DESIGN.md §6; see :func:`_current_sets`)."""
+    return (await _current_sets(agent_id, [], claims))[2]
 
 
 async def _query_vector(query: str):
@@ -964,16 +944,22 @@ def _quote(
             quote["content_len"] = len(content)
             quote["content"] = content[:cap]
             quote["content_truncated"] = True
-            span_start = quote["block"]["span"][0]
+            span_start, span_end = quote["block"]["span"]
             quote["block"]["span"] = [span_start, span_start + cap]
             # Cut, so what is shown is a prefix of the context rather than the
             # context: the same treatment a cut node gets, and the same reason.
             quote["context_incomplete"] = True
+            # bug-466: the shown text starts at the governing range's first block, so
+            # the range is what expand names -- the best block alone did not return
+            # the rest of what was cut. The same [first, last] form the incomplete
+            # path gives, which get_contents takes.
+            starts = [s for _, s, _, _ in block_entry[1]]
+            ends = [e for _, _, e, _ in block_entry[1]]
             quote.setdefault(
                 "expand",
                 {
                     "ref": claim.ref,
-                    "block": quote["block"]["index"],
+                    "block": [starts.index(span_start), ends.index(span_end)],
                     "revision": blocks.text_revision(block_entry[0]),
                 },
             )
@@ -1005,32 +991,26 @@ def _quote(
     return quote
 
 
-# How recall shows an episode: this label, then the stored summary. get_contents,
-# nodes and blocks all measure offsets in the summary alone.
-_EPISODE_LABEL = "[Episode] "
-
-
 def _stored_text(claim: _Candidate) -> str:
     """The record's text as stored, so a range into it is one get_contents can serve.
 
     bug-456: an episode quoted without a block set was measured in recall's display
     string, and every range and expand span landed 10 characters right of the text
-    they named.
+    they named. The label rule is excerpts.stored_text, which the recall excerpt uses too.
     """
-    if claim.kind == "ep" and claim.content.startswith(_EPISODE_LABEL):
-        return claim.content[len(_EPISODE_LABEL):]
-    return claim.content
+    return excerpts.stored_text(claim.ref, claim.content)
 
 
 def _filled_quote(claim: _Candidate, block_entry: tuple | None, query_bits, query_grams: set[str], cap: int) -> dict:
     """An item's head quote: the parts of its record that matched, filled to `cap` (2.6).
 
-    The ranking, the governing-context rule and the filling are the recall excerpt's
-    (`excerpts.fill_ranges`), so a head quote and a recall excerpt of the same record for the
-    same query are the same passages. With a current block set (read only while block
-    retrieval is on) the blocks are ranked lexically and by their bits; without one the
-    record is divided at read time and ranked by shared words. A record no longer than the
-    cap is quoted whole, and one that divides into a single block from its start.
+    The passages are chosen by `excerpts.select`, the rule the recall excerpt uses, so a
+    head quote and a recall excerpt of the same record for the same query are the same
+    passages (bug-480: the two carried their own copies, and they had diverged). With a
+    current block set (read only while block retrieval is on) the blocks are ranked
+    lexically, and by their bits when the query vector has their width; without one the
+    record is divided at read time and ranked by shared words. A record no longer than
+    the cap is quoted whole, and one that divides into a single block from its start.
 
     `quote_basis` says which of those it was and `ranges` gives the quoted spans in the
     record's text, in text order; the spans are joined by `excerpts.SEPARATOR`.
@@ -1038,19 +1018,13 @@ def _filled_quote(claim: _Candidate, block_entry: tuple | None, query_bits, quer
     text = block_entry[0] if block_entry is not None else _stored_text(claim)
     if len(text) <= cap:
         return {"content": text, "quote_basis": "whole", "ranges": [[0, len(text)]]}
-    if block_entry is not None:
-        block_rows, basis, bits = block_entry[1], "blocks", query_bits
-    else:
-        divided = blocks.segment(text)
-        block_rows = [(i, s.start, s.end, None) for i, s in enumerate(divided)]
-        basis, bits = "lexical", None
+    basis, ranges, severed, ranked, spans = excerpts.select(
+        text, block_entry[1] if block_entry is not None else None, query_bits, query_grams, cap
+    )
     quote: dict = {"content_len": len(text), "content_truncated": True}
-    if len(block_rows) <= 1:
+    if basis == "start":
         return {**quote, "content": text[:cap], "quote_basis": "start", "ranges": [[0, cap]],
                 "expand": {"ref": claim.ref, "span": [0, len(text)]}}
-    spans = [(start, end) for _, start, end, _ in block_rows]
-    ranked = rank_blocks(text, block_rows, bits, query_grams)
-    ranges, severed = excerpts.fill_ranges(text, spans, ranked, cap)
     quote.update(content=excerpts.SEPARATOR.join(text[s:e] for s, e in ranges), quote_basis=basis,
                  ranges=[[s, e] for s, e in ranges])
     if severed:
@@ -1073,9 +1047,9 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
     claim and ref stay. Because the budget only chooses the prefix length, raising it
     alone never removes an item or an excerpt (invariant 9).
 
-    The first head is always admitted. A budget is never below one preview-tier
-    excerpt, so it fits whenever the preview tier is on; with the tier disabled the
-    first item is still returned whole rather than returning nothing.
+    The first head is always admitted. A budget is never below one head quote
+    (resolve_budget, bug-457), so it fits; with the preview tier disabled and
+    filling off, the first item is still returned whole rather than returning nothing.
 
     Returns (items, used characters, whether a head was cut).
     """
@@ -1171,7 +1145,7 @@ async def do_reconstruct(
     # orders the candidate pool this reconstruction reads. Read here as well, so a cue
     # that cannot be read is refused rather than taken for an empty candidate pool.
     try:
-        p.cue_interpreter.parse(time_cue)
+        parsed_cue = p.cue_interpreter.parse(time_cue)
     except _time_cue.TimeCueError as exc:
         return error_response(str(exc), items=[], returned_count=0)
     effective_count, count_policy = resolve_count(count)
@@ -1194,6 +1168,9 @@ async def do_reconstruct(
     cue_terms, cue_report = await associations.query_terms(
         agent_id, query, project_id=project_id, channel=channel
     )
+    # bug-474 / bug-494: the candidate recall runs with this reconstruction's provider
+    # set and the cue it already read, and hands back the query vector it embedded.
+    recalled_vec: list = []
     recall_result = await p.reconstruct_candidates.candidates(
         agent_id,
         query,
@@ -1207,7 +1184,9 @@ async def do_reconstruct(
         # The recall trace of the call this reconstruction rests on
         # (docs/RECALL_PROCESS_DESIGN.md §1.1), returned as trace.recall.
         **({"trace": True} if trace else {}),
-        **({"time_cue": time_cue} if time_cue else {}),
+        **({"time_cue": parsed_cue} if parsed_cue is not None else {}),
+        providers_=p,
+        query_vec_out=recalled_vec,
     )
     messages = recall_result.get("messages", [])
 
@@ -1224,8 +1203,11 @@ async def do_reconstruct(
     if candidate_bound_clamped:
         bounds["effective_top_k"] = effective_top_k
     # Retrieval handed back exactly as many rows as it was allowed to. Whether more
-    # lay beyond is not known here, so this is "reached", never "omitted".
-    if total >= effective_top_k:
+    # lay beyond is not known here, so this is "reached", never "omitted". Counted
+    # over the rows inside recall's limit only: the reserved rows and the held seats
+    # sit beside it (bug-465), so counting them read a short retrieval as a full one.
+    within_limit = sum(1 for m in messages if m.get("match_reason", {}).get("admission") != "reservation")
+    if within_limit >= effective_top_k:
         bounds["reached"] = [BOUND_TOP_K]
     response: dict = {
         "items": [],
@@ -1268,8 +1250,7 @@ async def do_reconstruct(
         )
         return response if trace else _compact(response, bound_lowered=hops_lowered)
 
-    await _candidate_context(agent_id, candidates)
-    spans = await _episode_spans(agent_id, [c.row_id for c in candidates if c.kind == "ep" and c.row_id > 0])
+    spans = await _read_candidates(agent_id, candidates)
 
     pool_refs = [c.ref for c in candidates]
     links = await associations.record_links(agent_id, pool_refs, project_id=project_id, channel=channel)
@@ -1355,15 +1336,22 @@ async def do_reconstruct(
         )
         entries_claims.append((item, head, others))
     all_claims = [c for _, head, others in entries_claims for c in (head, *others)]
-    node_sets, not_current = await _current_node_sets(agent_id, all_claims) if all_claims else ({}, set())
+    head_cap = config.RECONSTRUCT_QUOTE_CHARS
+    # bug-495: a filled head quote never reads nodes, so under the default head cap
+    # only the other claims' node sets are read -- reading the heads' as well cost a
+    # read of their embeddings, and a query embedding nothing used.
+    node_claims = [c for _, head, others in entries_claims for c in ((head,) if head_cap <= 0 else ()) + tuple(others)]
     # Blocks are read behind the same switch that lets the block arm run: off
     # means the index may exist and nothing reads it, and quoting is a read.
-    block_sets = (
-        await _current_block_sets(agent_id, all_claims)
-        if all_claims and blocks.retrieval_enabled()
-        else {}
+    block_claims = all_claims if blocks.retrieval_enabled() else []
+    node_sets, not_current, block_sets = (
+        await _current_sets(agent_id, node_claims, block_claims) if (node_claims or block_claims) else ({}, set(), {})
     )
-    query_vec = await _query_vector(query) if (node_sets or block_sets) else None
+    query_vec = None
+    if node_sets or block_sets:
+        # The vector the candidate recall embedded; asked for again only where that
+        # recall produced none (a remote search answers for itself).
+        query_vec = np.asarray(recalled_vec[0], dtype=np.float32) if recalled_vec else await _query_vector(query)
     if (node_sets or block_sets) and query_vec is None:
         response["quote_selection"] = QUOTE_LEXICAL_ONLY
     # The same vector, quantised the way a stored block is. One embedding call,
@@ -1380,7 +1368,6 @@ async def do_reconstruct(
     # few indices only -- the fused values are not calibrated across records), so the runner-up
     # is a place to read next, not a confidence.
     node_orders: dict[str, list[int]] | None = {} if trace else None
-    head_cap = config.RECONSTRUCT_QUOTE_CHARS
     for item, head, others in entries_claims:
         head_quote = (
             _filled_quote(head, block_sets.get(head.ref), query_bits, query_grams, head_cap)
@@ -1443,9 +1430,14 @@ async def do_reconstruct(
         response["shortfall_reason"] = "count_zero"
     # A held item does not fill the window, so a short window is judged without them.
     if len(items) - held_returned < effective_count:
+        # bug-464: `budget_cut` is true when allocate cut any head, a held one
+        # included, and a held item cut by the budget is already reported as
+        # reserved_omitted. The budget made the window short only when it cut one of
+        # the window's own items.
+        window_cut = len(items) - held_returned < len(window)
         response["shortfall_reason"] = (
             SHORTFALL_BUDGET_EXHAUSTED
-            if budget_cut
+            if window_cut
             else SHORTFALL_BELOW_QUALITY_THRESHOLD
             if recall_result.get("gate_fallback")
             else SHORTFALL_EXHAUSTED_CANDIDATES
