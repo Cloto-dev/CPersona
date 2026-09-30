@@ -365,8 +365,9 @@ depends on the signal:
   channel's scores are min-max normalised within the query, summed, and divided
   by the number of channels that returned anything. With two active channels, a
   row that one channel ranks first and the other does not find scores exactly
-  0.5, however weak the match; a row both rank first scores 1.0. The number is
-  relative to the query.
+  0.5, however weak the match; a row both rank first scores 1.0. With one active
+  channel its top row scores 1.0; with three, a row one channel ranks first
+  scores 0.333. The number is relative to the query.
 - **`cosine`** (under `rrf`, for a row that has one): the raw cosine
   similarity between the query and the row. This is absolute.
 - **`rrf`** (under `rrf`, for a row with no cosine): a sum of reciprocal ranks,
@@ -378,12 +379,15 @@ nothing: under `rsf`, queries about topics a store cannot hold return 0.5 just
 as known hits do.
 
 `match_reason.cosine`, where present, is that cosine whatever the signal —
-the one absolute number on a row. How well it separates
+the one absolute number on a row — unless the episode-boundary penalty is on
+(§3; off by default since 2.6.0a7), which scales it and the `rsf` score by as
+little as half for memories older than the latest episode. How well it separates
 questions that have an answer from questions that do not has not been measured;
 check its distribution on your own queries before putting a threshold on it.
 `confidence` (§2) is a blend and not a match strength either.
 
-What does say "nothing":
+What does say "nothing" — though in practice an empty recall mostly means that
+no retriever returned anything:
 
 - Under the default configuration, a recall whose every candidate falls below
   the quality gate returns no rows (§8).
@@ -393,10 +397,14 @@ What does say "nothing":
 
 Under `rsf`, the gate compares the relative fused score with an absolute
 threshold, so a pool of weak candidates still passes, and an `rsf` recall is
-rarely empty. This is an open defect (bug-247). Making that gate absolute was
-tried and withdrawn: on a pack of real agent memories it emptied 52 of 250
-questions that had an answer, and only 11 of 50 that had none
+rarely empty. This is an open defect (bug-247). One fix, a fixed-scale gate
+score, was tried and withdrawn: under the calibration a server runs at startup,
+on a pack of real agent memories it emptied 52 of 250 questions that had an
+answer and 11 of 50 that had none, because rows found by several channels sum
+above 1.0 and the calibrated threshold landed where a row found by one channel
+rarely reaches
 ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-rsf-gate-scale.md)).
+Other fixes remain open.
 
 A caller that must say "there is no such record" should corroborate it with an
 exact search for a term the record would have to contain — a keyword search,
