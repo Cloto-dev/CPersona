@@ -310,6 +310,19 @@ async def test_the_widest_offsets_are_inside_the_window(corpus):
 
 
 @pytest.mark.asyncio
+async def test_a_true_end_two_local_days_from_the_text_end_is_found(corpus):
+    """The window's width is the bound, not a margin: a true end can sit two local
+    dates past the text minimum (two before the text maximum), a minute apart."""
+    span = await _only(corpus, [
+        "2026-05-31T23:59:00-12:00",  # text minimum, 2026-06-01T11:59Z
+        "2026-06-02T01:58:00+14:00",  # the oldest, 2026-06-01T11:58Z
+        "2026-06-08T22:02:00-12:00",  # the newest, 2026-06-09T10:02Z
+        "2026-06-10T00:01:00+14:00",  # text maximum, 2026-06-09T10:01Z
+    ])
+    assert span == ("2026-06-02T01:58:00+14:00", "2026-06-08T22:02:00-12:00")
+
+
+@pytest.mark.asyncio
 async def test_one_offset_throughout_answers_as_before(corpus):
     stamps = ["2026-03-01T00:00:00+09:00", "2026-03-02T00:00:00+09:00", "2026-04-01T00:00:00+09:00"]
     assert await _only(corpus, stamps) == (stamps[0], stamps[-1])

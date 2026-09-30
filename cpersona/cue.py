@@ -176,8 +176,8 @@ def period(
         unit, value = cue.ago
         width = _UNITS[unit]
         try:
-            centre = _earlier(now, width * value)
-        except OverflowError:  # the product itself is past the largest timedelta
+            centre = now - width * value
+        except OverflowError:  # the product, or the point it names, is out of range
             centre = _EARLIEST
         start, end = _earlier(centre, width / 2), min(_later(centre, width / 2), now)
     else:
