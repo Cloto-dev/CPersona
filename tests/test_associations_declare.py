@@ -464,3 +464,53 @@ async def test_declare_associations_without_associations_runs_no_declaration(cle
         {"agent_id": AGENT, "associations": {"entities": [{"name": "MizEye"}]}}
     )
     assert len(calls) == 1, "the counter did not see a real declaration, so the check above proves nothing"
+
+
+# --- the tool boundary (bug-475, bug-489) ------------------------------------------
+
+
+async def _call(name: str, arguments: dict):
+    from mcp import types
+
+    handler = server.registry.server.request_handlers[types.CallToolRequest]
+    request = types.CallToolRequest(
+        method="tools/call",
+        params=types.CallToolRequestParams(name=name, arguments=arguments),
+    )
+    return (await handler(request)).root
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retract", [[1, 2], "relations", 5])
+async def test_a_retract_that_is_not_an_object_is_refused_at_the_boundary(clean_db, retract):
+    """bug-475: the report of a malformed retract is the boundary's refusal. The
+    handler never sees one -- and would not report it if it did, because the argument
+    reader turns a non-object into {} -- so this holds only while the schema says
+    `type: object`."""
+    result = await _call("declare_associations", {"agent_id": AGENT, "retract": retract})
+    assert result.isError is True
+    assert result.content[0].text.startswith("Input validation error"), result.content[0].text
+
+
+def _tool(name: str):
+    return next(t for t in server.registry._tools if t.name == name)
+
+
+def test_declare_associations_describes_its_own_object():
+    """bug-489: the property carried store's sentences -- the stored memory, and drops
+    reported in associations.dropped -- to a tool whose drops are top-level."""
+    declared = _tool("declare_associations").inputSchema["properties"]["associations"]["description"]
+    stored = _tool("store").inputSchema["properties"]["associations"]["description"]
+    assert "associations.dropped" in stored and "memory is stored" in stored
+    assert "associations.dropped" not in declared and "stored" not in declared
+    assert "`dropped`" in declared
+
+
+def test_declare_associations_does_not_restate_the_nested_descriptions():
+    """bug-489: the normalization and alias rules are carried by the nested property
+    descriptions, which are sent with the tool; the description repeated them."""
+    tool = _tool("declare_associations")
+    entities = tool.inputSchema["properties"]["associations"]["properties"]["entities"]
+    assert "normalization (NFKC" in entities["description"]
+    assert "normalization (NFKC" not in tool.description
+    assert "second claim on it is dropped" not in tool.description

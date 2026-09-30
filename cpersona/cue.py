@@ -53,6 +53,28 @@ RECENT_ONLY = timedelta(hours=24)
 _UNITS = {"days": timedelta(days=1), "weeks": timedelta(weeks=1), "months": timedelta(days=30)}
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# The ends of the representable range. A period that reaches past one is clipped
+# to it (bug-443): the reach is not always the caller's -- a record stored with a
+# year-1 stamp closes an open end at year 1, and a vague margin then reaches past
+# it -- so refusing the cue could not prevent it, and raising would turn a recall
+# into an error the tool does not document.
+_EARLIEST = datetime.min.replace(tzinfo=timezone.utc)
+_LATEST = datetime.max.replace(tzinfo=timezone.utc)
+
+
+def _later(t: datetime, delta: timedelta) -> datetime:
+    try:
+        return t + delta
+    except OverflowError:
+        return _LATEST
+
+
+def _earlier(t: datetime, delta: timedelta) -> datetime:
+    try:
+        return t - delta
+    except OverflowError:
+        return _EARLIEST
+
 
 class TimeCueError(ValueError):
     """The caller's `time_cue` could not be read. The message says which part."""
@@ -88,7 +110,7 @@ def _parse_instant(value, field: str, end_of_day: bool) -> datetime:
         if _DATE_ONLY.match(text):
             day = datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
             # A date names the whole day: `before` includes it.
-            return day + timedelta(days=1) if end_of_day else day
+            return _later(day, timedelta(days=1)) if end_of_day else day
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
         raise TimeCueError(f"time_cue.{field} is not a date or timestamp: {text!r}") from exc
@@ -123,7 +145,8 @@ def parse(raw) -> TimeCue | None:
     if not isinstance(ago, dict) or set(ago) != {"unit", "value"}:
         raise TimeCueError('time_cue.ago must be {"unit": ..., "value": ...} or "long_ago"')
     unit, value = ago["unit"], ago["value"]
-    if unit not in _UNITS:
+    # A list is not hashable, so the membership test alone raised TypeError (bug-443).
+    if not isinstance(unit, str) or unit not in _UNITS:
         raise TimeCueError("time_cue.ago.unit must be one of days, weeks, months")
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise TimeCueError("time_cue.ago.value must be a whole number, 0 or more")
@@ -152,8 +175,11 @@ def period(
     elif cue.ago is not None:
         unit, value = cue.ago
         width = _UNITS[unit]
-        centre = now - width * value
-        start, end = centre - width / 2, min(centre + width / 2, now)
+        try:
+            centre = now - width * value
+        except OverflowError:  # the product, or the point it names, is out of range
+            centre = _EARLIEST
+        start, end = _earlier(centre, width / 2), min(_later(centre, width / 2), now)
     else:
         start = cue.after if cue.after is not None else oldest
         end = cue.before if cue.before is not None else now
@@ -161,9 +187,9 @@ def period(
             return None
     if end <= start:
         # A one-instant scope (a single record) still has a period around it.
-        end = start + timedelta(seconds=1)
+        end = _later(start, timedelta(seconds=1))
     margin = (end - start) * MARGIN[confidence]
-    return start - margin, end + margin
+    return _earlier(start, margin), _later(end, margin)
 
 
 def recent_only(cue: TimeCue, now: datetime, span: tuple[datetime | None, datetime | None]) -> bool:
@@ -222,5 +248,10 @@ def utc(value: str | None) -> datetime | None:
 
 
 def sql_instant(value: datetime) -> str:
-    """A period bound as SQLite's `datetime()` reads it (UTC, second resolution)."""
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    """A period bound as SQLite's `datetime()` reads it (UTC, second resolution).
+
+    isoformat rather than strftime: strftime's %Y does not pad a year below 1000
+    on every platform, and a clipped bound at year 1 would then compare as text
+    against four-digit years in the wrong order.
+    """
+    return value.astimezone(timezone.utc).isoformat(sep=" ", timespec="seconds")[:19]

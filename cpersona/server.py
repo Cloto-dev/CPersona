@@ -267,15 +267,17 @@ async def do_declare_associations_boundary(
         ))
     else:
         result.update({"entities": [], "mentions": 0, "relations": [], "dropped": []})
+    # bug-475: a retract that is not an object never reaches this function. The
+    # schema declares it an object and the MCP layer refuses anything else before
+    # the handler runs ("Input validation error"), which is the report; the branch
+    # that reported it here was unreachable, and validate_dict would have turned
+    # the value into {} had the schema not caught it.
     if retract:
-        if isinstance(retract, dict):
-            retracted = await associations_module.retract(
-                agent_id, relations=retract.get("relations"), mentions=retract.get("mentions")
-            )
-            result["dropped"].extend(retracted.pop("dropped"))
-            result["retracted"] = retracted
-        else:
-            result["dropped"].append({"item": "retract", "reason": "must be an object"})
+        retracted = await associations_module.retract(
+            agent_id, relations=retract.get("relations"), mentions=retract.get("mentions")
+        )
+        result["dropped"].extend(retracted.pop("dropped"))
+        result["retracted"] = retracted
     return _oc_annotate(result, project_id, resolved, warning)
 
 
@@ -682,7 +684,7 @@ _ASSOCIATIONS_PROPERTY = {
     "properties": {
         "entities": {
             "type": "array",
-            "description": "Entities to register (if new) and mark as mentioned. Names are compared after normalization (NFKC, case-folded, whitespace collapsed).",
+            "description": "Entities to register (if new) and mark as mentioned. Names and aliases are compared after normalization (NFKC, case-folded, whitespace collapsed), so two that normalize alike name one entity.",
             "items": {
                 "type": "object",
                 "properties": {
@@ -710,6 +712,15 @@ _ASSOCIATIONS_PROPERTY = {
             },
         },
     },
+}
+
+# bug-489: the property above is store's -- its description speaks of the stored
+# memory and of associations.dropped. declare_associations takes the same object
+# with a description of its own, and its tool description no longer restates what
+# the nested descriptions already carry (they are sent with both tools).
+_DECLARE_ASSOCIATIONS_PROPERTY = {
+    **_ASSOCIATIONS_PROPERTY,
+    "description": "The entities and relations to declare. Malformed items are reported in `dropped` and skipped.",
 }
 
 # Session no-persist controls — registered first for discoverability.
@@ -1056,13 +1067,9 @@ registry.auto_tool(
     "Declare associative memory after the fact: entities with aliases, and "
     "subject–predicate–object relations, recorded verbatim and walked by "
     "reconstruct. The server extracts nothing and infers nothing — coverage is "
-    "exactly what was declared. Names, aliases and predicates are compared after "
-    "normalization (NFKC, case-folded, whitespace collapsed), so two declarations "
-    "that normalize alike are one entity. An alias resolves to at most one entity "
-    "per scope; a second claim on it is dropped. `anchor_ref` names the record "
+    "exactly what was declared. `anchor_ref` names the record "
     "(`mem:<id>` / `ep:<id>`) the declaration is evidenced by: every entity named "
-    "is recorded as mentioned by it and every relation carries it. A relation's "
-    "endpoint is an entity name (registered if new) or a record ref of this agent. "
+    "is recorded as mentioned by it and every relation carries it. "
     "Malformed items are reported in `dropped` and skipped; nothing else in the call "
     "is refused for them. `retract` removes relations by id and mentions by "
     "{entity, ref} — the only way a declaration leaves the store. "
@@ -1073,7 +1080,7 @@ registry.auto_tool(
         "type": "object",
         "properties": {
             "agent_id": {"type": "string", "description": "Agent identifier"},
-            "associations": _ASSOCIATIONS_PROPERTY,
+            "associations": _DECLARE_ASSOCIATIONS_PROPERTY,
             "anchor_ref": {
                 "type": "string",
                 "description": "The record this declaration is evidenced by: 'mem:<id>' or 'ep:<id>' of this agent. Optional.",

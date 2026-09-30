@@ -313,3 +313,45 @@ async def test_a_channel_less_declaration_does_not_reuse_one_channel_s_entity(cl
     report = await associations.declare(AGENT, {"entities": [{"name": "Glob"}]}, project_id="P")
     assert report["entities"][0]["created"] is True
     assert await _entity_rows(clean_db) == [("P", "C", "glob"), ("P", "", "glob")]
+
+
+async def _traced_traverse(*args, **kw) -> tuple[dict, list[str]]:
+    from cpersona import database
+
+    reader = await database._get_read_db()
+    statements: list[str] = []
+    await reader.set_trace_callback(statements.append)
+    try:
+        out = await associations.traverse(*args, **kw)
+    finally:
+        await reader.set_trace_callback(None)
+    return out, [s for s in statements if "entity_mentions m JOIN" in s]
+
+
+@pytest.mark.asyncio
+async def test_traverse_reads_the_refs_and_not_the_text():
+    """bug-501: every mentioning memory's content and episode's summary was read, only
+    for the refs to be kept."""
+    hub = await _mem("hub note " * 50)
+    await _declare(entities=[{"name": "Hub"}], anchor=hub)
+    out, reads = await _traced_traverse(AGENT, "Hub", max_hops=1, limit=3)
+    assert _by_name(out)["Hub"]["mentions"] == [hub]
+    assert reads, "the mention reads were not observed"
+    assert not [s for s in reads if "t.content" in s or "t.summary" in s], reads
+
+
+@pytest.mark.asyncio
+async def test_traverse_counts_only_when_a_read_came_back_full():
+    """bug-501: two COUNT queries ran for every entity, although a read that returned
+    fewer rows than the limit has already counted itself."""
+    hub = await _mem("hub note")
+    await _declare(entities=[{"name": "Hub"}], anchor=hub)
+    out, reads = await _traced_traverse(AGENT, "Hub", max_hops=1, limit=3)
+    assert "mentions_omitted" not in _by_name(out)["Hub"]
+    assert not [s for s in reads if "COUNT(*)" in s], reads
+
+    for i in range(4):
+        await _declare(entities=[{"name": "Hub"}], anchor=await _mem(f"more hub {i}"))
+    out, reads = await _traced_traverse(AGENT, "Hub", max_hops=1, limit=3)
+    assert _by_name(out)["Hub"]["mentions_omitted"] == 2
+    assert [s for s in reads if "COUNT(*)" in s and "memories" in s]

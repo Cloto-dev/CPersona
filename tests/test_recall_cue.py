@@ -553,3 +553,67 @@ async def test_reconstruct_returns_every_cue_seat_beside_its_window(fake_embeddi
     held = [item for item in out["items"] if item.get("admission") == "reservation"]
     assert len(held) == cue.SEATS["sure"] == 3
     assert out["reserved_count"] == 3 and out["returned_count"] == 1 + 3
+
+
+# --- a cue past the representable range (bug-443) -------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "time_cue",
+    [
+        {"before": "9999-12-31", "confidence": "sure"},
+        {"ago": {"unit": "months", "value": 100000}, "confidence": "sure"},
+        {"after": "0001-01-02", "confidence": "vague"},
+        {"ago": {"unit": "days", "value": 10**15}, "confidence": "vague"},
+    ],
+)
+async def test_a_period_past_the_representable_range_is_clipped_not_raised(fake_embedding_client, time_cue):
+    """These escaped as OverflowError, so recall and reconstruct raised instead of
+    answering; a period is now clipped to the ends of the representable range."""
+    from cpersona import reconstruct
+
+    await _seed(CORPUS)
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=3, trace=True, time_cue=time_cue)
+    assert "error" not in out and out["messages"]
+    rec = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, time_cue=time_cue)
+    assert "error" not in rec and rec["items"]
+
+
+@pytest.mark.asyncio
+async def test_a_stored_year_one_stamp_is_clipped_too(fake_embedding_client):
+    """Why the period is clipped rather than the cue refused: an open end is closed by
+    the oldest stored row, so a caller's ordinary cue reaches past year 1 when the
+    store holds a row stamped there."""
+    refs = await _seed(CORPUS)
+    db = await get_db()
+    await db.execute(
+        "UPDATE memories SET timestamp = '0001-01-01T00:00:00+00:00' WHERE id = ?",
+        (int(refs[-1].split(":")[1]),),
+    )
+    await db.commit()
+    out = await memory_handlers.do_recall(
+        AGENT, QUERY, limit=3, time_cue={"before": _ts(46)[:10], "confidence": "vague"}
+    )
+    assert "error" not in out and out["messages"]
+
+
+@pytest.mark.asyncio
+async def test_a_unit_that_is_not_a_string_is_refused_not_raised(fake_embedding_client):
+    """A list unit raised TypeError (unhashable) from the membership test."""
+    from cpersona import reconstruct
+
+    bad = {"ago": {"unit": ["days"], "value": 1}, "confidence": "sure"}
+    out = await memory_handlers.do_recall(AGENT, QUERY, limit=3, time_cue=bad)
+    assert out["messages"] == [] and "ago.unit" in out["error"]
+    rec = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, time_cue=bad)
+    assert rec["items"] == [] and "ago.unit" in rec["error"]
+
+
+def test_a_clipped_bound_is_written_with_a_four_digit_year():
+    earliest = datetime.min.replace(tzinfo=timezone.utc)
+    assert cue.sql_instant(earliest) == "0001-01-01 00:00:00"
+    assert cue.sql_instant(datetime(2026, 9, 30, 1, 2, 3, 999, tzinfo=timezone.utc)) == "2026-09-30 01:02:03"
+    # Non-UTC input is converted, as before.
+    jst = timezone(timedelta(hours=9))
+    assert cue.sql_instant(datetime(2026, 9, 30, 9, 0, 0, tzinfo=jst)) == "2026-09-30 00:00:00"
