@@ -20511,7 +20511,7 @@
       },
       "budget_policy": {
         "clamped": false,
-        "reason": "budget_omitted",
+        "reason": "default_fits_the_window",
         "source": "server_default"
       },
       "count_policy": {
@@ -20519,8 +20519,8 @@
         "reason": "count_omitted",
         "source": "server_default"
       },
-      "effective_budget": 4000,
-      "effective_count": 1,
+      "effective_budget": 8000,
+      "effective_count": 10,
       "items": [
         {
           "claims": [
@@ -20540,6 +20540,177 @@
               40
             ]
           ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-12-31T00:00:00Z",
+              "ref": "mem:1",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper logbook entry 0",
+          "head_ref": "mem:1",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              40
+            ]
+          ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-11-11T00:00:00Z",
+              "ref": "mem:6",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper logbook entry 5",
+          "head_ref": "mem:6",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              40
+            ]
+          ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-10-22T00:00:00Z",
+              "ref": "mem:8",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper logbook entry 7",
+          "head_ref": "mem:8",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              40
+            ]
+          ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-12-21T00:00:00Z",
+              "ref": "mem:2",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper logbook entry 1",
+          "head_ref": "mem:2",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              40
+            ]
+          ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-09-12T00:00:00Z",
+              "ref": "mem:12",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper logbook entry 11",
+          "head_ref": "mem:12",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              41
+            ]
+          ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-12-01T00:00:00Z",
+              "ref": "mem:4",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper logbook entry 3",
+          "head_ref": "mem:4",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              40
+            ]
+          ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-11-02T00:00:00Z",
+              "ref": "ep:1",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper review inside the period",
+          "head_ref": "ep:1",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              49
+            ]
+          ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-11-01T00:00:00Z",
+              "ref": "mem:7",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper logbook entry 6",
+          "head_ref": "mem:7",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              40
+            ]
+          ]
+        },
+        {
+          "claims": [
+            {
+              "as_of": "2026-10-02T00:00:00Z",
+              "ref": "mem:10",
+              "why": "seed"
+            }
+          ],
+          "content": "harbor lighthouse keeper logbook entry 9",
+          "head_ref": "mem:10",
+          "independence_reason": "singleton",
+          "quote_basis": "whole",
+          "ranges": [
+            [
+              0,
+              40
+            ]
+          ]
         }
       ],
       "reconstruction": {
@@ -20547,11 +20718,11 @@
         "cluster_count": 14,
         "excluded_without_provenance": 0,
         "policy": "v1",
-        "selected_count": 1
+        "selected_count": 10
       },
       "requested_budget": null,
       "requested_count": null,
-      "returned_count": 1,
+      "returned_count": 10,
       "trace": {
         "candidate_refs": [
           "mem:11",
@@ -21087,7 +21258,7 @@
           "trace_version": 1
         }
       },
-      "used_budget": 40
+      "used_budget": 410
     },
     "seam": "modular-recall-m1",
     "thresholds": {}

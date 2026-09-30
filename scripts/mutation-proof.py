@@ -2207,6 +2207,26 @@ MUTATIONS += [
         breaks='turning construction off alone becomes a startup error',
         expect='test_config_parsing.py::test_turning_construction_off_alone_turns_the_reader_off_too',
     ),
+    Mutation(
+        id='M207',
+        tests=('tests/test_reconstruct_v1.py',),
+        target='config — reconstruct returns 10 items when the caller omits count (2.6.0)',
+        file='cpersona/config.py',
+        find='    else min(10, RECONSTRUCT_MAX_COUNT)\n',
+        replace='    else min(1, RECONSTRUCT_MAX_COUNT)\n',
+        breaks='a caller that omits count gets one item, not the configuration that was measured',
+        expect='test_reconstruct_v1.py::test_unconfigured_count_policy_is_the_measured_default',
+    ),
+    Mutation(
+        id='M208',
+        tests=('tests/test_reconstruct_v1.py',),
+        target='config — an unset default count follows a lowered maximum',
+        file='cpersona/config.py',
+        find='    else min(10, RECONSTRUCT_MAX_COUNT)\n',
+        replace='    else 10\n',
+        breaks='lowering only the maximum becomes a startup error',
+        expect='test_reconstruct_v1.py::test_an_unset_default_follows_a_lowered_maximum',
+    ),
 ]
 
 

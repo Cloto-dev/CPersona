@@ -203,8 +203,19 @@ RECALL_PROPAGATION_SEAT = (
 # RECONSTRUCT_FORCED_COUNT pins the base for every call and is None unless an
 # operator sets it. A configuration whose default or forced value exceeds the
 # maximum is a STARTUP ERROR, not a silent clamp -- see validate_reconstruct_counts().
-RECONSTRUCT_DEFAULT_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", 1))
+#
+# The default is 10 from 2.6.0: the configuration a caller gets by omitting
+# `count` is the one measured with a reader on a pack of a real agent's memory,
+# which asked for 10. Left unset it follows the maximum down, so an operator who
+# lowers only the maximum is not refused at startup for a default nobody set; a
+# default set explicitly is taken as written and that refusal stands.
 RECONSTRUCT_MAX_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_MAX_COUNT", 10))
+_default_count_raw = os.environ.get("CPERSONA_RECONSTRUCT_DEFAULT_COUNT")
+RECONSTRUCT_DEFAULT_COUNT = (
+    max(1, _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", 10))
+    if _default_count_raw not in (None, "")
+    else min(10, RECONSTRUCT_MAX_COUNT)
+)
 _forced_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_COUNT")
 RECONSTRUCT_FORCED_COUNT = (
     max(1, _parse_int("CPERSONA_RECONSTRUCT_FORCED_COUNT", 1))
