@@ -117,23 +117,42 @@ class LookupEmbeddingClient:
         self._http_url = ""  # empty → skip remote index/search in do_store/do_recall
         self._client = None  # v2.4.3x health-probe path checks this attribute
         self._lookup: dict[str, list[float]] = {}
+        # Block texts for one page of records while build_corpus_blocks runs.
+        # Kept apart from _lookup, which lives for the whole run: a corpus has
+        # millions of block texts, so they are held as array rows one page at a
+        # time and dropped as soon as the page is written.
+        self._staged: dict[str, np.ndarray] = {}
 
     async def initialize(self):
         pass
 
     async def close(self):
         self._lookup.clear()
+        self._staged.clear()
 
     def preload(self, texts: list[str], embeddings: np.ndarray):
         """Batch-register text→embedding mappings."""
         for text, emb in zip(texts, embeddings):
             self._lookup[text] = emb.tolist()
 
+    def stage(self, texts: list[str], embeddings: np.ndarray) -> None:
+        """Register block texts for the page being built (see build_corpus_blocks)."""
+        for text, emb in zip(texts, embeddings):
+            self._staged[text] = emb
+
+    def unstage(self) -> None:
+        self._staged.clear()
+
     async def embed(self, texts: list[str]) -> list[list[float]] | None:
         """Return pre-computed embeddings from lookup."""
         results = []
         for text in texts:
             emb = self._lookup.get(text)
+            if emb is None:
+                staged = self._staged.get(text)
+                # A list of floats, as the real client returns: the storage
+                # check (vector.pack_for_storage) refuses an array row.
+                emb = staged.tolist() if staged is not None else None
             if emb is None:
                 return None
             results.append(emb)
@@ -519,6 +538,142 @@ async def store_corpus(server_mod, emb_client, st_model, corpus: list[dict], bat
     return total
 
 
+async def build_corpus_blocks(emb_client, st_model, page: int = 2000) -> dict:
+    """Build every stored record's blocks through the package's own builder.
+
+    store_corpus inserts rows directly, so the store path that would queue a
+    block build never runs. This does what that queued task does, record by
+    record, with the package's ``blocks.prepare_blocks`` (division, embedding,
+    quantisation) and ``blocks.write_blocks`` (the rows and their vectors). What
+    the harness adds is only where the vectors come from: each page's block
+    texts are encoded in one batch by the same model that encoded the records
+    (through the disk cache when it is on) and staged on the client that
+    ``prepare_blocks`` asks.
+
+    Records carry no overflow-tree nodes here -- nothing builds them -- so
+    ``node_bounds`` is empty, which is what the package's own builder would read
+    for these rows. A record that divides into a single span gets no blocks
+    (``prepare_blocks`` returns None: its one block would be the record).
+
+    A block text with no vector raises inside ``prepare_blocks``; the page is
+    not committed and the run stops rather than measuring a partial index.
+    """
+    from cpersona import blocks
+    from cpersona.database import get_db
+
+    db = await get_db()
+    stats = {"records": 0, "records_with_blocks": 0, "block_rows": 0, "texts_encoded": 0}
+    t0 = time.time()
+    after = 0
+    while True:
+        rows = await db.execute_fetchall(
+            "SELECT id, content FROM memories WHERE agent_id = ? AND id > ? ORDER BY id LIMIT ?",
+            (AGENT_ID, after, page),
+        )
+        if not rows:
+            break
+        after = rows[-1][0]
+        texts: list[str] = []
+        for _, content in rows:
+            spans = blocks.segment(content)
+            if len(spans) > 1:
+                texts.extend(content[s.start : s.end] for s in spans)
+        unique = list(dict.fromkeys(texts))
+        if unique:
+            vecs = st_model.encode(unique, normalize_embeddings=True, show_progress_bar=False, **_DOC_ENCODE_KW)
+            emb_client.stage(unique, vecs)
+            stats["texts_encoded"] += len(unique)
+        try:
+            for rid, content in rows:
+                stats["records"] += 1
+                prepared = await blocks.prepare_blocks("mem", rid, content, ())
+                if prepared is None:
+                    continue
+                if not await blocks.write_blocks(db, prepared):
+                    raise RuntimeError(f"record {rid} changed while its blocks were built")
+                stats["records_with_blocks"] += 1
+                stats["block_rows"] += len(prepared.spans)
+            await db.commit()
+        except BaseException:
+            # Nothing of a failed page is kept, so a later commit on this
+            # connection cannot publish half of it.
+            await db.rollback()
+            raise
+        finally:
+            emb_client.unstage()
+    stats["seconds"] = round(time.time() - t0, 1)
+    return stats
+
+
+async def count_block_rows() -> int | None:
+    """Block rows for this agent, or None when the package has no block table."""
+    from cpersona.database import get_db
+
+    db = await get_db()
+    try:
+        row = await db.execute_fetchall("SELECT COUNT(*) FROM record_blocks WHERE agent_id = ?", (AGENT_ID,))
+    except Exception:  # pre-2.6 schema: no record_blocks table
+        return None
+    return int(row[0][0])
+
+
+def block_settings() -> dict | None:
+    """The package's effective block switches, or None when it has no blocks.
+
+    Read from the loaded package, not the environment, for the reason the dump
+    header pins the gates: a value set after import never reaches it. The build
+    switch is the setting itself, not ``blocks.building_enabled()``: that also
+    asks for a running task queue, which the harness never starts because it
+    builds the blocks itself (build_corpus_blocks).
+    """
+    try:
+        from cpersona import blocks
+    except ImportError:
+        return None
+    return {
+        "build_enabled": bool(blocks.config.BLOCK_BUILD_ENABLED),
+        "retrieval_enabled": bool(blocks.retrieval_enabled()),
+    }
+
+
+def _row_id_of_ref(ref: str) -> int:
+    kind, _, num = ref.partition(":")
+    if kind != "mem" or not num.isdigit():
+        # LMEB stores memories only; any other ref means the mapping is wrong.
+        raise ValueError(f"unexpected ref in a reconstruct response: {ref!r}")
+    return int(num)
+
+
+def reconstruct_doc_ids(response: dict, msg_id_of: dict[int, str]) -> tuple[list[str], list[str]]:
+    """(ranked, evidence) corpus doc ids from a reconstruct response.
+
+    ranked = each item's head claim, in item order: the unit a reconstruct
+    response quotes, and so the unit its rank is scored on. Items come back
+    most relevant first, and the items held by a reservation follow the window
+    (docs/BLOCK_REACH_DESIGN.md §5), so they rank after it here too.
+    evidence = every claim of every item, heads included, first appearance
+    kept: all the records the response points a reader at.
+    """
+    ranked: list[str] = []
+    evidence: list[str] = []
+    seen: set[str] = set()
+    for item in response.get("items", []):
+        ranked.append(msg_id_of[_row_id_of_ref(item["head_ref"])])
+        for claim in item.get("claims", []):
+            doc = msg_id_of[_row_id_of_ref(claim["ref"])]
+            if doc not in seen:
+                seen.add(doc)
+                evidence.append(doc)
+    return ranked, evidence
+
+
+def any_relevant(ids: list[str], rels: dict[str, int] | None) -> bool:
+    """Whether any document the qrels grade above zero is among ``ids``."""
+    if not rels:
+        return False
+    return any(rels.get(d, 0) > 0 for d in ids)
+
+
 class VectorAdmissionProbe:
     """Counts what the vector arm admits, per query, without touching cpersona.
 
@@ -589,8 +744,23 @@ async def run_subtask(
     split: tuple[int, str] | None = None,
     split_sink: dict | None = None,
     latency_scan_window: int = 500,
+    tool: str = "recall",
+    msg_id_of: dict[int, str] | None = None,
+    evidence_sink: dict | None = None,
 ) -> float:
     """Run a single subtask using cpersona's actual do_recall().
+
+    ``tool="reconstruct"`` asks ``do_reconstruct`` instead, at the package's
+    own default count, and scores the items' head claims in item order
+    (``reconstruct_doc_ids``); ``msg_id_of`` maps the row ids its refs carry
+    back to corpus doc ids. The limit regime does not apply to it: the count
+    is the build's default, which is the point of measuring it.
+
+    ``evidence_sink``, if given, receives per subtask what the whole response
+    carried rather than its first ten: how many queries got any relevant
+    document anywhere in it (every row a recall returned, the reserved ones
+    included; every claim of every reconstruct item) and the mean number of
+    documents it carried. NDCG@10 is unchanged by it.
 
     When latency lists are provided, per-query wall-clock of the real
     do_recall() call is appended to them: `latencies_full` for the NDCG pass
@@ -656,6 +826,9 @@ async def run_subtask(
     if admission_probe is not None:
         admission_probe.reset()
         admission_probe.active = True
+    evidence_hits = 0
+    evidence_queries = 0
+    carried_total = 0
     for i, q in enumerate(queries_data):
         qid = str(q["id"])  # Ensure string for consistent matching with qrels (CSV returns strings)
         qtext = q["text"]
@@ -666,27 +839,35 @@ async def run_subtask(
         # cosine >= 0.3, then Stage 3 (FTS5) fills remaining with keyword matches.
         t0 = time.perf_counter()
         recall_kwargs = {"channel": get_scene_id(qid)} if isolate_scenes else {}
-        recall_result = await server_mod.do_recall(
-            agent_id=AGENT_ID,
-            query=qtext,
-            limit=effective_limit,
-            **recall_kwargs,
-        )
-        if latencies_full is not None:
-            latencies_full.append((time.perf_counter() - t0) * 1000)
-        if depth_check is not None:
-            depth_check.observe(effective_limit, qtext, recall_result, query_id=qid)
+        if tool == "reconstruct":
+            rec_result = await server_mod.do_reconstruct(AGENT_ID, qtext, **recall_kwargs)
+            if latencies_full is not None:
+                latencies_full.append((time.perf_counter() - t0) * 1000)
+            messages = []
+            doc_ids, evidence_ids = reconstruct_doc_ids(rec_result, msg_id_of or {})
+        else:
+            recall_result = await server_mod.do_recall(
+                agent_id=AGENT_ID,
+                query=qtext,
+                limit=effective_limit,
+                **recall_kwargs,
+            )
+            if latencies_full is not None:
+                latencies_full.append((time.perf_counter() - t0) * 1000)
+            if depth_check is not None:
+                depth_check.observe(effective_limit, qtext, recall_result, query_id=qid)
 
-        # Extract msg_ids from recall result (same format as MCP response).
-        # IMPORTANT: do_recall() reverses results for LLM context (most relevant
-        # at the end). We reverse back to get relevance-descending order for NDCG.
-        messages = recall_result.get("messages", [])
-        messages = list(reversed(messages))
-        doc_ids = []
-        for msg in messages:
-            msg_id = msg.get("id", "")
-            if msg_id:
-                doc_ids.append(msg_id)
+            # Extract msg_ids from recall result (same format as MCP response).
+            # IMPORTANT: do_recall() reverses results for LLM context (most relevant
+            # at the end). We reverse back to get relevance-descending order for NDCG.
+            messages = recall_result.get("messages", [])
+            messages = list(reversed(messages))
+            doc_ids = []
+            for msg in messages:
+                msg_id = msg.get("id", "")
+                if msg_id:
+                    doc_ids.append(msg_id)
+            evidence_ids = doc_ids
 
         raw_ids = doc_ids
 
@@ -696,8 +877,14 @@ async def run_subtask(
             if scene_id in candidates:
                 allowed = candidates[scene_id]
                 doc_ids = [d for d in doc_ids if d in allowed]
+                evidence_ids = [d for d in evidence_ids if d in allowed]
 
         results[qid] = doc_ids
+        # The same queries compute_ndcg scores: those with a relevant document.
+        if any(s > 0 for s in qrels.get(qid, {}).values()):
+            evidence_queries += 1
+            evidence_hits += any_relevant(evidence_ids, qrels[qid])
+            carried_total += len(evidence_ids)
 
         # Optional per-query ranking dump. `returned_ids` is the raw recall
         # list before candidate filtering (a bug-155-style ranking bug
@@ -726,6 +913,7 @@ async def run_subtask(
                 "query_id": qid,
                 "returned_ids": raw_ids[:20],
                 "filtered_ids": doc_ids[:20],
+                "evidence_ids": evidence_ids[:50],
                 "rows": rows_out,
             })
 
@@ -733,6 +921,13 @@ async def run_subtask(
             logger.info(f"      Queried {i + 1}/{total_q}")
     if admission_probe is not None:
         admission_probe.active = False
+    if evidence_sink is not None:
+        evidence_sink[subtask.get("name", "")] = {
+            "queries": evidence_queries,
+            "any_relevant": evidence_hits,
+            "any_relevant_rate": round(100 * evidence_hits / evidence_queries, 2) if evidence_queries else None,
+            "mean_carried": round(carried_total / evidence_queries, 2) if evidence_queries else None,
+        }
 
     # Production-shaped latency pass: same queries, MCP default limit=10 and a
     # restored scan window (the benchmark env raises the window for the NDCG
@@ -813,6 +1008,8 @@ async def run_task(
     isolate_scenes: bool = False,
     split: tuple[int, str] | None = None,
     latency_scan_window: int = 500,
+    tool: str = "recall",
+    build_blocks: bool = False,
 ) -> dict | None:
     from trackb_instrument import DepthCheck, record_depth_check
 
@@ -847,6 +1044,8 @@ async def run_task(
     subtask_results: dict[str, float] = {}
     calibration_records: list[dict] = []
     admission_results: dict[str, dict] = {}
+    evidence_results: dict[str, dict] = {}
+    block_records: list[dict] = []
     latencies_full: list[float] = []
     latencies_limit10: list[float] = []
     task_start = time.time()
@@ -864,6 +1063,29 @@ async def run_task(
                                          isolate_scenes=isolate_scenes)
         store_time = time.time() - store_start
         logger.info(f"    Store: {store_time:.1f}s ({len(corpus) / max(store_time, 0.01):.0f} docs/s)")
+
+        # Blocks: built here or not at all (store_corpus bypasses the store
+        # path that would queue them). The row count is recorded either way, so
+        # an arm meant to read no blocks can be shown to have had none.
+        group_blocks: dict = {"corpus": os.path.relpath(corpus_path, task_dir)}
+        if build_blocks:
+            group_blocks.update(await build_corpus_blocks(emb_client, st_model))
+            logger.info(f"    Blocks: {group_blocks['block_rows']} rows for {group_blocks['records_with_blocks']}"
+                        f"/{group_blocks['records']} records ({group_blocks['seconds']}s)")
+        group_blocks["block_rows_in_store"] = await count_block_rows()
+        block_records.append(group_blocks)
+
+        msg_id_of: dict[int, str] | None = None
+        if tool == "reconstruct":
+            from cpersona.database import get_db
+
+            _db = await get_db()
+            msg_id_of = {
+                r[0]: r[1]
+                for r in await _db.execute_fetchall(
+                    "SELECT id, msg_id FROM memories WHERE agent_id = ?", (AGENT_ID,)
+                )
+            }
 
         # Auto-calibrate threshold if requested
         if auto_calibrate:
@@ -897,6 +1119,9 @@ async def run_task(
                 split=split,
                 split_sink=split_assignment,
                 latency_scan_window=latency_scan_window,
+                tool=tool,
+                msg_id_of=msg_id_of,
+                evidence_sink=evidence_results,
             )
             eval_time = time.time() - eval_start
             subtask_results[st["name"]] = ndcg
@@ -949,6 +1174,12 @@ async def run_task(
         result["calibration"] = calibration_records
     if admission_results:
         result["vector_admission"] = admission_results
+    # What the whole response carried (run_subtask's evidence_sink) and the
+    # block index each corpus group was measured over.
+    result["tool"] = tool
+    result["evidence"] = evidence_results
+    result["blocks"] = block_records
+    result["block_settings"] = block_settings()
     if latencies_limit10:
         result["recall_latency_limit10_scan_window"] = latency_scan_window
     # Every recall of both passes, checked against the depth this run intended
@@ -1015,6 +1246,18 @@ async def async_main(args):
     # the server_mod attribute is kept for older monolith checkouts via CPERSONA_REPO.
     vector_mod._embedding_client = emb_client
     server_mod._embedding_client = emb_client
+
+    # The block arm (2.6.0+) and the reconstruct tool, checked against the
+    # loaded package before any corpus is stored.
+    settings = block_settings()
+    if args.build_blocks and (settings is None or not settings["build_enabled"]):
+        raise SystemExit("--build_blocks needs a checkout with blocks and CPERSONA_BLOCK_BUILD_ENABLED on")
+    if settings and settings["retrieval_enabled"] and not args.build_blocks:
+        logger.warning("  block retrieval is on but this run builds no blocks, so the arm reads an empty "
+                       "index: pass --build_blocks, or set CPERSONA_BLOCK_BUILD_ENABLED=false for an arm "
+                       "without blocks")
+    if args.tool == "reconstruct" and not hasattr(server_mod, "do_reconstruct"):
+        raise SystemExit("--tool reconstruct needs a checkout with do_reconstruct (2.6.0+)")
 
     # Initialize the DB (creates schema, FTS5 tables, triggers). get_db is not
     # re-exported by cpersona.server on the v2.4.20+ package layout.
@@ -1169,6 +1412,9 @@ async def async_main(args):
             "depth_floor_env": os.environ.get("CPERSONA_RECALL_DEPTH_FLOOR", ""),
             "split": args.split,
             "split_seed": args.split_seed,
+            "tool": args.tool,
+            "build_blocks": bool(args.build_blocks),
+            "block_settings": block_settings(),
         }
         dump_fh.write(json.dumps(header) + "\n")
         dump_fh.flush()
@@ -1224,6 +1470,8 @@ async def async_main(args):
             isolate_scenes=bool(getattr(args, "isolate_scenes", False)),
             split=(args.split_seed, args.split) if args.split != "all" else None,
             latency_scan_window=args.latency_scan_window,
+            tool=args.tool,
+            build_blocks=bool(args.build_blocks),
         )
         if result:
             all_results.append(result)
@@ -1375,6 +1623,15 @@ def main():
                              "JSON under `split`. Default: all queries.")
     parser.add_argument("--split_seed", type=int, default=None,
                         help="Seed for --split (required when --split is dev or test).")
+    parser.add_argument("--tool", default="recall", choices=["recall", "reconstruct"],
+                        help="Which MCP tool to score. reconstruct (2.6.0+) is asked at the "
+                             "package's default count; its items' head claims are scored in "
+                             "item order. --recall_limit does not apply to it.")
+    parser.add_argument("--build_blocks", action="store_true",
+                        help="Build every stored record's blocks with the package's own builder "
+                             "(2.6.0+, docs/BLOCK_REACH_DESIGN.md) before calibration. Without it "
+                             "no blocks exist, whatever the package's block settings say; set "
+                             "CPERSONA_BLOCK_BUILD_ENABLED=false for an arm that reads none.")
     parser.add_argument("--latency_scan_window", type=int, default=500,
                         help="CPERSONA_MAX_MEMORIES for the limit=10 latency pass. Default "
                              "500 keeps recorded latency numbers comparable; the package "

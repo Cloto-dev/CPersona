@@ -20,7 +20,7 @@ Two tracks are measured:
 | File | Role |
 | --- | --- |
 | `benchmark_lmeb.py` | Track A runner (raw embedding baseline via mteb) |
-| `benchmark_trackb_lmeb.py` | Track B runner (real cpersona store/recall paths) |
+| `benchmark_trackb_lmeb.py` | Track B runner (real cpersona store/recall paths). On a 2.6.0+ checkout, `--build_blocks` builds every stored record's blocks with the package's own builder, and `--tool reconstruct` scores `reconstruct` items (head claims, in item order) instead of `recall` rows |
 | `budget_batching.py` | Token-budget dynamic batching for SentenceTransformer encode (MPS pathologies workaround); shared by both tracks |
 | `mps_accel.py` | Optional behavior-invariant recall acceleration (`--fast`): preloads each corpus group's embeddings into one matrix instead of per-query full-table scans. Zero changes to cpersona itself |
 | `mps_accel_equivalence_gate.py` | Equivalence gate proving `mps_accel` returns identical results to the original `_search_vector` (numpy backend: bitwise; torch: ≤1e-5), including a `do_recall` integration comparison. `--mode sidecar` turns the same harness on the contiguous embedding index, comparing `_search_vector` with and without the index file present. Deliberately NOT named `test_*.py`: it is a standalone script that mutates `os.environ` at import time, so pytest must never collect it |
