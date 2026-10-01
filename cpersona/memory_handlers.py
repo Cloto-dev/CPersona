@@ -29,6 +29,7 @@ from cpersona import coarse_index
 from cpersona import coverage
 from cpersona import cue
 from cpersona import excerpts
+from cpersona import far_seats
 from cpersona import generation
 from cpersona import health
 from cpersona import nodes
@@ -1614,6 +1615,28 @@ def _propagation_applies(requested: bool, query: str) -> bool:
     return bool(requested) and RECALL_MODE in {"rrf", "rsf"} and bool(query.strip())
 
 
+def _far_seats_apply(query: str) -> bool:
+    """Whether a recall runs the far scan: switched on, and a query to rank by meaning.
+
+    Whether a local query vector exists is known only after the fusion has run (a
+    remote search produces none); the recall checks that too before it scans.
+    """
+    return far_seats.enabled() and bool(query.strip())
+
+
+def _vector_arm_floor(agent_id: str) -> float:
+    """The similarity floor the vector arm held this recall's near rows to.
+
+    The fused modes rank with a permissive floor (`_recall_rrf` and `_recall_rsf`:
+    the threshold times `RRF_THRESHOLD_FACTOR`), because the fusion and the gate
+    decide afterwards; the cascade ranks with the threshold itself. A far record is
+    held to the floor the near records of the same recall met (decision F of
+    docs/BINARY_COARSE_SEARCH_DESIGN.md).
+    """
+    threshold = vector._get_vector_threshold(agent_id)
+    return threshold * RRF_THRESHOLD_FACTOR if RECALL_MODE in {"rrf", "rsf"} else threshold
+
+
 async def _propagation_seat_rows(
     p,
     ledger: budget.Ledger,
@@ -2028,7 +2051,9 @@ async def do_recall(
     """
     propagation_seat = _propagation_applies(propagation_seat, query)
     try:
-        ledger = budget.Ledger.for_recall(iteration_budget, propagation=propagation_seat)
+        ledger = budget.Ledger.for_recall(
+            iteration_budget, propagation=propagation_seat, far=_far_seats_apply(query)
+        )
     except ValueError as exc:
         return error_response(str(exc), messages=[])
     # The providers this recall runs with, read once, here: a set installed while
@@ -2171,8 +2196,12 @@ async def _do_recall(
     # The set do_recall read at its start; read here only for a direct library call.
     p = providers_ if providers_ is not None else providers.active()
     propagation_seat = _propagation_applies(propagation_seat, query)
+    far_on = _far_seats_apply(query)
     # What this recall may spend, declared before it spends any (cpersona/budget.py).
-    ledger = ledger_ if ledger_ is not None else budget.Ledger.for_recall(propagation=propagation_seat)
+    ledger = (
+        ledger_ if ledger_ is not None
+        else budget.Ledger.for_recall(propagation=propagation_seat, far=far_on)
+    )
     # Each stage's input is recorded on a traced recall (recall_trace.stage_input).
     trace_rec = recall_trace.current()
     requested = limit
@@ -2226,8 +2255,8 @@ async def _do_recall(
         # Every row an ordinary arm reached, whatever the gate later decides: the
         # cue's held seat is only for a record no other arm found (§2.4), so a row
         # the gate refused cannot come back through it.
-        # bug-492: built only when a cue can use it.
-        reached = {_row_rid(r) for r in results} if time_cue is not None else set()
+        # bug-492: built only when a cue or the far seats can use it.
+        reached = {_row_rid(r) for r in results} if time_cue is not None or far_on else set()
 
         # Episode-boundary penalty + confidence scoring (factored so the gate calibration
         # produces the exact same per-row gate score the runtime gate keys on).
@@ -2289,6 +2318,24 @@ async def _do_recall(
             )
             if trace_rec is not None:
                 trace_rec.arm("block", block_rows, "_block_distance")
+
+        # The far scan (docs/BINARY_COARSE_SEARCH_DESIGN.md §5). Like the block arm
+        # it is fused with nothing and reaches the answer only through held places
+        # after the cut. Ids and vectors are read here; the text of the few rows
+        # that are seated is read after the cut, when it is known which they are.
+        far_hits: list = []
+        if far_on and query_vec_out:
+            ledger.spend(budget.FAR_FETCH)
+            far_hits = await far_seats.ranked(
+                db, query_vec_out[0], agent_id=agent_id, project_id=project_id,
+                channel=channel, source_id=source_id, floor=_vector_arm_floor(agent_id),
+            )
+            if trace_rec is not None:
+                trace_rec.arm(
+                    "far",
+                    [{"id": h.id, "_rid": ("mem", h.id), "_far_cosine": h.cosine} for h in far_hits],
+                    "_far_cosine",
+                )
 
         # The time cue (docs/RECALL_PROCESS_DESIGN.md §2): the cue arm searches the
         # period, and if it finds nothing the loop suspects the period is wrong and
@@ -2478,7 +2525,7 @@ async def _do_recall(
     # to cut: since cued-v0.3 a cue seat may hold one of the latter (§2.11).
     # bug-492: the three sets below are read only by the cue's seats and the
     # propagation seat, both off by default, and are built only when one is on.
-    admitted_rids = {_rid_of(r) for r in results} if cue_note is not None else set()
+    admitted_rids = {_rid_of(r) for r in results} if cue_note is not None or far_hits else set()
     results = results[:limit]
     # The window as the count cut it, before the cue's move reorders it: the
     # propagation seat follows this order's first row.
@@ -2522,6 +2569,30 @@ async def _do_recall(
         results.extend(reserved[: blocks.BLOCK_RESERVATION])
         if trace_rec is not None:
             trace_rec.reservation(reserved[: blocks.BLOCK_RESERVATION], "block")
+
+    # The far seats (docs/BINARY_COARSE_SEARCH_DESIGN.md §5): two places after the
+    # block reservation, filled in cosine order with far records the answer does
+    # not already hold. As with the cue's seats, a record an ordinary arm reached
+    # and the gate or autocut refused is not eligible -- a refused row does not
+    # come back this way -- while one the gate admitted and the count cut is. They
+    # displace nothing, the gate is not consulted for them, and they are not
+    # credited to the record's recall count (bug-453: `credited_ids` above).
+    if far_hits:
+        present = {_rid_of(r) for r in results}
+        eligible = [
+            h for h in far_hits
+            if ("mem", h.id) not in present and (("mem", h.id) not in reached or ("mem", h.id) in admitted_rids)
+        ]
+        seated: list[dict] = []
+        if eligible:
+            async with connection() as db:
+                seated = await far_seats.seat_rows(
+                    db, eligible, agent_id=agent_id, project_id=project_id, channel=channel,
+                    source_id=source_id, excluded=lambda content: _content_excluded(content, exclude_set),
+                )
+        results.extend(seated)
+        if trace_rec is not None:
+            trace_rec.reservation(seated, "far")
 
     # The cue's held seats (§2.4, §2.11): the best records the cue arm found that the
     # answer does not hold -- one no ordinary arm reached, or one the gate and autocut
@@ -2569,7 +2640,7 @@ async def _do_recall(
 
     providers.check_recall_count(
         len(results), limit, cue.MAX_SEATS + (propagation.SEATS if propagation_seat else 0),
-        blocks.BLOCK_RESERVATION,
+        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0),
     )
     # The one hypothesis a recall evaluates today: the order its stages produced.
     ledger.spend(budget.ITERATION)
@@ -2640,7 +2711,12 @@ async def _do_recall(
         # Scoring reshape lives in 2.6.0 (charter §5 soak isolation); this exposes
         # only what the existing scoring layer already computed.
         gate_score, gate_signal = _gate_score(r)
-        if r.get("_cue_seat"):
+        if r.get("_far_seat"):
+            # A far seat (docs/BINARY_COARSE_SEARCH_DESIGN.md §5). No gate read it; the
+            # cosine is the stored vector's, the quantity the near scan ranks by, and it
+            # is what ordered the seats.
+            msg["match_reason"] = {"signal": "far", "admission": "reservation", "cosine": r["_far_cosine"]}
+        elif r.get("_cue_seat"):
             # A held seat for the time cue (docs/RECALL_PROCESS_DESIGN.md §2.4). Checked
             # before the gate branches: a cue-arm row may carry a cosine, but no gate
             # read it, so it must not be reported as having passed one.
@@ -2710,6 +2786,8 @@ async def _do_recall(
         r.pop("_block_order", None)
         r.pop("_cue_seat", None)
         r.pop("_cue_rank", None)
+        r.pop("_far_seat", None)
+        r.pop("_far_cosine", None)
         r.pop("_propagation_seat", None)
         r.pop("_propagation_fused_rank", None)
         r.pop("_propagation_cosine_rank", None)

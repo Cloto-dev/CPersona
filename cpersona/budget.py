@@ -28,16 +28,19 @@ ORDINARY_FETCH = "ordinary_fetch"
 BLOCK_FETCH = "block_fetch"
 CUE_STAGE = "cue_stage"
 PROPAGATION_FETCH = "propagation_fetch"
+FAR_FETCH = "far_fetch"
 ITERATION = "iteration"
 
 # The ordinary arms fetch once; the block arm fetches once; the cue loop runs its
 # first stage and at most one wider one; the propagation seat's deeper ranking
 # (cpersona/propagation.py) fetches once, and only a recall it is on for
 # declares it, so a recall without it reports exactly the ledger it did before.
+# The far seats' coarse scan (cpersona/far_seats.py) is declared the same way.
 ORDINARY_FETCHES = 1
 BLOCK_FETCHES = 1
 CUE_STAGES = 2
 PROPAGATION_FETCHES = 1
+FAR_FETCHES = 1
 
 # The iteration budget a recall runs with when its caller names none.
 DEFAULT_ITERATIONS = 1
@@ -57,7 +60,7 @@ class Ledger:
     used: dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    def for_recall(cls, iterations: int | None = None, propagation: bool = False) -> Ledger:
+    def for_recall(cls, iterations: int | None = None, propagation: bool = False, far: bool = False) -> Ledger:
         budget = DEFAULT_ITERATIONS if iterations is None else int(iterations)
         if budget < 1:
             raise ValueError(f"an iteration budget is at least 1 (the recall's own order); got {budget}")
@@ -68,6 +71,8 @@ class Ledger:
         }
         if propagation:
             limits[PROPAGATION_FETCH] = PROPAGATION_FETCHES
+        if far:
+            limits[FAR_FETCH] = FAR_FETCHES
         limits[ITERATION] = budget
         return cls(MappingProxyType(limits))
 
