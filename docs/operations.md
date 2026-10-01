@@ -327,6 +327,16 @@ embedding, and filling missing embeddings is what `check_health` with
 the file exists but cannot be used. Add `--json` to either for a
 machine-readable line.
 
+**For memories, `build` also writes the coarse index**, a second derived file
+beside the first (`<database>.memories.coarseindex`). It holds the same rows,
+each reduced to one bit per dimension, and it is read only by the opt-in reach
+described in [Binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md). It is
+handled like the contiguous index: never backed up, never repaired, safe to
+delete, and removed by a purge along with the rows it held. With both files,
+`build` exits 0 only when both were built. `status` reports the coarse index
+under `coarse` without changing its own exit code, because nothing reads the
+coarse index unless a setting asks for it.
+
 **What happens between builds.** The index knows the highest row id that
 existed when it was built. Rows written after that are not in it, and are not
 lost: every query reads them from the database exactly as the scan always did,

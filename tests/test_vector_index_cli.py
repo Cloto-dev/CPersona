@@ -77,15 +77,19 @@ def db_path(tmp_path) -> str:
 
 def test_the_four_outcomes_and_their_exit_codes(db_path):
     index_path = db_path + ".memories.vecindex"
+    coarse_path = db_path + ".memories.coarseindex"
 
     absent = _cli(db_path, "status")
     assert absent.returncode == 1, absent.stderr
     assert json.loads(absent.stdout)["present"] is False
+    assert json.loads(absent.stdout)["coarse"]["present"] is False
 
     declined = _cli(db_path, "build")
     assert declined.returncode == 1, declined.stderr
     assert json.loads(declined.stdout)["built"] is False
+    assert json.loads(declined.stdout)["coarse"]["built"] is False
     assert not os.path.exists(index_path), "a declined build must leave no file"
+    assert not os.path.exists(coarse_path), "a declined build must leave no file"
 
     _seed(db_path, 5)
     built = _cli(db_path, "build")
@@ -93,6 +97,9 @@ def test_the_four_outcomes_and_their_exit_codes(db_path):
     result = json.loads(built.stdout)
     assert result["built"] is True and result["count"] == 5
     assert result["path"] == index_path and os.path.exists(index_path)
+    # The same command builds the coarse index (design §10 B), over the same rows.
+    assert result["coarse"]["built"] is True and result["coarse"]["count"] == 5
+    assert result["coarse"]["path"] == coarse_path and os.path.exists(coarse_path)
 
     status = _cli(db_path, "status")
     assert status.returncode == 0, status.stderr
@@ -100,6 +107,7 @@ def test_the_four_outcomes_and_their_exit_codes(db_path):
     assert report["usable"] is True
     assert report["rows"] == 5 and report["watermark"] == result["watermark"]
     assert report["rows_since_build"] == 0
+    assert report["coarse"]["usable"] is True and report["coarse"]["rows"] == 5
 
     # Rows written after the build are what the status is for: the number the
     # scan reads exactly until the next build.
@@ -130,6 +138,7 @@ def test_human_output_names_the_path_and_the_outcome(db_path):
     built = plain("build")
     assert built.returncode == 0, built.stderr
     assert built.stdout.startswith("built ") and db_path in built.stdout
+    assert "\ncoarse: built " in built.stdout
     status = plain("status")
     assert status.returncode == 0
     assert "2 rows" in status.stdout and "0 rows written since the build" in status.stdout

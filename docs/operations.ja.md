@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:7e399616e9fe6ce7466c141420dca3ddcb08ccea -->
+<!-- i18n-source: docs/operations.md@blob:cc0a5d3dc09b81c811a082cef2690d37a3f0880b -->
 
 # 運用 Runbook
 
@@ -318,6 +318,14 @@ build できれば exit 0、辞退したら exit 1 で理由を印字します�
 `rows_read_exactly` が増えることがあります。索引が無ければ exit 1、ファイルは
 あるが使えなければ exit 2 です。
 どちらも `--json` を付けると機械可読な 1 行になります。
+
+**memories では、`build` は粗探索の索引も書きます。** 1 つ目の隣に置く 2 つ目の派生
+ファイル (`<データベース>.memories.coarseindex`) です。同じ行を、それぞれ 1 次元 1 ビットに
+縮めて持ち、[1 ビット粗探索](BINARY_COARSE_SEARCH_DESIGN.md)で述べる opt-in の到達だけが
+読みます。扱いは連続配置の索引と同じで、バックアップせず、修復せず、消しても安全で、
+削除 (purge) は持っていた行と一緒にこれも消します。両方のファイルを作る場合、`build` が
+exit 0 を返すのは両方を作れた時だけです。`status` は粗探索の索引を `coarse` の下で報告しますが、
+自分の exit code は変えません。設定が求めない限り、粗探索の索引を読むものは無いからです。
 
 **build と build の間に起きること。** 索引は build 時点の最大行 id を覚えて
 います。それ以降に書かれた行は索引に無く、失われもしません。毎クエリがそれらを
