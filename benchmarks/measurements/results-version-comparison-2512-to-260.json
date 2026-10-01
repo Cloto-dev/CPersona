@@ -1,0 +1,1066 @@
+{
+ "registered_rules": "prereg-version-comparison-2512-to-260.md (7b6e470) with Amendment 1 (044c9e9); best arms fixed on the dev half in selection-version-comparison-2512-to-260.json (8124f72)",
+ "split": "test",
+ "split_seed": 20260930,
+ "run_date": "2026-10-01",
+ "builds": {
+  "2.4.41": "784807a",
+  "2.5.12": "8088429",
+  "2.6.0": "bac63da",
+  "harness": "7b6e470 (benchmarks/benchmark_trackb_lmeb.py and the package tree are unchanged through 044c9e9)"
+ },
+ "arms": {
+  "R_rrf": "2.4.41 recall rrf (Amendment 1: reported, not judged)",
+  "A_rrf": "2.5.12 recall rrf (best of 2.5.12, and its shipped configuration)",
+  "B_rrf_on": "2.6.0 recall rrf, block reach on (shipped configuration)",
+  "C_rrf_on": "2.6.0 reconstruct rrf, block reach on (shipped configuration)",
+  "C_rsf_on": "2.6.0 reconstruct rsf, block reach on (best of 2.6.0)"
+ },
+ "verdict_rule": "a task fell if lower by more than 0.01, rose if higher by more than 0.01 (differences rounded to 4 places first); better = macro rises and at most 7 tasks fall; worse = macro falls; otherwise mixed",
+ "invalid": {},
+ "verdict": {
+  "base": "A_rrf",
+  "new": "C_rsf_on",
+  "macro_base": 57.356,
+  "macro_new": 59.1173,
+  "macro_diff": 1.7613,
+  "fell": [
+   "Proced_mem_bench"
+  ],
+  "rose": [
+   "ReMe",
+   "LMEB_SciFact",
+   "Gorilla",
+   "REALTALK",
+   "LoCoMo",
+   "ToolBench",
+   "TMD",
+   "DeepPlanning",
+   "EPBench",
+   "KnowMeBench",
+   "LongMemEval",
+   "ConvoMem",
+   "MemBench",
+   "MemGovern"
+  ],
+  "same": 0,
+  "word": "better",
+  "tasks": [
+   {
+    "task": "ReMe",
+    "base": 59.87,
+    "new": 60.89,
+    "diff": 1.02,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "LMEB_SciFact",
+    "base": 72.49,
+    "new": 73.02,
+    "diff": 0.53,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "Gorilla",
+    "base": 33.34,
+    "new": 36.05,
+    "diff": 2.71,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "REALTALK",
+    "base": 42.12,
+    "new": 45.22,
+    "diff": 3.1,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "Proced_mem_bench",
+    "base": 55.28,
+    "new": 53.88,
+    "diff": -1.4,
+    "state": "fell",
+    "moved_over_5": false
+   },
+   {
+    "task": "LoCoMo",
+    "base": 44.29,
+    "new": 47.51,
+    "diff": 3.22,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "ToolBench",
+    "base": 49.47,
+    "new": 51.32,
+    "diff": 1.85,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "TMD",
+    "base": 23.6,
+    "new": 24.56,
+    "diff": 0.96,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "DeepPlanning",
+    "base": 52.21,
+    "new": 54.29,
+    "diff": 2.08,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "EPBench",
+    "base": 88.68,
+    "new": 89.98,
+    "diff": 1.3,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "KnowMeBench",
+    "base": 48.61,
+    "new": 52.03,
+    "diff": 3.42,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "LongMemEval",
+    "base": 80.69,
+    "new": 84.75,
+    "diff": 4.06,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "ConvoMem",
+    "base": 60.22,
+    "new": 60.87,
+    "diff": 0.65,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "MemBench",
+    "base": 60.34,
+    "new": 61.9,
+    "diff": 1.56,
+    "state": "rose",
+    "moved_over_5": false
+   },
+   {
+    "task": "MemGovern",
+    "base": 89.13,
+    "new": 90.49,
+    "diff": 1.36,
+    "state": "rose",
+    "moved_over_5": false
+   }
+  ]
+ },
+ "reported": {
+  "shipped_recall_vs_2512": {
+   "base": "A_rrf",
+   "new": "B_rrf_on",
+   "macro_base": 57.356,
+   "macro_new": 58.8667,
+   "macro_diff": 1.5107,
+   "fell": [],
+   "rose": [
+    "ReMe",
+    "LMEB_SciFact",
+    "Gorilla",
+    "REALTALK",
+    "LoCoMo",
+    "ToolBench",
+    "TMD",
+    "DeepPlanning",
+    "KnowMeBench",
+    "LongMemEval",
+    "ConvoMem",
+    "MemBench",
+    "MemGovern"
+   ],
+   "same": 2,
+   "word": "better",
+   "tasks": [
+    {
+     "task": "ReMe",
+     "base": 59.87,
+     "new": 60.03,
+     "diff": 0.16,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "LMEB_SciFact",
+     "base": 72.49,
+     "new": 72.8,
+     "diff": 0.31,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "Gorilla",
+     "base": 33.34,
+     "new": 34.77,
+     "diff": 1.43,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "REALTALK",
+     "base": 42.12,
+     "new": 44.29,
+     "diff": 2.17,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "Proced_mem_bench",
+     "base": 55.28,
+     "new": 55.28,
+     "diff": 0.0,
+     "state": "same",
+     "moved_over_5": false
+    },
+    {
+     "task": "LoCoMo",
+     "base": 44.29,
+     "new": 46.43,
+     "diff": 2.14,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ToolBench",
+     "base": 49.47,
+     "new": 51.19,
+     "diff": 1.72,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "TMD",
+     "base": 23.6,
+     "new": 24.39,
+     "diff": 0.79,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "DeepPlanning",
+     "base": 52.21,
+     "new": 54.82,
+     "diff": 2.61,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "EPBench",
+     "base": 88.68,
+     "new": 88.69,
+     "diff": 0.01,
+     "state": "same",
+     "moved_over_5": false
+    },
+    {
+     "task": "KnowMeBench",
+     "base": 48.61,
+     "new": 51.72,
+     "diff": 3.11,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "LongMemEval",
+     "base": 80.69,
+     "new": 83.65,
+     "diff": 2.96,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ConvoMem",
+     "base": 60.22,
+     "new": 61.95,
+     "diff": 1.73,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemBench",
+     "base": 60.34,
+     "new": 63.55,
+     "diff": 3.21,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemGovern",
+     "base": 89.13,
+     "new": 89.44,
+     "diff": 0.31,
+     "state": "rose",
+     "moved_over_5": false
+    }
+   ]
+  },
+  "shipped_reconstruct_vs_2512": {
+   "base": "A_rrf",
+   "new": "C_rrf_on",
+   "macro_base": 57.356,
+   "macro_new": 58.526,
+   "macro_diff": 1.17,
+   "fell": [
+    "Proced_mem_bench",
+    "MemBench"
+   ],
+   "rose": [
+    "ReMe",
+    "LMEB_SciFact",
+    "Gorilla",
+    "REALTALK",
+    "LoCoMo",
+    "ToolBench",
+    "TMD",
+    "DeepPlanning",
+    "EPBench",
+    "KnowMeBench",
+    "LongMemEval",
+    "ConvoMem",
+    "MemGovern"
+   ],
+   "same": 0,
+   "word": "better",
+   "tasks": [
+    {
+     "task": "ReMe",
+     "base": 59.87,
+     "new": 60.18,
+     "diff": 0.31,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "LMEB_SciFact",
+     "base": 72.49,
+     "new": 73.45,
+     "diff": 0.96,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "Gorilla",
+     "base": 33.34,
+     "new": 33.45,
+     "diff": 0.11,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "REALTALK",
+     "base": 42.12,
+     "new": 44.39,
+     "diff": 2.27,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "Proced_mem_bench",
+     "base": 55.28,
+     "new": 54.99,
+     "diff": -0.29,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "LoCoMo",
+     "base": 44.29,
+     "new": 45.8,
+     "diff": 1.51,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ToolBench",
+     "base": 49.47,
+     "new": 52.13,
+     "diff": 2.66,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "TMD",
+     "base": 23.6,
+     "new": 25.15,
+     "diff": 1.55,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "DeepPlanning",
+     "base": 52.21,
+     "new": 54.72,
+     "diff": 2.51,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "EPBench",
+     "base": 88.68,
+     "new": 89.27,
+     "diff": 0.59,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "KnowMeBench",
+     "base": 48.61,
+     "new": 51.99,
+     "diff": 3.38,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "LongMemEval",
+     "base": 80.69,
+     "new": 83.35,
+     "diff": 2.66,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ConvoMem",
+     "base": 60.22,
+     "new": 61.45,
+     "diff": 1.23,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemBench",
+     "base": 60.34,
+     "new": 58.04,
+     "diff": -2.3,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemGovern",
+     "base": 89.13,
+     "new": 89.53,
+     "diff": 0.4,
+     "state": "rose",
+     "moved_over_5": false
+    }
+   ]
+  },
+  "best_260_vs_2441": {
+   "base": "R_rrf",
+   "new": "C_rsf_on",
+   "macro_base": 58.4313,
+   "macro_new": 59.1173,
+   "macro_diff": 0.686,
+   "fell": [
+    "Proced_mem_bench",
+    "TMD",
+    "ConvoMem"
+   ],
+   "rose": [
+    "ReMe",
+    "LMEB_SciFact",
+    "Gorilla",
+    "REALTALK",
+    "LoCoMo",
+    "ToolBench",
+    "DeepPlanning",
+    "EPBench",
+    "KnowMeBench",
+    "LongMemEval",
+    "MemBench",
+    "MemGovern"
+   ],
+   "same": 0,
+   "word": "better",
+   "tasks": [
+    {
+     "task": "ReMe",
+     "base": 60.27,
+     "new": 60.89,
+     "diff": 0.62,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "LMEB_SciFact",
+     "base": 71.9,
+     "new": 73.02,
+     "diff": 1.12,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "Gorilla",
+     "base": 34.45,
+     "new": 36.05,
+     "diff": 1.6,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "REALTALK",
+     "base": 44.45,
+     "new": 45.22,
+     "diff": 0.77,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "Proced_mem_bench",
+     "base": 55.28,
+     "new": 53.88,
+     "diff": -1.4,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "LoCoMo",
+     "base": 46.36,
+     "new": 47.51,
+     "diff": 1.15,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ToolBench",
+     "base": 51.0,
+     "new": 51.32,
+     "diff": 0.32,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "TMD",
+     "base": 24.89,
+     "new": 24.56,
+     "diff": -0.33,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "DeepPlanning",
+     "base": 53.41,
+     "new": 54.29,
+     "diff": 0.88,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "EPBench",
+     "base": 88.63,
+     "new": 89.98,
+     "diff": 1.35,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "KnowMeBench",
+     "base": 51.28,
+     "new": 52.03,
+     "diff": 0.75,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "LongMemEval",
+     "base": 82.93,
+     "new": 84.75,
+     "diff": 1.82,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ConvoMem",
+     "base": 61.62,
+     "new": 60.87,
+     "diff": -0.75,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemBench",
+     "base": 60.98,
+     "new": 61.9,
+     "diff": 0.92,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemGovern",
+     "base": 89.02,
+     "new": 90.49,
+     "diff": 1.47,
+     "state": "rose",
+     "moved_over_5": false
+    }
+   ]
+  },
+  "shipped_recall_vs_2441": {
+   "base": "R_rrf",
+   "new": "B_rrf_on",
+   "macro_base": 58.4313,
+   "macro_new": 58.8667,
+   "macro_diff": 0.4353,
+   "fell": [
+    "ReMe",
+    "REALTALK",
+    "TMD"
+   ],
+   "rose": [
+    "LMEB_SciFact",
+    "Gorilla",
+    "LoCoMo",
+    "ToolBench",
+    "DeepPlanning",
+    "EPBench",
+    "KnowMeBench",
+    "LongMemEval",
+    "ConvoMem",
+    "MemBench",
+    "MemGovern"
+   ],
+   "same": 1,
+   "word": "better",
+   "tasks": [
+    {
+     "task": "ReMe",
+     "base": 60.27,
+     "new": 60.03,
+     "diff": -0.24,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "LMEB_SciFact",
+     "base": 71.9,
+     "new": 72.8,
+     "diff": 0.9,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "Gorilla",
+     "base": 34.45,
+     "new": 34.77,
+     "diff": 0.32,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "REALTALK",
+     "base": 44.45,
+     "new": 44.29,
+     "diff": -0.16,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "Proced_mem_bench",
+     "base": 55.28,
+     "new": 55.28,
+     "diff": 0.0,
+     "state": "same",
+     "moved_over_5": false
+    },
+    {
+     "task": "LoCoMo",
+     "base": 46.36,
+     "new": 46.43,
+     "diff": 0.07,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ToolBench",
+     "base": 51.0,
+     "new": 51.19,
+     "diff": 0.19,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "TMD",
+     "base": 24.89,
+     "new": 24.39,
+     "diff": -0.5,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "DeepPlanning",
+     "base": 53.41,
+     "new": 54.82,
+     "diff": 1.41,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "EPBench",
+     "base": 88.63,
+     "new": 88.69,
+     "diff": 0.06,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "KnowMeBench",
+     "base": 51.28,
+     "new": 51.72,
+     "diff": 0.44,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "LongMemEval",
+     "base": 82.93,
+     "new": 83.65,
+     "diff": 0.72,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ConvoMem",
+     "base": 61.62,
+     "new": 61.95,
+     "diff": 0.33,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemBench",
+     "base": 60.98,
+     "new": 63.55,
+     "diff": 2.57,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemGovern",
+     "base": 89.02,
+     "new": 89.44,
+     "diff": 0.42,
+     "state": "rose",
+     "moved_over_5": false
+    }
+   ]
+  },
+  "shipped_reconstruct_vs_2441": {
+   "base": "R_rrf",
+   "new": "C_rrf_on",
+   "macro_base": 58.4313,
+   "macro_new": 58.526,
+   "macro_diff": 0.0947,
+   "fell": [
+    "ReMe",
+    "Gorilla",
+    "REALTALK",
+    "Proced_mem_bench",
+    "LoCoMo",
+    "ConvoMem",
+    "MemBench"
+   ],
+   "rose": [
+    "LMEB_SciFact",
+    "ToolBench",
+    "TMD",
+    "DeepPlanning",
+    "EPBench",
+    "KnowMeBench",
+    "LongMemEval",
+    "MemGovern"
+   ],
+   "same": 0,
+   "word": "better",
+   "tasks": [
+    {
+     "task": "ReMe",
+     "base": 60.27,
+     "new": 60.18,
+     "diff": -0.09,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "LMEB_SciFact",
+     "base": 71.9,
+     "new": 73.45,
+     "diff": 1.55,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "Gorilla",
+     "base": 34.45,
+     "new": 33.45,
+     "diff": -1.0,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "REALTALK",
+     "base": 44.45,
+     "new": 44.39,
+     "diff": -0.06,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "Proced_mem_bench",
+     "base": 55.28,
+     "new": 54.99,
+     "diff": -0.29,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "LoCoMo",
+     "base": 46.36,
+     "new": 45.8,
+     "diff": -0.56,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "ToolBench",
+     "base": 51.0,
+     "new": 52.13,
+     "diff": 1.13,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "TMD",
+     "base": 24.89,
+     "new": 25.15,
+     "diff": 0.26,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "DeepPlanning",
+     "base": 53.41,
+     "new": 54.72,
+     "diff": 1.31,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "EPBench",
+     "base": 88.63,
+     "new": 89.27,
+     "diff": 0.64,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "KnowMeBench",
+     "base": 51.28,
+     "new": 51.99,
+     "diff": 0.71,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "LongMemEval",
+     "base": 82.93,
+     "new": 83.35,
+     "diff": 0.42,
+     "state": "rose",
+     "moved_over_5": false
+    },
+    {
+     "task": "ConvoMem",
+     "base": 61.62,
+     "new": 61.45,
+     "diff": -0.17,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemBench",
+     "base": 60.98,
+     "new": 58.04,
+     "diff": -2.94,
+     "state": "fell",
+     "moved_over_5": false
+    },
+    {
+     "task": "MemGovern",
+     "base": 89.02,
+     "new": 89.53,
+     "diff": 0.51,
+     "state": "rose",
+     "moved_over_5": false
+    }
+   ]
+  }
+ },
+ "summary": {
+  "A_rrf": {
+   "macro_ndcg10": 57.356,
+   "any_relevant_share": 93.15,
+   "mean_carried": 9.967,
+   "category_macro": {
+    "Dialogue": 51.8767,
+    "Episodic": 65.72,
+    "Procedural": 55.886,
+    "Semantic": 72.49
+   },
+   "per_task": {
+    "ReMe": 59.87,
+    "LMEB_SciFact": 72.49,
+    "Gorilla": 33.34,
+    "REALTALK": 42.12,
+    "Proced_mem_bench": 55.28,
+    "LoCoMo": 44.29,
+    "ToolBench": 49.47,
+    "TMD": 23.6,
+    "DeepPlanning": 52.21,
+    "EPBench": 88.68,
+    "KnowMeBench": 48.61,
+    "LongMemEval": 80.69,
+    "ConvoMem": 60.22,
+    "MemBench": 60.34,
+    "MemGovern": 89.13
+   }
+  },
+  "B_rrf_on": {
+   "macro_ndcg10": 58.8667,
+   "any_relevant_share": 93.9,
+   "mean_carried": 11.9601,
+   "category_macro": {
+    "Dialogue": 54.0433,
+    "Episodic": 66.8133,
+    "Procedural": 57.1,
+    "Semantic": 72.8
+   },
+   "per_task": {
+    "ReMe": 60.03,
+    "LMEB_SciFact": 72.8,
+    "Gorilla": 34.77,
+    "REALTALK": 44.29,
+    "Proced_mem_bench": 55.28,
+    "LoCoMo": 46.43,
+    "ToolBench": 51.19,
+    "TMD": 24.39,
+    "DeepPlanning": 54.82,
+    "EPBench": 88.69,
+    "KnowMeBench": 51.72,
+    "LongMemEval": 83.65,
+    "ConvoMem": 61.95,
+    "MemBench": 63.55,
+    "MemGovern": 89.44
+   }
+  },
+  "C_rrf_on": {
+   "macro_ndcg10": 58.526,
+   "any_relevant_share": 93.48,
+   "mean_carried": 11.9096,
+   "category_macro": {
+    "Dialogue": 53.03,
+    "Episodic": 67.1467,
+    "Procedural": 56.964,
+    "Semantic": 73.45
+   },
+   "per_task": {
+    "ReMe": 60.18,
+    "LMEB_SciFact": 73.45,
+    "Gorilla": 33.45,
+    "REALTALK": 44.39,
+    "Proced_mem_bench": 54.99,
+    "LoCoMo": 45.8,
+    "ToolBench": 52.13,
+    "TMD": 25.15,
+    "DeepPlanning": 54.72,
+    "EPBench": 89.27,
+    "KnowMeBench": 51.99,
+    "LongMemEval": 83.35,
+    "ConvoMem": 61.45,
+    "MemBench": 58.04,
+    "MemGovern": 89.53
+   }
+  },
+  "C_rsf_on": {
+   "macro_ndcg10": 59.1173,
+   "any_relevant_share": 93.65,
+   "mean_carried": 9.5845,
+   "category_macro": {
+    "Dialogue": 54.135,
+    "Episodic": 67.6333,
+    "Procedural": 57.206,
+    "Semantic": 73.02
+   },
+   "per_task": {
+    "ReMe": 60.89,
+    "LMEB_SciFact": 73.02,
+    "Gorilla": 36.05,
+    "REALTALK": 45.22,
+    "Proced_mem_bench": 53.88,
+    "LoCoMo": 47.51,
+    "ToolBench": 51.32,
+    "TMD": 24.56,
+    "DeepPlanning": 54.29,
+    "EPBench": 89.98,
+    "KnowMeBench": 52.03,
+    "LongMemEval": 84.75,
+    "ConvoMem": 60.87,
+    "MemBench": 61.9,
+    "MemGovern": 90.49
+   }
+  },
+  "R_rrf": {
+   "macro_ndcg10": 58.4313,
+   "any_relevant_share": 93.28,
+   "mean_carried": 9.9731,
+   "category_macro": {
+    "Dialogue": 53.5383,
+    "Episodic": 66.7267,
+    "Procedural": 56.632,
+    "Semantic": 71.9
+   },
+   "per_task": {
+    "ReMe": 60.27,
+    "LMEB_SciFact": 71.9,
+    "Gorilla": 34.45,
+    "REALTALK": 44.45,
+    "Proced_mem_bench": 55.28,
+    "LoCoMo": 46.36,
+    "ToolBench": 51.0,
+    "TMD": 24.89,
+    "DeepPlanning": 53.41,
+    "EPBench": 88.63,
+    "KnowMeBench": 51.28,
+    "LongMemEval": 82.93,
+    "ConvoMem": 61.62,
+    "MemBench": 60.98,
+    "MemGovern": 89.02
+   }
+  }
+ },
+ "summary_notes": {
+  "any_relevant_share": "percent of all test queries, pooled over the 15 tasks, whose response carried a relevant document anywhere",
+  "mean_carried": "mean over tasks of each task's query-weighted mean of documents carried",
+  "category_macro": "mean over the tasks of each category, from each task file's memory_type"
+ }
+}
