@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/BINARY_COARSE_SEARCH_DESIGN.md@blob:ea3949d5e2ed3f8e8333a3519c724c12a0ea3103 -->
+<!-- i18n-source: docs/BINARY_COARSE_SEARCH_DESIGN.md@blob:6b61dbf62f961d20faa056ae4eb3b66c938bbe8c -->
 
 # 1 ビット粗探索 — 設計 { #binary-coarse-search-design }
 
@@ -21,7 +21,8 @@ cosine で順位付けします。その窓より古いレコードは、問い�
   Block をコーパス全体で順位付けします ([Block による到達](BLOCK_REACH_DESIGN.md))。1 節だけの
   レコードは Block を持ちません。その 1 つの Block がレコードそのものになるからです。窓の外に
   あるそうしたレコードは、今も意味では届きません。
-- **時間の手がかり**は、それが指す期間をコーパス全体で探します
+- **時間の手がかり**は、それが指す期間 (出荷されている
+  [動的検索窓 (Dynamic Retrieval Envelope)](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process)) をコーパス全体で探します
   ([想起のプロセス](RECALL_PROCESS_DESIGN.md#22-the-cue-arm))。ただしそのベクトル側は、期間内で
   最も新しく*保存された* `CPERSONA_MAX_MEMORIES` 件しか順位付けしません。大きなストアで長い
   期間や曖昧な期間を指すと、期間の残りはベクトル側から外れます。
@@ -189,7 +190,7 @@ cosine で順位付けします。ベクトルの腕が自分の行に課す類�
 
 ## 6. 時間の手がかりの残り { #6-the-cue-arms-remainder }
 
-今、時間の手がかりの腕のベクトル側は、タイムスタンプが期間に入るレコードを順位付けしますが、
+手がかりの期間は、想起のプロセスが出荷している動的検索窓です。今、時間の手がかりの腕のベクトル側は、タイムスタンプが期間に入るレコードを順位付けしますが、
 保存順で最大 `CPERSONA_MAX_MEMORIES` 件しか読みません。それより多くの埋め込み済みレコードを
 持つ期間では残りがベクトル側から外れ、どれが外れるかは、期間ではなく保存された時刻で決まります。
 

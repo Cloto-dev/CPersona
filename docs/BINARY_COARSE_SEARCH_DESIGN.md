@@ -20,7 +20,8 @@ Two later steps reduced that gap without closing it:
   ([Block reach](BLOCK_REACH_DESIGN.md)). A record that is a single clause has
   no blocks, because its one block would be the record itself. Past the window,
   such a record is still out of semantic reach.
-- **The time cue** searches the period it names, over the whole corpus
+- **The time cue** searches the period it names — the shipped
+  [Dynamic Retrieval Envelope](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process) — over the whole corpus
   ([The recall process](RECALL_PROCESS_DESIGN.md#22-the-cue-arm)). Its vector
   half, however, ranks only the `CPERSONA_MAX_MEMORIES` most recently *stored*
   records inside the period. A long or vague period on a large store leaves the
@@ -219,6 +220,7 @@ it has no block reach. Episodes are not searched (section 11).
 
 ## 6. The cue arm's remainder
 
+A cue's period is the Dynamic Retrieval Envelope the recall process ships.
 Today the vector half of the cue arm ranks the records whose timestamp falls in
 the period, reading at most `CPERSONA_MAX_MEMORIES` of them in storage order.
 A period holding more embedded records than that loses the rest from the
