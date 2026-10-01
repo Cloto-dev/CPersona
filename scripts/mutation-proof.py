@@ -2296,6 +2296,26 @@ MUTATIONS += [
         breaks="kanji words drop out of the ledger, so a Japanese question's content parts go unrecorded",
         expect='test_coverage_ledger.py::test_parts_are_words_cut_by_script',
     ),
+    Mutation(
+        id='M216',
+        tests=('tests/test_recall_cue.py',),
+        target="time cue — an empty query lists the period's newest records by their own time",
+        file='cpersona/memory_handlers.py',
+        find='"datetime(timestamp) DESC, id ASC" if window is not None',
+        replace='"created_at DESC" if window is not None',
+        breaks="the period's rows are ordered by when they were stored, so an import decides which of them the cue's seats hold",
+        expect='test_recall_cue.py::test_an_empty_query_orders_the_period_by_the_records_time_not_by_when_they_were_stored',
+    ),
+    Mutation(
+        id='M217',
+        tests=('tests/test_recall_cue.py',),
+        target='time cue — an empty query without a period keeps the storage order',
+        file='cpersona/memory_handlers.py',
+        find='if window is not None else "created_at DESC"',
+        replace='if True else "created_at DESC"',
+        breaks="the ordinary empty-query recall stops listing the most recently stored records first",
+        expect='test_recall_cue.py::test_the_keyword_search_without_a_period_still_lists_the_most_recently_stored_first',
+    ),
 ]
 
 

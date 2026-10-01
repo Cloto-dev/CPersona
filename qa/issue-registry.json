@@ -7445,13 +7445,15 @@
       "severity": "LOW",
       "discovered": "2026-09-30T00:00:00Z",
       "version": "2.6.0b2",
+      "fixed_in": "2.6.2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "An empty query has no ranking to offer, so the keyword half returns the period's",
+      "pattern": "id ASC\" if window is not None else \"created_at DESC\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "nondeterministic-order",
       "fix_sketch": "Either order the cue arm's empty-query list by the rows' own time (datetime(timestamp) DESC, id ASC), the axis the period is measured on -- a change to which rows a cue's seats take -- or keep created_at, give it a deterministic tie-break, and seed the test with distinct created_at values so it states the order it relies on.",
-      "note": "Found while running mutation baselines for the 2.6.0 LOW batch. Choosing between the two is a decision about which time a cue ranks by, not a test repair."
+      "note": "Found while running mutation baselines for the 2.6.0 LOW batch. Choosing between the two is a decision about which time a cue ranks by, not a test repair.",
+      "fix_note": "With a period, the empty-query keyword search orders by datetime(timestamp) DESC, id ASC -- the records' own time, the axis the period is measured on, with the row id settling equal times -- and without one it keeps created_at DESC, so only the cue arm changes. The alternative, keeping created_at with a tie-break and seeding the test with distinct created_at values, would have made the order deterministic but left it wrong: an import stores rows in an order unrelated to their own time, and created_at would then decide which of a period's rows the cue's seats hold. The episodes of the same arm were already ordered by their own time. Regression: tests/test_recall_cue.py::test_an_empty_query_orders_the_period_by_the_records_time_not_by_when_they_were_stored and ::test_records_of_one_time_in_the_period_come_back_in_the_order_they_were_stored (created_at written one second apart, running against the period's order), ::test_the_keyword_search_without_a_period_still_lists_the_most_recently_stored_first; mutations M216 and M217."
     },
     {
       "id": "bug-503",

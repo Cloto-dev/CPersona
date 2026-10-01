@@ -1924,7 +1924,7 @@ async def _search_cue_arm(
         ])
 
     # An empty query has no ranking to offer, so the keyword half returns the period's
-    # newest records, as the ordinary recall does for an empty query.
+    # newest records by their own time, as the episodes below are ordered by theirs.
     if FTS_ENABLED or not query.strip():
         keyword = await _search_memories_keyword(
             db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
@@ -3602,11 +3602,15 @@ async def _search_memories_keyword(
         src_params_m = (*src_params_m, *window)
 
     if not query.strip():
+        # A period is measured on the records' own time, so its newest records are
+        # newest by that time (bug-502). created_at is when a row was stored, which an
+        # import leaves unrelated to the period, and at one-second resolution ties.
+        newest_first = "datetime(timestamp) DESC, id ASC" if window is not None else "created_at DESC"
         rows = await db.execute_fetchall(
             f"""SELECT id, msg_id, content, source, timestamp
                FROM memories
                WHERE {iso.clause}{src_clause_bare}
-               ORDER BY created_at DESC
+               ORDER BY {newest_first}
                LIMIT ?""",
             (*iso.params, *src_params_bare, limit),
         )
