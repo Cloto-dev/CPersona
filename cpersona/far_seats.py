@@ -77,7 +77,7 @@ async def ranked(db, query_vec, *, agent_id, project_id, channel, source_id, flo
     dim = int(query.shape[-1])
     found = await coarse_search.coarse_candidates(
         db, query, agent_id=agent_id, project_id=project_id, channel=channel,
-        source_id=source_id, start=scan_start(), k=coarse_search.K_PROVISIONAL,
+        source_id=source_id, start=scan_start(), k=coarse_search.CANDIDATES,
     )
     if not found.ids:
         return []

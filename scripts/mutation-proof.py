@@ -2518,6 +2518,16 @@ MUTATIONS += [
         breaks='the seats go to the earliest far records the Hamming pass kept instead of the closest ones',
         expect='test_far_seats.py::test_the_seats_hold_the_best_far_records_and_displace_nothing',
     ),
+    Mutation(
+        id='M237',
+        tests=('tests/test_coarse_search.py',),
+        target='coarse search — the candidate count is the measured decision',
+        file='cpersona/coarse_search.py',
+        find='CANDIDATES = 256\n',
+        replace='CANDIDATES = 255\n',
+        breaks='the Hamming pass keeps a count no measurement chose, and nothing says so',
+        expect='test_coarse_search.py::test_the_candidate_count_is_the_measured_decision',
+    ),
 ]
 
 

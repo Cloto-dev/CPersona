@@ -20,6 +20,7 @@ Design: `docs/BINARY_COARSE_SEARCH_DESIGN.md` §4 and invariants 1, 3, 4 and 6 o
 
 import itertools
 import json
+import pathlib
 import random
 
 import numpy as np
@@ -119,7 +120,7 @@ def _missing(tmp_path) -> str:
 
 
 async def _reference(db, query, *, agent_id, project_id=None, channel="", source_id="",
-                     start=0, end=None, period=None, k=coarse_search.K_PROVISIONAL):
+                     start=0, end=None, period=None, k=coarse_search.CANDIDATES):
     """The contract read plainly, by a route that shares nothing with the suppliers' selection."""
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     src = source_id_where(source_id)
@@ -295,3 +296,17 @@ async def test_degenerate_requests(store, tmp_path):
     other_dim = await coarse_search.coarse_candidates(db, _vector(1, 8), agent_id=AGENT, path=path)
     assert other_dim.source == "live"  # an index of another dimension does not answer
     assert json.dumps(other_dim.rows())  # plain ints all the way down
+
+
+def test_the_candidate_count_is_the_measured_decision():
+    """`CANDIDATES` is the value the registered measurement decided, not a number typed twice.
+
+    The decision of design §9 is recorded in the measurement's own JSON. Changing the
+    constant without a new measurement, or re-scoring to a different decision without
+    changing the constant, fails here.
+    """
+    path = (pathlib.Path(__file__).resolve().parents[1]
+            / "benchmarks" / "measurements" / "results-binary-coarse-search.json")
+    decision = json.loads(path.read_text(encoding="utf-8"))["decision"]
+    assert decision["status"] == "decided"
+    assert coarse_search.CANDIDATES == decision["k"]

@@ -1,8 +1,8 @@
 # Binary Coarse Search — design
 
 Status: in development for 2.6.2. The coarse index (section 3), the supplier
-(section 4) and the far seats (section 5) are on `master`; the cue arm's
-remainder (section 6) and the measurement (section 9) are not yet.
+(section 4), the far seats (section 5) and the measurement (section 9) are on
+`master`; the cue arm's remainder (section 6) is not yet.
 `SCHEMA_VERSION` does not change and no runtime dependency is added. Both settings this page introduces are off by default, and
 with them off every answer is the one 2.6.1 gives, bit for bit, including the
 order of equally-similar rows.
@@ -272,8 +272,8 @@ so that either can ship alone.
 At the defaults the new code does not run: a guard, not a scan that returns
 nothing. The number of far seats and `K'` are not settings. Like the block
 reservation and the block re-rank's depth, they are server policy, derived from
-nothing the caller asks for: the seats are fixed at two, and `K'` is set by the
-measurement of section 9. `CPERSONA_MAX_MEMORIES` keeps its meaning — the near window, and with
+nothing the caller asks for: the seats are fixed at two, and `K'` is 256, set by
+the measurement of section 9. `CPERSONA_MAX_MEMORIES` keeps its meaning — the near window, and with
 it the recency prior — and is where the far scan begins.
 
 ## 8. Invariants
@@ -310,6 +310,16 @@ memory; index build time and size. The size at which the coarse scan becomes
 slower than the exact one is reported, because below it there is a store size
 where the index costs more than it saves.
 
+Measured ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-binary-coarse-search.md)): against an exact scan that reads the same rows from
+SQLite, the coarse path is faster at every size, from 2,000 far records to
+990,000 (197 ms against 15.9 s at the largest). Against an exact scan of the
+contiguous float32 index it is slower at every size measured (197 ms against
+55), on a machine where that 4.1 GB index sits in memory. The one-bit index buys
+residency — 190 MB and 59 MB of peak memory per far ranking at 1,000,000
+records — not latency, which is the split between the contiguous index and this
+one that the scale plan draws. Without the coarse index, the live supplier takes
+about 16 s per recall at that size.
+
 **`K'`.** The approximation sits in one place: which far records survive the
 Hamming pass to be re-ranked. With `K'` equal to the number of far records,
 the far seats are filled exactly as an exact float32 scan of the same positions
@@ -321,14 +331,23 @@ which one differs count as one half, not as a failure. The bound is **95%**
 (section 10, C). A miss costs a reachable far record its seat; it never puts a
 wrong row in place of a right one, because the seats displace nothing.
 
-The `K'` that meets a bound grows with the store, because a larger store has
+The `K'` that meets a bound was expected to grow with the store, because a larger store has
 more records whose bits sit close to the query's by chance. So the curve is
 taken at several sizes — synthetic stores of 100,000 and 1,000,000 records, and
 the 237,654-document store the scan-window measurements used — on a grid of `K'`
 fixed before the run, and `K'` is the smallest value, or the smallest rule in
 the store's size, that meets the bound at the largest of them. The starting
-point of 1,000 is a starting point, not a result. Each `K'` costs its float32
-reads: 4 KB a candidate at 1,024 dimensions, about 4 MB a recall at 1,000.
+point of 1,000 was a starting point, not a result.
+
+**Measured: `K'` = 256** ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-binary-coarse-search.md)). It met the bound in all eight cells —
+100,000, 237,654 and 1,000,000 records, two query sets on the largest, both
+fusions — with the lowest cell at 97.3%; 128 fell below it in three. Each
+candidate costs its float32 read, 4 KB at 1,024 dimensions, about 1 MB a recall
+at 256. The expectation that the value grows with the store did not hold: the
+237,654-record store needed more than the 1,000,000-record one for the same
+queries, because the records added below it came from other corpora and rarely
+sat near a query's bits. What sets `K'` is how many records compete near the
+query in Hamming distance, not the row count.
 
 **Precision is not measured here.** A claim that far seats improve answers
 needs a store with a real far stratum and a rule fixed in advance, and it has to

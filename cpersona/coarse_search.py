@@ -55,10 +55,13 @@ from cpersona.vector_index import IndexUnusable
 
 logger = logging.getLogger(__name__)
 
-#: Candidates the Hamming pass keeps. Provisional: the value is set by the
-#: measurement of design §9, and like the far seats it is server policy, not a
-#: setting.
-K_PROVISIONAL = 1000
+#: Candidates the Hamming pass keeps: server policy, not a setting, like the far
+#: seats. Set by the measurement of design §9 — the smallest value on its grid whose
+#: seats agree with an exact scan's at least 95% of the time at every store size and
+#: regime measured, up to 1,000,000 records
+#: (benchmarks/measurements/results-binary-coarse-search.md). A test holds it to the
+#: decision recorded there.
+CANDIDATES = 256
 
 #: Index rows whose bits are gathered at once. It bounds the copy a scattered
 #: selection makes out of the mapped file (128 bytes a row at 1,024 dimensions,
@@ -148,7 +151,7 @@ async def coarse_candidates(
     start: int = 0,
     end: int | None = None,
     period: tuple | None = None,
-    k: int = K_PROVISIONAL,
+    k: int = CANDIDATES,
     path: str | None = None,
 ) -> Candidates:
     """The `k` records nearest the query's bits at scan positions `[start, end)`.
