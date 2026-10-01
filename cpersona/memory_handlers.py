@@ -1920,6 +1920,7 @@ async def _search_cue_arm(
         import numpy as np
 
         qv = np.array(query_vec[0], dtype=np.float32)
+        floor = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
         survivors = await vector._chunked_cosine_scan(
             db,
             f"""SELECT id, embedding FROM memories
@@ -1929,10 +1930,26 @@ async def _search_cue_arm(
             (*iso.params, *src.params, start, end, MAX_MEMORIES),
             qv,
             len(qv),
-            vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR,
+            floor,
             depth,
         )
         ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
+        if config.CUE_COARSE_ENABLED:
+            # The period's remainder (docs/BINARY_COARSE_SEARCH_DESIGN.md §6): the records
+            # past the cap above, in the same scan of the same period, searched through the
+            # coarse supplier and re-ranked by their stored vectors' cosine against the
+            # same floor. Both lists hold exact cosines, so they merge on that; a tie goes
+            # to the capped list (its rows sit earlier in the scan), then by scan position.
+            remainder = await far_seats.ranked(
+                db, qv, agent_id=agent_id, project_id=project_id, channel=channel,
+                source_id=source_id, floor=floor, start=MAX_MEMORIES, period=(start, end),
+            )
+            merged = sorted(
+                [(0, ordinal, mem_id, score) for ordinal, mem_id, score in ranked]
+                + [(1, hit.position, hit.id, hit.cosine) for hit in remainder],
+                key=lambda s: (-s[3], s[0], s[1]),
+            )
+            ranked = [(position, mem_id, score) for _, position, mem_id, score in merged[:depth]]
         payload = await vector._fetch_rows_by_id(
             db,
             f"SELECT id, msg_id, content, source, timestamp FROM memories WHERE id IN ({{ph}})"

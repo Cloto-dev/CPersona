@@ -33,6 +33,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from cpersona import coarse_index
 from cpersona import coarse_search
 from cpersona import config
 from cpersona import vector
@@ -71,17 +72,27 @@ def _admitted(agent_id, project_id, channel, source_id) -> tuple[str, tuple]:
     return f"{iso.and_clause}{src.and_clause}", (*iso.params, *src.params)
 
 
-async def ranked(db, query_vec, *, agent_id, project_id, channel, source_id, floor: float) -> list[FarHit]:
-    """The far records by cosine, best first, at or above `floor`. Ids and vectors only."""
+async def ranked(db, query_vec, *, agent_id, project_id, channel, source_id, floor: float,
+                 start: int | None = None, period: tuple | None = None) -> list[FarHit]:
+    """The far records by cosine, best first, at or above `floor`. Ids and vectors only.
+
+    By default the far seats' question: every record past the vector lists, any time.
+    `start` and `period` ask it of a time cue's period from the cue's own cap instead
+    (the cue arm's remainder, design §6); the period is re-applied when the
+    candidates are read by id, as the authority's predicate is.
+    """
     query = np.asarray(query_vec, dtype=np.float32)
     dim = int(query.shape[-1])
     found = await coarse_search.coarse_candidates(
         db, query, agent_id=agent_id, project_id=project_id, channel=channel,
-        source_id=source_id, start=scan_start(), k=coarse_search.CANDIDATES,
+        source_id=source_id, start=scan_start() if start is None else start, period=period,
+        k=coarse_search.CANDIDATES,
     )
     if not found.ids:
         return []
     clause, params = _admitted(agent_id, project_id, channel, source_id)
+    if period is not None:
+        clause, params = f"{clause} AND {coarse_index.PERIOD_PREDICATE}", (*params, *period)
     stored = await vector._fetch_rows_by_id(
         db,
         f"SELECT id, embedding FROM memories WHERE id IN ({{ph}}) AND embedding IS NOT NULL{clause}",

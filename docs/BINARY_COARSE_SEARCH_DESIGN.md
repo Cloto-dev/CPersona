@@ -1,8 +1,8 @@
 # Binary Coarse Search — design
 
-Status: in development for 2.6.2. The coarse index (section 3), the supplier
-(section 4), the far seats (section 5) and the measurement (section 9) are on
-`master`; the cue arm's remainder (section 6) is not yet.
+Status: implemented for 2.6.2. The coarse index (section 3), the supplier
+(section 4), the far seats (section 5), the cue arm's remainder (section 6) and
+the measurement (section 9) are on `master`.
 `SCHEMA_VERSION` does not change and no runtime dependency is added. Both settings this page introduces are off by default, and
 with them off every answer is the one 2.6.1 gives, bit for bit, including the
 order of equally-similar rows.
