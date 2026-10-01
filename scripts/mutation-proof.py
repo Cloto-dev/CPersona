@@ -1910,9 +1910,9 @@ MUTATIONS += [
     Mutation(
         id='M177',
         tests=('tests/test_recall_cue.py',),
-        target='recall — no reached set without a cue (bug-492)',
+        target='recall — no reached set without a cue or far seats (bug-492)',
         file='cpersona/memory_handlers.py',
-        find='        reached = {_row_rid(r) for r in results} if time_cue is not None else set()\n',
+        find='        reached = {_row_rid(r) for r in results} if time_cue is not None or far_on else set()\n',
         replace='        reached = {_row_rid(r) for r in results}\n',
         breaks="every recall builds a set only the cue's seats read",
         expect='test_recall_cue.py::test_a_plain_recall_builds_no_seat_bookkeeping',
@@ -1920,9 +1920,9 @@ MUTATIONS += [
     Mutation(
         id='M178',
         tests=('tests/test_recall_cue.py',),
-        target='recall — no admitted set without a cue (bug-492)',
+        target='recall — no admitted set without a cue or far seats (bug-492)',
         file='cpersona/memory_handlers.py',
-        find='    admitted_rids = {_rid_of(r) for r in results} if cue_note is not None else set()\n',
+        find='    admitted_rids = {_rid_of(r) for r in results} if cue_note is not None or far_hits else set()\n',
         replace='    admitted_rids = {_rid_of(r) for r in results}\n',
         breaks="every recall builds a set only the cue's seats read",
         expect='test_recall_cue.py::test_a_plain_recall_builds_no_seat_bookkeeping',
