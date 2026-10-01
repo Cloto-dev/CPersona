@@ -2356,6 +2356,88 @@ MUTATIONS += [
         breaks='a record whose time SQLite cannot read falls inside wide periods in the file and in none in SQL',
         expect='test_coarse_index.py::test_a_period_in_the_file_selects_the_rows_sql_selects',
     ),
+    Mutation(
+        id='M222',
+        tests=('tests/test_coarse_search.py',),
+        target='coarse search — a tie at the cut-off distance goes to the earlier scan position',
+        file='cpersona/coarse_search.py',
+        find='at = at[np.argpartition(positions[at], need - 1)[:need]] if need > 0 else at[:0]',
+        replace='at = at[np.argpartition(-positions[at], need - 1)[:need]] if need > 0 else at[:0]',
+        breaks='the rows kept at the cut-off are the latest of the tie, so K-prime holds older records than the order the answer states',
+        expect='test_coarse_search.py::test_top_k_by_counting_is_the_prefix_of_the_full_sort',
+    ),
+    Mutation(
+        id='M223',
+        tests=('tests/test_coarse_search.py',),
+        target="coarse search — the index's period includes its lower bound, as the SQL does",
+        file='cpersona/coarse_search.py',
+        find='selected = selected[(stamps >= low.encode("ascii")) & (stamps < high.encode("ascii"))]',
+        replace='selected = selected[(stamps > low.encode("ascii")) & (stamps < high.encode("ascii"))]',
+        breaks='a record at the first instant of a period is in the period in SQL and missing from the index: the index is stricter than the authority',
+        expect='test_coarse_search.py::test_the_index_offers_every_row_the_authority_admits',
+    ),
+    Mutation(
+        id='M224',
+        tests=('tests/test_coarse_search.py',),
+        target='coarse search — a live row is merged into the index order on created_at DESC then id ASC',
+        file='cpersona/coarse_search.py',
+        find='key = ((row[1] or "").encode("utf-8", "replace"), -int(row[0]))',
+        replace='key = ((row[1] or "").encode("utf-8", "replace"), int(row[0]))',
+        breaks='a row written after the build sorts before the indexed rows of its second, so every later scan position moves',
+        expect='test_coarse_search.py::test_the_index_returns_what_the_live_store_returns',
+    ),
+    Mutation(
+        id='M225',
+        tests=('tests/test_coarse_search.py',),
+        target='coarse search — an indexed row whose embedding was cleared sends the question to the live store',
+        file='cpersona/coarse_search.py',
+        find='        if await _lost_since_build(db, index, index.ids[selected], agent_id):',
+        replace='        if False and await _lost_since_build(db, index, index.ids[selected], agent_id):',
+        breaks='the index counts a row the scan no longer reads, so every later position is one off and a record with no vector can be offered',
+        expect='test_coarse_search.py::test_a_cleared_embedding_sends_the_question_to_the_live_store',
+    ),
+    Mutation(
+        id='M226',
+        tests=('tests/test_coarse_search.py',),
+        target='coarse search — a row of another width keeps its scan position in the live store',
+        file='cpersona/coarse_search.py',
+        find=(
+            '                if len(blob) == width:\n'
+            '                    ids.append(row_id)\n'
+            '                    blobs.append(blob)\n'
+            '                    positions.append(position)\n'
+            '                position += 1\n'
+        ),
+        replace=(
+            '                if len(blob) == width:\n'
+            '                    ids.append(row_id)\n'
+            '                    blobs.append(blob)\n'
+            '                    positions.append(position)\n'
+            '                    position += 1\n'
+        ),
+        breaks='the range is counted over comparable rows instead of the scan, so a far region starts inside the near window',
+        expect='test_coarse_search.py::test_a_row_of_another_width_keeps_its_scan_position_and_is_skipped',
+    ),
+    Mutation(
+        id='M227',
+        tests=('tests/test_coarse_search.py',),
+        target='coarse search — a candidate deleted since the build sends the question to the live store',
+        file='cpersona/coarse_search.py',
+        find='        if not await _all_exist(db, list(found.ids)):',
+        replace='        if False and not await _all_exist(db, list(found.ids)):',
+        breaks='the index offers a record that no longer exists and the answer is one record short',
+        expect='test_coarse_search.py::test_a_deleted_candidate_sends_the_question_to_the_live_store',
+    ),
+    Mutation(
+        id='M228',
+        tests=('tests/test_coarse_search.py',),
+        target="coarse search — the rows the index reads live are held to the cue's period",
+        file='cpersona/coarse_search.py',
+        find='source_id=source_id, scan_limit=-1, table="memories", window=period,',
+        replace='source_id=source_id, scan_limit=-1, table="memories", window=None,',
+        breaks='a record written after the build lands in every period, so a cue reaches rows its period does not hold',
+        expect='test_coarse_search.py::test_the_index_returns_what_the_live_store_returns',
+    ),
 ]
 
 

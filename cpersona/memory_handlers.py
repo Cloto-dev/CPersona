@@ -25,6 +25,7 @@ from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import blocks
 from cpersona import budget
+from cpersona import coarse_index
 from cpersona import coverage
 from cpersona import cue
 from cpersona import excerpts
@@ -1889,7 +1890,7 @@ async def _search_cue_arm(
     start, end = (cue.sql_instant(w) for w in window)
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     src = source_id_where(source_id)
-    in_window = "datetime(timestamp) >= datetime(?) AND datetime(timestamp) < datetime(?)"
+    in_window = coarse_index.PERIOD_PREDICATE
     lists: list[list[dict]] = []
 
     if query_vec and query.strip():

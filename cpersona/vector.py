@@ -17,6 +17,7 @@ from cpersona.isolation import IsolationFilter, isolation_where, source_id_where
 from cpersona import config
 from cpersona import health
 from cpersona import vector_index
+from cpersona.coarse_index import PERIOD_PREDICATE
 from cpersona.config import (
     MAX_MEMORIES,
     REMOTE_INDEX_TIMEOUT_SECS,
@@ -817,8 +818,16 @@ async def _index_tail_rows(
     source_id: str,
     scan_limit: int,
     table: str = "memories",
+    window: tuple | None = None,
 ):
     """The rows the index cannot answer for, read exactly.
+
+    `window`, when given, keeps only the rows whose own time falls in the
+    period `[start, end)` — the predicate the cue arm reads a period with
+    (`coarse_index.PERIOD_PREDICATE`), bound to the same values. The record
+    coarse search passes it; every other caller passes nothing, and with nothing
+    the statement is the one it always was. A `scan_limit` of -1 is SQLite's
+    "no limit", for a caller whose range runs to the end of the store.
 
     Three disjoint groups, all bounded: everything written since the build
     (`id > watermark`); the rows the fixed-width format could not spell; and the
@@ -865,6 +874,12 @@ async def _index_tail_rows(
     src_filter = source_id_where(source_id if table == "memories" else "")
     src_clause = src_filter.and_clause
     src_params = src_filter.params
+    if window is not None:
+        # Records only: a period is measured on a record's own `timestamp`.
+        if table != "memories":
+            raise ValueError(f"a period cannot be applied to {table}")
+        src_clause += f" AND {PERIOD_PREDICATE}"
+        src_params = (*src_params, *window)
 
     # The holes travel as ONE parameter — a JSON array — rather than one placeholder
     # per id. A placeholder per id makes the cap on named holes a cap on SQL
