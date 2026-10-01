@@ -17,7 +17,17 @@
   "C_rsf_on": "2.6.0 reconstruct rsf, block reach on (best of 2.6.0)"
  },
  "verdict_rule": "a task fell if lower by more than 0.01, rose if higher by more than 0.01 (differences rounded to 4 places first); better = macro rises and at most 7 tasks fall; worse = macro falls; otherwise mixed",
- "invalid": {},
+ "validation": {
+  "arms_checked": 5,
+  "tasks_per_arm": 15,
+  "invalid_arms": {},
+  "checks": [
+   "every task completed and its last harness run exited 0",
+   "block-reach arms hold block rows in every corpus group whose records divide; block-off arms hold none",
+   "every dump header: recall_limit 10, autocut and fused gate on, scene_isolated true for exactly the seven per-conversation tasks, split test, seed 20260930",
+   "every task log carries at least one record-vector cache line, and none reports a miss"
+  ]
+ },
  "verdict": {
   "base": "A_rrf",
   "new": "C_rsf_on",
