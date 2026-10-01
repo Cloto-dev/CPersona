@@ -199,6 +199,14 @@ RECALL_PROPAGATION_SEAT = (
 # return up to two more rows, and they displace none of the rows it returned.
 FAR_SEATS_ENABLED = os.environ.get("CPERSONA_FAR_SEATS_ENABLED", "false").lower() == "true"
 
+# 2.6.2: the cue arm's remainder (docs/BINARY_COARSE_SEARCH_DESIGN.md §6). The vector
+# half of a time cue ranks at most CPERSONA_MAX_MEMORIES of the period's records, the
+# most recently stored; on, the rest of the period is searched through the coarse
+# supplier and merged on cosine. Off by default, and separate from the far seats so
+# that either can ship alone. A period holding no more than the cap gives the same
+# answer on or off: its remainder is empty.
+CUE_COARSE_ENABLED = os.environ.get("CPERSONA_CUE_COARSE_ENABLED", "false").lower() == "true"
+
 # 2.6: the Reconstruction Window and the bounds of the reconstruct tool
 # (docs/RELIABLE_RECALL_2_6.md section 7). `count` is the CEILING on how many
 # recall items come back -- not a fill target and not a search depth:

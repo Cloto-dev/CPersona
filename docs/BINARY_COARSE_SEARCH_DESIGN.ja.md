@@ -1,11 +1,11 @@
-<!-- i18n-source: docs/BINARY_COARSE_SEARCH_DESIGN.md@blob:ab3c211755d14cf80125c5f96b9c008469861e32 -->
+<!-- i18n-source: docs/BINARY_COARSE_SEARCH_DESIGN.md@blob:79974b8feb5d59eff2fe6fefeee3c2a2249eb951 -->
 
 # 1 ビット粗探索 — 設計 { #binary-coarse-search-design }
 
 > **翻訳について**: 正本は英語版です。日本語版が古い場合は英語版を参照してください。
 
-Status: 2.6.2 に向けて開発中です。粗探索の索引 (第 3 節)、供給者 (第 4 節)、窓の外の席 (第 5 節)、
-計測 (第 9 節) は `master` にあり、手がかりの腕の残り (第 6 節) はまだです。
+Status: 2.6.2 に向けて実装済みです。粗探索の索引 (第 3 節)、供給者 (第 4 節)、窓の外の席 (第 5 節)、
+手がかりの腕の残り (第 6 節)、計測 (第 9 節) は `master` にあります。
 `SCHEMA_VERSION` は変わらず、実行時の依存も増えません。
 このページが導入する 2 つの設定はどちらも既定で off で、off のままなら、同じ類似度の行の
 並び順まで含めて、すべての答えが 2.6.1 とビット単位で同じです。
