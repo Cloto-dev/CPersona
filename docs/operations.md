@@ -169,6 +169,43 @@ follow.
 - `lock_memory` protects against loss, not against losing a ranking
   ([contract §9](behavior-contracts.md#9-lock_memory-protects-it-does-not-boost)).
 
+### Prompting recall from Claude Code hooks
+
+An agent does not always look in memory before it answers, and an instruction
+in an always-loaded file is read once and then competes with everything else. A
+`UserPromptSubmit` hook fires on every prompt.
+[`examples/claude-code-hooks/prompt_hook.py`](https://github.com/Cloto-dev/CPersona/blob/master/examples/claude-code-hooks/prompt_hook.py)
+is a minimal one, standard library only: it adds a note telling the agent to
+call `reconstruct` for the request, with the prompt as a suggested query, and to
+confirm "there is no such record" with an exact search rather than a score
+([contract §12](behavior-contracts.md#12-scores-order-one-response-they-do-not-say-whether-an-answer-exists)).
+Copy it to `.claude/hooks/` in the project and register it in
+`.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command",
+                  "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/prompt_hook.py\"",
+                  "timeout": 5}]}
+    ]
+  }
+}
+```
+
+Two mistakes fail silently on Windows. A production user made both and got no
+recall from the hook for five days:
+
+- **Read and write UTF-8 yourself.** Python's standard streams use the console
+  code page on Windows (cp932 on Japanese Windows), while Claude Code sends and
+  reads UTF-8, so a hook that reads `sys.stdin` as text fails on a Japanese
+  prompt and adds nothing. The example reads and writes bytes and decodes
+  UTF-8 itself.
+- **Give the script an absolute path.** A relative path stops resolving when the
+  session's working directory is a subfolder. `$CLAUDE_PROJECT_DIR` expands to
+  the project root.
+
 ## Japanese and CJK corpora
 
 - Set **`CPERSONA_RECALL_MODE=rsf`**. FTS5 tokenizes CJK poorly, and rsf keeps
@@ -289,6 +326,16 @@ embedding, and filling missing embeddings is what `check_health` with
 `rows_since_build` stays at 0. It exits 1 when there is no index, and 2 when
 the file exists but cannot be used. Add `--json` to either for a
 machine-readable line.
+
+**For memories, `build` also writes the coarse index**, a second derived file
+beside the first (`<database>.memories.coarseindex`). It holds the same rows,
+each reduced to one bit per dimension, and it is read only by the opt-in reach
+described in [Binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md). It is
+handled like the contiguous index: never backed up, never repaired, safe to
+delete, and removed by a purge along with the rows it held. With both files,
+`build` exits 0 only when both were built. `status` reports the coarse index
+under `coarse` without changing its own exit code, because nothing reads the
+coarse index unless a setting asks for it.
 
 **What happens between builds.** The index knows the highest row id that
 existed when it was built. Rows written after that are not in it, and are not

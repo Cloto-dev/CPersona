@@ -25,6 +25,7 @@ from cpersona.isolation import isolation_where, source_id_where
 
 from cpersona import blocks
 from cpersona import budget
+from cpersona import coverage
 from cpersona import cue
 from cpersona import excerpts
 from cpersona import generation
@@ -1923,7 +1924,7 @@ async def _search_cue_arm(
         ])
 
     # An empty query has no ranking to offer, so the keyword half returns the period's
-    # newest records, as the ordinary recall does for an empty query.
+    # newest records by their own time, as the episodes below are ordered by theirs.
     if FTS_ENABLED or not query.strip():
         keyword = await _search_memories_keyword(
             db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
@@ -2084,6 +2085,17 @@ async def do_recall(
         result = await _do_recall(agent_id, query, limit, **kwargs)
     finally:
         rec.deactivate(token)
+    # The coverage ledger (docs/RECALL_PROCESS_DESIGN.md §1.5): which parts of the
+    # question the returned records hold. Computed after the answer is final, over
+    # each returned record's full stored text. The trace is an instrument, so a
+    # ledger that cannot be built is reported in the trace, never raised.
+    started = time.perf_counter()
+    try:
+        cov = await coverage.for_refs(agent_id, query, [m.get("ref") for m in result.get("messages") or []])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recall trace: coverage ledger not built: %s", type(exc).__name__)
+        cov = {"error": type(exc).__name__}
+    rec.coverage(cov, (time.perf_counter() - started) * 1000)
     result["trace"] = rec.finish()
     return result
 
@@ -3590,11 +3602,15 @@ async def _search_memories_keyword(
         src_params_m = (*src_params_m, *window)
 
     if not query.strip():
+        # A period is measured on the records' own time, so its newest records are
+        # newest by that time (bug-502). created_at is when a row was stored, which an
+        # import leaves unrelated to the period, and at one-second resolution ties.
+        newest_first = "datetime(timestamp) DESC, id ASC" if window is not None else "created_at DESC"
         rows = await db.execute_fetchall(
             f"""SELECT id, msg_id, content, source, timestamp
                FROM memories
                WHERE {iso.clause}{src_clause_bare}
-               ORDER BY created_at DESC
+               ORDER BY {newest_first}
                LIMIT ?""",
             (*iso.params, *src_params_bare, limit),
         )

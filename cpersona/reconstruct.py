@@ -65,7 +65,7 @@ import logging
 
 import numpy as np
 
-from . import associations, blocks, config, excerpts, generation, nodes, vector
+from . import associations, blocks, config, coverage, excerpts, generation, nodes, vector
 from .database import connection
 from .utils import _parse_timestamp_utc, error_response
 
@@ -1414,6 +1414,20 @@ async def do_reconstruct(
 
     response["items"] = items
     response["returned_count"] = len(items)
+    if trace:
+        # The coverage ledger over the records the items cite (docs/RECALL_PROCESS_DESIGN.md
+        # §1.5). Recorded only; a ledger that cannot be built is reported, never raised.
+        cited = [
+            ref
+            for item in items
+            for ref in (item.get("head_ref"), *(c.get("ref") for c in item.get("claims", [])),
+                        *(x.get("ref") for x in item.get("excerpts", []) if isinstance(x, dict)))
+        ]
+        try:
+            response["trace"]["coverage"] = await coverage.for_refs(agent_id, query, cited)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reconstruct trace: coverage ledger not built: %s", type(exc).__name__)
+            response["trace"]["coverage"] = {"error": type(exc).__name__}
     response["reconstruction"]["selected_count"] = len(items)
     held_returned = sum(1 for item in items if item.get("admission") == "reservation")
     providers.check_reconstruct_count(

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:7f8d4b62be3464bdbc3ee2402405736234383a1f -->
+<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:76b6894cfde272cf836f0d92e448b32cb94d1a1b -->
 
 # 連続配置埋め込み索引
 
@@ -142,6 +142,12 @@ id をヘッダに列挙します。クエリ経路は後述の tail 読み出�
 
 固定幅 ASCII であることが、merge の安全性を作ります。SQLite はこれらの値をテキストと
 して比較し、この形式の同一長文字列では、バイト比較と時系列比較が同じ比較になります。
+
+読み込み側は各配列を `np.memmap` で写しますが、Windows では写さずにメモリへ読み込みます。
+Windows はメモリに写されたままのファイルの置き換えを拒否し、サーバーは読み込んだ索引を
+動いている間ずっと持ち続けるので、写す方式では、検索したことのあるサーバーが動いている間の
+再構築がすべて `PermissionError` で失敗していました。読み込む方式の費用は、検索が毎回
+触れている量とほぼ同じで、再構築が置き換えるファイルにハンドルを残しません。
 
 ## 5. 鮮度 — watermark { #5-freshness-the-watermark }
 

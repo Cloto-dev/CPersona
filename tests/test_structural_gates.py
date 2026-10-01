@@ -1309,6 +1309,37 @@ def test_every_runtime_dependency_carries_an_upper_bound():
     )
 
 
+# The newest release of each runtime dependency that a published advisory affects, where
+# the fix needs a floor this package states itself. A transitive requirement cannot be
+# relied on for it: `mcp` accepts older PyJWT, and `pip install -U cpersona` only upgrades
+# what the new requirements no longer allow.
+_LAST_VULNERABLE = {
+    # Key-confusion and token-parsing advisories against 2.13.0 and earlier, fixed in 2.14.0.
+    "pyjwt": "2.13.0",
+}
+
+
+def test_runtime_dependency_floors_exclude_known_vulnerable_releases():
+    """Gate: a declared floor never admits a release with a known, fixed advisory.
+
+    The locked jobs cannot see this either: uv.lock pins the fixed version, so a floor
+    lowered by accident still tests green here while every upgrade in the field keeps the
+    vulnerable release it already had.
+    """
+    import tomllib
+
+    from packaging.requirements import Requirement
+
+    config = tomllib.loads((PKG.parent / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = {Requirement(d).name.lower(): Requirement(d) for d in config["project"]["dependencies"]}
+    for name, last_bad in _LAST_VULNERABLE.items():
+        assert name in declared, f"{name} is no longer declared — drop it from _LAST_VULNERABLE or restore it"
+        assert not declared[name].specifier.contains(last_bad, prereleases=True), (
+            f"{declared[name]} still admits {name} {last_bad}, which a published advisory affects. "
+            "Raise the floor to the first fixed release."
+        )
+
+
 # --------------------------------------------------------------------------------------
 # Gate 14 (doc-claim class, 2.5.6): the background queue stays unwired in production.
 #

@@ -85,7 +85,7 @@ def index_path(table: str = "memories") -> str:
 
 @dataclass(frozen=True)
 class VectorIndex:
-    """A validated, memory-mapped index file."""
+    """A validated index file, memory-mapped (read into memory on Windows, see _maps_files)."""
 
     path: str
     dim: int
@@ -136,36 +136,76 @@ def _intern(values: list) -> tuple[list, dict]:
     return table, {v: i for i, v in enumerate(table)}
 
 
-async def build_index(db, table: str = "memories", path: str | None = None) -> dict:
-    """Write the index for `table`. Read-only against the database.
+@dataclass(frozen=True)
+class RowPlan:
+    """The rows a derived index of a table holds, decided once for every file built from it.
 
-    Two passes. The first reads every column except the embedding —
-    `length(embedding)` rather than the blob itself, which is the whole point: it
-    yields integers, not 3 KB Python objects. It fixes the row set, the
-    dimension, the string tables and the exclusions. The second streams only the
-    blobs, under a predicate built from the first pass's findings, and must
-    produce exactly the rows the first pass counted.
-
-    Both passes read on the seam's read connection, which WAL gives snapshot
-    isolation from the serialised writer. The second pass's row count is checked
-    against the first anyway: snapshot isolation is an argument, and an argument
-    is not a check. A mismatch aborts the build rather than leaving a file whose
-    embeddings are shifted by a row against their ids — the one corruption that
-    would still pass every length check below.
-
-    The index spans every agent (the axes ride as columns, and the authority is
-    re-applied when the caller hydrates), so this is a deliberate global scan,
-    spelled the way the isolation gate requires one to be spelled.
+    The contiguous index and the coarse index (``cpersona.coarse_index``) are built
+    from the same plan, so they hold the same rows in the same order, name the
+    same holes and intern the same axis values. Two builders each deciding that
+    for themselves would be two answers to "which rows does the index hold", while
+    the query path merges both against one live tail.
     """
-    out = path or index_path(table)
+
+    table: str
+    watermark: int
+    width: int
+    dim: int
+    #: The metadata rows, in canonical order: id, agent_id, project_id, channel,
+    #: created_at, length(embedding), then the source id for memories, then
+    #: ``extra_columns`` from ``extra_offset`` on.
+    kept: list
+    excluded: list
+    unembedded: list
+    agents: list
+    projects: list
+    channels: list
+    sources: list
+    agent_ix: dict
+    project_ix: dict
+    channel_ix: dict
+    source_ix: dict
+    row_sources: list
+    extra_offset: int
+
+    @property
+    def count(self) -> int:
+        return len(self.kept)
+
+    def axis_code_arrays(self) -> list:
+        """The four axis columns as int32 bytes, in the order both file formats write them."""
+        return [
+            np.array([self.agent_ix[r[1]] for r in self.kept], dtype="<i4").tobytes(),
+            np.array([self.project_ix[r[2]] for r in self.kept], dtype="<i4").tobytes(),
+            np.array([self.channel_ix[r[3]] for r in self.kept], dtype="<i4").tobytes(),
+            np.array(
+                [NULL_CODE if value is None else self.source_ix[value] for value in self.row_sources],
+                dtype="<i4",
+            ).tobytes(),
+        ]
+
+
+async def plan_rows(db, table: str = "memories", *, extra_columns: tuple = ()) -> "RowPlan | dict":
+    """Decide the row set, its order, its named holes and its string tables.
+
+    Returns the declining result -- the same dict the builder returns -- when the
+    corpus cannot be indexed as it stands. ``extra_columns`` are SQL expressions
+    appended to each metadata row, for a file that carries a column the
+    contiguous index does not; they never change which rows are kept.
+
+    Read-only, and a deliberate global scan, spelled the way the isolation gate
+    requires one to be spelled: the axes ride as columns, and the authority is
+    re-applied when a caller hydrates.
+    """
     iso = isolation_where(agent_id=None)
     src_expr = ", json_extract(source, '$.id')" if table == "memories" else ""
+    extra_expr = "".join(f", {column}" for column in extra_columns)
 
     row = await db.execute_fetchall(f"SELECT MAX(id) FROM {table}{iso.where}", iso.params)
     watermark = int(row[0][0] or 0)
 
     meta_sql = (
-        f"SELECT id, agent_id, project_id, channel, created_at, length(embedding){src_expr}"
+        f"SELECT id, agent_id, project_id, channel, created_at, length(embedding){src_expr}{extra_expr}"
         f" FROM {table}"
         f" WHERE embedding IS NOT NULL AND id <= ?{iso.and_clause}"
         f" ORDER BY created_at DESC, id ASC"
@@ -254,6 +294,44 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     )
     sources, source_ix = _intern(row_sources)
 
+    return RowPlan(
+        table=table, watermark=watermark, width=width, dim=dim, kept=kept,
+        excluded=excluded, unembedded=unembedded, agents=agents, projects=projects,
+        channels=channels, sources=sources, agent_ix=agent_ix, project_ix=project_ix,
+        channel_ix=channel_ix, source_ix=source_ix, row_sources=row_sources,
+        extra_offset=6 + (1 if table == "memories" else 0),
+    )
+
+
+async def build_index(db, table: str = "memories", path: str | None = None) -> dict:
+    """Write the index for `table`. Read-only against the database.
+
+    Two passes. The first reads every column except the embedding —
+    `length(embedding)` rather than the blob itself, which is the whole point: it
+    yields integers, not 3 KB Python objects. It fixes the row set, the
+    dimension, the string tables and the exclusions. The second streams only the
+    blobs, under a predicate built from the first pass's findings, and must
+    produce exactly the rows the first pass counted.
+
+    Both passes read on the seam's read connection, which WAL gives snapshot
+    isolation from the serialised writer. The second pass's row count is checked
+    against the first anyway: snapshot isolation is an argument, and an argument
+    is not a check. A mismatch aborts the build rather than leaving a file whose
+    embeddings are shifted by a row against their ids — the one corruption that
+    would still pass every length check below.
+
+    The index spans every agent (the axes ride as columns, and the authority is
+    re-applied when the caller hydrates), so this is a deliberate global scan,
+    spelled the way the isolation gate requires one to be spelled.
+    """
+    out = path or index_path(table)
+    plan = await plan_rows(db, table)
+    if isinstance(plan, dict):
+        return plan
+    watermark, width, dim, count = plan.watermark, plan.width, plan.dim, plan.count
+    kept, excluded, unembedded = plan.kept, plan.excluded, plan.unembedded
+    agents, projects, channels, sources = plan.agents, plan.projects, plan.channels, plan.sources
+
     header = {
         "format": FORMAT_VERSION,
         "table": table,
@@ -294,18 +372,8 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
                     f"embedding pass returned {written} rows, metadata pass counted {count}"
                 )
 
-            fh.write(np.array([agent_ix[r[1]] for r in kept], dtype="<i4").tobytes())
-            fh.write(np.array([project_ix[r[2]] for r in kept], dtype="<i4").tobytes())
-            fh.write(np.array([channel_ix[r[3]] for r in kept], dtype="<i4").tobytes())
-            fh.write(
-                np.array(
-                    [
-                        NULL_CODE if value is None else source_ix[value]
-                        for value in row_sources
-                    ],
-                    dtype="<i4",
-                ).tobytes()
-            )
+            for column in plan.axis_code_arrays():
+                fh.write(column)
             fh.write(b"".join(r[4].encode("ascii") for r in kept))
             fh.flush()
             os.fsync(fh.fileno())
@@ -351,12 +419,13 @@ def _is_canonical(value: str) -> bool:
     )
 
 
-async def _stream_embeddings(db, fh, table: str, watermark: int, width: int) -> int:
-    """Append the blobs in canonical order, without holding them all at once.
+async def iter_embedding_chunks(db, table: str, watermark: int, width: int):
+    """The blobs of the planned rows in canonical order, a chunk at a time.
 
     The predicate mirrors the metadata pass exactly — same watermark, same width,
     same canonical-created_at test, same ORDER BY — so the two passes describe one
-    row set. Global by design, like the first pass.
+    row set. Global by design, like the first pass. Both index files read their
+    second pass through here, so they cannot disagree about which blob is which row.
     """
     iso = isolation_where(agent_id=None)
     sql = (
@@ -365,19 +434,40 @@ async def _stream_embeddings(db, fh, table: str, watermark: int, width: int) -> 
         f"   AND {_canonical_predicate()}{iso.and_clause}"
         f" ORDER BY created_at DESC, id ASC"
     )
-    written = 0
     async with db.execute(sql, (watermark, width, *iso.params)) as cursor:
         while True:
             rows = await cursor.fetchmany(512)
             if not rows:
-                break
-            fh.write(b"".join(r[0] for r in rows))
-            written += len(rows)
+                return
+            yield [r[0] for r in rows]
+
+
+async def _stream_embeddings(db, fh, table: str, watermark: int, width: int) -> int:
+    """Append the blobs in canonical order, without holding them all at once."""
+    written = 0
+    async for blobs in iter_embedding_chunks(db, table, watermark, width):
+        fh.write(b"".join(blobs))
+        written += len(blobs)
     return written
 
 
+def _maps_files() -> bool:
+    """Whether a loaded index maps its file (POSIX) or reads it into memory (Windows).
+
+    A server keeps the index it loaded for as long as it runs (``cached_index``), and
+    a rebuild moves a new file over the old one. Windows refuses to replace a file that
+    is still mapped — ``PermissionError: [WinError 5]`` at the ``os.replace`` in
+    ``build_index`` — so on Windows every rebuild failed while any process held the
+    index, which is whenever the server had searched since it started (a production
+    report; reproduced in CI). Reading the arrays costs what the scan already touches
+    on every query, and it leaves no handle open. POSIX allows the replace, so it keeps
+    the mapping.
+    """
+    return os.name != "nt"
+
+
 def load_index(table: str = "memories", path: str | None = None) -> VectorIndex | None:
-    """Map an index file, or return None when there is none.
+    """Map (or, on Windows, read) an index file, or return None when there is none.
 
     None means "no index", which is not an error — it is the ordinary state
     before the first build and after a deletion. A file that exists but does not
@@ -420,12 +510,17 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
         # a header that disagrees with its own body — all as the same condition.
         raise IndexUnusable(f"{src}: expected {expect} bytes for {count} rows of {dim}d, found {size}")
 
-    # One memmap per array, addressed by offset, rather than one uint8 map that is
+    # One array per field, addressed by offset, rather than one uint8 buffer that is
     # re-viewed: a view across a slice has to satisfy numpy's alignment rules for
     # the target dtype, and expressing the offsets here keeps the layout in the
     # code that reads it instead of in a chain of pointer arithmetic.
+    mapped = _maps_files()
+
     def _map(offset: int, dtype: str, shape) -> np.ndarray:
-        return np.memmap(src, dtype=dtype, mode="r", offset=offset, shape=shape)
+        if mapped:
+            return np.memmap(src, dtype=dtype, mode="r", offset=offset, shape=shape)
+        items = int(np.prod(shape))
+        return np.fromfile(src, dtype=dtype, count=items, offset=offset).reshape(shape)
 
     off = base
     ids = _map(off, "<i8", (count,))
@@ -474,8 +569,9 @@ def _build_parser():
         prog="python -m cpersona.vector_index",
         description=(
             "Build or inspect the contiguous embedding index, a derived file beside "
-            "the database that the local vector scan reads instead of SQLite rows. "
-            "It is never repaired: delete it and build again."
+            "the database that the local vector scan reads instead of SQLite rows, "
+            "and for memories the coarse (one-bit) index beside it. Neither is ever "
+            "repaired: delete them and build again."
         ),
     )
     ap.add_argument(
@@ -491,8 +587,9 @@ def _build_parser():
     sub = ap.add_subparsers(dest="command", required=True)
     sub.add_parser(
         "build",
-        help="Write the index from the database (read-only against it). Exit 0 when "
-        "built, 1 when the builder declined (the reason is printed), 2 on error.",
+        help="Write the index from the database (read-only against it), and for "
+        "memories the coarse index too. Exit 0 when every file was built, 1 when a "
+        "builder declined (the reason is printed), 2 on error.",
     )
     sub.add_parser(
         "status",
@@ -583,6 +680,9 @@ async def _status(table: str) -> dict:
 def _render(result: dict, as_json: bool) -> str:
     if as_json:
         return json.dumps(result, sort_keys=True)
+    if "coarse" in result:
+        own = {k: v for k, v in result.items() if k != "coarse"}
+        return f"{_render(own, False)}\ncoarse: {_render(result['coarse'], False)}"
     if "built" in result:
         if result["built"]:
             return (
@@ -629,12 +729,23 @@ def main(argv: list | None = None) -> int:
         skip_before = database.SKIP_BOOT_MIGRATIONS
         database.SKIP_BOOT_MIGRATIONS = True
         try:
+            from cpersona import coarse_index
+
             if args.command == "build":
                 async with connection() as db:
                     result = await build_index(db, args.table)
-                code = 0 if result.get("built") else 1
+                    if args.table in coarse_index.COARSE_TABLES:
+                        # The same command builds both (design §10 B): an operator who
+                        # builds one index is not left to discover the other.
+                        result["coarse"] = await coarse_index.build_coarse_index(db, args.table)
+                built = [result] + ([result["coarse"]] if "coarse" in result else [])
+                code = 0 if all(r.get("built") for r in built) else 1
             else:
                 result = await _status(args.table)
+                if args.table in coarse_index.COARSE_TABLES:
+                    # Reported, not scored: the coarse index is read only when a setting
+                    # asks for it, so its absence does not make the contiguous one unusable.
+                    result["coarse"] = await coarse_index.status(args.table)
                 code = 0 if result.get("usable") else (2 if result["present"] else 1)
         except Exception as exc:  # noqa: BLE001 — the reason must reach the operator
             print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)

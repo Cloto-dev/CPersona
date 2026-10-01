@@ -7445,13 +7445,31 @@
       "severity": "LOW",
       "discovered": "2026-09-30T00:00:00Z",
       "version": "2.6.0b2",
+      "fixed_in": "2.6.2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "An empty query has no ranking to offer, so the keyword half returns the period's",
+      "pattern": "id ASC\" if window is not None else \"created_at DESC\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "nondeterministic-order",
       "fix_sketch": "Either order the cue arm's empty-query list by the rows' own time (datetime(timestamp) DESC, id ASC), the axis the period is measured on -- a change to which rows a cue's seats take -- or keep created_at, give it a deterministic tie-break, and seed the test with distinct created_at values so it states the order it relies on.",
-      "note": "Found while running mutation baselines for the 2.6.0 LOW batch. Choosing between the two is a decision about which time a cue ranks by, not a test repair."
+      "note": "Found while running mutation baselines for the 2.6.0 LOW batch. Choosing between the two is a decision about which time a cue ranks by, not a test repair.",
+      "fix_note": "With a period, the empty-query keyword search orders by datetime(timestamp) DESC, id ASC -- the records' own time, the axis the period is measured on, with the row id settling equal times -- and without one it keeps created_at DESC, so only the cue arm changes. The alternative, keeping created_at with a tie-break and seeding the test with distinct created_at values, would have made the order deterministic but left it wrong: an import stores rows in an order unrelated to their own time, and created_at would then decide which of a period's rows the cue's seats hold. The episodes of the same arm were already ordered by their own time. Regression: tests/test_recall_cue.py::test_an_empty_query_orders_the_period_by_the_records_time_not_by_when_they_were_stored and ::test_records_of_one_time_in_the_period_come_back_in_the_order_they_were_stored (created_at written one second apart, running against the period's order), ::test_the_keyword_search_without_a_period_still_lists_the_most_recently_stored_first; mutations M216 and M217."
+    },
+    {
+      "id": "bug-503",
+      "summary": "(MEDIUM) On Windows a rebuild of the contiguous index failed with PermissionError: [WinError 5] at the os.replace in build_index whenever any process still held the index it replaces. load_index mapped every array with np.memmap and cached_index keeps the loaded index for the life of the process, so a server that had searched since it started held the file mapped until it exited; Windows refuses to replace a mapped file, POSIX allows it. A production user reported the rebuild failing intermittently on Windows 11 (and once succeeding three times in a row with the same setup, consistent with the server not having searched in that session). The search stayed correct because rows outside the index are read from SQLite, but the index went stale and searches slowed.",
+      "severity": "MEDIUM",
+      "discovered": "2026-09-30T00:00:00Z",
+      "version": "2.5.11",
+      "file": "cpersona/vector_index.py",
+      "pattern": "^        return np\\.memmap\\(src",
+      "expected": "absent",
+      "status": "fixed",
+      "fixed_in": "2.6.1",
+      "category": "platform",
+      "fix_sketch": "On Windows, read the arrays into memory instead of mapping them, so no handle is left open on the file a rebuild replaces.",
+      "note": "Field report from a Windows 11 user (2.5.11). Reproduced on windows-latest in CI by loading the index and rebuilding it in the same process: PermissionError [WinError 5] Access is denied at vector_index.py:319.",
+      "fix_note": "load_index maps the file only where _maps_files() is true (not Windows); on Windows each array is read with np.fromfile at its offset. A new Windows CI job runs the reproduction; tests/test_vector_index_rebuild_while_loaded.py also runs the read path on every platform and compares it field by field with the mapped one."
     }
   ]
 }

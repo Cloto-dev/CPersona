@@ -182,6 +182,10 @@ guides disagree, the guides win.
   Hamming distance on one bit per dimension, collapsed to their parent and
   admitted by a held reservation, so a long record's tail becomes reachable
   without a new score entering the quality gate.
+- [Binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md) — a one-bit index
+  of every record, scanned by Hamming distance and re-ranked by the stored
+  vectors, so records past the scan window can be held beside the answer
+  and a time cue's period can be searched whole, without widening the window.
 - [Overflow tree](OVERFLOW_TREE_DESIGN.md) — dividing a long record into
   spans that each fit the embedding window, so a returned record can be quoted
   by the part that matters, without changing what recall returns.

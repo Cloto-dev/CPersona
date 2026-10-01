@@ -746,7 +746,7 @@ async def _remove_moved_source_vectors(source_agent_id: str, tally: "_MergeTally
 
 
 def _purge_local_vector_index(counts: dict) -> list:
-    """Drop the contiguous index files a purge just made stale (bug-337).
+    """Drop the derived index files a purge just made stale: contiguous and coarse (bug-337).
 
     The index is a derived copy of the rows: it carries their embeddings and
     their agent / project / channel / source identifiers, so a purge that left
@@ -768,11 +768,16 @@ def _purge_local_vector_index(counts: dict) -> list:
     Non-DB side effect — call AFTER the delete transaction commits, like the
     calibration and remote-namespace purges beside it.
     """
+    from cpersona import coarse_index
+
     removed = []
-    for table in vector_index.INDEXED_TABLES:
+    # The coarse index carries the same identifiers and a one-bit form of the same
+    # vectors, so it is residue in exactly the same sense and goes with the table.
+    stale = [(table, vector_index.index_path(table)) for table in vector_index.INDEXED_TABLES]
+    stale += [(table, coarse_index.index_path(table)) for table in coarse_index.COARSE_TABLES]
+    for table, path in stale:
         if not counts.get(f"deleted_{table}", 1):
             continue
-        path = vector_index.index_path(table)
         try:
             os.unlink(path)
         except FileNotFoundError:

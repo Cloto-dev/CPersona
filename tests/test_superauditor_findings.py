@@ -1,12 +1,18 @@
-"""SuperAuditor v1 conformance for CPersona's ``get_session_findings``.
+"""SuperAuditor v1.1 conformance for CPersona's ``get_session_findings``.
 
-The standard (docs/SUPERAUDITOR_STANDARD.md §9) lists nine demonstrations,
-C1–C9. C1–C5 are proved against the shared fixtures in
-``conformance/superauditor/v1/`` — pure functions of (detector output,
-per_kind_limit), fed through THIS server's delivery path rather than the
-reference script. C6–C8 are proved here against the registry and a live
-database. C9 (broadcast retirement) does not apply: CPersona never pushed
-findings onto unrelated responses, so there is nothing to retire.
+The standard (https://github.com/Cloto-dev/superauditor, STANDARD.md §9) lists
+twelve demonstrations, C1–C12. C1–C5 are proved against the fixtures in
+``conformance/superauditor/v1/`` (a copy of the standard's
+``conformance/v1/``) — pure functions of (detector output, per_kind_limit),
+fed through THIS server's delivery path rather than the reference script.
+C6–C8 are proved here against the registry and a live database. C9 (broadcast
+retirement) does not apply: CPersona never pushed findings onto unrelated
+responses, so there is nothing to retire. C10 is
+``test_a_crashed_probe_is_a_finding_not_a_failed_pull``; C11 is
+``test_an_issue_that_owns_a_kind_key_keeps_it_as_object_kind``,
+``test_de_escalation_is_kept_as_health_severity_not_as_the_kind_severity`` and
+the relocation refusal; C12 is
+``test_the_response_states_the_standard_version_it_conforms_to``.
 
 Beyond the letter of the standard, this file pins the two decisions the seam
 makes about ``check_health``'s severity model — escalation tiers become their
@@ -280,6 +286,16 @@ async def test_empty_database_delivers_no_findings_with_the_full_response_shape(
     # is asserted in CI's wheel-smoke job, which is the only place an install exists.
     assert response["_meta"]["server_version"] == cpersona.__version__
     assert "identity_shared" not in response  # stdio: sessions are not shared
+
+
+@pytest.mark.asyncio
+async def test_the_response_states_the_standard_version_it_conforms_to(db):
+    """C12 (v1.1): a consumer reads the response by the rules of the version it names, which
+    the server's own version cannot tell it. Pinned as a literal, not as the module constant:
+    the claim changes only when this file's conformance tests change with it."""
+    response = await maintenance_handlers.do_get_session_findings()
+    assert response["_meta"]["superauditor"] == "1.1"
+    assert findings.SUPERAUDITOR_VERSION == "1.1"
 
 
 @pytest.mark.asyncio
