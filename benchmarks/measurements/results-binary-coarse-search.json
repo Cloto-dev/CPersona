@@ -1,0 +1,1702 @@
+{
+ "bound": 0.95,
+ "grid": [
+  32,
+  64,
+  128,
+  256,
+  512,
+  1000,
+  2048,
+  4096,
+  8192,
+  16384,
+  32768,
+  65536
+ ],
+ "seats": 2,
+ "cells": {
+  "s100k/q1/shipped": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.897,
+    "ci95": [
+     0.875,
+     0.919
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.206,
+    "all_seats_kept": 0.832
+   },
+   "k64": {
+    "agreement": 0.958,
+    "ci95": [
+     0.944,
+     0.971
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.084,
+    "all_seats_kept": 0.928
+   },
+   "k128": {
+    "agreement": 0.983,
+    "ci95": [
+     0.973,
+     0.992
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.034,
+    "all_seats_kept": 0.974
+   },
+   "k256": {
+    "agreement": 0.99,
+    "ci95": [
+     0.982,
+     0.996
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.02,
+    "all_seats_kept": 0.984
+   },
+   "k512": {
+    "agreement": 0.995,
+    "ci95": [
+     0.99,
+     0.999
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.01,
+    "all_seats_kept": 0.99
+   },
+   "k1000": {
+    "agreement": 0.998,
+    "ci95": [
+     0.995,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.004,
+    "all_seats_kept": 0.996
+   },
+   "k2048": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   },
+   "excluded_per_query_median": 4.0,
+   "recall_ms_median": 125.7
+  },
+  "s100k/q1/production": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.873,
+    "ci95": [
+     0.85,
+     0.896
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.254,
+    "all_seats_kept": 0.792
+   },
+   "k64": {
+    "agreement": 0.951,
+    "ci95": [
+     0.935,
+     0.965
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.098,
+    "all_seats_kept": 0.916
+   },
+   "k128": {
+    "agreement": 0.981,
+    "ci95": [
+     0.971,
+     0.99
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.038,
+    "all_seats_kept": 0.97
+   },
+   "k256": {
+    "agreement": 0.989,
+    "ci95": [
+     0.981,
+     0.996
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.022,
+    "all_seats_kept": 0.982
+   },
+   "k512": {
+    "agreement": 0.995,
+    "ci95": [
+     0.99,
+     0.999
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.01,
+    "all_seats_kept": 0.99
+   },
+   "k1000": {
+    "agreement": 0.998,
+    "ci95": [
+     0.995,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.004,
+    "all_seats_kept": 0.996
+   },
+   "k2048": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   },
+   "excluded_per_query_median": 7.0,
+   "recall_ms_median": 128.6
+  },
+  "s237/q1/shipped": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.8,
+    "ci95": [
+     0.769,
+     0.829
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.4,
+    "all_seats_kept": 0.716
+   },
+   "k64": {
+    "agreement": 0.913,
+    "ci95": [
+     0.892,
+     0.934
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.174,
+    "all_seats_kept": 0.87
+   },
+   "k128": {
+    "agreement": 0.955,
+    "ci95": [
+     0.94,
+     0.969
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.09,
+    "all_seats_kept": 0.926
+   },
+   "k256": {
+    "agreement": 0.983,
+    "ci95": [
+     0.974,
+     0.991
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.034,
+    "all_seats_kept": 0.968
+   },
+   "k512": {
+    "agreement": 0.993,
+    "ci95": [
+     0.987,
+     0.998
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.014,
+    "all_seats_kept": 0.986
+   },
+   "k1000": {
+    "agreement": 0.999,
+    "ci95": [
+     0.997,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.002,
+    "all_seats_kept": 0.998
+   },
+   "k2048": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   },
+   "excluded_per_query_median": 4.0,
+   "recall_ms_median": 297.95
+  },
+  "s237/q1/production": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.773,
+    "ci95": [
+     0.742,
+     0.804
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.454,
+    "all_seats_kept": 0.676
+   },
+   "k64": {
+    "agreement": 0.901,
+    "ci95": [
+     0.879,
+     0.923
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.198,
+    "all_seats_kept": 0.85
+   },
+   "k128": {
+    "agreement": 0.948,
+    "ci95": [
+     0.931,
+     0.964
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.104,
+    "all_seats_kept": 0.918
+   },
+   "k256": {
+    "agreement": 0.982,
+    "ci95": [
+     0.972,
+     0.991
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.036,
+    "all_seats_kept": 0.97
+   },
+   "k512": {
+    "agreement": 0.991,
+    "ci95": [
+     0.984,
+     0.997
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.018,
+    "all_seats_kept": 0.984
+   },
+   "k1000": {
+    "agreement": 0.997,
+    "ci95": [
+     0.992,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.006,
+    "all_seats_kept": 0.996
+   },
+   "k2048": {
+    "agreement": 0.998,
+    "ci95": [
+     0.994,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.004,
+    "all_seats_kept": 0.998
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   },
+   "excluded_per_query_median": 7.0,
+   "recall_ms_median": 300.75
+  },
+  "s1m/q1/shipped": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.806,
+    "ci95": [
+     0.777,
+     0.834
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.388,
+    "all_seats_kept": 0.704
+   },
+   "k64": {
+    "agreement": 0.903,
+    "ci95": [
+     0.882,
+     0.923
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.194,
+    "all_seats_kept": 0.84
+   },
+   "k128": {
+    "agreement": 0.96,
+    "ci95": [
+     0.946,
+     0.973
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.08,
+    "all_seats_kept": 0.928
+   },
+   "k256": {
+    "agreement": 0.985,
+    "ci95": [
+     0.977,
+     0.992
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.03,
+    "all_seats_kept": 0.97
+   },
+   "k512": {
+    "agreement": 0.996,
+    "ci95": [
+     0.992,
+     0.999
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.008,
+    "all_seats_kept": 0.992
+   },
+   "k1000": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k2048": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   },
+   "excluded_per_query_median": 4.0,
+   "recall_ms_median": 724.5
+  },
+  "s1m/q1/production": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.783,
+    "ci95": [
+     0.753,
+     0.812
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.434,
+    "all_seats_kept": 0.672
+   },
+   "k64": {
+    "agreement": 0.893,
+    "ci95": [
+     0.871,
+     0.914
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.214,
+    "all_seats_kept": 0.824
+   },
+   "k128": {
+    "agreement": 0.953,
+    "ci95": [
+     0.938,
+     0.967
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.094,
+    "all_seats_kept": 0.916
+   },
+   "k256": {
+    "agreement": 0.982,
+    "ci95": [
+     0.973,
+     0.99
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.036,
+    "all_seats_kept": 0.964
+   },
+   "k512": {
+    "agreement": 0.993,
+    "ci95": [
+     0.987,
+     0.998
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.014,
+    "all_seats_kept": 0.986
+   },
+   "k1000": {
+    "agreement": 0.997,
+    "ci95": [
+     0.993,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.006,
+    "all_seats_kept": 0.994
+   },
+   "k2048": {
+    "agreement": 0.998,
+    "ci95": [
+     0.995,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.004,
+    "all_seats_kept": 0.996
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   },
+   "excluded_per_query_median": 6.0,
+   "recall_ms_median": 792.25
+  },
+  "s1m/q2/shipped": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.836,
+    "ci95": [
+     0.811,
+     0.861
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.328,
+    "all_seats_kept": 0.724
+   },
+   "k64": {
+    "agreement": 0.905,
+    "ci95": [
+     0.885,
+     0.924
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.19,
+    "all_seats_kept": 0.828
+   },
+   "k128": {
+    "agreement": 0.948,
+    "ci95": [
+     0.933,
+     0.962
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.104,
+    "all_seats_kept": 0.904
+   },
+   "k256": {
+    "agreement": 0.978,
+    "ci95": [
+     0.968,
+     0.987
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.044,
+    "all_seats_kept": 0.96
+   },
+   "k512": {
+    "agreement": 0.988,
+    "ci95": [
+     0.98,
+     0.995
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.024,
+    "all_seats_kept": 0.978
+   },
+   "k1000": {
+    "agreement": 0.994,
+    "ci95": [
+     0.989,
+     0.998
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.012,
+    "all_seats_kept": 0.988
+   },
+   "k2048": {
+    "agreement": 0.998,
+    "ci95": [
+     0.995,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.004,
+    "all_seats_kept": 0.996
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   },
+   "excluded_per_query_median": 4.0,
+   "recall_ms_median": 852.8
+  },
+  "s1m/q2/production": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.818,
+    "ci95": [
+     0.7919750000000001,
+     0.844
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.364,
+    "all_seats_kept": 0.698
+   },
+   "k64": {
+    "agreement": 0.895,
+    "ci95": [
+     0.874,
+     0.915
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.21,
+    "all_seats_kept": 0.812
+   },
+   "k128": {
+    "agreement": 0.939,
+    "ci95": [
+     0.923,
+     0.954
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.122,
+    "all_seats_kept": 0.888
+   },
+   "k256": {
+    "agreement": 0.973,
+    "ci95": [
+     0.962,
+     0.983
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.054,
+    "all_seats_kept": 0.95
+   },
+   "k512": {
+    "agreement": 0.984,
+    "ci95": [
+     0.975,
+     0.992
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.032,
+    "all_seats_kept": 0.97
+   },
+   "k1000": {
+    "agreement": 0.994,
+    "ci95": [
+     0.989,
+     0.998
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.012,
+    "all_seats_kept": 0.988
+   },
+   "k2048": {
+    "agreement": 0.998,
+    "ci95": [
+     0.995,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.004,
+    "all_seats_kept": 0.996
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   },
+   "excluded_per_query_median": 6.0,
+   "recall_ms_median": 976.45
+  }
+ },
+ "checks": {
+  "s100k/q1": {
+   "store": "s100k",
+   "qset": "q1",
+   "rows": 100000,
+   "far_rows": 90000,
+   "floor": 0.15,
+   "dim": 1024,
+   "cosine_seconds": 0.4,
+   "supplier_sources": [
+    "index"
+   ],
+   "supplier_ms_median": 65.5,
+   "V1_identity": {
+    "queries": 3,
+    "pass": true
+   },
+   "V2_prefix": {
+    "calls": 30,
+    "pass": true
+   },
+   "V3_bridge": {
+    "queries": 20,
+    "top_seats_equal": 20,
+    "near_tie_explained": 0,
+    "max_abs_cos_diff": 9.5367431640625e-07,
+    "pass": true
+   },
+   "V4_live_equals_index": {
+    "queries": 3,
+    "pass": true
+   }
+  },
+  "s237/q1": {
+   "store": "s237",
+   "qset": "q1",
+   "rows": 237654,
+   "far_rows": 227654,
+   "floor": 0.15,
+   "dim": 1024,
+   "cosine_seconds": 1.3,
+   "supplier_sources": [
+    "index"
+   ],
+   "supplier_ms_median": 139.1,
+   "V1_identity": {
+    "queries": 3,
+    "pass": true
+   },
+   "V2_prefix": {
+    "calls": 30,
+    "pass": true
+   },
+   "V3_bridge": {
+    "queries": 20,
+    "top_seats_equal": 20,
+    "near_tie_explained": 0,
+    "max_abs_cos_diff": 1.0728836059570312e-06,
+    "pass": true
+   },
+   "V4_live_equals_index": {
+    "queries": 3,
+    "pass": true
+   }
+  },
+  "s1m/q1": {
+   "store": "s1m",
+   "qset": "q1",
+   "rows": 1000000,
+   "far_rows": 990000,
+   "floor": 0.15,
+   "dim": 1024,
+   "cosine_seconds": 9.5,
+   "supplier_sources": [
+    "index"
+   ],
+   "supplier_ms_median": 1108.1,
+   "V1_identity": {
+    "queries": 3,
+    "pass": true
+   },
+   "V2_prefix": {
+    "calls": 30,
+    "pass": true
+   },
+   "V3_bridge": {
+    "queries": 20,
+    "top_seats_equal": 20,
+    "near_tie_explained": 0,
+    "max_abs_cos_diff": 1.1324882507324219e-06,
+    "pass": true
+   }
+  },
+  "s1m/q2": {
+   "store": "s1m",
+   "qset": "q2",
+   "rows": 1000000,
+   "far_rows": 990000,
+   "floor": 0.15,
+   "dim": 1024,
+   "cosine_seconds": 1.0,
+   "supplier_sources": [
+    "index"
+   ],
+   "supplier_ms_median": 366.9,
+   "V1_identity": {
+    "queries": 3,
+    "pass": true
+   },
+   "V2_prefix": {
+    "calls": 30,
+    "pass": true
+   },
+   "V3_bridge": {
+    "queries": 20,
+    "top_seats_equal": 20,
+    "near_tie_explained": 0,
+    "max_abs_cos_diff": 1.3709068298339844e-06,
+    "pass": true
+   }
+  }
+ },
+ "raw_top_seats": {
+  "s100k/q1": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.918,
+    "ci95": [
+     0.898,
+     0.937
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.164,
+    "all_seats_kept": 0.864
+   },
+   "k64": {
+    "agreement": 0.97,
+    "ci95": [
+     0.958,
+     0.98
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.06,
+    "all_seats_kept": 0.944
+   },
+   "k128": {
+    "agreement": 0.99,
+    "ci95": [
+     0.982,
+     0.996
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.02,
+    "all_seats_kept": 0.984
+   },
+   "k256": {
+    "agreement": 0.995,
+    "ci95": [
+     0.989,
+     0.999
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.01,
+    "all_seats_kept": 0.992
+   },
+   "k512": {
+    "agreement": 0.998,
+    "ci95": [
+     0.995,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.004,
+    "all_seats_kept": 0.996
+   },
+   "k1000": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k2048": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   }
+  },
+  "s237/q1": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.83,
+    "ci95": [
+     0.802,
+     0.857
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.34,
+    "all_seats_kept": 0.754
+   },
+   "k64": {
+    "agreement": 0.93,
+    "ci95": [
+     0.911,
+     0.948
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.14,
+    "all_seats_kept": 0.896
+   },
+   "k128": {
+    "agreement": 0.964,
+    "ci95": [
+     0.95,
+     0.977
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.072,
+    "all_seats_kept": 0.94
+   },
+   "k256": {
+    "agreement": 0.987,
+    "ci95": [
+     0.979,
+     0.994
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.026,
+    "all_seats_kept": 0.976
+   },
+   "k512": {
+    "agreement": 0.993,
+    "ci95": [
+     0.987,
+     0.998
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.014,
+    "all_seats_kept": 0.986
+   },
+   "k1000": {
+    "agreement": 0.999,
+    "ci95": [
+     0.997,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.002,
+    "all_seats_kept": 0.998
+   },
+   "k2048": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   }
+  },
+  "s1m/q1": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.826,
+    "ci95": [
+     0.798,
+     0.854
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.348,
+    "all_seats_kept": 0.734
+   },
+   "k64": {
+    "agreement": 0.912,
+    "ci95": [
+     0.891,
+     0.932
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.176,
+    "all_seats_kept": 0.858
+   },
+   "k128": {
+    "agreement": 0.967,
+    "ci95": [
+     0.954975,
+     0.979
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.066,
+    "all_seats_kept": 0.94
+   },
+   "k256": {
+    "agreement": 0.986,
+    "ci95": [
+     0.978,
+     0.993
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.028,
+    "all_seats_kept": 0.972
+   },
+   "k512": {
+    "agreement": 0.996,
+    "ci95": [
+     0.992,
+     0.999
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.008,
+    "all_seats_kept": 0.992
+   },
+   "k1000": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k2048": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   }
+  },
+  "s1m/q2": {
+   "truncated": 0,
+   "k32": {
+    "agreement": 0.885,
+    "ci95": [
+     0.864,
+     0.905
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.23,
+    "all_seats_kept": 0.798
+   },
+   "k64": {
+    "agreement": 0.935,
+    "ci95": [
+     0.918,
+     0.951
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.13,
+    "all_seats_kept": 0.882
+   },
+   "k128": {
+    "agreement": 0.965,
+    "ci95": [
+     0.952,
+     0.977
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.07,
+    "all_seats_kept": 0.938
+   },
+   "k256": {
+    "agreement": 0.984,
+    "ci95": [
+     0.975,
+     0.992
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.032,
+    "all_seats_kept": 0.972
+   },
+   "k512": {
+    "agreement": 0.989,
+    "ci95": [
+     0.982,
+     0.995
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.022,
+    "all_seats_kept": 0.98
+   },
+   "k1000": {
+    "agreement": 0.996,
+    "ci95": [
+     0.992,
+     0.999
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.008,
+    "all_seats_kept": 0.992
+   },
+   "k2048": {
+    "agreement": 0.998,
+    "ci95": [
+     0.995,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.004,
+    "all_seats_kept": 0.996
+   },
+   "k4096": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k8192": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k16384": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k32768": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "k65536": {
+    "agreement": 1.0,
+    "ci95": [
+     1.0,
+     1.0
+    ],
+    "queries": 500,
+    "misses_per_recall": 0.0,
+    "all_seats_kept": 1.0
+   },
+   "exact_seats_filled": {
+    "0": 0,
+    "1": 0,
+    "2": 500
+   }
+  }
+ },
+ "control_failures": [],
+ "missing_cells": [],
+ "decision": {
+  "k": 256,
+  "status": "decided"
+ }
+}

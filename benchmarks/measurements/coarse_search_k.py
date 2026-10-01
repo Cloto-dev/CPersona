@@ -72,7 +72,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_REPO / "benchmarks"))
 sys.path.insert(0, str(_REPO))
 
-import scan_window_ab as swab
+import scan_window_ab as swab  # noqa: E402
 
 AGENT_ID = "coarse-k"
 SEED = 20261001
@@ -416,9 +416,9 @@ async def _prepare(args) -> None:
             v2.append(np.array_equal(np.asarray(found.positions, dtype=np.int64), cand_cache[qi][:k]))
     checks["V2_prefix"] = {"calls": len(v2), "pass": all(v2)}
 
-    # V3 bridge: the production ranking at the provisional K' against this one.
+    # V3 bridge: the production ranking at the shipped K' against this one.
     v3 = {"queries": 0, "top_seats_equal": 0, "near_tie_explained": 0, "max_abs_cos_diff": 0.0}
-    k_prov = coarse_search.K_PROVISIONAL
+    k_prov = coarse_search.CANDIDATES
     if k_prov in K_GRID:
         for qi in range(20):
             hits = await far_seats.ranked(db, qmat[qi], agent_id=AGENT_ID, project_id=None, channel="",
@@ -736,7 +736,7 @@ async def _cost(args) -> None:
     absent = str(work / "absent.coarseindex")
     live_queries = every if out["far_rows"] <= 250_000 else range(COST_WARMUP + 3)
     for k in ks:
-        coarse_search.K_PROVISIONAL = k
+        coarse_search.CANDIDATES = k
 
         async def ranked(q):
             return await far_seats.ranked(db, q, agent_id=AGENT_ID, project_id=None, channel="",
