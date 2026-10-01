@@ -1,10 +1,10 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:2b5f03ced5aedca0e2fa31bdc266450217ccaacf -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:090cb2faf625dd2dc677188fd3cfe1bb11301d29 -->
 
 # 2.6 系はいまどこまで来ているか
 
 > **翻訳について**: 正本は英語版です。この日本語版は参照用の翻訳で、内容が食い違う場合は英語版が優先されます。
 
-更新日: 2026-09-30。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
+更新日: 2026-10-01。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
 示します。このラインが何を建て、何をもって完了とするかは
 [ラインのページ](RELIABLE_RECALL_2_6.md) が、各リリースに何が入っているかは
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
@@ -38,7 +38,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 4 | 再構成想起がツールとして存在する | 2.6.0a2 で **リリース済み**、a3 で拡張 | ツール本体: [#274](https://github.com/Cloto-dev/cpersona/pull/274)。深さより広さ、payload の予算: [#280](https://github.com/Cloto-dev/cpersona/pull/280)、[#286](https://github.com/Cloto-dev/cpersona/pull/286)。item の形の統一と、何を落としたかを言う応答: [#288](https://github.com/Cloto-dev/cpersona/pull/288)、[#289](https://github.com/Cloto-dev/cpersona/pull/289)、[#290](https://github.com/Cloto-dev/cpersona/pull/290)。これまでの測定: 上限 1〜10 の [count replay](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1-count-replay.md) (記録自身が「既定を選ぶものではない」と述べています) と、事前登録した [reader study](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1_1-reader.md)。後者は 1 回目では reader が受け取る量が減らず、2 つの変更の後の再測定が、18 問で登録済みの判定則を満たしました。既定の件数は今も契約上の選択であり、測定された最適値ではありません。 |
 | 5 | 適応的融合が両方のモデルで素の embedding を上回る | **研究中** | 設計と、その根拠である段ごとの損失の分析: [#260](https://github.com/Cloto-dev/cpersona/pull/260)、[#261](https://github.com/Cloto-dev/cpersona/pull/261)、[設計記録](ADAPTIVE_FUSION_DESIGN.md)。サーバーのコードはありません。 |
 | 6 | ベンチマーク上のすべての失敗にコードと再生できる trace がある | **開発中** | 2.6.0a7 でリリース: 求めに応じて `recall` と `reconstruct` が各段の残した行・落とした行・並べ替えを記録として返し、`benchmarks/` の道具が記録と正解の参照から確定した失敗コードを付けます ([#324](https://github.com/Cloto-dev/cpersona/pull/324)、[設計](RECALL_PROCESS_DESIGN.md#1-the-recall-trace))。すべてのベンチマーク上の失敗への適用はまだです。 |
-| 7 | 精度・トークン・遅延・メモリのフロンティアが動いた | **研究中** | 未測定です。凍結した 2.5 の baseline に対して、最後に測ります。 |
+| 7 | 精度・トークン・遅延・メモリのフロンティアが動いた | **研究中** | 1 軸を測りました。LMEB のうち、1 人の利用者の記憶を干し草の山にできる 15 タスクで、10 行の応答において、最良構成の 2.6.0 は最良構成の 2.5.12 より関連する記憶を上位に返しました。macro NDCG@10 は 57.36 → 59.12、上がったタスク 14・下がったタスク 1 で、事前登録した判定則によります ([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-version-comparison-2512-to-260.md))。トークン・遅延・メモリは未測定なので、フロンティアはまだ示していません。 |
 | 8 | 2.5 の baseline が抱える品質上の負債が、閉じられたか理由つきで持ち越された | **開発中** | ベンチマークの走行がどの較正の下で測られたかを、走行と一緒に記録するようになりました: [#258](https://github.com/Cloto-dev/cpersona/pull/258)。他の項目は未着手です。 |
 
 ## 完了条件の外で、このラインがリリースしたもの { #released-in-this-line-beyond-the-conditions }

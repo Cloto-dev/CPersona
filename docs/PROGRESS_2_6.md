@@ -1,6 +1,6 @@
 # Where the 2.6 line stands
 
-Updated: 2026-09-30. This page says how far the 2.6 line has come, item by
+Updated: 2026-10-01. This page says how far the 2.6 line has come, item by
 item, with the evidence for each. The [line's page](RELIABLE_RECALL_2_6.md)
 says what the line builds and what "done" means; the
 [release notes](https://github.com/Cloto-dev/cpersona/releases) say what each
@@ -37,7 +37,7 @@ The numbering follows
 | 4 | Reconstructive Recall exists as a tool | **Released** in 2.6.0a2, extended in a3 | The tool: [#274](https://github.com/Cloto-dev/cpersona/pull/274). Breadth before depth and the payload budget: [#280](https://github.com/Cloto-dev/cpersona/pull/280), [#286](https://github.com/Cloto-dev/cpersona/pull/286). One item shape, and a response that says what it dropped: [#288](https://github.com/Cloto-dev/cpersona/pull/288), [#289](https://github.com/Cloto-dev/cpersona/pull/289), [#290](https://github.com/Cloto-dev/cpersona/pull/290). Measured so far: a [count replay](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1-count-replay.md) over ceilings 1 to 10, which by its own statement does not choose a default; and a pre-registered [reader study](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-reconstruct-v1_1-reader.md) whose first run found no reduction in what a reader takes in, and whose re-measurement after two changes met the registered rule on 18 questions. The default count is still a contract choice, not a measured optimum. |
 | 5 | Adaptive fusion beats the raw embedding on both models | **In research** | The design and the stage-by-stage loss analysis it rests on: [#260](https://github.com/Cloto-dev/cpersona/pull/260), [#261](https://github.com/Cloto-dev/cpersona/pull/261), [design record](ADAPTIVE_FUSION_DESIGN.md). No server code. |
 | 6 | Every benchmark failure has a code and a replayable trace | **In development** | Released in 2.6.0a7: on request, `recall` and `reconstruct` return a trace of what each stage kept, dropped and reordered, and a tool in `benchmarks/` assigns a confirmed failure code from a trace and the answer's references ([#324](https://github.com/Cloto-dev/cpersona/pull/324), [design](RECALL_PROCESS_DESIGN.md#1-the-recall-trace)). Not yet applied to every benchmark failure. |
-| 7 | The accuracy–token–latency–memory frontier has moved | **In research** | Not measured. It is measured last, against the frozen 2.5 baseline. |
+| 7 | The accuracy–token–latency–memory frontier has moved | **In research** | One axis measured. On the 15 LMEB tasks whose haystack can be one caller's memory, at ten rows, 2.6.0 in its best configuration ranks the relevant memory higher than 2.5.12 in its best: macro NDCG@10 57.36 → 59.12, 14 tasks up and 1 down, under a pre-registered rule ([results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-version-comparison-2512-to-260.md)). Tokens, latency and memory are not measured, so the frontier is not yet shown. |
 | 8 | The open quality debt of the 2.5 baseline is closed or carried with reasons | **In development** | The calibration a benchmark run measured under is now recorded with the run: [#258](https://github.com/Cloto-dev/cpersona/pull/258). The other items are open. |
 
 ## Released in this line, beyond the conditions
