@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:2b208352f219078b5d4cb76271a2c1981dc76fc2 -->
+<!-- i18n-source: docs/index.md@blob:4253b1ed770235c28206f94fd6b7a773bb92a7d4 -->
 
 # CPersona ドキュメント
 
@@ -173,6 +173,9 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 - [Block による到達](BLOCK_REACH_DESIGN.md) — 長いレコードを節に相当する Block へ分け、
   1 次元 1 ビットの Hamming 距離で順位付けし、親へ畳んで別枠で通すことで、
   品質 gate に新しいスコアを入れずに末尾へ到達できるようにすること。
+- [1 ビット粗探索](BINARY_COARSE_SEARCH_DESIGN.md) — 全レコードの 1 ビット索引を
+  Hamming 距離で走査し、保存済みのベクトルで並べ直すことで、走査窓を広げずに、
+  窓の外のレコードを答えの横に別枠で置き、時間の手がかりの期間を丸ごと探せるようにすること。
 - [溢れ分の tree](OVERFLOW_TREE_DESIGN.md) — 長いレコードを埋め込みの窓に収まる区間に分け、
   recall が返すものを変えずに、返されたレコードを関連する部分で引用できるようにすること。
 - [連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md) — entity・別名・関係の宣言されたグラフ。
