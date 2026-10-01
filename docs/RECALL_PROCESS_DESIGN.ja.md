@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:b3e02958ff7dae19ea3ec30b3cf7489d51322b33 -->
+<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:eb017e9190099430e4e175fadbd1e719c27e20cb -->
 
 # 想起のプロセス v0 — 設計 { #the-recall-process-v0-design }
 
@@ -133,6 +133,9 @@ time_cue = {
 
 手がかりは期間になります。`sure` はそのまま使い、`likely` は両側に期間の長さの半分だけ、`vague` は長さの分だけ
 広げます。この余白は方針の版の一部です。
+
+この期間が、この版の[動的検索窓 (Dynamic Retrieval Envelope)](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process)
+です。手がかりの検索器が探すストアの部分であり、§2.5 の 1 回の修正が広げるものです。
 
 ### 2.2 手がかりの検索器 { #22-the-cue-arm }
 

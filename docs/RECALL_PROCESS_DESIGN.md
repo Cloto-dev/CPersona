@@ -165,6 +165,11 @@ The cue becomes a period. `sure` uses it as given, `likely` widens it on both
 sides by half its length, and `vague` by its whole length. These margins are
 part of the policy version.
 
+The period is this version's
+[Dynamic Retrieval Envelope](RELIABLE_RECALL_2_6.md#1-deliberative-recall-the-recall-process):
+the part of the store the cue arm searches, and the thing the one revision of
+§2.5 widens.
+
 ### 2.2 The cue arm
 
 The server runs one more retrieval arm restricted to the period: vector and
