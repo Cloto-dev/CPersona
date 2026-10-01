@@ -29,18 +29,24 @@ and says nothing about how far the ladder has been climbed.
 ## What never changes
 
 These hold on every line. A feature that needs one of them to bend is not
-scheduled; it is redesigned.
+scheduled; it is redesigned. The one deliberate exception is announced here
+rather than made quietly: 3.0 replaces the storage layer, which narrows the
+second and third items below from 3.0 on
+([why, and the way across](#30-persistent-identity-and-what-remains-of-the-graph-plan)).
 
 - **The server never calls a language model.** Summarising, extracting and
   judging are the agent's job. The server stores, indexes and retrieves
   deterministically. Memory therefore adds no generative API cost, and a
   result is reproducible from the corpus and the configuration.
-- **One SQLite file the user owns.** No external database, and no service the
+- **A local store the user owns.** No external database, and no service the
   data depends on. Embedding is a separate process that can be absent.
-- **The database schema only moves forward.** Upgrades migrate in place.
-  Additive changes (new columns, new tables) are the norm; restructuring an
-  existing table has no precedent and would need a migration design that does
-  not exist yet.
+  Through 2.x the store is one SQLite file. 3.0 replaces it with a store that
+  is not chosen yet, and this item is what that store must still satisfy.
+- **The database schema only moves forward within a major line.** Upgrades
+  migrate in place. Additive changes (new columns, new tables) are the norm;
+  restructuring an existing table has no precedent and would need a migration
+  design that does not exist yet. Across a major version the storage may
+  break, and only with a supported converter: 3.0 comes with one from 2.8.
 - **Degradation is reported, never hidden.** A recall that lost its vector
   layer says so in the response, and a health check names what it could not
   verify.
@@ -191,7 +197,8 @@ repair, and rollback. Bounded, opt-in remediation — a conformer that applies a
 reviewed repair and re-audits, separated from the auditor that only observes —
 belongs with those boundaries and is placed here; it was first listed under
 2.7. The number is provisional. What matters is the
-capability boundary, and it may be re-cut.
+capability boundary, and it may be re-cut. Whatever it ends up carrying, 2.8
+is the version the 3.0 converter reads.
 
 ### 3.0 — persistent identity, and what remains of the graph plan
 
@@ -201,6 +208,36 @@ memory, an operational self-model, and continuity across several clients and
 several models at once. On the runtime axis, this is where the server body is
 expected to be largely Go (below), which is why the two share a major
 version.
+
+**What it breaks: the storage layer.** Every rung of the
+[ladder](#the-runtime-and-scale-ladder) so far works around one fact: the
+data lives in SQLite rows. That is where the cost now concentrates. Moving
+embeddings out of SQLite into memory was the bottleneck of vector search, and
+on a query that matches the whole corpus the full-text arm — SQLite's FTS5 —
+took 70% of a recall at 100,000 rows
+([measurement](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-recall-path-profile.md)).
+3.0 therefore replaces the storage layer, and a 3.0 server does not open a
+2.x database.
+
+The way across is a converter that compiles a 2.8 database into the 3.0
+store, supported for a period that will be stated with the 3.0 release.
+Databases from earlier 2.x lines upgrade in place to 2.8 first, as every 2.x
+upgrade does. Still open: what replaces SQLite — chosen after separating the
+bottlenecks that are SQLite's own from those any store would have — and how
+a conversion is shown to be correct before anyone is asked to run it.
+
+**Memory that includes images.** An agent's experience is not only text: its
+working record already holds screenshots and diagrams. 3.0 stores an image as
+four things: the original; a copy fitted to a model's image input limits,
+with its token cost recorded so that a recall can budget for it; the
+description and visible text the agent writes, since the server still calls
+no model; and an image embedding for search, made by the embedding process.
+The model-facing form is an image rather than precomputed visual tokens:
+[the Claude API](https://platform.claude.com/docs/en/build-with-claude/vision),
+for one, takes an image as bytes, a URL or an uploaded file, and has no way
+to receive visual tokens computed elsewhere. The original is
+kept so that a new model, or a better conversion, can rebuild the rest. Audio
+and video are out of scope until they have a design of their own.
 
 An earlier plan made 3.0 "the graph release": entity and relation tables, a
 bi-temporal model on edges, and model-driven memory evolution, in three
