@@ -316,6 +316,63 @@ async def test_an_empty_query_searches_the_period_by_recency(fake_embedding_clie
     assert out["trace"]["stages"][0]["found"] == 3
 
 
+async def _stored_one_second_apart(refs):
+    # The corpus is stored newest first, so when storing it spans several seconds the
+    # older records carry the later created_at -- the order an import also produces.
+    # Written explicitly so the test does not depend on how fast the rows were stored.
+    db = await get_db()
+    for second, ref in enumerate(refs):
+        await db.execute(
+            "UPDATE memories SET created_at = ? WHERE id = ?",
+            (f"2026-01-01 00:00:{second:02d}", int(ref.removeprefix("mem:"))),
+        )
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_an_empty_query_orders_the_period_by_the_records_time_not_by_when_they_were_stored(
+    fake_embedding_client,
+):
+    # bug-502: the period is measured on the records' own time, so its newest records
+    # are newest by that time. Ordered by created_at these three read [7, 6, 5].
+    refs = await _seed(CORPUS)
+    await _stored_one_second_apart(refs)
+    time_cue = {"after": _ts(75)[:10], "before": _ts(46)[:10], "confidence": "sure"}
+    out = await memory_handlers.do_recall(AGENT, "", limit=3, trace=True, time_cue=time_cue)
+    assert [row["ref"] for row in out["trace"]["arms"]["cue"]] == [refs[5], refs[6], refs[7]]
+
+
+@pytest.mark.asyncio
+async def test_records_of_one_time_in_the_period_come_back_in_the_order_they_were_stored(
+    fake_embedding_client,
+):
+    # Equal times leave the order to the row id, oldest row first, whatever created_at says.
+    refs = await _seed(CORPUS)
+    await _stored_one_second_apart(refs)
+    db = await get_db()
+    await db.execute(
+        "UPDATE memories SET timestamp = ? WHERE id IN (?, ?, ?)",
+        (_ts(61), *(int(ref.removeprefix("mem:")) for ref in refs[5:8])),
+    )
+    await db.commit()
+    time_cue = {"after": _ts(75)[:10], "before": _ts(46)[:10], "confidence": "sure"}
+    out = await memory_handlers.do_recall(AGENT, "", limit=3, trace=True, time_cue=time_cue)
+    assert [row["ref"] for row in out["trace"]["arms"]["cue"]] == [refs[5], refs[6], refs[7]]
+
+
+@pytest.mark.asyncio
+async def test_the_keyword_search_without_a_period_still_lists_the_most_recently_stored_first(
+    fake_embedding_client,
+):
+    # The fix is the cue's: the empty-query keyword search the ordinary recall makes,
+    # with no period, keeps ordering by created_at.
+    refs = await _seed(CORPUS)
+    await _stored_one_second_apart(refs)
+    db = await get_db()
+    rows = await memory_handlers._search_memories_keyword(db, AGENT, "", 3)
+    assert [f"mem:{row['id']}" for row in rows] == [refs[11], refs[10], refs[9]]
+
+
 # --- a cue that points only at today (§2.8) ------------------------------------------
 
 
