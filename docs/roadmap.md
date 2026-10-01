@@ -103,7 +103,7 @@ and chain nodes need them; restructuring is not planned.
 **Features, each answering a measured problem:**
 
 - **Deliberative Recall** — the recall process. Recall becomes a bounded,
-  deterministic loop inside one call: an envelope, a fetch, an evaluation, and
+  deterministic loop inside one call: a Dynamic Retrieval Envelope, a fetch, an evaluation, and
   a revision that follows cues from what it found. It is the way a model
   reasons before it answers, without spending the agent's tokens on the turns.
 

@@ -45,18 +45,27 @@ Deliberative Recall gives the memory layer the same shape:
 ```text
 recall intent
     ↓
-retrieval envelope        (where to look first)
+Dynamic Retrieval Envelope (where to look first)
     ↓
-fetch                     (one or two ranked lists)
+fetch                      (one or two ranked lists)
     ↓
-evaluate                  (is the evidence sufficient?)
+evaluate                   (is the evidence sufficient?)
     ↓
-revise the envelope       (widen, relax, follow a cue) ──┐
-    ↓                                                    │  bounded
-select evidence           ←──────────────────────────────┘
+revise the envelope        (widen, relax, follow a cue) ──┐
+    ↓                                                     │  bounded
+select evidence            ←──────────────────────────────┘
     ↓
-reconstruct               (the exit — section 7)
+reconstruct                (the exit — section 7)
 ```
+
+The first box has a name. The **Dynamic Retrieval Envelope** is the part of
+the store a fetch is aimed at, and the loop moves it: it widens, relaxes or
+follows a cue. It is not the vector scan window, which stays a fixed bound on
+what the vector arm ranks, and it never crosses the isolation boundary of
+`agent_id`, `project_id` and `channel`. In the recall process as shipped, its
+one input is the caller's time cue: the cue's period, widened according to its
+confidence and revised at most once
+([The recall process §2](RECALL_PROCESS_DESIGN.md#2-the-loops-basic-form)).
 
 Four decisions make this a design rather than a metaphor.
 
@@ -86,7 +95,7 @@ candidates can be tried many times for the price of one retrieval.
 **Cue propagation is the substance of the loop.** An iteration that re-runs the
 same query against the same corpus with a slightly different threshold is a
 parameter sweep, and it is exhausted in a few turns. The loop earns its iterations only when each turn learns something the next can
-use. The timestamp of a strong hit narrows the temporal envelope. The episode,
+use. The timestamp of a strong hit narrows the envelope's period. The episode,
 source or project it belongs to becomes a context cue. The overflow chain it
 sits in, and the relations declared on it (section 6), name the places to look
 next.
@@ -449,7 +458,7 @@ effective_budget = min(budget_base, max_budget)
 
 The window sits fourth in a series this server already has: the embedding
 window (what gets indexed; a split is reported), the scan window (what gets
-scanned; a gate fallback is reported), the retrieval envelope (where the loop
+scanned; a gate fallback is reported), the Dynamic Retrieval Envelope (where the loop
 looks; the widening is reported) and the Reconstruction Window (what reaches
 the agent; a short return is reported). Each is a bounded aperture, and each
 says so when it cuts.
