@@ -192,6 +192,13 @@ RECALL_PROPAGATION_SEAT = (
     os.environ.get("CPERSONA_RECALL_PROPAGATION_SEAT", "false").lower() == "true"
 )
 
+# 2.6.2: far seats (docs/BINARY_COARSE_SEARCH_DESIGN.md §5, cpersona/far_seats.py).
+# Two places held after the block reservation for records past the scan window
+# that the coarse search finds by meaning. Off by default: off, the far scan does
+# not run and the recall is the one it was before, bit for bit. On, a recall may
+# return up to two more rows, and they displace none of the rows it returned.
+FAR_SEATS_ENABLED = os.environ.get("CPERSONA_FAR_SEATS_ENABLED", "false").lower() == "true"
+
 # 2.6: the Reconstruction Window and the bounds of the reconstruct tool
 # (docs/RELIABLE_RECALL_2_6.md section 7). `count` is the CEILING on how many
 # recall items come back -- not a fill target and not a search depth:

@@ -1,7 +1,9 @@
 # Binary Coarse Search — design
 
-Status: proposed for 2.6.2. `SCHEMA_VERSION` does not change and no runtime
-dependency is added. Both settings this page introduces are off by default, and
+Status: in development for 2.6.2. The coarse index (section 3), the supplier
+(section 4) and the far seats (section 5) are on `master`; the cue arm's
+remainder (section 6) and the measurement (section 9) are not yet.
+`SCHEMA_VERSION` does not change and no runtime dependency is added. Both settings this page introduces are off by default, and
 with them off every answer is the one 2.6.1 gives, bit for bit, including the
 order of equally-similar rows.
 
@@ -343,20 +345,25 @@ measured, not assumed.
 
 - **A. Placement — decided: a file of its own** beside the contiguous index,
   for the reasons of section 3. The schema does not change.
-- **B. When the index is built.** By the existing build command, as the
-  contiguous index is. The watermark makes a late build a matter of latency, not
-  of correctness, so this step adds no automatic build.
+- **B. When the index is built — decided: by the existing build command.**
+  `python -m cpersona.vector_index build` writes the coarse index beside the
+  contiguous one. The watermark makes a late build a matter of latency, not of
+  correctness, so this step adds no automatic build.
 - **C. The allowed approximation — decided: per-seat agreement of at least
   95%** with an exact scan, met at the largest store measured (section 9).
 - **D. Enabling — decided: a switch and a fixed bound.** Both switches are off
   by default, and the far seats are fixed at two, the size of the block
   reservation, until a measurement with a reader gives a reason to change it.
-- **E. `CPERSONA_MAX_MEMORIES`.** Its meaning is unchanged: the near window and
-  the recency prior. The far scan begins where it ends.
-- **F. The far seats' floor.** The vector arm's similarity floor (proposed), or
-  no floor, as the block reservation has none. Blocks have none because a short
-  span scores on another scale; a far record does not.
-- **G. Setting names.** The two names of section 7 are provisional.
+- **E. `CPERSONA_MAX_MEMORIES` — decided: unchanged.** It is the near window and
+  the recency prior. The far scan begins where it ends, or where
+  `CPERSONA_VECTOR_REACH` ends when that is further.
+- **F. The far seats' floor — decided: the vector arm's similarity floor**, the
+  one the near records of the same recall met (the threshold itself under the
+  cascade, the threshold times `CPERSONA_RRF_THRESHOLD_FACTOR` under `rrf` and
+  `rsf`). Blocks have no floor because a short span scores on another scale; a
+  far record does not.
+- **G. Setting names — decided:** `CPERSONA_FAR_SEATS_ENABLED` and
+  `CPERSONA_CUE_COARSE_ENABLED`, as in section 7.
 
 ## 11. Non-goals
 

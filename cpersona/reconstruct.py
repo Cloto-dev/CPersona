@@ -65,7 +65,7 @@ import logging
 
 import numpy as np
 
-from . import associations, blocks, config, coverage, excerpts, generation, nodes, vector
+from . import associations, blocks, config, coverage, excerpts, far_seats, generation, nodes, vector
 from .database import connection
 from .utils import _parse_timestamp_utc, error_response
 
@@ -1431,7 +1431,8 @@ async def do_reconstruct(
     response["reconstruction"]["selected_count"] = len(items)
     held_returned = sum(1 for item in items if item.get("admission") == "reservation")
     providers.check_reconstruct_count(
-        len(items), held_returned, effective_count, blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS
+        len(items), held_returned, effective_count,
+        blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0),
     )
     if held_returned:
         # Beside the window, not in it: returned_count may exceed effective_count by this.
