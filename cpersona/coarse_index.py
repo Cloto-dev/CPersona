@@ -66,6 +66,12 @@ COARSE_TABLES = ("memories",)
 #: compare the way the SQL compares.
 TIMESTAMP_EXPR = "datetime(timestamp)"
 TIMESTAMP_WIDTH = 19
+#: A cue's period `[start, end)` over the record's own time, both bounds read by
+#: `datetime()` (the cue arm binds `cue.sql_instant` strings to the two
+#: placeholders). One spelling for every reader of a period — the cue arm's
+#: exact part, the live tail of an index read, and the coarse search's live
+#: supplier — so the rows a period holds cannot depend on which of them asked.
+PERIOD_PREDICATE = f"{TIMESTAMP_EXPR} >= datetime(?) AND {TIMESTAMP_EXPR} < datetime(?)"
 #: A timestamp `datetime()` cannot read is NULL in SQL, and a NULL is inside no
 #: period. NUL bytes sort below every instant `datetime()` can write, so a period
 #: compared against them excludes the row, as the SQL does.

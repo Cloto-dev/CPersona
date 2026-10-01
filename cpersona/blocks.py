@@ -1176,15 +1176,29 @@ def hamming_distances(bit_strings: list[bytes], query_bits: bytes):
     """The Hamming distance from ``query_bits`` to each of ``bit_strings``.
 
     Every string must be the query's width; choosing which rows qualify is the
-    caller's decision. The one place the join, the XOR and the popcount are
-    written, which the search and the quotation's block ranking both read
-    (bug-481).
+    caller's decision. The one place the join is written, which the search and
+    the quotation's block ranking both read (bug-481); the distance itself is
+    `hamming_matrix`.
     """
     import numpy as np
 
     width = len(query_bits)
     packed = np.frombuffer(b"".join(bit_strings), dtype=np.uint8).reshape(len(bit_strings), width)
-    query = np.frombuffer(query_bits, dtype=np.uint8)
+    return hamming_matrix(packed, np.frombuffer(query_bits, dtype=np.uint8))
+
+
+def hamming_matrix(packed, query):
+    """The Hamming distance from ``query`` to each row of ``packed``.
+
+    ``packed`` is a ``uint8`` matrix of one row of bits per vector and ``query``
+    a ``uint8`` vector of the same width. The one place the XOR and the
+    popcount are written: blocks reach it through ``hamming_distances``, and the
+    record coarse search (``coarse_search``) hands it the rows of its file or of
+    the live store directly, so a block distance and a record distance cannot
+    come from two rules.
+    """
+    import numpy as np
+
     return _popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
 
 
