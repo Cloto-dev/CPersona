@@ -118,14 +118,25 @@ and the unembedded-row list have the meaning they have in the contiguous index
 the watermark and the named rows are read live, so no stored record is ever
 invisible to this path for want of a rebuild.
 
-**Why a file of its own, and not more arrays in the contiguous index.** The
-point of one bit per dimension is resident memory. The contiguous index holds
-float32 for every record, and on Windows its loader reads the arrays into memory
-rather than mapping them, so that a rebuild can replace the file. Bits stored in
-the same file would bring every float32 vector into memory with them. In a file
-of their own, the resident cost at one million records of 1,024 dimensions is
-about 190 bytes a row — 128 of bits, 62 of ids, axes and times — or about
-190 MB, against 4.1 GB for the same vectors in float32.
+**Why a file of its own, and not more arrays in the contiguous index.** Two
+reasons hold whatever the loader does:
+
+- **An existing index stays usable.** Adding arrays to the contiguous index
+  means a new format version, and a file of the old version is unusable to the
+  new reader: every deployment that built one would fall back to the slower scan
+  until it rebuilt, having asked for nothing.
+- **Far reach does not require the float32 index.** The point of one bit per
+  dimension is resident memory. In a file of its own, the resident cost at one
+  million records of 1,024 dimensions is about 190 bytes a row — 128 of bits,
+  62 of ids, axes and times — or about 190 MB. In the same file, enabling far
+  seats would first require building a file that also holds 4.1 GB of float32.
+
+A third reason holds for the loader as it stands: on Windows it reads every
+array into memory rather than mapping it, so that a rebuild can replace the
+file, and the float32 would become resident with the bits. The price of a file
+of its own is that the ids, axis codes and creation times are written twice,
+about 43 bytes a row, and that each file carries its own watermark — which is
+safe, because each answers only for the rows at or below its own.
 
 **`timestamp` is stored for section 6 only.** It is the axis a cue's period is
 measured on, and it is not the axis the file is ordered by. SQLite compares it
@@ -190,8 +201,7 @@ to its own rows is dropped: a far record is a whole record, the same population
 the floor was set for, so it is held to the same bar a near record must clear to
 be ranked at all. Equal cosines go by scan position.
 
-**How it is admitted.** Up to `CPERSONA_FAR_SEATS` places are held after the
-block reservation, filled in cosine order with records the answer does not
+**How it is admitted.** Two places are held after the block reservation, filled in cosine order with records the answer does not
 already hold. As with the cue's seats, a record that an ordinary arm reached and
 the quality gate or autocut refused is not eligible: a refused row does not come
 back this way. The quality gate is not consulted for the seats and is not
@@ -204,9 +214,13 @@ What follows from that, stated rather than argued away:
   property section 1 needs.
 - **A response can be longer.** The seats are additional to `limit`, like the
   block reservation, the cue's seats and the propagation seat. The count check
-  that bounds a response grows by `CPERSONA_FAR_SEATS`.
+  that bounds a response grows by those two places.
 - **The seats are an upper bound on what a bad far hit can cost**, not a claim
-  that far hits are good.
+  that far hits are good. Their number is fixed at two, the size of the block
+  reservation, and is a conservative bound rather than a tuned parameter, for
+  the reason the block reservation gives
+  ([Block reach §5](BLOCK_REACH_DESIGN.md#5-admission-a-reservation-not-a-gate-change)):
+  tuning it needs a measurement with a reader, which is the precision step.
 - **A seated row is not credited** to the record's recall count, for the reason
   the other held rows are not: no gate admitted it.
 - Each seated row says where it came from: `match_reason.signal` = `far`,
@@ -243,19 +257,21 @@ exactly today's answer**, because the remainder is empty. Nothing about how a
 cue moves a row, how its seats are filled or how it widens changes; only the
 vector half's candidates do.
 
-This part is switched by `CPERSONA_CUE_COARSE`, separately from the far seats,
+This part is switched by `CPERSONA_CUE_COARSE_ENABLED`, separately from the far seats,
 so that either can ship alone.
 
 ## 7. Settings
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
-| `CPERSONA_FAR_SEATS` | places held for far records; `0` means the far scan does not run | `0` |
-| `CPERSONA_CUE_COARSE` | search the remainder of a cue's period through the coarse index | `false` |
-| `CPERSONA_COARSE_DEPTH` | `K'`, the candidates the Hamming pass keeps | set by the measurement of section 9 |
+| `CPERSONA_FAR_SEATS_ENABLED` | hold two places for far records; off means the far scan does not run | `false` |
+| `CPERSONA_CUE_COARSE_ENABLED` | search the remainder of a cue's period through the coarse index | `false` |
 
 At the defaults the new code does not run: a guard, not a scan that returns
-nothing. `CPERSONA_MAX_MEMORIES` keeps its meaning — the near window, and with
+nothing. The number of far seats and `K'` are not settings. Like the block
+reservation and the block re-rank's depth, they are server policy, derived from
+nothing the caller asks for: the seats are fixed at two, and `K'` is set by the
+measurement of section 9. `CPERSONA_MAX_MEMORIES` keeps its meaning — the near window, and with
 it the recency prior — and is where the far scan begins.
 
 ## 8. Invariants
@@ -276,7 +292,7 @@ it the recency prior — and is where the far scan begins.
    declines a store of mixed widths, as the contiguous index's builder does,
    and the live supplier skips rows of another width.
 7. **Bounded growth.** A response holds at most `limit` plus the held places of
-   every kind, now including `CPERSONA_FAR_SEATS`.
+   every kind, now including the two far seats.
 8. **At the defaults, nothing changes**, pinned by the behaviour golden.
 
 ## 9. Measurement
@@ -295,11 +311,22 @@ where the index costs more than it saves.
 **`K'`.** The approximation sits in one place: which far records survive the
 Hamming pass to be re-ranked. With `K'` equal to the number of far records,
 the far seats are filled exactly as an exact float32 scan of the same positions
-would fill them, and the measurement starts from that identity. Across a grid
-of `K'` fixed before the run, it reports how often the seats agree with the
-exact scan's, and `K'` is the smallest value on the grid that meets the bound
-the maintainer sets (section 10, C). The starting point of 1,000 is a starting
-point, not a result.
+would fill them, and the measurement starts from that identity.
+
+The measure is **per-seat agreement**: of the records an exact scan would seat,
+the share the coarse scan also seats, averaged over the queries. Two seats of
+which one differs count as one half, not as a failure. The bound is **95%**
+(section 10, C). A miss costs a reachable far record its seat; it never puts a
+wrong row in place of a right one, because the seats displace nothing.
+
+The `K'` that meets a bound grows with the store, because a larger store has
+more records whose bits sit close to the query's by chance. So the curve is
+taken at several sizes — synthetic stores of 100,000 and 1,000,000 records, and
+the 237,654-document store the scan-window measurements used — on a grid of `K'`
+fixed before the run, and `K'` is the smallest value, or the smallest rule in
+the store's size, that meets the bound at the largest of them. The starting
+point of 1,000 is a starting point, not a result. Each `K'` costs its float32
+reads: 4 KB a candidate at 1,024 dimensions, about 4 MB a recall at 1,000.
 
 **Precision is not measured here.** A claim that far seats improve answers
 needs a store with a real far stratum and a rule fixed in advance, and it has to
@@ -314,23 +341,22 @@ measured, not assumed.
 
 ## 10. Decision points for the maintainer
 
-- **A. Placement.** A file of its own beside the contiguous index (proposed), or
-  more arrays in the contiguous index under a new format version. The earlier
-  outline proposed the second; section 3 gives the reason to prefer the first.
-  Neither changes the schema.
+- **A. Placement — decided: a file of its own** beside the contiguous index,
+  for the reasons of section 3. The schema does not change.
 - **B. When the index is built.** By the existing build command, as the
   contiguous index is. The watermark makes a late build a matter of latency, not
   of correctness, so this step adds no automatic build.
-- **C. The allowed approximation.** The share of queries on which the far seats
-  must agree with an exact scan at the chosen `K'` — for example, at least 95%.
-- **D. Enabling.** Both settings off by default. When far seats are enabled,
-  how many: 2 is proposed, the size of the block reservation.
+- **C. The allowed approximation — decided: per-seat agreement of at least
+  95%** with an exact scan, met at the largest store measured (section 9).
+- **D. Enabling — decided: a switch and a fixed bound.** Both switches are off
+  by default, and the far seats are fixed at two, the size of the block
+  reservation, until a measurement with a reader gives a reason to change it.
 - **E. `CPERSONA_MAX_MEMORIES`.** Its meaning is unchanged: the near window and
   the recency prior. The far scan begins where it ends.
 - **F. The far seats' floor.** The vector arm's similarity floor (proposed), or
   no floor, as the block reservation has none. Blocks have none because a short
   span scores on another scale; a far record does not.
-- **G. Setting names.** The three names of section 7 are provisional.
+- **G. Setting names.** The two names of section 7 are provisional.
 
 ## 11. Non-goals
 
