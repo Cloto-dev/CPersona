@@ -7,9 +7,9 @@ says what the line builds and what "done" means; the
 release contains. Where this page and a release disagree, the release is
 right.
 
-2.6.0 is the line's first final release. 2.6.1 followed the same day and 2.6.2 the
-next (2026-10-01), and a plain install resolves to 2.6.2. 2.6.3a1 (2026-10-02) is a
-pre-release, installed only by exact version.
+2.6.0 is the line's first final release. 2.6.1 followed the same day, 2.6.2 the
+next (2026-10-01) and 2.6.3 the day after (2026-10-02), and a plain install
+resolves to 2.6.3.
 Its pre-releases are on PyPI as `2.6.0aN` and `2.6.0bN`; the 2.5 line is now
 Candidate ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md)).
 
@@ -57,6 +57,7 @@ The numbering follows
 | 2.6.1 | Fixes and additions from a production report: the contiguous index can be rebuilt on Windows while a server holds it (bug-503); what a recall score means, and why it cannot say that nothing matches ([contract §12](behavior-contracts.md#12-scores-order-one-response-they-do-not-say-whether-an-answer-exists)); an example Claude Code hook that prompts recall ([runbook](operations.md#prompting-recall-from-claude-code-hooks)); `get_session_findings` names the SuperAuditor version it conforms to (1.1) | [#377](https://github.com/Cloto-dev/cpersona/pull/377), [#378](https://github.com/Cloto-dev/cpersona/pull/378), [#379](https://github.com/Cloto-dev/cpersona/pull/379), [#380](https://github.com/Cloto-dev/cpersona/pull/380) |
 | 2.6.2 | The binary coarse search, off by default ([design](BINARY_COARSE_SEARCH_DESIGN.md)): a one-bit index of every record beside the contiguous index; far seats, two held places for records past the scan window (`CPERSONA_FAR_SEATS_ENABLED`); the rest of a time cue's period searched past the vector half's cap (`CPERSONA_CUE_COARSE_ENABLED`); the number of candidates set at 256 by a registered measurement ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-binary-coarse-search.md)). Also a coverage ledger in the recall trace, an empty-query time cue that lists a period's records by their own time (bug-502), and PyJWT 2.14.0 or later | [#382](https://github.com/Cloto-dev/cpersona/pull/382), [#383](https://github.com/Cloto-dev/cpersona/pull/383), [#384](https://github.com/Cloto-dev/cpersona/pull/384), [#387](https://github.com/Cloto-dev/cpersona/pull/387), [#389](https://github.com/Cloto-dev/cpersona/pull/389), [#390](https://github.com/Cloto-dev/cpersona/pull/390), [#391](https://github.com/Cloto-dev/cpersona/pull/391), [#392](https://github.com/Cloto-dev/cpersona/pull/392) |
 | 2.6.3a1 | Pre-release. Every stored vector is labelled with the model that produced it (schema 18): the fingerprint a backend reports from `GET /capabilities` (CEmbedding 0.9.0 and later), else the model the `api` transport sends or the name configured. `check_health` reports the vectors a different model wrote (`embedding_model`), and `CPERSONA_EMBEDDING_MODEL_MODE=reject` stops comparing them with the query; the default `warn` changes nothing recall returns ([configuration](configuration.md#core-settings)) | [#395](https://github.com/Cloto-dev/cpersona/pull/395) |
+| 2.6.3 | The final of 2.6.3a1, with no change to the code: a plain install now labels every stored vector with its model and migrates the schema to 18. It was cut after eight hours of production use on 2.6.3a1 with no restart, no error and every new vector labelled |
 
 The associative layer is released and off by default. Whether it becomes the
 default is decided by its own A/B run; no result of that run is recorded yet.
