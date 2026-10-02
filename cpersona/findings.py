@@ -73,6 +73,7 @@ _TIERED_CHECKS = frozenset(
         "null_episode_embedding",
         "schema_objects",
         "vector_index",
+        "coarse_index",
         "embedding_backend",
     }
 )
@@ -92,6 +93,10 @@ _TIER_KINDS: dict[str, str] = {
     # exists and has stopped being used: reads stay correct either way, so
     # neither is critical, but silence is how they went unnoticed for a week.
     "vector_index_degraded": "warn",
+    # coarse_index: the same split, and every stamped state is a setting paying the
+    # live store's price -- including no file at all, because the setting that reads
+    # it is on and its cost without one is the size of the store.
+    "coarse_index_degraded": "warn",
     # embedding_backend: the registry default (info) covers the two states that are not
     # defects — no backend configured, and a run that did not probe one. The state the
     # runner stamps warn is a backend that is configured and did not answer: reads stay
@@ -161,10 +166,10 @@ def finding_kind(issue: dict) -> str:
         if reported in ("embedding_backend_unreachable", "embedding_backend_misconfigured"):
             return reported
         return "embedding_backend"
-    if check == "vector_index":
-        # warn is the runner's stamp for "an index exists and is not being
-        # used"; the unstamped states are observations, not defects.
-        return "vector_index_degraded" if stamped == "warn" else "vector_index"
+    if check in ("vector_index", "coarse_index"):
+        # warn is the runner's stamp for "an index the recall should be using is
+        # not"; the unstamped states are observations, not defects.
+        return f"{check}_degraded" if stamped == "warn" else check
     # schema_objects: critical is the runner's own stamp for a guarantee-bearing
     # object; anything else is a performance index (warn, or info once the
     # repairable policy de-escalated it).

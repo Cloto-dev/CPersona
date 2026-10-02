@@ -2842,6 +2842,164 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
     return issues
 
 
+async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[dict]:
+    """The coarse index, while a setting reads it; under ``fix``, the file built again.
+
+    Two settings read the one-bit index (docs/BINARY_COARSE_SEARCH_DESIGN.md):
+    the far seats and the time cue's remainder, and only for records past the
+    scan window. When the index cannot serve them they fall back to the live
+    store, which reads the stored vector of every record past the window on
+    every recall. The answers stay the same; the cost grows with the store
+    instead of the window (measured 15.9 s a recall at 990,000 records past it,
+    against 197 ms through the index). That fallback is silent by design, so
+    the price is reported here, where a monitor reads health, before anyone has
+    to notice it as latency.
+
+    Silent unless one of those settings is on AND the scope holds records past
+    the window: an index nothing reads is not worth a line. Then:
+
+    - **absent** (warn, from ``INDEX_MATTERS_ROWS`` records past the window).
+      Unlike the contiguous index's absence this is stamped: the operator turned
+      on a setting whose cost, without the file, is the size of the store.
+    - **unusable**, **dimension drift**, **rows missing** (warn): a file exists
+      and recall is not using it.
+    - **tail grown** (the registry default, info): the file is used, and the rows
+      it cannot answer for are read exactly on every recall.
+
+    ``fix`` builds the file again whatever the state: it is a derived artifact,
+    never repaired. One file holds every agent's records, so the registry
+    declares the repair cross-agent and the guard demands write on every agent
+    for it. ``repairable`` is 1 (the one file) or 0 when the builder would
+    decline, which is a corpus carrying two embedding widths mid-swap.
+
+    Detection is all the findings surface does with this (the SuperAuditor
+    boundary): whether a finding leads to ``check_health(fix=true)`` is the
+    harness's decision, not the server's.
+    """
+    from cpersona import coarse_index, far_seats, vector_index
+
+    starts = []
+    if config.FAR_SEATS_ENABLED:
+        starts.append(far_seats.scan_start())
+    if config.CUE_COARSE_ENABLED:
+        starts.append(vector.MAX_MEMORIES)
+    if not starts:
+        return []
+    start = min(starts)
+
+    # A recall reads one agent's records, so the store's reach is the largest
+    # agent's, not the total: the window applies per scope.
+    iso = isolation_where(agent_id=agent_id or None)
+    largest = await db.execute_fetchall(
+        f"SELECT COUNT(*) AS n FROM memories WHERE embedding IS NOT NULL{iso.and_clause}"
+        " GROUP BY agent_id ORDER BY n DESC LIMIT 1",
+        iso.params,
+    )
+    far_rows = max(0, (largest[0][0] if largest else 0) - start)
+    if far_rows == 0:
+        return []
+
+    hint = (
+        "build the coarse index again: check_health(checks=['coarse_index'], fix=true), "
+        "or python -m cpersona.vector_index --db <path> --table memories build"
+    )
+    # Deliberately global, as check_vector_index's are: the builder declines while
+    # any row carries another width, and a width is not corpus content.
+    all_axes = isolation_where(agent_id=None)
+    widths = {
+        r[0]
+        for r in await db.execute_fetchall(
+            f"SELECT DISTINCT length(embedding) FROM memories"
+            f" WHERE embedding IS NOT NULL{all_axes.and_clause}",
+            all_axes.params,
+        )
+    }
+    repairable = 1 if len(widths) <= 1 else 0
+
+    issue: dict | None = None
+    try:
+        index = coarse_index.cached_coarse_index("memories")
+    except vector_index.IndexUnusable as exc:
+        index = None
+        issue = {
+            "type": "coarse_index_unusable",
+            "severity": "warn",
+            "detail": str(exc),
+            "rows_past_window": far_rows,
+            "repairable": repairable,
+            "hint": hint,
+        }
+    if issue is None and index is None:
+        if far_rows < INDEX_MATTERS_ROWS:
+            return []
+        width = max(widths) if widths else 0
+        issue = {
+            "type": "coarse_index_absent",
+            "severity": "warn",
+            "rows_past_window": far_rows,
+            "embedding_bytes_read_per_recall": far_rows * width,
+            "repairable": repairable,
+            "hint": (
+                f"every recall reads the stored vectors of {far_rows} records past the window "
+                f"from SQLite, about {far_rows * width / 1_000_000:.0f} MB, and the cost grows "
+                f"with the store; {hint}"
+            ),
+        }
+    if issue is None and widths and widths != {index.dim * 4}:
+        issue = {
+            "type": "coarse_index_dimension_drift",
+            "severity": "warn",
+            "index_dim": index.dim,
+            "corpus_widths_bytes": sorted(widths),
+            "repairable": repairable,
+            "hint": "the index is not being used; build it again once the corpus carries one embedding width",
+        }
+    if issue is None:
+        # The rows the index holds that the store no longer does: each sends the
+        # recall that meets one back to the live store (coarse_search._from_index).
+        live_indexed = (
+            await db.execute_fetchall(
+                "SELECT COUNT(*) FROM memories WHERE id <= ? AND embedding IS NOT NULL"
+                f"{all_axes.and_clause}",
+                (index.watermark, *all_axes.params),
+            )
+        )[0][0]
+        if index.count and live_indexed < index.count:
+            issue = {
+                "type": "coarse_index_rows_missing",
+                "severity": "warn",
+                "indexed_rows": index.count,
+                "rows_still_present": live_indexed,
+                "repairable": repairable,
+                "hint": f"rows the index holds are gone from the database; {hint}",
+            }
+    if issue is None:
+        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", all_axes)
+        if index.count and read_exactly > INDEX_TAIL_RATIO * index.count:
+            issue = {
+                "type": "coarse_index_tail_grown",
+                "indexed_rows": index.count,
+                "rows_read_exactly": read_exactly,
+                "repairable": repairable,
+                "hint": f"the rows written since the build are read exactly on every recall; {hint}",
+            }
+    if issue is None:
+        return []
+
+    if fix and repairable:
+        try:
+            built = await coarse_index.build_coarse_index(db, "memories")
+        except vector_index.IndexUnusable as exc:
+            built = {"built": False, "reason": str(exc)}
+        # Present on every fix run, so "not built" is an answer rather than an absence.
+        issue["rebuilt"] = bool(built.get("built"))
+        if issue["rebuilt"]:
+            issue["build"] = {k: built[k] for k in ("count", "dim", "watermark", "bytes")}
+        else:
+            issue["build_declined"] = built.get("reason", "")
+    return [issue]
+
+
 # Group and other. The owner's own bits are not a finding: a file this package
 # placed is meant to be readable by the account running the server.
 _OTHERS_MASK = stat.S_IRWXG | stat.S_IRWXO
@@ -3229,6 +3387,8 @@ HEALTH_CHECKS: list[Check] = [
     Check("anonymous_source", "info", False, check_anonymous_source),
     Check("vector_fallback_config", "info", False, check_vector_fallback_config),
     Check("vector_index", "info", False, check_vector_index),
+    # cross_agent_fix: its repair writes one file holding every agent's records.
+    Check("coarse_index", "info", True, check_coarse_index, cross_agent_fix=True),
     Check("operating_context_parse", "warn", False, check_operating_context_parse),
     Check("operating_context_size", "info", False, check_operating_context_size),
     Check("file_permissions", "warn", True, check_file_permissions),

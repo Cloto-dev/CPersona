@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/BINARY_COARSE_SEARCH_DESIGN.md@blob:79974b8feb5d59eff2fe6fefeee3c2a2249eb951 -->
+<!-- i18n-source: docs/BINARY_COARSE_SEARCH_DESIGN.md@blob:c5dfaf331b4d7f89618d8b4efb54bfb15030fdfe -->
 
 # 1 ビット粗探索 — 設計 { #binary-coarse-search-design }
 
@@ -314,6 +314,10 @@ float32 走査とまったく同じように埋まり、計測はこの恒等か
 - **B. 索引をいつ作るか — 決定: 既存の作成コマンドで作ります。**
   `python -m cpersona.vector_index build` が連続索引の隣に粗探索の索引を書きます。watermark により、
   作成の遅れは正しさでなくレイテンシの問題になるので、この段階は自動作成を加えません。
+  2.6.4 からは、作成が必要になったことを健全性チェックが言います。`check_health` の
+  `coarse_index` チェックは、設定がファイルを読み、あるエージェントが窓の外に記録を持つ間、
+  そのファイルを報告し、`fix=true` で作ります。所見は他と同じく配送され、それを受けてどうするかは
+  読む側に残します。
 - **C. 許容する近似 — 決定: 厳密な走査との席ごとの一致率 95% 以上**を、測った中で最も大きい
   ストアで満たすこと (第 9 節)。
 - **D. 有効化 — 決定: 切り替えと固定の上限。** どちらの切り替えも既定で off。窓の外の席は
