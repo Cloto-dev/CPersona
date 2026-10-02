@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:e77c6bd9869cf2d15cb35d12c1d3cc1ed2a0f34d -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:7cb5b1ebd894392d0b3cba7553370b449319d705 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,7 +10,7 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2 が続き、版を指定しない導入は 2.6.2 になります。
+2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2 が続き、版を指定しない導入は 2.6.2 になります。2.6.3a1 (2026-10-02) は pre-release で、版を指定したときだけ導入されます。
 pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -56,6 +56,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.0 | このラインの最初の final リリース。機能の追加はなし: Block による到達を既定で on にし、`count` を省略した `reconstruct` を 10 項目にし (この 2 つで、記憶から答えるためにこのリリースが推奨する構成になります)、alpha のレビューが登録した LOW の欠陥 43 件を修正。ノードの境界をまたいでいた Block の集合、表せる範囲を超えて例外になっていた時期の手がかり、待ち行列の全タスクを止めていた失敗する構築、どのゲートも認めていない脇の行に記録されていた recall の回数など。 |
 | 2.6.1 | 実運用の報告から入れた修正と追加: サーバーが開いたままでも Windows で連続配置索引を再構築できる (bug-503)。recall のスコアが何を意味し、なぜ「一致するものは無い」を示せないか ([契約 §12](behavior-contracts.md#12-scores-order-one-response-they-do-not-say-whether-an-answer-exists))。recall を促す Claude Code フックの例 ([運用](operations.md#prompting-recall-from-claude-code-hooks))。`get_session_findings` が準拠する SuperAuditor の版 (1.1) を示す | [#377](https://github.com/Cloto-dev/cpersona/pull/377)、[#378](https://github.com/Cloto-dev/cpersona/pull/378)、[#379](https://github.com/Cloto-dev/cpersona/pull/379)、[#380](https://github.com/Cloto-dev/cpersona/pull/380) |
 | 2.6.2 | 1 ビット粗探索。既定は off ([設計](BINARY_COARSE_SEARCH_DESIGN.md)): 連続配置索引の隣に全レコードの 1 ビット索引。窓の外の席 = 走査窓の外のレコードのための 2 つの予約席 (`CPERSONA_FAR_SEATS_ENABLED`)。時間の手がかりの期間のうち、ベクトル側の上限を超えた残りの探索 (`CPERSONA_CUE_COARSE_ENABLED`)。候補数は事前登録した計測で 256 に決定 ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-binary-coarse-search.md))。ほかに recall の trace の網羅の台帳、空のクエリの時間の手がかりが期間のレコードをそれ自身の時刻順に並べる修正 (bug-502)、PyJWT 2.14.0 以上 | [#382](https://github.com/Cloto-dev/cpersona/pull/382), [#383](https://github.com/Cloto-dev/cpersona/pull/383), [#384](https://github.com/Cloto-dev/cpersona/pull/384), [#387](https://github.com/Cloto-dev/cpersona/pull/387), [#389](https://github.com/Cloto-dev/cpersona/pull/389), [#390](https://github.com/Cloto-dev/cpersona/pull/390), [#391](https://github.com/Cloto-dev/cpersona/pull/391), [#392](https://github.com/Cloto-dev/cpersona/pull/392) |
+| 2.6.3a1 | pre-release。保存するベクトルに、それを作ったモデルのラベルを付けます (スキーマ 18): バックエンドが `GET /capabilities` で返す指紋 (CEmbedding 0.9.0 以降)、それが無ければ `api` トランスポートが送るモデル名か設定したモデル名。別のモデルが書いたベクトルを `check_health` が報告し (`embedding_model`)、`CPERSONA_EMBEDDING_MODEL_MODE=reject` でそのベクトルを問いと比べなくなります。既定の `warn` は recall の結果を何も変えません ([設定](configuration.md#core-settings)) | [#395](https://github.com/Cloto-dev/cpersona/pull/395) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
