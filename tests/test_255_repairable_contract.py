@@ -320,6 +320,8 @@ EXPECTED_REPAIRABLE = {
     # locked on purpose, for the same reason: building blocks never modifies the
     # record (checks.check_missing_blocks)
     "missing_blocks": 1,
+    # the one file a rebuild writes (checks.check_coarse_index)
+    "coarse_index": 1,
 }
 
 
@@ -365,6 +367,29 @@ async def _s_file_permissions(conn):
         yield conn
     finally:
         os.chmod(path, before)
+
+
+@seeder("coarse_index")
+async def _s_coarse_index(conn):
+    # Not a row either: the subject is a derived file, absent while a setting that
+    # reads it is on and the agent holds records past the window. The window is
+    # narrowed so a handful of rows reach past it; everything is put back, and the
+    # file a fix run builds is removed so it cannot reach the next test.
+    import struct
+
+    from cpersona import coarse_index
+
+    saved = (config.FAR_SEATS_ENABLED, vector.MAX_MEMORIES, vector.VECTOR_REACH, checks.INDEX_MATTERS_ROWS)
+    config.FAR_SEATS_ENABLED, vector.MAX_MEMORIES, vector.VECTOR_REACH, checks.INDEX_MATTERS_ROWS = True, 2, 0, 1
+    for n in range(4):
+        await _mem(conn, f"coarse row {n}", embedding=struct.pack("<4f", n + 1.0, -1.0, 0.5, -0.5))
+    try:
+        yield conn
+    finally:
+        config.FAR_SEATS_ENABLED, vector.MAX_MEMORIES, vector.VECTOR_REACH, checks.INDEX_MATTERS_ROWS = saved
+        path = coarse_index.index_path("memories")
+        if os.path.exists(path):
+            os.unlink(path)
 
 
 def _fix_capable_names() -> set:

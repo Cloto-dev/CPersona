@@ -367,7 +367,11 @@ measured, not assumed.
 - **B. When the index is built — decided: by the existing build command.**
   `python -m cpersona.vector_index build` writes the coarse index beside the
   contiguous one. The watermark makes a late build a matter of latency, not of
-  correctness, so this step adds no automatic build.
+  correctness, so this step adds no automatic build. Since 2.6.4 the health
+  surface says when the build is owed: `check_health`'s `coarse_index` check
+  reports the file while a setting reads it and an agent holds records past the
+  window, and `fix=true` builds it. The finding is delivered like any other;
+  acting on it stays with whoever reads it.
 - **C. The allowed approximation — decided: per-seat agreement of at least
   95%** with an exact scan, met at the largest store measured (section 9).
 - **D. Enabling — decided: a switch and a fixed bound.** Both switches are off

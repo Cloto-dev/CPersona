@@ -337,6 +337,21 @@ delete, and removed by a purge along with the rows it held. With both files,
 under `coarse` without changing its own exit code, because nothing reads the
 coarse index unless a setting asks for it.
 
+**When a setting does read it, health reports it.** With
+`CPERSONA_FAR_SEATS_ENABLED` or `CPERSONA_CUE_COARSE_ENABLED` on, and an agent
+holding records past the scan window, a recall that cannot use the coarse index
+reads the stored vector of every one of those records from the database: the
+answer is the same, and the cost grows with the store instead of the window.
+`check_health` raises `coarse_index_absent` (with the records past the window and
+the bytes a recall reads), `coarse_index_unusable`, `coarse_index_dimension_drift`
+or `coarse_index_rows_missing` as warnings, and `coarse_index_tail_grown` as an
+observation, and says nothing while both settings are off or the store fits the
+window. `check_health(checks=["coarse_index"], fix=true)` builds the file again;
+it holds every agent's records, so the repair asks for write access to every
+agent. The findings reach `get_session_findings` like every other check's, so a
+monitor can hear of the cost before anyone notices it as latency. Whether a
+finding leads to the repair is the monitor's decision, not the server's.
+
 **What happens between builds.** The index knows the highest row id that
 existed when it was built. Rows written after that are not in it, and are not
 lost: every query reads them from the database exactly as the scan always did,
