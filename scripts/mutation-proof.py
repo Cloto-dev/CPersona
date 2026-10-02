@@ -2858,6 +2858,26 @@ MUTATIONS += [
         breaks="propagation measures closeness with another model's vectors under reject",
         expect='test_embedding_model_label.py::test_reject_covers_the_propagation_seat',
     ),
+    Mutation(
+        id='M271',
+        tests=('tests/test_embedding_model_label.py',),
+        target='embedding_model label — the prefetched re-embed carries its label to the locked write',
+        file='cpersona/checks.py',
+        find='                label = cached_label\n',
+        replace='                label = ""\n',
+        breaks='a vector re-embedded before the write lock is applied unlabelled',
+        expect='test_embedding_model_label.py::test_a_row_already_without_a_vector_is_re_embedded_under_the_label_learned_unlocked',
+    ),
+    Mutation(
+        id='M272',
+        tests=('tests/test_embedding_model_label.py',),
+        target='embedding_model label — the live re-embed labels what it writes',
+        file='cpersona/checks.py',
+        find='                label = await generation.record_label()\n                emb = await vector._embedding_client.embed([text])\n',
+        replace='                label = ""\n                emb = await vector._embedding_client.embed([text])\n',
+        breaks='a vector re-embedded by a direct caller is written unlabelled',
+        expect='test_embedding_model_label.py::test_the_live_re_embed_labels_what_it_writes',
+    ),
 ]
 
 

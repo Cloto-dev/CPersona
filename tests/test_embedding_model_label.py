@@ -262,6 +262,34 @@ async def test_a_content_rewrite_clears_the_label_with_the_vector(clean_db, monk
     assert await _label(clean_db, "memories", mem) == (False, "")
 
 
+@pytest.mark.asyncio
+async def test_a_row_already_without_a_vector_is_re_embedded_under_the_label_learned_unlocked(clean_db, monkeypatch):
+    """The prefetched path: the vector and its label are computed before the write lock
+    and applied under it, so the label must ride in the prefetch."""
+    _install(monkeypatch, FailingClient(OTHER))
+    mem = await _store("no vector yet")
+    assert await _label(clean_db, "memories", mem) == (False, "")
+
+    _install(monkeypatch, IdentifiedClient(FP))
+    res = await maintenance_handlers.do_check_health(agent_id=AGENT, fix=True, checks=["null_embedding"])
+    assert "error" not in res, res
+    assert await _label(clean_db, "memories", mem) == (True, FP)
+
+
+@pytest.mark.asyncio
+async def test_the_live_re_embed_labels_what_it_writes(clean_db, monkeypatch):
+    """The path a direct caller takes, with no prefetch: it embeds and labels in place."""
+    from cpersona.isolation import isolation_where
+
+    _install(monkeypatch, FailingClient(OTHER))
+    mem = await _store("no vector yet either")
+    _install(monkeypatch, IdentifiedClient(FP))
+    written = await checks._reembed_null_rows(clean_db, "memories", "content", isolation_where(agent_id=AGENT), None)
+    await clean_db.commit()
+    assert written == 1
+    assert await _label(clean_db, "memories", mem) == (True, FP)
+
+
 # --- the migration ------------------------------------------------------------------------
 
 
