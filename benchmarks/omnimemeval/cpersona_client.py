@@ -1,0 +1,92 @@
+"""CPersona adapter: a CPersona server reached over MCP streamable HTTP.
+
+CPersona calls no model when it stores or recalls, so ``Memory service model`` does not apply.
+
+- ``add`` stores one haystack session as one record: a date line, then one paragraph per turn
+  prefixed by its role, at the session's time. A session can run past CPersona's default write
+  bound (16,000 characters); the server is expected to run with ``CPERSONA_MAX_CONTENT_LENGTH``
+  raised so that a session is stored whole, and a truncated write is an error here.
+- ``search`` is CPersona's ``reconstruct`` at the server's defaults (``count`` 10, CPersona's
+  maximum, so the harness ``top_k`` is not passed). Each item is rendered as its record's time
+  followed by the text the item quotes (the head quote, then any excerpts).
+- ``delete_all`` purges the user's data.
+
+Environment: ``CPERSONA_MCP_URL`` (for example ``http://127.0.0.1:8501/mcp``) and
+``CPERSONA_AUTH_TOKEN`` (the server's bearer token).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+
+import httpx2
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+from .base_client import env_float, require_env
+
+
+class CpersonaClient:
+    def __init__(self):
+        self.url = require_env("CPERSONA_MCP_URL")
+        self._headers = {"Authorization": "Bearer " + require_env("CPERSONA_AUTH_TOKEN")}
+        self._timeout = env_float("CPERSONA_TIMEOUT_SECONDS", 600.0)
+        # One event loop on its own thread: the harness calls the client from worker threads,
+        # and every call is a short-lived MCP session against a stateless server.
+        self._loop = asyncio.new_event_loop()
+        threading.Thread(target=self._loop.run_forever, daemon=True).start()
+
+    async def _acall(self, tool: str, args: dict) -> dict:
+        async with httpx2.AsyncClient(headers=self._headers, timeout=self._timeout) as http:
+            async with streamable_http_client(self.url, http_client=http) as streams:
+                async with ClientSession(streams[0], streams[1]) as session:
+                    await session.initialize()
+                    result = await session.call_tool(tool, args)
+        text = result.content[0].text if result.content else ""
+        if getattr(result, "is_error", None) or getattr(result, "isError", None):
+            raise RuntimeError(f"cpersona {tool} failed: {text[:300]}")
+        return json.loads(text)
+
+    def call(self, tool: str, args: dict) -> dict:
+        return asyncio.run_coroutine_threadsafe(self._acall(tool, args), self._loop).result(self._timeout + 30)
+
+    def add(self, messages, user_id, session_key=None, **_kw):
+        when = next((m.get("chat_time") for m in messages if m.get("chat_time")), None)
+        turns = "\n\n".join(f"{m.get('role', 'user')}: {str(m.get('content', '')).strip()}" for m in messages)
+        message = {
+            "content": (f"Session date: {when}\n\n{turns}" if when else turns),
+            "source": {"type": "User", "id": user_id, "name": ""},
+        }
+        if when:
+            message["timestamp"] = when
+        if session_key:
+            message["id"] = str(session_key)
+        res = self.call("store", {"agent_id": user_id, "message": message})
+        if res.get("result") == "rejected":
+            raise RuntimeError(f"cpersona store rejected a session: {res.get('reason')}")
+        if res.get("truncated"):
+            raise RuntimeError("cpersona store truncated a session: raise CPERSONA_MAX_CONTENT_LENGTH on the server")
+        return res
+
+    @staticmethod
+    def render(response: dict) -> list[str]:
+        """One block per item: the record's time, then the quoted text."""
+        blocks = []
+        for item in response.get("items", []):
+            claims = item.get("claims", [])
+            when = next((c.get("as_of") for c in claims if c.get("ref") == item.get("head_ref")), None)
+            if when is None and claims:
+                when = claims[0].get("as_of")
+            parts = [item.get("content") or ""]
+            parts += [x.get("content", "") for x in item.get("excerpts", []) if isinstance(x, dict)]
+            body = "\n…\n".join(p for p in parts if p)
+            blocks.append(f"[{when}]\n{body}\n" if when else f"{body}\n")
+        return blocks
+
+    def search(self, query, user_id, top_k):
+        return self.render(self.call("reconstruct", {"agent_id": user_id, "query": query}))
+
+    def delete_all(self, user_id):
+        return self.call("delete_agent_data", {"agent_id": user_id})
