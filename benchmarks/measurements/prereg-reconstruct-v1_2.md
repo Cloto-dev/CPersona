@@ -233,3 +233,16 @@ The 2.6.4 pre-release notes state a claim only where its rule was met, with the
 measured figures. A rule not met is reported with its numbers and nothing is
 claimed for it. "Do not release" in either instrument holds the change back until
 it is understood.
+
+## Amendments
+
+Made without reading any arm's results into the rule.
+
+- **Line splitting.** The first smoke run (arm A) answered after two logged
+  searches, and the harness reported it failed with a JSON parse error. Its line
+  splitter, carried over from the v1.1 study, used Python's `str.splitlines()`,
+  which also splits at U+2028; the Codex event line that carried a quoted session
+  held two of them unescaped, as JSON allows. The harness now splits JSON Lines at
+  newlines only, for the event stream and the tool log alike. The run was re-read
+  from its unchanged artifacts, not re-run, and its first reading is kept beside
+  it. Its answer had not been judged.
