@@ -68,7 +68,7 @@ import numpy as np  # noqa: E402
 
 from cpersona import session  # noqa: E402
 from cpersona import admin_handlers, health, maintenance_handlers, memory_handlers  # noqa: E402
-from cpersona import scope_stats, tasks, utils, vector  # noqa: E402
+from cpersona import generation, scope_stats, tasks, utils, vector  # noqa: E402
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient, EmbedOutcome  # noqa: E402
 from cpersona.database import get_db  # noqa: E402
 
@@ -387,6 +387,9 @@ async def _reset(db) -> None:
     vector._agent_thresholds.clear()
     scope_stats.clear()
     health._reset()
+    # The backend identity one scenario learns decides which stored labels the next
+    # one's embedding_model check judges, and with what key its writes are labelled.
+    generation.reset()
 
 
 def _mask_row_refs(calls: list[dict]) -> list[dict]:

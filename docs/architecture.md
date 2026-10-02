@@ -38,8 +38,8 @@ Two things follow from this shape:
 
 ## Storage
 
-One SQLite database in WAL mode (`CPERSONA_DB_PATH`), currently **schema
-v17**, migrated forward automatically on startup. It holds four data tables —
+One SQLite database in WAL mode (`CPERSONA_DB_PATH`), currently
+**schema v18**, migrated forward automatically on startup. It holds four data tables —
 `memories`, `episodes`, `profiles`, `pending_memory_tasks` — plus a
 `schema_version` bookkeeping table and two FTS5 virtual tables that triggers
 keep in step. A fifth table, `record_nodes`, holds only offsets into the text of

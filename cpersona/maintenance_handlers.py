@@ -13,6 +13,7 @@ from cpersona import __version__
 from cpersona import checks as checks_registry
 from cpersona import config
 from cpersona import findings as findings_seam
+from cpersona import generation
 from cpersona import session
 from cpersona import update_check
 from cpersona import vector
@@ -77,6 +78,11 @@ async def do_check_health(
     # bug-083: the dimension probe embed rides in the same unlocked phase (as
     # embedding_cache["expected_dim"]) so check_embedding_dimension no longer embeds
     # under the lock either.
+    # The embedding_model check compares stored labels with the backend's identity.
+    # Learned here, unlocked, so the check reads it without a request under the lock.
+    if "embedding_model" in checks_run:
+        await generation.refresh()
+
     embedding_cache = None
     if fix:
         async with connection() as db:

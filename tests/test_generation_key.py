@@ -443,15 +443,28 @@ async def test_the_quotation_path_refuses_blocks_from_a_generation_it_did_not_ru
 async def test_a_block_build_stamps_the_backend_as_it_is_now(building, monkeypatch):
     """The identity was refreshed only at boot and on traced recalls, so a backend
     redeployed with another model under the same URL left builds stamping the old
-    fingerprint. Here boot learned one backend, and the builds meet another."""
-    async with _TempDB() as tmp:
-        from cpersona import database
+    fingerprint. Here the record was stored under one backend, and the build meets
+    another.
 
-        await generation.refresh(Backend(_identity(FINGERPRINT)))
+    The build is driven on its own, after the redeploy. A store asks the backend too
+    (it labels its own vector), so a store followed by its build would read the new
+    backend whichever of the two asked, and could not tell whether the build did.
+    """
+    async with _TempDB():
+        from cpersona import blocks as blocks_mod
+        from cpersona import database, memory_handlers
+
+        original = Backend(_identity(FINGERPRINT))
+        monkeypatch.setattr(building, "capabilities_with_outcome", original.capabilities_with_outcome, raising=False)
+        monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", False)
+        row_id = (await memory_handlers.do_store("agent.gen", {"content": LONG}))["id"]
+        assert generation.fingerprint() == FINGERPRINT, "the store learned the backend it embedded with"
+
         monkeypatch.setattr(generation, "REFRESH_INTERVAL_SECONDS", 0)
         redeployed = Backend(_identity(OTHER))
         monkeypatch.setattr(building, "capabilities_with_outcome", redeployed.capabilities_with_outcome, raising=False)
-        row_id = await _store_and_drain(tmp, LONG)
+        monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+        await blocks_mod.build_blocks({"kind": "mem", "id": row_id})
 
         db = await database.get_db()
         stored = await db.execute_fetchall(
@@ -464,15 +477,22 @@ async def test_a_block_build_stamps_the_backend_as_it_is_now(building, monkeypat
 
 @pytest.mark.asyncio
 async def test_a_node_build_stamps_the_backend_as_it_is_now(building, monkeypatch):
-    building.token_window = 16
-    async with _TempDB() as tmp:
-        from cpersona import database
+    """As for blocks: stored under one backend, built after a redeploy, the build
+    driven on its own so the store's own question cannot answer for it."""
+    async with _TempDB():
+        from cpersona import database, memory_handlers
+        from cpersona import nodes as nodes_mod
 
-        await generation.refresh(Backend(_identity(FINGERPRINT)))
+        original = Backend(_identity(FINGERPRINT))
+        monkeypatch.setattr(building, "capabilities_with_outcome", original.capabilities_with_outcome, raising=False)
+        row_id = (await memory_handlers.do_store("agent.gen", {"content": LONG * 40}))["id"]
+        assert generation.fingerprint() == FINGERPRINT, "the store learned the backend it embedded with"
+
+        building.token_window = 16
         monkeypatch.setattr(generation, "REFRESH_INTERVAL_SECONDS", 0)
         redeployed = Backend(_identity(OTHER))
         monkeypatch.setattr(building, "capabilities_with_outcome", redeployed.capabilities_with_outcome, raising=False)
-        row_id = await _store_and_drain(tmp, LONG * 40)
+        await nodes_mod.build_nodes({"kind": "mem", "id": row_id})
 
         db = await database.get_db()
         stored = await db.execute_fetchall(

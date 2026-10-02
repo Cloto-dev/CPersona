@@ -300,11 +300,16 @@ async def do_store(
     window_probe = asyncio.ensure_future(nodes.runs_past_window(content)) if nodes.building_enabled() else None
 
     embedding_blob = None
+    # Written in the same INSERT as the blob, so a row never carries a label for a
+    # vector it does not have.
+    embedding_label = ""
     if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
+            label = await generation.record_label()
             embeddings = await vector._embedding_client.embed([content])
             if embeddings:
                 embedding_blob = vector.pack_for_storage(embeddings[0])
+                embedding_label = label
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as e:
             logger.warning("Embedding failed during store: %s", e)
     elif local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
@@ -319,9 +324,10 @@ async def do_store(
     # seam (network I/O, not a DB commit).
     async with transaction() as db:
         cursor = await db.execute(
-            """INSERT OR IGNORE INTO memories (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, channel)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, channel),
+            """INSERT OR IGNORE INTO memories
+               (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, embedding_model, channel)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, embedding_label, channel),
         )
     if cursor.rowcount == 0:
         # v2.5.2 additive asymmetry: the msg_id / content branches echo the
@@ -1331,8 +1337,11 @@ async def _backfill_cosines(
     # bug-040/041: memories and episodes id spaces AUTOINCREMENT independently, so
     # an episode id N MUST NOT read memory id N's blob (and vice versa) — one
     # IN(...) batch per table, embedding column only.
-    mem_ids = [rid for (_, rid, is_ep) in needy if not is_ep]
-    ep_ids = [rid for (_, rid, is_ep) in needy if is_ep]
+    # A vector another model wrote is not compared (reject): the row keeps its None
+    # cosine, as a row with no blob does.
+    rejected = await vector.rejected_rids(db, [("ep" if is_ep else "mem", rid) for (_, rid, is_ep) in needy])
+    mem_ids = [rid for (_, rid, is_ep) in needy if not is_ep and ("mem", rid) not in rejected]
+    ep_ids = [rid for (_, rid, is_ep) in needy if is_ep and ("ep", rid) not in rejected]
 
     async def _fetch_blobs(table: str, ids: list[int]) -> dict[int, bytes | None]:
         """bug-301: chunked at the same width its sibling uses.
@@ -1719,6 +1728,9 @@ async def _propagation_seat_rows(
                 ) as cur:
                     for row_id, blob in await cur.fetchall():
                         blobs[(kind, row_id)] = blob
+            # A vector another model wrote is not compared (reject): absent, like a NULL blob.
+            for rid in await vector.rejected_rids(db, blobs):
+                blobs.pop(rid)
     anchor = propagation.unit(blobs.get(rid_of(anchor_row)))
     if anchor is None:
         return [], note
@@ -1957,12 +1969,13 @@ async def _search_cue_arm(
             [mem_id for _, mem_id, _ in ranked],
             (*iso.params, *src.params),
         )
-        lists.append([
+        vector_rows = [
             {"id": mem_id, "_rid": ("mem", mem_id), "_cosine": score, "msg_id": payload[mem_id][1],
              "content": payload[mem_id][2], "source": payload[mem_id][3], "timestamp": payload[mem_id][4]}
             for _, mem_id, score in ranked
             if mem_id in payload
-        ])
+        ]
+        lists.append(await vector._drop_rejected_labels(db, vector_rows))
 
     # An empty query has no ranking to offer, so the keyword half returns the period's
     # newest records by their own time, as the episodes below are ordered by theirs.
@@ -1992,7 +2005,8 @@ async def _search_cue_arm(
                 depth,
             )
             ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
-            lists.append(await _episode_rows(db, ep_iso, [(ep_id, score) for _, ep_id, score in ranked]))
+            ep_vector_rows = await _episode_rows(db, ep_iso, [(ep_id, score) for _, ep_id, score in ranked])
+            lists.append(await vector._drop_rejected_labels(db, ep_vector_rows))
         if FTS_ENABLED and query.strip():
             lists.append(await _search_episodes_fts(
                 db, agent_id, query, depth, channel=channel, project_id=project_id,
@@ -3922,22 +3936,36 @@ async def _prepare_episode_row(
         end_time = max(timestamps) if timestamps else None
 
     embedding_blob = None
+    embedding_label = ""
     if vector._embedding_client and summary:
         try:
+            label = await generation.record_label()
             embeddings = await vector._embedding_client.embed([summary])
             if embeddings:
                 embedding_blob = vector.pack_for_storage(embeddings[0])
+                embedding_label = label
         except Exception as e:
             logger.warning("Embedding failed for episode: %s", e)
 
-    return (agent_id, project_id, summary, keywords, start_time, end_time, embedding_blob, int(resolved), channel)
+    return (
+        agent_id,
+        project_id,
+        summary,
+        keywords,
+        start_time,
+        end_time,
+        embedding_blob,
+        embedding_label,
+        int(resolved),
+        channel,
+    )
 
 
 async def _insert_episode_row(db, row: tuple) -> int:
     """Leaf: INSERT a prepared episode row inside the caller's open transaction."""
     cursor = await db.execute(
-        """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, resolved, channel)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time, end_time, embedding, embedding_model, resolved, channel)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         row,
     )
     return cursor.lastrowid

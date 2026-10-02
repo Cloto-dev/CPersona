@@ -167,16 +167,23 @@ Three requirements are easy to miss. Each one degrades ranking silently:
   call, with no instruction prefix. Prompt-prefix models (e5-style, prompted
   bge) underperform here. Symmetric or retrieval-merged models (jina-v5-nano,
   bge-m3, MiniLM) are the intended fit.
-- **Swapping models behind one URL invalidates the corpus.** The contract
-  carries no model identity, so CPersona fingerprints the backend by embedding
-  *dimension* alone. A swap to a different model of the same dimension is
-  undetectable.
+- **Swapping models behind one URL invalidates the corpus.** The `/embed`
+  contract carries no model identity. A backend that also answers
+  `GET /capabilities` (CEmbedding 0.9.0 and later) names itself with a
+  fingerprint, and from 2.6.3 every stored vector is labelled with it, so
+  `check_health` counts the vectors a different model wrote
+  (`embedding_model_mismatch`). Without that report, from an older or another
+  backend, CPersona can tell a swap only by embedding *dimension*, and a swap
+  to a different model of the same dimension is undetectable. Vectors stored
+  before 2.6.3 carry no label and are never counted.
 
-  The repair tools cannot reach it either. `check_health(fix=true)` re-embeds
-  rows whose blob is NULL, and the dimension check only NULLs blobs of the
-  wrong *length*. After a same-dimension swap every blob is the expected size,
-  so nothing is NULLed and nothing is re-embedded. No tool force-re-embeds a
-  row that already has a blob.
+  Detecting a swap does not repair it. `check_health(fix=true)` re-embeds rows
+  whose blob is NULL, and the dimension check only NULLs blobs of the wrong
+  *length*. After a same-dimension swap every blob is the expected size, so
+  nothing is NULLed and nothing is re-embedded. No tool force-re-embeds a row
+  that already has a blob. Until the corpus is rebuilt,
+  `CPERSONA_EMBEDDING_MODEL_MODE=reject` stops comparing the old vectors with
+  queries; those rows are then found only by keyword.
 
   To recover, rebuild the corpus: `delete_agent_data`, then re-`store` as in
   the [rebuild pattern](operations.md#corpus-indexing-and-sync-patterns), then

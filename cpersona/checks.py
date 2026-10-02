@@ -159,7 +159,7 @@ async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> 
     """Rewrite content for re-embedding, or delete an unlocked dedup collision."""
     try:
         await db.execute(
-            "UPDATE memories SET content = ?, embedding = NULL WHERE id = ? AND locked = 0",
+            "UPDATE memories SET content = ?, embedding = NULL, embedding_model = '' WHERE id = ? AND locked = 0",
             (new_content, row_id),
         )
     except sqlite3.IntegrityError:
@@ -419,7 +419,7 @@ async def check_nonfinite_embedding(db, agent_id: str, fix: bool) -> list[dict]:
             for start in range(0, len(bad), _NONFINITE_REPAIR_CHUNK):
                 chunk = bad[start : start + _NONFINITE_REPAIR_CHUNK]
                 await db.execute(
-                    f"UPDATE {table} SET embedding = NULL "
+                    f"UPDATE {table} SET embedding = NULL, embedding_model = '' "
                     f"WHERE id IN ({','.join('?' * len(chunk))})",
                     chunk,
                 )
@@ -485,13 +485,13 @@ async def check_embedding_dimension(db, agent_id: str, fix: bool, embedding_cach
         # NULL out mismatched BLOBs so the null_embedding fixer re-embeds them.
         if mismatched_mem > 0:
             await db.execute(
-                f"""UPDATE memories SET embedding = NULL
+                f"""UPDATE memories SET embedding = NULL, embedding_model = ''
                 WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
                 (expected_bytes, *iso.params),
             )
         if mismatched_ep > 0:
             await db.execute(
-                f"""UPDATE episodes SET embedding = NULL
+                f"""UPDATE episodes SET embedding = NULL, embedding_model = ''
                 WHERE embedding IS NOT NULL AND length(embedding) != ?{iso.and_clause}""",
                 (expected_bytes, *iso.params),
             )
@@ -751,16 +751,20 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     lock (bug-072). do_check_health calls this before taking the shared write lock so the
     batched embedding HTTP calls do not stall every other writer — do_store, the queue
     drain, import/merge — for the whole re-embed duration. Returns
-    {"memories": {id: (text, blob)}, "episodes": {id: (text, blob)}}; the text the blob
-    was computed from rides along so the write path can refuse to attach it to changed
-    content (bug-077). Empty when there is no embedding client (the fix loop then no-ops
-    just as before)."""
+    {"memories": {id: (text, blob)}, "episodes": {id: (text, blob)}, "label": str}; the
+    text the blob was computed from rides along so the write path can refuse to attach it
+    to changed content (bug-077), and ``label`` is the ``embedding_model`` the blobs are
+    written with. Empty tables and no label when there is no embedding client (the fix
+    loop then no-ops just as before)."""
     out: dict = {"memories": {}, "episodes": {}}
     if not vector._embedding_client:
         return out
     # bug-129: do not re-probe a backend already latched as faulted by recall.
     if health.is_faulted():
         return out
+    # The label the blobs below are written with, learned before they are computed
+    # and applied with them under the lock (no network there).
+    out["label"] = await generation.record_label()
     iso = isolation_where(agent_id=agent_id or None)
     tables = [("memories", "content"), ("episodes", "summary")]
     if not _blobs_are_stored():
@@ -826,11 +830,13 @@ async def apply_embedding_cache(db, embedding_cache) -> int:
     bug-028 coherence class). A mismatch simply leaves the row NULL for the next
     unlocked pass. Returns the number of rows updated."""
     applied = 0
+    label = (embedding_cache or {}).get("label", "")
     for table, text_col in (("memories", "content"), ("episodes", "summary")):
         for row_id, (text, blob) in (embedding_cache or {}).get(table, {}).items():
             cur = await db.execute(
-                f"UPDATE {table} SET embedding = ? WHERE id = ? AND embedding IS NULL AND {text_col} = ?",
-                (blob, row_id, text),
+                f"UPDATE {table} SET embedding = ?, embedding_model = ?"
+                f" WHERE id = ? AND embedding IS NULL AND {text_col} = ?",
+                (blob, label, row_id, text),
             )
             if getattr(cur, "rowcount", 0) == 1:
                 applied += 1
@@ -850,6 +856,7 @@ async def _reembed_null_rows(db, table: str, text_col: str, iso, embedding_cache
     by do_check_health's second unlocked pass. An embedding_cache of None (direct calls /
     tests, no lock held) keeps the live path."""
     cache = (embedding_cache or {}).get(table, {})
+    cached_label = (embedding_cache or {}).get("label", "")
     rows = await db.execute_fetchall(
         f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT ?", (*iso.params, REEMBED_ROW_CAP)
     )
@@ -861,15 +868,18 @@ async def _reembed_null_rows(db, table: str, text_col: str, iso, embedding_cache
                 cached_text, blob = cached
                 if cached_text != text:
                     continue  # bug-077: stale prefetch — leave NULL for the next pass
+                label = cached_label
             elif embedding_cache is not None:
                 continue  # bug-083: no live embeds while the write lock is held
             else:
+                label = await generation.record_label()
                 emb = await vector._embedding_client.embed([text])
                 blob = vector.pack_for_storage(emb[0]) if emb else None
             if blob is not None:
                 cur = await db.execute(
-                    f"UPDATE {table} SET embedding = ? WHERE id = ? AND embedding IS NULL AND {text_col} = ?",
-                    (blob, row_id, text),
+                    f"UPDATE {table} SET embedding = ?, embedding_model = ?"
+                    f" WHERE id = ? AND embedding IS NULL AND {text_col} = ?",
+                    (blob, label, row_id, text),
                 )
                 if getattr(cur, "rowcount", 0) == 1:
                     re_embedded += 1
@@ -879,6 +889,81 @@ async def _reembed_null_rows(db, table: str, text_col: str, iso, embedding_cache
             # The caller reports the count; this says which row and why.
             logger.warning("re-embed failed for %s id=%s: %s", table, row_id, e)
     return re_embedded
+
+
+# Distinct labels one embedding_model finding names, most rows first. The count it
+# reports is the whole of it; the sample is for reading, and a migration has one or
+# two labels behind it, not dozens.
+EMBEDDING_MODEL_LABEL_SAMPLE = 5
+
+
+async def check_embedding_model(db, agent_id: str, fix: bool) -> list[dict]:
+    """Report stored vectors labelled with another model than the one embedding now.
+
+    ``docs/getting-started.md`` said a swap to a different model of the same width is
+    undetectable: the old vectors keep the expected length, so nothing about them
+    differs. Each vector now carries the label of what wrote it (schema v18), and a
+    backend can name itself -- CEmbedding's ``/capabilities``, or the model the
+    ``api`` transport sends -- so the rows written under another model can be counted.
+
+    ``info``, and standing: a migration leaves old rows behind for as long as their
+    re-embedding takes, which is a condition to watch rather than an outage to
+    escalate. Not repairable here: the repair is re-embedding, paced so it does not
+    starve other recalls, and one check run is not that.
+
+    Judges nothing when there is no current identity to compare with (the
+    identity is learned before the run, outside the write lock, so this reads it
+    without a request). Nothing under ``off``. An empty label is unknown, never a
+    mismatch, and a row without a vector has nothing to label.
+    """
+    if config.EMBEDDING_MODEL_MODE == "off":
+        return []
+    accepted = generation.accepted_labels()
+    if accepted is None:
+        return []
+    iso = isolation_where(agent_id=agent_id or None)
+    label_in = ",".join("?" * len(accepted))
+    per_table: dict[str, int] = {}
+    labels: dict[str, int] = {}
+    for table in ("memories", "episodes"):
+        rows = await db.execute_fetchall(
+            f"SELECT embedding_model, COUNT(*) FROM {table} WHERE embedding IS NOT NULL"
+            f" AND embedding_model NOT IN ({label_in}){iso.and_clause} GROUP BY embedding_model",
+            (*accepted, *iso.params),
+        )
+        per_table[table] = sum(n for _, n in rows)
+        for label, n in rows:
+            labels[label] = labels.get(label, 0) + n
+    total = sum(per_table.values())
+    if total == 0:
+        return []
+    reject = config.EMBEDDING_MODEL_MODE == "reject"
+    return [
+        {
+            "type": "embedding_model_mismatch",
+            "count": total,
+            "memories": per_table["memories"],
+            "episodes": per_table["episodes"],
+            "current": generation.current_identity(),
+            "labels": [
+                {"label": label, "count": n}
+                for label, n in sorted(labels.items(), key=lambda kv: (-kv[1], kv[0]))[:EMBEDDING_MODEL_LABEL_SAMPLE]
+            ],
+            "mode": config.EMBEDDING_MODEL_MODE,
+            "recall": (
+                "not compared with the query: the rows are found only by keyword, "
+                "and score without a vector vote"
+                if reject
+                else "still compared with the query as if the current model had written them"
+            ),
+            "hint": (
+                "re-embed these rows to bring them under the current model"
+                if reject
+                else "re-embed these rows to bring them under the current model; "
+                "CPERSONA_EMBEDDING_MODEL_MODE=reject stops comparing them meanwhile"
+            ),
+        }
+    ]
 
 
 async def check_null_embedding(db, agent_id: str, fix: bool, embedding_cache=None) -> list[dict]:
@@ -3104,6 +3189,7 @@ HEALTH_CHECKS: list[Check] = [
     # info by default: "no backend configured" is a supported configuration, not a
     # defect. The runner stamps warn for the one state that is (bug-274).
     Check("embedding_backend", "info", False, check_embedding_backend),
+    Check("embedding_model", "info", False, check_embedding_model),
     Check("null_embedding", "warn", True, check_null_embedding),
     Check("null_episode_embedding", "warn", True, check_null_episode_embedding),
     Check("fts_integrity", "warn", True, check_fts_integrity),

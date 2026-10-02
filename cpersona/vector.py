@@ -15,6 +15,7 @@ from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
 from cpersona.isolation import IsolationFilter, isolation_where, source_id_where
 
 from cpersona import config
+from cpersona import generation
 from cpersona import health
 from cpersona import vector_index
 from cpersona.coarse_index import PERIOD_PREDICATE
@@ -339,6 +340,63 @@ async def _fetch_rows_by_id(
         for row in await db.execute_fetchall(sql, (*chunk, *extra_params)):
             out[row[0]] = row
     return out
+
+
+async def rejected_rids(db: aiosqlite.Connection, rids) -> set[tuple[str, int]]:
+    """The records among ``rids`` whose vector is labelled with another model, under ``reject``.
+
+    ``CPERSONA_EMBEDDING_MODEL_MODE=reject`` keeps a vector written by a different
+    model from being compared with the query. Every reader that ranks records by
+    their stored vector asks this one function -- the vector arm, the cue arm, the
+    far seats, propagation, the cosine backfill -- so the rule cannot differ between
+    them. It is asked of what a reader found rather than pushed into each reader's
+    SQL, because the vector index serves rows from a file built before any label was
+    judged, and the set of accepted labels moves when the backend does.
+
+    Empty under ``warn`` and ``off``. Empty, too, when there is no current identity to
+    compare against: an unknown backend is not evidence that a label is wrong.
+    """
+    if config.EMBEDDING_MODEL_MODE != "reject":
+        return set()
+    wanted: dict[str, list[int]] = {"mem": [], "ep": []}
+    for kind, row_id in rids:
+        if kind in wanted and isinstance(row_id, int):
+            wanted[kind].append(row_id)
+    if not wanted["mem"] and not wanted["ep"]:
+        return set()
+    await generation.refresh()
+    accepted = generation.accepted_labels()
+    if accepted is None:
+        return set()
+    label_in = ",".join("?" * len(accepted))
+    rejected: set[tuple[str, int]] = set()
+    for kind, table in (("mem", "memories"), ("ep", "episodes")):
+        found = await _fetch_rows_by_id(
+            db,
+            f"SELECT id FROM {table} WHERE id IN ({{ph}}) AND embedding_model NOT IN ({label_in})",
+            wanted[kind],
+            tuple(accepted),
+        )
+        rejected.update((kind, row_id) for row_id in found)
+    return rejected
+
+
+async def _drop_rejected_labels(db: aiosqlite.Connection, rows: list[dict]) -> list[dict]:
+    """``rows`` without the ones :func:`rejected_rids` names; ``rows`` itself when it names none.
+
+    Applied to the vector arm's output rather than inside each of its paths -- the
+    remote service, the index, the scan, the far list -- so a path added later is
+    covered without being touched. A row removed here is treated as one without a
+    vector: the lexical arms can still find it, with no vector vote beside theirs.
+    The arm may hand back fewer than ``limit`` rows: the ones that would have filled
+    the gap were cut by its own ranking before this ran.
+    """
+    if not rows:
+        return rows
+    rejected = await rejected_rids(db, [row.get("_rid", ("mem", row["id"])) for row in rows])
+    if not rejected:
+        return rows
+    return [row for row in rows if row.get("_rid", ("mem", row["id"])) not in rejected]
 
 
 async def _search_vector_remote(
@@ -1912,7 +1970,7 @@ async def _search_vector(
         # The service answered, and its answer IS the result. The reach applies
         # to the local scan only — the remote service ranks under its own window
         # — so `far_out` is left as the caller handed it over: empty.
-        return remote_results
+        return await _drop_rejected_labels(db, remote_results)
 
     import numpy as np
 
@@ -2031,6 +2089,8 @@ async def _search_vector(
                 "is counted twice by the fusion",
                 len(overlap),
             )
-        far_out.extend(row for row in far_rows if row.get("_rid") not in near_rids)
+        far_out.extend(
+            await _drop_rejected_labels(db, [row for row in far_rows if row.get("_rid") not in near_rids])
+        )
 
-    return [c[1] for c in top_k]
+    return await _drop_rejected_labels(db, [c[1] for c in top_k])

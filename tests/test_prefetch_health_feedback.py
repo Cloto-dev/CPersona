@@ -108,7 +108,7 @@ async def test_unreachable_backend_reaches_health_with_the_call_s_own_evidence(
     cache = await checks.prefetch_null_embeddings(clean_db, "down")
 
     assert client.calls == 2, "both chunks were attempted before the breaker latched"
-    assert cache == {"memories": {}, "episodes": {}}
+    assert cache == {"memories": {}, "episodes": {}, "label": ""}
     assert health.is_faulted()
 
     advisory = health.maybe_advisory()

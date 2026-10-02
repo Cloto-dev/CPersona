@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:1f843396dca214276d54e16d73db0d23b4377591 -->
+<!-- i18n-source: docs/architecture.md@blob:c1f8eeae34b961069a9e424a30ba25ed0040fc05 -->
 
 # アーキテクチャ
 
@@ -41,7 +41,7 @@ flowchart TB
 ## ストレージ { #storage }
 
 WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在の
-**schema v17** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
+**schema v18** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
 `memories` / `episodes` / `profiles` / `pending_memory_tasks` の 4 つです。加えて
 記録用の `schema_version` テーブルと、トリガーで同期される FTS5 仮想テーブルが
 2 つあります。5 つ目のテーブル `record_nodes` は、長い記憶とエピソードの本文への

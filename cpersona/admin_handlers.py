@@ -25,6 +25,7 @@ from cpersona.isolation import isolation_where
 from cpersona import blocks
 from cpersona import config
 from cpersona import fileperms
+from cpersona import generation
 from cpersona import nodes
 from cpersona import session
 from cpersona import tasks
@@ -527,11 +528,15 @@ async def do_update_memory(
     # stale, so recall stops matching the old wording and check_health's
     # null-embedding repair can re-embed the row later.
     embedding_blob = None
+    # Rewritten with the blob, so a NULLed vector does not keep the old one's label.
+    embedding_label = ""
     if vector._embedding_client and local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
         try:
+            label = await generation.record_label()
             embeddings = await vector._embedding_client.embed([content])
             if embeddings:
                 embedding_blob = vector.pack_for_storage(embeddings[0])
+                embedding_label = label
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as e:
             logger.warning("Embedding failed during update_memory: %s", e)
 
@@ -545,8 +550,8 @@ async def do_update_memory(
     # bug-042/043: transaction() serialises the UPDATE+commit behind the shared lock.
     async with transaction() as db:
         cursor = await db.execute(
-            "UPDATE memories SET content = ?, embedding = ? WHERE id = ? AND locked = 0",
-            (content, embedding_blob, memory_id),
+            "UPDATE memories SET content = ?, embedding = ?, embedding_model = ? WHERE id = ? AND locked = 0",
+            (content, embedding_blob, embedding_label, memory_id),
         )
     if cursor.rowcount == 0:
         return error_response(f"Memory {memory_id} is locked and cannot be edited")
@@ -2434,6 +2439,21 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
     return {"ok": True, "deleted_id": episode_id}
 
 
+def _imported_label(record: dict, blob: bytes | None) -> str:
+    """The ``embedding_model`` label a restored row takes.
+
+    Only a restored vector keeps one: a row whose vector was refused, or that
+    carried none, is stored without a vector, and a label beside nothing would
+    describe nothing. A file written before labels existed, or one edited by hand
+    into something that is not a string, gives '' -- unknown, which is what such a
+    file can say about the model that produced its vectors.
+    """
+    label = record.get("embedding_model")
+    if blob is None or not isinstance(label, str):
+        return ""
+    return label
+
+
 def _decode_embedding(record: dict, tally: "_ImportTally", line_num: int, kind: str) -> bytes | None:
     """Decode a base64 embedding blob from an export record.
 
@@ -2589,7 +2609,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 # locked flag through export. bug-092: carry recall stats too.
                 cur = await db.execute(
                     "SELECT id, agent_id, msg_id, content, source, timestamp, metadata, embedding, created_at,"
-                    " project_id, channel, locked, recall_count, last_recalled_at"
+                    " project_id, channel, locked, recall_count, last_recalled_at, embedding_model"
                     f" FROM memories{iso.where} ORDER BY id",
                     iso.params,
                 )
@@ -2613,12 +2633,14 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                         }
                         if include_embeddings and row[7]:
                             record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
+                            # The label travels with the vector it describes, and only with it.
+                            record["embedding_model"] = row[14]
                         f.write(json.dumps(record, ensure_ascii=False) + "\n")
                         exported_memories += 1
 
                 cur = await db.execute(
                     "SELECT id, agent_id, summary, keywords, start_time, end_time, embedding, created_at, resolved,"
-                    " project_id, channel"
+                    " project_id, channel, embedding_model"
                     f" FROM episodes{iso.where} ORDER BY id",
                     iso.params,
                 )
@@ -2639,6 +2661,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                         }
                         if include_embeddings and row[6]:
                             record["embedding_b64"] = base64.b64encode(row[6]).decode("ascii")
+                            record["embedding_model"] = row[11]
                         f.write(json.dumps(record, ensure_ascii=False) + "\n")
                         exported_episodes += 1
 
@@ -2873,11 +2896,12 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         # bug-092: created_at and the recall stats ride along too — the
         # old INSERT re-stamped every restored row with import time and
         # zeroed its recall-frequency boost.
+        blob = _decode_embedding(record, tally, line_num, "memory")
         cur = await db.execute(
             "INSERT OR IGNORE INTO memories"
             " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,"
-            "  embedding, locked, recall_count, last_recalled_at, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+            "  embedding, embedding_model, locked, recall_count, last_recalled_at, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
             (
                 aid,
                 pid,
@@ -2887,7 +2911,8 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
                 source,
                 timestamp,
                 metadata,
-                _decode_embedding(record, tally, line_num, "memory"),
+                blob,
+                _imported_label(record, blob),
                 1 if record.get("locked") else 0,
                 int(record.get("recall_count") or 0),
                 record.get("last_recalled_at"),
@@ -2980,11 +3005,12 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
         return
 
     if not tally.dry_run:
+        blob = _decode_embedding(record, tally, line_num, "episode")
         cur = await db.execute(
             "INSERT INTO episodes"
             " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
-            "  embedding, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+            "  embedding, embedding_model, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
             (
                 aid,
                 ep_pid,
@@ -2994,7 +3020,8 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
                 record.get("start_time"),
                 record.get("end_time"),
                 1 if record.get("resolved") else 0,
-                _decode_embedding(record, tally, line_num, "episode"),
+                blob,
+                _imported_label(record, blob),
                 record.get("created_at"),
             ),
         )
@@ -3294,7 +3321,7 @@ async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tal
     while True:
         rows = await db.execute_fetchall(
             "SELECT id, project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
-            " created_at, recall_count, last_recalled_at"
+            " created_at, recall_count, last_recalled_at, embedding_model"
             " FROM memories WHERE agent_id = ? AND id > ? ORDER BY id LIMIT ?",
             (source_agent_id, last_src_id, _MERGE_READ_CHUNK),
         )
@@ -3320,6 +3347,7 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
         created_at,
         recall_count,
         last_recalled_at,
+        embedding_model,
     ) in rows:
         if not content:
             continue
@@ -3350,8 +3378,8 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
             cur = await db.execute(
                 "INSERT OR IGNORE INTO memories"
                 " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata, embedding,"
-                "  locked, created_at, recall_count, last_recalled_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  embedding_model, locked, created_at, recall_count, last_recalled_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     target_agent_id,
                     project_id,
@@ -3362,6 +3390,7 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
                     timestamp,
                     metadata,
                     embedding,
+                    embedding_model,
                     locked,
                     created_at,
                     recall_count,
@@ -3389,7 +3418,7 @@ async def _merge_episode_rows(db, source_agent_id: str, target_agent_id: str, ta
     while True:
         rows = await db.execute_fetchall(
             "SELECT id, summary, keywords, start_time, end_time, resolved, project_id, channel, embedding,"
-            " created_at"
+            " created_at, embedding_model"
             " FROM episodes WHERE agent_id = ? AND id > ? ORDER BY id LIMIT ?",
             (source_agent_id, last_src_id, _MERGE_READ_CHUNK),
         )
@@ -3412,6 +3441,7 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
         ep_channel,
         ep_embedding,
         created_at,
+        ep_embedding_model,
     ) in rows:
         if not summary:
             continue
@@ -3437,8 +3467,8 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
             cur = await db.execute(
                 "INSERT INTO episodes"
                 " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
-                "  embedding, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+                "  embedding, embedding_model, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
                 (
                     target_agent_id,
                     ep_project_id,
@@ -3449,6 +3479,7 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
                     end_time,
                     resolved,
                     ep_embedding,
+                    ep_embedding_model,
                     created_at,
                 ),
             )

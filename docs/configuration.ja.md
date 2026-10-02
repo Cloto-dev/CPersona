@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:b185e6c24462b2df37794b5ccfb11f498ebf1a17 -->
+<!-- i18n-source: docs/configuration.md@blob:a1d678366b87a0838cfefb9cf1815e59a5078824 -->
 
 # 設定リファレンス
 
@@ -15,6 +15,7 @@
 | `CPERSONA_DB_PATH` | `data/cpersona.db` | SQLite データベースのパス。**クライアントの作業ディレクトリからの相対**なので、セッションをまたいで 1 つの記憶を保つには絶対パスを指定してください |
 | `CPERSONA_EMBEDDING_MODE` | `none` | 埋め込みモード: `http` (ローカルの埋め込みサーバー)、`api` (OpenAI 互換エンドポイント — `CPERSONA_EMBEDDING_API_URL` の既定は OpenAI なので、このモードはリクエストごとに課金されます)、`none` のいずれか |
 | `CPERSONA_EMBEDDING_URL` | *(未設定)* | 埋め込みサーバーの URL。例: `http://127.0.0.1:8401/embed` |
+| `CPERSONA_EMBEDDING_MODEL_MODE` | `warn` | 保存されたベクトルに、現在と違うモデルのラベルが付いていたときの扱い。ベクトルは、それを作ったものを示すラベル付きで書き込まれます: バックエンドが `GET /capabilities` で返す指紋 (CEmbedding 0.9.0 以降)、それが無ければ `api` トランスポートが送るモデル名か設定したモデル名、どれも無ければ空です。ラベルを比べるのは、現在の識別子があるとき (指紋が返ってきたとき、または `api` トランスポートのモデル) だけです。`warn` は別のモデルが書いたベクトルを `check_health` (`embedding_model`) で報告し、recall の結果は何も変えません。`reject` はそのベクトルを問いと比べなくなり、該当する行はキーワードでだけ見つかり、ベクトルの票なしで採点されます。`off` は報告を外します。2.6.3 より前に保存したベクトルにはラベルが無く、数えられません |
 | `CPERSONA_VECTOR_SEARCH_MODE` | `local` | ベクトル検索の実行場所 (`local` = プロセス内コサイン、`remote` = 外部委譲) |
 | `CPERSONA_RECALL_MODE` | `rrf` | recall の融合戦略 (`rrf` / `rsf` / `cascade`) — 後述 |
 | `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211): 超過分は行がプレビュー階層に戻り — 関連度の高い行から全文で残し (bug-214) — 応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層**と両方の予算を**無効化します — 無効な階層への降格は本文を無言で落とすことになるため、切り詰めをやめる選択はどこでも切り詰めないという選択になります |

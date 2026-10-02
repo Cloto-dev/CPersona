@@ -326,7 +326,7 @@ async def test_drain_archives_and_deletes_task_atomically(clean_db, monkeypatch)
     monkeypatch.setattr(tasks, "TASK_RETRY_DELAY", 0)
 
     async def prepared(agent_id, history, summary="", *a, **kw):
-        return (agent_id, "", "drained summary", "", None, None, None, 0, "")
+        return (agent_id, "", "drained summary", "", None, None, None, "", 0, "")
 
     monkeypatch.setattr(memory_handlers, "_prepare_episode_row", prepared)
     queue = tasks.MemoryTaskQueue()
@@ -721,7 +721,7 @@ async def test_drain_does_not_resurrect_wiped_agent(clean_db, monkeypatch):
     async def prepare_and_wipe(agent_id, history, summary="", *a, **kw):
         # The wipe lands while the drain is inside its unlocked prepare phase.
         await admin_handlers.do_delete_agent_data(agent_id)
-        return (agent_id, "", "resurrected?", "", None, None, None, 0, "")
+        return (agent_id, "", "resurrected?", "", None, None, None, "", 0, "")
 
     monkeypatch.setattr(memory_handlers, "_prepare_episode_row", prepare_and_wipe)
     queue._running = True

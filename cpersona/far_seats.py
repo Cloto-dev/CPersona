@@ -100,11 +100,16 @@ async def ranked(db, query_vec, *, agent_id, project_id, channel, source_id, flo
         params,
     )
     # A candidate the authority does not admit, or one whose vector changed width or
-    # was cleared between the two statements, is dropped here: fail-closed.
+    # was cleared between the two statements, is dropped here: fail-closed. So is one
+    # whose vector another model wrote, under reject.
+    rejected = await vector.rejected_rids(db, [("mem", row_id) for row_id in stored])
     kept = [
         (row_id, position)
         for row_id, position in zip(found.ids, found.positions)
-        if row_id in stored and stored[row_id][1] is not None and len(stored[row_id][1]) == dim * 4
+        if row_id in stored
+        and stored[row_id][1] is not None
+        and len(stored[row_id][1]) == dim * 4
+        and ("mem", row_id) not in rejected
     ]
     if not kept:
         return []

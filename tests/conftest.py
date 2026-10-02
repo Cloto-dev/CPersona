@@ -149,6 +149,22 @@ def blocks_off(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _forget_backend_identity():
+    """Forget the embedding backend identity around every test.
+
+    ``generation`` keeps what the backend reported for five minutes, process-wide. A
+    test that installs a client which names itself leaves that name behind, and the
+    next test's writes are then labelled with it and its ``embedding_model`` check
+    judges against it -- a fact about test order, not about the test.
+    """
+    from cpersona import generation
+
+    generation.reset()
+    yield
+    generation.reset()
+
+
+@pytest.fixture(autouse=True)
 def _clear_scope_stats_cache():
     """Empty the per-scope aggregate cache around every test.
 
