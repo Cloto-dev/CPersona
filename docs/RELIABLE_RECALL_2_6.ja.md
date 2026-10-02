@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:f6458ab816adca6e45b7c68be00c10bb23b1f5b7 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:e38a631395395eaca2601d03751fb3133364decc -->
 
 # Reliable Recall — 2.6 系
 
@@ -348,9 +348,9 @@ budget_base      = forced_budget ?? requested_budget ?? default_budget(count)
 effective_budget = min(budget_base, max_budget)
 ```
 
-- 既定値は、設定された既定値か、窓の item 1 件につき head の引用 1 つ分
-  (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`。0 の時は preview tier の大きさ) のうち、
-  大きい方です。件数を指定して予算を指定しなかった呼び出し側が、自分で決めていない既定値に
+- 既定値は、設定された既定値か、窓の item の head の引用を合計した文字数のうち、
+  大きい方です。head の引用はそれぞれの item の大きさで数えます (下記。
+  `CPERSONA_RECONSTRUCT_QUOTE_CHARS` が 0 の時はどの item も preview tier の大きさ)。件数を指定して予算を指定しなかった呼び出し側が、自分で決めていない既定値に
   幅を削られてはなりません: 既定 4,000・引用 500 字では、件数 10 の窓が 8 件しか返しません
   でした。動くのは既定値だけです。呼び出し側や運用者が指定した予算はそのまま使い、
   件数 8 以下の窓はこれまでと同じ値になります。
@@ -364,10 +364,18 @@ effective_budget = min(budget_base, max_budget)
   説明のためのものです。
 - item は head claim を `content` に運び、保持した他の claim の原文抜粋を
   `excerpts` に関連度の高い順で運びます。2.6 からは head claim を、そのレコードのうち
-  クエリに一致した箇所から引用します: ブロックの支配範囲を順位順に、
-  `CPERSONA_RECONSTRUCT_QUOTE_CHARS` に収まる限り詰め、本文順で示します —
-  recall の抜粋と同じ詰め方です ([設計](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26))。
-  `quote_basis` は範囲の選び方を、`ranges` はそれがレコードのどこかを述べます。
+  クエリに一致した箇所から引用します: ブロックの支配範囲を順位順に、その item の
+  引用の大きさに収まる限り詰め、本文順で示します — recall の抜粋と同じ詰め方です
+  ([設計](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26))。`ranges` はそれがレコードのどこかを
+  述べ、範囲の選び方 `quote_basis` は trace に入ります。2.6.4 (v1.2) で詰め方の 3 点を
+  変えました。大きさは item の位置で決まります: 最初の `CPERSONA_RECONSTRUCT_FULL_QUOTES`
+  (5) 件は `CPERSONA_RECONSTRUCT_QUOTE_CHARS` (800)、それより後は
+  `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS` (400) です。非公開の実運用パックの開発用の問では、
+  読み手が見られた根拠の引用 127 件のうち 102 件が最初の 4 件の item にあったためです。
+  ブロックの順位は、レコードのすべてのブロックが保存済みの int8 ベクトルを持つ時はその
+  コサインで、そうでない時は符号ビットで付けます。接している範囲は 1 つの範囲として示し、
+  間に本文がある範囲だけを区切ります。2 つのブロックにまたがる文が区切りで切れることは
+  なくなりました。
   回答の読み手で LongMemEval を計測したところ、count 1 では単一の支配パッセージが
   116 問に答えたのに対し 500 問中 154 問、count 5 では 223 問に対し 321 問に答えました。
   他の各抜粋は preview tier と同じ切り方です。抜粋は
@@ -410,7 +418,7 @@ effective_budget = min(budget_base, max_budget)
 ```jsonc
 { "items": [{
     "content": "…",            // head claim のうち一致した箇所を原文のまま " … " で連結
-    "quote_basis": "blocks",   // blocks / lexical (読み取り時に分割) / start (1 ブロック) / whole (引用に収まる)
+    "quote_basis": "blocks",   // trace のみ: blocks / lexical (読み取り時に分割) / start (1 ブロック) / whole (引用に収まる)
     "ranges": [[0, 212], [1480, 1731]],  // content の各パッセージがレコードのどこか、本文順
     "head_ref": "…",           // content が引用している claim
     "excerpts": [{ "ref": "…", "content": "…" }],      // 保持した他の claim、関連度順、予算の内側。無ければ省略
@@ -419,7 +427,7 @@ effective_budget = min(budget_base, max_budget)
                  "why": "cluster:chain",               // なぜここにあるか、常に
                  "roles": [{ "ref": "mem:…", "role": "supersedes" },
                            { "ref": "ep:…",  "role": "supports" }] }],  // その行に無ければ省略
-    "independence_reason": "cluster:episode" }],                  // なぜ別の item か
+    "independence_reason": "cluster:episode" }],                  // なぜ別の item か。"singleton" の時は無い
   "effective_count": 1, "returned_count": 1,                      // 常に
   // 以下は述べることがある時、または trace=true の時だけ:
   "effective_budget": 4000, "used_budget": 3980,                  // 予算が item か抜粋を運べなかった
@@ -447,7 +455,9 @@ effective_budget = min(budget_base, max_budget)
 4. 有界性 — 宣言された境界の先は走査せず、有効なペイロード予算を超えて引用しない。境界が
    落とした行は `bounds.omitted`、`claims_omitted`、`excerpts_omitted`、または不足理由で、
    到達しただけの境界は `bounds.reached` で報告する。
-5. 説明可能性 — すべての要素が、なぜ存在するかを言う。
+5. 説明可能性 — すべての要素が、なぜ存在するかを言う。2.6.4 からは、既定の理由は
+   無いことで示します: `independence_reason` の無い item は `singleton`、`why` の無い claim は
+   `seed` で、`trace=true` はどちらも書き出します。
 6. 既存の `recall` 契約には触れない。その後 recall の行は additive な項目を 1 つ得た。
    切り詰めたプレビューに添える抜粋で、ここでの引用と同じブロック順位付けと
    支配文脈の規則で作る ([設計](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26))。
@@ -520,7 +530,10 @@ v1.1 からペイロード予算を上記のとおり実装しています。既
   方針・境界・候補数の言い直しに約 500 字を使っていました。行そのものの費用は recall の行と
   同じでした。この外枠は、述べることがある時だけ返します (上の件数と予算の規則、境界が行を
   落とした・到達した・ライブラリ上限で引き下げられた時の `bounds`、行を除外した時の
-  `reconstruction.excluded_without_provenance`)。
+  `reconstruction.excluded_without_provenance`)。2.6.4 からは item の中にも同じ規則を
+  当てます: `singleton` の時の `independence_reason`、`seed` の時の claim の `why`、
+  `quote_basis`、`content_len` が既に示している `content_truncated` は trace に回します。
+  非公開の実運用パックの開発用の問では、これらが応答の約 9% でした。
 - ノード引用を切り詰めた item は `expand` を持ちます。`get_contents` にそのまま渡すと、
   そのノードの残りが返る引数です。ノードは引用の数倍、記録はノードの何倍もあるので、
   次に読む最小の単位をそのまま使える形で渡します: まずそのノード、次に前後のノード、

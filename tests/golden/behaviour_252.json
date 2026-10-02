@@ -21255,7 +21255,7 @@
         "reason": "count_omitted",
         "source": "server_default"
       },
-      "effective_budget": 8000,
+      "effective_budget": 6000,
       "effective_count": 10,
       "items": [
         {

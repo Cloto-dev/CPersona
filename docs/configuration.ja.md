@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:a1d678366b87a0838cfefb9cf1815e59a5078824 -->
+<!-- i18n-source: docs/configuration.md@blob:f359cf581d8e3b1306d8fd35fd9f0aecebc3a9f8 -->
 
 # 設定リファレンス
 
@@ -67,7 +67,9 @@
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします。充足目標ではなく上限です |
 | `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | 絶対上限。超える要求は切り詰めて報告します。実験的な制限であり、実測で最適とされた件数ではありません |
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | item の先頭引用: そのレコードのうち一致した部分を、ランキング順にこの文字数まで詰め、本文中の順序で示します — recall の抜粋と同じ詰め方です。これ以下の長さのレコードは全体が引用されます。`0` にすると、2.6 より前と同様に、支配する 1 節をプレビュー階層で切って引用します |
-| `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` | `4000` | 呼び出し側が `budget` を省略した時のペイロード予算 (引用本文の文字数)。ウィンドウの item 1 件につき先頭引用 1 つ分の方が大きければそちらになります。件数と予算の掃引で選ぶまでの暫定値です |
+| `CPERSONA_RECONSTRUCT_FULL_QUOTES` | `5` | 先頭から何件の item に、上の先頭引用の大きさをそのまま使うか。2.6.4 から |
+| `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS` | `400` | それより後の item の先頭引用の大きさ。0 より大きく `CPERSONA_RECONSTRUCT_QUOTE_CHARS` 以下でないと起動時に止まります。同じ値にすると、2.6.4 より前と同じくどの item も同じ大きさで引用します。2.6.4 から |
+| `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` | `4000` | 呼び出し側が `budget` を省略した時のペイロード予算 (引用本文の文字数)。ウィンドウの item の先頭引用の大きさを合計した方が大きければそちらになります。件数と予算の掃引で選ぶまでの暫定値です |
 | `CPERSONA_RECONSTRUCT_FORCED_BUDGET` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします |
 | `CPERSONA_RECONSTRUCT_MAX_BUDGET` | `20000` | 予算の絶対上限。超える要求は切り詰めて報告します。既定値・強制値がこれを超える場合、または設定値がプレビュー層の抜粋 1 つ分に満たない場合は起動時に停止します |
 

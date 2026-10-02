@@ -80,11 +80,14 @@ cut. So a row the preview cuts also carries the part that matched:
 ```
 
 - **How it is made.** The record's blocks are ranked as the reconstruction
-  exit ranks them (lexical overlap fused with Hamming distance), each is
-  extended to the range that governs it (the sentence it sits in, and a
-  qualifying neighbour), and the ranges are taken in that order while they fit
-  the cap without overlapping. They are shown in text order, so the excerpt
-  reads forwards. On the same benchmark the excerpt at 800 characters
+  exit ranks them (lexical overlap fused with closeness to the query vector:
+  the cosine of the blocks' stored int8 vectors when every block has one, the
+  Hamming distance of their bits otherwise), each is extended to the range that
+  governs it (the sentence it sits in, and a qualifying neighbour), and the
+  ranges are taken in that order while they fit the cap without overlapping.
+  They are shown in text order, so the excerpt reads forwards; ranges that
+  touch are shown as one, and only ranges with text between them are joined by
+  ' … ' (2.6.4). On the same benchmark the excerpt at 800 characters
   answered 341 of 500 — within the reader's run-to-run noise of the full
   records at 56% of their length — and at 500 characters, 318, against the
   prefix's 260 at the same size.

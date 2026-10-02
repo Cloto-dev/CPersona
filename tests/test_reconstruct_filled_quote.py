@@ -79,7 +79,9 @@ async def _store(tmp, *texts):
 
 
 async def _item(ref, **kw):
-    out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, deep=True, **kw)
+    # trace=True: these tests read how a quote was made (quote_basis, content_truncated),
+    # which since 2.6.4 only the trace spells out (test_reconstruct_v1_2 pins the default).
+    out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, deep=True, **{"trace": True, **kw})
     return next(i for i in out["items"] if i["head_ref"] == ref), out
 
 
@@ -147,6 +149,10 @@ def test_the_default_budget_holds_a_filled_head_per_item(monkeypatch):
     monkeypatch.setattr(config, "RECONSTRUCT_FORCED_BUDGET", None)
     assert reconstruct.resolve_budget(None, 1)[0] == 4000
     assert reconstruct.resolve_budget(None, 5)[0] == 4000
+    monkeypatch.setattr(config, "RECONSTRUCT_FULL_QUOTES", 5)
+    monkeypatch.setattr(config, "RECONSTRUCT_TAIL_QUOTE_CHARS", 400)
+    assert reconstruct.resolve_budget(None, 10)[0] == 5 * 800 + 5 * 400, "ten heads, the last five tail-sized"
+    monkeypatch.setattr(config, "RECONSTRUCT_TAIL_QUOTE_CHARS", 800)
     assert reconstruct.resolve_budget(None, 10)[0] == 8000, "ten filled heads do not fit the old 10 x 500"
     monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 0)
     assert reconstruct.resolve_budget(None, 10)[0] == 5000, "with filling off the head is preview-sized again"
@@ -238,7 +244,7 @@ async def test_the_mcp_boundary_delivers_the_filled_quote_uncut(filling):
 
     async with _TempDB() as tmp:
         ids = await _store(tmp, LONG)
-        out = await server.do_reconstruct_boundary(AGENT, QUERY, 3, None, None, None, True, "", None, "")
+        out = await server.do_reconstruct_boundary(AGENT, QUERY, 3, None, None, None, True, "", None, "", trace=True)
         item = next(i for i in out["items"] if i["head_ref"] == ids[LONG])
         assert TAIL in item["content"], "the boundary cut the filled quote back to the record's start"
         assert item["quote_basis"] == "lexical" and item["content_len"] == len(LONG)
@@ -252,7 +258,7 @@ async def test_the_mcp_boundary_still_cuts_the_single_passage(filling, monkeypat
     monkeypatch.setattr(config, "RECONSTRUCT_QUOTE_CHARS", 0)
     async with _TempDB() as tmp:
         ids = await _store(tmp, LONG)
-        out = await server.do_reconstruct_boundary(AGENT, QUERY, 3, None, None, None, True, "", None, "")
+        out = await server.do_reconstruct_boundary(AGENT, QUERY, 3, None, None, None, True, "", None, "", trace=True)
         item = next(i for i in out["items"] if i["head_ref"] == ids[LONG])
         assert item["content"] == LONG[:500] and item["content_truncated"] is True
 
@@ -301,7 +307,7 @@ async def test_a_reconstruction_embeds_its_query_once(filling, monkeypatch):
             return await real(texts)
 
         monkeypatch.setattr(filling, "embed", counting)
-        out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, deep=True)
+        out = await reconstruct.do_reconstruct(AGENT, QUERY, count=3, deep=True, trace=True)
         assert any(item.get("quote_basis") == "blocks" for item in out["items"]), "the quotes must use the vector"
         assert len(asked) == 1, asked
 

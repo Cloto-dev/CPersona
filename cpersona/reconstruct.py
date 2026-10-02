@@ -144,7 +144,37 @@ NODES_NOT_CURRENT = "not_current"  # nodes exist but are partial or another mode
 # * `reconstruction.excluded_without_provenance`: rows were excluded.
 #
 # `trace=true` returns the full audit as before, including the pool counts.
+#
+# 2.6.4: the same rule inside the items. On the private real-use pack's development
+# questions about 9% of a response was item fields a reader does not act on --
+#
+# * `independence_reason` when it is "singleton", and a claim's `why` when it is
+#   "seed": the values every item and claim carries unless a bundling key or a
+#   relation joined it. Absent means that value, so every element still says why
+#   it is present; only the default is no longer spelled out.
+# * `quote_basis`: how the quoted ranges were chosen, a fact about the server.
+# * `content_truncated`: `content_len` beside the quote already says it was cut.
+#
+# `trace=true` returns every one of them.
 _ASKED = ("caller", "server_default")
+_DEFAULT_INDEPENDENCE = "singleton"
+_DEFAULT_WHY = "seed"
+
+
+def _compact_item(item: dict) -> dict:
+    """An item without the fields :func:`_compact` leaves to the trace (see above)."""
+    out = {k: v for k, v in item.items() if k not in ("quote_basis", "content_truncated")}
+    if out.get("independence_reason") == _DEFAULT_INDEPENDENCE:
+        del out["independence_reason"]
+    if "claims" in out:
+        out["claims"] = [
+            {k: v for k, v in claim.items() if not (k == "why" and v == _DEFAULT_WHY)} for claim in out["claims"]
+        ]
+    if "excerpts" in out:
+        out["excerpts"] = [
+            {k: v for k, v in x.items() if k not in ("quote_basis", "content_truncated")} for x in out["excerpts"]
+        ]
+    return out
 
 
 def _compact(response: dict, *, bound_lowered: bool = False) -> dict:
@@ -166,6 +196,7 @@ def _compact(response: dict, *, bound_lowered: bool = False) -> dict:
     excluded = out.pop("reconstruction")["excluded_without_provenance"]
     if excluded:
         out["reconstruction"] = {"excluded_without_provenance": excluded}
+    out["items"] = [_compact_item(item) for item in out["items"]]
     return out
 
 
@@ -289,6 +320,15 @@ def _head_cap() -> int:
     return config.RECONSTRUCT_QUOTE_CHARS if config.RECONSTRUCT_QUOTE_CHARS > 0 else config.RECALL_PREVIEW_CHARS
 
 
+def _head_cap_at(position: int) -> int:
+    """The head quote's size for the item at ``position`` (0 is the first): the full
+    size for the first ``RECONSTRUCT_FULL_QUOTES`` items, the tail size after them.
+    With filling off every item takes the preview tier's size, as before."""
+    if config.RECONSTRUCT_QUOTE_CHARS <= 0 or position < config.RECONSTRUCT_FULL_QUOTES:
+        return _head_cap()
+    return config.RECONSTRUCT_TAIL_QUOTE_CHARS
+
+
 def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
     """The payload budget (section 7, "Breadth before depth").
 
@@ -320,7 +360,7 @@ def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
         base, source, reason = requested, "caller", "budget_requested"
     else:
         base, source, reason = config.RECONSTRUCT_DEFAULT_BUDGET, "server_default", "budget_omitted"
-        heads = int(count) * max(_head_cap(), 0)
+        heads = sum(max(_head_cap_at(position), 0) for position in range(int(count)))
         if heads > base:
             base, reason = heads, "default_fits_the_window"
     base = int(base)
@@ -753,30 +793,59 @@ def rank_nodes(text: str, node_rows: list[tuple], query_vec, query_grams: set[st
 
 
 def rank_blocks(
-    text: str, block_rows: list[tuple], query_bits: bytes | None, query_grams: set[str]
+    text: str, block_rows: list[tuple], query_bits: bytes | None, query_grams: set[str],
+    query_vec=None,
 ) -> list[tuple]:
     """The blocks of ``text``, best match first. ``block_rows`` are
-    (index, start, end, bits) in order.
+    (index, start, end, bits[, vector]) in order; ``vector`` is the block's stored
+    int8 vector, or None.
 
-    The same two-list fusion the node path uses, with Hamming distance standing
-    in for cosine because that is the representation a block has. Equal values
-    share a rank, so a query with no literal match leaves the choice to the
-    vector rather than to block order; ties go to the earlier block. No score is
-    reported — a Hamming distance is not calibrated across records or models.
+    The same two-list fusion the node path uses: shared words, and closeness to
+    the query vector. Closeness is the cosine of the stored int8 vectors when the
+    query vector is given and every block has one of its width (2.6.4), and
+    otherwise the Hamming distance of the bits, which is what a block had before
+    its vector was stored. All or nothing, as for the block arm's re-rank: a cosine
+    and a Hamming distance cannot share one order. The int8 vector keeps the
+    magnitude of each dimension that the sign bit throws away; on the private
+    real-use pack's development questions it put the block holding the evidence
+    inside the quote more often. Equal values share a rank, so a query with no
+    literal match leaves the choice to the vector rather than to block order; ties
+    go to the earlier block. No score is reported — neither distance is calibrated
+    across records or models.
     """
-    lexical = [float(len(query_grams & _trigrams(text[start:end]))) for _, start, end, _ in block_rows]
+    lexical = [float(len(query_grams & _trigrams(text[row[1]:row[2]]))) for row in block_rows]
     ranks = [_shared_ranks(lexical)]
-    if query_bits is not None:
+    cosines = _int8_cosines(block_rows, query_vec)
+    if cosines is not None:
+        ranks.append(_shared_ranks(cosines))
+    elif query_bits is not None:
         width = len(query_bits)
-        usable = all(bits is not None and len(bits) == width for _, _, _, bits in block_rows)
+        usable = all(row[3] is not None and len(row[3]) == width for row in block_rows)
         if usable and block_rows:
-            distances = blocks.hamming_distances([bits for _, _, _, bits in block_rows], query_bits)
+            distances = blocks.hamming_distances([row[3] for row in block_rows], query_bits)
             # Ranked highest-first like the others, so a nearer block sorts first.
             ranks.append(_shared_ranks([-float(d) for d in distances]))
     k = config.RRF_K
     fused = [sum(1.0 / (k + 1 + r[i]) for r in ranks) for i in range(len(block_rows))]
     order = sorted(range(len(block_rows)), key=lambda i: (-fused[i], block_rows[i][0]))
     return [block_rows[i] for i in order]
+
+
+def _int8_cosines(block_rows: list[tuple], query_vec) -> list[float] | None:
+    """The cosine of each block's stored int8 vector with ``query_vec``, or None
+    when the query vector is missing or any block has no vector of its width."""
+    if query_vec is None or not block_rows:
+        return None
+    query = np.asarray(query_vec, dtype=np.float32)
+    width = int(query.shape[-1])
+    stored = [row[4] if len(row) > 4 else None for row in block_rows]
+    if any(v is None or len(v) != width for v in stored):
+        return None
+    matrix = np.frombuffer(b"".join(stored), dtype=np.int8).reshape(len(stored), width).astype(np.float32)
+    norms = np.linalg.norm(matrix, axis=1) * float(np.linalg.norm(query))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cosines = np.where(norms > 0, (matrix @ query) / norms, 0.0)
+    return [float(c) for c in cosines]
 
 
 async def _current_sets(
@@ -836,16 +905,18 @@ async def _current_sets(
                     continue
                 block_marks = ",".join("?" for _ in wanted)
                 grouped: dict[int, list] = {}
-                for parent_id, index, start, end, bits, has_vector, model in await db.execute_fetchall(
+                for parent_id, index, start, end, bits, vector_i8, model in await db.execute_fetchall(
                     "SELECT b.parent_id, b.block_index, b.start_char, b.end_char, b.embedding_bits, "
-                    "v.block_index IS NOT NULL, b.embedding_model FROM record_blocks b "
+                    "v.embedding_i8, b.embedding_model FROM record_blocks b "
                     "LEFT JOIN record_block_vectors v ON v.parent_kind = b.parent_kind "
                     "AND v.parent_id = b.parent_id AND v.block_index = b.block_index "
                     f"WHERE b.parent_kind = ? AND b.parent_id IN ({block_marks}) "
                     "ORDER BY b.parent_id, b.block_index",
                     [kind, *wanted],
                 ):
-                    grouped.setdefault(parent_id, []).append((index, start, end, bits, has_vector, model))
+                    grouped.setdefault(parent_id, []).append(
+                        (index, start, end, bits, vector_i8 is not None, model, vector_i8)
+                    )
                 for parent_id, group in grouped.items():
                     text = texts.get(parent_id)
                     if text is None:
@@ -853,7 +924,7 @@ async def _current_sets(
                     node_ends = [g[2] for g in ends.get(parent_id, [])]
                     rows = [(g[1], g[2], g[4], g[5]) for g in group]
                     if blocks.block_set_is_current(rows, len(text), block_keys, node_ends):
-                        block_sets[f"{kind}:{parent_id}"] = (text, [g[:4] for g in group])
+                        block_sets[f"{kind}:{parent_id}"] = (text, [(*g[:4], g[6]) for g in group])
     return node_sets, not_current, block_sets
 
 
@@ -882,7 +953,7 @@ async def _query_vector(query: str):
     return np.asarray(vectors[0], dtype=np.float32)
 
 
-def _block_quote(claim: _Candidate, entry: tuple, query_bits, query_grams: set[str]) -> dict:
+def _block_quote(claim: _Candidate, entry: tuple, query_bits, query_grams: set[str], query_vec=None) -> dict:
     """The quoted text for one claim, at block granularity (§4.3, invariant 9).
 
     A block is a clause, which is small enough to be read and small enough to
@@ -899,9 +970,9 @@ def _block_quote(claim: _Candidate, entry: tuple, query_bits, query_grams: set[s
     than leaving a caller to infer it from an empty answer.
     """
     text, block_rows = entry
-    ranked = rank_blocks(text, block_rows, query_bits, query_grams)
-    index, _, _, _ = ranked[0]
-    spans = [(start, end) for _, start, end, _ in block_rows]
+    ranked = rank_blocks(text, block_rows, query_bits, query_grams, query_vec)
+    index = ranked[0][0]
+    spans = [(row[1], row[2]) for row in block_rows]
     start, end, complete = blocks.context_range(text, spans, index)
     quote: dict = {
         "content": text[start:end],
@@ -938,7 +1009,7 @@ def _quote(
     """
     block_entry = (block_sets or {}).get(claim.ref)
     if block_entry is not None:
-        quote = _block_quote(claim, block_entry, query_bits, query_grams)
+        quote = _block_quote(claim, block_entry, query_bits, query_grams, query_vec)
         content = quote["content"]
         if cap > 0 and len(content) > cap:
             quote["content_len"] = len(content)
@@ -953,8 +1024,8 @@ def _quote(
             # the range is what expand names -- the best block alone did not return
             # the rest of what was cut. The same [first, last] form the incomplete
             # path gives, which get_contents takes.
-            starts = [s for _, s, _, _ in block_entry[1]]
-            ends = [e for _, _, e, _ in block_entry[1]]
+            starts = [row[1] for row in block_entry[1]]
+            ends = [row[2] for row in block_entry[1]]
             quote.setdefault(
                 "expand",
                 {
@@ -1001,7 +1072,9 @@ def _stored_text(claim: _Candidate) -> str:
     return excerpts.stored_text(claim.ref, claim.content)
 
 
-def _filled_quote(claim: _Candidate, block_entry: tuple | None, query_bits, query_grams: set[str], cap: int) -> dict:
+def _filled_quote(
+    claim: _Candidate, block_entry: tuple | None, query_bits, query_grams: set[str], cap: int, query_vec=None
+) -> dict:
     """An item's head quote: the parts of its record that matched, filled to `cap` (2.6).
 
     The passages are chosen by `excerpts.select`, the rule the recall excerpt uses, so a
@@ -1019,7 +1092,7 @@ def _filled_quote(claim: _Candidate, block_entry: tuple | None, query_bits, quer
     if len(text) <= cap:
         return {"content": text, "quote_basis": "whole", "ranges": [[0, len(text)]]}
     basis, ranges, severed, ranked, spans = excerpts.select(
-        text, block_entry[1] if block_entry is not None else None, query_bits, query_grams, cap
+        text, block_entry[1] if block_entry is not None else None, query_bits, query_grams, cap, query_vec
     )
     quote: dict = {"content_len": len(text), "content_truncated": True}
     if basis == "start":
@@ -1368,9 +1441,11 @@ async def do_reconstruct(
     # few indices only -- the fused values are not calibrated across records), so the runner-up
     # is a place to read next, not a confidence.
     node_orders: dict[str, list[int]] | None = {} if trace else None
-    for item, head, others in entries_claims:
+    for position, (item, head, others) in enumerate(entries_claims):
         head_quote = (
-            _filled_quote(head, block_sets.get(head.ref), query_bits, query_grams, head_cap)
+            _filled_quote(
+                head, block_sets.get(head.ref), query_bits, query_grams, _head_cap_at(position), query_vec
+            )
             if head_cap > 0
             else _quote(
                 head, node_sets, query_vec, query_grams, cap, not_current, node_orders,
