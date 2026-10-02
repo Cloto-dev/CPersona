@@ -86,7 +86,7 @@ Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/C
 
 **3. Register it with your MCP client**
 
-For Codex CLI, Cursor, VS Code, or Claude Desktop, follow the
+For Codex, Cursor, VS Code, or Claude Desktop, follow the
 [client registration table](https://cloto-dev.github.io/CPersona/getting-started/#3-register-cpersona-with-your-mcp-client).
 The command below is for Claude Code.
 
