@@ -30,8 +30,8 @@ reachable by exact version.
 ## What the first start does
 
 On its first start, 2.6 migrates the database from schema version 13 (every
-2.5.x release) to schema version 17, one step at a time. **No stored row is
-rewritten**: each step adds tables and triggers. A step that fails is not
+2.5.x release) to schema version 17 (18 from 2.6.3a1), one step at a time. **No
+stored row is rewritten**: each step adds tables and triggers, or one column. A step that fails is not
 recorded as done, so it is retried on the next start.
 
 | Schema version | Added in | What it adds | Anything to build afterwards? |
@@ -40,8 +40,9 @@ recorded as done, so it is retried on the next start.
 | 15 | 2.6.0a4 | `entities`, `entity_aliases`, `entity_mentions`, `relations`: declared associations | No |
 | 16 | 2.6.0a5 | `record_blocks`: block reach | **Built for you**: blocks for the records already stored, unless you turn block reach off ([below](#block-reach-is-on-by-default)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
+| 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2 and 2.6.0 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1 and 2.6.2 changed no schema.
 
 ## After the first start
 
