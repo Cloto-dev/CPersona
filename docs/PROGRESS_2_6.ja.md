@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:6c5c2ec2a7ce7dc6a56a5959a7b166f284cdad4d -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:d01918bba81abe6916ba404f970189dcf54ba8ea -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,7 +10,7 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3 が続き、版を指定しない導入は 2.6.3 になります。
+2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3 が続き、版を指定しない導入は 2.6.3 になります。2.6.4a1 (2026-10-02) は pre-release で、版を指定したときだけ導入されます。
 pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -58,6 +58,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.2 | 1 ビット粗探索。既定は off ([設計](BINARY_COARSE_SEARCH_DESIGN.md)): 連続配置索引の隣に全レコードの 1 ビット索引。窓の外の席 = 走査窓の外のレコードのための 2 つの予約席 (`CPERSONA_FAR_SEATS_ENABLED`)。時間の手がかりの期間のうち、ベクトル側の上限を超えた残りの探索 (`CPERSONA_CUE_COARSE_ENABLED`)。候補数は事前登録した計測で 256 に決定 ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-binary-coarse-search.md))。ほかに recall の trace の網羅の台帳、空のクエリの時間の手がかりが期間のレコードをそれ自身の時刻順に並べる修正 (bug-502)、PyJWT 2.14.0 以上 | [#382](https://github.com/Cloto-dev/cpersona/pull/382), [#383](https://github.com/Cloto-dev/cpersona/pull/383), [#384](https://github.com/Cloto-dev/cpersona/pull/384), [#387](https://github.com/Cloto-dev/cpersona/pull/387), [#389](https://github.com/Cloto-dev/cpersona/pull/389), [#390](https://github.com/Cloto-dev/cpersona/pull/390), [#391](https://github.com/Cloto-dev/cpersona/pull/391), [#392](https://github.com/Cloto-dev/cpersona/pull/392) |
 | 2.6.3a1 | pre-release。保存するベクトルに、それを作ったモデルのラベルを付けます (スキーマ 18): バックエンドが `GET /capabilities` で返す指紋 (CEmbedding 0.9.0 以降)、それが無ければ `api` トランスポートが送るモデル名か設定したモデル名。別のモデルが書いたベクトルを `check_health` が報告し (`embedding_model`)、`CPERSONA_EMBEDDING_MODEL_MODE=reject` でそのベクトルを問いと比べなくなります。既定の `warn` は recall の結果を何も変えません ([設定](configuration.md#core-settings)) | [#395](https://github.com/Cloto-dev/cpersona/pull/395) |
 | 2.6.3 | 2.6.3a1 の final で、コードの変更はなし: 版を指定しない導入でも、保存するベクトルにモデルのラベルが付き、スキーマが 18 に移行します。2.6.3a1 を本番で 8 時間使い、再起動なし・エラーなし・新しいベクトルはすべてラベル付き、を確かめてから出しました |
+| 2.6.4a1 | pre-release。再構成想起 v1.2 ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-reconstruct-v1_2.md)): Block を保存済みの int8 ベクトルで順位付けし、接する箇所は 1 つの引用にまとめ、先頭の引用の長さを項目の位置で決め (最初の `CPERSONA_RECONSTRUCT_FULL_QUOTES` (5) 項目は `CPERSONA_RECONSTRUCT_QUOTE_CHARS` (800)、それ以降は `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS` (400))、読み手が使わない欄を既定の応答から trace へ移します。非公開の実運用パックの test 150 問で、見える根拠の引用は 196 中 133 から 146 に増え、最初の応答の大きさの中央値は 2.6.3 の 0.662 倍になりました。ほかに `check_health` に `coarse_index`: 粗探索の設定が索引を読む間、無い・使えない索引を報告し、`fix=true` で作ります | [#398](https://github.com/Cloto-dev/cpersona/pull/398), [#399](https://github.com/Cloto-dev/cpersona/pull/399) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
