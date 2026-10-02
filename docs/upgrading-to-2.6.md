@@ -30,7 +30,7 @@ reachable by exact version.
 ## What the first start does
 
 On its first start, 2.6 migrates the database from schema version 13 (every
-2.5.x release) to schema version 17 (18 from 2.6.3a1), one step at a time. **No
+2.5.x release) to schema version 18 (17 for 2.6.0 to 2.6.2), one step at a time. **No
 stored row is rewritten**: each step adds tables and triggers, or one column. A step that fails is not
 recorded as done, so it is retried on the next start.
 

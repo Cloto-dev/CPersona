@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:cc0a5d3dc09b81c811a082cef2690d37a3f0880b -->
+<!-- i18n-source: docs/operations.md@blob:9c57fc97ed14eb0e21d5497d25c9bafe8442e934 -->
 
 # 運用 Runbook
 
@@ -326,6 +326,19 @@ build できれば exit 0、辞退したら exit 1 で理由を印字します�
 削除 (purge) は持っていた行と一緒にこれも消します。両方のファイルを作る場合、`build` が
 exit 0 を返すのは両方を作れた時だけです。`status` は粗探索の索引を `coarse` の下で報告しますが、
 自分の exit code は変えません。設定が求めない限り、粗探索の索引を読むものは無いからです。
+
+**設定が読む時は、健全性チェックが報告します。** `CPERSONA_FAR_SEATS_ENABLED` か
+`CPERSONA_CUE_COARSE_ENABLED` が on で、あるエージェントが走査窓の外に記録を持つ時、粗探索の
+索引を使えない想起は、その記録すべての保存ベクトルをデータベースから読みます。答えは同じで、
+費用が窓ではなくストアの大きさに比例して増えます。`check_health` は `coarse_index_absent`
+(窓の外の記録数と 1 回の想起が読むバイト数つき)・`coarse_index_unusable`・
+`coarse_index_dimension_drift`・`coarse_index_rows_missing` を警告として、
+`coarse_index_tail_grown` を観察として出し、両方の設定が off の間やストアが窓に収まる間は
+何も言いません。`check_health(checks=["coarse_index"], fix=true)` はファイルを作り直します。
+ファイルは全エージェントの記録を持つので、この修復は全エージェントへの書き込み権限を求めます。
+所見は他のチェックと同じく `get_session_findings` に届くので、監視側は遅さとして誰かが
+気づく前に費用を知ることができます。所見を受けて修復するかは監視側が決めることで、
+サーバは決めません。
 
 **build と build の間に起きること。** 索引は build 時点の最大行 id を覚えて
 います。それ以降に書かれた行は索引に無く、失われもしません。毎クエリがそれらを
