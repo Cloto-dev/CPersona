@@ -280,7 +280,7 @@ async def test_a_cut_quote_says_it_is_no_longer_whole(monkeypatch, quoting):
         out = await reconstruct.do_reconstruct(AGENT, "採用", count=3, deep=True)
 
         (item,) = out["items"]
-        assert item["content_truncated"] and item["content"] == DECISION[:8]
+        assert item["content_len"] > len(item["content"]) and item["content"] == DECISION[:8]
         assert item["context_incomplete"], "a severed quote passed as whole evidence"
         assert item["expand"]["ref"] == f"mem:{stored['id']}"
         assert item["expand"]["revision"] == blocks.text_revision(DECISION)

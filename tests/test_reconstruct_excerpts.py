@@ -222,7 +222,7 @@ async def test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_
         assert "vault" not in item["content"]  # no nodes yet: quoted from the start
         assert "node" not in item
         # ...and the item says its cut quote is only the start, and why
-        assert item["content_truncated"] and item["node_unavailable"] == "no_nodes"
+        assert item["content_len"] > len(item["content"]) and item["node_unavailable"] == "no_nodes"
         assert "node_order" not in before["trace"]
 
         await tmp.drain()
@@ -234,7 +234,8 @@ async def test_a_long_record_is_quoted_from_the_node_that_matches_and_the_items_
         assert LONG[start:end] == item["content"]
         assert item["node"]["of"] > 1 and item["node"]["index"] == item["node"]["of"] - 1
         # A quote that carries its whole node has nothing more to hand over.
-        assert "content_truncated" not in item and "expand" not in item
+        # content_len appears exactly when the quote was cut (content_truncated is trace-only since 2.6.4).
+        assert "content_len" not in item and "expand" not in item
         # tree invariant 1 for this tool: nodes change the quote, never the items
         assert _shape(after) == _shape(before)
         assert "node_unavailable" not in item and "quote_selection" not in after
@@ -287,7 +288,7 @@ async def test_a_record_quoted_whole_says_nothing_about_nodes(windowed):
         await memory_handlers.do_store(AGENT, {"content": "the vault combination is 7431"})
         result = await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True)
         (item,) = result["items"]
-        assert "content_truncated" not in item and "node_unavailable" not in item and "expand" not in item
+        assert "content_len" not in item and "node_unavailable" not in item and "expand" not in item
         assert "quote_selection" not in result
 
 
@@ -394,7 +395,9 @@ async def test_the_mcp_boundary_forwards_the_budget(windowed):
 @pytest.mark.asyncio
 async def test_a_one_row_item_carries_its_row_once(windowed):
     # Item metadata is compressed: the ref, time and reason of a row appear in its
-    # claim and nowhere else, and fields with nothing to say are absent.
+    # claim and nowhere else, and fields with nothing to say are absent -- since
+    # 2.6.4 that includes a claim's why when it is "seed" and an item's
+    # independence_reason when it is "singleton" (absent means that value).
     async with _TempDB():
         stored = await memory_handlers.do_store(
             AGENT, {"content": "deploy on friday", "timestamp": "2026-09-17T10:00:00+00:00"}
@@ -404,8 +407,7 @@ async def test_a_one_row_item_carries_its_row_once(windowed):
         assert item == {
             "content": "deploy on friday",
             "head_ref": ref,
-            "claims": [{"ref": ref, "as_of": "2026-09-17T10:00:00+00:00", "why": "seed"}],
-            "independence_reason": "singleton",
+            "claims": [{"ref": ref, "as_of": "2026-09-17T10:00:00+00:00"}],
         }
 
 
@@ -420,7 +422,7 @@ async def test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_i
         await memory_handlers.do_store(AGENT, {"content": LONG})
         await tmp.drain()
         (item,) = (await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True))["items"]
-        assert item["content_truncated"] and "7431" not in item["content"]
+        assert item["content_len"] > len(item["content"]) and "7431" not in item["content"]
         assert item["expand"] == {"ref": item["head_ref"], "node": item["node"]["index"]}
         (more,) = (await memory_handlers.do_get_contents(AGENT, [item["expand"]]))["items"]
         assert more["content"].startswith(item["content"]) and "7431" in more["content"]

@@ -160,7 +160,9 @@ async def test_a_block_set_is_not_read_while_block_retrieval_is_off(fake_embeddi
 async def test_a_block_set_is_ranked_with_the_query_vector_the_recall_embedded(
     fake_embedding_client, monkeypatch
 ):
-    """The bits are what make a block set's ranking more than a word match."""
+    """The query vector is what makes a block set's ranking more than a word match:
+    its bits for the Hamming ranking, and since 2.6.4 the vector itself for the
+    cosine of the stored int8 vectors."""
     from cpersona import reconstruct
 
     monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
@@ -168,15 +170,16 @@ async def test_a_block_set_is_ranked_with_the_query_vector_the_recall_embedded(
     seen = []
     real = reconstruct.rank_blocks
 
-    def spy(text, rows, query_bits, grams):
-        seen.append(query_bits)
-        return real(text, rows, query_bits, grams)
+    def spy(text, rows, query_bits, grams, *args, **kwargs):
+        query_vec = args[0] if args else kwargs.get("query_vec")
+        seen.append((query_bits, query_vec))
+        return real(text, rows, query_bits, grams, *args, **kwargs)
 
     monkeypatch.setattr(reconstruct, "rank_blocks", spy)
     async with _TempDB() as tmp:
         await _store(tmp, LONG)
         await _boundary()
-    assert seen and all(bits is not None for bits in seen)
+    assert seen and all(bits is not None and vec is not None for bits, vec in seen)
 
 
 @pytest.mark.asyncio

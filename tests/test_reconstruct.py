@@ -434,7 +434,7 @@ async def test_episode_containment_bundles_and_derives_supports():
         keywords="rollback billing",
     )
     assert out.get("episode_id"), out
-    res = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K)
+    res = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K, trace=True)
     items = [i for i in res["items"] if i["independence_reason"] == "cluster:episode"]
     assert items, res
     item = items[0]
@@ -449,7 +449,7 @@ async def test_episode_containment_bundles_and_derives_supports():
 async def test_source_alone_does_not_bundle():
     """The adjacency key needs both halves; source alone would fold the whole pool."""
     await _seed_unclustered()  # one source, an hour apart
-    out = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K)
+    out = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K, trace=True)
     assert out["returned_count"] == 5
     assert all(i["independence_reason"] == "singleton" for i in out["items"]), [
         i["independence_reason"] for i in out["items"]

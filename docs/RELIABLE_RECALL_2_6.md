@@ -407,9 +407,10 @@ budget_base      = forced_budget ?? requested_budget ?? default_budget(count)
 effective_budget = min(budget_base, max_budget)
 ```
 
-- The default is the configured default, or one head quote
-  (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`, the preview tier's size when that is 0)
-  for each item of the window when that is more. A caller that names a count and leaves
+- The default is the configured default, or the head quotes of the window's
+  items summed when that is more — each item's head quote at its size (below;
+  the preview tier's size for every item when `CPERSONA_RECONSTRUCT_QUOTE_CHARS`
+  is 0). A caller that names a count and leaves
   the budget alone must not lose breadth to a default it never set: with a
   default of 4,000 and quotes of 500 characters, a window of ten used to return
   eight. Only the default moves. A budget the caller or an operator names is
@@ -427,11 +428,20 @@ effective_budget = min(budget_base, max_budget)
 - An item carries its head claim in `content` and verbatim excerpts of its
   other retained claims in `excerpts`, most relevant first. Since 2.6 the head
   claim is quoted from the parts of its record that matched the query: the
-  governing ranges of its blocks in ranking order, filled while they fit
-  `CPERSONA_RECONSTRUCT_QUOTE_CHARS` and shown in text order — the same filling
-  as the recall excerpt ([design](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26)).
-  `quote_basis` says how the ranges were chosen and `ranges` where they are in
-  the record. Measured with an answer reader on LongMemEval, this answered 154
+  governing ranges of its blocks in ranking order, filled while they fit the
+  item's quote size and shown in text order — the same filling as the recall
+  excerpt ([design](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26)). `ranges` says
+  where they are in the record; `quote_basis`, how they were chosen, is in the
+  trace. Since 2.6.4 (v1.2) three things about that filling changed. The size
+  follows the item's place: `CPERSONA_RECONSTRUCT_QUOTE_CHARS` (800) for the
+  first `CPERSONA_RECONSTRUCT_FULL_QUOTES` (5) items and
+  `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS` (400) after them, because the
+  evidence a reader could see sat in the first four items for 102 of 127
+  quotes on the private real-use pack's development questions. Blocks are
+  ranked by the cosine of their stored int8 vectors when every block of the
+  record has one, and by their sign bits otherwise. Passages that touch are
+  shown as one; only passages with text between them are separated, so a
+  sentence running across two blocks is no longer cut. Measured with an answer reader on LongMemEval, this answered 154
   of 500 questions at count 1 where the single governing passage answered 116,
   and 321 where it answered 223 at count 5. Each other excerpt is cut as the
   preview tier cuts. An excerpt only ever comes
@@ -486,7 +496,7 @@ layer is present. With no relations this stage is the identity.
 ```jsonc
 { "items": [{
     "content": "…",            // the parts of the head claim that matched, verbatim, joined by " … "
-    "quote_basis": "blocks",   // blocks / lexical (divided at read time) / start (one block) / whole (fits the quote)
+    "quote_basis": "blocks",   // trace only: blocks / lexical (divided at read time) / start (one block) / whole (fits the quote)
     "ranges": [[0, 212], [1480, 1731]],  // where content's passages are in the record, in text order
     "head_ref": "…",           // the claim that content quotes
     "excerpts": [{ "ref": "…", "content": "…" }],      // other retained claims, most relevant first, within the budget; absent when none
@@ -495,7 +505,7 @@ layer is present. With no relations this stage is the identity.
                  "why": "cluster:chain",               // why it is here, always
                  "roles": [{ "ref": "mem:…", "role": "supersedes" },
                            { "ref": "ep:…",  "role": "supports" }] }],  // absent when the row has none
-    "independence_reason": "cluster:episode" }],                  // why it is a separate item
+    "independence_reason": "cluster:episode" }],                  // why it is a separate item; absent when "singleton"
   "effective_count": 1, "returned_count": 1,                      // always
   // the rest appears only when it has something to say, or under trace=true:
   "effective_budget": 4000, "used_budget": 3980,                  // the budget withheld an item or an excerpt
@@ -527,7 +537,10 @@ appear when declared relations do. A reader ignores a role it does not know.
    quotes more than the effective payload budget; rows a bound dropped are
    reported in `bounds.omitted`, `claims_omitted`, `excerpts_omitted` or the
    shortfall reason, and a bound that was only met in `bounds.reached`.
-5. Explainability — every element says why it is present.
+5. Explainability — every element says why it is present. Since 2.6.4 the
+   default reason is said by its absence: an item without `independence_reason`
+   is `singleton`, a claim without `why` is `seed`, and `trace=true` spells both
+   out.
 6. The existing `recall` contract is untouched. Since then recall rows have
    gained one additive field, the excerpt beside a cut preview, made from the
    same block ranking and governing-context rule as a quotation here
@@ -621,7 +634,11 @@ these concrete qualifications:
   that envelope is now stated only when it has something to say (the count and
   budget rules above; `bounds` when a bound dropped rows, was reached or was
   lowered by the library ceiling; `reconstruction.excluded_without_provenance`
-  when rows were excluded).
+  when rows were excluded). Since 2.6.4 the same rule holds inside the items:
+  `independence_reason` when it is `singleton`, a claim's `why` when it is
+  `seed`, `quote_basis` and `content_truncated` (which `content_len` already
+  implies) are left to the trace. On the private real-use pack's development
+  questions they were about 9% of a response.
 - An item whose node quote was cut carries `expand`, the argument `get_contents`
   takes to return the rest of that node. A node is several times a quote and a
   record is many times a node, so the smallest next read is handed over ready to

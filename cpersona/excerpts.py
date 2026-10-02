@@ -8,17 +8,21 @@ full records 351; this excerpt, filled to 800 characters, answered 341.
 
 The excerpt is made from the pieces the reconstruction exit quotes with: the
 record's blocks, ranked by `reconstruct.rank_blocks` (lexical overlap fused with
-Hamming distance), each extended to the range that governs it by
+closeness to the query vector), each extended to the range that governs it by
 `blocks.context_range`. What is new here is only the filling: governing ranges
 are taken in ranking order while they fit the cap without overlapping, and are
-shown in text order, joined by a separator, so the excerpt reads forwards.
+shown in text order, so the excerpt reads forwards. Ranges that touch are shown
+as one passage; only ranges with text between them are joined by a separator
+(2.6.4: the separator used to fall between two neighbouring blocks too, cutting a
+sentence that ran across them).
 
 Which blocks, and how they were ranked, is stated in `basis`:
 
-  blocks   the record's current block set, ranked lexically, and by its bits
-           when the query was embedded at their width (bug-467: without such a
-           vector the set is ranked lexically alone and is still reported as
-           `blocks`, because the division is the stored one)
+  blocks   the record's current block set, ranked lexically, and by closeness
+           when the query was embedded at their width: the cosine of the stored
+           int8 vectors when every block has one, else the bits (bug-467: without
+           such a vector the set is ranked lexically alone and is still reported
+           as `blocks`, because the division is the stored one)
   lexical  divided at read time (no current block set), ranked lexically only
   start    the record divides into one block, so its start is shown
 
@@ -34,7 +38,7 @@ from types import SimpleNamespace
 
 from cpersona import blocks, nodes
 
-#: Joins the governing ranges an excerpt shows, which are not contiguous.
+#: Joins the governing ranges an excerpt shows where text lies between them.
 SEPARATOR = " … "
 
 
@@ -59,14 +63,27 @@ def fill_ranges(
         start, end, _ = blocks.context_range(text, spans, row[0])
         if any(start < e and s < end for s, e in chosen):
             continue
-        cost = (end - start) + (len(SEPARATOR) if chosen else 0)
+        # A range that touches one already taken joins it and costs no separator.
+        touching = any(start == e or end == s for s, e in chosen)
+        cost = (end - start) + (len(SEPARATOR) if chosen and not touching else 0)
         if used + cost > cap:
             if not chosen:
                 return [(start, start + cap)], True
             break
         chosen.append((start, end))
         used += cost
-    return sorted(chosen), False
+    return _joined(sorted(chosen)), False
+
+
+def _joined(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """``ranges`` (sorted, not overlapping) with every pair that touches made one."""
+    out: list[tuple[int, int]] = []
+    for start, end in ranges:
+        if out and start == out[-1][1]:
+            out[-1] = (out[-1][0], end)
+        else:
+            out.append((start, end))
+    return out
 
 
 #: How recall shows an episode: this label, then the stored summary. Offsets into an
@@ -82,7 +99,7 @@ def stored_text(ref: str, shown: str) -> str:
 
 
 def select(
-    text: str, stored_rows: list | None, query_bits, query_grams: set[str], cap: int
+    text: str, stored_rows: list | None, query_bits, query_grams: set[str], cap: int, query_vec=None
 ) -> tuple[str, list[tuple[int, int]], bool, list[tuple], list[tuple[int, int]]]:
     """The passages of ``text`` to show: ``(basis, ranges, severed, ranked, spans)``.
 
@@ -94,15 +111,15 @@ def select(
     from cpersona import reconstruct
 
     if stored_rows is not None:
-        rows, basis, bits = stored_rows, "blocks", query_bits
+        rows, basis, bits, vec = stored_rows, "blocks", query_bits, query_vec
     else:
         divided = blocks.segment(text)
         rows = [(i, s.start, s.end, None) for i, s in enumerate(divided)]
-        basis, bits = "lexical", None
+        basis, bits, vec = "lexical", None, None
     if len(rows) <= 1:
         return "start", [(0, min(cap, len(text)))], len(text) > cap, [], []
-    spans = [(start, end) for _, start, end, _ in rows]
-    ranked = reconstruct.rank_blocks(text, rows, bits, query_grams)
+    spans = [(row[1], row[2]) for row in rows]
+    ranked = reconstruct.rank_blocks(text, rows, bits, query_grams, vec)
     ranges, severed = fill_ranges(text, spans, ranked, cap)
     return basis, ranges, severed, ranked, spans
 
@@ -157,6 +174,6 @@ async def for_refs(
             text, stored_rows = known[p.ref], None
         else:
             continue
-        basis, ranges, _, _, _ = select(text, stored_rows, query_bits, grams, cap)
+        basis, ranges, _, _, _ = select(text, stored_rows, query_bits, grams, cap, query_vec)
         out[p.ref] = {"excerpt": SEPARATOR.join(text[s:e] for s, e in ranges), "basis": basis}
     return out

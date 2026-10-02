@@ -154,7 +154,11 @@ async def test_a_request_honoured_as_asked_is_not_restated():
         "requested_count", "count_policy", "requested_budget", "effective_budget", "used_budget",
         "budget_policy", "bounds", "reconstruction", "trace",
     }
-    assert full["items"] == out["items"]
+    # The items differ by exactly the fields 2.6.4 leaves to the trace, and only by them.
+    assert [R._compact_item(i) for i in full["items"]] == out["items"]
+    assert all(i["independence_reason"] == "singleton" and "quote_basis" in i for i in full["items"])
+    assert not any("independence_reason" in i or "quote_basis" in i for i in out["items"])
+    assert all("why" not in c for i in out["items"] for c in i["claims"])
 
 
 @pytest.mark.asyncio

@@ -266,6 +266,15 @@ RECONSTRUCT_ADJACENCY_SECONDS = max(0, _parse_int("CPERSONA_RECONSTRUCT_ADJACENC
 # count 5, against the single governing passage cut at the preview tier. 0 keeps that single
 # passage, which is what every quote was before.
 RECONSTRUCT_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_QUOTE_CHARS", 800))
+# 2.6.4: the head quote's size follows the item's place. The first
+# RECONSTRUCT_FULL_QUOTES items are filled to RECONSTRUCT_QUOTE_CHARS and every later
+# one to RECONSTRUCT_TAIL_QUOTE_CHARS. On the private real-use pack's development
+# questions the evidence a reader can see sat in the first four items for 102 of 127
+# quotes, and quoting the rest at half the size kept the evidence shown while the
+# quoted text fell by about 30%. Setting the tail equal to RECONSTRUCT_QUOTE_CHARS
+# quotes every item alike, as before.
+RECONSTRUCT_FULL_QUOTES = max(0, _parse_int("CPERSONA_RECONSTRUCT_FULL_QUOTES", 5))
+RECONSTRUCT_TAIL_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS", 400))
 RECONSTRUCT_DEFAULT_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", 4000)
 RECONSTRUCT_MAX_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_MAX_BUDGET", 20000)
 _forced_budget_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_BUDGET")
@@ -316,6 +325,13 @@ def validate_reconstruct_counts() -> None:
         raise ValueError(
             f"CPERSONA_RECONSTRUCT_FORCED_BUDGET={RECONSTRUCT_FORCED_BUDGET} exceeds "
             f"CPERSONA_RECONSTRUCT_MAX_BUDGET={RECONSTRUCT_MAX_BUDGET}"
+        )
+    # A tail longer than the head would quote the later, less relevant items more
+    # fully than the first ones; and a tail of nothing would return items with no text.
+    if RECONSTRUCT_QUOTE_CHARS > 0 and not 0 < RECONSTRUCT_TAIL_QUOTE_CHARS <= RECONSTRUCT_QUOTE_CHARS:
+        raise ValueError(
+            f"CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS={RECONSTRUCT_TAIL_QUOTE_CHARS} must be above 0 "
+            f"and at most CPERSONA_RECONSTRUCT_QUOTE_CHARS={RECONSTRUCT_QUOTE_CHARS}"
         )
 # How many embedding rows the fallback vector scan turns into a matrix at a
 # time. The scan reads `MAX_MEMORIES` rows of `(id, embedding)`; it used to

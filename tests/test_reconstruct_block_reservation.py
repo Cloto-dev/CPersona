@@ -170,7 +170,9 @@ async def test_the_default_budget_holds_the_reserved_places_too(reading, lexical
         assert count * head >= config.RECONSTRUCT_DEFAULT_BUDGET, "the window alone must set the default for this test"
         out = await reconstruct.do_reconstruct(AGENT, QUERY, count=count, trace=True)
         assert out["reserved_count"] == 1
-        assert out["effective_budget"] == (count + 1) * head
+        # The held item sits after the window, so it is sized as a tail quote (2.6.4).
+        assert config.RECONSTRUCT_FULL_QUOTES == count, "the held item must be the first tail item for this test"
+        assert out["effective_budget"] == count * head + config.RECONSTRUCT_TAIL_QUOTE_CHARS
 
 
 @pytest.mark.asyncio
