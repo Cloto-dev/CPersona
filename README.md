@@ -8,7 +8,8 @@
 
 Persistent memory for AI agents, over MCP.
 One SQLite file you own. No LLM in the loop. Honest when recall degrades.
-CPersona is an MCP persistent memory server that stores AI agent memories in a local SQLite file.
+Ask your agent to save a project's design decisions and their reasons, then recall them in a later coding session ([setup and verification](https://cloto-dev.github.io/CPersona/getting-started/#4-verify-it-works)).
+Use `reconstruct` to read recalled items with quotes from the stored records ([traceable recall](https://cloto-dev.github.io/CPersona/tools/#everyday-memory)).
 
 [![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE) [![Sponsor](https://img.shields.io/badge/sponsor-Cloto--dev-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Cloto-dev)
 
@@ -84,6 +85,10 @@ Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/C
 **Without a backend, cpersona still runs** — FTS5 + keyword search, and it says on every recall that it is degraded rather than quietly returning less. That is a supported fallback, not a recommended way to run: recall then matches on shared words, so a memory phrased differently from your question can be missed, and so can an older one.
 
 **3. Register it with your MCP client**
+
+For Codex, Cursor, VS Code, or Claude Desktop, follow the
+[client registration table](https://cloto-dev.github.io/CPersona/getting-started/#3-register-cpersona-with-your-mcp-client).
+The command below is for Claude Code.
 
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
