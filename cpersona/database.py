@@ -14,7 +14,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -320,6 +320,10 @@ CREATE TABLE IF NOT EXISTS memories (
     recall_count INTEGER NOT NULL DEFAULT 0,
     last_recalled_at TEXT,
     locked     INTEGER NOT NULL DEFAULT 0,
+    -- v18: what produced `embedding`, as declared when it was written -- a backend
+    -- fingerprint, else the model name this process sends or was configured with,
+    -- else '' (unknown). A declaration, never verified: read it as a label.
+    embedding_model TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -350,6 +354,10 @@ CREATE TABLE IF NOT EXISTS episodes (
     end_time   TEXT,
     resolved   INTEGER NOT NULL DEFAULT 0,
     channel    TEXT NOT NULL DEFAULT '',
+    -- v18: what produced `embedding`, as declared when it was written -- a backend
+    -- fingerprint, else the model name this process sends or was configured with,
+    -- else '' (unknown). A declaration, never verified: read it as a label.
+    embedding_model TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -1194,6 +1202,15 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
             await db.execute("DROP TRIGGER IF EXISTS memories_fts_au")
             await db.execute("DROP TRIGGER IF EXISTS episodes_au")
             await db.executescript(FTS_SQL)
+
+        # v18: the label of the backend that produced each record's vector, in the
+        # shape record_nodes and record_blocks already use, so the three can be
+        # compared without one of them meaning something else. Existing rows take
+        # '' -- nobody recorded what embedded them, and inventing a value would be
+        # the mislabel the column exists to prevent.
+        if current < 18:
+            for table in ("memories", "episodes"):
+                await _ensure_column(db, table, "embedding_model", "TEXT NOT NULL DEFAULT ''")
     except Exception as e:
         migration_error = e
         logger.error(

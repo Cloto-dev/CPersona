@@ -583,6 +583,27 @@ EMBEDDING_MODEL_CONFIGURED = bool(
 )
 
 
+# What a stored vector labelled with a different model than the current one costs.
+#
+# Every memory and episode written with a vector now carries the label of the
+# backend that produced it (`embedding_model`, schema v18). A label only says
+# something once there is a current identity to compare it with — a fingerprint
+# the backend reports, or the model the `api` transport sends — and a row stored
+# before the column existed carries none, which is unknown rather than different.
+#
+# `warn` (the default) reports the rows whose label differs in the
+# `embedding_model` health check and changes nothing a recall returns: the vectors
+# are compared exactly as they were yesterday. `reject` treats those rows as rows
+# without a vector: no reader compares their stored vector with the query, so they
+# are found only by keyword and score without a vector vote. That is where a
+# migration ends once the old rows have been re-embedded. It is written,
+# mounted and tested here rather than in the release that turns it on, so that
+# release changes a default instead of adding a code path. `off` silences the
+# report; the label is written either way, because a label not written cannot be
+# recovered later.
+EMBEDDING_MODEL_MODE = _parse_choice("CPERSONA_EMBEDDING_MODEL_MODE", "warn", ("warn", "reject", "off"))
+
+
 def reported_embedding_model() -> str:
     """The model name to report to a caller, which is not always the resolved one.
 

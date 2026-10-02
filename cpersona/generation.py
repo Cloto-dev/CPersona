@@ -147,3 +147,56 @@ def block_keys() -> tuple[str, str]:
     ``blocks`` already kept before there was anything better to compare.
     """
     return keys(config.reported_embedding_model())
+
+
+def record_keys() -> tuple[str, str]:
+    """:func:`keys` for the ``embedding_model`` label of ``memories`` and ``episodes``.
+
+    The legacy half is the reported name, as for blocks, and not the resolved one
+    nodes keep: over HTTP the resolved name is a default this process never sends,
+    and a label written from it would name an OpenAI model on a corpus some other
+    backend embedded. Empty says "not known here", which is what is true.
+    """
+    return keys(config.reported_embedding_model())
+
+
+async def record_label() -> str:
+    """The label a memory or episode vector is written with, learned just before it is.
+
+    What the backend reported when last asked, else the name this process sends or
+    was configured with, else empty. It is a declaration and nothing checks it: the
+    vector it sits beside may come from the embedding client's cache, and a backend
+    can be swapped between this call and the request that embeds.
+    """
+    await refresh()
+    return record_keys()[0]
+
+
+def current_identity() -> str | None:
+    """What the vectors this server writes now come from, when that is known.
+
+    Over HTTP only a fingerprint answers it: a configured name never reaches the
+    backend, so it cannot say what answered. The ``api`` transport sends its model
+    with every request, so there the model is the identity. Anything else is None —
+    unknown, and never a reason to call a stored label different.
+    """
+    learned = fingerprint()
+    if learned:
+        return learned
+    if config.EMBEDDING_MODE == "api":
+        return config.EMBEDDING_MODEL
+    return None
+
+
+def accepted_labels() -> tuple[str, ...] | None:
+    """The labels a stored vector may carry and still be compared, or None.
+
+    None when there is no current identity to compare against — then no label is
+    judged, in either direction. Otherwise empty (stored before labels existed,
+    or by a backend nobody could name), the current key, and the key this
+    deployment wrote before it could ask. A label outside the set was written
+    under a different model.
+    """
+    if current_identity() is None:
+        return None
+    return tuple(dict.fromkeys(("", *record_keys())))

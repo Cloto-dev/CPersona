@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:b7f180074a705ccfcd8c4f333257965aed6a6187 -->
+<!-- i18n-source: docs/getting-started.md@blob:8a27ed49910435ba991ec84ddb75ec78c10c3a36 -->
 
 # はじめに
 
@@ -166,15 +166,22 @@ CPersona が読むのは **`embeddings`** だけです。`dimensions` はリフ�
   プレフィックスは付きません。プレフィックス前提のモデル (e5 系、prompted bge) は
   この契約の下では性能が出ません。対称型または retrieval 統合型のモデル
   (jina-v5-nano、bge-m3、MiniLM) が想定される適合先です。
-- **同じ URL の裏でモデルを差し替えるとコーパスが無効化されます。** 契約はモデル
-  同一性を運ばないため、CPersona はバックエンドを埋め込みの*次元*だけで識別します。
-  同じ次元の別モデルへの差し替えは検出できません。
+- **同じ URL の裏でモデルを差し替えるとコーパスが無効化されます。** `/embed` の
+  契約はモデル同一性を運びません。`GET /capabilities` にも答えるバックエンド
+  (CEmbedding 0.9.0 以降) は指紋で自分を名乗り、2.6.3 からは保存するベクトルに
+  その指紋のラベルが付くので、別のモデルが書いたベクトルを `check_health` が
+  数えます (`embedding_model_mismatch`)。その報告が無いバックエンド (古い版や別の
+  実装) では、CPersona が差し替えに気づけるのは埋め込みの*次元*が変わったときだけで、
+  同じ次元の別モデルへの差し替えは検出できません。2.6.3 より前に保存したベクトルには
+  ラベルが無く、数えられません。
 
-  修復ツールもここには届きません。`check_health(fix=true)` が再埋め込みするのは
+  気づけても修復はされません。`check_health(fix=true)` が再埋め込みするのは
   blob が NULL の行で、次元チェックは*長さ*の違う blob だけを NULL 化します。
   同一次元での差し替え後は全 blob が期待どおりの大きさなので、何も NULL 化されず、
   何も再埋め込みされません。既に blob を持つ行を強制的に再埋め込みするツールは
-  ありません。
+  ありません。コーパスを再構築するまでの間は、`CPERSONA_EMBEDDING_MODEL_MODE=reject`
+  で古いベクトルを問いと比べないようにできます。そのとき該当する行はキーワードでだけ
+  見つかります。
 
   復旧手段はコーパスの再構築です。`delete_agent_data` の後、
   [再構築パターン](operations.md#corpus-indexing-and-sync-patterns) のとおりに再
