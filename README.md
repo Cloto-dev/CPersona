@@ -85,6 +85,10 @@ Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/C
 
 **3. Register it with your MCP client**
 
+For Codex CLI, Cursor, VS Code, or Claude Desktop, follow the
+[client registration table](https://cloto-dev.github.io/CPersona/getting-started/#3-register-cpersona-with-your-mcp-client).
+The command below is for Claude Code.
+
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
