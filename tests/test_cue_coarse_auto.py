@@ -303,6 +303,8 @@ async def test_a_recall_carries_the_suggestion_once_and_reconstruct_forwards_it(
     assert "suggestion" not in again
     rebuilt = await R.do_reconstruct(AGENT, QUERY, session_key="sess-b")
     assert rebuilt["suggestion"]["records"] == TOTAL
+    merged = await M.do_recall_with_context(AGENT, QUERY, external_context=[], session_key="sess-e")
+    assert merged["suggestion"]["records"] == TOTAL
 
 
 @pytest.mark.asyncio

@@ -3298,6 +3298,36 @@ MUTATIONS += [
         breaks='a reconstruct caller never hears the suggestion its recall consumed',
         expect='test_cue_coarse_auto.py::test_a_recall_carries_the_suggestion_once_and_reconstruct_forwards_it',
     ),
+    Mutation(
+        id='M315',
+        tests=('tests/test_cue_coarse_auto.py',),
+        target='coarse suggestion — recall_with_context forwards it',
+        file='cpersona/memory_handlers.py',
+        find='    suggestion = recall_result.get("suggestion")\n',
+        replace='    suggestion = None\n',
+        breaks='a recall_with_context caller never hears the suggestion its recall consumed',
+        expect='test_cue_coarse_auto.py::test_a_recall_carries_the_suggestion_once_and_reconstruct_forwards_it',
+    ),
+    Mutation(
+        id='M316',
+        tests=('tests/test_cue_coarse_auto.py',),
+        target='cue mode — unset or empty is auto',
+        file='cpersona/config.py',
+        find='    if value in ("", "auto"):\n',
+        replace='    if value == "auto":\n',
+        breaks='an unset setting turns the remainder off instead of the default mode',
+        expect='test_cue_coarse_auto.py::test_the_setting_names_three_modes_and_unset_is_auto',
+    ),
+    Mutation(
+        id='M317',
+        tests=('tests/test_cue_coarse_auto.py',),
+        target='cue mode — only "true" is on',
+        file='cpersona/config.py',
+        find='    return "on" if value == "true" else "off"\n',
+        replace='    return "on" if value in ("true", "1", "yes", "on") else "off"\n',
+        breaks='values that meant off before 2.6.4 start reading the live store',
+        expect='test_cue_coarse_auto.py::test_the_setting_names_three_modes_and_unset_is_auto',
+    ),
 ]
 
 
