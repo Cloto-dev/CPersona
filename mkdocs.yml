@@ -274,6 +274,7 @@ nav:
           - Reach, recency and the far vote: REACH_AND_RECENCY_PLAN.md
           - One prior function: PRIOR_FUNCTION_DESIGN.md
           - The recall process, v0: RECALL_PROCESS_DESIGN.md
+          - Evidence allocation: EVIDENCE_ALLOCATION_DESIGN.md
           - Adaptive fusion: ADAPTIVE_FUSION_DESIGN.md
           - Overflow tree: OVERFLOW_TREE_DESIGN.md
           - Block reach: BLOCK_REACH_DESIGN.md
