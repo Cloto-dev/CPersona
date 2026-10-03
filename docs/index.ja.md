@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:4253b1ed770235c28206f94fd6b7a773bb92a7d4 -->
+<!-- i18n-source: docs/index.md@blob:22984b189579c327ad01e1426f12532d1a262d43 -->
 
 # CPersona ドキュメント
 
@@ -167,6 +167,9 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
   各行の横に別の値として返すこと。
 - [想起のプロセス v0](RECALL_PROCESS_DESIGN.md) — 失敗をどの段で起きたかに帰属できる想起の記録と、
   指定した時期に見つかった行を、ゲートに触れずに上限付きの段数だけ上げる時期の手がかり。
+- [証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md) — 窓の全レコードの引用候補を 1 つの順序に並べ、
+  証拠の順に作った列を予算で切ること。予算を小さくした時に、各 item の決まった分ではなく
+  答えている発話が残るようにします。
 - [適応的融合](ADAPTIVE_FUSION_DESIGN.md) — 各検索器にプールの取り分を確保すること、
   プールサイズ gate から順位カットを外すこと、そして「いま計測済みの lexical 重み」と
   「後の条件付き証拠の融合モード」のどちらを採るかを決める事前登録済みの比較。
