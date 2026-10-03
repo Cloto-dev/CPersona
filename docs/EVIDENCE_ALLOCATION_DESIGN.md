@@ -1,9 +1,10 @@
 # Evidence Allocation — design
 
 Status: design, for 2.6.5. Nothing here is implemented yet. The first
-pre-release (2.6.5a1) adds the cross-record ranking of section 3 alone; the
-second (2.6.5a2) replaces the payload sequence of section 4. Both are measured
-against a rule registered before any answer call (section 6). `SCHEMA_VERSION`
+pre-release (2.6.5a1) cuts a payload sequence ordered across records (sections
+3 and 4); the second (2.6.5a2) adds the coverage step of section 5, so the
+difference between the two is the coverage step alone. Both are measured
+against a rule registered before any answer call (section 7). `SCHEMA_VERSION`
 does not change: everything below reads the blocks and int8 block vectors a
 store already has.
 
@@ -65,15 +66,37 @@ Ties are broken by the record's rank, then by the passage's position in its
 text, so the order is total and deterministic. No score is reported; the trace
 records each passage's three ranks.
 
-2.6.5a1 uses this order inside the current sequence only: an item's head is its
-record's first passage in the cross-record order, filled to the item's quote
-size as today. This isolates the ranking from the allocation, so each can be
-measured alone.
+Inside one record, this order differs from `rank_blocks` only by the extra
+weight it gives the vector: the record's rank is the same for all of its
+passages. Its use is across records, so it is measured as the payload sequence
+of section 4, not inside today's sequence.
 
-## 4. A sequence by evidence (2.6.5a2)
+## 4. The payload sequence (2.6.5a1)
 
-The payload sequence becomes the candidate passages in the order a greedy pass
-builds, independent of the budget:
+The payload sequence becomes the candidate passages in the order of section 3,
+independent of the budget. The budget then cuts this sequence exactly as it
+cuts today's: the response is the longest prefix that fits. Invariant 9 keeps
+its form — the budget only
+chooses the prefix, so raising it never removes a passage — but its first
+clause changes: **the sequence no longer puts every head before any excerpt**.
+A passage of the first record may now come before the only passage of the
+tenth, so a small budget can return fewer items with more of each. Section 1 is
+why: at the same cost, keeping every item thin lost more than keeping fewer
+items whole.
+
+What a response looks like does not change. Items are still one per record,
+in recall order; an item's `content` is the passages of its head record that
+the prefix took, shown in text order and joined as a head quote is today
+(`ranges` names them), and `excerpts` keep quoting the item's other claims; a
+record with no passage inside the budget returns no item, and the omission is
+reported as today. `count` keeps
+its meaning, a ceiling on items. The trace records the sequence, and for each
+passage its ranks (and, from 2.6.5a2, the parts it covered).
+
+## 5. Coverage (2.6.5a2)
+
+The sequence of section 4 is rebuilt by a greedy pass, still independent of the
+budget:
 
 1. Start from the order of section 3.
 2. Take the first passage. Mark the parts of the question it covers — the
@@ -83,29 +106,16 @@ builds, independent of the budget:
    covering only parts already covered moves down, by fixed steps. Take the
    first. Repeat until every candidate is placed.
 
-The budget then cuts this sequence exactly as it cuts today's: the response is
-the longest prefix that fits. Invariant 9 keeps its form — the budget only
-chooses the prefix, so raising it never removes a passage — but its first
-clause changes: **the sequence no longer puts every head before any excerpt**.
-A passage of the first record may now come before the only passage of the
-tenth, so a small budget can return fewer items with more of each. Section 1 is
-why: at the same cost, keeping every item thin lost more than keeping fewer
-items whole.
+This is where a multi-session question's second session rises: its passage
+covers a part the first session's did not.
 
-What a response looks like does not change. Items are still one per record,
-in recall order; an item's `content` is its record's earliest passage in the
-sequence and its `excerpts` the later ones; a record with no passage inside the
-budget returns no item, and the omission is reported as today. `count` keeps
-its meaning, a ceiling on items. The trace records the sequence, and for each
-passage its ranks and the parts it covered.
-
-## 5. What does not change
+## 6. What does not change
 
 No model is called; content is a quotation of stored text; the result is
 deterministic; every passage carries its record's reference. The schema, the
 recall that produces the window and the meaning of `count` are unchanged.
 
-## 6. How it is judged
+## 7. How it is judged
 
 - **Primary**: at a budget whose Context Tokens are at most 1,000, the 95%
   bootstrap interval of the paired accuracy difference against four items
@@ -122,11 +132,11 @@ recall that produces the window and the meaning of `count` are unchanged.
   controls (four items, six items, every item, and the two quote-curve points)
   reuse their recorded answers.
 
-## 7. Deferred
+## 8. Deferred
 
 - Splitting the question into clauses for coverage: coverage starts with the
   ledger's lexical parts, and a finer split is considered only after the
-  coverage step of section 4 has been measured.
+  coverage step of section 5 has been measured.
 - A budget that adapts to the question (section 7 of the recall design defers
   adaptation until a fixed policy has a reproducible baseline and an audit
   contract; this design is that fixed policy).
