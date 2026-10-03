@@ -1,0 +1,39 @@
+diff --git a/scripts/client_factory/registry.py b/scripts/client_factory/registry.py
+index c8b9f16..c7aaf50 100644
+--- a/scripts/client_factory/registry.py
++++ b/scripts/client_factory/registry.py
+@@ -32,6 +32,9 @@ _LIB_CLIENT_REGISTRY = {
+     "memorylake":  ("memorylake_client",  "MemoryLakeClient"),
+     "backboard":   ("backboard_client",   "BackboardClient"),
+     "mem9":        ("mem9_client",        "Mem9Client"),
++    # Two names, one client: each points at its own CPersona server through its env file.
++    "cpersona":    ("cpersona_client",    "CpersonaClient"),
++    "cpersona263": ("cpersona_client",    "CpersonaClient"),
+ }
+ 
+ SUPPORTED_LIBS = list(_LIB_CLIENT_REGISTRY.keys())
+diff --git a/scripts/utils/ingest_helpers.py b/scripts/utils/ingest_helpers.py
+index 7d5365b..3cedf44 100644
+--- a/scripts/utils/ingest_helpers.py
++++ b/scripts/utils/ingest_helpers.py
+@@ -63,6 +63,7 @@ _CHAT_TIME_LIBS = frozenset({
+ _CONV_ID_LIBS = frozenset({"memos", "everos"})
+ _SESSION_KEY_LIBS = frozenset({
+     "cognee", "backboard", "memorylake", "letta", "hindsight", "graphiti",
++    "cpersona", "cpersona263",
+ })
+ 
+ 
+diff --git a/scripts/utils/search_helpers.py b/scripts/utils/search_helpers.py
+index c869340..af3d0cd 100644
+--- a/scripts/utils/search_helpers.py
++++ b/scripts/utils/search_helpers.py
+@@ -182,6 +182,8 @@ def hindsight_search(client: Any, query: str, user_id: str, top_k: int, *,
+ 
+ DEFAULT_SEARCH_DISPATCH = {
+     "zep": generic_text_search,
++    "cpersona": generic_text_search,
++    "cpersona263": generic_text_search,
+     "mem0": generic_text_search,
+     "memos": generic_text_search,
+     "everos": generic_text_search,
