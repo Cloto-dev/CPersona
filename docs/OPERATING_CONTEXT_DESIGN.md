@@ -126,8 +126,15 @@ it through the vendored `ToolRegistry.__init__`, which is currently
 `Server(server_name)` with no instructions
 (`_vendored_mcp_common/mcp_utils.py:73`).
 
-Composition rule: `instructions = [instructions.summary]` verbatim, with no
-prefix. **The summary is the compact canonical; details are opt-in** via
+Composition rule: CPersona's own guidance first, then `instructions.summary`
+verbatim. The guidance (`server.SERVER_INSTRUCTIONS`, about 500 characters) says
+when to use CPersona's tools: a client that defers tool definitions, as Claude
+Code's tool search does, shows an agent only the tool names and these
+instructions at session start. Claude Code cuts the instructions at 2,048
+characters, so the guidance comes first and a summary within the 1,500
+characters below still fits. With no summary the instructions are the guidance
+alone (before 2.6.5a3 they were empty). **The summary is the compact canonical;
+details are opt-in** via
 `get_operating_context` (preview-tier structure, under the same token
 fixed-cost discipline as CSC `get_active_context` and the recall preview
 tiers).

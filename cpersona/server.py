@@ -601,7 +601,32 @@ _AUTO_PROJECT_ID_CLAUSE = (
 # The Hard layer is NOT frozen with it: operating_context.get_context() re-parses
 # the sidecar whenever its mtime changes, so project_id validation, '@auto'
 # resolution and get_operating_context are live within the same process.
-registry = ToolRegistry("cloto-mcp-cpersona", instructions=operating_context.instructions_text())
+#
+# CPersona's own guidance comes first. A client that defers tool definitions
+# (Claude Code's tool search) shows an agent only the tool names and these
+# instructions at session start, so they say when to look for CPersona's tools;
+# Claude Code cuts them at 2,048 characters, so the operator's summary follows.
+SERVER_INSTRUCTIONS = (
+    "CPersona is this agent's long-term memory: decisions, rules, preferences and "
+    "findings from earlier sessions, stored as records that can be quoted. Use "
+    "reconstruct when a session starts and whenever a question depends on something "
+    "from before this conversation; use store when something should outlive this "
+    "conversation, and archive_episode when the session ends. get_contents reads a "
+    "quoted record further. The maintenance tools (check_health, list_memories, "
+    "list_episodes) are for when the user asks about the store itself."
+)
+
+
+def server_instructions(operator_summary: str | None) -> str:
+    """The `initialize` instructions: CPersona's guidance, then the operator's summary."""
+    if not operator_summary:
+        return SERVER_INSTRUCTIONS
+    return f"{SERVER_INSTRUCTIONS}\n\n{operator_summary}"
+
+
+registry = ToolRegistry(
+    "cloto-mcp-cpersona", instructions=server_instructions(operating_context.instructions_text())
+)
 
 
 # One description, referenced by every schema that takes the key. The parameter is
@@ -736,7 +761,8 @@ async def do_persistence_status(session_key: str = "") -> dict:
 
 registry.auto_tool(
     "pause_persistence",
-    "Pause write operations on this MCP server for an opt-in TTL window. While "
+    "Pause write operations on this MCP server for an opt-in TTL window (default 1800 "
+    "seconds, at most 86400). While "
     # C26 (c): the list was four tools short and omitted the fix-downgrade.
     # bug-166: it also promised a uniform no-op body that only two tools return.
     # `persisted: false` is the one field every skipped write carries, so it is
@@ -746,33 +772,23 @@ registry.auto_tool(
     "delete_memory, delete_episode, delete_agent_data, lock_memory, unlock_memory, update_profile, "
     "import_memories, merge_memories, calibrate_threshold, set_recall_precision — "
     "returns a no-op response carrying `persisted: false`, `dry_run: true` and a "
-    "`reason` (with the TTL remaining) instead of writing to the database. "
-    "`persisted: false` is the authoritative signal: branch on it, not on an id. "
-    'Where the success shape has an `id`, it reads `"no-persist"` (store, '
-    "archive_episode); action-specific id keys (deleted_id / updated_id / "
-    "locked_id / unlocked_id / episode_id) are blanked to null so a truthy echo "
-    "cannot read as success. migrate_channel_axis is gated differently — it is "
-    "forced to dry_run and reports repairs_skipped rather than returning a "
-    "skipped-response, so it carries no `persisted` key. check_health and "
-    "deep_check are not blocked but downgrade to fix=false (they answer with "
-    "repairs_skipped: true). Read tools (recall, list_*, get_profile, etc.) still "
-    "answer normally, except that recall suppresses its recall_count / "
-    "last_recalled_at bump — a write that would otherwise move ranking state during "
-    "a paused session. **Blast radius follows session_key (response `scope`). Pass the "
-    'same session_key here and on your write calls and the pause covers that key alone '
-    '(`scope: "session"`): a session that sends a different key is neither silenced by '
-    "it nor able to clear it. The key is a partition hint, not a credential — it is "
-    "compared, never verified — so anyone who sends the same string shares the pause. "
-    "Omit "
+    "`reason` (with the TTL remaining) instead of writing. Branch on `persisted: false`, "
+    'not on an id: an `id` reads `"no-persist"` (store, archive_episode), and the '
+    "action-specific id keys (deleted_id / updated_id / locked_id / unlocked_id / "
+    "episode_id) are null. migrate_channel_axis is instead forced to dry_run and reports "
+    "repairs_skipped, with no `persisted` key; check_health and deep_check downgrade to "
+    "fix=false (repairs_skipped: true). Read tools answer normally, but recall does not "
+    "bump recall_count / last_recalled_at. "
+    "**Blast radius follows session_key (response `scope`). Pass the same session_key "
+    'here and on your write calls and the pause covers that key alone (`scope: "session"`): '
+    "a session that sends a different key is neither silenced by it nor able to clear it. "
+    "The key is a partition hint, not a credential, so anyone who sends the same string "
+    "shares the pause. Omit "
     'it and you arm the bucket every keyless caller shares (`scope: "process"`) — on a '
-    "streamable-HTTP deployment a single process serves every connected client, so a "
-    "keyless pause silences writes for every other keyless session until resume or TTL "
-    "elapse, and those sessions get no signal. Under stdio (one process per client) "
-    "that bucket is the session.** This affects only this MCP server "
-    "(cpersona); call cscheduler's pause_persistence too if you want both paused. "
-    "Use for benchmarking, AB testing, or ephemeral exploration where memory "
-    "contamination must be avoided. Default TTL: 1800 seconds (30 minutes); upper "
-    "bound: 86400 seconds (1 day).",
+    "streamable-HTTP deployment one process serves every client, so a keyless pause "
+    "silences writes for every other keyless session until resume or TTL elapse, and "
+    "those sessions get no signal. Under stdio (one process per client) that bucket is "
+    "the session.** This affects only cpersona; pause cscheduler separately.",
     {
         "type": "object",
         "properties": {
@@ -1167,34 +1183,34 @@ registry.auto_tool(
 
 registry.auto_tool(
     "recall",
-    "Recall relevant memories using multi-strategy search (vector + FTS5 + keyword). "
-    "To answer a question from memory, prefer `reconstruct`, the recommended way to read it: "
-    "it returns items that quote the rows supporting them, within a character budget. "
-    "Message content is returned as a preview tier by default — expand selected rows "
-    "with get_contents(refs), or opt out wholesale with full_content=true. "
-    "full_content is itself budgeted (200k chars per response, bug-211): rows "
-    "past the budget degrade to the preview tier and the response carries "
-    "full_content_budget_chars (absent when the budget never bites). "
-    "2.6 additive: a message whose content the preview cut also carries excerpt — the part of "
-    "the record that matched the query, at most 800 characters (CPERSONA_RECALL_EXCERPT_CHARS), "
-    "separate passages joined by ' … ' in text order — and excerpt_basis (blocks: the record's "
-    "block set; lexical: divided at read time, ranked by shared words; start: the record is one "
-    "block, so its start). Read the excerpt before deciding to expand a row; content stays the "
-    "record's start. Absent under full_content and on rows shown whole. "
-    "v2.5.2 additive: each scored message carries match_reason={signal, score, ...} where "
-    "signal is the branch the quality gate keyed on (rsf > cosine > rrf; confidence only under "
-    "CPERSONA_CONFIDENCE_ORDERING=legacy — from 2.6.0a7 an enabled confidence score is returned "
-    "beside each row but neither orders nor gates) and the remaining keys (cosine / rrf / rsf) "
-    "surface the internal per-retriever contributions present on that row; prior, when present, "
-    "is the age weight that ordered the row (CPERSONA_PRIOR_AGE_RATE). Unscored rows (cascade "
-    "FTS/keyword) omit match_reason. "
-    "A response carrying gate_fallback=true (absent otherwise) means every candidate fell below "
-    "the quality gate and the below-gate lexical matches were returned instead of an empty "
-    "result — treat them as low-confidence. "
-    "A response may carry suggestion (absent otherwise, at most once per session): something the "
-    "server noticed that only the user can decide — that this scope has grown past the scan "
-    "window with no coarse index for a time cue to search the rest. Relay its message, and run "
-    "its fix only if the user agrees.",
+    # Cut to Claude Code's 2,048-character description limit with the reading rules
+    # first; the preview tier and excerpts are specified in
+    # docs/RECALL_PREVIEW_TIER_DESIGN.md.
+    "Recall memories by multi-strategy search (vector + FTS5 + keyword). To answer a "
+    "question from memory, prefer `reconstruct`: it returns items that quote the rows "
+    "supporting them, within a character budget. "
+    "Rows come in ascending order of relevance: the LAST row is the best match "
+    "(docs/behavior-contracts.md section 1). "
+    "`gate_fallback: true` (absent otherwise) means every candidate fell below the "
+    "quality gate and the below-gate lexical matches were returned instead of an empty "
+    "result: treat them as low-confidence. "
+    "`suggestion` (absent otherwise, at most once per session) is something only the "
+    "user can decide: that this scope has outgrown the scan window with no coarse index "
+    "for a time cue to search the rest. Relay its message, and run its fix only if the "
+    "user agrees. "
+    "Content is a preview of the record's start by default. A row the preview cut also "
+    "carries `excerpt`, the part of the record that matched the query (at most 800 "
+    "characters, CPERSONA_RECALL_EXCERPT_CHARS; passages joined by ' … ' in text "
+    "order), and `excerpt_basis` (blocks / lexical / start). Read the excerpt before "
+    "expanding a row with get_contents(refs). `full_content=true` returns whole rows, "
+    "capped at 200,000 characters per response: rows past it fall back to the preview "
+    "and the response carries `full_content_budget_chars`. "
+    "Each scored row carries `match_reason` {signal, score, ...}: `signal` is the branch "
+    "the quality gate keyed on (rsf > cosine > rrf), the other keys are the "
+    "per-retriever contributions, and `prior` is the age weight when one ordered the "
+    "row. An enabled confidence score is returned beside each row but neither orders "
+    "nor gates it (unless CPERSONA_CONFIDENCE_ORDERING=legacy). Unscored rows (cascade "
+    "FTS/keyword) have no match_reason.",
     {
         "type": "object",
         "properties": {
@@ -1565,123 +1581,37 @@ registry.auto_tool(
 
 registry.auto_tool(
     "reconstruct",
-    "The recommended way to answer a question from memory (10 items unless `count` says "
-    "otherwise). "
-    "Assemble recall ITEMS from the candidate rows a recall produces: units of memory, "
-    "each traceable to the canonical rows that support it. Reconstruction means select, "
-    "order and assign roles -- never compose. No model is called and nothing is "
-    "summarised: `content` quotes the item's head claim verbatim -- the parts of its record "
-    "that matched, filled up to a fixed size -- and expands through `head_ref` via get_contents. "
-    "HEAD CLAIM: the most relevant row in the item; if newer versions of that record (same "
-    "message id in the same stored project) are present, their latest version. When "
-    "max_evidence cuts an item, the head is kept and the most relevant remaining rows fill "
-    "the rest. "
-    "Stored rows are never modified. "
-    "COUNT IS A CEILING, NOT A FILL TARGET AND NOT A SEARCH DEPTH: "
-    "base = forced ?? requested ?? server default, effective = min(base, maximum), and "
-    "0 <= returned <= effective. Every response states effective_count and returned_count. "
-    "ONE EXCEPTION, WITH THE BLOCK ARM ON: records only that arm reached are held beside the "
-    "window, as in recall -- up to the block reservation, after the window's items, each marked "
-    "admission='reservation' and counted in reserved_count (a held item the budget left out is "
-    "counted in reserved_omitted). They never take or displace a place in the window, so "
-    "returned_count may exceed effective_count by reserved_count. "
-    "A RESPONSE SAYS MORE ONLY WHEN THE SERVER DID SOMETHING OTHER THAN WHAT WAS ASKED: "
-    "requested_count + count_policy {source, clamped, reason} when the count was clamped or "
-    "operator-forced; requested_budget + budget_policy when the budget was clamped, raised or "
-    "forced; effective_budget + used_budget when the budget withheld an item or an excerpt; "
-    "`bounds` when a bound dropped rows, was reached, or was lowered by the library ceiling; "
-    "reconstruction.excluded_without_provenance when rows were excluded. A response without "
-    "them was served as asked. `trace=true` returns the full audit every time. "
-    "Fewer items than the window is a NORMAL "
-    "result and carries `shortfall_reason` (no_relevant_evidence / "
-    "below_quality_threshold / exhausted_candidates); a shortfall is never padded with "
-    "duplicates, fragments, or a cluster split in two. "
-    "BREADTH IS SEPARATE FROM COUNT: `top_k` (candidate depth), `max_hops` (relation "
-    "hops) and `max_evidence` are declared independently and none is derived from "
-    "`count` -- changing `count` alone does not move the candidate id set. "
-    "WHAT THE RESPONSE ADMITS: `bounds.omitted` names a bound that DROPPED rows the tool held "
-    "(`max_evidence` -- each cut item also counts them in `claims_omitted` -- or `max_hops`: a "
-    "declared relation was left unfollowed); "
-    "`bounds.reached` names a bound that was only MET (`top_k`: retrieval returned as many rows "
-    "as it was allowed; `max_evidence`: an entity the walk reached is mentioned by more records "
-    "than were read -- whether more lay beyond is not known). Both are absent when empty. "
-    "`quote_selection: lexical_only` appears when no query embedding was available and nodes "
-    "were ranked by shared trigrams alone; an item whose cut quote is merely the start of its "
-    "record carries `node_unavailable` (`no_nodes`, or `not_current` when nodes exist but are "
-    "partial or another model's). ABSENCE IS NOT A VERDICT: a response without these fields "
-    "does not say its items suffice to answer, that the whole store was searched, or that the "
-    "rows were checked for contradiction -- `conflicts` detects one narrow case only. "
-    "BREADTH BEFORE DEPTH: `budget` bounds the characters of quoted text -- each item's "
-    "`content` and its `excerpts` -- where `count` bounds how many items. The quoted text is "
-    "one fixed sequence: every head in item order, then each item's most relevant remaining "
-    "excerpt, then the next, and the response is its longest prefix that fits. An excerpt the "
-    "budget cannot carry is omitted (counted in `excerpts_omitted`, absent when zero; its "
-    "claim and ref stay); "
-    "an item is dropped only when its head does not fit, with shortfall_reason "
-    "budget_exhausted. Raising the budget alone never removes an item or an excerpt. When "
-    "`budget` is omitted the default is the configured default or the window's quote sizes "
-    "summed, whichever is more, so a count you name is not cut by a budget you did not set; a "
-    "budget you do name is taken as given. "
-    "QUOTES: `content` quotes the head claim and each `excerpts[]` entry quotes another "
-    "retained claim, most relevant first; all are verbatim. The head quote is the record's "
-    "passages that matched the query, taken in ranking order while they fit the item's quote "
-    "size -- CPERSONA_RECONSTRUCT_QUOTE_CHARS (800) for the first CPERSONA_RECONSTRUCT_FULL_QUOTES "
-    "(5) items, CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS (400) after them -- and shown in text order, "
-    "passages with text between them joined by ' … ' -- the recall excerpt's filling; `ranges` "
-    "gives their character spans in the record, and `content_len` appears when the record is "
-    "longer than its quote (trace=true adds `quote_basis` and `content_truncated`). A best "
-    "passage longer than the size is cut and carries `context_incomplete` and "
-    "`expand` ({ref, span}) for get_contents. Excerpts of the other claims -- and the head "
-    "when CPERSONA_RECONSTRUCT_QUOTE_CHARS=0 -- are quoted as before 2.6 and cut as the preview "
-    "tier cuts: a long record with overflow-tree nodes is quoted from the node that best matches the "
-    "query (rank by embedding similarity and by shared character trigrams, fused), and "
-    "`node` gives its index, node count and character span in the stored text; a record "
-    "without nodes is quoted from its start. READ FURTHER IN STEPS, SMALLEST FIRST: a node "
-    "quote is the start of a node several times its length, and an item whose quote was cut "
-    "carries `expand` -- pass it to get_contents as it is to read the rest of that node. If "
-    "that is not enough, read its neighbours with {ref, node: [index - 1, index + 1]}. Pass "
-    "the bare ref, the whole record, only when the parts did not answer: a record can be "
-    "tens of times a node. Nodes are read after items are chosen, so "
-    "they never change which items come back or their order. No relevance score is returned. "
-    "ITEM SHAPE (the same for every item): `claims` carries one entry per retained row, "
-    "newest first, each with `ref`, `as_of`, `why` (the key that admitted the row; "
-    "`relation:<predicate>` when a declared relation did; absent when the search returned the "
-    "row itself, `seed`), `hops` when the relation walk reached "
-    "the row, and `roles` when it has any -- sort by `as_of` for a chronological view. `excerpts` and "
-    "`excerpts_omitted` are absent when empty. `trace=true` adds `reconstruction` (policy, "
-    "candidate / cluster / selected counts), candidate refs, clusters and, for each "
-    "record quoted by node, `node_order` -- its best few node indices, best first, as places to "
-    "read next (an order, not a confidence). "
-    "Gate fallback remains visible even when count is filled; zero count states count_zero. "
-    "Retrieval degradation and update notices are delivered unchanged. If the library "
-    "ceiling clamps top_k, bounds.effective_top_k reports the applied bound, including when "
-    "the candidate pool is empty. "
-    "`independence_reason` says why this is a separate item (absent when nothing joined it to "
-    "another: `singleton`); `conflicts` "
+    # Claude Code shows a tool description only up to 2,048 characters, so this keeps
+    # what a caller acts on, most important first, and the contract lives in
+    # docs/RELIABLE_RECALL_2_6.md section 7. The text this replaced ran to 9,189
+    # characters, and nothing after its first 2,048 reached an agent.
+    "The recommended way to answer a question from memory. Returns up to `count` "
+    "ITEMS (10 by default): units of memory, each quoting verbatim its most relevant "
+    "record. `content` is the parts of that record that matched the query; pass "
+    "`head_ref`, or an item's `expand` as it is, to get_contents to read more. No model "
+    "is called and nothing is summarised; stored rows are never modified. "
+    "COUNT IS A CEILING, not a fill target or a search depth: fewer items is a normal "
+    "result and carries `shortfall_reason`, and nothing is padded. With the block arm "
+    "on, up to `reserved_count` held items may follow the window. Breadth is set apart "
+    "from count: raise `top_k` when items are missing evidence; `max_hops` and "
+    "`max_evidence` bound the declared-relation walk and the rows kept per item. "
+    "BUDGET bounds the characters of quoted text (`content` plus `excerpts`), where "
+    "count bounds items: excerpts are omitted before items, and raising the budget "
+    "never removes an item or an excerpt. Omit it for the server default. "
+    "READ FURTHER IN STEPS, smallest first: an item's `expand`, then the neighbouring "
+    "nodes ({ref, node: [index - 1, index + 1]}), and the bare ref, the whole record, "
+    "only when the parts did not answer. "
+    "ITEM: `claims` lists the retained rows newest first (`ref`, `as_of`, `why`, `hops`, "
+    "`roles`); `excerpts` quote the other claims. `roles[].role` names what the "
+    "REFERENCED row is to this claim (supports / supersedes / corrects / qualifies / "
+    "contradicts / temporal_predecessor); ignore a role you do not know. `conflicts` "
     "appears only when two rows cannot be ordered. "
-    "ROLE DIRECTION: `roles[].role` names what the REFERENCED row is to this claim (the "
-    "ref is the subject, the claim is the object): the referenced episode SUPPORTS this "
-    "claim, the referenced newer row SUPERSEDES it. The vocabulary is fixed at supports / supersedes "
-    "/ corrects / qualifies / contradicts / temporal_predecessor. The server derives `supersedes` "
-    "(same message id, time order) and `supports` (episode span containment); any role word can "
-    "also be DECLARED as a record -> record relation (declare_associations), whose subject is the "
-    "ref. Ignore a role you do not know. "
-    "BUNDLING KEYS are deterministic and never semantic: same message id within the "
-    "same stored project (unknown project context cannot establish identity), containment in "
-    "a candidate episode's time span, and adjacent timestamps FROM THE SAME SOURCE "
-    "within the same project and channel, with the entire burst bounded by the time window "
-    "(source alone is not a key -- in a single-agent store it is constant and would fold "
-    "the whole pool into one item), and a declared record -> record relation between two "
-    "candidates. Sharing a declared entity does not bundle. "
-    "DECLARED ASSOCIATIONS (declare_associations, or `associations` on store) are read here and "
-    "nowhere else, and change nothing when none apply: the names and aliases of entities the "
-    "query mentions are added to the LEXICAL search only (the query's meaning, and so the vector "
-    "search, is unchanged; the extra match is a vote, not a pass through the quality gate); and "
-    "from each item's candidates the relation walk follows declared entity -> entity relations, "
-    "either direction, up to `max_hops`, adding records that mention an entity it reached as "
-    "evidence inside that item -- never as an item, never twice in one response, kept fewest hops "
-    "first, then most recently declared relation, then lowest record id. "
-    "This tool is additive: the `recall` contract is untouched.",
+    "A response adds fields only when the server did something other than asked "
+    "(count_policy, budget_policy, `bounds`, gate_fallback); their absence does not "
+    "say the items suffice or that the whole store was searched. `trace=true` returns "
+    "the full audit. Declared associations widen the lexical search and add walked "
+    "evidence inside items, never items. Full contract: docs/RELIABLE_RECALL_2_6.md "
+    "section 7.",
     {
         "type": "object",
         "properties": {
@@ -2321,53 +2251,42 @@ registry.auto_tool(
     "check_health",
     # C26 doc-drift class: the count is rendered from the registry, not typed
     # in prose (it said 20 while the registry held 23).
-    f"Check memory database health ({len(HEALTH_CHECK_NAMES)}-check registry, each issue tagged with "
-    "severity critical/warn/info). Detects contamination, duplicates, oversized "
-    "content, embedding issues, FTS integrity (count + content-level), schema "
-    "version/object drift (missing UNIQUE indexes or FTS triggers), SQLite file "
-    "integrity, project_id naming drift, invalid JSON/timestamps, timestamp "
-    "format drift, stale tasks, missing profiles, empty content, "
-    "invalid/anonymous sources. Returns storage stats incl. project_id/channel "
-    "distributions. Set fix=true to auto-repair (agent-scoped, locked-safe); "
-    # bug-310: one repair is not agent-scoped, and saying so is the difference
-    # between a caller that knows what it authorised and one that does not.
-    "the one exception is dedup_msg_id_index, whose repair blanks colliding "
-    "msg_id values under every agent because the UNIQUE index it restores is a "
-    "global schema object — with an ACL configured that repair demands "
-    "read-write on '*', so exclude it via `checks` to stay agent-scoped. "
-    "critical file-integrity findings are report-only. Two repairs are lossy and "
-    "irreversible, each against its own cap: oversized memories are cut to "
-    "CPERSONA_MAX_CONTENT_LENGTH (default 16000 since 2.5.4a2) and the agent's "
-    "profile row to CPERSONA_MAX_PROFILE_LENGTH (default 2000), keeping the "
-    "start. Lower either cap and a fix run shortens rows that were within the "
-    "old one. Some repairs are bounded per run (source canonicalisation "
-    # bug-364/362: the bound was typed here while the enforced cap lives in the
-    # configuration, so the two drifted by an order of magnitude. Render it.
-    f"classifies at most {checks_module.INVALID_SOURCE_CLASSIFY_CAP} rows); "
-    "a fix response carrying `remaining` > 0 "
-    "with a re-run hint has NOT converged — run fix again until `remaining` "
-    "stops decreasing. "
-    "Use checks parameter to "
-    # bug-230: an unrecognised name used to select nothing and answer 'healthy'.
-    "run a subset — an unknown name is rejected (ok=false) rather than silently "
-    "running nothing, and every response echoes `checks_run`. "
+    f"Check memory database health ({len(HEALTH_CHECK_NAMES)}-check registry, each issue "
+    "tagged critical/warn/info): contamination, duplicates, oversized content, embeddings, "
+    "FTS and schema integrity, SQLite file integrity, naming, JSON and timestamp drift, "
+    "stale tasks, profiles and sources. Returns storage stats with project_id/channel "
+    "distributions. "
     # b1-3 (2.5.2b1, CONTRACT BREAK): one verdict, not two.
-    "The verdict is `status`: healthy / degraded / unhealthy, "
-    "derived from severity counts (info never degrades). The pre-2.5.2b1 "
-    "`healthy` boolean (len(issues) == 0) is gone — it reported False for an "
-    "info-only database that `status` called healthy; read `issues` / "
-    "`severity_summary` for the underlying counts. "
+    "The verdict is `status` (healthy / degraded / unhealthy, from severity counts; info "
+    "never degrades). "
     # bug-428: 'healthy' is read as "the installation works", which is more than
     # this verdict can say. A database whose every row is missing its embedding
     # because the backend was never reachable is healthy by this definition, and
     # was reported that way to someone whose import had silently embedded nothing.
-    "Read `status` as a verdict on what is IN the database, not on whether the "
-    "pipeline that fills it is working: a corpus where every embedding is NULL is "
-    "internally consistent, so it scores healthy while semantic recall is dead. "
-    "Nothing here contacts the embedding backend unless fix=true — on a "
-    "report-only run the liveness findings cannot appear at all, and their absence "
-    "is not evidence the backend answered. The `null_embedding` finding carries "
-    "the reason its repair cannot run; read that before reading `status`.",
+    "Read it as a verdict on what is IN the database, not on whether the "
+    "pipeline that fills it is working: a corpus whose every embedding is NULL scores healthy while "
+    "semantic recall is dead. Nothing contacts the embedding backend unless fix=true, so "
+    "on a report-only run the liveness findings cannot appear and their absence is not "
+    "evidence the backend answered; the `null_embedding` finding says why its repair "
+    "cannot run. "
+    # bug-230: an unrecognised name used to select nothing and answer 'healthy'.
+    "`checks` runs a subset: an unknown name is rejected (ok=false), and every response "
+    "echoes `checks_run`. "
+    # bug-310: one repair is not agent-scoped, and saying so is the difference
+    # between a caller that knows what it authorised and one that does not.
+    "fix=true repairs, agent-scoped and locked-safe, except dedup_msg_id_index: its "
+    "repair blanks colliding msg_id values under every agent because the UNIQUE index "
+    "it restores is global, so under an ACL it needs read-write on '*'; exclude it via "
+    "`checks` to stay agent-scoped. critical file-integrity findings are report-only. "
+    "Two repairs are lossy and irreversible: oversized memories are cut to "
+    "CPERSONA_MAX_CONTENT_LENGTH (default 16000) and the profile to "
+    "CPERSONA_MAX_PROFILE_LENGTH (default 2000), keeping the start, and lowering a cap "
+    "shortens rows that fit the old one. Some repairs are bounded per run (source "
+    # bug-364/362: the bound was typed here while the enforced cap lives in the
+    # configuration, so the two drifted by an order of magnitude. Render it.
+    f"canonicalisation classifies at most {checks_module.INVALID_SOURCE_CLASSIFY_CAP} rows): "
+    "a fix response with `remaining` > 0 has NOT converged; run fix again until "
+    "`remaining` stops decreasing.",
     {
         "type": "object",
         "properties": {
@@ -2396,41 +2315,35 @@ registry.auto_tool(
 
 registry.auto_tool(
     "get_session_findings",
-    "Pull the storage-integrity findings on demand (SuperAuditor v1 pull contract, "
-    "docs/SUPERAUDITOR_STANDARD.md) instead of reading them off check_health. Same "
-    "detector as check_health(fix=false) over the WHOLE database, delivered as "
+    "Pull the storage-integrity findings on demand (the SuperAuditor pull contract, "
+    "docs/SUPERAUDITOR_STANDARD.md) instead of reading them off check_health: the same "
+    "detector as check_health(fix=false) over the WHOLE database. Read-only, never "
+    "repairs. "
     # bug-391: `kind` was described as the registry name a caller re-runs, with
     # an escalation tier offered as the example — but the tiers this seam mints
     # are not in the check registry and check_health refuses every name outside
     # it, so the one documented diagnostic follow-up answered with an error on
     # exactly the findings an operator most wants to re-check. The name that
     # re-runs is `check`, which every finding already carries.
-    "findings: each carries `kind` (the finding's name: a check registry name, or "
-    "an escalation tier this seam mints for a runner that grades its own severity, "
-    "e.g. null_embedding_pipeline_down — a tier is NOT a registry name), `check` "
-    "(the registry name that produced it, so check_health(checks=[finding['check']]) "
-    "re-runs exactly that probe) and a static per-kind "
-    "`severity` (critical = the read contract is broken now / warn = two stored facts "
-    "contradict / info = an observation). check_health's own instance verdict rides "
-    "along as `health_severity`; a probe that raised is reported as kind "
-    "`check_crashed` instead of failing the pull, so a partial result says which "
-    "probe is missing. Read-only, never repairs. NOT free, though: the registry runs "
-    "unfiltered, which includes two whole-database reads (the FTS5 integrity-check over "
-    "both indexes, and PRAGMA quick_check over the file), so every pull is O(database) "
-    "on a channel meant to be pulled once a session — budget it by call frequency. There "
-    "is deliberately no cheap subset: choosing which probes run would be choosing which "
-    "forgotten state stays forgotten. Findings "
-    "are NOT filtered by agent_id or project_id — the channel surfaces forgotten "
-    "state, and slicing it by the caller's bucket would hide exactly the rows that "
-    "were forgotten (scope a repair with check_health(agent_id=...)). Honest caps: "
-    "`findings` holds at most per_kind_limit rows per kind, `capped_kinds` names every "
-    "kind that had more (observed, not inferred from count == limit), `total` and "
-    "the counts describe the RETURNED set only, and `per_kind_limit` echoes the limit "
-    "applied. `summary` restates the same trimmed set in prose (pass "
-    "include_summary=false to skip paying for it). On a shared remote transport with "
-    "no session_key declared the response carries `identity_shared: true` — this "
-    "server has no session-scoped probes, so the key is a partition hint, not a "
-    "filter. `_meta.server_version` identifies the running instance.",
+    "Each finding carries `kind` (a check registry name, or an escalation tier this seam "
+    "mints for a runner that grades its own severity, e.g. null_embedding_pipeline_down — "
+    "a tier is NOT a registry name), `check` (the registry name that produced it: "
+    "check_health(checks=[finding['check']]) re-runs exactly that probe) and a static "
+    "per-kind `severity` (critical = the read contract is broken now / warn = two stored "
+    "facts contradict / info = an observation). check_health's own verdict rides along as "
+    "`health_severity`; a probe that raised is reported as kind `check_crashed` instead of "
+    "failing the pull. "
+    "NOT free: the registry runs unfiltered, including two whole-database reads (the FTS5 "
+    "integrity-check over both indexes and PRAGMA quick_check), so every pull is "
+    "O(database); budget it by call frequency. There is deliberately no cheap subset. "
+    "Findings are NOT filtered by agent_id or project_id: slicing them by the caller's "
+    "bucket would hide exactly the forgotten rows (scope a repair with "
+    "check_health(agent_id=...)). Honest caps: `findings` holds at most per_kind_limit "
+    "rows per kind, `capped_kinds` names every kind that had more, and `total` and the "
+    "counts describe the RETURNED set only. `summary` restates it in prose "
+    "(include_summary=false skips it). Without a session_key on a shared remote "
+    "transport the response carries `identity_shared: true`; `_meta.server_version` "
+    "identifies the running instance.",
     {
         "type": "object",
         "properties": {
@@ -2620,6 +2533,20 @@ registry.auto_tool(
 # if a tool is registered without a classification, and test_acl.py's
 # wrap-coverage check fails if one is registered without the guard.
 acl.install(registry)
+
+
+# The tools a session uses every time, loaded with the session instead of found
+# by a tool search when first needed. Claude Code defers MCP tool definitions
+# and reads `anthropic/alwaysLoad` in a tool's _meta to exempt that tool
+# (code.claude.com/docs/en/mcp, "Exempt a server from deferral"); other clients
+# ignore the key. A deferred definition is written to the prompt cache again in
+# the middle of every session that loads it; one loaded with the session sits in
+# the cached prefix the next session reads back. Every session pays for these
+# definitions whether it calls them or not, so the list stays short.
+ALWAYS_LOADED_TOOLS = ("reconstruct", "store", "archive_episode")
+for _tool in registry._tools:
+    if _tool.name in ALWAYS_LOADED_TOOLS:
+        _tool.meta = {**(_tool.meta or {}), "anthropic/alwaysLoad": True}
 
 
 # =============================================================================
