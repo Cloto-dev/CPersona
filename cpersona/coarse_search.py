@@ -76,7 +76,8 @@ class Candidates:
     ids: tuple[int, ...]
     distances: tuple[int, ...]
     positions: tuple[int, ...]
-    #: "index" or "live": which supplier answered. Reported, never part of the answer.
+    #: "index" or "live": which supplier answered; "skipped" when the caller asked for
+    #: the index only and it could not answer. Reported, never part of the answer.
     source: str
 
     def rows(self) -> list[tuple[int, int, int]]:
@@ -153,6 +154,7 @@ async def coarse_candidates(
     period: tuple | None = None,
     k: int = CANDIDATES,
     path: str | None = None,
+    live: bool = True,
 ) -> Candidates:
     """The `k` records nearest the query's bits at scan positions `[start, end)`.
 
@@ -160,6 +162,11 @@ async def coarse_candidates(
     strings); the records it holds are those `coarse_index.PERIOD_PREDICATE`
     admits, and positions are counted among them. `end=None` runs to the end of
     the store. `path` names an index file other than the default, for tests.
+
+    `live=False` asks the index only: when it cannot answer, the answer is empty
+    with source "skipped" and the live store is not read. That is the cue arm's
+    default mode (design §7), which trades the remainder for a cost that does not
+    grow with the store, and says so in the response.
     """
     if start < 0:
         raise ValueError(f"start must be a scan position, got {start}")
@@ -173,6 +180,8 @@ async def coarse_candidates(
     found = await _from_index(db, query_bits, dim, k, path, **scope)
     if found is not None:
         return found
+    if not live:
+        return _empty("skipped")
     return await _from_live(db, query_bits, dim, k, **scope)
 
 

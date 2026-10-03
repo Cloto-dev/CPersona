@@ -89,6 +89,13 @@ The same verdict rides on `recall` as an `update` key, once per session and
 absent when there is nothing to say. It also appears in `check_health` as an
 `update_available` (info) or `version_yanked` (warn) issue.
 
+`recall` carries one more notice of the same kind: `suggestion`, once per
+session, when the recall's scope holds 1,000 or more records past the scan
+window and no coarse index exists for a time cue to search the rest of its
+period ([binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md#7-settings)). It
+holds a `message` to relay and the `fix` call that builds the index. Building it
+needs write access to every agent, so it is the user's decision.
+
 Nothing is ever installed as a side effect. `apply=true` is the only thing
 that installs anything, and a **restart is always required** afterwards,
 because the process that ran the install is still running the old code.

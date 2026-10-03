@@ -329,8 +329,10 @@ machine-readable line.
 
 **For memories, `build` also writes the coarse index**, a second derived file
 beside the first (`<database>.memories.coarseindex`). It holds the same rows,
-each reduced to one bit per dimension, and it is read only by the opt-in reach
-described in [Binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md). It is
+each reduced to one bit per dimension, and it is read only by the reach
+described in [Binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md): the far
+seats, when turned on, and a time cue's search of its period past the scan
+window, which since 2.6.4 uses the file by default when it exists. It is
 handled like the contiguous index: never backed up, never repaired, safe to
 delete, and removed by a purge along with the rows it held. With both files,
 `build` exits 0 only when both were built. `status` reports the coarse index
@@ -338,15 +340,23 @@ under `coarse` without changing its own exit code, because nothing reads the
 coarse index unless a setting asks for it.
 
 **When a setting does read it, health reports it.** With
-`CPERSONA_FAR_SEATS_ENABLED` or `CPERSONA_CUE_COARSE_ENABLED` on, and an agent
-holding records past the scan window, a recall that cannot use the coarse index
-reads the stored vector of every one of those records from the database: the
-answer is the same, and the cost grows with the store instead of the window.
+`CPERSONA_FAR_SEATS_ENABLED=true` or `CPERSONA_CUE_COARSE_ENABLED=true`, and an
+agent holding records past the scan window, a recall that cannot use the coarse
+index reads the stored vector of every one of those records from the database:
+the answer is the same, and the cost grows with the store instead of the window.
 `check_health` raises `coarse_index_absent` (with the records past the window and
 the bytes a recall reads), `coarse_index_unusable`, `coarse_index_dimension_drift`
 or `coarse_index_rows_missing` as warnings, and `coarse_index_tail_grown` as an
 observation, and says nothing while both settings are off or the store fits the
-window. `check_health(checks=["coarse_index"], fix=true)` builds the file again;
+window.
+
+With `CPERSONA_CUE_COARSE_ENABLED` unset, its default, a time cue asks the file
+only: without a usable one the part of a period past the window is not
+searched, and the recall says so in `time_cue.remainder`. While the far seats
+are off, no recall then pays for a missing file, so the same four states are
+reported as observations (info), not warnings. A recall whose scope holds 1,000 or more records past the window
+with no file also carries a `suggestion`, once per session, for the agent to
+relay to the user. Building the file is never automatic. `check_health(checks=["coarse_index"], fix=true)` builds the file again;
 it holds every agent's records, so the repair asks for write access to every
 agent. The findings reach `get_session_findings` like every other check's, so a
 monitor can hear of the cost before anyone notices it as latency. Whether a

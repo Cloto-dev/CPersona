@@ -652,8 +652,8 @@ these concrete qualifications:
   whether count limited the output or retrieval supplied too few candidates.
 - `gate_fallback` is preserved even when the requested count is filled.
   An explicit zero count returns no items and states `count_zero`.
-- Retrieval `advisory` and `update` notices survive reconstruction, including
-  empty results, so consuming a per-session notice also delivers it.
+- Retrieval `advisory`, `update` and `suggestion` notices survive reconstruction,
+  including empty results, so consuming a per-session notice also delivers it.
 - `bounds.top_k` records the requested candidate bound. If the library ceiling
   reduces it, `bounds.effective_top_k` records the applied bound, including on
   an empty result. A shortfall describes

@@ -10,6 +10,7 @@ Accesses `vector._embedding_client` as a module attribute (set by server.main())
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import math
@@ -26,6 +27,7 @@ from cpersona.isolation import isolation_where, source_id_where
 from cpersona import blocks
 from cpersona import budget
 from cpersona import coarse_index
+from cpersona import coarse_notice
 from cpersona import coverage
 from cpersona import cue
 from cpersona import excerpts
@@ -1892,6 +1894,35 @@ async def _episode_rows(db, iso, ranked: list[tuple[int, float | None]]) -> list
     return out
 
 
+# What the cue arm's remainder did on the cue stage in progress (design
+# docs/BINARY_COARSE_SEARCH_DESIGN.md §7): the stage loop sets a fresh dict, the arm
+# writes it, and the loop reads it back into the stage. A context variable for the
+# reason the trace recorder is one: the arm sits behind the cue_candidates provider,
+# whose contract returns rows only. Outside a cue stage it holds None and the arm notes
+# nothing.
+_cue_remainder_note: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "cpersona_cue_remainder", default=None
+)
+
+#: The time_cue.remainder hint, when the default mode left a period's remainder out.
+CUE_REMAINDER_HINT = (
+    "the period holds more records than the vector search reads, and the rest were not "
+    "searched because no coarse index could answer; "
+    "check_health(checks=['coarse_index'], fix=true) builds it"
+)
+
+
+async def _period_has_remainder(db, iso, src, start: str, end: str) -> bool:
+    """Whether the period holds an embedded record past the cap: one id-only row read."""
+    rows = await db.execute_fetchall(
+        f"""SELECT 1 FROM memories
+           WHERE {iso.clause} AND embedding IS NOT NULL{src.and_clause} AND {coarse_index.PERIOD_PREDICATE}
+           LIMIT 1 OFFSET ?""",
+        (*iso.params, *src.params, start, end, MAX_MEMORIES),
+    )
+    return bool(rows)
+
+
 async def _search_cue_arm(
     db,
     agent_id: str,
@@ -1946,16 +1977,31 @@ async def _search_cue_arm(
             depth,
         )
         ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
-        if config.CUE_COARSE_ENABLED:
+        mode = config.CUE_COARSE_MODE
+        if mode != "off":
             # The period's remainder (docs/BINARY_COARSE_SEARCH_DESIGN.md §6): the records
             # past the cap above, in the same scan of the same period, searched through the
             # coarse supplier and re-ranked by their stored vectors' cosine against the
             # same floor. Both lists hold exact cosines, so they merge on that; a tie goes
             # to the capped list (its rows sit earlier in the scan), then by scan position.
-            remainder = await far_seats.ranked(
+            # In the default mode (auto) only a usable coarse index is asked: without one
+            # the remainder is empty, as with the setting off, and the stage notes whether
+            # the period had one to leave out (design §7).
+            remainder, supplier = await far_seats.ranked_with_source(
                 db, qv, agent_id=agent_id, project_id=project_id, channel=channel,
                 source_id=source_id, floor=floor, start=MAX_MEMORIES, period=(start, end),
+                live=mode == "on",
             )
+            note = _cue_remainder_note.get()
+            if note is not None:
+                # Noted when the remainder was searched, or when records were left out:
+                # a skip with nothing past the cap is the recall the setting off gives,
+                # and its stage stays the one it was (invariant 8, the behaviour golden).
+                left_out = supplier == "skipped" and await _period_has_remainder(db, iso, src, start, end)
+                if supplier != "skipped" or left_out:
+                    note.update(mode=mode, supplier=supplier)
+                    if left_out:
+                        note["left_out"] = True
             merged = sorted(
                 [(0, ordinal, mem_id, score) for ordinal, mem_id, score in ranked]
                 + [(1, hit.position, hit.id, hit.cosine) for hit in remainder],
@@ -2394,12 +2440,17 @@ async def _do_recall(
             while cue_ignored is None:
                 ledger.spend(budget.CUE_STAGE)
                 window = p.envelope_planner.period(time_cue, confidence, now, span)
+                remainder_note: dict = {}
                 if window is not None:
-                    cue_rows = await p.cue_candidates.search(
-                        db, agent_id=agent_id, query=query, depth=cue.DEPTH, window=window,
-                        channel=channel, project_id=project_id, source_id=source_id,
-                        exclude_set=exclude_set, query_vec=query_vec_out, lexical_terms=lexical_terms,
-                    )
+                    note_token = _cue_remainder_note.set(remainder_note)
+                    try:
+                        cue_rows = await p.cue_candidates.search(
+                            db, agent_id=agent_id, query=query, depth=cue.DEPTH, window=window,
+                            channel=channel, project_id=project_id, source_id=source_id,
+                            exclude_set=exclude_set, query_vec=query_vec_out, lexical_terms=lexical_terms,
+                        )
+                    finally:
+                        _cue_remainder_note.reset(note_token)
                 stage = {
                     "stage": len(stages),
                     "searched": "all arms and the cue period" if not stages else "the cue period only",
@@ -2408,6 +2459,8 @@ async def _do_recall(
                     "found": len(cue_rows),
                     "next": None,
                 }
+                if remainder_note:
+                    stage["remainder"] = remainder_note
                 stages.append(stage)
                 if trace_rec is not None:
                     trace_rec.arm("cue" if len(stages) == 1 else f"cue_stage_{len(stages) - 1}", cue_rows, "_cosine")
@@ -2918,6 +2971,13 @@ async def _do_recall(
             "moved": len(cue_note.get("lifted", [])),
             "seated": len(cue_note.get("seated", [])),
         }
+        # Said only when the default mode left records of the period out (design §7):
+        # a bound that dropped rows is reported. Searched whole, or nothing past the
+        # cap, and the response is the one it was before.
+        if last.get("remainder", {}).get("left_out"):
+            result["time_cue"]["remainder"] = {
+                "searched": False, "reason": "no_usable_index", "hint": CUE_REMAINDER_HINT,
+            }
     elif cue_ignored is not None:
         result["time_cue"] = {"policy": cue.POLICY, "ignored": cue_ignored["reason"], "period": cue_ignored["period"]}
     advisory = health.maybe_advisory(session_key_resolved, session_key_declared)
@@ -2933,6 +2993,12 @@ async def _do_recall(
     update = update_check.notice(session_key_resolved, session_key_declared)
     if update is not None:
         result["update"] = update
+    # The coarse index suggestion (docs/BINARY_COARSE_SEARCH_DESIGN.md §7): the same
+    # contract, for a scope that has grown past the window with no index to search
+    # the rest of a time cue's period. The count is the pool count read above.
+    suggestion = coarse_notice.notice(pool_memories, MAX_MEMORIES, session_key_resolved, session_key_declared)
+    if suggestion is not None:
+        result["suggestion"] = suggestion
     return result
 
 
@@ -3241,6 +3307,11 @@ async def do_recall_with_context(
     update = recall_result.get("update")
     if update is not None:
         result["update"] = update
+    # The same for the coarse index suggestion, which coarse_notice.notice() consumed
+    # in the recall above.
+    suggestion = recall_result.get("suggestion")
+    if suggestion is not None:
+        result["suggestion"] = suggestion
     return result
 
 

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:9c57fc97ed14eb0e21d5497d25c9bafe8442e934 -->
+<!-- i18n-source: docs/operations.md@blob:02039bf741e47ab707d55ab74a98fa70014ab241 -->
 
 # 運用 Runbook
 
@@ -321,20 +321,30 @@ build できれば exit 0、辞退したら exit 1 で理由を印字します�
 
 **memories では、`build` は粗探索の索引も書きます。** 1 つ目の隣に置く 2 つ目の派生
 ファイル (`<データベース>.memories.coarseindex`) です。同じ行を、それぞれ 1 次元 1 ビットに
-縮めて持ち、[1 ビット粗探索](BINARY_COARSE_SEARCH_DESIGN.md)で述べる opt-in の到達だけが
-読みます。扱いは連続配置の索引と同じで、バックアップせず、修復せず、消しても安全で、
+縮めて持ち、[1 ビット粗探索](BINARY_COARSE_SEARCH_DESIGN.md)で述べる到達だけが読みます。
+読むのは、on にした時の窓の外の席と、時間の手がかりが期間のうち走査窓より後ろを探す時です。
+後者は 2.6.4 から、ファイルがあれば既定で使います。扱いは連続配置の索引と同じで、バックアップせず、修復せず、消しても安全で、
 削除 (purge) は持っていた行と一緒にこれも消します。両方のファイルを作る場合、`build` が
 exit 0 を返すのは両方を作れた時だけです。`status` は粗探索の索引を `coarse` の下で報告しますが、
 自分の exit code は変えません。設定が求めない限り、粗探索の索引を読むものは無いからです。
 
-**設定が読む時は、健全性チェックが報告します。** `CPERSONA_FAR_SEATS_ENABLED` か
-`CPERSONA_CUE_COARSE_ENABLED` が on で、あるエージェントが走査窓の外に記録を持つ時、粗探索の
+**設定が読む時は、健全性チェックが報告します。** `CPERSONA_FAR_SEATS_ENABLED=true` か
+`CPERSONA_CUE_COARSE_ENABLED=true` で、あるエージェントが走査窓の外に記録を持つ時、粗探索の
 索引を使えない想起は、その記録すべての保存ベクトルをデータベースから読みます。答えは同じで、
 費用が窓ではなくストアの大きさに比例して増えます。`check_health` は `coarse_index_absent`
 (窓の外の記録数と 1 回の想起が読むバイト数つき)・`coarse_index_unusable`・
 `coarse_index_dimension_drift`・`coarse_index_rows_missing` を警告として、
 `coarse_index_tail_grown` を観察として出し、両方の設定が off の間やストアが窓に収まる間は
-何も言いません。`check_health(checks=["coarse_index"], fix=true)` はファイルを作り直します。
+何も言いません。
+
+`CPERSONA_CUE_COARSE_ENABLED` が未設定 (既定) の時、時間の手がかりはファイルにしか尋ねません。
+使えるファイルが無ければ、期間のうち窓より後ろは探さず、想起は `time_cue.remainder` でそう
+伝えます。窓の外の席が off の間は、ファイルが無くても費用を払う想起が無いので、同じ 4 つの
+状態は警告でなく観察 (info) として報告します。窓の外に 1,000 件以上の記録を持つ範囲で、
+ファイルが無いまま想起すると、エージェントが利用者に伝えるための `suggestion` もセッション
+ごとに 1 回付きます。ファイルの作成が自動で行われることはありません。
+
+`check_health(checks=["coarse_index"], fix=true)` はファイルを作り直します。
 ファイルは全エージェントの記録を持つので、この修復は全エージェントへの書き込み権限を求めます。
 所見は他のチェックと同じく `get_session_findings` に届くので、監視側は遅さとして誰かが
 気づく前に費用を知ることができます。所見を受けて修復するかは監視側が決めることで、

@@ -411,6 +411,11 @@ afterwards.
   and `install.command` to the user. Never call `check_update(apply=true)`
   without the user's explicit go-ahead — it installs software, and the server
   must be restarted afterwards.
+- A `suggestion` key on a `recall` response (once per session) says the memory
+  has grown past what a time cue's search reads, with no coarse index to search
+  the rest. Relay its `message` to the user and propose the build. Run its `fix`
+  (`check_health(checks=["coarse_index"], fix=true)`) only if the user agrees —
+  it rewrites a file that holds every agent's records.
 
 ### Operating knowledge (canonical: `docs/`)
 

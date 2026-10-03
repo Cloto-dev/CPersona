@@ -165,6 +165,21 @@ def _forget_backend_identity():
 
 
 @pytest.fixture(autouse=True)
+def _forget_coarse_suggestion():
+    """Forget which sessions heard the coarse index suggestion, around every test.
+
+    ``coarse_notice`` says it once per session and, without a declared key, once per
+    process. Left alone, the first test that triggers it silences it for every later
+    test in the run -- a fact about test order, not about the test.
+    """
+    from cpersona import coarse_notice
+
+    coarse_notice.reset()
+    yield
+    coarse_notice.reset()
+
+
+@pytest.fixture(autouse=True)
 def _clear_scope_stats_cache():
     """Empty the per-scope aggregate cache around every test.
 

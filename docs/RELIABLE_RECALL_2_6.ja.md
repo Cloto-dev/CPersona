@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:e38a631395395eaca2601d03751fb3133364decc -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d8b753f2561bd9adf4ac1164f5cfa210c791a37c -->
 
 # Reliable Recall — 2.6 系
 
@@ -545,7 +545,7 @@ v1.1 からペイロード予算を上記のとおり実装しています。既
   呼び出し側は、count が出力を制限したのか、検索候補が足りなかったのかを確認できます。
 - 指定した件数を返せた場合も `gate_fallback` を保持します。明示的な count 0 は
   item を返さず、`count_zero` を報告します。
-- 検索が生成した `advisory` と `update` は、空の結果でも返します。
+- 検索が生成した `advisory`・`update`・`suggestion` は、空の結果でも返します。
   セッション単位の通知を消費した時は、その呼び出し元へ届けます。
 - `bounds.top_k` は要求した候補上限です。ライブラリ上限で制限された場合は
   `bounds.effective_top_k` に実効値を返します (空の結果でも)。

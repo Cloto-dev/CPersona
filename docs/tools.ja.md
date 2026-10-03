@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:0ea1dcf12a318e0d009dea84be1635342821b797 -->
+<!-- i18n-source: docs/tools.md@blob:4575e1e8f3262a63261fadfb0459ac43eeec10e6 -->
 
 # ツール一覧
 
@@ -91,6 +91,12 @@
 同じ判定は `recall` 応答に `update` キーとして乗ります (セッションごとに 1 回、
 伝えることがなければキー自体が付きません)。`check_health` でも `update_available`
 (info) または `version_yanked` (warn) の検出項目として現れます。
+
+`recall` は同じ種類の通知をもう 1 つ運びます。`suggestion` で、セッションごとに 1 回、
+想起の範囲が走査窓の外に 1,000 件以上の記録を持ち、時間の手がかりが期間の残りを探すための
+粗探索の索引が無い時に付きます ([1 ビット粗探索](BINARY_COARSE_SEARCH_DESIGN.md#7-settings))。
+中身は伝えるための `message` と、索引を作る `fix` の呼び出しです。作成には全エージェントへの
+書き込み権限が要るので、決めるのは利用者です。
 
 副作用として更新が行われることはありません。インストールするのは `apply=true` だけ
 で、その後は**必ず再起動が必要**です。インストールを実行したプロセス自身が、

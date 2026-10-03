@@ -1302,7 +1302,7 @@ async def do_reconstruct(
     }
     # bug-436: do_recall has already marked these notices as delivered to this
     # session. Forward them even when no candidate survives reconstruction.
-    for notice in ("advisory", "update", "time_cue"):
+    for notice in ("advisory", "update", "suggestion", "time_cue"):
         if notice in recall_result:
             response[notice] = recall_result[notice]
     if recall_result.get("gate_fallback"):
