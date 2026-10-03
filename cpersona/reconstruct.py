@@ -1181,6 +1181,143 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
     return items, used, heads < len(entries)
 
 
+#: config.RECONSTRUCT_SEQUENCE value for the payload sequence ordered across records.
+SEQUENCE_EVIDENCE = "evidence"
+
+
+def returned_walk_cuts(walk_cuts: list[set], positions: list[int], returned: int) -> set:
+    """The walk's cuts inside the items returned. ``positions`` say which chosen item each
+    quoted entry is: under the evidence sequence a returned item need not be one of the
+    first, so the cuts are read by position, not by a prefix."""
+    return set().union(*(walk_cuts[p] for p in positions[:returned]))
+
+
+def record_passages(
+    claim: _Candidate, block_entry: tuple | None, query_bits, query_grams: set[str], query_vec, cap: int
+) -> tuple[str, str, list[tuple]]:
+    """The candidate passages of one head record, best first inside the record (2.6.5a1).
+
+    Returns ``(text, basis, passages)``. A passage is ``(start, end, cosine, cut_from)``:
+    a block's governing range (``blocks.context_range``), ranked as a head quote ranks
+    them (``rank_blocks``, the stored block set when there is one, otherwise the text
+    divided at read time), a range overlapping a better one skipped. ``cosine`` is the
+    int8 cosine of the block that produced it, or None. A range longer than ``cap`` is
+    cut to its first ``cap`` characters and ``cut_from`` names the end it was cut from.
+    A record no longer than ``cap`` is one passage, whole; one that divides into a single
+    block is its start, as a head quote is.
+    """
+    text = block_entry[0] if block_entry is not None else _stored_text(claim)
+    if len(text) <= cap:
+        return text, "whole", [(0, len(text), None, None)]
+    if block_entry is not None:
+        rows, basis, bits, vec = block_entry[1], "blocks", query_bits, query_vec
+    else:
+        rows = [(i, s.start, s.end, None) for i, s in enumerate(blocks.segment(text))]
+        basis, bits, vec = "lexical", None, None
+    if len(rows) <= 1:
+        return text, "start", [(0, cap, None, len(text))]
+    spans = [(row[1], row[2]) for row in rows]
+    ranked = rank_blocks(text, rows, bits, query_grams, vec)
+    cosines = _int8_cosines(ranked, vec)
+    passages: list[tuple] = []
+    governed: list[tuple[int, int]] = []
+    for n, row in enumerate(ranked):
+        start, end, _ = blocks.context_range(text, spans, row[0])
+        if any(start < e and s < end for s, e in governed):
+            continue
+        governed.append((start, end))
+        cosine = cosines[n] if cosines is not None else None
+        if end - start > cap:
+            passages.append((start, start + cap, cosine, end))
+        else:
+            passages.append((start, end, cosine, None))
+    return text, basis, passages
+
+
+def evidence_order(records: list[list[tuple]]) -> list[tuple[int, int, tuple[int, int, int | None]]]:
+    """Every passage of every record in one order (docs/EVIDENCE_ALLOCATION_DESIGN.md §3).
+
+    ``records[i]`` are the passages of the i-th item's head record, best first inside it
+    (``record_passages``). Reciprocal-rank fusion of three ranks: the record's place in
+    the item order, the passage's place inside its record, and its block's int8 cosine
+    among every passage that has one (a passage without one ranks after them all; with
+    none at all the list is left out). Ties go to the earlier record, then the earlier
+    text. Returns ``(record, passage, (record rank, inside rank, cosine rank))`` in order.
+    """
+    flat = [(i, j, p) for i, passages in enumerate(records) for j, p in enumerate(passages)]
+    if not flat:
+        return []
+    record_ranks = _shared_ranks([-float(i) for i, _, _ in flat])
+    inside_ranks = [j for _, j, _ in flat]
+    lists = [record_ranks, inside_ranks]
+    cosine_ranks: list[int | None] = [None] * len(flat)
+    if any(p[2] is not None for _, _, p in flat):
+        cosine_ranks = _shared_ranks([p[2] if p[2] is not None else float("-inf") for _, _, p in flat])
+        lists.append(cosine_ranks)
+    k = config.RRF_K
+    fused = [sum(1.0 / (k + 1 + ranks[n]) for ranks in lists) for n in range(len(flat))]
+    order = sorted(range(len(flat)), key=lambda n: (-fused[n], flat[n][0], flat[n][2][0]))
+    return [(flat[n][0], flat[n][1], (record_ranks[n], inside_ranks[n], cosine_ranks[n])) for n in order]
+
+
+def _quoted_length(ranges: list[tuple[int, int]]) -> int:
+    """Characters of a quote showing ``ranges`` of one record: touching ranges as one,
+    the rest joined by the separator (excerpts.fill)."""
+    joined = excerpts._joined(sorted(ranges))
+    return sum(e - s for s, e in joined) + len(excerpts.SEPARATOR) * max(0, len(joined) - 1)
+
+
+def cut_sequence(
+    order: list[tuple], records: list[list[tuple]], budget: int
+) -> tuple[dict[int, list[int]], int]:
+    """The longest prefix of ``order`` that fits ``budget`` (invariant 9's form).
+
+    Each passage costs what it adds to its record's quote, separator included, so the
+    sum is exactly the characters the quotes carry. The first passage is always taken.
+    Returns ``({record: [passage, ...] in order taken}, characters used)``.
+    """
+    taken: dict[int, list[int]] = {}
+    shown: dict[int, list[tuple[int, int]]] = {}
+    used = 0
+    for position, (i, j, _) in enumerate(order):
+        start, end = records[i][j][:2]
+        before = shown.get(i, [])
+        cost = _quoted_length(before + [(start, end)]) - _quoted_length(before)
+        if position and used + cost > budget:
+            break
+        used += cost
+        shown[i] = before + [(start, end)]
+        taken.setdefault(i, []).append(j)
+    return taken, used
+
+
+def sequence_quote(claim: _Candidate, text: str, basis: str, passages: list[tuple], taken: list[int]) -> dict:
+    """A head quote made of the passages the sequence took, in text order (2.6.5a1).
+
+    The same shape as a filled head quote: ``content``, ``quote_basis``, ``ranges``, and
+    ``content_len``/``content_truncated`` when the record is longer than the quote. A
+    passage cut from a longer range carries ``context_incomplete`` and an ``expand``
+    naming the range; a record quoted from its start carries the ``expand`` a filled
+    head quote gives it.
+    """
+    chosen = [passages[j] for j in taken]
+    ranges = excerpts._joined(sorted((p[0], p[1]) for p in chosen))
+    quote: dict = {
+        "content": excerpts.SEPARATOR.join(text[s:e] for s, e in ranges),
+        "quote_basis": basis,
+        "ranges": [[s, e] for s, e in ranges],
+    }
+    if basis == "whole":
+        return quote
+    quote.update(content_len=len(text), content_truncated=True)
+    cut = next((p for p in sorted(chosen) if p[3] is not None), None)
+    if cut is not None:
+        if basis != "start":
+            quote["context_incomplete"] = True
+        quote["expand"] = {"ref": claim.ref, "span": [cut[0], cut[3]]}
+    return quote
+
+
 async def do_reconstruct(
     agent_id: str,
     query: str,
@@ -1441,9 +1578,42 @@ async def do_reconstruct(
     # few indices only -- the fused values are not calibrated across records), so the runner-up
     # is a place to read next, not a confidence.
     node_orders: dict[str, list[int]] | None = {} if trace else None
-    for position, (item, head, others) in enumerate(entries_claims):
+    # Which of entries_claims the quoted entries are: all of them, unless the evidence
+    # sequence (2.6.5a1) left an item with no passage inside the budget.
+    positions = list(range(len(entries_claims)))
+    sequence_heads: dict[int, dict] = {}
+    if head_cap > 0 and config.RECONSTRUCT_SEQUENCE == SEQUENCE_EVIDENCE:
+        records = [
+            record_passages(head, block_sets.get(head.ref), query_bits, query_grams, query_vec, head_cap)
+            for _, head, _ in entries_claims
+        ]
+        order = evidence_order([passages for _, _, passages in records])
+        taken, _ = cut_sequence(order, [passages for _, _, passages in records], effective_budget)
+        positions = sorted(taken)
+        for i in positions:
+            text, basis, passages = records[i]
+            sequence_heads[i] = sequence_quote(entries_claims[i][1], text, basis, passages, taken[i])
+        if trace:
+            chosen = {(i, j) for i, js in taken.items() for j in js}
+            response["trace"]["sequence"] = {
+                "mode": SEQUENCE_EVIDENCE,
+                "candidates": len(order),
+                "taken": [
+                    {
+                        "ref": entries_claims[i][1].ref,
+                        "span": list(records[i][2][j][:2]),
+                        "ranks": {"record": ranks[0], "inside": ranks[1], "cosine": ranks[2]},
+                    }
+                    for i, j, ranks in order
+                    if (i, j) in chosen
+                ],
+            }
+    for position in positions:
+        item, head, others = entries_claims[position]
         head_quote = (
-            _filled_quote(
+            sequence_heads[position]
+            if position in sequence_heads
+            else _filled_quote(
                 head, block_sets.get(head.ref), query_bits, query_grams, _head_cap_at(position), query_vec
             )
             if head_cap > 0
@@ -1471,7 +1641,7 @@ async def do_reconstruct(
 
     # Only items that are returned count: a cut inside an item the window or the
     # budget left out is not something this response withheld from its reader.
-    returned_cuts = set().union(*walk_cuts[:len(items)])
+    returned_cuts = returned_walk_cuts(walk_cuts, positions, len(items))
     omitted = [
         name
         for name, cut in (

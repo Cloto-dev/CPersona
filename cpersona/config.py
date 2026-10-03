@@ -289,6 +289,14 @@ RECONSTRUCT_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_QUOTE_CHARS", 
 # quotes every item alike, as before.
 RECONSTRUCT_FULL_QUOTES = max(0, _parse_int("CPERSONA_RECONSTRUCT_FULL_QUOTES", 5))
 RECONSTRUCT_TAIL_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS", 400))
+# 2.6.5a1 (docs/EVIDENCE_ALLOCATION_DESIGN.md sections 3-4): the payload sequence the
+# budget cuts. "items" is section 7's: every head in item order, then each item's excerpts
+# in turn. "evidence" places every passage of the items' head records in one order across
+# records and cuts that, so an item's head quote is the passages of its record the cut took
+# and an item none of whose passages fit is not returned. Experimental: off until measured
+# against its registered rule. Read only while head quotes are filled
+# (CPERSONA_RECONSTRUCT_QUOTE_CHARS above 0).
+RECONSTRUCT_SEQUENCE = _parse_choice("CPERSONA_RECONSTRUCT_SEQUENCE", "items", ("items", "evidence"))
 RECONSTRUCT_DEFAULT_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", 4000)
 RECONSTRUCT_MAX_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_MAX_BUDGET", 20000)
 _forced_budget_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_BUDGET")
