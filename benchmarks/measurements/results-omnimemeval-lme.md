@@ -130,6 +130,31 @@ Search latency, descriptive only: mean 26.6 s for arm A and 24.4 s for arm B
 a local embedding server. It is not comparable with hosted services and has not
 been investigated yet.
 
+## Embedding backend
+
+Both arms reached the same local embedding server over HTTP
+(`CPERSONA_EMBEDDING_MODE=http`, `CPERSONA_EMBEDDING_MODEL=bge-m3`).
+
+| Setting | Value |
+| --- | --- |
+| Model | `BAAI/bge-m3`, Hugging Face snapshot `5617a9f61b02` |
+| Output | dense vectors only, 1,024 dimensions, float32, normalized to unit length |
+| Window | 512 tokens (`max_seq_length`) |
+| Runtime | sentence-transformers 5.6.0, PyTorch 2.12.1, transformers 5.12.1, Python 3.11.15, Apple MPS, batch 32 |
+| Cache | each text's vector computed once and kept under the text's SHA-256, so both arms received the same vector for the same text |
+| Endpoints | `/embed` and `/count_tokens`; no `/capabilities`, so stored vectors carry the configured name as their label, not a model fingerprint |
+
+The CPersona servers otherwise ran with `CPERSONA_VECTOR_SEARCH_MODE=local`,
+`CPERSONA_STORE_BLOB=true`, `CPERSONA_FTS_ENABLED=true` and
+`CPERSONA_MAX_CONTENT_LENGTH=80000`, defaults elsewhere (fusion `rrf`, block reach
+on). Long records are split into 512-token windows for their nodes and blocks; a
+block keeps its vector as int8 values and sign bits.
+
+CEmbedding's `onnx_bge_m3` provider serves the same model through ONNX Runtime,
+with a window set by `ONNX_MAX_SEQ_LEN` (default 2,048). A deployment that keeps
+that default embeds up to four times as much of a long record into one vector as
+this run did, and even at 512 its vectors are not guaranteed to match this run's to the bit.
+
 ## What this setup does not exercise
 
 The harness searches once with the question text and answers from that result.
