@@ -105,6 +105,7 @@ plugins:
             Overflow tree: 溢れ分の tree
             Block reach: Block による到達
             Binary coarse search: 1 ビット粗探索
+            Evidence allocation: 証拠の配分
             Associative memory: 連想記憶
             Access and identity: アクセスと同一性
             Retrieval and storage: 検索と保存
