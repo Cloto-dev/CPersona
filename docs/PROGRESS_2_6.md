@@ -8,9 +8,8 @@ release contains. Where this page and a release disagree, the release is
 right.
 
 2.6.0 is the line's first final release. 2.6.1 followed the same day, 2.6.2 the
-next (2026-10-01) and 2.6.3 the day after (2026-10-02), and a plain install
-resolves to 2.6.3. 2.6.4a1 (2026-10-02) and 2.6.4a2 (2026-10-03) are
-pre-releases, installed only by exact version.
+next (2026-10-01), 2.6.3 the day after (2026-10-02) and 2.6.4 on 2026-10-03,
+and a plain install resolves to 2.6.4.
 Its pre-releases are on PyPI as `2.6.0aN` and `2.6.0bN`; the 2.5 line is now
 Candidate ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md)).
 
@@ -61,6 +60,7 @@ The numbering follows
 | 2.6.3 | The final of 2.6.3a1, with no change to the code: a plain install now labels every stored vector with its model and migrates the schema to 18. It was cut after eight hours of production use on 2.6.3a1 with no restart, no error and every new vector labelled |
 | 2.6.4a1 | Pre-release. Reconstruct v1.2 ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-reconstruct-v1_2.md)): blocks are ranked by their stored int8 vectors, passages that touch are quoted as one, the head quote is sized by the item's place (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`, 800, for the first `CPERSONA_RECONSTRUCT_FULL_QUOTES`, 5, items and `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS`, 400, after them), and the default response leaves to the trace what a reader does not act on. On the private real-use pack's 150 test questions the evidence quotes shown rose from 133 to 146 of 196 and the first response's median size fell to 0.662 of 2.6.3's. Also `check_health` gains `coarse_index`: while a coarse-search setting reads the index, a missing or unusable one is reported, and `fix=true` builds it | [#398](https://github.com/Cloto-dev/cpersona/pull/398), [#399](https://github.com/Cloto-dev/cpersona/pull/399) |
 | 2.6.4a2 | Pre-release. A time cue searches the part of its period past the scan window through the coarse index by default (`CPERSONA_CUE_COARSE_ENABLED` unset): with no usable index that part is not searched, the recall is the one the setting off gives, and `time_cue.remainder` says so; `true` keeps the 2.6.2 meaning ([binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md#7-settings)). Nothing builds the index: a recall whose scope holds 1,000 or more records past the window with no index carries a `suggestion` once per session for the agent to relay, and `check_health` reports the missing index as info while only this mode reads it | [#405](https://github.com/Cloto-dev/cpersona/pull/405) |
+| 2.6.4 | The final of 2.6.4a2, with no change to the code: a plain install now quotes in `reconstruct` the part of a record that matched, sized by the item's place, and searches a time cue's period past the scan window through the coarse index by default when one exists. It was cut after six hours of production use on 2.6.4a2 with no restart and no error |
 
 The associative layer is released and off by default. Whether it becomes the
 default is decided by its own A/B run; no result of that run is recorded yet.
