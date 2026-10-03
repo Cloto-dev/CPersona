@@ -3478,6 +3478,32 @@ MUTATIONS += [
         breaks="the sweep's whole-corpus coverage count runs on the request connection",
         expect='test_background_read_seam.py::test_block_sweep_coverage_is_read_beside_the_requests',
     ),
+    Mutation(
+        id='M333',
+        tests=('tests/test_background_read_seam.py',),
+        target='background read seam — re-keyed on the write connection',
+        file='cpersona/database.py',
+        find='    if _bg_read_db is not None and _bg_read_db_owner is write_db:\n        return _bg_read_db\n    async with _read_lock:\n',
+        replace='    if _bg_read_db is not None:\n        return _bg_read_db\n    async with _read_lock:\n',
+        also=(
+            (
+                '        if _bg_read_db is not None and _bg_read_db_owner is write_db:\n            return _bg_read_db\n        stale, _bg_read_db',
+                '        if _bg_read_db is not None:\n            return _bg_read_db\n        stale, _bg_read_db',
+            ),
+        ),
+        breaks='after the write connection is replaced, background reads keep reading the old database file',
+        expect='test_background_read_seam.py::test_background_seam_follows_a_rebooted_database',
+    ),
+    Mutation(
+        id='M334',
+        tests=('tests/test_background_read_seam.py',),
+        target='background read seam — an in-memory database is shared, not reopened',
+        file='cpersona/database.py',
+        find='        if DB_PATH == ":memory:":\n            _bg_read_db, _bg_read_db_owner = write_db, write_db\n            return _bg_read_db\n',
+        replace='',
+        breaks='background reads of an in-memory database open a second, empty database',
+        expect='test_background_read_seam.py::test_background_seam_shares_an_in_memory_database',
+    ),
 ]
 
 

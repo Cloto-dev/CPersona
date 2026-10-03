@@ -197,3 +197,45 @@ async def test_startup_calibration_lists_agents_on_the_background_seam(monkeypat
         status = await admin_handlers.ensure_calibrated_on_startup(True, True)
         assert status["global_ok"] is True
         assert entered == [1], "the agent listing did not go through the background seam"
+
+
+@pytest.mark.asyncio
+async def test_background_seam_follows_a_rebooted_database(tmp_path):
+    async with _TempDB():
+        async with database.background_connection() as bg:
+            await bg.execute_fetchall("SELECT 1")
+        first_db = database._db
+        database.DB_PATH = str(tmp_path / "rebooted.db")
+        database._db = None
+        try:
+            async with database.transaction() as db:
+                await db.execute(
+                    "INSERT INTO memories (agent_id, content, source, timestamp) "
+                    "VALUES ('reboot-agent', 'boot row', '{}', 't')"
+                )
+            async with database.background_connection() as bg:
+                rows = await bg.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = 'reboot-agent'")
+            assert rows[0][0] == 1, "the background seam still reads the database from before the reboot"
+        finally:
+            await first_db.close()
+
+
+@pytest.mark.asyncio
+async def test_background_seam_shares_an_in_memory_database():
+    # A second connection to :memory: would open a different, empty database.
+    saved = (database._db, database.DB_PATH)
+    database._db = None
+    database.DB_PATH = ":memory:"
+    try:
+        async with database.transaction() as db:
+            await db.execute(
+                "INSERT INTO memories (agent_id, content, source, timestamp) "
+                "VALUES ('memory-agent', 'row', '{}', 't')"
+            )
+        async with database.background_connection() as bg:
+            assert bg is database._db
+            rows = await bg.execute_fetchall("SELECT COUNT(*) FROM memories WHERE agent_id = 'memory-agent'")
+        assert rows[0][0] == 1
+    finally:
+        await database.close_db()
+        database._db, database.DB_PATH = saved
