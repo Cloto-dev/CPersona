@@ -3,9 +3,12 @@
 Status: implemented for 2.6.2. The coarse index (section 3), the supplier
 (section 4), the far seats (section 5), the cue arm's remainder (section 6) and
 the measurement (section 9) are on `master`.
-`SCHEMA_VERSION` does not change and no runtime dependency is added. Both settings this page introduces are off by default, and
-with them off every answer is the one 2.6.1 gives, bit for bit, including the
-order of equally-similar rows.
+`SCHEMA_VERSION` does not change and no runtime dependency is added. The far
+seats are off by default. Since 2.6.4 the cue arm's remainder is searched by
+default, but only through a coarse index that can answer (section 7), and
+nothing builds that index automatically. With the far seats off and no index,
+every returned row is the one 2.6.1 gives, bit for bit, including the order of
+equally-similar rows.
 
 ## 0. What this step is
 
@@ -166,7 +169,10 @@ There are two suppliers, and they run one algorithm:
 
 The two return the same list for the same store, because quantising a stored
 vector is deterministic and a Hamming distance is an integer. **Building or
-deleting the index changes what a recall costs, never what it returns.** The
+deleting the index changes what a recall costs, never what it returns**, for
+every reader that may fall back to the live store. The cue arm's default mode
+(section 7) is the one reader that may not: it asks the index only, so there a
+missing index means the remainder is not searched, and the response says so. The
 contiguous index already holds itself to that rule, and the far list of the
 reach setting was required to meet it; this step does too. The live supplier
 is slow on a large store, and that is its whole cost: a missing index is
@@ -260,17 +266,53 @@ cue moves a row, how its seats are filled or how it widens changes; only the
 vector half's candidates do.
 
 This part is switched by `CPERSONA_CUE_COARSE_ENABLED`, separately from the far seats,
-so that either can ship alone.
+so that either can ship alone. Its three modes are in section 7.
 
 ## 7. Settings
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
 | `CPERSONA_FAR_SEATS_ENABLED` | hold two places for far records; off means the far scan does not run | `false` |
-| `CPERSONA_CUE_COARSE_ENABLED` | search the remainder of a cue's period through the coarse index | `false` |
+| `CPERSONA_CUE_COARSE_ENABLED` | search the remainder of a cue's period through the coarse index | unset (`auto`) |
 
-At the defaults the new code does not run: a guard, not a scan that returns
-nothing. The number of far seats and `K'` are not settings. Like the block
+`CPERSONA_CUE_COARSE_ENABLED` names three modes:
+
+| Value | The remainder is searched | Without a usable index |
+| --- | --- | --- |
+| unset, empty or `auto` (the default since 2.6.4) | through the coarse index only | not searched: the recall is the one `false` gives, and `time_cue.remainder` says the period was not searched whole |
+| `true` | through the index, or the live store | the live store: the same records, at a cost that grows with the store |
+| `false`, or any other value | never | — |
+
+**Why three, and not `true` by default.** An operator who set `true` in 2.6.2
+or 2.6.3 relies on the answer not depending on the index. Changing what `true`
+means would change that operator's answers without a word. The default mode
+gives a meaning only to the value nobody chose. It never reads the live store,
+so its cost does not grow with the store, and it searches the remainder as soon
+as an index exists.
+
+"Cannot answer" is every state in which the supplier would fall back: no file,
+another dimension, an unusable file, rows whose embedding was cleared since the
+build, or a candidate deleted since the build. The decision is made on each
+recall. `time_cue.remainder` is present only when the period held records past
+the cap that were not searched: `{"searched": false, "reason": "no_usable_index",
+"hint": ...}`. Whether there were any is one id-only read of the period at
+offset `CPERSONA_MAX_MEMORIES`, made only when the index did not answer. A
+recall that searched the remainder, or whose period fits the cap, carries
+nothing more, and a traced recall names the supplier on the stage only then.
+
+**Nothing builds the index; the agent is told instead.** In the default mode a
+recall whose scope holds at least `INDEX_MATTERS_ROWS` (1,000) records past the
+window, with no coarse index that loads, carries a `suggestion` once per session
+(once per process without a session key). It is the contract of the `update`
+notice: absent unless there is something to say, and decided from the pool
+count the quality gate already took and a cached check of the file, so it adds
+no query to the recall. It holds a `message` for the agent to relay and the `fix` call,
+`check_health(checks=["coarse_index"], fix=true)`. The build writes every
+agent's records into one file, so it needs write access to every agent, and
+the user decides. An operator who set the mode explicitly is not told.
+
+With the far seats off and the cue mode `false`, the new code does not run: a
+guard, not a scan that returns nothing. The number of far seats and `K'` are not settings. Like the block
 reservation and the block re-rank's depth, they are server policy, derived from
 nothing the caller asks for: the seats are fixed at two, and `K'` is 256, set by
 the measurement of section 9. `CPERSONA_MAX_MEMORIES` keeps its meaning — the near window, and with
@@ -283,8 +325,10 @@ it the recency prior — and is where the far scan begins.
    `isolation_where()` and the source prefix filter, failing closed.
 2. **The near list is untouched.** The window's rows, their scores, their order
    and the rows the fusion returns are those of 2.6.1 with any setting.
-3. **The index never changes an answer.** The index and the live store return
-   the same candidates for the same store.
+3. **The index never changes an answer where the live store may answer.** The
+   index and the live store return the same candidates for the same store. In
+   the cue arm's default mode the index is the only supplier, and when it
+   cannot answer the remainder is not searched and the response says so.
 4. **Order is total and stated.** Hamming ties and cosine ties break by scan
    position (`created_at` DESC, `id` ASC), never by the order a sort happened to
    leave.
@@ -295,7 +339,10 @@ it the recency prior — and is where the far scan begins.
    and the live supplier skips rows of another width.
 7. **Bounded growth.** A response holds at most `limit` plus the held places of
    every kind, now including the two far seats.
-8. **At the defaults, nothing changes**, pinned by the behaviour golden.
+8. **At the defaults, nothing changes for a store within the window**, pinned
+   by the behaviour golden: no row, no response field, no trace stage. A store
+   past it, with no index, returns the same rows and may add
+   `time_cue.remainder` and the once-per-session `suggestion`.
 
 ## 9. Measurement
 
@@ -371,12 +418,19 @@ measured, not assumed.
   surface says when the build is owed: `check_health`'s `coarse_index` check
   reports the file while a setting reads it and an agent holds records past the
   window, and `fix=true` builds it. The finding is delivered like any other;
-  acting on it stays with whoever reads it.
+  acting on it stays with whoever reads it. When only the cue arm's default
+  mode reads the file, a missing or unusable one costs no recall any time, so
+  the finding is unstamped (info) rather than a warning. From 2.6.4 the recall
+  itself also carries the `suggestion` of section 7, so that an agent notices
+  the growth without asking for health; the build is still not automatic.
 - **C. The allowed approximation — decided: per-seat agreement of at least
   95%** with an exact scan, met at the largest store measured (section 9).
-- **D. Enabling — decided: a switch and a fixed bound.** Both switches are off
-  by default, and the far seats are fixed at two, the size of the block
-  reservation, until a measurement with a reader gives a reason to change it.
+- **D. Enabling — decided: a switch and a fixed bound.** The far seats are off
+  by default and fixed at two, the size of the block reservation, until a
+  measurement with a reader gives a reason to change it. The cue arm's
+  remainder is on by default since 2.6.4 in the index-only mode of section 7:
+  it adds reach only, and only through an index. Without one, its whole cost is
+  the id-only read that decides whether to say so.
 - **E. `CPERSONA_MAX_MEMORIES` — decided: unchanged.** It is the near window and
   the recency prior. The far scan begins where it ends, or where
   `CPERSONA_VECTOR_REACH` ends when that is further.
