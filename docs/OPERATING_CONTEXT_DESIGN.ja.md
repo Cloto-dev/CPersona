@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:16e812f84517e3a59eb7a134bb3d4e7a799cf2e4 -->
+<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:4afbe86856c01d6bd14be44a6ee23c1606399cb1 -->
 
 # サーバー供給の運用コンテキスト (グローバル設定 + MCP instructions 配布)
 
@@ -133,7 +133,7 @@ body = """..."""
 読み込むクライアントは、セッションの開始時にツールの名前とこの instructions しか
 エージェントに見せないからです。Claude Code は instructions を 2,048 文字で切り詰めるので、
 案内を先頭に置けば、下の 1,500 文字以内の summary も収まります。summary が無い時の
-instructions は案内だけです (2.6.5a3 より前は空でした)。**summary が簡潔な正本であり、
+instructions は案内だけです (2.6.5a2 より前は空でした)。**summary が簡潔な正本であり、
 詳細は `get_operating_context`
 による opt-in です** (プレビュー階層の構造で、CSC の `get_active_context` や recall
 のプレビュー階層と同じトークン固定費の規律に従います)。

@@ -9,8 +9,8 @@ right.
 
 2.6.0 is the line's first final release. 2.6.1 followed the same day, 2.6.2 the
 next (2026-10-01), 2.6.3 the day after (2026-10-02) and 2.6.4 on 2026-10-03,
-and a plain install resolves to 2.6.4. 2.6.5a1 (2026-10-04) is a pre-release,
-installed only by exact version.
+and a plain install resolves to 2.6.4. 2.6.5a1 and 2.6.5a2 (2026-10-04) are
+pre-releases, installed only by exact version.
 Its pre-releases are on PyPI as `2.6.0aN` and `2.6.0bN`; the 2.5 line is now
 Candidate ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md)).
 
@@ -63,6 +63,7 @@ The numbering follows
 | 2.6.4a2 | Pre-release. A time cue searches the part of its period past the scan window through the coarse index by default (`CPERSONA_CUE_COARSE_ENABLED` unset): with no usable index that part is not searched, the recall is the one the setting off gives, and `time_cue.remainder` says so; `true` keeps the 2.6.2 meaning ([binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md#7-settings)). Nothing builds the index: a recall whose scope holds 1,000 or more records past the window with no index carries a `suggestion` once per session for the agent to relay, and `check_health` reports the missing index as info while only this mode reads it | [#405](https://github.com/Cloto-dev/cpersona/pull/405) |
 | 2.6.4 | The final of 2.6.4a2, with no change to the code: a plain install now quotes in `reconstruct` the part of a record that matched, sized by the item's place, and searches a time cue's period past the scan window through the coarse index by default when one exists. It was cut after six hours of production use on 2.6.4a2 with no restart and no error |
 | 2.6.5a1 | Pre-release. With `CPERSONA_RECONSTRUCT_SEQUENCE=evidence`, the budget of `reconstruct` cuts one order of the head records' passages across records instead of every head quote in item order and then the excerpts; an item's head quote is the passages of its record the cut took, in text order ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md)). The default, `items`, returns what 2.6.4 does, and no accuracy is claimed until the setting is measured. Calibration and the boot-time block sweep now read on a connection of their own: on a 23,867-record store, searches issued during a startup calibration fell from 19.8 s to 0.57 s on average and during the sweep from 19.1 s to 0.60 s; what either computes does not change | [#412](https://github.com/Cloto-dev/cpersona/pull/412), [#414](https://github.com/Cloto-dev/cpersona/pull/414) |
+| 2.6.5a2 | Pre-release. `reconstruct`, `store` and `archive_episode` carry `"anthropic/alwaysLoad": true` in their `_meta`, so Claude Code loads them with the session instead of through tool search. The five tool descriptions longer than the 2,048 characters Claude Code shows now fit (`reconstruct` was 9,189), with what a caller acts on first and the details left to the design documents they name. The `initialize` instructions open with CPersona's guidance on when to use its tools, followed by an operating context's summary when one is configured. No cost change is claimed until it is measured | [#417](https://github.com/Cloto-dev/cpersona/pull/417) |
 
 The associative layer is released and off by default. Whether it becomes the
 default is decided by its own A/B run; no result of that run is recorded yet.
