@@ -41,6 +41,13 @@ def test_a_record_within_the_cap_is_one_whole_passage():
     assert (text, basis, passages) == ("short", "whole", [(0, 5, None, None)])
 
 
+def test_an_episode_is_measured_in_its_stored_summary():
+    ref = "ep" + ":" + "3"
+    shown = excerpts.EPISODE_LABEL + "what the episode says"
+    text, basis, passages = reconstruct.record_passages(_Claim(ref, shown), None, None, set(), None, 800)
+    assert text == "what the episode says" and passages == [(0, len(text), None, None)]
+
+
 def test_a_record_of_one_block_is_quoted_from_its_start():
     text = "one clause and nothing else"
     assert len(blocks.segment(text)) == 1, "the fixture must divide into a single block"

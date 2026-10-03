@@ -1206,7 +1206,9 @@ def record_passages(
     A record no longer than ``cap`` is one passage, whole; one that divides into a single
     block is its start, as a head quote is.
     """
-    text = block_entry[0] if block_entry is not None else _stored_text(claim)
+    # The stored text, as a filled head quote measures it (bug-456): an episode is shown with a
+    # label its stored summary does not hold, and the spans are offsets into the stored text.
+    text = _stored_text(claim) if block_entry is None else block_entry[0]
     if len(text) <= cap:
         return text, "whole", [(0, len(text), None, None)]
     if block_entry is not None:
