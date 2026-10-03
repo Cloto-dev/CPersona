@@ -51,8 +51,9 @@ def main():
         out = {}
         for uid, conv in data.items():
             r = rows[int(uid.rsplit("_", 1)[1])]
+            # a number, as the harness wrote it: the judge stage adds it to the answer's duration
             out[uid] = [{**conv[0], "search_context": r["search_context"],
-                         "search_duration_ms": str(r["search_duration_ms"])}]
+                         "search_duration_ms": float(r["search_duration_ms"])}]
         json.dump(out, open(dst / "cpersona_lme_search_results.json", "w"), ensure_ascii=False, indent=4)
         shutil.copy2(SRC / "cpersona_lme_search_status.json", dst / "cpersona_lme_search_status.json")
         (dst / ".step_1_done").touch()

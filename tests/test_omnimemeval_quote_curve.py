@@ -37,7 +37,7 @@ def _harness(tmp_path):
     src = tmp_path / "results/lme/cpersona-lme1"
     src.mkdir(parents=True)
     data = {f"lme_exper_user_lme1_{i}": [{"question": f"q{i}", "search_context": f"published {i}",
-                                           "search_duration_ms": "1.0", "status": "success"}] for i in range(500)}
+                                           "search_duration_ms": 1.0, "status": "success"}] for i in range(500)}
     (src / "cpersona_lme_search_results.json").write_text(json.dumps(data))
     (src / "cpersona_lme_search_status.json").write_text("{}")
     return data
@@ -61,7 +61,9 @@ def test_build_writes_each_size_by_question(monkeypatch, tmp_path):
     out = json.loads((tmp_path / "results/lme/cpersona-lme1-q400/cpersona_lme_search_results.json").read_text())
     assert out["lme_exper_user_lme1_7"][0]["search_context"] == "short 7"
     assert out["lme_exper_user_lme1_7"][0]["question"] == "q7"  # the published entry's other fields are kept
-    assert out["lme_exper_user_lme1_7"][0]["search_duration_ms"] == "2.5"
+    # a number, never a string: the harness's judge stage adds it to the answer's duration
+    assert type(out["lme_exper_user_lme1_7"][0]["search_duration_ms"]) is float
+    assert out["lme_exper_user_lme1_7"][0]["search_duration_ms"] == 2.5
     assert (tmp_path / "results/lme/cpersona-lme1-q400/.step_2_done").exists()
 
 
