@@ -26,7 +26,9 @@ def api(usage_dir: Path, stem: str):
     import json
     calls = prompt = 0
     for p in sorted(usage_dir.glob(f"{stem}-pass*.json")):
-        m = json.loads(p.read_text())["modules"]["ANSWER"]
+        m = json.loads(p.read_text())["modules"].get("ANSWER")
+        if not m:  # a pass that resumed past the answers made no answer call
+            continue
         calls += m["usage_reported_call_count"]
         prompt += m["prompt_tokens"]
     return calls, prompt
