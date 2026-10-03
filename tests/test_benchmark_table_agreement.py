@@ -1,8 +1,8 @@
 """Locks for the gate that keeps one benchmark table from disagreeing with itself.
 
-The LMEB Track A/B numbers are published twice — in the README, where a visitor
-decides whether the pipeline costs ranking quality, and in `benchmarks/README.md`
-beside the harness that produced them. Two copies of one measurement is the shape
+CPersona's OmniMemEval rows are published twice — in the README, where a visitor
+decides what the memory buys and costs, and in the results document beside the run
+record and the rules they were judged by. Two copies of one measurement is the shape
 that rots: the second copy is the one nobody remembers to update, and a benchmark
 that quietly disagrees with itself is worse than one nobody published.
 
@@ -22,9 +22,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
-HEADER = "| Embedding Model | Params | Dim | Track A (raw) | Track B (cpersona) | Δ |\n|---|---|---|---|---|---|\n"
-MINILM = "| all-MiniLM-L6-v2 | 22M | 384 | 43.67 | **50.10** | +6.43 |\n"
-BGE = "| bge-m3 | 568M | 1024 | 56.83 | **57.66** | +0.83 |\n"
+HEADER = (
+    "| Backend | Deployment | SS-User | SS-Asst | SS-Pref | Temp. Reas | Multi-S | Know. Upd | Overall | Context Tokens |\n"
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n"
+)
+MINILM = "| CPersona 2.6.3a1 | local | 90.00 | 78.57 | 86.67 | 85.71 | 67.67 | 85.90 | 80.80 | 2,354.6 |\n"
+BGE = "| CPersona v1.2 (2.6.4a1) | local | 91.43 | 80.36 | 90.00 | 83.46 | 71.43 | 84.62 | 81.60 | 1,786.7 |\n"
 
 
 def _load():
@@ -60,7 +63,7 @@ def test_identical_tables_pass(gate):
 
 def test_a_changed_number_is_caught(gate):
     """The case this gate exists for: one side is updated, the other is not."""
-    drifted = BGE.replace("**57.66**", "**58.99**")
+    drifted = BGE.replace("| 81.60 |", "| 82.40 |")
     assert gate(HEADER + MINILM + BGE, HEADER + MINILM + drifted) != []
 
 
@@ -81,8 +84,21 @@ def test_a_missing_table_fails_rather_than_skipping(gate):
 
 def test_reformatting_is_free(gate):
     """Rows compare after whitespace is squeezed: alignment is not a fact."""
-    padded = "|  bge-m3  |  568M  | 1024 | 56.83 | **57.66** | +0.83 |\n"
+    padded = "|  CPersona v1.2 (2.6.4a1)  |  local  | 91.43 | 80.36 | 90.00 | 83.46 | 71.43 | 84.62 | 81.60 |  1,786.7  |\n"
     assert gate(HEADER + BGE, HEADER + padded) == []
+
+
+def test_a_shorter_comparison_row_is_not_read_as_a_table_row(gate):
+    """The results document also names CPersona in a five-column comparison table.
+
+    Read as a row of the same table, that line would be a second row for one
+    version: a measurement looking like two, and a red gate over a page that agrees.
+    """
+    comparison = (
+        "| Backend | Deployment | Overall | Context Tokens | note |\n| --- | --- | ---: | ---: | --- |\n"
+        "| CPersona v1.2 (2.6.4a1) | local | 81.60 | 1,786.7 | — |\n"
+    )
+    assert gate(HEADER + MINILM + BGE, HEADER + MINILM + BGE + "\n" + comparison) == []
 
 
 def test_the_real_pages_agree():
@@ -105,13 +121,13 @@ def test_two_rows_for_one_model_in_one_table_is_caught(gate):
     equal -- so a document publishing two different numbers for one model passed
     the gate that exists to keep the published numbers from disagreeing.
     """
-    stale = BGE.replace("**57.66**", "**51.02**")
+    stale = BGE.replace("| 81.60 |", "| 79.20 |")
     assert gate(HEADER + stale + BGE, HEADER + BGE) != []
 
 
 def test_the_duplicate_is_caught_even_when_both_tables_carry_it(gate):
     """Both sides duplicating the row is the case a key-by-key compare cannot see."""
-    stale = BGE.replace("**57.66**", "**51.02**")
+    stale = BGE.replace("| 81.60 |", "| 79.20 |")
     assert gate(HEADER + stale + BGE, HEADER + stale + BGE) != []
 
 

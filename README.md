@@ -133,14 +133,31 @@ what you may rely on: [Behavior Contracts](https://cloto-dev.github.io/CPersona/
 
 ## Benchmarks
 
-Measured on LMEB (Long-horizon Memory Embedding Benchmark, arXiv:2603.12572) — 22 datasets subsuming LoCoMo and LongMemEval, measured here as 22 retrieval tasks. The metric is Mean NDCG@10 across all 22 tasks. **Track A** is the raw embedding model alone; **Track B** routes the same embeddings through cpersona's real `store`/`recall` code paths (SQLite + FTS5 + RRF fusion + per-agent auto-calibration).
+Measured on [OmniMemEval](https://github.com/MemTensor/OmniMemEval)'s LongMemEval-S
+pipeline: the 500 questions of the cleaned LongMemEval-S, answered by `gpt-4.1-mini`
+and judged by `gpt-4o-mini`, through the same harness, prompts and models as the
+memory backends OmniMemEval reproduces. Accuracy is the share of questions judged
+correct; Context Tokens is the average number of tokens sent to the answer model per
+question, its prompt included.
 
-| Embedding Model | Params | Dim | Track A (raw) | Track B (cpersona) | Δ |
-|---|---|---|---|---|---|
-| all-MiniLM-L6-v2 | 22M | 384 | 43.67 | **50.10** | +6.43 |
-| bge-m3 | 568M | 1024 | 56.83 | **57.66** | +0.83 |
+| Backend | Deployment | SS-User | SS-Asst | SS-Pref | Temp. Reas | Multi-S | Know. Upd | Overall | Context Tokens |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CPersona 2.6.3a1 | local | 90.00 | 78.57 | 86.67 | 85.71 | 67.67 | 85.90 | 80.80 | 2,354.6 |
+| CPersona v1.2 (2.6.4a1) | local | 91.43 | 80.36 | 90.00 | 83.46 | 71.43 | 84.62 | 81.60 | 1,786.7 |
 
-Track B lands at or above Track A on both models: the fusion layers add signal rather than merely persisting vectors, and a weaker embedding gains more because the FTS5/keyword layers rescue what its vectors miss. How to read the deltas, the noise envelope, the measurement harness and the reproduction regime: [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
+**81.60% at 1,786.7 tokens a question.** Of the 12 backends OmniMemEval reproduces
+through the same pipeline, MemOS answers more questions (89.20%, at 4,151 tokens) and
+Mem0's cloud service sends fewer tokens (856, at 56.00%); 2.6.4a1 scored higher with
+fewer tokens than each of the other ten, the closest of them within one run's sampling
+error. CPersona stores each conversation as it is and calls no model to store or
+recall.
+
+2.6.3a1 is the code of 2.6.3, the release a plain install gets; 2.6.4a1 is a
+pre-release. Each was run once, by this project. The comparison rows, the registered
+rules and every departure from a clean run are in the
+[results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme.md).
+Retrieval-only measurements on LMEB (22 tasks) and the harness behind them:
+[`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
 
 ## Documentation
 

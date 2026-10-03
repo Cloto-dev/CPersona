@@ -816,22 +816,25 @@ def check_applies_to_banners() -> None:
         )
 
 
-# The LMEB Track A/B table is published twice: in the README, where a visitor
-# decides whether the pipeline costs ranking quality, and in benchmarks/README,
-# beside the harness that produced it. Two copies of the same measurement is
-# exactly the shape this gate exists for — the second copy is the one nobody
+# The OmniMemEval rows are published twice: in the README, where a visitor
+# decides what the memory buys and costs, and in the results document, beside the
+# run record and the rules they were judged by. Two copies of the same measurement
+# is exactly the shape this gate exists for — the second copy is the one nobody
 # remembers to update, and a benchmark number that quietly disagrees with itself
 # is worse than one nobody published.
 #
 # Rows are compared as text after whitespace is squeezed, so reformatting the
-# table is free and changing a number is not. A missing table on either side is
+# table is free and changing a number is not. Only CPersona's full rows count, in
+# OmniMemEval's ten-column format: the results document also lists CPersona in a
+# shorter comparison table, and reading those as rows of the same table would make
+# one measurement look like two. A missing table on either side is
 # a failure rather than a skip: a comparison with nothing to compare reports
 # green over an unexamined claim.
 BENCH_TABLE_SOURCES = (
     ROOT / "README.md",
-    ROOT / "benchmarks" / "README.md",
+    ROOT / "benchmarks" / "measurements" / "results-omnimemeval-lme.md",
 )
-BENCH_ROW = re.compile(r"^\|\s*([\w.\-/]+)\s*\|\s*\d+M\s*\|.*$", re.M)
+BENCH_ROW = re.compile(r"^\|\s*(CPersona [^|*\n]+?)\s*\|\s*local\s*\|(?:[^|\n]*\|){8}[ \t]*$", re.M)
 
 
 def _bench_rows(doc: Path) -> dict[str, str]:
@@ -863,8 +866,8 @@ def check_benchmark_tables_agree() -> None:
     for doc, rows in tables.items():
         if not rows:
             fail(
-                f"{doc.relative_to(ROOT)}: no LMEB benchmark rows found. The table is "
-                "published in both README.md and benchmarks/README.md and this gate "
+                f"{doc.relative_to(ROOT)}: no OmniMemEval benchmark rows found. The rows "
+                "are published in both README.md and the results document and this gate "
                 "compares them; if it moved, update BENCH_TABLE_SOURCES rather than "
                 "leaving the comparison with nothing to compare."
             )
