@@ -45,11 +45,14 @@ def boot(a: dict, b: dict) -> tuple[float, float, float]:
     return sum(diff) / n * 100, stats[int(0.025 * B)], stats[int(0.975 * B) - 1]
 
 
+def acc(p: dict) -> float:
+    return sum(v[0] for v in p.values()) / len(p) * 100
+
+
 def main():
     pub = judged(H / "results/lme/cpersona-lme1")
     pts = {k: judged(H / f"results/lme/cpersona-lme1-k{k}") for k in POINTS}
     full = pts["full"]
-    acc = lambda p: sum(v[0] for v in p.values()) / len(p) * 100
     agree = sum(pub[i][0] == full[i][0] for i in pub) / len(pub) * 100
     noisy = abs(acc(full) - acc(pub)) > 2.0
     print(f"noise check: published {acc(pub):.2f} / full re-answered {acc(full):.2f} / "
