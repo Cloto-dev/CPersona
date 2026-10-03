@@ -33,9 +33,10 @@ same search) fixed what the change has to do:
 | Shortening every quote ([quote curve](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-quote-curve.md)) | At the same cost, worse than removing items at both points measured: 7.40 points below four items, 4.20 below six |
 | What a context quotes ([evidence metrics](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-evidence.md)) | With every item, 96.2% of answer sessions are quoted, but only 21.9% of the quoted text comes from them. The first item carries an answer session on 426 of 500 questions |
 | Where a shorter quote loses the evidence | The evidence turn left outside the quote, though in a quoted record, rises from 7.5% to 23.3% of evidence turns at 320/160 characters; none is lost by cutting a passage that was too long |
+| Where the evidence ranks inside its record | Of 859 evidence turns in quoted answer records, the record's best-ranked passage reaches 62.9%; the second 16.3%, the third 6.3%, the fourth or fifth 6.4%, a later one 8.1%. Recomputed with the server's ranking, which reproduced all 5,888 quoted ranges |
 
-The last row is the one this design rests on. The turn that answers is often
-not the best-ranked block of its record: a long quote reaches it by filling the
+The last two rows are the ones this design rests on. The turn that answers is
+often not the best-ranked passage of its record: a long quote reaches it by filling the
 second and third passages, and a short one does not. Removing items, the other
 uniform cut, loses the second session a multi-session question needs. Both
 cuts are blind to the evidence.
