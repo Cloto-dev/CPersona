@@ -7,6 +7,8 @@ ingestion's user ids (version "lme1"), two worker threads as the harness ran, an
 contexts and durations to its own file; the published results directory is not touched.
 
 usage: OMNIMEMEVAL_DIR=<checkout> OMNIMEMEVAL_ENV_FILE=<envfile> <harness venv python> search_driver.py <out.json> [workers]
+       SEARCH_INDICES=<json> searches only the questions it lists: a list of indices, or a file with a
+       "dev" list of {"index": i} (v1_5_dev_questions.json)
 (run from the checkout: the dataset loader reads a path relative to it)
 """
 import json
@@ -28,6 +30,11 @@ from utils.search_helpers import dispatch_search, unpack_search_result  # noqa: 
 
 OUT = Path(sys.argv[1])
 WORKERS = int(sys.argv[2]) if len(sys.argv) > 2 else 2
+INDICES = None
+if os.environ.get("SEARCH_INDICES"):
+    _listed = json.load(open(os.environ["SEARCH_INDICES"]))
+    _listed = _listed["dev"] if isinstance(_listed, dict) else _listed
+    INDICES = [e["index"] if isinstance(e, dict) else int(e) for e in _listed]
 df = load_lme_dataframe()
 
 
@@ -43,7 +50,7 @@ def one(i):
 
 rows = []
 with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-    for r in ex.map(one, range(len(df))):
+    for r in ex.map(one, INDICES if INDICES is not None else range(len(df))):
         rows.append(r)
         if len(rows) % 50 == 0:
             print(f"{len(rows)}/{len(df)}", flush=True)
