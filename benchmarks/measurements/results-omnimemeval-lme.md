@@ -127,8 +127,20 @@ What departed from a single uninterrupted run, in order:
 
 Search latency, descriptive only: mean 26.6 s for arm A and 24.4 s for arm B
 (p95 42.6 s and 39.2 s), on a laptop serving one store of all 500 haystacks with
-a local embedding server. It is not comparable with hosted services and has not
-been investigated yet.
+a local embedding server. **These figures are not the cost of a search.** Each
+server started on a copy of the store without a calibration file, so it began
+calibrating its global threshold and then each of the 500 agents in the
+background, 29 to 36 minutes per agent. Both servers were calibrating through
+both arms' searches, six agents each by the time the searches ended.
+
+Arm B was searched again on 2026-10-03 with the calibration that run had written
+restored at startup, so no calibration ran: one server, the harness's search
+wrapper and client with the same two workers and the same user ids
+([`search_driver.py`](../omnimemeval/search_driver.py)). Mean 0.57 s,
+median 0.54 s, p95 0.88 s, maximum 1.38 s, and all 500 contexts identical to the
+run's, byte for byte. The embedding server had been replaced by one that keeps
+the same cache on disk; it returned the vectors of all 500 questions unchanged.
+Neither set of figures is comparable with a hosted service.
 
 ## Embedding backend
 
