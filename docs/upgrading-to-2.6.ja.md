@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:59d1445959892620760a42bc3fcc67bfab97ca7a -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:9fe47f590e53dd72ba9b269edd8a8d3e9fe9bfe1 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -41,7 +41,7 @@
 | 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block と一緒に作られます |
 | 18 | 2.6.3a1 | `memories` と `episodes` の `embedding_model`: 各ベクトルを作ったモデルのラベル。保存済みの行は空のラベル (不明) になります | なし: ベクトルは次に書かれるときにラベルが付きます |
 
-2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1 はスキーマを変えていません。
+2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2 はスキーマを変えていません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
@@ -167,6 +167,13 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
   粗探索の索引があれば探し、無ければ探さずに `time_cue.remainder` でそう伝えます。保存済みの
   ベクトルを全部読むことはありません。窓に収まるストアでは何も変わりません。`true` と `false` の
   意味は変わりません ([設定](BINARY_COARSE_SEARCH_DESIGN.md#7-settings))。
+- **サーバーが instructions を送り、3 つのツールがセッションと一緒に読み込まれます**
+  (2.6.5a2)。`initialize` の instructions は、CPersona のツールをいつ使うかの案内
+  (約 500 文字) で始まり、運用コンテキストの summary が設定されていればそのあとに続きます。
+  以前は summary が無いと空でした。Claude Code では `reconstruct`・`store`・`archive_episode`
+  がツール検索を通さずセッションの開始時に読み込まれるので、どのセッションもこの 3 つの定義を
+  持ち、起動はサーバーのツールを最大 5 秒待ちます。ツールの説明文 5 本が短くなり、外した細部は
+  説明文が名前を挙げる設計文書にあります。
 - **答えの脇に置いた行は recall の回数を得ません** (2.6.0)。confidence が有効なとき、Block の
   別枠、時期の別枠、関連の別枠は `recall_count` を増やさず、その `confidence` は
   その行自身の履歴を読みます。

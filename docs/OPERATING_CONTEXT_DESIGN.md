@@ -133,7 +133,7 @@ Code's tool search does, shows an agent only the tool names and these
 instructions at session start. Claude Code cuts the instructions at 2,048
 characters, so the guidance comes first and a summary within the 1,500
 characters below still fits. With no summary the instructions are the guidance
-alone (before 2.6.5a3 they were empty). **The summary is the compact canonical;
+alone (before 2.6.5a2 they were empty). **The summary is the compact canonical;
 details are opt-in** via
 `get_operating_context` (preview-tier structure, under the same token
 fixed-cost discipline as CSC `get_active_context` and the recall preview

@@ -42,7 +42,7 @@ recorded as done, so it is retried on the next start.
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
 | 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4 and 2.6.5a1 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1 and 2.6.5a2 changed no schema.
 
 ## After the first start
 
@@ -196,6 +196,15 @@ Check these against what your deployment relies on. Each is off, or equal to
   otherwise left out with `time_cue.remainder` saying so; nothing reads every
   stored vector. A store within the window sees no change. `true` and `false`
   keep their meaning ([settings](BINARY_COARSE_SEARCH_DESIGN.md#7-settings)).
+- **The server sends instructions, and three tools load with the session**
+  (2.6.5a2). The `initialize` instructions now open with CPersona's guidance on
+  when to use its tools (about 500 characters), followed by the operating
+  context's summary when one is configured; without one they used to be empty.
+  In Claude Code, `reconstruct`, `store` and `archive_episode` load at session
+  start instead of through tool search, so every session carries their
+  definitions, and startup waits up to 5 seconds for the server's tools. Five
+  tool descriptions are shorter; what they dropped is in the design documents
+  they name.
 - **Rows held beside the answer earn no recall count** (2.6.0). With confidence
   enabled, the block reservation, the time cue's seats and the propagation seat
   no longer raise `recall_count`, and their `confidence` reads their own history.
