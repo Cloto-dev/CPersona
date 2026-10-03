@@ -42,7 +42,7 @@ recorded as done, so it is retried on the next start.
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
 | 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2 and 2.6.4a1 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1 and 2.6.4a2 changed no schema.
 
 ## After the first start
 
@@ -190,6 +190,12 @@ Check these against what your deployment relies on. Each is off, or equal to
   (2.6.0). A deployment that sets it to anything but 1 recalibrates on its first
   start of 2.6.0, because a gate measured at another weight is no longer
   restored. At the default nothing changes.
+- **A time cue searches past the scan window through the coarse index by
+  default** (2.6.4a2). With `CPERSONA_CUE_COARSE_ENABLED` unset, the part of a
+  cue's period past the scan window is searched when a coarse index exists, and
+  otherwise left out with `time_cue.remainder` saying so; nothing reads every
+  stored vector. A store within the window sees no change. `true` and `false`
+  keep their meaning ([settings](BINARY_COARSE_SEARCH_DESIGN.md#7-settings)).
 - **Rows held beside the answer earn no recall count** (2.6.0). With confidence
   enabled, the block reservation, the time cue's seats and the propagation seat
   no longer raise `recall_count`, and their `confidence` reads their own history.

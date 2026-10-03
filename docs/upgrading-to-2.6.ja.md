@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:11ed51736add75e137470f3f9446cf75378e5560 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:9732ce2e773ab5079b51413fc099ab2c0241cb39 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -41,7 +41,7 @@
 | 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block と一緒に作られます |
 | 18 | 2.6.3a1 | `memories` と `episodes` の `embedding_model`: 各ベクトルを作ったモデルのラベル。保存済みの行は空のラベル (不明) になります | なし: ベクトルは次に書かれるときにラベルが付きます |
 
-2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1 はスキーマを変えていません。
+2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2 はスキーマを変えていません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
@@ -162,6 +162,11 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 - **既定以外の `CPERSONA_PRIOR_FAR_WEIGHT` は較正の一部になります** (2.6.0)。1 以外を設定した
   配備は、2.6.0 の最初の起動で較正し直します。別の重みで測ったゲートは復元されないためです。
   既定のままなら何も変わりません。
+- **時間の手がかりは、既定で粗探索の索引を通して走査窓の外を探します** (2.6.4a2)。
+  `CPERSONA_CUE_COARSE_ENABLED` が未設定なら、手がかりの期間のうち走査窓より後ろの部分を、
+  粗探索の索引があれば探し、無ければ探さずに `time_cue.remainder` でそう伝えます。保存済みの
+  ベクトルを全部読むことはありません。窓に収まるストアでは何も変わりません。`true` と `false` の
+  意味は変わりません ([設定](BINARY_COARSE_SEARCH_DESIGN.md#7-settings))。
 - **答えの脇に置いた行は recall の回数を得ません** (2.6.0)。confidence が有効なとき、Block の
   別枠、時期の別枠、関連の別枠は `recall_count` を増やさず、その `confidence` は
   その行自身の履歴を読みます。
