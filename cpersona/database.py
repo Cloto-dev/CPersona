@@ -107,6 +107,32 @@ async def connection():
                 await db.rollback()
 
 
+@contextlib.asynccontextmanager
+async def background_connection():
+    """Read seam for long background reads, on a connection of their own.
+
+    aiosqlite gives each connection one worker thread and runs its statements in
+    the order they arrive, so every read sharing ``connection()`` waits for the
+    statement ahead of it. A calibration's simulate-query recalls and the block
+    sweep's pages of whole records are statements of seconds each, issued for
+    minutes on end; a search arriving behind them waited for them. Measured on a
+    23,867-record store: searches took 24 s during a startup calibration and 19 s
+    during the boot sweep, against 0.6 s with neither, and returned the same
+    rows. This seam keeps that work off the connection the requests use. Same
+    contract as ``connection()``: reads only, and an implicit transaction is
+    rolled back on scope exit.
+
+    Background reads share this one connection, so they still queue behind each
+    other, which costs no one a wait they would notice."""
+    db = await _get_background_read_db()
+    try:
+        yield db
+    finally:
+        if db is not _db and db._conn is not None and db._conn.in_transaction:
+            with contextlib.suppress(Exception):
+                await db.rollback()
+
+
 async def release_read_probe_transaction(db) -> bool:
     """End a transaction a read-seam probe implicitly opened. Owner-side helper.
 
@@ -803,6 +829,10 @@ SKIP_BOOT_MIGRATIONS = False
 # re-init), the read connection would otherwise keep serving the OLD database
 # file — so _get_read_db() re-keys itself on the current write connection.
 _read_db_owner: aiosqlite.Connection | None = None
+# The connection background_connection() yields, and the write connection it was
+# opened alongside (the same re-keying as _read_db_owner).
+_bg_read_db: aiosqlite.Connection | None = None
+_bg_read_db_owner: aiosqlite.Connection | None = None
 # Serialises first-touch initialisation: without it two coroutines racing into
 # get_db() would both run the (idempotent but committing) migration ladder
 # concurrently — the exact contender-commit interleaving the write seam exists
@@ -839,14 +869,43 @@ async def _get_read_db() -> aiosqlite.Connection:
             # fall back to shared-connection semantics for in-memory use.
             _read_db, _read_db_owner = write_db, write_db
             return _read_db
-        rdb = await aiosqlite.connect(DB_PATH)
-        try:
-            await rdb.execute("PRAGMA busy_timeout=5000")
-        except BaseException:
-            await rdb.close()
-            raise
-        _read_db, _read_db_owner = rdb, write_db
+        _read_db, _read_db_owner = await _open_reader(), write_db
     return _read_db
+
+
+async def _get_background_read_db() -> aiosqlite.Connection:
+    """Get or create the background read connection (see ``background_connection``).
+
+    The same lifecycle as ``_get_read_db``: opened after get_db() has migrated,
+    re-keyed on the current write connection, and the write connection itself
+    for an in-memory database."""
+    global _bg_read_db, _bg_read_db_owner
+    write_db = await get_db()
+    if _bg_read_db is not None and _bg_read_db_owner is write_db:
+        return _bg_read_db
+    async with _read_lock:
+        write_db = await get_db()
+        if _bg_read_db is not None and _bg_read_db_owner is write_db:
+            return _bg_read_db
+        stale, _bg_read_db, _bg_read_db_owner = _bg_read_db, None, None
+        if stale is not None and stale is not write_db:
+            with contextlib.suppress(Exception):
+                await stale.close()
+        if DB_PATH == ":memory:":
+            _bg_read_db, _bg_read_db_owner = write_db, write_db
+            return _bg_read_db
+        _bg_read_db, _bg_read_db_owner = await _open_reader(), write_db
+    return _bg_read_db
+
+
+async def _open_reader() -> aiosqlite.Connection:
+    rdb = await aiosqlite.connect(DB_PATH)
+    try:
+        await rdb.execute("PRAGMA busy_timeout=5000")
+    except BaseException:
+        await rdb.close()
+        raise
+    return rdb
 
 
 async def _ensure_dedup_indexes(db) -> None:
@@ -1310,7 +1369,7 @@ async def close_db():
     re-points the module globals (test reboot harnesses, embedded re-init)
     must go through this helper instead of assigning ``None`` directly.
     """
-    global _db, _read_db, _read_db_owner, _write_generation
+    global _db, _read_db, _read_db_owner, _bg_read_db, _bg_read_db_owner, _write_generation
     # The connections are going away; whatever was cached against them describes
     # a database this process may never see again.
     _write_generation += 1
@@ -1319,6 +1378,11 @@ async def close_db():
             await _read_db.close()
         _read_db = None
     _read_db_owner = None
+    if _bg_read_db is not None:
+        if _bg_read_db is not _db:
+            await _bg_read_db.close()
+        _bg_read_db = None
+    _bg_read_db_owner = None
     if _db is not None:
         await _db.close()
         _db = None

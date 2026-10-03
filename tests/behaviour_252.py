@@ -663,7 +663,7 @@ async def close_db() -> None:
     """
     from cpersona import database
 
-    for attr in ("_read_db", "_db"):
+    for attr in ("_read_db", "_bg_read_db", "_db"):
         conn = getattr(database, attr, None)
         if conn is not None:
             try:

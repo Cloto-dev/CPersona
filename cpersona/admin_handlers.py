@@ -48,7 +48,7 @@ from cpersona.config import (
     TASK_RETRY_DELAY,
     VECTOR_SEARCH_MODE,
 )
-from cpersona.database import connection, read_snapshot, transaction
+from cpersona.database import background_connection, connection, read_snapshot, transaction
 from cpersona.utils import (
     _clamp_limit,
     _parse_timestamp_utc,
@@ -1786,8 +1786,11 @@ async def do_calibrate_threshold(
         )
 
     # The read seam stays open through the fused-gate calibration below — it issues
-    # simulate-query recalls against the same connection.
-    async with connection() as db:
+    # simulate-query recalls against the same connection. It is the background seam:
+    # each simulate query is a whole stored record, and on a large store its keyword
+    # search takes seconds, so on the request connection every search would wait
+    # behind one.
+    async with background_connection() as db:
         vecs, sample_error = await _sample_embeddings(db, agent_id, sample_n)
         if sample_error is not None:
             return sample_error
@@ -2318,7 +2321,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         # Deliberate corpus-wide agent enumeration (typed no-filter helper —
         # the structural gate's sanctioned spelling for a global scan).
         iso_all = isolation_where(agent_id=None)
-        async with connection() as db:
+        async with background_connection() as db:
             agent_rows = await db.execute_fetchall(
                 f"SELECT DISTINCT agent_id FROM memories WHERE embedding IS NOT NULL{iso_all.and_clause}",
                 iso_all.params,
