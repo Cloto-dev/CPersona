@@ -3468,6 +3468,16 @@ MUTATIONS += [
         breaks="close_db leaves the background connection's non-daemon thread running",
         expect='test_background_read_seam.py::test_close_db_closes_the_background_connection',
     ),
+    Mutation(
+        id='M332',
+        tests=('tests/test_background_read_seam.py',),
+        target='background read seam — the block sweep counts coverage off the request connection',
+        file='cpersona/blocks.py',
+        find='    async with background_connection() as db:\n        total, held = await coverage(db, keys)\n',
+        replace='    async with connection() as db:\n        total, held = await coverage(db, keys)\n',
+        breaks="the sweep's whole-corpus coverage count runs on the request connection",
+        expect='test_background_read_seam.py::test_block_sweep_coverage_is_read_beside_the_requests',
+    ),
 ]
 
 

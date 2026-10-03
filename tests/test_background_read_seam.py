@@ -155,6 +155,26 @@ async def test_block_sweep_pages_are_read_beside_the_requests(monkeypatch, fake_
 
 
 @pytest.mark.asyncio
+async def test_block_sweep_coverage_is_read_beside_the_requests(monkeypatch, fake_embedding_client):
+    # The report at the end of a run counts the whole corpus.
+    monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    async with _TempDB():
+        started = asyncio.Event()
+
+        async def empty_page(db, kind, after_id, limit):
+            return []
+
+        async def slow_coverage(db, keys):
+            await _hold(db, started)
+            return 0, 0
+
+        monkeypatch.setattr(blocks, "_page", empty_page)
+        monkeypatch.setattr(blocks, "coverage", slow_coverage)
+        waited = await _measure_while(blocks.backfill({}), started)
+        assert waited < NOT_QUEUED_S, f"a request waited {waited:.2f}s behind the sweep's coverage count"
+
+
+@pytest.mark.asyncio
 async def test_startup_calibration_lists_agents_on_the_background_seam(monkeypatch):
     # The agent listing scans every stored row; on a large store that is a long
     # statement of its own.
