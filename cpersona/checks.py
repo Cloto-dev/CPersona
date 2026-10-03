@@ -2863,6 +2863,12 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
       on a setting whose cost, without the file, is the size of the store.
     - **unusable**, **dimension drift**, **rows missing** (warn): a file exists
       and recall is not using it.
+
+    The time cue's default mode (auto, since 2.6.4) reads the index too, but never
+    falls back to the live store: without a usable file the remainder is simply
+    not searched. When it is the only reader, the four states above cost no time
+    and are reported unstamped (info): the store has outgrown what a time cue
+    reaches, and building the file is what gives the reach back.
     - **tail grown** (the registry default, info): the file is used, and the rows
       it cannot answer for are read exactly on every recall.
 
@@ -2881,11 +2887,14 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
     starts = []
     if config.FAR_SEATS_ENABLED:
         starts.append(far_seats.scan_start())
-    if config.CUE_COARSE_ENABLED:
+    if config.CUE_COARSE_MODE != "off":
         starts.append(vector.MAX_MEMORIES)
     if not starts:
         return []
     start = min(starts)
+    # Whether a reader pays the live store's price without the file. Only the default
+    # cue mode reads it and does not: its states are then observations, not costs.
+    live_price = config.FAR_SEATS_ENABLED or config.CUE_COARSE_MODE == "on"
 
     # A recall reads one agent's records, so the store's reach is the largest
     # agent's, not the total: the window applies per scope.
@@ -2985,6 +2994,17 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
             }
     if issue is None:
         return []
+    if not live_price and issue.get("severity") == "warn":
+        # Only the default cue mode reads the file, and it skips the remainder rather
+        # than read the live store: no recall pays for this state, so it is unstamped,
+        # and an absent file is described as the reach it costs, not as bytes read.
+        del issue["severity"]
+        if issue["type"] == "coarse_index_absent":
+            del issue["embedding_bytes_read_per_recall"]
+            issue["hint"] = (
+                f"a time cue does not search the {far_rows} records past the window "
+                f"without the index; {hint}"
+            )
 
     if fix and repairable:
         try:

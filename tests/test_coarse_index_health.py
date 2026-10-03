@@ -62,7 +62,7 @@ async def db(monkeypatch):
     monkeypatch.setattr(vector, "VECTOR_REACH", 0)
     monkeypatch.setattr(checks, "INDEX_MATTERS_ROWS", 5)
     monkeypatch.setattr(config, "FAR_SEATS_ENABLED", True)
-    monkeypatch.setattr(config, "CUE_COARSE_ENABLED", False)
+    monkeypatch.setattr(config, "CUE_COARSE_MODE", "off")
     conn = await get_db()
     _clean_index()
     await conn.execute("DELETE FROM memories")
@@ -130,7 +130,7 @@ async def test_the_far_seats_begin_past_vector_reach(db, monkeypatch):
 @pytest.mark.asyncio
 async def test_the_cue_remainder_begins_at_the_window_whatever_vector_reach_is(db, monkeypatch):
     monkeypatch.setattr(config, "FAR_SEATS_ENABLED", False)
-    monkeypatch.setattr(config, "CUE_COARSE_ENABLED", True)
+    monkeypatch.setattr(config, "CUE_COARSE_MODE", "on")
     monkeypatch.setattr(vector, "VECTOR_REACH", WINDOW + 100)
     await _insert(db, WINDOW + 20)
     issues = await _run(db)

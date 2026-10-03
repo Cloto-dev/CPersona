@@ -2,8 +2,10 @@
 
 Design: `docs/BINARY_COARSE_SEARCH_DESIGN.md` §6. The vector half of the cue arm ranks
 at most `CPERSONA_MAX_MEMORIES` of the period's records, the most recently stored. With
-`CPERSONA_CUE_COARSE_ENABLED` on, the rest of the period goes through the coarse
-supplier and is merged on cosine.
+`CPERSONA_CUE_COARSE_ENABLED=true` (mode "on"), the rest of the period goes through the
+coarse supplier and is merged on cosine. No index is built here, so "on" reads the live
+store; the default mode (auto), which asks the index only, is pinned in
+`tests/test_cue_coarse_auto.py`.
 
 Every embedding is one-hot on the first axis plus a filler axis, as in
 `tests/test_far_seats.py`, so a record's cosine to the query is a value this file chose
@@ -107,7 +109,7 @@ async def db(monkeypatch):
 
 
 async def _cue_arm(db, monkeypatch, *, enabled: bool):
-    monkeypatch.setattr(config, "CUE_COARSE_ENABLED", enabled)
+    monkeypatch.setattr(config, "CUE_COARSE_MODE", "on" if enabled else "off")
     return await M._search_cue_arm(
         db, AGENT, QUERY, cue.DEPTH, PERIOD, channel="", project_id=None, source_id="",
         exclude_set=set(), query_vec=[ONE_HOT.tolist()],
@@ -120,9 +122,9 @@ def _ids(rows):
 
 @pytest.mark.asyncio
 async def test_off_the_remainder_is_not_searched(db, monkeypatch):
-    """At the default the remainder is a guard, not a search that finds nothing."""
+    """Off, the remainder is a guard, not a search that finds nothing."""
     ids = await _seed(db)
-    assert config.CUE_COARSE_ENABLED is False
+    monkeypatch.setattr(config, "CUE_COARSE_MODE", "off")
 
     async def detonate(*a, **kw):
         raise AssertionError("the remainder was searched with the setting off")
@@ -226,9 +228,9 @@ async def test_a_cued_recall_seats_the_record_the_remainder_reached(db, monkeypa
     """Through the whole recall: nothing about the cue's seats changes, only what its vector half saw."""
     ids = await _seed(db)
     time_cue = {"after": "2026-03-10", "before": "2026-03-19", "confidence": "sure"}
-    monkeypatch.setattr(config, "CUE_COARSE_ENABLED", False)
+    monkeypatch.setattr(config, "CUE_COARSE_MODE", "off")
     off = await M.do_recall(AGENT, QUERY, 5, time_cue=time_cue)
-    monkeypatch.setattr(config, "CUE_COARSE_ENABLED", True)
+    monkeypatch.setattr(config, "CUE_COARSE_MODE", "on")
     on = await M.do_recall(AGENT, QUERY, 5, time_cue=time_cue)
     off_refs = [m["ref"] for m in off["messages"]]
     on_refs = [m["ref"] for m in on["messages"]]

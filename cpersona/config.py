@@ -201,11 +201,25 @@ FAR_SEATS_ENABLED = os.environ.get("CPERSONA_FAR_SEATS_ENABLED", "false").lower(
 
 # 2.6.2: the cue arm's remainder (docs/BINARY_COARSE_SEARCH_DESIGN.md §6). The vector
 # half of a time cue ranks at most CPERSONA_MAX_MEMORIES of the period's records, the
-# most recently stored; on, the rest of the period is searched through the coarse
-# supplier and merged on cosine. Off by default, and separate from the far seats so
-# that either can ship alone. A period holding no more than the cap gives the same
-# answer on or off: its remainder is empty.
-CUE_COARSE_ENABLED = os.environ.get("CPERSONA_CUE_COARSE_ENABLED", "false").lower() == "true"
+# most recently stored; the rest of the period can be searched through the coarse
+# supplier and merged on cosine. Separate from the far seats so that either can ship
+# alone. A period holding no more than the cap gives the same answer in every mode:
+# its remainder is empty.
+#
+# 2.6.4: three modes (design §7). Unset, empty or "auto" is the default: the remainder
+# is searched only through a coarse index that can answer, and with none it is not
+# searched -- the recall is the one "false" gives, and the response says the period
+# was not searched whole. "true" keeps the 2.6.2 meaning: through the index, or
+# without one through the live store, which returns the same records at a cost that
+# grows with the store. Anything else is off, as every value but "true" was before.
+def _cue_coarse_mode(raw: str | None) -> str:
+    value = (raw or "").strip().lower()
+    if value in ("", "auto"):
+        return "auto"
+    return "on" if value == "true" else "off"
+
+
+CUE_COARSE_MODE = _cue_coarse_mode(os.environ.get("CPERSONA_CUE_COARSE_ENABLED"))
 
 # 2.6: the Reconstruction Window and the bounds of the reconstruct tool
 # (docs/RELIABLE_RECALL_2_6.md section 7). `count` is the CEILING on how many

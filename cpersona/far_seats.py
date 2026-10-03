@@ -81,15 +81,30 @@ async def ranked(db, query_vec, *, agent_id, project_id, channel, source_id, flo
     (the cue arm's remainder, design §6); the period is re-applied when the
     candidates are read by id, as the authority's predicate is.
     """
+    hits, _ = await ranked_with_source(
+        db, query_vec, agent_id=agent_id, project_id=project_id, channel=channel,
+        source_id=source_id, floor=floor, start=start, period=period,
+    )
+    return hits
+
+
+async def ranked_with_source(db, query_vec, *, agent_id, project_id, channel, source_id, floor: float,
+                             start: int | None = None, period: tuple | None = None,
+                             live: bool = True) -> tuple[list[FarHit], str]:
+    """`ranked`, with the supplier that answered (`Candidates.source`).
+
+    `live=False` asks the coarse index only, so the source is "skipped" and the hits
+    empty when no usable index could answer: the cue arm's default mode (design §7).
+    """
     query = np.asarray(query_vec, dtype=np.float32)
     dim = int(query.shape[-1])
     found = await coarse_search.coarse_candidates(
         db, query, agent_id=agent_id, project_id=project_id, channel=channel,
         source_id=source_id, start=scan_start() if start is None else start, period=period,
-        k=coarse_search.CANDIDATES,
+        k=coarse_search.CANDIDATES, live=live,
     )
     if not found.ids:
-        return []
+        return [], found.source
     clause, params = _admitted(agent_id, project_id, channel, source_id)
     if period is not None:
         clause, params = f"{clause} AND {coarse_index.PERIOD_PREDICATE}", (*params, *period)
@@ -112,7 +127,7 @@ async def ranked(db, query_vec, *, agent_id, project_id, channel, source_id, flo
         and ("mem", row_id) not in rejected
     ]
     if not kept:
-        return []
+        return [], found.source
     cosines = vector._cosine_batch(query, dim, [stored[row_id][1] for row_id, _ in kept])
     hits = [
         FarHit(row_id, float(cosine), position)
@@ -120,7 +135,7 @@ async def ranked(db, query_vec, *, agent_id, project_id, channel, source_id, flo
         if cosine >= floor
     ]
     hits.sort(key=lambda h: (-h.cosine, h.position))
-    return hits
+    return hits, found.source
 
 
 async def seat_rows(db, hits: list[FarHit], *, agent_id, project_id, channel, source_id, excluded) -> list[dict]:

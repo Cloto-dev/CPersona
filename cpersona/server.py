@@ -1190,7 +1190,11 @@ registry.auto_tool(
     "FTS/keyword) omit match_reason. "
     "A response carrying gate_fallback=true (absent otherwise) means every candidate fell below "
     "the quality gate and the below-gate lexical matches were returned instead of an empty "
-    "result — treat them as low-confidence.",
+    "result — treat them as low-confidence. "
+    "A response may carry suggestion (absent otherwise, at most once per session): something the "
+    "server noticed that only the user can decide — that this scope has grown past the scan "
+    "window with no coarse index for a time cue to search the rest. Relay its message, and run "
+    "its fix only if the user agrees.",
     {
         "type": "object",
         "properties": {
@@ -1291,7 +1295,8 @@ registry.auto_tool(
                     "confidence step. likely widens the period by half its length on each side, "
                     "vague by its whole length. The response then carries time_cue: the period "
                     "searched, whether it was widened, how many rows moved and how many seats were "
-                    "used. Pass it only when the request itself says when (a date, a month, "
+                    "used, and remainder when the period held more records than the vector search "
+                    "reads and no coarse index could search the rest. Pass it only when the request itself says when (a date, a month, "
                     "\"last week\", \"in the spring\"); omit it when the request names no time, and "
                     "never fill it with today's date or a guess. A cue whose own period starts "
                     "within the last 24 hours (today, or later) is not used: the rows are those of "
