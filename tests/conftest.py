@@ -347,13 +347,14 @@ def _close_singleton_db():
     yield
     from cpersona import database
 
-    rdb = database._read_db
-    if rdb is not None and rdb is not database._db:
-        try:
-            asyncio.run(rdb.close())
-        except Exception:
-            pass
-    database._read_db = None
+    for attr in ("_read_db", "_bg_read_db"):
+        rdb = getattr(database, attr)
+        if rdb is not None and rdb is not database._db:
+            try:
+                asyncio.run(rdb.close())
+            except Exception:
+                pass
+        setattr(database, attr, None)
 
     db = database._db
     if db is not None:

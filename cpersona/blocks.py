@@ -39,7 +39,7 @@ import time
 from dataclasses import dataclass
 
 from cpersona import config, generation, tasks, vector
-from cpersona.database import connection, transaction
+from cpersona.database import background_connection, connection, transaction
 from cpersona.isolation import isolation_where
 from cpersona.nodes import PARENT_TEXT, _parent_text
 
@@ -985,7 +985,10 @@ async def backfill(payload: dict) -> str:
         page_after = after_id if kind == BACKFILL_KINDS[kind_index] else 0
         cursor = (kind, page_after)
         while stopped_by is None:
-            async with connection() as db:
+            # The background seam: a page is whole records, and a sweep reads the
+            # corpus page after page, so on the request connection every search
+            # issued during it waited behind a page.
+            async with background_connection() as db:
                 page = await _page(db, kind, page_after, _BACKFILL_PAGE)
                 ids = [row_id for row_id, _ in page]
                 sets = await _sets_for(db, kind, ids)
@@ -1046,7 +1049,7 @@ async def backfill(payload: dict) -> str:
         # a successful run that did nothing and queueing another just like it.
         raise RuntimeError(f"block backfill: {failed} records failed and none were built")
 
-    async with connection() as db:
+    async with background_connection() as db:
         total, held = await coverage(db, keys)
     report = (
         f"built {built} records ({blocks_written} blocks) in {requests} embedding requests; "
