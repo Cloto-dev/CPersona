@@ -160,7 +160,7 @@ _ASKED = ("caller", "server_default")
 _DEFAULT_INDEPENDENCE = "singleton"
 _DEFAULT_WHY = "seed"
 
-# `lite=true` (2.6.5): a smaller response for a question one or two records can answer.
+# `lite=true` (2.6.5a3): a smaller response for a question one or two records can answer.
 # The budget is LITE_BUDGET unless the caller names one, the sequence is `whole`
 # whatever CPERSONA_RECONSTRUCT_SEQUENCE says, and the response leaves out what a
 # reader of such an answer does not act on --

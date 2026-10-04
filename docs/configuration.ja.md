@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:e4b7e625feba5c692687243b55e94b591429f21d -->
+<!-- i18n-source: docs/configuration.md@blob:de39e196b1685d0c978f0e733e75fcd3f122d4a4 -->
 
 # 設定リファレンス
 
@@ -69,7 +69,7 @@
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | item の先頭引用: そのレコードのうち一致した部分を、ランキング順にこの文字数まで詰め、本文中の順序で示します — recall の抜粋と同じ詰め方です。これ以下の長さのレコードは全体が引用されます。`0` にすると、2.6 より前と同様に、支配する 1 節をプレビュー階層で切って引用します |
 | `CPERSONA_RECONSTRUCT_FULL_QUOTES` | `5` | 先頭から何件の item に、上の先頭引用の大きさをそのまま使うか。2.6.4 から |
 | `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS` | `400` | それより後の item の先頭引用の大きさ。0 より大きく `CPERSONA_RECONSTRUCT_QUOTE_CHARS` 以下でないと起動時に止まります。同じ値にすると、2.6.4 より前と同じくどの item も同じ大きさで引用します。2.6.4 から |
-| `CPERSONA_RECONSTRUCT_SEQUENCE` | `items` | 予算が切る引用の列。`items` は各 item の先頭引用を item の順に並べ、そのあと各 item の抜粋を順に回す列です。`evidence` は item の先頭レコードの引用候補をすべて、レコードをまたいだ 1 つの順序に並べて切ります。item の先頭引用はそのレコードのうち切り取りに入った部分 (本文の順に表示) になり、1 つも入らなかった item は返しません ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md))。`whole` は同じ順序に長さで引いた床を付けたものです。引用の長さ (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`) 以下の先頭レコードを丸ごと item の順に先に並べ、それより長いレコードの引用候補を `evidence` の順序で続けます。予算を上げて引用が消えることはありません。`CPERSONA_RECONSTRUCT_QUOTE_CHARS` が 0 より大きい時だけ読みます。実験的な設定です。2.6.5a1 から (`whole` は次の pre-release から) |
+| `CPERSONA_RECONSTRUCT_SEQUENCE` | `items` | 予算が切る引用の列。`items` は各 item の先頭引用を item の順に並べ、そのあと各 item の抜粋を順に回す列です。`evidence` は item の先頭レコードの引用候補をすべて、レコードをまたいだ 1 つの順序に並べて切ります。item の先頭引用はそのレコードのうち切り取りに入った部分 (本文の順に表示) になり、1 つも入らなかった item は返しません ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md))。`whole` は同じ順序に長さで引いた床を付けたものです。引用の長さ (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`) 以下の先頭レコードを丸ごと item の順に先に並べ、それより長いレコードの引用候補を `evidence` の順序で続けます。予算を上げて引用が消えることはありません。`CPERSONA_RECONSTRUCT_QUOTE_CHARS` が 0 より大きい時だけ読みます。実験的な設定です。2.6.5a1 から (`whole` は 2.6.5a3 から) |
 | `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` | `4000` | 呼び出し側が `budget` を省略した時のペイロード予算 (引用本文の文字数)。ウィンドウの item の先頭引用の大きさを合計した方が大きければそちらになります。件数と予算の掃引で選ぶまでの暫定値です |
 | `CPERSONA_RECONSTRUCT_FORCED_BUDGET` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします |
 | `CPERSONA_RECONSTRUCT_MAX_BUDGET` | `20000` | 予算の絶対上限。超える要求は切り詰めて報告します。既定値・強制値がこれを超える場合、または設定値がプレビュー層の抜粋 1 つ分に満たない場合は起動時に停止します |

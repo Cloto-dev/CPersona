@@ -465,7 +465,7 @@ effective_budget = min(budget_base, max_budget)
   excerpt; an item whose excerpts were cut states `excerpts_omitted`. A caller
   can therefore tell whether breadth or depth was cut, and a response the budget
   never touched says nothing about it.
-- **`lite=true`** (2.6.5) is a preset for a question one or two records can
+- **`lite=true`** (2.6.5a3) is a preset for a question one or two records can
   answer. The budget is 2,800 characters unless the caller names one (an
   operator-forced budget still wins), and the sequence is `whole`
   ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))
