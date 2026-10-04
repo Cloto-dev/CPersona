@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d8b753f2561bd9adf4ac1164f5cfa210c791a37c -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:cc0ec627b9ba36b12ef3a98fa2ad18aeb4d982b3 -->
 
 # Reliable Recall — 2.6 系
 
@@ -393,6 +393,18 @@ effective_budget = min(budget_base, max_budget)
   `clamped`、`reason`) を、予算が item か抜粋を運べなかった時は `effective_budget` と
   `used_budget` を述べ、抜粋を削られた item は `excerpts_omitted` を述べます。呼び出し側は、
   削られたのが幅か深さかを見分けられます。予算が何も削らなかった応答は、予算について何も述べません。
+- **`lite=true`** (2.6.5) は、1〜2 件の記録で答えられる問いのためのプリセットです。予算は、呼び出し側が
+  指定しない限り 2,800 字です (運用者が強制した予算はこれまで通り優先します)。列は
+  `CPERSONA_RECONSTRUCT_SEQUENCE` の値にかかわらず `whole`
+  ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length)) です。応答は、そうした答えの
+  読み手が使わないものを省きます: item から `ranges` を除き、唯一の claim が先頭を繰り返すだけの item は
+  `claims` の代わりにその claim の `as_of` を持ち、外枠から `bounds`、`effective_budget`、`used_budget`、
+  `reserved_omitted` を除きます。`effective_count`、`returned_count`、不足理由は引き続き述べ、先頭以上の
+  ことを述べる claim は残し、応答は `lite: true` と述べます。`trace=true` はすべての欄を返します。
+  `whole` の登録済みの判定は 2 つともこの予算で測りました
+  ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)): LongMemEval-S では、全件の
+  約半分の検索テキストで evidence 列に劣らない答えを返し、非公開の実運用パックでは、全予算の既定の列より
+  見せた根拠が少なくなりました。そのため既定ではなく、選ぶものです。
 
 この窓は、このサーバーが既に持つ系列の 4 番目です: 埋め込み窓 (何が索引に載るか。分割は
 報告される)、走査窓 (何が走査されるか。gate fallback は報告される)、動的検索窓 (ループが

@@ -512,6 +512,7 @@ async def do_reconstruct_boundary(
     trace: bool = False,
     budget: int | None = None,
     time_cue: dict | None = None,
+    lite: bool = False,
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -533,6 +534,7 @@ async def do_reconstruct_boundary(
         session_key=session_key,
         trace=trace,
         budget=budget,
+        lite=lite,
         **({"time_cue": time_cue} if time_cue else {}),
     )
     # bug-485: no preview cut here. Heads are already cut where they are quoted --
@@ -1598,6 +1600,7 @@ registry.auto_tool(
     "BUDGET bounds the characters of quoted text (`content` plus `excerpts`), where "
     "count bounds items: excerpts are omitted before items, and raising the budget "
     "never removes an item or an excerpt. Omit it for the server default. "
+    "`lite=true` answers smaller and cheaper (see its parameter). "
     "READ FURTHER IN STEPS, smallest first: an item's `expand`, then the neighbouring "
     "nodes ({ref, node: [index - 1, index + 1]}), and the bare ref, the whole record, "
     "only when the parts did not answer. "
@@ -1705,6 +1708,19 @@ registry.auto_tool(
                     "reconstruction reads. The response carries time_cue when one was applied."
                 ),
             },
+            "lite": {
+                "type": "boolean",
+                "description": (
+                    "A smaller, cheaper response, for a question one or two records can answer. "
+                    "Quotes at most 2,800 characters unless `budget` is given, short records "
+                    "whole first and then the best-ranked passages of longer ones. Leaves out "
+                    "`ranges`, `bounds` and the budget fields; an item whose only claim is its "
+                    "head carries that claim's `as_of` instead of `claims`. The response says "
+                    "`lite: true`. It can miss evidence the default finds: use the default when "
+                    "the question needs several records or a lite answer was incomplete. "
+                    "`trace=true` returns every field. Default false."
+                ),
+            },
         },
         "required": ["agent_id", "query"],
     },
@@ -1724,6 +1740,7 @@ registry.auto_tool(
         ("trace", bool, False),
         ("budget", int, None),
         ("time_cue", dict, None),
+        ("lite", bool, False),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
