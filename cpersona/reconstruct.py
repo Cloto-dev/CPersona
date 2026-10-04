@@ -160,6 +160,25 @@ _ASKED = ("caller", "server_default")
 _DEFAULT_INDEPENDENCE = "singleton"
 _DEFAULT_WHY = "seed"
 
+# `lite=true` (2.6.5): a smaller response for a question one or two records can answer.
+# The budget is LITE_BUDGET unless the caller names one, the sequence is `whole`
+# whatever CPERSONA_RECONSTRUCT_SEQUENCE says, and the response leaves out what a
+# reader of such an answer does not act on --
+#
+# * `ranges`: where the quote sits in its record; `head_ref` and `expand` still lead there.
+# * a lone claim that only repeats `head_ref`: its `as_of` moves onto the item. A claim
+#   that says more (a `why`, `roles`, `hops`) or one of several keeps the list whole,
+#   so every element still says why it is present.
+# * `bounds`, `effective_budget`, `used_budget`, `reserved_omitted`: the caller chose
+#   a small budget, so a cut is the expected outcome, not news.
+#
+# `lite: true` says the shape was chosen, and `trace=true` returns every field. On the
+# private real-use pack's test questions the shape is about 11% smaller than the compact
+# one at the same budget (cl100k tokens of the JSON), and LITE_BUDGET is the budget both packs' registered tests
+# of `whole` were measured at (benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md).
+LITE_BUDGET = 2800
+_LITE_ENVELOPE = ("bounds", "effective_budget", "used_budget", "reserved_omitted")
+
 
 def _compact_item(item: dict) -> dict:
     """An item without the fields :func:`_compact` leaves to the trace (see above)."""
@@ -177,7 +196,18 @@ def _compact_item(item: dict) -> dict:
     return out
 
 
-def _compact(response: dict, *, bound_lowered: bool = False) -> dict:
+def _lite_item(item: dict) -> dict:
+    """An item in the lite shape (see LITE_BUDGET above), from its compact form."""
+    out = {k: v for k, v in item.items() if k != "ranges"}
+    claims = out.get("claims")
+    if claims and len(claims) == 1 and claims[0].get("ref") == out.get("head_ref") and set(claims[0]) <= {"ref", "as_of"}:
+        del out["claims"]
+        if "as_of" in claims[0]:
+            out["as_of"] = claims[0]["as_of"]
+    return out
+
+
+def _compact(response: dict, *, bound_lowered: bool = False, lite: bool = False) -> dict:
     out = dict(response)
     count_policy, budget_policy = out["count_policy"], out["budget_policy"]
     if not count_policy["clamped"] and count_policy["source"] in _ASKED:
@@ -197,6 +227,11 @@ def _compact(response: dict, *, bound_lowered: bool = False) -> dict:
     if excluded:
         out["reconstruction"] = {"excluded_without_provenance": excluded}
     out["items"] = [_compact_item(item) for item in out["items"]]
+    if lite:
+        for key in _LITE_ENVELOPE:
+            out.pop(key, None)
+        out["items"] = [_lite_item(item) for item in out["items"]]
+        out["lite"] = True
     return out
 
 
@@ -1360,6 +1395,7 @@ async def do_reconstruct(
     trace: bool = False,
     budget: int | None = None,
     time_cue: dict | None = None,
+    lite: bool = False,
 ) -> dict:
     """Assemble recall items from the candidate pool the recall process produced.
 
@@ -1386,6 +1422,9 @@ async def do_reconstruct(
     except _time_cue.TimeCueError as exc:
         return error_response(str(exc), items=[], returned_count=0)
     effective_count, count_policy = resolve_count(count)
+    if lite and budget is None:
+        budget = LITE_BUDGET
+    sequence = SEQUENCE_WHOLE if lite else config.RECONSTRUCT_SEQUENCE
     effective_budget, budget_policy = resolve_budget(budget, effective_count)
     bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))
     # bug-437: report the effective retrieval bound, not only the larger request.
@@ -1485,7 +1524,7 @@ async def do_reconstruct(
                 else SHORTFALL_NO_RELEVANT_EVIDENCE
             )
         )
-        return response if trace else _compact(response, bound_lowered=hops_lowered)
+        return response if trace else _compact(response, bound_lowered=hops_lowered, lite=lite)
 
     spans = await _read_candidates(agent_id, candidates)
 
@@ -1609,13 +1648,13 @@ async def do_reconstruct(
     # sequence (2.6.5a1) left an item with no passage inside the budget.
     positions = list(range(len(entries_claims)))
     sequence_heads: dict[int, dict] = {}
-    if head_cap > 0 and config.RECONSTRUCT_SEQUENCE in (SEQUENCE_EVIDENCE, SEQUENCE_WHOLE):
+    if head_cap > 0 and sequence in (SEQUENCE_EVIDENCE, SEQUENCE_WHOLE):
         records = [
             record_passages(head, block_sets.get(head.ref), query_bits, query_grams, query_vec, head_cap)
             for _, head, _ in entries_claims
         ]
         record_sets = [passages for _, _, passages in records]
-        if config.RECONSTRUCT_SEQUENCE == SEQUENCE_WHOLE:
+        if sequence == SEQUENCE_WHOLE:
             order = whole_order(record_sets, [basis == "whole" for _, basis, _ in records])
         else:
             order = evidence_order(record_sets)
@@ -1627,7 +1666,7 @@ async def do_reconstruct(
         if trace:
             chosen = {(i, j) for i, js in taken.items() for j in js}
             response["trace"]["sequence"] = {
-                "mode": config.RECONSTRUCT_SEQUENCE,
+                "mode": sequence,
                 "candidates": len(order),
                 "taken": [
                     {
@@ -1733,4 +1772,4 @@ async def do_reconstruct(
             if recall_result.get("gate_fallback")
             else SHORTFALL_EXHAUSTED_CANDIDATES
         )
-    return response if trace else _compact(response, bound_lowered=hops_lowered)
+    return response if trace else _compact(response, bound_lowered=hops_lowered, lite=lite)

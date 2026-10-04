@@ -465,6 +465,23 @@ effective_budget = min(budget_base, max_budget)
   excerpt; an item whose excerpts were cut states `excerpts_omitted`. A caller
   can therefore tell whether breadth or depth was cut, and a response the budget
   never touched says nothing about it.
+- **`lite=true`** (2.6.5) is a preset for a question one or two records can
+  answer. The budget is 2,800 characters unless the caller names one (an
+  operator-forced budget still wins), and the sequence is `whole`
+  ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))
+  whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says. The response leaves out what a
+  reader of such an answer does not act on: items lose `ranges`, an item whose
+  only claim repeats its head carries that claim's `as_of` instead of `claims`,
+  and the envelope loses `bounds`, `effective_budget`, `used_budget` and
+  `reserved_omitted`. `effective_count`, `returned_count` and a shortfall
+  reason are still stated, a claim that says more than its head is kept, and
+  the response says `lite: true`. `trace=true` returns every field. Both
+  registered tests of `whole` were measured at this budget
+  ([results](../benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)):
+  on LongMemEval-S it answered no worse than the evidence sequence with about
+  half the retrieved text of every item, and on the private real-use pack it
+  showed fewer evidence quotes than the default sequence at its full budget,
+  which is why it is a choice and not the default.
 
 The window sits fourth in a series this server already has: the embedding
 window (what gets indexed; a split is reported), the scan window (what gets
