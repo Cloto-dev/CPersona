@@ -3371,9 +3371,9 @@ MUTATIONS += [
     Mutation(
         id='M322',
         tests=('tests/test_reconstruct_evidence_sequence.py',),
-        target='evidence sequence — read only under CPERSONA_RECONSTRUCT_SEQUENCE=evidence',
+        target='evidence sequence — read only under CPERSONA_RECONSTRUCT_SEQUENCE=evidence or whole',
         file='cpersona/reconstruct.py',
-        find='    if head_cap > 0 and config.RECONSTRUCT_SEQUENCE == SEQUENCE_EVIDENCE:\n',
+        find='    if head_cap > 0 and config.RECONSTRUCT_SEQUENCE in (SEQUENCE_EVIDENCE, SEQUENCE_WHOLE):\n',
         replace='    if False:\n',
         breaks='the setting does nothing: every response keeps the items sequence',
         expect='test_reconstruct_evidence_sequence.py::test_the_evidence_sequence_through_do_reconstruct',
