@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:464d2931a465fc985db89995aece5d3dc73b76b5 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:1f8ed3b210aca573f8ec1cc77fd57e2b4818771b -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -62,7 +62,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.4a2 | pre-release。時間の手がかりは、期間のうち走査窓より後ろの部分を、既定で粗探索の索引を通して探します (`CPERSONA_CUE_COARSE_ENABLED` 未設定)。使える索引が無ければその部分は探さず、recall は設定を off にした時と同じになり、`time_cue.remainder` がそう伝えます。`true` は 2.6.2 の意味のままです ([1 ビット粗探索](BINARY_COARSE_SEARCH_DESIGN.md#7-settings))。索引を自動で作るものはありません。範囲が窓の外に 1,000 件以上の記録を持ち索引が無い recall には、エージェントが伝えるための `suggestion` がセッションごとに 1 回付き、この動き方だけが索引を読む間、`check_health` は索引の不在を info として報告します | [#405](https://github.com/Cloto-dev/cpersona/pull/405) |
 | 2.6.4 | 2.6.4a2 の final で、コードの変更はなし: 版を指定しない導入でも、`reconstruct` がレコードの一致した部分を item の位置に応じた大きさで引用し、時間の手がかりの期間のうち走査窓より後ろの部分を、粗探索の索引があれば既定でそれを通して探します。2.6.4a2 を本番で 6 時間使い、再起動なし・エラーなしを確かめてから出しました |
 | 2.6.5a1 | pre-release。`CPERSONA_RECONSTRUCT_SEQUENCE=evidence` にすると、`reconstruct` の予算は、各 item の先頭引用を item の順に並べてから抜粋を回す列の代わりに、先頭レコードの passage を記録をまたいで 1 つの順に並べた列を切ります。item の先頭引用は、そのレコードから切り取られた passage を本文の順に並べたものです ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md))。既定の `items` は 2.6.4 と同じ応答を返し、この設定を測るまで精度は主張しません。較正と起動時の block の見回りは専用の読み取り接続で読むようになりました。23,867 記録のストアで、起動時の較正中に出した検索は平均 19.8 秒から 0.57 秒に、見回り中は 19.1 秒から 0.60 秒になりました。どちらも計算する内容は変わりません | [#412](https://github.com/Cloto-dev/cpersona/pull/412), [#414](https://github.com/Cloto-dev/cpersona/pull/414) |
-| 2.6.5a2 | pre-release。`reconstruct`・`store`・`archive_episode` の `_meta` に `"anthropic/alwaysLoad": true` を付け、Claude Code はこの 3 つをツール検索を通さずセッションと一緒に読み込みます。Claude Code が見せる 2,048 文字を超えていたツールの説明文 5 本 (`reconstruct` は 9,189 文字) を収め、呼び出し側が判断に使うことを先頭に置き、細部は説明文が名前を挙げる設計文書に任せました。`initialize` の instructions は、CPersona のツールをいつ使うかの案内で始まり、運用コンテキストの summary があればそのあとに続きます。費用の変化は測るまで主張しません | [#417](https://github.com/Cloto-dev/cpersona/pull/417) |
+| 2.6.5a2 | pre-release。`reconstruct`・`store`・`archive_episode` の `_meta` に `"anthropic/alwaysLoad": true` を付け、Claude Code はこの 3 つをツール検索を通さずセッションと一緒に読み込みます。Claude Code が見せる 2,048 文字を超えていたツールの説明文 5 本 (`reconstruct` は 9,189 文字) を収め、呼び出し側が判断に使うことを先頭に置き、細部は説明文が名前を挙げる設計文書に任せました。`initialize` の instructions は、CPersona のツールをいつ使うかの案内で始まり、運用コンテキストの summary があればそのあとに続きます。費用は 2.6.5a1 と比べて測りました (Claude Code と Claude Sonnet 5.5 で 6 セッションの開発作業、版と条件ごとに 10 回)。セッションを続けて使うと 0.901 倍 (95% 区間 0.836〜0.968) です。1 時間以上空けると差は示せません (1.018、区間 0.941〜1.095)。[リリースノート](https://github.com/Cloto-dev/CPersona/releases/tag/v2.6.5a2)も参照してください | [#417](https://github.com/Cloto-dev/cpersona/pull/417) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
