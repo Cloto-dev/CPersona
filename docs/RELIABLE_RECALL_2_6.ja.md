@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:2c9cc8b92d93dfd2ac80bbd457c0151c0f703b82 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:cc0ec627b9ba36b12ef3a98fa2ad18aeb4d982b3 -->
 
 # Reliable Recall — 2.6 系
 
@@ -402,7 +402,7 @@ effective_budget = min(budget_base, max_budget)
   `reserved_omitted` を除きます。`effective_count`、`returned_count`、不足理由は引き続き述べ、先頭以上の
   ことを述べる claim は残し、応答は `lite: true` と述べます。`trace=true` はすべての欄を返します。
   `whole` の登録済みの判定は 2 つともこの予算で測りました
-  ([結果](../benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)): LongMemEval-S では、全件の
+  ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)): LongMemEval-S では、全件の
   約半分の検索テキストで evidence 列に劣らない答えを返し、非公開の実運用パックでは、全予算の既定の列より
   見せた根拠が少なくなりました。そのため既定ではなく、選ぶものです。
 

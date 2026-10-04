@@ -477,7 +477,7 @@ effective_budget = min(budget_base, max_budget)
   reason are still stated, a claim that says more than its head is kept, and
   the response says `lite: true`. `trace=true` returns every field. Both
   registered tests of `whole` were measured at this budget
-  ([results](../benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)):
+  ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)):
   on LongMemEval-S it answered no worse than the evidence sequence with about
   half the retrieved text of every item, and on the private real-use pack it
   showed fewer evidence quotes than the default sequence at its full budget,
