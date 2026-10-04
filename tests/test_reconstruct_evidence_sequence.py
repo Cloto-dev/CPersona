@@ -119,6 +119,34 @@ def test_a_passage_without_a_cosine_ranks_after_those_with_one(rrf60):
     assert ranks[1] == 0 and ranks[2] == 1 and ranks[0] == 2
 
 
+def test_whole_puts_the_records_shown_whole_first_in_item_order(rrf60):
+    records = [
+        [_p(0, 10, 0.1), _p(20, 30, 0.9), _p(40, 50, 0.8)],
+        [_p(0, 10, 0.2)],
+        [_p(0, 10, 0.05), _p(20, 30, 0.95)],
+        [_p(0, 10, 0.01)],
+    ]
+    whole = [False, True, False, True]
+    evidence = [(i, j) for i, j, _ in reconstruct.evidence_order(records)]
+    longs = [e for e in evidence if not whole[e[0]]]
+    assert longs[0][1] != 0, "the fixture must let a long record's second passage lead"
+    assert evidence[:2] != [(1, 0), (3, 0)], "the fixture must separate the floor from the evidence order"
+    order = [(i, j) for i, j, _ in reconstruct.whole_order(records, whole)]
+    assert order[:2] == [(1, 0), (3, 0)], "the records shown whole open the order, in item order"
+    assert order[2:] == longs, "a long record's passages keep the evidence order, its best one included"
+    every_best_first = sorted((e for e in evidence if e[1] == 0), key=lambda e: e[0])
+    assert order[: len(every_best_first)] != every_best_first, "the floor is drawn by length, not by rank"
+    assert sorted(reconstruct.whole_order(records, whole)) == sorted(reconstruct.evidence_order(records))
+
+
+def test_every_sequence_reconstruct_names_is_a_setting_value():
+    assert {
+        "items",
+        reconstruct.SEQUENCE_EVIDENCE,
+        reconstruct.SEQUENCE_WHOLE,
+    } == set(config.RECONSTRUCT_SEQUENCES)
+
+
 def test_ties_go_to_the_earlier_record_then_the_earlier_text(rrf60):
     order = reconstruct.evidence_order([[_p(50, 60), _p(0, 10)]])
     assert [j for _, j, _ in order] == [0, 1], "inside rank first, not text position"
@@ -213,9 +241,9 @@ def sized(monkeypatch):
     monkeypatch.setattr(config, "RECONSTRUCT_FORCED_BUDGET", None)
 
 
-async def _run(budget, mode, monkeypatch):
+async def _run(budget, mode, monkeypatch, count=6):
     monkeypatch.setattr(config, "RECONSTRUCT_SEQUENCE", mode)
-    return await reconstruct.do_reconstruct("agent.seq", "filler2x7 lorem", count=6, deep=True, trace=True,
+    return await reconstruct.do_reconstruct("agent.seq", "filler2x7 lorem", count=count, deep=True, trace=True,
                                             budget=budget)
 
 
@@ -253,3 +281,46 @@ async def test_the_evidence_sequence_through_do_reconstruct(fake_embedding_clien
     assert [r for r in order if r in {i["head_ref"] for i in small["items"]}] == [i["head_ref"] for i in small["items"]], (
         "returned items keep the recall order"
     )
+
+
+SHORT = [f"note {n}: lorem ipsum, kept short." for n in range(3)]
+
+
+@pytest.mark.usefixtures("blocks_off", "sized")
+@pytest.mark.asyncio
+async def test_the_whole_sequence_through_do_reconstruct(fake_embedding_client, monkeypatch):
+    from tests.test_reconstruct_filled_quote import _TempDB
+
+    async with _TempDB() as tmp:
+        for text in RECORDS + SHORT:
+            await memory_handlers.do_store("agent.seq", {"content": text})
+        await tmp.drain()
+        runs = {b: await _run(b, "whole", monkeypatch, count=9) for b in (100, 500, 1000, 3000, 6000)}
+        evidence = {b: await _run(b, "evidence", monkeypatch, count=9) for b in (500, 1000)}
+    short_refs = {i["head_ref"] for i in runs[6000]["items"] if i["content"] in SHORT}
+    assert short_refs, "the fixture must return short records"
+    floor = sum(len(i["content"]) for i in runs[6000]["items"] if i["head_ref"] in short_refs)
+    previous: dict = {}
+    for budget, out in runs.items():
+        sequence = out["trace"]["sequence"]
+        assert sequence["mode"] == "whole"
+        taken = [t["ref"] for t in sequence["taken"]]
+        shorts_taken = [r for r in taken if r in short_refs]
+        assert taken[: len(shorts_taken)] == shorts_taken, f"budget {budget}: a long passage came before a whole record"
+        for item in out["items"]:
+            if item["head_ref"] in short_refs:
+                assert item["content"] in SHORT and item["quote_basis"] == "whole", "a short record is shown whole"
+        if budget >= floor:
+            returned = {i["head_ref"] for i in out["items"]}
+            assert short_refs <= returned, f"budget {budget} covers the floor but dropped a short record"
+        assert out["used_budget"] == sum(len(i["content"]) for i in out["items"]) <= max(budget, 800)
+        spans = {i["head_ref"]: {tuple(r) for r in i["ranges"]} for i in out["items"]}
+        for ref, ranges in previous.items():
+            assert ref in spans, f"raising the budget to {budget} removed {ref}"
+            assert all(any(a <= s and e <= b for a, b in spans[ref]) for s, e in ranges), (
+                f"raising the budget to {budget} shrank {ref}"
+            )
+        previous = spans
+    for budget in (500, 1000):
+        kept = {i["head_ref"] for i in evidence[budget]["items"]} & short_refs
+        assert len(kept) < len(short_refs), f"budget {budget}: the fixture must let the evidence order drop a short record"

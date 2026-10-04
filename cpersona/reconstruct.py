@@ -1183,6 +1183,8 @@ def allocate(entries: list[tuple[dict, dict, list[dict]]], budget: int) -> tuple
 
 #: config.RECONSTRUCT_SEQUENCE value for the payload sequence ordered across records.
 SEQUENCE_EVIDENCE = "evidence"
+#: The same order behind a floor of the records shown whole: every short head record first.
+SEQUENCE_WHOLE = "whole"
 
 
 def returned_walk_cuts(walk_cuts: list[set], positions: list[int], returned: int) -> set:
@@ -1260,6 +1262,29 @@ def evidence_order(records: list[list[tuple]]) -> list[tuple[int, int, tuple[int
     fused = [sum(1.0 / (k + 1 + ranks[n]) for ranks in lists) for n in range(len(flat))]
     order = sorted(range(len(flat)), key=lambda n: (-fused[n], flat[n][0], flat[n][2][0]))
     return [(flat[n][0], flat[n][1], (record_ranks[n], inside_ranks[n], cosine_ranks[n])) for n in order]
+
+
+def whole_order(records: list[list[tuple]], whole: list[bool]) -> list[tuple[int, int, tuple[int, int, int | None]]]:
+    """``evidence_order`` behind a floor of the records shown whole.
+
+    ``whole[i]`` says the i-th record is no longer than a quote, so ``record_passages``
+    gives it as one passage, the record itself. Those records come first, in item order;
+    every passage of a longer record follows in ``evidence_order``. The budget still cuts
+    a prefix, so raising it never removes a passage.
+
+    The floor is drawn by length, not by rank. A short record costs no more than its own
+    text, and where it holds an answer it is usually the whole of it: without the floor,
+    the budget went to the second and third passages of the first long records and the
+    items it dropped were the short records that held the answer. A long record holds
+    its answer in one passage among several, and those passages still compete across
+    records on how close they are: a floor of every record's best passage spent the
+    budget one passage deep on every long record, which lost the answers that sat in a
+    second passage and, on a store of long records only, the depth the evidence order
+    gives the first records (docs/EVIDENCE_ALLOCATION_DESIGN.md section 4).
+    """
+    order = evidence_order(records)
+    firsts = sorted((entry for entry in order if whole[entry[0]]), key=lambda entry: entry[0])
+    return firsts + [entry for entry in order if not whole[entry[0]]]
 
 
 def _quoted_length(ranges: list[tuple[int, int]]) -> int:
@@ -1584,13 +1609,17 @@ async def do_reconstruct(
     # sequence (2.6.5a1) left an item with no passage inside the budget.
     positions = list(range(len(entries_claims)))
     sequence_heads: dict[int, dict] = {}
-    if head_cap > 0 and config.RECONSTRUCT_SEQUENCE == SEQUENCE_EVIDENCE:
+    if head_cap > 0 and config.RECONSTRUCT_SEQUENCE in (SEQUENCE_EVIDENCE, SEQUENCE_WHOLE):
         records = [
             record_passages(head, block_sets.get(head.ref), query_bits, query_grams, query_vec, head_cap)
             for _, head, _ in entries_claims
         ]
-        order = evidence_order([passages for _, _, passages in records])
-        taken, _ = cut_sequence(order, [passages for _, _, passages in records], effective_budget)
+        record_sets = [passages for _, _, passages in records]
+        if config.RECONSTRUCT_SEQUENCE == SEQUENCE_WHOLE:
+            order = whole_order(record_sets, [basis == "whole" for _, basis, _ in records])
+        else:
+            order = evidence_order(record_sets)
+        taken, _ = cut_sequence(order, record_sets, effective_budget)
         positions = sorted(taken)
         for i in positions:
             text, basis, passages = records[i]
@@ -1598,7 +1627,7 @@ async def do_reconstruct(
         if trace:
             chosen = {(i, j) for i, js in taken.items() for j in js}
             response["trace"]["sequence"] = {
-                "mode": SEQUENCE_EVIDENCE,
+                "mode": config.RECONSTRUCT_SEQUENCE,
                 "candidates": len(order),
                 "taken": [
                     {
