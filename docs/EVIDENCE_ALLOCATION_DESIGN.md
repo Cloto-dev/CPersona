@@ -2,9 +2,9 @@
 
 Status: design, for 2.6.5. The first pre-release (2.6.5a1) ships the payload
 sequence ordered across records (sections 3 and 4) as
-`CPERSONA_RECONSTRUCT_SEQUENCE=evidence`, off by default. The next pre-release
-adds the same order behind a floor drawn by record length (`whole`, the end of
-section 4), also off by default. The coverage step of section 5 is not
+`CPERSONA_RECONSTRUCT_SEQUENCE=evidence`, off by default. 2.6.5a3 adds the same
+order behind a floor drawn by record length (`whole`, the end of section 4), also
+off by default, and `lite=true` on `reconstruct`, which uses it at 2,800 characters. The coverage step of section 5 is not
 implemented yet. Each step is measured against a rule registered before any
 answer call (section 7). `SCHEMA_VERSION` does not change: everything below
 reads the blocks and int8 block vectors a store already has.
@@ -94,7 +94,7 @@ reported as today. `count` keeps
 its meaning, a ceiling on items. The trace records the sequence, and for each
 passage its ranks (and, once section 5 is implemented, the parts it covered).
 
-### A floor by record length (next pre-release) { #a-floor-by-record-length }
+### A floor by record length (2.6.5a3) { #a-floor-by-record-length }
 
 On the private real-use pack's development questions, the order of section 3
 lost answers that today's sequence kept. The budget went to the second and

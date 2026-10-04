@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/EVIDENCE_ALLOCATION_DESIGN.md@blob:7ba7ff3426b6a07ca38153b9e5e292fe679d76f1 -->
+<!-- i18n-source: docs/EVIDENCE_ALLOCATION_DESIGN.md@blob:76b1da5df31d8c251a9883b20d60f4c615f9c418 -->
 
 # 証拠の配分 — 設計 { #evidence-allocation-design }
 
@@ -6,8 +6,8 @@
 
 Status: 2.6.5 に向けた設計です。最初の pre-release (2.6.5a1) は、レコードをまたいで並べた引用の列
 (第 3 節と第 4 節) を `CPERSONA_RECONSTRUCT_SEQUENCE=evidence` として既定 off で出荷しました。
-次の pre-release は、同じ順序にレコードの長さで引いた床を付けた列 (`whole`、第 4 節の末尾) を、
-これも既定 off で足します。第 5 節の被覆の段はまだ実装していません。どの段も、回答の呼び出しより前に
+2.6.5a3 は、同じ順序にレコードの長さで引いた床を付けた列 (`whole`、第 4 節の末尾) を、
+これも既定 off で足し、それを 2,800 字で使う `reconstruct` の `lite=true` を加えます。第 5 節の被覆の段はまだ実装していません。どの段も、回答の呼び出しより前に
 登録した判定則で測ります (第 7 節)。`SCHEMA_VERSION` は変わりません。以下はすべて、ストアが
 すでに持っている Block と Block ごとの int8 ベクトルを読みます。
 
@@ -78,7 +78,7 @@ trace に各候補の 3 つの順位を記録します。
 1 つも入らなかったレコードの item は返さず、そのことは今と同じく報告します。`count` の意味 (item 数の上限)
 は変わりません。trace は列と、各候補の順位 (第 5 節を実装した後は押さえた部分も) を記録します。
 
-### レコードの長さで引いた床 (次の pre-release) { #a-floor-by-record-length }
+### レコードの長さで引いた床 (2.6.5a3) { #a-floor-by-record-length }
 
 非公開の実運用パックの調整用の問いでは、第 3 節の順序が、今の列なら残せた答えを落としました。予算は
 先頭のレコードの 2 つ目・3 つ目の候補に使われ、そのあと落ちた item は答えを持つ短いレコードでした。

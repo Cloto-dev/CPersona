@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:1f8ed3b210aca573f8ec1cc77fd57e2b4818771b -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:3107024955fc79fc44dc1220afc18a6a1c13fc1d -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,7 +10,7 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4 が続き、版を指定しない導入は 2.6.4 になります。2.6.5a1 と 2.6.5a2 (2026-10-04) は pre-release で、版を指定したときだけ導入されます。
+2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4 が続き、版を指定しない導入は 2.6.4 になります。2.6.5a1 と 2.6.5a2 (2026-10-04)、2.6.5a3 (2026-10-05) は pre-release で、版を指定したときだけ導入されます。
 pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -63,6 +63,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.4 | 2.6.4a2 の final で、コードの変更はなし: 版を指定しない導入でも、`reconstruct` がレコードの一致した部分を item の位置に応じた大きさで引用し、時間の手がかりの期間のうち走査窓より後ろの部分を、粗探索の索引があれば既定でそれを通して探します。2.6.4a2 を本番で 6 時間使い、再起動なし・エラーなしを確かめてから出しました |
 | 2.6.5a1 | pre-release。`CPERSONA_RECONSTRUCT_SEQUENCE=evidence` にすると、`reconstruct` の予算は、各 item の先頭引用を item の順に並べてから抜粋を回す列の代わりに、先頭レコードの passage を記録をまたいで 1 つの順に並べた列を切ります。item の先頭引用は、そのレコードから切り取られた passage を本文の順に並べたものです ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md))。既定の `items` は 2.6.4 と同じ応答を返し、この設定を測るまで精度は主張しません。較正と起動時の block の見回りは専用の読み取り接続で読むようになりました。23,867 記録のストアで、起動時の較正中に出した検索は平均 19.8 秒から 0.57 秒に、見回り中は 19.1 秒から 0.60 秒になりました。どちらも計算する内容は変わりません | [#412](https://github.com/Cloto-dev/cpersona/pull/412), [#414](https://github.com/Cloto-dev/cpersona/pull/414) |
 | 2.6.5a2 | pre-release。`reconstruct`・`store`・`archive_episode` の `_meta` に `"anthropic/alwaysLoad": true` を付け、Claude Code はこの 3 つをツール検索を通さずセッションと一緒に読み込みます。Claude Code が見せる 2,048 文字を超えていたツールの説明文 5 本 (`reconstruct` は 9,189 文字) を収め、呼び出し側が判断に使うことを先頭に置き、細部は説明文が名前を挙げる設計文書に任せました。`initialize` の instructions は、CPersona のツールをいつ使うかの案内で始まり、運用コンテキストの summary があればそのあとに続きます。費用は 2.6.5a1 と比べて測りました (Claude Code と Claude Sonnet 5.5 で 6 セッションの開発作業、版と条件ごとに 10 回)。セッションを続けて使うと 0.901 倍 (95% 区間 0.836〜0.968) です。1 時間以上空けると差は示せません (1.018、区間 0.941〜1.095)。[リリースノート](https://github.com/Cloto-dev/CPersona/releases/tag/v2.6.5a2)も参照してください | [#417](https://github.com/Cloto-dev/cpersona/pull/417) |
+| 2.6.5a3 | pre-release。`CPERSONA_RECONSTRUCT_SEQUENCE=whole` は evidence 列の前に床を置きます: 引用の長さ以下の先頭レコードを丸ごと item の順に先に並べ、それより長いレコードの passage を evidence の順で続けます ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))。予算 2,800 字で、LongMemEval-S の判定用 400 問では evidence 列に劣らず (−0.25 ポイント、95% 区間 −0.75〜+0.00)、非公開の実運用パックの 150 問では根拠を 39 件多く見せました。どちらも実行前に登録した規則による判定です ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md))。`reconstruct` は `lite=true` を受け付けます: その列を 2,800 字で使い、`ranges`・予算の欄・先頭だけの claim を省きます。非公開パックでは応答が既定の呼び出しより約 55% 小さく、見せる根拠は少なくなります (196 件中 120 対 146)。そのため 1〜2 件の記録で答えられる問いのための選択肢です。どちらも既定 off です | [#420](https://github.com/Cloto-dev/cpersona/pull/420), [#421](https://github.com/Cloto-dev/cpersona/pull/421) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。

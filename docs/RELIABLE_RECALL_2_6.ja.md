@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:cc0ec627b9ba36b12ef3a98fa2ad18aeb4d982b3 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:7b6e50b58842e02c12004f6b798029a34e0d7b29 -->
 
 # Reliable Recall — 2.6 系
 
@@ -393,7 +393,7 @@ effective_budget = min(budget_base, max_budget)
   `clamped`、`reason`) を、予算が item か抜粋を運べなかった時は `effective_budget` と
   `used_budget` を述べ、抜粋を削られた item は `excerpts_omitted` を述べます。呼び出し側は、
   削られたのが幅か深さかを見分けられます。予算が何も削らなかった応答は、予算について何も述べません。
-- **`lite=true`** (2.6.5) は、1〜2 件の記録で答えられる問いのためのプリセットです。予算は、呼び出し側が
+- **`lite=true`** (2.6.5a3) は、1〜2 件の記録で答えられる問いのためのプリセットです。予算は、呼び出し側が
   指定しない限り 2,800 字です (運用者が強制した予算はこれまで通り優先します)。列は
   `CPERSONA_RECONSTRUCT_SEQUENCE` の値にかかわらず `whole`
   ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length)) です。応答は、そうした答えの
