@@ -50,12 +50,16 @@ def ctx(p: dict) -> float:
 
 def evidence(run: str, uids: list[str], df, conn) -> dict:
     ctxs = json.load(open(H / "results/lme" / run / "cpersona_lme_search_results.json"))
+    return evidence_of({uid: ctxs[uid][0]["search_context"] for uid in uids}, uids, df, conn)
+
+
+def evidence_of(contexts: dict[str, str], uids: list[str], df, conn) -> dict:
     shown, all_shown, touched, turn_q, turn_t, in_ans, quoted, unlocated = [], [], [], 0, 0, 0, 0, 0
     for uid in uids:
         i = int(uid.rsplit("_", 1)[1])
         recs = records(conn, uid)
         ans_js, turns, _missing = evidence_spans(df.iloc[i], recs)
-        spans, _items, c = locate(ctxs[uid][0]["search_context"], recs, frozenset(ans_js))
+        spans, _items, c = locate(contexts[uid], recs, frozenset(ans_js))
         unlocated += c.get("quoted_chars_unlocated", 0)
         m = {j: merged(v) for j, v in spans.items()}
         if ans_js:
