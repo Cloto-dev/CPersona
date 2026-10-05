@@ -296,7 +296,9 @@ RECONSTRUCT_TAIL_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_TAIL_QUOT
 # and an item none of whose passages fit is not returned. "whole" (section 4) is
 # the same order behind a floor drawn by length: every head record no longer than a quote
 # first, whole, in item order, then the passages of the longer records in the evidence
-# order. Experimental: off until measured against its registered rule. Read only while
+# order. "coverage" (section 5) rebuilds the "whole" order by the parts of the question
+# each passage holds (reconstruct.coverage_order). Experimental: off until measured
+# against its registered rule. Read only while
 # head quotes are filled (CPERSONA_RECONSTRUCT_QUOTE_CHARS above 0).
 RECONSTRUCT_SEQUENCES = ("items", "evidence", "whole", "coverage")
 RECONSTRUCT_SEQUENCE = _parse_choice("CPERSONA_RECONSTRUCT_SEQUENCE", "items", RECONSTRUCT_SEQUENCES)

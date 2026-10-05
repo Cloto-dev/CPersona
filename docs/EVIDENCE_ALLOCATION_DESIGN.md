@@ -4,9 +4,9 @@ Status: design, for 2.6.5. The first pre-release (2.6.5a1) ships the payload
 sequence ordered across records (sections 3 and 4) as
 `CPERSONA_RECONSTRUCT_SEQUENCE=evidence`, off by default. 2.6.5a3 adds the same
 order behind a floor drawn by record length (`whole`, the end of section 4), also
-off by default, and `lite=true` on `reconstruct`, which uses it at 2,800 characters. The coverage step of section 5 is not
-implemented yet. Each step is measured against a rule registered before any
-answer call (section 7). `SCHEMA_VERSION` does not change: everything below
+off by default, and `lite=true` on `reconstruct`, which uses it at 2,800 characters. The next pre-release adds the
+coverage step of section 5 on top of `whole` (`coverage`), off by default. Each
+step is measured against a rule registered before any answer call (section 7). `SCHEMA_VERSION` does not change: everything below
 reads the blocks and int8 block vectors a store already has.
 
 ## 0. What this step is
@@ -126,21 +126,57 @@ floor includes records between one and two quotes long that today's sequence
 quotes at the top ranks. `evidence` keeps its meaning; `whole` is a separate
 value, and the default does not change.
 
-## 5. Coverage (not implemented yet) { #5-coverage-265a2 }
+## 5. Coverage (`coverage`) { #5-coverage-265a2 }
 
-The sequence of section 4 is rebuilt by a greedy pass, still independent of the
-budget:
+`CPERSONA_RECONSTRUCT_SEQUENCE=coverage` rebuilds the order of `whole` by a
+greedy pass, still independent of the budget:
 
-1. Start from the order of section 3.
-2. Take the first passage. Mark the parts of the question it covers — the
-   coverage ledger's parts: declared entities and rare words, as recorded in
-   `trace.coverage`.
-3. Re-rank the rest: a passage covering a part not yet covered moves up, one
-   covering only parts already covered moves down, by fixed steps. Take the
-   first. Repeat until every candidate is placed.
+1. Start from the order of `whole` (section 4).
+2. Take the first passage. Mark the parts of the question it holds: the
+   coverage ledger's parts, the words of the question that `trace.coverage`
+   records (a run of two or more kanji or katakana, or an ASCII identifier,
+   after NFKC and lower case), found inside the passage's own range.
+3. Place every passage left at its place in that order, moved up five places
+   if it holds a part no passage taken so far holds, or down five places if
+   every part it holds is already held, and take the first. A passage that
+   holds no part keeps its place, and ties go to the earlier place. Repeat until
+   every candidate is placed.
 
 This is where a multi-session question's second session rises: its passage
-covers a part the first session's did not.
+holds a part the first session's did not.
+
+The passages of the first two records in item order are never moved down.
+Those records are where the answer usually is, and a second passage of the
+same record repeats the question's words because it is about the same thing.
+On the private real-use pack's development questions, the evidence `whole`
+lost against today's sequence sat in the first two records, and moving their
+second passages down for repeating the question spent their depth on records
+further down. A traced call lists, for each passage taken, the indices of the
+parts it holds.
+
+On those development questions, at budgets of 2,000, 2,800, 3,000 and 4,000
+characters, `coverage` showed more of the evidence quotes than `whole` at every
+budget (113 against 104 at 2,800; summed over the four budgets, 29 more, with a
+95% bootstrap interval of 9 to 54). Today's sequence leaves part of the budget
+unused; against it at the same characters shown, `coverage` was level, within
+a few quotes. On LongMemEval-S's 100 development questions at 2,800, it showed
+the answer sessions, all of a question's answer sessions and the evidence turns
+at least as often as `whole` (94.5%, 88.0% and 91.7%, against 94.2%, 87.0% and
+91.4%). These are development numbers, which chose the rule; the claim is the
+registered test of section 7.
+
+Three other orders were measured on the same development questions and set
+aside. Filling every record to its head quote's size in item order before
+anything else, as today's sequence does, showed the most evidence on the
+real-use pack, but on LongMemEval-S, where a record is a session, that is four
+items' worth of sessions, and it showed the answer sessions as rarely as four
+items do (87.5% against 94.2%). Filling only the first two records that way
+before the coverage pass was level with keeping them from moving down, within
+the noise of 150 questions, and is one stage more. Moving passages without
+keeping the first records showed less on the real-use pack (by 10 quotes over
+three budgets, with an interval of 0 to 26). The steps of five places and the
+two kept records were not tuned past that: steps of three, eight or ten places
+and three or five kept records were within a few quotes of them.
 
 ## 6. What does not change
 
@@ -168,12 +204,16 @@ recall that produces the window and the meaning of `count` are unchanged.
   on the same 400 LongMemEval-S test questions and on the private pack's test
   questions, by the rules registered in
   [`prereg-omnimemeval-lme-v1_5-whole.md`](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/prereg-omnimemeval-lme-v1_5-whole.md).
+- **`coverage` against `whole`** is judged the same way, at the same budget,
+  on the same 400 LongMemEval-S test questions and on the private pack's test
+  questions, by the rules registered in
+  [`prereg-omnimemeval-lme-v1_5-coverage.md`](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/prereg-omnimemeval-lme-v1_5-coverage.md).
 
 ## 8. Deferred
 
-- Splitting the question into clauses for coverage: coverage starts with the
+- Splitting the question into clauses for coverage: coverage uses the
   ledger's lexical parts, and a finer split is considered only after the
-  coverage step of section 5 has been measured.
+  coverage step of section 5 has been judged.
 - A budget that adapts to the question (section 7 of the recall design defers
   adaptation until a fixed policy has a reproducible baseline and an audit
   contract; this design is that fixed policy).
