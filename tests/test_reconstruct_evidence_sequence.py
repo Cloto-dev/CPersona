@@ -8,7 +8,7 @@ a passage, and an item none of whose passages fit is not returned. Off by defaul
 
 import pytest
 
-from cpersona import blocks, config, excerpts, memory_handlers, reconstruct
+from cpersona import blocks, config, coverage, excerpts, memory_handlers, reconstruct
 
 
 def _ref(n: int) -> str:
@@ -144,6 +144,7 @@ def test_every_sequence_reconstruct_names_is_a_setting_value():
         "items",
         reconstruct.SEQUENCE_EVIDENCE,
         reconstruct.SEQUENCE_WHOLE,
+        reconstruct.SEQUENCE_COVERAGE,
     } == set(config.RECONSTRUCT_SEQUENCES)
 
 
@@ -152,6 +153,109 @@ def test_ties_go_to_the_earlier_record_then_the_earlier_text(rrf60):
     assert [j for _, j, _ in order] == [0, 1], "inside rank first, not text position"
     tied = reconstruct.evidence_order([[_p(50, 60, 0.5)], [_p(0, 10, 0.5)]])
     assert [i for i, _, _ in tied][0] == 0
+
+
+# --- the coverage order (section 5) ----------------------------------------------------
+
+
+def _flat(n, record=None):
+    """``n`` passages in one order, the i-th in record ``record`` (or its own record ``10 + i``,
+    past the records the coverage order keeps from moving down)."""
+    return [(record if record is not None else 10 + i, 0, (i, 0, None)) for i in range(n)]
+
+
+def _held(order, parts_at):
+    """held[record][0] = the parts of the passage at each position of ``order``."""
+    held = {}
+    for n, (i, j, _) in enumerate(order):
+        held.setdefault(i, {})[j] = frozenset(parts_at.get(n, ()))
+    return held
+
+
+def _positions(order, result):
+    where = {(e[0], e[1]): n for n, e in enumerate(order)}
+    return [where[(e[0], e[1])] for e in result]
+
+
+def test_coverage_takes_the_first_passage_as_it_stands():
+    order = _flat(8)
+    held = _held(order, {6: {0}})
+    assert _positions(order, reconstruct.coverage_order(order, held))[0] == 0
+
+
+def test_a_passage_holding_a_new_part_moves_up_by_the_step():
+    order = _flat(10)
+    held = _held(order, {7: {0}})
+    assert reconstruct.COVERAGE_STEP == 5
+    # place 7 - 5 = 2, behind the passage already at 2 (ties go to the earlier position)
+    assert _positions(order, reconstruct.coverage_order(order, held)) == [0, 1, 2, 7, 3, 4, 5, 6, 8, 9]
+
+
+def test_a_passage_holding_only_parts_already_held_moves_down_by_the_step():
+    order = _flat(10)
+    held = _held(order, {0: {0}, 2: {0}})
+    # place 2 + 5 = 7, ahead of the passage at 7
+    assert _positions(order, reconstruct.coverage_order(order, held)) == [0, 1, 3, 4, 5, 6, 2, 7, 8, 9]
+
+
+def test_the_first_records_are_never_moved_down():
+    order = [(0, 0, (0, 0, None)), (5, 0, (1, 0, None)), (1, 0, (2, 0, None))] + _flat(7)[3:]
+    assert reconstruct.COVERAGE_KEEP == 2
+    held = _held(order, {0: {0}, 2: {0}})
+    assert _positions(order, reconstruct.coverage_order(order, held)) == list(range(len(order))), (
+        "a passage of the second record repeating a held part keeps its place"
+    )
+    order[2] = (2, 0, (2, 0, None))
+    assert _positions(order, reconstruct.coverage_order(order, _held(order, {0: {0}, 2: {0}})))[2] != 2, (
+        "the same passage in the third record moves down"
+    )
+
+
+def test_a_part_is_new_only_until_a_taken_passage_holds_it():
+    order = _flat(10)
+    held = _held(order, {6: {1}, 7: {1}})
+    result = _positions(order, reconstruct.coverage_order(order, held))
+    assert result.index(6) == 2, "the first passage holding part 1 moves up"
+    assert result.index(7) > 7, "the second, holding only part 1 once it is held, moves down"
+
+
+def test_a_passage_holding_no_part_keeps_its_place_and_nothing_is_lost():
+    order = _flat(6)
+    held = _held(order, {})
+    assert reconstruct.coverage_order(order, held) == order
+    held = _held(order, {3: {0}, 4: {0, 1}, 5: {2}})
+    assert sorted(reconstruct.coverage_order(order, held)) == sorted(order)
+    assert reconstruct.coverage_order([], {}) == []
+
+
+def test_the_parts_a_passage_holds_are_the_ledgers_words_inside_its_range():
+    query = "ＣｌｏｔｏＣｏｒｅ の リリース は 2.6.5a3 から"
+    text = "release notes. ClotoCore shipped. リリース was 2.6.5A3."
+    first, second = (0, 15), (15, len(text))
+    held = reconstruct.passage_parts(query, [text], [[(*first, None, None), (*second, None, None)]])
+    words = [w for w in ("clotocore", "リリース", "2.6.5a3")]
+    q = coverage.normalize(query)
+    index = {q[s:e]: k for k, (s, e, _) in enumerate(coverage.parts(q))}
+    assert set(index) == set(words), "full-width letters normalize to the ASCII word; hiragana is not a part"
+    assert held[0][0] == frozenset(), "a word outside the passage's range is not held by it"
+    assert held[0][1] == frozenset(index[w] for w in words), "matched after NFKC and lower case"
+
+
+def test_the_coverage_order_is_built_on_the_whole_order(rrf60):
+    records = [
+        [_p(0, 10, 0.1), _p(20, 30, 0.9), _p(40, 50, 0.8)],
+        [_p(0, 10, 0.2)],
+        [_p(0, 10, 0.05), _p(20, 30, 0.95)],
+        [_p(0, 10, 0.01)],
+    ]
+    texts = [("x" * 60, "blocks", records[0]), ("y" * 10, "whole", records[1]), ("z" * 40, "blocks", records[2]),
+             ("w" * 10, "whole", records[3])]
+    whole = reconstruct.whole_order(records, [False, True, False, True])
+    assert whole != reconstruct.evidence_order(records), "the fixture must separate the two bases"
+    order, held = reconstruct.sequence_order(reconstruct.SEQUENCE_COVERAGE, "no words of the records", texts)
+    assert order == whole and all(not h for row in held for h in row), "with no part held, the whole order stands"
+    order, held = reconstruct.sequence_order(reconstruct.SEQUENCE_WHOLE, "no words of the records", texts)
+    assert order == whole and held is None
 
 
 # --- the budget cuts the order ----------------------------------------------------------
@@ -324,3 +428,51 @@ async def test_the_whole_sequence_through_do_reconstruct(fake_embedding_client, 
     for budget in (500, 1000):
         kept = {i["head_ref"] for i in evidence[budget]["items"]} & short_refs
         assert len(kept) < len(short_refs), f"budget {budget}: the fixture must let the evidence order drop a short record"
+
+
+@pytest.mark.usefixtures("blocks_off", "sized")
+@pytest.mark.asyncio
+async def test_the_coverage_sequence_through_do_reconstruct(fake_embedding_client, monkeypatch):
+    from tests.test_reconstruct_filled_quote import _TempDB
+
+    query = "filler4x20 filler1x3 lorem"
+
+    async def run(budget, mode):
+        monkeypatch.setattr(config, "RECONSTRUCT_SEQUENCE", mode)
+        return await reconstruct.do_reconstruct("agent.seq", query, count=9, deep=True, trace=True, budget=budget)
+
+    async with _TempDB() as tmp:
+        for text in RECORDS + SHORT:
+            await memory_handlers.do_store("agent.seq", {"content": text})
+        await tmp.drain()
+        runs = {b: await run(b, "coverage") for b in (100, 500, 1000, 3000, 6000)}
+        whole = await run(6000, "whole")
+    q = coverage.normalize(query)
+    words = [q[s:e] for s, e, _ in coverage.parts(q)]
+    previous: dict = {}
+    for budget, out in runs.items():
+        sequence = out["trace"]["sequence"]
+        assert sequence["mode"] == "coverage"
+        for t in sequence["taken"]:
+            assert all(0 <= k < len(words) for k in t["parts"])
+        assert out["used_budget"] == sum(len(i["content"]) for i in out["items"]) <= max(budget, 800)
+        for item in out["items"]:
+            parts = item["content"].split(excerpts.SEPARATOR)
+            assert any(all(part in text for part in parts) for text in RECORDS + SHORT), "a quote is one record's own text"
+        spans = {i["head_ref"]: {tuple(r) for r in i["ranges"]} for i in out["items"]}
+        for ref, ranges in previous.items():
+            assert ref in spans, f"raising the budget to {budget} removed {ref}"
+            assert all(any(a <= s and e <= b for a, b in spans[ref]) for s, e in ranges), (
+                f"raising the budget to {budget} shrank {ref}"
+            )
+        previous = spans
+    taken = runs[6000]["trace"]["sequence"]["taken"]
+    held_first = next(n for n, t in enumerate(taken) if words.index("filler1x3") in t["parts"])
+    passage = (taken[held_first]["ref"], taken[held_first]["span"])
+    whole_taken = [(t["ref"], t["span"]) for t in whole["trace"]["sequence"]["taken"]]
+    assert whole_taken.index(passage) > len(SHORT), "the fixture must place the passage behind the whole order's floor"
+    assert held_first < len(SHORT), "the passage holding a new part moved ahead of the floor's later records"
+    shorts = [n for n, t in enumerate(taken) if t["ref"] in {r for r, _ in whole_taken[: len(SHORT)]}]
+    assert shorts[0] == 0 and shorts[1:] != list(range(1, len(SHORT))), (
+        "a short record repeating a held part moved down, the first one kept as it stood"
+    )

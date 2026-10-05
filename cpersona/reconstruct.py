@@ -1322,6 +1322,84 @@ def whole_order(records: list[list[tuple]], whole: list[bool]) -> list[tuple[int
     return firsts + [entry for entry in order if not whole[entry[0]]]
 
 
+#: The whole order re-ranked by the parts of the question each passage holds (section 5).
+SEQUENCE_COVERAGE = "coverage"
+#: Places a passage moves in the coverage order: up when it holds a part of the question
+#: no passage taken before it holds, down when every part it holds is already held.
+COVERAGE_STEP = 5
+#: The first records in item order, whose passages the coverage order never moves down.
+COVERAGE_KEEP = 2
+
+
+def passage_parts(query: str, texts: list[str], records: list[list[tuple]]) -> list[list[frozenset[int]]]:
+    """Which parts of the question each passage holds: ``out[i][j]`` is the set of indices
+    into the coverage ledger's parts (``coverage.parts``, the first ``MAX_PARTS``) whose
+    word occurs in the normalized text of passage ``j`` of record ``i``."""
+    q = coverage.normalize(query)
+    words = [q[s:e] for s, e, _ in coverage.parts(q)[: coverage.MAX_PARTS]]
+    out: list[list[frozenset[int]]] = []
+    for text, passages in zip(texts, records):
+        out.append([
+            frozenset(k for k, word in enumerate(words) if word in coverage.normalize(text[p[0] : p[1]]))
+            for p in passages
+        ])
+    return out
+
+
+def coverage_order(order: list[tuple], held: list[list[frozenset[int]]]) -> list[tuple]:
+    """``order`` rebuilt by a greedy pass over the parts of the question (docs/EVIDENCE_ALLOCATION_DESIGN.md §5).
+
+    The first passage of ``order`` is taken. Then, at each step, every passage left is
+    placed at its position in ``order``, moved up ``COVERAGE_STEP`` places if it holds a
+    part no passage taken so far holds, or down ``COVERAGE_STEP`` places if every part it
+    holds is already held -- unless it belongs to one of the first ``COVERAGE_KEEP``
+    records -- and the first is taken. A passage that holds no part keeps its place. Ties
+    go to the earlier position in ``order``, so the result is a total order, and nothing in
+    it depends on the budget, which still cuts a prefix.
+
+    The first records are not moved down because they are where the answer usually is,
+    and a second passage of the same record repeats the question's words because it is
+    about the same thing: demoting it for repeating them took the depth of the first
+    records and spent it on records further down.
+    """
+    if not order:
+        return []
+    position = {(e[0], e[1]): n for n, e in enumerate(order)}
+    first, remaining = order[0], list(order[1:])
+    out = [first]
+    covered = set(held[first[0]][first[1]])
+
+    def place(entry):
+        n = position[(entry[0], entry[1])]
+        parts = held[entry[0]][entry[1]]
+        if parts - covered:
+            return (n - COVERAGE_STEP, n)
+        if parts and entry[0] >= COVERAGE_KEEP:
+            return (n + COVERAGE_STEP, n)
+        return (n, n)
+
+    while remaining:
+        pick = min(remaining, key=place)
+        remaining.remove(pick)
+        out.append(pick)
+        covered |= held[pick[0]][pick[1]]
+    return out
+
+
+def sequence_order(sequence: str, query: str, records: list[tuple[str, str, list[tuple]]]) -> tuple[list[tuple], list | None]:
+    """The payload order of ``sequence`` over ``records`` (``record_passages`` of each item's
+    head, in item order), and, under the coverage order, the parts each passage holds."""
+    record_sets = [passages for _, _, passages in records]
+    if sequence in (SEQUENCE_WHOLE, SEQUENCE_COVERAGE):
+        order = whole_order(record_sets, [basis == "whole" for _, basis, _ in records])
+    else:
+        order = evidence_order(record_sets)
+    if sequence != SEQUENCE_COVERAGE:
+        return order, None
+    held = passage_parts(query, [text for text, _, _ in records], record_sets)
+    return coverage_order(order, held), held
+
+
 def _quoted_length(ranges: list[tuple[int, int]]) -> int:
     """Characters of a quote showing ``ranges`` of one record: touching ranges as one,
     the rest joined by the separator (excerpts.fill)."""
@@ -1648,16 +1726,13 @@ async def do_reconstruct(
     # sequence (2.6.5a1) left an item with no passage inside the budget.
     positions = list(range(len(entries_claims)))
     sequence_heads: dict[int, dict] = {}
-    if head_cap > 0 and sequence in (SEQUENCE_EVIDENCE, SEQUENCE_WHOLE):
+    if head_cap > 0 and sequence in (SEQUENCE_EVIDENCE, SEQUENCE_WHOLE, SEQUENCE_COVERAGE):
         records = [
             record_passages(head, block_sets.get(head.ref), query_bits, query_grams, query_vec, head_cap)
             for _, head, _ in entries_claims
         ]
         record_sets = [passages for _, _, passages in records]
-        if sequence == SEQUENCE_WHOLE:
-            order = whole_order(record_sets, [basis == "whole" for _, basis, _ in records])
-        else:
-            order = evidence_order(record_sets)
+        order, parts_held = sequence_order(sequence, query, records)
         taken, _ = cut_sequence(order, record_sets, effective_budget)
         positions = sorted(taken)
         for i in positions:
@@ -1673,6 +1748,9 @@ async def do_reconstruct(
                         "ref": entries_claims[i][1].ref,
                         "span": list(records[i][2][j][:2]),
                         "ranks": {"record": ranks[0], "inside": ranks[1], "cosine": ranks[2]},
+                        # Under the coverage order, the indices of the parts of the question the
+                        # passage holds (trace.coverage's parts when the same refs are cited).
+                        **({"parts": sorted(parts_held[i][j])} if parts_held is not None else {}),
                     }
                     for i, j, ranks in order
                     if (i, j) in chosen
