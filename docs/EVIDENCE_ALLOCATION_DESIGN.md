@@ -4,9 +4,10 @@ Status: design, for 2.6.5. The first pre-release (2.6.5a1) ships the payload
 sequence ordered across records (sections 3 and 4) as
 `CPERSONA_RECONSTRUCT_SEQUENCE=evidence`, off by default. 2.6.5a3 adds the same
 order behind a floor drawn by record length (`whole`, the end of section 4), also
-off by default, and `lite=true` on `reconstruct`, which uses it at 2,800 characters. The coverage step of section 5 is not
-implemented yet. Each step is measured against a rule registered before any
-answer call (section 7). `SCHEMA_VERSION` does not change: everything below
+off by default, and `lite=true` on `reconstruct`, which uses it at 2,800 characters. The coverage step of section 5 was
+built on top of `whole`, judged on both packs' test questions, and set aside.
+Each step is measured against a rule registered before any answer call
+(section 7). `SCHEMA_VERSION` does not change: everything below
 reads the blocks and int8 block vectors a store already has.
 
 ## 0. What this step is
@@ -126,21 +127,48 @@ floor includes records between one and two quotes long that today's sequence
 quotes at the top ranks. `evidence` keeps its meaning; `whole` is a separate
 value, and the default does not change.
 
-## 5. Coverage (not implemented yet) { #5-coverage-265a2 }
+## 5. Coverage (judged, set aside) { #5-coverage-265a2 }
 
-The sequence of section 4 is rebuilt by a greedy pass, still independent of the
-budget:
+The coverage step was built, judged against `whole` and not shipped. It rebuilt
+the order of `whole` by a greedy pass, still independent of the budget:
 
-1. Start from the order of section 3.
-2. Take the first passage. Mark the parts of the question it covers — the
-   coverage ledger's parts: declared entities and rare words, as recorded in
-   `trace.coverage`.
-3. Re-rank the rest: a passage covering a part not yet covered moves up, one
-   covering only parts already covered moves down, by fixed steps. Take the
-   first. Repeat until every candidate is placed.
+1. Start from the order of `whole` (section 4).
+2. Take the first passage. Mark the parts of the question it holds: the
+   coverage ledger's parts, the words of the question that `trace.coverage`
+   records (a run of two or more kanji or katakana, or an ASCII identifier,
+   after NFKC and lower case), found inside the passage's own range.
+3. Place every passage left at its place in that order, moved up five places
+   if it holds a part no passage taken so far holds, or down five places if
+   every part it holds is already held, and take the first. A passage that
+   holds no part keeps its place, and ties go to the earlier place. Repeat until
+   every candidate is placed.
 
-This is where a multi-session question's second session rises: its passage
-covers a part the first session's did not.
+The passages of the first two records in item order were never moved down:
+those records are where the answer usually is, and a second passage of the
+same record repeats the question's words because it is about the same thing.
+
+On the private real-use pack's development questions it showed more evidence
+than `whole` at every budget measured (113 against 104 at 2,800), and on
+LongMemEval-S's development questions it showed the answer sessions at least as
+often. Three other orders were set aside there. Filling every record to its
+head quote's size in item order first, as today's sequence does, showed the
+most evidence on the real-use pack, but on LongMemEval-S, where a record is a
+session, that is four items' worth of sessions, and it showed the answer
+sessions as rarely as four items do. Filling only the first two records that
+way first was level with keeping them from moving down, and moving passages
+without keeping the first records showed less.
+
+The registered test did not carry the development gain
+([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-coverage.md)).
+On the private pack's 150 test questions at 2,800, `coverage` showed 121 of 196
+evidence quotes against `whole`'s 120, and 2 fewer than today's sequence at the
+same characters; at 2,000 and 4,000 it showed 7 and 2 more than `whole`. On
+LongMemEval-S's 400 test questions it changed 319 contexts and showed the
+answer sessions about as often as `whole` (95.5% against 95.7%). At the same
+characters, today's sequence, `whole` and `coverage` were within a few quotes
+of each other on the real-use pack: once short records are protected, ordering
+the window's passages by the question's words does not move the evidence shown
+much. `whole` stays the sequence of `lite=true`.
 
 ## 6. What does not change
 
@@ -168,12 +196,17 @@ recall that produces the window and the meaning of `count` are unchanged.
   on the same 400 LongMemEval-S test questions and on the private pack's test
   questions, by the rules registered in
   [`prereg-omnimemeval-lme-v1_5-whole.md`](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/prereg-omnimemeval-lme-v1_5-whole.md).
+- **`coverage` against `whole`** was registered the same way, at the same
+  budget, in
+  [`prereg-omnimemeval-lme-v1_5-coverage.md`](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/prereg-omnimemeval-lme-v1_5-coverage.md).
+  The private pack's test, run first, did not meet its rule, and the
+  LongMemEval-S answer stage was not run (section 5).
 
 ## 8. Deferred
 
-- Splitting the question into clauses for coverage: coverage starts with the
-  ledger's lexical parts, and a finer split is considered only after the
-  coverage step of section 5 has been measured.
+- Splitting the question into clauses for coverage: the coverage step of
+  section 5, on the ledger's lexical parts, did not move the evidence shown,
+  so a finer split has no measured reason yet.
 - A budget that adapts to the question (section 7 of the recall design defers
   adaptation until a fixed policy has a reproducible baseline and an audit
   contract; this design is that fixed policy).
