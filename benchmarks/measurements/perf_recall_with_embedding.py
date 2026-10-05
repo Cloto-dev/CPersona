@@ -7,7 +7,10 @@ every query twice in alternating order: once with the stand-in vector and once
 through a real `EmbeddingClient` pointed at an embedding server. The difference
 is what embedding the query costs under the same machine state.
 
-Registration: prereg-recall-latency-with-embedding.md.
+Registrations: prereg-recall-latency-with-embedding.md (the synthetic corpus) and
+prereg-recall-latency-realistic-corpus.md (`--corpus-db`: a corpus of real text
+built through the store path by build_realistic_corpus.py, with its blocks and
+nodes, timed with real questions from `--queries-file`).
 
 Every query text is used once per client, so the client's cache never answers a
 timed query. The script refuses to run when the model's output width differs
@@ -16,6 +19,9 @@ from the corpus width, because the vector arm would then compare nothing.
 Usage (the scan window must cover the corpus, as in the earlier records):
   CPERSONA_MAX_MEMORIES=100000 python benchmarks/measurements/perf_recall_with_embedding.py \\
       --rows 100000 --dim 768 --embed-url http://127.0.0.1:8401/embed --json out.json
+  CPERSONA_MAX_MEMORIES=100000 python benchmarks/measurements/perf_recall_with_embedding.py \\
+      --corpus-db corpus.db --queries-file queries.json --agent perf.real --dim 768 \\
+      --settle-load 1.0 --json out.json
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ import asyncio
 import json
 import math
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -67,6 +74,10 @@ async def run(args) -> dict:
     from cpersona.database import close_db, connection, init_db
     import cpersona.server as server_mod
 
+    if args.corpus_db:
+        # The corpus is a finished database: copy it over the scratch path before
+        # anything opens it, so the run never writes to the file it was given.
+        shutil.copyfile(args.corpus_db, os.environ["CPERSONA_DB_PATH"])
     await init_db()
     stub = perf.LocalEmbeddingClient(args.dim)
     real = EmbeddingClient(
@@ -87,7 +98,7 @@ async def run(args) -> dict:
         vector._embedding_client = client
         server_mod._embedding_client = client
 
-    agent = "perf.index"
+    agent = args.agent
     index_file = vector_index.index_path("memories")
     for path in (index_file, index_file + ".tmp"):
         if os.path.exists(path):
@@ -107,8 +118,32 @@ async def run(args) -> dict:
         if os.path.exists("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") else None,
     }
 
+    texts = None
+    if args.queries_file:
+        texts = json.load(open(args.queries_file))
+        need = args.warmup + 2 * args.queries
+        if len(texts) < need or len(set(texts[:need])) < need:
+            raise SystemExit(f"--queries-file needs {need} distinct texts, has {len(set(texts))}")
+    warm_texts = texts[: args.warmup] if texts else [f"topic {100000 + w} question" for w in range(args.warmup)]
+    timed_texts = texts[args.warmup : args.warmup + args.queries] if texts else [f"topic {i} question" for i in range(args.queries)]
+    embed_texts = (
+        texts[args.warmup + args.queries : args.warmup + 2 * args.queries]
+        if texts
+        else [f"embed probe {i} about a topic question" for i in range(args.queries)]
+    )
+    result["corpus_db"] = os.path.basename(args.corpus_db) if args.corpus_db else None
+    result["queries_file"] = os.path.basename(args.queries_file) if args.queries_file else None
+    result["embed_server_note"] = args.embed_server_note
+
     async with connection() as db:
-        await perf.build_corpus(db, args.rows, args.dim, agent)
+        if args.corpus_db:
+            counts = {}
+            for table in ("memories", "record_blocks", "record_nodes"):
+                counts[table] = (await db.execute_fetchall(f"SELECT COUNT(*) FROM {table}"))[0][0]
+            result["corpus_counts"] = counts
+            result["rows"] = counts["memories"]
+        else:
+            await perf.build_corpus(db, args.rows, args.dim, agent)
         result["scan_window"] = vector.MAX_MEMORIES
         build = await vector_index.build_index(db, "memories")
         if not build.get("built"):
@@ -116,18 +151,28 @@ async def run(args) -> dict:
         result["index"] = {k: build[k] for k in ("count", "dim", "watermark", "bytes")}
 
         # Warm-up texts are never reused below.
-        for w in range(args.warmup):
-            text = f"topic {100000 + w} question"
+        for text in warm_texts:
             for client in (stub, real):
                 use(client)
                 await server_mod.do_recall(agent_id=agent, query=text, limit=args.limit)
 
+        if args.settle_load is not None:
+            # Wait for the machine to come to rest before the timed loop, rather
+            # than reading a load average the driver's own preparation produced.
+            waited, deadline = 0.0, time.monotonic() + args.settle_timeout
+            while os.getloadavg()[0] >= args.settle_load and time.monotonic() < deadline:
+                time.sleep(15)
+                waited += 15
+            result["settle"] = {
+                "threshold": args.settle_load,
+                "waited_s": waited,
+                "settled": os.getloadavg()[0] < args.settle_load,
+            }
         result["load_before"] = os.getloadavg()
         result["top_before"] = top_processes()
 
         stub_ms, real_ms, rows_stub, rows_real = [], [], [], []
-        for i in range(args.queries):
-            text = f"topic {i} question"
+        for i, text in enumerate(timed_texts):
             order = (stub, real) if i % 2 == 0 else (real, stub)
             for client in order:
                 use(client)
@@ -143,9 +188,9 @@ async def run(args) -> dict:
                     rows_real.append(returned)
 
         embed_ms = []
-        for i in range(args.queries):
+        for i, text in enumerate(embed_texts):
             t0 = time.perf_counter()
-            vec = await real.embed([f"embed probe {i} about a topic question"])
+            vec = await real.embed([text])
             embed_ms.append((time.perf_counter() - t0) * 1000)
             if not vec or len(vec[0]) != args.dim:
                 raise SystemExit(f"embed probe {i} returned no vector of width {args.dim}")
@@ -174,6 +219,12 @@ def main() -> int:
     ap.add_argument("--embed-url", default="http://127.0.0.1:8401/embed")
     ap.add_argument("--model-label", default="", help="recorded as given, e.g. onnx_jina_v5_nano")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--agent", default="perf.index", help="the corpus's agent (build_realistic_corpus.py: perf.real)")
+    ap.add_argument("--corpus-db", default=None, help="a finished corpus database to time instead of the synthetic one")
+    ap.add_argument("--queries-file", default=None, help="JSON list: warm-up, then timed, then embed-only texts")
+    ap.add_argument("--settle-load", type=float, default=None, help="wait for the 1-minute load to fall below this")
+    ap.add_argument("--settle-timeout", type=float, default=900.0)
+    ap.add_argument("--embed-server-note", default="", help="recorded as given, e.g. ONNX_INTRA_OP_THREADS=1")
     args = ap.parse_args()
 
     result = asyncio.run(run(args))

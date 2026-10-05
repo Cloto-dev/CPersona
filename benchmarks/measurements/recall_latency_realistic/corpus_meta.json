@@ -1,0 +1,35 @@
+{
+  "agent": "perf.real",
+  "build_seconds": 38828.4,
+  "chars": 269167878,
+  "concurrency": 1,
+  "cpersona": "2.6.4",
+  "derived_build_outcomes": {
+    "built": 100609,
+    "one": 142
+  },
+  "embed_url": "http://127.0.0.1:8401/embed",
+  "length_percentiles": "length_percentiles.json",
+  "queries_written": 53,
+  "rows_requested": 100000,
+  "seed": 20261004,
+  "skipped": 2,
+  "source_file": "longmemeval_m.json",
+  "store_seconds": 15246.2,
+  "stored": 100000,
+  "table_counts": {
+    "memories": 100000,
+    "pending_memory_tasks": 0,
+    "record_block_vectors": 3480069,
+    "record_blocks": 3480069,
+    "record_nodes": 1503
+  },
+  "tokens_cl100k": 56293636,
+  "tokens_per_record": {
+    "max": 3335,
+    "mean": 562.9,
+    "median": 496,
+    "p10": 208,
+    "p90": 979
+  }
+}
