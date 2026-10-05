@@ -555,3 +555,36 @@ def test_the_rule_reads_the_node_ends_it_is_given():
     assert not blocks.block_set_is_current([(0, 5, True, "m"), (6, 12, True, "m")], 12, ("m",))  # gap
     assert not blocks.block_set_is_current([(0, 5, True, "m"), (5, 12, False, "m")], 12, ("m",))  # vector
     assert not blocks.block_set_is_current([(0, 5, True, "m"), (5, 12, True, "x")], 12, ("m",))  # model
+
+
+@pytest.mark.asyncio
+async def test_the_stored_vectors_are_exactly_those_of_the_listed_keys():
+    """bug-505: the keys are joined as a table. The answer must be the listed
+    keys' vectors and nothing else: a key with no vector is absent, a repeated
+    key comes back once, and a neighbouring block of a listed parent is not
+    read in with it."""
+    async with _TempDB():
+        db = await database.get_db()
+        held = {
+            ("mem", 1, 0): b"\x01\x01", ("mem", 1, 1): b"\x02\x02",
+            ("mem", 2, 0): b"\x03\x03", ("ep", 1, 0): b"\x04\x04",
+        }
+        await db.executemany(
+            "INSERT INTO record_block_vectors (parent_kind, parent_id, block_index, embedding_i8)"
+            " VALUES (?, ?, ?, ?)",
+            [(*key, vector) for key, vector in held.items()],
+        )
+        await db.commit()
+        asked = [("mem", 2, 0), ("ep", 1, 0), ("mem", 1, 1), ("mem", 9, 0), ("mem", 2, 0)]
+        got = await blocks._stored_vectors(db, asked)
+        assert got == {key: held[key] for key in (("mem", 2, 0), ("ep", 1, 0), ("mem", 1, 1))}
+
+
+def test_the_stored_vectors_are_not_read_with_a_row_value_list():
+    """bug-505: SQLite 3.40.1 reads every vector in the store for
+    ``(a, b, c) IN (VALUES ...)``. A newer SQLite searches the key for both
+    forms, so a query plan taken here cannot tell them apart; the statement's
+    form is what is pinned."""
+    statement = blocks._stored_vectors_statement("(?, ?, ?)")
+    assert "IN (VALUES" not in statement
+    assert "JOIN record_block_vectors" in statement

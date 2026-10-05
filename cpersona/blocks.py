@@ -1307,16 +1307,28 @@ def _order(usable: list[tuple], distances) -> list[tuple[tuple, int]]:
 
 
 async def _stored_vectors(db, keys: list[tuple[str, int, int]]) -> dict[tuple, bytes]:
-    """The re-rank vectors of ``keys``, by (kind, parent id, block index)."""
+    """The re-rank vectors of ``keys``, by (kind, parent id, block index).
+
+    The keys are joined as a table rather than matched with a row-value
+    ``IN (VALUES ...)``: SQLite 3.40.1, which Debian 12's Python links, does not
+    search the primary key for the row-value form and reads every vector in
+    the store to find two hundred (4.3 s over 3,480,069 blocks, against 6 ms
+    for the join; 3.50 searches the key either way). bug-505.
+    """
     if not keys:
         return {}
     marks = ", ".join("(?, ?, ?)" for _ in keys)
-    rows = await db.execute_fetchall(
-        "SELECT parent_kind, parent_id, block_index, embedding_i8 FROM record_block_vectors "
-        f"WHERE (parent_kind, parent_id, block_index) IN (VALUES {marks})",
-        [value for key in keys for value in key],
-    )
+    rows = await db.execute_fetchall(_stored_vectors_statement(marks), [value for key in keys for value in key])
     return {(r[0], r[1], r[2]): r[3] for r in rows}
+
+
+def _stored_vectors_statement(marks: str) -> str:
+    return (
+        f"WITH wanted(kind, parent_id, block_index) AS (VALUES {marks}) "
+        "SELECT v.parent_kind, v.parent_id, v.block_index, v.embedding_i8 FROM wanted"
+        " JOIN record_block_vectors AS v ON v.parent_kind = wanted.kind"
+        " AND v.parent_id = wanted.parent_id AND v.block_index = wanted.block_index"
+    )
 
 
 def _rerank(

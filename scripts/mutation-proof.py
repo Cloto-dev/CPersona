@@ -3704,6 +3704,30 @@ MUTATIONS += [
         breaks='the planner reads the agent through the axes index and sorts every row before the first comes back',
         expect='test_blocks_retrieval.py::test_the_examined_read_walks_the_key_without_sorting',
     ),
+    Mutation(
+        id='M355',
+        tests=('tests/test_blocks_rerank.py',),
+        target='bug-505 — the stored vectors are read by a join, not a row-value list',
+        file='cpersona/blocks.py',
+        find='        f"WITH wanted(kind, parent_id, block_index) AS (VALUES {marks}) "\n'
+        '        "SELECT v.parent_kind, v.parent_id, v.block_index, v.embedding_i8 FROM wanted"\n'
+        '        " JOIN record_block_vectors AS v ON v.parent_kind = wanted.kind"\n'
+        '        " AND v.parent_id = wanted.parent_id AND v.block_index = wanted.block_index"\n',
+        replace='        "SELECT parent_kind, parent_id, block_index, embedding_i8 FROM record_block_vectors "\n'
+        '        f"WHERE (parent_kind, parent_id, block_index) IN (VALUES {marks})"\n',
+        breaks='SQLite 3.40 reads every vector in the store to find two hundred',
+        expect='test_blocks_rerank.py::test_the_stored_vectors_are_not_read_with_a_row_value_list',
+    ),
+    Mutation(
+        id='M356',
+        tests=('tests/test_blocks_rerank.py',),
+        target='bug-505 — the join matches the block, not only its parent',
+        file='cpersona/blocks.py',
+        find='        " AND v.parent_id = wanted.parent_id AND v.block_index = wanted.block_index"\n',
+        replace='        " AND v.parent_id = wanted.parent_id"\n',
+        breaks="every block of a listed parent is read in, and a parent's other blocks answer for the listed one",
+        expect='test_blocks_rerank.py::test_the_stored_vectors_are_exactly_those_of_the_listed_keys',
+    ),
 ]
 
 
