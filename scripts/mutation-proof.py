@@ -1442,8 +1442,8 @@ MUTATIONS += [
         tests=("tests/test_blocks_retrieval.py",),
         target="blocks — a record's share is its first blocks in text order (bug-455)",
         file="cpersona/blocks.py",
-        find="PARTITION BY parent_kind, parent_id ORDER BY block_index\"",
-        replace="PARTITION BY parent_kind, parent_id ORDER BY block_index DESC\"",
+        find="        \" ORDER BY parent_kind, parent_id, block_index\"\n",
+        replace="        \" ORDER BY parent_kind, parent_id, block_index DESC\"\n",
         breaks="the scan keeps a long record's last blocks, which the design does not describe",
         expect="test_blocks_retrieval.py::test_a_record_s_share_is_its_first_blocks",
     ),
@@ -3683,6 +3683,50 @@ MUTATIONS += [
         replace='',
         breaks='the registry drops lite before the handler sees it',
         expect='test_reconstruct_lite.py::test_the_tool_forwards_lite',
+    ),
+    Mutation(
+        id='M353',
+        tests=('tests/test_blocks_retrieval.py',),
+        target='bug-504 — the examined read counts a record\'s share over admitted rows',
+        file='cpersona/blocks.py',
+        find='                if taken > BLOCK_PER_PARENT_CAP:\n',
+        replace='                if taken >= BLOCK_PER_PARENT_CAP:\n',
+        breaks='every record gives one block fewer than its share',
+        expect='test_blocks_retrieval.py::test_the_examined_rows_are_the_ones_a_window_over_them_keeps',
+    ),
+    Mutation(
+        id='M354',
+        tests=('tests/test_blocks_retrieval.py',),
+        target='bug-504 — the examined read walks the primary key and sorts nothing',
+        file='cpersona/blocks.py',
+        find='        " INDEXED BY sqlite_autoindex_record_blocks_1"\n',
+        replace='',
+        breaks='the planner reads the agent through the axes index and sorts every row before the first comes back',
+        expect='test_blocks_retrieval.py::test_the_examined_read_walks_the_key_without_sorting',
+    ),
+    Mutation(
+        id='M355',
+        tests=('tests/test_blocks_rerank.py',),
+        target='bug-505 — the stored vectors are read by a join, not a row-value list',
+        file='cpersona/blocks.py',
+        find='        f"WITH wanted(kind, parent_id, block_index) AS (VALUES {marks}) "\n'
+        '        "SELECT v.parent_kind, v.parent_id, v.block_index, v.embedding_i8 FROM wanted"\n'
+        '        " JOIN record_block_vectors AS v ON v.parent_kind = wanted.kind"\n'
+        '        " AND v.parent_id = wanted.parent_id AND v.block_index = wanted.block_index"\n',
+        replace='        "SELECT parent_kind, parent_id, block_index, embedding_i8 FROM record_block_vectors "\n'
+        '        f"WHERE (parent_kind, parent_id, block_index) IN (VALUES {marks})"\n',
+        breaks='SQLite 3.40 reads every vector in the store to find two hundred',
+        expect='test_blocks_rerank.py::test_the_stored_vectors_are_not_read_with_a_row_value_list',
+    ),
+    Mutation(
+        id='M356',
+        tests=('tests/test_blocks_rerank.py',),
+        target='bug-505 — the join matches the block, not only its parent',
+        file='cpersona/blocks.py',
+        find='        " AND v.parent_id = wanted.parent_id AND v.block_index = wanted.block_index"\n',
+        replace='        " AND v.parent_id = wanted.parent_id"\n',
+        breaks="every block of a listed parent is read in, and a parent's other blocks answer for the listed one",
+        expect='test_blocks_rerank.py::test_the_stored_vectors_are_exactly_those_of_the_listed_keys',
     ),
 ]
 

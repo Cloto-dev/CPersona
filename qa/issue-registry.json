@@ -7470,6 +7470,34 @@
       "fix_sketch": "On Windows, read the arrays into memory instead of mapping them, so no handle is left open on the file a rebuild replaces.",
       "note": "Field report from a Windows 11 user (2.5.11). Reproduced on windows-latest in CI by loading the index and rebuilding it in the same process: PermissionError [WinError 5] Access is denied at vector_index.py:319.",
       "fix_note": "load_index maps the file only where _maps_files() is true (not Windows); on Windows each array is read with np.fromfile at its offset. A new Windows CI job runs the reproduction; tests/test_vector_index_rebuild_while_loaded.py also runs the read path on every platform and compares it field by field with the mapped one."
+    },
+    {
+      "id": "bug-504",
+      "summary": "(HIGH) The block arm's examined read ranked every block in the store before its cap applied. _examined numbered each record's admitted rows with ROW_NUMBER() and cut with LIMIT, and with agent_id = ? in the filter SQLite read the agent's rows through idx_record_blocks_axes and sorted all of them before returning the first, so BLOCK_EXAMINED_CAP bounded what was returned, not what was read. Recall cost grew with the whole block table on the default configuration: over 100,000 memories of real length (3,480,069 blocks) recall took a median of 20.7 s on an Intel N150, and on a laptop this one statement was 9.7 s of a 10.2 s recall.",
+      "severity": "HIGH",
+      "discovered": "2026-10-05T00:00:00Z",
+      "version": "2.6.4",
+      "file": "cpersona/blocks.py",
+      "pattern": "INDEXED BY sqlite_autoindex_record_blocks_1",
+      "expected": "present",
+      "status": "fixed",
+      "category": "performance",
+      "fix_note": "The rows are read in primary key order through the key's own index, named with INDEXED BY so the planner cannot take the axes index and sort; both caps are counted while reading, over the rows the filter admits, and the read stops when the examined cap is full. On the same corpus the read went from 2.6 s to 0.11 s and returned the same 250,000 rows in the same order, and recall returned identical responses for every question compared. Rejected: adding INDEXED BY to the window statement alone, which kept the window's materialisation and an outer sort (1.4 s); and replacing the window with block_index < cap, which changes what a record contributes when some of its blocks are not admitted (no bits yet, or another model's).",
+      "note": "Found by timing recall over a corpus built through the store path with real conversation lengths; the earlier latency record used a synthetic corpus with no blocks, so it could not see this. Lands in the first release after 2.6.5a3."
+    },
+    {
+      "id": "bug-505",
+      "summary": "(HIGH) The block arm read the two hundred re-rank vectors with a row-value IN: WHERE (parent_kind, parent_id, block_index) IN (VALUES ...). SQLite 3.40.1, the version Debian 12's Python links (and so the official python images built on it), does not search the primary key for that form: its plan is SCAN record_block_vectors, so every recall read every stored vector in the store. Over 100,000 memories of real length (3,480,069 blocks) this one statement took 4.6 s of a 6.7 s recall on an Intel N150; SQLite 3.50.4 searches the key and takes under a millisecond, so the cost appears only where the older library is linked.",
+      "severity": "HIGH",
+      "discovered": "2026-10-05T00:00:00Z",
+      "version": "2.6.4",
+      "file": "cpersona/blocks.py",
+      "pattern": "WITH wanted\\(kind, parent_id, block_index\\) AS \\(VALUES",
+      "expected": "present",
+      "status": "fixed",
+      "category": "performance",
+      "fix_note": "The keys are joined as a table (a CTE of VALUES joined to record_block_vectors on all three key columns), which SQLite 3.40.1 plans as a search of the primary key per key: 6.1 ms against 4,277.6 ms for the same 200 keys on the same database. Rejected: reading by parent with parent_id IN (...), which the old library also indexes but which reads every block of each listed parent; and one point query per key, which costs two hundred round trips. A query plan cannot pin this in CI, whose SQLite searches the key for both forms, so the test pins the statement's form and a second test pins that only the listed keys come back.",
+      "note": "Found while profiling recall after bug-504 on the reference machine, where the CI-tested library hid it. The row-value IN in _stored_vectors was the only one in the package. Lands in the first release after 2.6.5a3."
     }
   ]
 }
