@@ -1160,18 +1160,53 @@ async def _examined(db, iso, keys: tuple[str, str]) -> list[tuple]:
     isolation axes on the row filter here rather than after ranking: a bucket
     that is one per cent of the corpus would otherwise spend the whole cut on
     rows the authority then drops.
+
+    The rows are read in primary key order and the read stops when the examined
+    cap is full, so the call costs the cap, not the corpus (bug-504). Both caps
+    are counted here, over the rows the filter admits, which is what a window
+    function over those rows would count.
     """
-    return await db.execute_fetchall(
-        "SELECT parent_kind, parent_id, block_index, embedding_bits FROM ("
-        "  SELECT parent_kind, parent_id, block_index, embedding_bits,"
-        "         ROW_NUMBER() OVER ("
-        "             PARTITION BY parent_kind, parent_id ORDER BY block_index"
-        "         ) AS within_parent"
-        "    FROM record_blocks"
-        f"   WHERE embedding_bits IS NOT NULL AND embedding_model IN (?, ?){iso.and_clause}"
-        ") WHERE within_parent <= ? "
-        "ORDER BY parent_kind, parent_id, block_index LIMIT ?",
-        (*keys, *iso.params, BLOCK_PER_PARENT_CAP, BLOCK_EXAMINED_CAP),
+    examined: list[tuple] = []
+    parent = None
+    taken = 0
+    async with db.execute(_examined_statement(iso), (*keys, *iso.params)) as cursor:
+        while len(examined) < BLOCK_EXAMINED_CAP:
+            page = await cursor.fetchmany(_EXAMINE_PAGE)
+            if not page:
+                break
+            for row in page:
+                if (row[0], row[1]) != parent:
+                    parent, taken = (row[0], row[1]), 0
+                taken += 1
+                if taken > BLOCK_PER_PARENT_CAP:
+                    continue
+                examined.append(row)
+                if len(examined) == BLOCK_EXAMINED_CAP:
+                    break
+    return examined
+
+
+#: Rows fetched per round trip while the examined set fills.
+_EXAMINE_PAGE = 4096
+
+
+def _examined_statement(iso) -> str:
+    """The examined rows in primary key order, every one the filter admits.
+
+    The order comes from the primary key's index, named so the planner cannot
+    trade it for the axes index: with ``agent_id = ?`` in the filter it would
+    otherwise read every row of the agent through that index and sort them all
+    before the first row came back. The previous statement ranked each parent's
+    rows with a window function and cut with LIMIT, which still sorted every
+    block of the store: 9.7 s of a 10.2 s recall over 100,000 memories and
+    3,480,069 blocks (bug-504). The table has carried this primary key since it
+    was created, so the index's name is fixed by SQLite.
+    """
+    return (
+        "SELECT parent_kind, parent_id, block_index, embedding_bits FROM record_blocks"
+        " INDEXED BY sqlite_autoindex_record_blocks_1"
+        f" WHERE embedding_bits IS NOT NULL AND embedding_model IN (?, ?){iso.and_clause}"
+        " ORDER BY parent_kind, parent_id, block_index"
     )
 
 

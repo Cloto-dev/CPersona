@@ -197,6 +197,92 @@ def test_the_design_states_the_share_the_code_applies():
     assert f"first {blocks.BLOCK_PER_PARENT_CAP} blocks in text order" in design
 
 
+# The statement the examined set was read with before bug-504: a window function
+# ranks each parent's admitted rows, then LIMIT cuts. Kept here as the reference
+# the streaming read must agree with, row for row.
+_WINDOW_REFERENCE = (
+    "SELECT parent_kind, parent_id, block_index, embedding_bits FROM ("
+    "  SELECT parent_kind, parent_id, block_index, embedding_bits,"
+    "         ROW_NUMBER() OVER (PARTITION BY parent_kind, parent_id ORDER BY block_index)"
+    "         AS within_parent"
+    "    FROM record_blocks"
+    "   WHERE embedding_bits IS NOT NULL AND embedding_model IN (?, ?){clause}"
+    ") WHERE within_parent <= ? ORDER BY parent_kind, parent_id, block_index LIMIT ?"
+)
+
+
+def _block(kind, parent_id, index, *, agent=AGENT, bits=b"\x0f\xf0", model="m-a"):
+    return (kind, parent_id, index, agent, "", "", 0, 1, 0, bits, model)
+
+
+_ODD_BLOCKS = [
+    # "ep" sorts before "mem", so the kinds interleave in key order
+    _block("ep", 7, 0), _block("ep", 7, 1), _block("ep", 7, 2),
+    # gaps in the index, and the first two rows are not admitted: a share counts
+    # the rows the filter admits, not the rows the table holds
+    _block("mem", 1, 0, bits=None), _block("mem", 1, 2, model="m-c"),
+    _block("mem", 1, 3), _block("mem", 1, 5), _block("mem", 1, 9),
+    # another agent's record between two of ours
+    _block("mem", 2, 0, agent="agent.other"), _block("mem", 2, 1, agent="agent.other"),
+    _block("mem", 3, 0, model="m-b"), _block("mem", 3, 1),
+    _block("mem", 4, 0), _block("mem", 4, 1), _block("mem", 4, 2), _block("mem", 4, 3),
+    _block("mem", 6, 4),
+]
+
+
+@pytest.mark.asyncio
+async def test_the_examined_rows_are_the_ones_a_window_over_them_keeps(monkeypatch):
+    """bug-504: the read stops at the cap instead of ranking every row of the
+    store, and must keep exactly what the window function kept — per-parent
+    shares counted over admitted rows, the examined cut in key order."""
+    async with _TempDB():
+        db = await database.get_db()
+        await db.executemany(
+            "INSERT INTO record_blocks (parent_kind, parent_id, block_index, agent_id, project_id,"
+            " channel, start_char, end_char, forced_boundary, embedding_bits, embedding_model)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            _ODD_BLOCKS,
+        )
+        await db.commit()
+        keys = ("m-a", "m-b")
+        iso = isolation_where(agent_id=AGENT)
+        # a share that binds, an examined cap that binds mid-parent, both loose, one row each
+        for share, cap in ((2, 7), (2, 100), (1, 3), (64, 4), (64, 100)):
+            monkeypatch.setattr(blocks, "BLOCK_PER_PARENT_CAP", share)
+            monkeypatch.setattr(blocks, "BLOCK_EXAMINED_CAP", cap)
+            want = [
+                tuple(r)
+                for r in await db.execute_fetchall(
+                    _WINDOW_REFERENCE.format(clause=iso.and_clause), (*keys, *iso.params, share, cap)
+                )
+            ]
+            got = [tuple(r) for r in await blocks._examined(db, iso, keys)]
+            assert want, "the fixture admitted nothing, so the comparison proves nothing"
+            assert got == want, (share, cap)
+
+
+@pytest.mark.asyncio
+async def test_the_examined_read_walks_the_key_without_sorting():
+    """bug-504: the cost of the read is the cap only while nothing sorts. With
+    ``agent_id = ?`` in the filter the planner prefers the axes index and sorts
+    every row of the agent; the statement names the key's index so it cannot."""
+    async with _TempDB():
+        db = await database.get_db()
+        for iso in (
+            isolation_where(agent_id=AGENT),
+            isolation_where(agent_id=AGENT, project_id="p", channel="c"),
+            isolation_where(agent_id=None),
+        ):
+            plan = [
+                r[3]
+                for r in await db.execute_fetchall(
+                    "EXPLAIN QUERY PLAN " + blocks._examined_statement(iso), ("m-a", "m-b", *iso.params)
+                )
+            ]
+            assert not any("TEMP B-TREE" in step for step in plan), plan
+            assert any("sqlite_autoindex_record_blocks_1" in step for step in plan), plan
+
+
 # --------------------------------------------------------------------------
 # reach: the record its own vector cannot bring back
 # --------------------------------------------------------------------------
