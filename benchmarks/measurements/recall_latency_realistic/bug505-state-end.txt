@@ -1,0 +1,4 @@
+2026-10-05 02:55:54 UTC
+the 8 GB virtual machine: stopped
+MemAvailable:   13802888 kB
+some avg10=0.00 avg60=2.95 avg300=5.55 total=17970581637
