@@ -421,7 +421,7 @@ standard](CLAUDE_MD_POLICY_STANDARD.md). The block itself is maintained in the
 skill, and this copy is checked against it in CI.
 
 ```markdown
-<!-- BEGIN cpersona-policy v4 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v5 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
@@ -435,8 +435,8 @@ quoting the rows behind it, at fewer reader tokens per correct answer. Read an i
 
 **Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
 "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
-Protect must-never-lose rules with `lock_memory`. After a successful `git commit`, `store` a
-one-line record: hash, what changed, why.
+Lock must-never-lose rules: `lock: true` on the `store` where it offers one, else `lock_memory`.
+After a successful `git commit`, `store` a one-line record: hash, what changed, why.
 
 **Changing an existing rule** → `update_memory`, never delete + store. If the memory is locked:
 `unlock_memory` → `update_memory` → `lock_memory`.
@@ -456,7 +456,7 @@ knob; after large corpus changes `calibrate_threshold(agent_id)`; monthly `check
 
 **If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
 as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that
-changes behaviour>` — with the body stored here under `message.id="memory-index:<slug>"` and content
+changes behaviour>` — with the body stored here under the id `memory-index:<slug>` and content
 starting `[<slug>]`, so a line tells you what to `recall`. Recall is ranked and may not surface a
 memory; the index always arrives. Its size cap fails **silently** when exceeded, so consolidate at
 80%, not at the limit. Never migrate existing memories into this store without asking first.
