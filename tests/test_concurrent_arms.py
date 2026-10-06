@@ -49,7 +49,12 @@ class _TempDB:
         return self
 
     async def __aexit__(self, *exc):
+        side = database._side_read_db
         await database.close_db()
+        if side is not None and side._connection is not None:
+            # close_db missed it (test_close_db_closes_the_side_connection says so);
+            # close it here, so the run fails that test instead of hanging at exit.
+            await side.close()
         database._db, database.DB_PATH, tasks._task_queue = self._saved
         session.reset_pauses_for_tests()
 

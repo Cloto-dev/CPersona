@@ -550,15 +550,16 @@ class _Beside:
     task, and ``outcome()`` returns or raises it where the caller reads it: the
     caller sees the exception at the same point as when the arm ran in line, and
     a task the caller never reads (it raised first) ends without leaving an
-    exception nobody retrieved."""
+    exception nobody retrieved. The coroutine is made inside the task, so one
+    cancelled before it starts leaves no coroutine that was never awaited."""
 
-    def __init__(self, coro):
-        self._task = asyncio.create_task(self._keep(coro))
+    def __init__(self, fn, *args):
+        self._task = asyncio.create_task(self._keep(fn, args))
 
     @staticmethod
-    async def _keep(coro):
+    async def _keep(fn, args):
         try:
-            return await coro, None
+            return await fn(*args), None
         except Exception as exc:  # noqa: BLE001 - re-raised by outcome()
             return None, exc
 
@@ -672,7 +673,7 @@ async def _recall_rrf(
     vector_results: list[dict] = []
     far_results: list[dict] = []
 
-    lexical = _Beside(_lexical_arms(db, agent_id, query, depth, channel, project_id, source_id, lexical_terms))
+    lexical = _Beside(_lexical_arms, db, agent_id, query, depth, channel, project_id, source_id, lexical_terms)
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # One call to the vector retriever, as always. `far_out` collects the
@@ -828,7 +829,7 @@ async def _recall_rsf(
     ep_rows: list[dict] = []
     mem_rows: list[dict] = []
 
-    lexical = _Beside(_lexical_arms(db, agent_id, query, depth, channel, project_id, source_id, lexical_terms))
+    lexical = _Beside(_lexical_arms, db, agent_id, query, depth, channel, project_id, source_id, lexical_terms)
     rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # bug-442: as under rrf, a far channel weighted 0 is not read at all.
@@ -2424,7 +2425,7 @@ async def _do_recall(
                     limit=limit,
                 )
 
-            block_arm = _Beside(_once_embedded(query_vec_out, _block_arm))
+            block_arm = _Beside(_once_embedded, query_vec_out, _block_arm)
         ledger.spend(budget.ORDINARY_FETCH)
         try:
             results = await p.fusion.retrieve(
