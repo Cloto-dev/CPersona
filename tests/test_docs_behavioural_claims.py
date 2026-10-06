@@ -181,7 +181,7 @@ def test_source_id_is_a_recall_argument_and_not_a_store_argument():
 
     assert "source_id" not in store_args, (
         "`store` now advertises source_id. The shipped skill tells agents that a write "
-        "carries its producer in message.source.id instead — update the tool-reference "
+        "carries its producer in source.id instead — update the tool-reference "
         "table in skills/cpersona-memory/SKILL.md before this becomes the wrong advice."
     )
     assert "source_id" in recall_args, (

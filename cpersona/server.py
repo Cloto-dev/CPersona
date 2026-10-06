@@ -200,14 +200,79 @@ def _oc_reject(error: str) -> dict:
     }
 
 
-async def do_store_boundary(
+def _store_refused(reason: str) -> dict:
+    """A store refused at the boundary, in the shape every store refusal takes."""
+    return {"ok": False, "result": "rejected", "reason": reason}
+
+
+# What the registry hands do_store_boundary when a call sent no top-level
+# `source`. The dict validator returns its default untouched when the key is
+# absent, so this object arriving means "omitted" — which a caller's explicit {}
+# ("the producer is unknown") must not be read as.
+_SOURCE_OMITTED = object()
+
+
+def _flat_message(
     agent_id: str,
-    message: dict,
+    content: str | None,
+    msg_id: str,
+    source,
+    timestamp: str,
+    metadata: dict | None,
+) -> dict:
+    """The legacy `message` dict do_store reads, built from the top-level fields.
+
+    A top-level call names no producer far more often than it names one: a model
+    calling store is the producer, and when it had to spell that out it wrote the
+    same three nested keys on almost every call and closed their braces wrongly
+    on a sixth of them, a mistake the client refuses before the server can read
+    anything. So an omitted source means this agent. The legacy form keeps its
+    own default, the anonymous {}, so no existing caller's attribution moves.
+    """
+    message: dict = {"content": content or ""}
+    if msg_id:
+        message["id"] = msg_id
+    message["source"] = {"type": "Agent", "id": agent_id, "name": ""} if source is _SOURCE_OMITTED else source
+    if timestamp:
+        message["timestamp"] = timestamp
+    if metadata:
+        message["metadata"] = metadata
+    return message
+
+
+async def do_store_boundary(
+    agent_id: str | None,
+    message: dict | None = None,
     channel: str = "",
     project_id: str = "",
     session_key: str = "",
     associations: dict | None = None,
+    content: str | None = None,
+    msg_id: str = "",
+    source=_SOURCE_OMITTED,
+    timestamp: str = "",
+    metadata: dict | None = None,
+    lock: bool = False,
 ) -> dict:
+    # The two forms are one call each. A call that mixes them has no reading that
+    # is not a guess about which half the caller meant, so it is refused rather
+    # than merged. An omitted message arrives as {} through MCP.
+    flat_given = content is not None or bool(msg_id or timestamp or metadata) or source is not _SOURCE_OMITTED
+    if message and flat_given:
+        return _store_refused(
+            "send content, id, source, timestamp and metadata either at the top level or inside "
+            "message, not both"
+        )
+    if agent_id is None:
+        # Under ACL the guard fills agent_id in before this runs when the connection
+        # can write to exactly one agent (acl.connection_agent); an omission that
+        # arrives here had no such agent to stand for.
+        return _store_refused(
+            "agent_id is required: it can be omitted only on a connection whose ACL grants "
+            "write access to exactly one agent"
+        )
+    if not message:
+        message = _flat_message(agent_id, content, msg_id, source, timestamp, metadata)
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
         # b1-1: `result` is total over every store response, so the gate refusal
@@ -236,6 +301,18 @@ async def do_store_boundary(
             channel=channel,
             anchor_ref=f"mem:{result['id']}",
         )
+    # The lock rider: the same row the associations rider anchors to, for the same
+    # reason. A store answered by an existing row is still a request that this
+    # memory end up locked. A paused, refused or id-less (unique-index race) store
+    # has no row, and the response says so rather than staying silent.
+    if lock:
+        row_id = result.get("id")
+        locked = False
+        if isinstance(row_id, int) and row_id > 0:
+            outcome = await do_lock_memory(row_id, agent_id=agent_id, session_key=session_key)
+            # A paused lock answers ok:true with its id nulled, so the id is the test.
+            locked = outcome.get("ok") is True and outcome.get("locked_id") == row_id
+        result["locked"] = locked
     return _oc_annotate(result, project_id, resolved, warning)
 
 
@@ -672,7 +749,7 @@ _SESSION_KEY_PROPERTY_SHORT = {
 }
 
 # The associative-memory declaration (docs/ASSOCIATIVE_MEMORY_DESIGN.md §2),
-# shared by the `store` rider and `declare_associations`.
+# declared by `declare_associations` (store carries the typed shape below).
 _ASSOCIATIONS_PROPERTY = {
     "type": "object",
     "description": (
@@ -716,13 +793,29 @@ _ASSOCIATIONS_PROPERTY = {
     },
 }
 
-# bug-489: the property above is store's -- its description speaks of the stored
-# memory and of associations.dropped. declare_associations takes the same object
-# with a description of its own, and its tool description no longer restates what
-# the nested descriptions already carry (they are sent with both tools).
+# bug-489: the property above speaks of the stored memory and of
+# associations.dropped. declare_associations takes the same object with a
+# description of its own, and its tool description no longer restates what the
+# nested descriptions already carry.
 _DECLARE_ASSOCIATIONS_PROPERTY = {
     **_ASSOCIATIONS_PROPERTY,
     "description": "The entities and relations to declare. Malformed items are reported in `dropped` and skipped.",
+}
+
+# store's rider: the same object, its shape said in one sentence instead of
+# nested schemas. store is loaded with every session (ALWAYS_LOADED_TOOLS), so
+# every character here is paid for by sessions that never declare anything; the
+# rules are declare_associations', which carries them in full, and malformed
+# items are reported per item by the handler rather than refused by a schema.
+_STORE_ASSOCIATIONS_PROPERTY = {
+    "type": "object",
+    "description": (
+        "Entities and relations to declare against this memory, as declare_associations "
+        "takes them: {entities: [{name, aliases}], relations: [{subject, predicate, object}]}, "
+        "subject / object being entity names or 'mem:<id>' / 'ep:<id>' refs. Malformed items "
+        "are reported in the response's associations.dropped and skipped; the memory is "
+        "stored regardless."
+    ),
 }
 
 # Session no-persist controls — registered first for discoverability.
@@ -899,158 +992,140 @@ registry.auto_tool(
 
 registry.auto_tool(
     "store",
-    "Store a message in agent memory for future recall. "
+    "Store a memory for future recall: put the text in content. agent_id may be omitted on "
+    "a connection that can write to exactly one agent (the agent used is echoed as "
+    "resolved_agent_id), and source defaults to that agent. lock:true also locks the "
+    "memory, as lock_memory does, and the response says locked:true|false. "
     # b1-1 (2.5.2b1, CONTRACT BREAK): `result` replaces the old `skipped` flag.
-    "Every response carries result — the one field to branch on: "
-    "'stored' (a new row was written; {ok:true, result:'stored', id:<row-id>, "
-    "embedded:<bool>}, embedded true iff a local blob was persisted or the remote "
-    "index push succeeded — false under EMBEDDING_MODE=none; the response also "
-    "carries truncated:true when content exceeded the length cap and was shortened, "
-    "and nodes:{status:'queued'} when the text runs past the embedding window and its "
-    "overflow-tree nodes were queued for construction — absent when it fits, when the "
-    "embedding server cannot report tokens, or with the task queue disabled), "
-    "'skipped' (nothing written and nothing wrong: {ok:true, result:'skipped', "
-    "reason:...}; the msg_id / content dedup branches echo the pre-existing row's id, "
-    "the OR IGNORE fallback reason='duplicate (unique index)' omits id by design — "
-    "TOCTOU seam), or "
-    "'rejected' (nothing written because the request was refused: {ok:false, "
-    "result:'rejected', reason:...} — empty content, content that sanitizes to empty, "
-    "or an operating-context project_id refusal, which also carries error). "
-    "Note for pre-2.5.2b1 callers: ok is no longer unconditionally true, and "
-    "skipped:true is gone — a rejection used to look like a success. "
-    "reason is human-readable, not a stable machine token. "
+    "Every response carries result, the one field to branch on: "
+    "'stored' (a new row: id, and embedded, whether a vector was kept; truncated:true when "
+    "content was shortened to the length cap; nodes:{status:'queued'} when the text runs "
+    "past the embedding window and its overflow-tree nodes were queued), "
+    "'skipped' (nothing written and nothing wrong: a duplicate id or content echoes the "
+    "existing row's id, except reason='duplicate (unique index)', a concurrent-write race, "
+    "which has none), or "
+    "'rejected' (ok:false, nothing written; reason is human-readable, not a stable token). "
     # bug-141: the no-persist branch has its own shape — document it so
     # consumers branch on `persisted`, not on key presence.
-    "Under pause_persistence the write is skipped (result:'skipped') and the response "
-    "carries persisted:false (id:'no-persist', embedded:false) — branch on persisted "
-    "to tell a paused write apart from a dedup hit.",
+    "Under pause_persistence the write is skipped and the response carries persisted:false "
+    "(id:'no-persist'), which tells a paused write from a duplicate. "
+    "The older message={content, id, source, timestamp, metadata} form is still accepted; "
+    "send those fields there or at the top level, not both.",
     {
         "type": "object",
         "properties": {
-            "agent_id": {"type": "string", "description": "Agent identifier"},
-            "message": {
+            "content": {
+                "type": "string",
+                # bug-168: "skipped" means ok:true in this tool's own
+                # vocabulary, so the old wording told callers to treat a
+                # refusal as a harmless no-op.
+                "description": "The text to store. Content that is empty — or that sanitizes to empty — is refused with ok:false, result:'rejected'.",
+            },
+            "agent_id": {
+                "type": "string",
+                "description": "Agent identifier. May be omitted when this connection can write to exactly one agent.",
+            },
+            "id": {
+                "type": "string",
+                "description": "Optional caller id: a later store with the same id in the same project is skipped as a duplicate.",
+            },
+            "source": {
+                # Object-only at the top level, unlike message.source below: the
+                # registry extracts this field with the dict validator, so a string
+                # sent here would reach the handler as "omitted" (the bug-398
+                # class). The schema refuses it instead, where the caller sees it.
                 "type": "object",
                 "description": (
-                    "ClotoMessage to store. Legacy source shapes are normalized "
-                    "server-side where unambiguous (e.g. lowercase type words, "
-                    "Rust serde externally-tagged dicts, bare 'user'/'assistant' "
-                    "strings); unknown shapes are stored verbatim and surfaced by "
-                    "check_health(invalid_source_type)."
+                    "Who produced the content, {type, id, name}. Default: "
+                    "{type:'Agent', id:<agent_id>}. Pass {} only when the producer is unknown."
                 ),
                 "properties": {
-                    "id": {
+                    "type": {
                         "type": "string",
-                        "description": "Caller-supplied message id used for msg_id-based dedup (γ-project-scoped). Optional.",
+                        # bug-233: NO `enum` here. The MCP SDK validates every call
+                        # against inputSchema before dispatch, so an enum of the
+                        # canonical values rejected the legacy spellings the next
+                        # sentence promises to fold. The list stays in the
+                        # description, derived from utils.CANONICAL_SOURCE_TYPES /
+                        # _TYPE_ALIASES so it cannot drift from the write seam.
+                        "description": (
+                            "One of "
+                            + ", ".join(f"'{t}'" for t in CANONICAL_SOURCE_TYPES)
+                            + "; legacy spellings are folded (" + source_type_alias_summary() + ")."
+                        ),
                     },
-                    "content": {
-                        "type": "string",
-                        # bug-168: "skipped" means ok:true in this tool's own
-                        # vocabulary, so the old wording told callers to treat a
-                        # refusal as a harmless no-op.
-                        "description": "The text to store. Content that is empty — or that sanitizes to empty — is refused with ok:false, result:'rejected'.",
-                    },
+                    "id": {"type": "string"},
+                    "name": {"type": "string"},
+                },
+            },
+            "timestamp": {
+                "type": "string",
+                "description": "ISO-8601 with an offset, e.g. '2026-07-22T12:00:00+00:00'. Default: now.",
+            },
+            "metadata": {
+                "type": "object",
+                "description": (
+                    # Bounded since 2.5.2b1. Unlike content, refused rather than cut:
+                    # a truncated JSON document is not a JSON document.
+                    f"Free-form JSON, at most {config.MAX_METADATA_LENGTH} characters serialised "
+                    "(source has the same cap). Larger is rejected, not truncated."
+                ),
+            },
+            "lock": {
+                "type": "boolean",
+                "description": "Also lock the memory against edits and deletion. Default false.",
+                "default": False,
+            },
+            "message": {
+                # The pre-2.6.6 form, typed but no longer described: its fields are
+                # the top-level ones above. source keeps the shapes the write seam
+                # folds (bug-233 / bug-398: a bare 'user' / 'assistant' word, null).
+                "type": "object",
+                "description": "The older form of content, id, source, timestamp and metadata.",
+                "properties": {
+                    "content": {"type": "string"},
+                    "id": {"type": "string"},
                     "source": {
-                        # bug-398: declared object-only while this schema's own
-                        # description promised that a bare 'user' / 'assistant'
-                        # string and a null source are folded at the write seam.
-                        # The SDK validates against inputSchema before dispatch,
-                        # so both promised shapes died at the boundary and
-                        # normalize_source was never reached — the defect
-                        # bug-233 removed from the child field, still standing
-                        # on the parent. Admitting them changes no call that
-                        # works today.
+                        # bug-398: the shapes the write seam folds. bug-140: null and
+                        # {} converge at the write seam; recall echoes {} for both.
                         "type": ["object", "string", "null"],
-                        "description": (
-                            "Attribution of who produced the content. Canonical shape is "
-                            "{type, id, name}. Type is the discriminator; id / name identify "
-                            "the concrete producer. Store null / empty {} only when the "
-                            "producer is genuinely unknown. "
-                            # bug-140: null and {} converge at the write seam;
-                            # recall echoes {} for rows stored either way.
-                            "A null source is normalized to {} at the write seam, so "
-                            "both persist (and recall) as the anonymous {}."
-                        ),
-                        "properties": {
-                            "type": {
-                                "type": "string",
-                                # bug-233: NO `enum` here. The MCP SDK validates every
-                                # call against inputSchema before dispatch, so an enum of
-                                # the canonical values rejected the legacy spellings the
-                                # very next sentence promises to fold — the call died at
-                                # the schema, normalize_source was never reached, and the
-                                # write was lost instead of normalized. The canonical list
-                                # stays in the description (still derived from
-                                # utils.CANONICAL_SOURCE_TYPES / _TYPE_ALIASES, so the
-                                # published contract cannot drift from the write seam);
-                                # enforcement is the write seam's plus
-                                # check_health(invalid_source_type).
-                                "description": (
-                                    "Producer role — send one of "
-                                    + ", ".join(f"'{t}'" for t in CANONICAL_SOURCE_TYPES)
-                                    + ". Legacy producers that cannot are folded server-side "
-                                    "at the write seam (" + source_type_alias_summary() + "), "
-                                    "and shapes outside that table are stored verbatim for "
-                                    "check_health(invalid_source_type) to surface."
-                                ),
-                            },
-                            "id": {
-                                "type": "string",
-                                "description": "Stable producer id (e.g. discord user id, agent id). Empty when anonymous.",
-                            },
-                            "name": {
-                                "type": "string",
-                                "description": "Human-readable label for display. Empty when unknown.",
-                            },
-                        },
+                        "description": "Also a bare 'user' / 'assistant' word, or null, stored as the anonymous {}.",
                     },
-                    "timestamp": {
-                        "type": "string",
-                        "description": (
-                            "UTC ISO-8601 timestamp with offset "
-                            "(e.g. '2026-07-22T12:00:00+00:00'). Defaults to server-time UTC "
-                            "when omitted. Aware non-UTC offsets are accepted; naive strings "
-                            "are surfaced by check_health(timestamp_format_drift)."
-                        ),
-                    },
-                    "metadata": {
-                        "type": "object",
-                        "description": (
-                            "Free-form JSON object for producer-specific context. Empty when unused. "
-                            # audit C12: the sidecars are bounded as of 2.5.2b1.
-                            f"Serialised size is capped at {config.MAX_METADATA_LENGTH} characters "
-                            "(same cap for source); an oversized field is refused with "
-                            "result='rejected' rather than truncated, because a truncated JSON "
-                            "document is not a JSON document."
-                        ),
-                    },
+                    "timestamp": {"type": "string"},
+                    "metadata": {"type": "object"},
                 },
             },
             "channel": {
                 "type": "string",
-                "description": "Memory channel for context separation (e.g. 'chat', 'discord'). Default: '' (shared).",
+                "description": "Memory channel for context separation (e.g. 'chat'). Default: '' (shared).",
             },
             "project_id": {
                 "type": "string",
                 "description": (
-                    "v2.4.17 isolation axis. Optional — omit or pass '' to "
-                    "store in the global pool. Reads via γ semantics: a "
-                    "recall with project_id='X' returns 'X' rows + global pool. "
-                    + _AUTO_PROJECT_ID_CLAUSE
+                    "Isolation bucket; omit or '' for the global pool (a recall in 'X' reads "
+                    "'X' and the global pool). '@auto' resolves this agent's default from the "
+                    "operating context, echoed as resolved_project_id; with no operating "
+                    "context configured it is stored as the literal '@auto'."
                 ),
             },
             "session_key": _SESSION_KEY_PROPERTY_SHORT,
-            "associations": _ASSOCIATIONS_PROPERTY,
+            "associations": _STORE_ASSOCIATIONS_PROPERTY,
         },
-        "required": ["agent_id", "message"],
     },
     do_store_boundary,
     [
-        ("agent_id", str),
+        ("agent_id", str, None),
         ("message", dict),
         ("channel", str, ""),
         ("project_id", str, ""),
         ("session_key", str, ""),
         ("associations", dict, None),
+        ("content", str, None),
+        ("id", str, ""),
+        ("source", dict, _SOURCE_OMITTED),
+        ("timestamp", str, ""),
+        ("metadata", dict, None),
+        ("lock", bool, False),
     ],
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
 )

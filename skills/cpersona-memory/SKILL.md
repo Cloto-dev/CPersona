@@ -474,7 +474,7 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
 | Recall tuning | `set_recall_precision`, `get_recall_precision`, `calibrate_threshold` |
 | Persistence control | `pause_persistence`, `resume_persistence`, `persistence_status` |
 | Portability | `export_memories`, `import_memories`, `merge_memories` |
-| Channels / multi-user | `migrate_channel_axis` (plus `channel` on `store` / `recall`, and `source_id` on `recall` — a write carries its producer in `message.source.id`, which `recall(source_id=…)` prefix-matches) |
+| Channels / multi-user | `migrate_channel_axis` (plus `channel` on `store` / `recall`, and `source_id` on `recall` — a write carries its producer in `source.id` (`message.source.id` before 2.6.6), which `recall(source_id=…)` prefix-matches) |
 | Health | `check_health`, `deep_check`, `get_session_findings`, `get_queue_status` |
 | Server version | `check_update` — is a newer (or a withdrawn) release of the server itself in play; installing one is opt-in and needs a restart |
 | Operator context | `get_operating_context` |

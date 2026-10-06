@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:4575e1e8f3262a63261fadfb0459ac43eeec10e6 -->
+<!-- i18n-source: docs/tools.md@blob:f6b836a0f63d8c2e5ab1fcfeed7a428720513e9a -->
 
 # ツール一覧
 
@@ -13,7 +13,7 @@
 
 | ツール | 何をするか |
 |---|---|
-| `store` | メッセージ 1 件を記憶に書きます。分岐は `ok` ではなく `result` — `stored` / `skipped` / `rejected` — で行ってください ([重複排除の契約](behavior-contracts.md#5-dedup-semantics-skip-not-upsert)) |
+| `store` | 記憶を 1 件書きます。2.6.6 からは本文を `content` に入れ、ACL が書き込みを 1 つの agent にだけ許す接続では `agent_id` を省けて (使われた agent は `resolved_agent_id` で返ります)、`source` の既定は書き込んだ agent、`lock: true` で同じ呼び出しのうちに鍵もかかります。それ以前の版の `message={content, id, source, timestamp, metadata}` の形も、その形の既定のまま受け付けます。分岐は `ok` ではなく `result` — `stored` / `skipped` / `rejected` — で行ってください ([重複排除の契約](behavior-contracts.md#5-dedup-semantics-skip-not-upsert)) |
 | `recall` | 3 層ハイブリッド検索で記憶を取り出します。**末尾の要素が最良のマッチ**です ([順序の契約](behavior-contracts.md#1-recall-return-order-last-is-best))。`trace: true` を渡すと、各段が何を残し・落とし・並べ替えたかの記録も返します。参照とスコアだけで、保存された本文は含みません ([想起の記録](RECALL_PROCESS_DESIGN.md#1-the-recall-trace))。`time_cue` を渡すと、答えがいつ保存されたかを確かさつきで伝えられます。その期間で見つかった行は決まった段数まで順位が上がり、その検索が見つけて答えに入っていない記録に最大 3 行の別枠 (確かさ別に 3 / 2 / 1) が取られます。品質ゲートを通る行は変わりません ([時期の手がかり](RECALL_PROCESS_DESIGN.md#2-the-loops-basic-form)) |
 | `recall_with_context` | 想起 *と同時に*、渡した会話履歴と重複排除しつつ統合します。返るのはスコア順ではなく**時系列**の統合です |
 | `get_contents` | recall が返したプレビュー参照 (`mem:<id>` / `ep:<id>`) を全文に展開します ([プレビュー階層の設計](RECALL_PREVIEW_TIER_DESIGN.md))。ref でレコードの一部 (overflow tree のノードまたは文字範囲) を指定することもでき、`reconstruct` の引用をレコード全体でなく前後のノードだけに展開できます |
