@@ -70,7 +70,7 @@ from cpersona.config import (
     VECTOR_SEARCH_MODE,
 )
 from cpersona import config # for runtime-mutable VECTOR_MIN_SIMILARITY access
-from cpersona.database import connection, transaction
+from cpersona.database import beside, connection, transaction
 from cpersona.utils import (
     _clamp_limit,
     _compute_confidence,
@@ -543,6 +543,102 @@ async def _recall_cascade(
     return results
 
 
+class _Beside:
+    """An arm running beside the caller's own reads, whose outcome is read later.
+
+    The coroutine's result or its exception is kept rather than raised inside the
+    task, and ``outcome()`` returns or raises it where the caller reads it: the
+    caller sees the exception at the same point as when the arm ran in line, and
+    a task the caller never reads (it raised first) ends without leaving an
+    exception nobody retrieved. The coroutine is made inside the task, so one
+    cancelled before it starts leaves no coroutine that was never awaited."""
+
+    def __init__(self, fn, *args):
+        self._task = asyncio.create_task(self._keep(fn, args))
+
+    @staticmethod
+    async def _keep(fn, args):
+        try:
+            return await fn(*args), None
+        except Exception as exc:  # noqa: BLE001 - re-raised by outcome()
+            return None, exc
+
+    async def outcome(self):
+        value, exc = await self._task
+        if exc is not None:
+            raise exc
+        return value
+
+    def cancel(self) -> None:
+        self._task.cancel()
+
+
+class _QueryVectorSlot(list):
+    """``query_vec_out`` that also says when the query vector arrives.
+
+    A fusion appends the vector the moment the query is embedded, before it
+    scans (``vector._search_vector``), and the block arm needs nothing else, so
+    do_recall starts the block arm then rather than after the fusion and the
+    scoring. A caller's own list is filled by the same append, as it was when
+    it was handed to the fusion directly."""
+
+    def __init__(self, mirror: list | None = None):
+        super().__init__()
+        self._mirror = mirror
+        self.arrived: asyncio.Future = asyncio.get_running_loop().create_future()
+
+    def append(self, item) -> None:
+        super().append(item)
+        if self._mirror is not None:
+            self._mirror.append(item)
+        if not self.arrived.done():
+            self.arrived.set_result(None)
+
+
+async def _once_embedded(slot: _QueryVectorSlot, run):
+    """Run ``run(vector)`` once the slot holds the query vector."""
+    await slot.arrived
+    return await run(slot[0])
+
+
+async def _lexical_arms(
+    db,
+    agent_id: str,
+    query: str,
+    depth: int,
+    channel: str,
+    project_id: str | None,
+    source_id: str,
+    lexical_terms: list[str] | None,
+) -> tuple[list[dict], list[dict]]:
+    """The two FTS arms of a fusion, on the connection beside ``db``.
+
+    They read the query text and nothing the vector arm produces, so the fusions
+    start them before the vector arm and read them after it. Beside the request
+    connection that is the side connection, whose thread steps the FTS
+    statements while the query is embedded and scanned on the request's
+    (``database.beside``); beside any other connection it is that connection. The fusion arithmetic still
+    runs after both, in the order it always did, so the fused list is the one the
+    arms in line produced. Episodes lack per-user source tagging, so a per-user
+    source_id filter normally suppresses them; a channel filter (v2.4.22) scopes
+    episodes to one channel and is allowed even with source_id set (grounding
+    path)."""
+    episodes: list[dict] = []
+    memories: list[dict] = []
+    if not FTS_ENABLED:
+        return episodes, memories
+    async with beside(db) as db:
+        if not source_id or channel:
+            episodes = await _search_episodes_fts(
+                db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
+            )
+        memories = await _search_memories_keyword(
+            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+            extra_terms=lexical_terms,
+        )
+    return episodes, memories
+
+
 async def _recall_rrf(
     db,
     agent_id: str,
@@ -577,6 +673,7 @@ async def _recall_rrf(
     vector_results: list[dict] = []
     far_results: list[dict] = []
 
+    lexical = _Beside(_lexical_arms, db, agent_id, query, depth, channel, project_id, source_id, lexical_terms)
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # One call to the vector retriever, as always. `far_out` collects the
@@ -626,13 +723,10 @@ async def _recall_rrf(
             if votes is not None:
                 votes.setdefault(f"{rid[0]}:{rid[1]}", {})["vector_far"] = PRIOR_FAR_WEIGHT / (k + rank + 1)
 
-    # Episodes lack per-user source tagging, so a per-user source_id filter
-    # normally suppresses them; a channel filter (v2.4.22) scopes episodes to
-    # one channel and is allowed even with source_id set (grounding path).
-    if FTS_ENABLED and (not source_id or channel):
-        fts_ep_results = await _search_episodes_fts(
-            db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
-        )
+    # The FTS arms ran beside the vector arm (_lexical_arms); they are fused in the
+    # order they always were, after it.
+    fts_ep_results, fts_mem_results = await lexical.outcome()
+    if fts_ep_results:
         for rank, row in enumerate(fts_ep_results):
             rid = ("ep", row["id"])
             if rid not in doc_map:
@@ -641,11 +735,7 @@ async def _recall_rrf(
             if votes is not None:
                 votes.setdefault(f"ep:{row['id']}", {})["episode_fts"] = 1.0 / (k + rank + 1)
 
-    if FTS_ENABLED:
-        fts_mem_results = await _search_memories_keyword(
-            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
-            extra_terms=lexical_terms,
-        )
+    if fts_mem_results:
         for rank, row in enumerate(fts_mem_results):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -739,6 +829,7 @@ async def _recall_rsf(
     ep_rows: list[dict] = []
     mem_rows: list[dict] = []
 
+    lexical = _Beside(_lexical_arms, db, agent_id, query, depth, channel, project_id, source_id, lexical_terms)
     rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # bug-442: as under rrf, a far channel weighted 0 is not read at all.
@@ -772,22 +863,16 @@ async def _recall_rsf(
             doc_map.setdefault(rid, row)
             far_raw[rid] = row.get("_cosine", 0.0)
 
-    # Episodes lack per-user source tagging (mirrors _recall_rrf gating).
-    if FTS_ENABLED and (not source_id or channel):
-        ep_rows = await _search_episodes_fts(
-            db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
-        )
+    # The FTS arms ran beside the vector arm, as under rrf (_lexical_arms).
+    ep_rows, mem_rows = await lexical.outcome()
+    if ep_rows:
         for row in ep_rows:
             rid = ("ep", row["id"])
             doc_map.setdefault(rid, row)
             bm = row.get("_bm25")
             ep_raw[rid] = -bm if bm is not None else None
 
-    if FTS_ENABLED:
-        mem_rows = await _search_memories_keyword(
-            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
-            extra_terms=lexical_terms,
-        )
+    if mem_rows:
         for row in mem_rows:
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -2318,14 +2403,48 @@ async def _do_recall(
     # answered for itself, an embed that failed -- and the block arm reads that
     # emptiness as "nothing to rank on" rather than embedding the query again. A
     # caller's list is filled in place, so the caller reads the same vector.
-    query_vec_out: list = query_vec_out_ if query_vec_out_ is not None else []
+    query_vec_out = _QueryVectorSlot(query_vec_out_)
     async with connection() as db:
+        # The block arm (below, where its rows are read) needs only the query
+        # vector, so it starts the moment the fusion has embedded the query and
+        # runs on this connection while the fusion's FTS arms run on the side
+        # connection. It never starts when no vector arrives.
+        block_arm: _Beside | None = None
+        if blocks.retrieval_enabled() and query.strip():
+
+            async def _block_arm(vec):
+                ledger.spend(budget.BLOCK_FETCH)
+                return await p.block_candidates.reserved_rows(
+                    db,
+                    vec,
+                    agent_id=agent_id,
+                    project_id=project_id,
+                    channel=channel,
+                    source_id=source_id,
+                    exclude_set=exclude_set,
+                    limit=limit,
+                )
+
+            block_arm = _Beside(_once_embedded, query_vec_out, _block_arm)
         ledger.spend(budget.ORDINARY_FETCH)
-        results = await p.fusion.retrieve(
-            db, agent_id=agent_id, query=query, depth=depth, limit=limit, deep=deep,
-            channel=channel, exclude_set=exclude_set, project_id=project_id,
-            source_id=source_id, query_vec_out=query_vec_out, lexical_terms=lexical_terms,
-        )
+        try:
+            results = await p.fusion.retrieve(
+                db, agent_id=agent_id, query=query, depth=depth, limit=limit, deep=deep,
+                channel=channel, exclude_set=exclude_set, project_id=project_id,
+                source_id=source_id, query_vec_out=query_vec_out, lexical_terms=lexical_terms,
+            )
+        except BaseException:
+            if block_arm is not None:
+                block_arm.cancel()
+            raise
+        if block_arm is not None:
+            if not query_vec_out:
+                block_arm.cancel()  # still waiting for a vector that will not come
+                block_arm = None
+            elif not query_vec_out.arrived.done():
+                # A fusion that filled the list other than by append: start it now,
+                # in line, as it ran before it could start early.
+                query_vec_out.arrived.set_result(None)
         if trace_rec is not None:
             trace_rec.stage_input("scoring", results)
 
@@ -2381,18 +2500,8 @@ async def _do_recall(
         # known yet and a hit whose record the gate admits anyway is not a
         # reserved row -- it is a row that was already there.
         block_rows: list[dict] = []
-        if blocks.retrieval_enabled() and query.strip() and query_vec_out:
-            ledger.spend(budget.BLOCK_FETCH)
-            block_rows = await p.block_candidates.reserved_rows(
-                db,
-                query_vec_out[0],
-                agent_id=agent_id,
-                project_id=project_id,
-                channel=channel,
-                source_id=source_id,
-                exclude_set=exclude_set,
-                limit=limit,
-            )
+        if block_arm is not None:
+            block_rows = await block_arm.outcome()
             if trace_rec is not None:
                 trace_rec.arm("block", block_rows, "_block_distance")
 

@@ -1,0 +1,6 @@
+ONNX_ALLOW_SPINNING=1: CPU-seconds in the 1.0 s after one /embed: 3.00
+ONNX_ALLOW_SPINNING=1: CPU-seconds in the 1.0 s after one /embed: 3.01
+ONNX_ALLOW_SPINNING=1: CPU-seconds in the 1.0 s after one /embed: 3.01
+ONNX_ALLOW_SPINNING=0: CPU-seconds in the 1.0 s after one /embed: 0.00
+ONNX_ALLOW_SPINNING=0: CPU-seconds in the 1.0 s after one /embed: 0.02
+ONNX_ALLOW_SPINNING=0: CPU-seconds in the 1.0 s after one /embed: 0.00

@@ -133,6 +133,52 @@ async def background_connection():
                 await db.rollback()
 
 
+@contextlib.asynccontextmanager
+async def side_connection():
+    """Read seam for a recall arm that runs beside the request's own reads.
+
+    The same reason as ``background_connection``, at the scale of one request:
+    aiosqlite runs a connection's statements one after another on its one
+    worker thread, so the arms of a recall that share ``connection()`` take the
+    sum of their times even when none of them needs another's result. The
+    lexical arms read only the query text, so they run here while the vector
+    arm embeds the query and scans on the request's connection, and the two
+    worker threads overlap: SQLite releases the interpreter lock while a
+    statement steps. Same contract as ``connection()``: reads only, and an
+    implicit transaction is rolled back on scope exit.
+
+    Every recall's side arms share this one connection, so concurrent recalls
+    queue their side arms behind each other, as they queue on the request
+    connection today."""
+    db = await _get_side_read_db()
+    try:
+        yield db
+    finally:
+        if db is not _db and db._conn is not None and db._conn.in_transaction:
+            with contextlib.suppress(Exception):
+                await db.rollback()
+
+
+@contextlib.asynccontextmanager
+async def beside(db):
+    """The connection an arm runs on beside the reads of ``db``.
+
+    The side connection when ``db`` is the request connection that
+    ``connection()`` yields, and ``db`` itself for any other: the background
+    seam, a pinned snapshot, the writer, or the one connection of an in-memory
+    database. On ``db`` itself the arm's statements take their turns with the
+    caller's, as they did when the arms ran in line. That is the point for the
+    background seam: a calibration's simulate queries are whole records whose
+    keyword searches take seconds, and moving them to the side connection would
+    queue every request's side arms behind them, the wait the background seam
+    exists to remove."""
+    if db is _read_db and db is not _db:
+        async with side_connection() as side:
+            yield side
+    else:
+        yield db
+
+
 async def release_read_probe_transaction(db) -> bool:
     """End a transaction a read-seam probe implicitly opened. Owner-side helper.
 
@@ -833,6 +879,9 @@ _read_db_owner: aiosqlite.Connection | None = None
 # opened alongside (the same re-keying as _read_db_owner).
 _bg_read_db: aiosqlite.Connection | None = None
 _bg_read_db_owner: aiosqlite.Connection | None = None
+# The connection side_connection() yields, re-keyed the same way.
+_side_read_db: aiosqlite.Connection | None = None
+_side_read_db_owner: aiosqlite.Connection | None = None
 # Serialises first-touch initialisation: without it two coroutines racing into
 # get_db() would both run the (idempotent but committing) migration ladder
 # concurrently — the exact contender-commit interleaving the write seam exists
@@ -896,6 +945,32 @@ async def _get_background_read_db() -> aiosqlite.Connection:
             return _bg_read_db
         _bg_read_db, _bg_read_db_owner = await _open_reader(), write_db
     return _bg_read_db
+
+
+async def _get_side_read_db() -> aiosqlite.Connection:
+    """Get or create the side read connection (see ``side_connection``).
+
+    The same lifecycle as ``_get_read_db``: opened after get_db() has migrated,
+    re-keyed on the current write connection, and the write connection itself
+    for an in-memory database, where the side arms then run on the one
+    connection there is, in turn, as they did before this seam existed."""
+    global _side_read_db, _side_read_db_owner
+    write_db = await get_db()
+    if _side_read_db is not None and _side_read_db_owner is write_db:
+        return _side_read_db
+    async with _read_lock:
+        write_db = await get_db()
+        if _side_read_db is not None and _side_read_db_owner is write_db:
+            return _side_read_db
+        stale, _side_read_db, _side_read_db_owner = _side_read_db, None, None
+        if stale is not None and stale is not write_db:
+            with contextlib.suppress(Exception):
+                await stale.close()
+        if DB_PATH == ":memory:":
+            _side_read_db, _side_read_db_owner = write_db, write_db
+            return _side_read_db
+        _side_read_db, _side_read_db_owner = await _open_reader(), write_db
+    return _side_read_db
 
 
 async def _open_reader() -> aiosqlite.Connection:
@@ -1369,7 +1444,8 @@ async def close_db():
     re-points the module globals (test reboot harnesses, embedded re-init)
     must go through this helper instead of assigning ``None`` directly.
     """
-    global _db, _read_db, _read_db_owner, _bg_read_db, _bg_read_db_owner, _write_generation
+    global _db, _read_db, _read_db_owner, _bg_read_db, _bg_read_db_owner, _side_read_db, _side_read_db_owner
+    global _write_generation
     # The connections are going away; whatever was cached against them describes
     # a database this process may never see again.
     _write_generation += 1
@@ -1383,6 +1459,11 @@ async def close_db():
             await _bg_read_db.close()
         _bg_read_db = None
     _bg_read_db_owner = None
+    if _side_read_db is not None:
+        if _side_read_db is not _db:
+            await _side_read_db.close()
+        _side_read_db = None
+    _side_read_db_owner = None
     if _db is not None:
         await _db.close()
         _db = None
