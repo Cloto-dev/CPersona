@@ -526,7 +526,7 @@ async def _recall_cascade(
     if remaining > 0:
         memory_rows = await _search_memories_keyword(
             db, agent_id, query, remaining, channel=channel, project_id=project_id, source_id=source_id,
-            extra_terms=lexical_terms,
+            extra_terms=lexical_terms, rank_only=True,
         )
         for row in memory_rows:
             rid = ("mem", row["id"])
@@ -610,6 +610,7 @@ async def _lexical_arms(
     project_id: str | None,
     source_id: str,
     lexical_terms: list[str] | None,
+    rank_only: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """The two FTS arms of a fusion, on the connection beside ``db``.
 
@@ -634,7 +635,7 @@ async def _lexical_arms(
             )
         memories = await _search_memories_keyword(
             db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
-            extra_terms=lexical_terms,
+            extra_terms=lexical_terms, rank_only=rank_only,
         )
     return episodes, memories
 
@@ -673,7 +674,7 @@ async def _recall_rrf(
     vector_results: list[dict] = []
     far_results: list[dict] = []
 
-    lexical = _Beside(_lexical_arms, db, agent_id, query, depth, channel, project_id, source_id, lexical_terms)
+    lexical = _Beside(_lexical_arms, db, agent_id, query, depth, channel, project_id, source_id, lexical_terms, True)
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # One call to the vector retriever, as always. `far_out` collects the
@@ -3757,6 +3758,11 @@ def _build_fts_query(query: str) -> str:
     other matching term hides the loss). The only character that needs
     neutralising is the FTS5 phrase quote, which is escaped by doubling.
     """
+    return " OR ".join(_fts_phrases(query))
+
+
+def _fts_phrases(query: str) -> list[str]:
+    """The quoted phrases ``_build_fts_query`` ORs together, in its order."""
     terms: list[str] = []
     for tok in _TOKEN_RE.findall(query):
         if _CJK_RE.match(tok):
@@ -3766,9 +3772,7 @@ def _build_fts_query(query: str) -> str:
         elif len(tok) >= 3:
             terms.append(tok)
         # ASCII tokens < 3 chars also can't match a trigram index -> dropped
-    if not terms:
-        return ""
-    return " OR ".join('"' + t.replace('"', '""') + '"' for t in dict.fromkeys(terms))
+    return ['"' + t.replace('"', '""') + '"' for t in dict.fromkeys(terms)]
 
 
 def _build_fts_recall_query(query: str, extra_terms: list[str] | None = None) -> str:
@@ -3780,12 +3784,99 @@ def _build_fts_recall_query(query: str, extra_terms: list[str] | None = None) ->
     match the index and is left to the LIKE fallback, as short query terms are.
     Without extra terms the expression is exactly the one it always was.
     """
+    return " OR ".join(_fts_recall_phrases(query, extra_terms))
+
+
+def _fts_recall_phrases(query: str, extra_terms: list[str] | None = None) -> list[str]:
+    """The quoted phrases ``_build_fts_recall_query`` ORs together, in its order."""
     normalized = " ".join(token.strip("\"'`.,;:!?()[]{}") for token in query.split())
-    expression = _build_fts_query(normalized)
     phrases = ['"' + t.replace('"', '""') + '"' for t in dict.fromkeys(extra_terms or ()) if len(t) >= 3]
-    if not phrases:
-        return expression
-    return " OR ".join([expression, *phrases] if expression else phrases)
+    return _fts_phrases(normalized) + phrases
+
+
+# FTS5's bm25 (ext/fts5/fts5_aux.c, the same in SQLite 3.40 and 3.50) gives phrase i the
+# idf log((N - n_i + 0.5) / (n_i + 0.5)) over the N indexed rows, n_i of which hold it,
+# and raises an idf at or below 0 -- a phrase in at least half the rows -- to 1e-6. A
+# phrase adds idf * f * (k1 + 1) / (f + k1 * (1 - b + b * D / avgdl)) to a row's score,
+# k1 = 1.2, which is less than idf * (k1 + 1) for any frequency f and length D. So a
+# phrase at the floor moves no row's score by as much as COMMON_PHRASE_BOUND.
+_BM25_IDF_FLOOR = 1e-6
+_BM25_K1 = 1.2
+COMMON_PHRASE_BOUND = _BM25_IDF_FLOOR * (_BM25_K1 + 1)
+# Room for the rounding between a score summed over every phrase and one summed over
+# some of them: far below the bound, and added to it rather than trusted to be zero.
+_BM25_SUM_ROUNDING = 1e-9
+_VOCAB_TABLE = "cpersona_memories_fts_rows"
+
+
+async def _common_phrases(db, phrases: list[str]) -> set[str]:
+    """The phrases FTS5's bm25 weighs at its idf floor, among those it can prove it for.
+
+    Only a phrase that is one trigram is classified: its row count is then the trigram's
+    row count in the index's vocabulary, exactly, with no phrase match to run. That
+    covers a three-letter word ("the", "was", "you") and every phrase of a Japanese or
+    Chinese query, which the query builder cuts into trigrams. An ASCII phrase is looked
+    up in lower case, as the trigram tokenizer folds it; any other script is left
+    unclassified, because a case fold here could name a different trigram than the
+    tokenizer's. An unclassified phrase stays in the ranking, which is always safe.
+    """
+    candidates: dict[str, str] = {}
+    for phrase in phrases:
+        word = phrase[1:-1].replace('""', '"')
+        if len(word) != 3:
+            continue
+        if word.isascii():
+            candidates[phrase] = word.lower()
+        elif all(_CJK_RE.match(ch) for ch in word):
+            candidates[phrase] = word
+    if not candidates:
+        return set()
+    # A temp table belongs to this connection and is gone with it; the database file
+    # is not written.
+    await db.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS temp.{_VOCAB_TABLE} USING fts5vocab(main, memories_fts, row)")
+    n_rows = (await db.execute_fetchall("SELECT count(*) FROM memories_fts_docsize"))[0][0]
+    if not n_rows:
+        return set()
+    terms = sorted(set(candidates.values()))
+    marks = ", ".join("?" for _ in terms)
+    held = dict(await db.execute_fetchall(f"SELECT term, doc FROM temp.{_VOCAB_TABLE} WHERE term IN ({marks})", terms))
+    return {
+        phrase
+        for phrase, term in candidates.items()
+        if math.log((n_rows - held.get(term, 0) + 0.5) / (held.get(term, 0) + 0.5)) <= 0.0
+    }
+
+
+async def _rank_on_rare_phrases(db, phrases: list[str], sql: str, filter_params: tuple, limit: int):
+    """The rows and order the whole expression ranks first, found without its common phrases.
+
+    Leaving out the phrases at the idf floor (``_common_phrases``) leaves every row's score
+    lower by less than ``bound``, the floor's most per phrase left out. The rows ranked on
+    the rest are taken only when that cannot change them: each of the first ``limit`` beats
+    the next by more than ``bound``, so no row behind can overtake and no two can swap, and
+    the last of them scores above ``bound``, so no row holding only common phrases can
+    reach them. Otherwise, or with nothing to leave out, None, and the caller ranks on the
+    whole expression as it always did. The rows' bm25 is the rest's: lower than the whole
+    expression's by less than ``bound``, which is why only a caller that reads the order
+    asks for this.
+    """
+    if limit <= 0:
+        return None, None
+    common = await _common_phrases(db, phrases)
+    rare = [p for p in phrases if p not in common]
+    if not common or not rare:
+        return None, None
+    left_out = len(phrases) - len(rare)
+    bound = COMMON_PHRASE_BOUND * left_out + _BM25_SUM_ROUNDING
+    rows = await db.execute_fetchall(sql, (" OR ".join(rare), *filter_params, limit + 1))
+    report = {"phrases": len(phrases), "left_out": left_out, "bound": bound, "ranked_on": "whole"}
+    if len(rows) <= limit:
+        return None, report
+    scores = [-row[5] for row in rows]
+    if scores[limit - 1] <= bound or any(scores[i] - scores[i + 1] <= bound for i in range(limit)):
+        return None, report
+    report["ranked_on"] = "rare"
+    return rows[:limit], report
 
 
 # An episode's time as ``episode_timestamp`` reads it, compared as SQLite datetimes.
@@ -3861,6 +3952,7 @@ async def _search_memories_keyword(
     source_id: str = "",
     extra_terms: list[str] | None = None,
     window: tuple[str, str] | None = None,
+    rank_only: bool = False,
 ) -> list[dict]:
     """Search memories using FTS5 (preferred) or LIKE fallback.
 
@@ -3870,6 +3962,9 @@ async def _search_memories_keyword(
     LIKE fallback; see ``_build_fts_recall_query``.
     window (2.6, the cue arm) keeps rows whose timestamp is in ``[start, end)``,
     both bounds as SQLite ``datetime()`` reads them; see ``cpersona/cue.py``.
+    rank_only is for a caller that reads the rows' order and not their bm25: it may
+    then be ranked without the query's common phrases, same rows, same order
+    (``_rank_on_rare_phrases``).
     """
     # isolation_where composes all three axes: exact agent, γ project,
     # and the knob2 v2 channel contract (stored channel '' matches every
@@ -3909,17 +4004,30 @@ async def _search_memories_keyword(
     if FTS_ENABLED:
         fts_query = _build_fts_recall_query(query, extra_terms)
         if fts_query:
-            try:
-                rows = await db.execute_fetchall(
-                    f"""SELECT m.id, m.msg_id, m.content, m.source, m.timestamp, bm25(memories_fts)
+            keyword_sql = f"""SELECT m.id, m.msg_id, m.content, m.source, m.timestamp, bm25(memories_fts)
                        FROM memories_fts f
                        JOIN memories m ON f.rowid = m.id
                        WHERE memories_fts MATCH ?
                        AND {iso_m.clause}{src_clause_m}
                        ORDER BY rank
-                       LIMIT ?""",
-                    (fts_query, *iso_m.params, *src_params_m, limit),
-                )
+                       LIMIT ?"""
+            try:
+                rows = None
+                if rank_only:
+                    try:
+                        rows, report = await _rank_on_rare_phrases(
+                            db, _fts_recall_phrases(query, extra_terms), keyword_sql, (*iso_m.params, *src_params_m), limit
+                        )
+                    except sqlite3.OperationalError as e:
+                        # The shortcut failing is no reason to lose the whole expression,
+                        # which the except below would turn into the LIKE fallback.
+                        logger.debug("Rare-phrase ranking unavailable, ranking on the whole expression: %s", e)
+                        rows, report = None, None
+                    rec = recall_trace.current()
+                    if rec is not None and report is not None:
+                        rec.data.setdefault("keyword_ranking", []).append(report)
+                if rows is None:
+                    rows = await db.execute_fetchall(keyword_sql, (fts_query, *iso_m.params, *src_params_m, limit))
             except sqlite3.OperationalError as e:
                 # bug-326: FTS_ENABLED says the build supports FTS5, not that this
                 # database still holds the index table — dropping it leaves the

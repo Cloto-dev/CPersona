@@ -48,6 +48,7 @@ What a trace may contain when it leaves the machine is decided separately.
 | `request` | `limit`, the recall depth, `deep`, the fusion mode, the confidence ordering, the prior's settings, whether the episode penalty is on, and the `time_cue` when given |
 | `config` | Embedding mode and model, scan window, reach and far-list limit, and whether the fused gate and autocut are enabled |
 | `arms` | Per retrieval arm (near vector, far vector, episode full text, memory keyword, block, and the cue arm): `{ref, rank, raw}` up to the depth |
+| `keyword_ranking` | Present when the memory keyword arm was asked for its order only (the rrf and cascade fusions): per call, how many of the query's phrases sat at bm25's idf floor and were left out of the ranking (`left_out` of `phrases`), the `bound` leaving them out cannot move a score by, and whether the rows were ranked on the rest (`rare`) or on the whole expression (`whole`). After `rare` the rows and their order are the whole expression's, and the arm's `raw` scores are the rest's, lower by less than the bound |
 | `fusion` | Per candidate: the fused score and each arm's contribution |
 | `scoring` | The episode penalty's factor and the prior's weight per row, where applied |
 | `gate` | Signal, the calibrated threshold or the heuristic minimum and which one applied (`origin`), the pool size, one decision per candidate (admitted, or dropped with a reason: `below_gate`, `profile_small_pool`, `unscored_volume`), and whether `gate_fallback` fired |

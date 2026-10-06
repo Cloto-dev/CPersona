@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:eb017e9190099430e4e175fadbd1e719c27e20cb -->
+<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:7a8900f7de3d13b48ab8b8d2b48b33ac31328058 -->
 
 # 想起のプロセス v0 — 設計 { #the-recall-process-v0-design }
 
@@ -45,6 +45,7 @@ v0 はサーバーに保存しません。保存したい呼び出し側 (ベン
 | `request` | `limit`、想起の深さ、`deep`、融合方式、confidence の並べ方、事前分布の設定、エピソードペナルティが有効か、渡された `time_cue` |
 | `config` | 埋め込みの方式とモデル、走査窓・reach・far リストの上限、融合ゲートと autocut が有効か |
 | `arms` | 検索器ごと (近いベクトル・遠いベクトル・エピソードの全文検索・記憶のキーワード・ブロック・手がかりの検索器) の `{ref, rank, raw}`、深さまで |
+| `keyword_ranking` | 記憶のキーワード検索器が順位だけを求められた時 (rrf と cascade の融合) にある。呼び出しごとに、問いの語のうち bm25 の idf が下限に張り付いて順位付けから外した数 (`phrases` 中の `left_out`)、外しても点数が動きうる幅の上限 `bound`、残りの語で並べたか (`rare`) 全体の式で並べたか (`whole`)。`rare` の時も記録と順序は全体の式と同じで、検索器の `raw` は残りの語の点数 (全体の式より上限未満だけ低い) |
 | `fusion` | 候補ごとの融合スコアと、各検索器の寄与 |
 | `scoring` | 効いた場合の、行ごとのエピソードペナルティの係数と事前分布の重み |
 | `gate` | 信号、較正済みの閾値か heuristic の下限とどちらが効いたか (`origin`)、プールの大きさ、候補ごとの判定 (通ったか、理由付きで落ちたか: `below_gate`・`profile_small_pool`・`unscored_volume`)、`gate_fallback` が起きたか |
