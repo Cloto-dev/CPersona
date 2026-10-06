@@ -347,7 +347,7 @@ def _close_singleton_db():
     yield
     from cpersona import database
 
-    for attr in ("_read_db", "_bg_read_db"):
+    for attr in ("_read_db", "_bg_read_db", "_side_read_db"):
         rdb = getattr(database, attr)
         if rdb is not None and rdb is not database._db:
             try:

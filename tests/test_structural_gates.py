@@ -717,7 +717,7 @@ def test_identity_probe_gate_has_teeth():
 # --------------------------------------------------------------------------------------
 
 TESTS_DIR = pathlib.Path(__file__).parent
-_ORPHAN_ATTRS = {"_db", "_read_db", "_bg_read_db"}
+_ORPHAN_ATTRS = {"_db", "_read_db", "_bg_read_db", "_side_read_db"}
 _CLOSE_NAMES = {"close", "close_db"}
 
 
