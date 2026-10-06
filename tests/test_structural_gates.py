@@ -2884,9 +2884,8 @@ async def test_store_content_description_matches_what_empty_content_actually_doe
     )
 
     store_tool = next(t for t in server.registry._tools if t.name == "store")
-    content_desc = store_tool.inputSchema["properties"]["message"]["properties"]["content"][
-        "description"
-    ]
+    # 2.6.6: the described content is the top-level one; message.content is typed only.
+    content_desc = store_tool.inputSchema["properties"]["content"]["description"]
     assert "refused" in content_desc, (
         "store's content description no longer says the input is REFUSED, but do_store "
         "still refuses it — a caller reading the schema expects a row that never appears"

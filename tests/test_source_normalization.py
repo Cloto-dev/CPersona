@@ -409,8 +409,9 @@ async def test_health_check_reads_the_shared_enum_not_its_own_literal(clean_db, 
 def _store_source_type_schema():
     from cpersona import server
 
+    # 2.6.6: the described source is the top-level one; message.source is typed only.
     store_tool = next(t for t in server.registry._tools if t.name == "store")
-    source_schema = store_tool.inputSchema["properties"]["message"]["properties"]["source"]
+    source_schema = store_tool.inputSchema["properties"]["source"]
     return source_schema["properties"]["type"]
 
 

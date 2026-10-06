@@ -65,6 +65,12 @@ _CLIENT_KEYS = {"client_id", "token", "grants", "per_subject"}
 # then query, in that order, so no grant is ever evaluated against the literal.
 SELF_SENTINEL = "@me"
 
+# Tools whose agent_id may be left out when the connection itself names the
+# agent (connection_agent). Only the write a session makes most often: every
+# other tool still says whose memory it means, so a reader cannot land in an
+# agent it did not name.
+AGENT_FROM_CONNECTION = frozenset({"store"})
+
 
 class AclConfigError(Exception):
     """Malformed ACL configuration — startup must fail, not degrade (§7)."""
@@ -593,6 +599,21 @@ def _omitted_scope_keys(demands: Demands, arguments: dict) -> list[str]:
     return needed
 
 
+def connection_agent(grants: dict[str, int]) -> str:
+    """The one agent these grants let a client write to, or "" when there is not one.
+
+    The default an omitted agent_id takes (AGENT_FROM_CONNECTION). It is never a
+    guess: a client whose grants allow writing to two agents, or to every agent
+    through the wildcard, has no single answer, so the omission stays an
+    omission and the guard reports it as one. Naming the agent this way reaches
+    nothing the client could not already reach by naming it.
+    """
+    if grants.get(WILDCARD, PERM_NONE) >= PERM_WRITE:
+        return ""
+    writable = [agent for agent, level in grants.items() if agent != WILDCARD and level >= PERM_WRITE]
+    return writable[0] if len(writable) == 1 else ""
+
+
 def _sweep_reach(grants: dict[str, int]) -> str:
     """How far an all-agents demand gets with these grants (§3, D6).
 
@@ -745,6 +766,19 @@ def _wrap(name: str, handler):
                 principal.client_id,
                 detail="per-subject client resolved with no subject",
             )
+        # An agent_id the connection names, filled in where the sentinel is
+        # resolved and for the same reason: before any demand is computed, so the
+        # grant check sees the agent the handler will write to. A per-subject
+        # client's own space is its alias, which is what "@me" already means; any
+        # other client gets the one agent its grants let it write to, or nothing.
+        defaulted_agent = ""
+        if name in AGENT_FROM_CONNECTION and arguments.get("agent_id") is None:
+            if boundary:
+                arguments = {**arguments, "agent_id": SELF_SENTINEL}
+            else:
+                defaulted_agent = connection_agent(grants)
+                if defaulted_agent:
+                    arguments = {**arguments, "agent_id": defaulted_agent}
         if any(arguments.get(key) == SELF_SENTINEL for key in _SCOPE_KEYS):
             if not boundary:
                 # Includes the stdio principal and every static-token client:
@@ -924,6 +958,10 @@ def _wrap(name: str, handler):
             result["resolved_agent_id"] = resolved_alias
             if alias_issued:
                 result["alias_issued"] = True
+        elif defaulted_agent and isinstance(result, dict):
+            # The same echo for an agent the connection named: the caller sent
+            # none, so the response is the only place it can learn which it got.
+            result["resolved_agent_id"] = defaulted_agent
         return result
 
     guarded._acl_guarded = True  # type: ignore[attr-defined]
