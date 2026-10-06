@@ -193,45 +193,45 @@ The block (keep it verbatim apart from the substitution — it is budgeted at
 is chosen to change behavior the agent would *not* show by default):
 
 ```markdown
-<!-- BEGIN cpersona-policy v5 (managed by the cpersona-memory skill; re-run the skill to update) -->
+<!-- BEGIN cpersona-policy v6 (managed by the cpersona-memory skill; re-run the skill to update) -->
 ## CPersona memory policy
 
 Use the CPersona MCP tools proactively with `agent_id="<AGENT_ID>"` — never wait to be asked.
+The call shapes below cover everyday use: read a tool's full schema only for an option not shown
+here (a client that must load a tool before calling it still loads it).
 
 **Session start** → `reconstruct(agent_id, query="<opening-topic keywords>")` before the first
 substantive action; with no topic yet, `recall(agent_id, query="", limit=10)` for the latest.
 `deep=true` when the first pass comes back thin. Skip only for trivial one-shot questions.
 
-**Answering from memory** → `reconstruct(agent_id, query)`, not `recall`: 10 items by default, each
-quoting the rows behind it, at fewer reader tokens per correct answer. Read an item to judge it.
+**Answering from memory** → `reconstruct(agent_id, query)`, not `recall`: items that quote the rows
+behind them. Read a quoted record further with `get_contents(agent_id, refs=["mem:<id>"])`.
 
-**Decisions, rules, preferences, bug findings** → `store` immediately. Fire on phrases like
-"let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
-Lock must-never-lose rules: `lock: true` on the `store` where it offers one, else `lock_memory`.
+**Decisions, rules, preferences, bug findings** → `store(agent_id, content="…")` immediately, with
+`lock=true` for must-never-lose rules (an older server: `message={"content": "…"}`, then `lock_memory`).
+Fire on "let's go with X", "from now on always Y", "remember that…", "approved", "that's a bug".
 After a successful `git commit`, `store` a one-line record: hash, what changed, why.
 
-**Changing an existing rule** → `update_memory`, never delete + store. If the memory is locked:
-`unlock_memory` → `update_memory` → `lock_memory`.
+**Changing an existing rule** → `update_memory(agent_id, memory_id=<id>, content="…")`, never
+delete + store; `<id>` is the number in `mem:<id>`. If locked: `unlock_memory` → update → `lock_memory`.
 
-**Session end** — fire on closing phrases ("that's all for today", "wrap it up", "good night") →
-first `store` + lock any unsaved decisions, then `archive_episode(agent_id, history=<the REAL
-turns>, summary=…, keywords=…, resolved=…)`, computing `summary` and `keywords` yourself.
+**Session end** — on closing phrases ("that's all for today", "wrap it up", "good night") → store
+and lock unsaved decisions, then `archive_episode(agent_id, summary="…", keywords="a b c",
+resolved=true|false, history=<the REAL turns>)`, computing `summary` and `keywords` yourself.
 
 **"Don't save this" / benchmark sessions** → `pause_persistence(ttl_seconds=1800)`;
 `resume_persistence()` (or TTL expiry) restores. Reads still answer, minus the writes inside them.
 
-**Degraded mode** — if a `recall` response carries an `advisory` field, surface it to the user
-and follow its runbook. Never quietly serve keyword-only recall.
+**Degraded mode** — a `recall` with an `advisory` field: tell the user and follow its runbook.
 
-**Quality** — recall feels off → `set_recall_precision` (strict/balanced/lenient), the one policy
-knob; after large corpus changes `calibrate_threshold(agent_id)`; monthly `check_health(agent_id, fix=true)`.
+**Quality** — recall feels off → `set_recall_precision` (strict/balanced/lenient); after large
+corpus changes `calibrate_threshold(agent_id)`; monthly `check_health(agent_id, fix=true)`.
 
 **If this client keeps a memory file that loads every session** (Claude Code's `MEMORY.md`), use it
 as the deterministic index over this store: one line per memory — `- <slug> — <the sentence that
-changes behaviour>` — with the body stored here under the id `memory-index:<slug>` and content
-starting `[<slug>]`, so a line tells you what to `recall`. Recall is ranked and may not surface a
-memory; the index always arrives. Its size cap fails **silently** when exceeded, so consolidate at
-80%, not at the limit. Never migrate existing memories into this store without asking first.
+changes behaviour>` — with the body stored under `id="memory-index:<slug>"`, content starting
+`[<slug>]`. Recall is ranked and may miss a memory; the index always arrives. Its size cap fails
+**silently**, so consolidate at 80%. Never migrate existing memories here without asking first.
 
 Details, setup, and troubleshooting: the `cpersona-memory` skill.
 <!-- END cpersona-policy -->
