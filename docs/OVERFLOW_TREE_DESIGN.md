@@ -1,6 +1,7 @@
 # Overflow Tree — design
 
-Status: design for the 2.6 line, not behaviour. This page fixes the storage
+Status: shipped in 2.6.0, first in 2.6.0a3; section 7 lists what was left to
+separate decisions. This page fixes the storage
 layer that lets a long record be quoted by the part that matters instead of by
 its first few hundred characters. Its first use is excerpt selection for
 [Reconstructive Recall](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit).

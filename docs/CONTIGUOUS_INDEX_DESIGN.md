@@ -1,8 +1,10 @@
 # Contiguous Embedding Index
 
-Status: proposed for the 2.5.x line. `SCHEMA_VERSION` stays 13, no new runtime
-dependency is added, and the answers are the ones the current scan already
-returns — bit for bit, including the order of equally-similar rows.
+Status: shipped in 2.5.9, first in 2.5.9a1. It added no schema version and no
+runtime dependency, and the answers are the ones the scan returns — bit for
+bit, including the order of equally-similar rows. An operator command builds
+the index; the server only reads it
+([Operations](operations.md#the-contiguous-vector-index)).
 
 ## 1. What changes and what does not
 
