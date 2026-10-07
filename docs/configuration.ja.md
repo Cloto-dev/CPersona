@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:ef4a3b65c87b584db7291b9e48941edbad88e8c8 -->
+<!-- i18n-source: docs/configuration.md@blob:d6355d403572f2b62e895dc5d9cf1d71695d5824 -->
 
 # 設定リファレンス
 
@@ -110,7 +110,7 @@ Codex のコードモードがそうで、1 回の表示を約 40,000 文字で�
 
 | 変数 | 既定値 | 説明 |
 |----------|---------|-------------|
-| `CPERSONA_COMPACT_TOOL_CLIENTS` | `codex-mcp-client` | 絞った一覧を返すクライアント。各クライアントが `initialize` で送る `clientInfo.name` をそのまま、カンマ区切りで書きます。空にすると絞った一覧は使いません |
+| `CPERSONA_COMPACT_TOOL_CLIENTS` | `codex-mcp-client` | 絞った一覧を返すクライアント (カンマ区切り)。各クライアントが `initialize` で送る `clientInfo.name` をそのまま書きます。HTTP トランスポートは stateless でセッションが `initialize` を覚えていないので、User-Agent の製品名で判定します (`codex-mcp-client/0.160.1` なら `codex-mcp-client`)。空にすると絞った一覧は使いません |
 | `CPERSONA_COMPACT_TOOLS` | `reconstruct,store,get_contents,archive_episode,update_memory,lock_memory,unlock_memory,pause_persistence,resume_persistence` | 絞った一覧に入れるツール (カンマ区切り)。サーバーにない名前はログに残して無視します |
 
 ## リモート (HTTP) トランスポート { #remote-http-transport }

@@ -110,7 +110,7 @@ session uses; every other client gets every tool. To give such a client the rest
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CPERSONA_COMPACT_TOOL_CLIENTS` | `codex-mcp-client` | Clients answered with the compact list: the exact `clientInfo.name` each sends in `initialize`, comma-separated. Empty turns the compact list off |
+| `CPERSONA_COMPACT_TOOL_CLIENTS` | `codex-mcp-client` | Clients answered with the compact list, comma-separated: the exact `clientInfo.name` each sends in `initialize`, or, over the HTTP transport (stateless, so no session keeps `initialize`), the product name in its User-Agent (`codex-mcp-client/0.160.1` names `codex-mcp-client`). Empty turns the compact list off |
 | `CPERSONA_COMPACT_TOOLS` | `reconstruct,store,get_contents,archive_episode,update_memory,lock_memory,unlock_memory,pause_persistence,resume_persistence` | The tools in the compact list, comma-separated. A name the server does not have is logged and ignored |
 
 ## Remote (HTTP) transport
