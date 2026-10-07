@@ -237,7 +237,8 @@ of that on both families. One byte per dimension reached the same targets as
 float32, to within one. The places the reservation fills are still
 mostly taken by records that are not the target: the share of places the
 target holds rises from 13% to 18%. This is reach, not precision: whether the reached text answers the
-question needs a reader, and the instrument that has one is not built.
+question needs a reader, and the instrument that has one was not built when
+this was measured (section 7 has the later measurement with a reader).
 
 **Where the vector comes from.** Four sources were measured against each other
 on the same families:
@@ -524,11 +525,12 @@ a vector among rows with one must each turn a named assertion red.
 
 ## 9. What this step does not claim
 
-It does not claim better answers. The benchmark this project regresses against
-judges at record granularity, so a finer quotation cannot register in it at
-all, and the reader-based instrument that could judge it is not built. Any
-public statement about this work says what was measured — reach — and says that
-precision was not.
+It does not claim better answers on public data. The benchmark this project
+regresses against judges at record granularity, so a finer quotation cannot
+register in it at all. The one measurement with a reader (section 7) is a
+private pack of one store's questions, and a measurement on public data
+follows. Any public statement about this work says what was measured — reach,
+and that one pack's answers — and says that precision on public data was not.
 
 It does not claim the tail is worth reaching. `P` is unmeasured, and the
 earlier measurement showed a standing cost for every query that is not a

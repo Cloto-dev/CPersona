@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/MEMORY_INTELLIGENCE_2_7.md@blob:293d26178ec7580017b473c71c80de67336a96e0 -->
+<!-- i18n-source: docs/MEMORY_INTELLIGENCE_2_7.md@blob:3fd2a8445e9923edfbf55120dc9fc742aa258f67 -->
 
 # Memory Intelligence — 2.7 系
 
@@ -133,9 +133,10 @@ enhancement)。スキーマの変更は追加のみです。
 ### 2.3 証拠で重み付けした確信度 { #23-evidence-weighted-confidence }
 
 **問題。** 今日ある confidence スコアは、類似度・時間減衰・解決済みフラグ・想起回数から
-作る opt-in のスコアラーです。有効にすると融合後のリスト全体を並べ替えるので、2.6 は
-その段を外すか融合の 1 項にするかを決めます
-([その決定](RELIABLE_RECALL_2_6.md#3-one-prior-function))。どちらに決まっても、この値が
+作る opt-in のスコアラーです。並べ方への効き方は 2.6 で決まりました:
+2.6.0a7 から値は各行の横に返るだけで、融合後のリストを並べ替えません。並べ替えるのは
+`CPERSONA_CONFIDENCE_ORDERING=legacy` の時だけです
+([契約 §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode))。どちらの場合も、この値が
 示すのは行が *問い* にどれだけ合うかです。*記憶* がどれだけ確かかではありません。
 
 **受け取るもの。** (a) 書き込み時にエージェントが付ける確度。3 値の列挙です — 2.6 の

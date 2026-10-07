@@ -56,13 +56,14 @@ The marketplace catalog and the Quick Start use the generic names.
 
 Declare `count` on each `reconstruct` call. It limits **assembled recall items**,
 not stored rows or retrieval depth. With no count configuration or call argument,
-the ceiling is **1**.
+the ceiling is **10** (or the configured maximum, when that is lower).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `10`, or `CPERSONA_RECONSTRUCT_MAX_COUNT` if that is lower | Ceiling used when the caller omits `count`. 10 from 2.6.0, the count the recommended configuration was measured with; set explicitly above the maximum, it is a startup error |
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(unset)* | Override the caller's count and the default for every call; still a ceiling, never a fill target |
 | `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | Absolute ceiling; requests above it are clamped and reported. This is an experimental limit, not an empirically optimal count |
+| `CPERSONA_RECONSTRUCT_ADJACENCY_SECONDS` | `60` | How close in time, in seconds, candidates from the same source in the same project and channel must be to bundle into one item. The burst is measured from its first row, so a run of short gaps does not join hours of conversation. `0` turns this bundling off |
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | An item's head quote: the parts of its record that matched, filled in ranking order up to this many characters and shown in text order — the same filling as the recall excerpt. A record no longer than this is quoted whole. `0` quotes the single governing passage instead, cut at the preview tier, as before 2.6 |
 | `CPERSONA_RECONSTRUCT_FULL_QUOTES` | `5` | How many items, from the first, take the full head quote size above. Since 2.6.4 |
 | `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS` | `400` | The head quote size of every item after those. Above 0 and at most `CPERSONA_RECONSTRUCT_QUOTE_CHARS`, or the server stops at startup; equal to it quotes every item alike, as before 2.6.4. Since 2.6.4 |
@@ -137,8 +138,8 @@ single `store` this server can accept, and 10x a `recall_with_context` carrying
 200 conversation turns, so ordinary traffic is nowhere near it.
 
 The default mode is `warn` on purpose. The request is served in full and the
-crossing is logged, at the 1st, 10th and 100th occurrence, so the line neither
-floods nor disappears.
+crossing is logged at the 1st, 10th, 100th, 1,000th occurrence and on at each
+power of ten, so the line neither floods nor disappears.
 
 Nothing in this project knows what your payloads look like, and a limit that
 refuses before anyone has measured is a limit set by guessing. Run with the

@@ -20,11 +20,13 @@ reachable by exact version.
 2. **Check the embedding server.** Building the overflow nodes for records
    already stored needs a server that reports token counts: CEmbedding 0.8.0 or
    later. An older server answers `count: null`, which is not zero.
-3. **Install 2.6.0.** A plain upgrade now resolves to it; pin the version so you
-   know which one you are running:
+3. **Install the newest 2.6 release.** A plain upgrade resolves to it. Keep it
+   within the 2.6 line, and note which version you got so you know what you are
+   running:
 
    ```sh
-   pip install 'cpersona==2.6.0'
+   pip install --upgrade 'cpersona>=2.6,<2.7'
+   pip show cpersona | grep Version
    ```
 
 ## What the first start does

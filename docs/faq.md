@@ -99,9 +99,11 @@ No. Lock protects against deletion and editing. Ranking is unaffected, and a
 locked memory can still lose a recall. "Must never be lost" → lock. "Must
 always be in context" → deterministic injection.
 
-The profile (`update_profile`) is a reliable always-surfaces channel only when
-confidence scoring is on. With it off, profile rows carry no score and are cut
-by `limit` on a full corpus.
+The profile (`update_profile`) is not a channel that always surfaces. It
+reliably surfaces near the top only with confidence scoring on under
+`CPERSONA_CONFIDENCE_ORDERING=legacy`. Under the default ordering it carries no
+score, sorts last and is cut by `limit` on a full corpus, and a pool of fewer
+than 50 rows returns no profile row at all.
 → [Contract §7](behavior-contracts.md#7-profile-rows-carry-no-score) /
 [§9](behavior-contracts.md#9-lock_memory-protects-it-does-not-boost)
 

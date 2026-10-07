@@ -153,8 +153,9 @@ Response: { "embeddings": [[float, ...], ...], "dimensions": <int> }
 
 CPersona reads **`embeddings`** and nothing else. `dimensions` comes from the
 reference server and is ignored by the client, so a backend that omits it
-still works. CPersona sends at most **32 texts per request**, and the
-reference server accepts up to 100. Batch limits in that range are nothing you
+still works. CPersona sends at most **64 texts per request** (when it
+builds a record's sentence blocks; 32 elsewhere), and the reference server
+accepts up to 100. Batch limits in that range are nothing you
 need to plan around.
 
 Three requirements are easy to miss. Each one degrades ranking silently:

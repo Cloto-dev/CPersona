@@ -3,7 +3,7 @@
 > MCP memory server: persistent, searchable memory for Claude and any MCP
 > host. Single local SQLite file, 3-layer hybrid retrieval (vector + FTS5 +
 > keyword), zero LLM dependency — the server never calls a generative model.
-> This site is the canonical documentation for the 2.5.x line; when another
+> This site is the canonical documentation for the 2.6.x line; when another
 > surface (README, bundled skill) disagrees, the site wins.
 
 Key facts an agent should not guess wrong: recall responses are ordered
@@ -27,7 +27,7 @@ CPERSONA_MAX_MEMORIES is the vector scan window, not a storage cap.
 - [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/): the behaviors callers may rely on — recall ordering, confidence×fusion interaction, episode boundary penalty, scan window, dedup, autocut, profile scoring, gate_fallback, lock semantics
 - [FAQ](https://cloto-dev.github.io/CPersona/faq/): question-shaped index into the pages above
 - [Operations Runbook](https://cloto-dev.github.io/CPersona/operations/): WAL-safe backup, degradation detection, recall tuning order, Japanese/CJK guidance, corpus indexing patterns, maintenance cadence
-- [Upgrading to 2.6](https://cloto-dev.github.io/CPersona/2.6/upgrading-to-2.6/): one-pass upgrade from a 2.5.x store to the current 2.6 pre-release: backup, what the first start migrates, the node backfill, recalibration, behaviour changes, and how to go back
+- [Upgrading to 2.6](https://cloto-dev.github.io/CPersona/2.6/upgrading-to-2.6/): one-pass upgrade from a 2.5.x store to the 2.6 line: backup, what the first start migrates, the node backfill, recalibration, behaviour changes, and how to go back
 - [Quality Assurance](https://cloto-dev.github.io/CPersona/quality-assurance/): how a release is gated — audit rounds, the bug ledger, structural CI gates, mutation proof, and the gates that check the docs themselves
 
 ## Project standards

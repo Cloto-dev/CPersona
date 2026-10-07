@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/OVERFLOW_TREE_DESIGN.md@blob:c7e98ac285e32fb9090f7dac1a33409d437d8e70 -->
+<!-- i18n-source: docs/OVERFLOW_TREE_DESIGN.md@blob:9779ca46c5a88be4af04e57b8349878537e740e9 -->
 
 # 溢れ分の tree — 設計 { #overflow-tree-design }
 
@@ -120,7 +120,8 @@ CREATE TABLE IF NOT EXISTS record_nodes (
 記憶と episode の id は再利用されない (`AUTOINCREMENT`) ので、ノードが別のレコードを指す
 ようになることはありません。`embedding_model` が現在のモデルと異なるノードは欠落として扱い、
 レコードの埋め込みと同じく作り直します。ノードは export しません: export が既に運ぶテキスト
-から導けるので、import が作り直します。ノードは親を通してしか読まれないので、親の分離軸と
+から導けるからです。import はノードの作成を予約しません。import した記録のノードは、
+ノードなしで書かれたほかの記録と同じく、ヘルスチェックの `missing_nodes` の修復が作ります。ノードは親を通してしか読まれないので、親の分離軸と
 アクセス制御を継承します。
 
 ## 5. 不変条件 { #5-invariants }

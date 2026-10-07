@@ -378,8 +378,9 @@ effective = min(base, max_count)
   default budget widens by one head per held item; a budget the caller or an
   operator named does not, and a held item it leaves out is reported as
   `reserved_omitted`.
-- The unconfigured default is **one item**, a conservative call contract rather
-  than a measured optimum. The maximum remains experimental until a sweep
+- The unconfigured default is **ten items** from 2.6.0: the count at which the
+  recommended configuration was measured with a reader on a pack of a real
+  agent's memory. The maximum remains experimental until a sweep
   over `count` and the payload budget on the long-memory benchmark compares
   answer and evidence quality against payload tokens and latency. Any proposed
   change to either default must be justified by that measurement.
@@ -497,8 +498,10 @@ says so when it cuts.
 1. *Candidates* — the pool from the recall process, unchanged; depth is the
    section 4 knob.
 2. *Bundling* — cluster candidates by deterministic keys: same message id,
-   same episode's time span, adjacent timestamps, same source, same overflow
-   chain. These keys are the *ceiling* of what the server calls "the same
+   same episode's time span, adjacent timestamps from the same source (one
+   key: source alone would fold a single-agent store into one item), a
+   declared record-to-record relation, and the same overflow chain (reserved:
+   no record has a chain yet, so it never fires). These keys are the *ceiling* of what the server calls "the same
    memory"; semantic sameness is not judged here (see below).
 3. *Bounded relation walk*: follow only relations attached to the candidates, to
 the hop limit. Those are episode containment, explicit references in metadata,
@@ -677,7 +680,7 @@ these concrete qualifications:
   the retrieved pool; it does not establish that the whole corpus was exhausted.
 - Authenticated use requires the same per-agent read grant as `recall`.
 
-The call-level count defaults to one item by contract, with an optional
+The call-level count defaults to ten items from 2.6.0, with an optional
 operator-forced override. Neither is a fill target: requesting or forcing five
 returns two when only two valid items are available. The maximum of ten
 remains experimental; neither value claims an empirically optimal
@@ -835,7 +838,7 @@ from reconstruction failure from agent-reasoning failure: the 2.5 flat recall; 2
 selection without reconstruction; reconstruction at `count = 1`; the sweep;
 the answer model given oracle evidence; the answer model given raw evidence
 instead of the reconstruction. Mutations that must fail before the exit is
-called done: the default changed from one to two; the minimum with the maximum
+called done: the default changed from ten to nine; the minimum with the maximum
 removed; the forced and requested priorities swapped; the candidate limit
 re-coupled to the count; deduplication disabled; provenance dropped; the
 returned count always reported as the effective count; excerpts allocated

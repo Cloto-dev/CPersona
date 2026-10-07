@@ -146,11 +146,12 @@ rows as well.
 ### 2.3 Evidence-weighted confidence
 
 **Problem.** The confidence score that exists today is an opt-in scorer built
-from similarity, time decay, the resolved flag and recall count. When it is
-on, it re-sorts the whole fused list, and 2.6 decides whether that step is
-removed or becomes a term of the fusion
-([the decision](RELIABLE_RECALL_2_6.md#3-one-prior-function)). Whichever way
-that goes, the value says how well a row fits the *query*. It does not say how
+from similarity, time decay, the resolved flag and recall count. 2.6 settled
+what it does to the order: from 2.6.0a7 it is returned beside each row and
+does not re-sort the fused list, which it now does only under
+`CPERSONA_CONFIDENCE_ORDERING=legacy`
+([contract §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)).
+Either way, the value says how well a row fits the *query*. It does not say how
 certain the *memory* is.
 
 **What the server receives.** (a) A certainty the agent attaches at write
