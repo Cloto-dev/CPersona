@@ -99,6 +99,20 @@ smaller answer. Raise these deliberately rather than waiting for a symptom.
 | `CPERSONA_NORMALIZATION_SCAN_CAP` | `10000` | Rows `deep_unnormalized_content` reads per run. Unicode normalisation cannot be a SQL predicate — SQLite has no NFC function — so this is the check that must read the text to answer at all, and the cap is what keeps that from meaning "read the corpus". Past it the result says `complete: false` rather than letting a floor be read as a total |
 | `CPERSONA_CALIBRATE_MAX_SAMPLE` | `5000` | Hard ceiling on `calibrate_threshold`'s `sample_size`, whatever the caller asks for. It feeds the same O(n²) matrix as the near-duplicate cap and exists to stop an unbounded value from exhausting memory for every agent on the connection, so raise it only as far as the machine can hold (see the measurements above) |
 
+## Compact tool list for some clients
+
+Some clients print the full definition of every tool an agent looks up, each time
+it looks. Codex in code mode does this and cuts each lookup at about 40,000
+characters, while all of CPersona's tools take about 75,000, so a lookup of them
+came back cut every time. A client named below is answered with only the tools a
+session uses; every other client gets every tool. To give such a client the rest
+(the maintenance tools, `recall`, the association tools), empty the client list.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_COMPACT_TOOL_CLIENTS` | `codex-mcp-client` | Clients answered with the compact list: the exact `clientInfo.name` each sends in `initialize`, comma-separated. Empty turns the compact list off |
+| `CPERSONA_COMPACT_TOOLS` | `reconstruct,store,get_contents,archive_episode,update_memory,lock_memory,unlock_memory,pause_persistence,resume_persistence` | The tools in the compact list, comma-separated. A name the server does not have is logged and ignored |
+
 ## Remote (HTTP) transport
 
 The default transport is stdio, where the MCP client owns the process and no

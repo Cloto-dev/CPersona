@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:de39e196b1685d0c978f0e733e75fcd3f122d4a4 -->
+<!-- i18n-source: docs/configuration.md@blob:ef4a3b65c87b584db7291b9e48941edbad88e8c8 -->
 
 # 設定リファレンス
 
@@ -99,6 +99,19 @@
 | `CPERSONA_INVALID_SOURCE_CLASSIFY_CAP` | `10000` | 1 回の `check_invalid_source_type` が分類する不正な `source` 行数。コストは行ごとの JSON パース (マイクロ秒オーダー) なので、上の 2 つより大きく取れます。上限を超えると標本が不完全になり、チェックは自身の severity を下げることを見送ります — 失われるのは判定であって正しさではありません |
 | `CPERSONA_NORMALIZATION_SCAN_CAP` | `10000` | `deep_unnormalized_content` が 1 回の実行で読む行数。Unicode 正規化は SQL の述語にできない (SQLite に NFC 関数が無い) ので、これは本文を読まないと答えられない唯一の check であり、この上限が「本文を読む」を「コーパス全体を読む」にしないための線です。上限を超えた実行は `complete: false` を返し、下限値を総数と読ませません |
 | `CPERSONA_CALIBRATE_MAX_SAMPLE` | `5000` | 呼び出し側が何を要求しても効く `calibrate_threshold` の `sample_size` の上限。near-duplicate と同じ O(n²) の行列を扱い、無制限な値が接続を共有する全エージェントごとメモリを食い潰すのを防ぐために存在します。引き上げはマシンが抱えられる範囲まで (上記の実測値を参照) |
+
+## 一部のクライアント向けの絞ったツール一覧 { #compact-tool-list-for-some-clients }
+
+エージェントがツールを調べるたびに、調べたツールの定義をすべて表示するクライアントがあります。
+Codex のコードモードがそうで、1 回の表示を約 40,000 文字で切ります。CPersona のツールを全部並べると
+約 75,000 文字になるため、調べるたびに切られていました。下に名前を挙げたクライアントには、
+セッションで使うツールだけを返し、ほかのクライアントにはすべてのツールを返します。そのような
+クライアントに残りのツール (保守用のツール、`recall`、関係のツール) を渡すには、クライアントの一覧を空にしてください。
+
+| 変数 | 既定値 | 説明 |
+|----------|---------|-------------|
+| `CPERSONA_COMPACT_TOOL_CLIENTS` | `codex-mcp-client` | 絞った一覧を返すクライアント。各クライアントが `initialize` で送る `clientInfo.name` をそのまま、カンマ区切りで書きます。空にすると絞った一覧は使いません |
+| `CPERSONA_COMPACT_TOOLS` | `reconstruct,store,get_contents,archive_episode,update_memory,lock_memory,unlock_memory,pause_persistence,resume_persistence` | 絞った一覧に入れるツール (カンマ区切り)。サーバーにない名前はログに残して無視します |
 
 ## リモート (HTTP) トランスポート { #remote-http-transport }
 
