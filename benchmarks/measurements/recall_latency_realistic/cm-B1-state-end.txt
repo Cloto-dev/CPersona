@@ -1,0 +1,6 @@
+2026-10-07 11:56:48 UTC
+the 8 GB virtual machine: stopped
+a 2 GB container: running
+a 3 GB container: running
+MemAvailable:   12055332 kB
+ 20:56:49  load average: 1.73, 1.20, 0.74
