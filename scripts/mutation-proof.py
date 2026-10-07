@@ -4088,6 +4088,26 @@ MUTATIONS += [
         breaks="overwritten index blocks go unreported on SQLite whose quick_check does not inspect FTS5",
         expect='test_bug439_quick_check_stale_fts_cache.py::test_a_damaged_index_is_reported_by_the_fts_check_whatever_quick_check_sees',
     ),
+    Mutation(
+        id='M404',
+        tests=('tests/test_keyword_rare_phrases.py',),
+        target="common phrases — the rows holding a phrase are counted with the phrase",
+        file='cpersona/memory_handlers.py',
+        find='_PHRASE_ROWS_SQL = "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH ?"\n',
+        replace='_PHRASE_ROWS_SQL = "SELECT count(*) FROM memories_fts_docsize WHERE ? IS NOT NULL"\n',
+        breaks="every phrase counts as held by every row, so a rare word is left out of the ranking as if it were common",
+        expect='test_keyword_rare_phrases.py::test_the_counts_classify_each_phrase_as_the_index_vocabulary_does',
+    ),
+    Mutation(
+        id='M405',
+        tests=('tests/test_keyword_rare_phrases.py',),
+        target="common phrases — a phrase is quoted before it is matched",
+        file='cpersona/memory_handlers.py',
+        find="        quoted = '\"' + term.replace('\"', '\"\"') + '\"'\n",
+        replace="        quoted = term\n",
+        breaks="a three-character word holding a quote is matched as query syntax and the classification fails",
+        expect='test_keyword_rare_phrases.py::test_the_counts_classify_each_phrase_as_the_index_vocabulary_does',
+    ),
 ]
 
 

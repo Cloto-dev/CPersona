@@ -80,7 +80,7 @@ def test_the_whole_expression_is_the_one_it_always_was(query, extra):
 
 
 class _Index:
-    """Answers the three statements the decision issues, with chosen numbers."""
+    """Answers the statements the decision issues, with chosen numbers."""
 
     def __init__(self, n_rows, docs, ranked=()):
         self.n_rows, self.docs, self.ranked = n_rows, docs, list(ranked)
@@ -88,14 +88,15 @@ class _Index:
         self.ranked_on = None
 
     async def execute(self, sql, params=()):
-        assert sql.startswith("CREATE VIRTUAL TABLE IF NOT EXISTS temp."), sql
+        raise AssertionError(f"the decision only reads, and creates no table: {sql}")
 
     async def execute_fetchall(self, sql, params=()):
         if "memories_fts_docsize" in sql:
             return [(self.n_rows,)]
-        if "WHERE term IN" in sql:
-            self.looked_up.extend(params)
-            return [(t, self.docs[t]) for t in params if t in self.docs]
+        if sql == mh._PHRASE_ROWS_SQL:
+            term = params[0][1:-1].replace('""', '"')
+            self.looked_up.append(term)
+            return [(self.docs.get(term, 0),)]
         self.ranked_on = params[0]
         return self.ranked[: params[-1]]
 
@@ -254,6 +255,36 @@ def _spy(monkeypatch):
 
     monkeypatch.setattr(mh, "_rank_on_rare_phrases", spy)
     return calls
+
+
+@pytest.mark.asyncio
+async def test_the_counts_classify_each_phrase_as_the_index_vocabulary_does():
+    # The rows holding a one-trigram phrase, counted with the phrase, must be the rows the
+    # index's vocabulary names for that trigram, case folded and with a quote inside, and
+    # the floor's edge must fall where FTS5 puts it: 10 of 20 rows is common, 9 is not.
+    records = []
+    for i in range(20):
+        text = f"rec{i:02d} "
+        if i < 10:
+            text += ("THE " if i % 2 else "the ") + "パン屋 " + 'a"b '
+        if i < 9:
+            text += "zeb "
+        records.append(text)
+    phrases = mh._fts_recall_phrases('The zeb パン屋 a"b')
+    assert phrases == ['"The"', '"zeb"', '"パン屋"', '"a""b"']
+    async with _TempDB():
+        async with database.transaction() as db:
+            for i, text in enumerate(records):
+                await db.execute(
+                    "INSERT INTO memories (agent_id, content, timestamp) VALUES (?, ?, ?)",
+                    (AGENT, text, f"2026-10-07T00:00:{i:02d}+00:00"),
+                )
+        async with database.connection() as db:
+            common = await mh._common_phrases(db, phrases)
+            await db.execute("CREATE VIRTUAL TABLE temp.vocab USING fts5vocab(main, memories_fts, row)")
+            docs = dict(await db.execute_fetchall("SELECT term, doc FROM temp.vocab"))
+    assert {t: docs[t] for t in ("the", "zeb", "パン屋", 'a"b')} == {"the": 10, "zeb": 9, "パン屋": 10, 'a"b': 10}
+    assert common == {'"The"', '"パン屋"', '"a""b"'}
 
 
 @pytest.mark.asyncio
