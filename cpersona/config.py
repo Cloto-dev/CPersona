@@ -1008,6 +1008,22 @@ OAUTH_SCOPES = os.environ.get("CPERSONA_OAUTH_SCOPES", "")
 OAUTH_JWKS_URI = os.environ.get("CPERSONA_OAUTH_JWKS_URI", "")
 
 
+# The compact tool list (server.py, where tools/list is answered). A client named
+# here -- the exact `clientInfo.name` it sends in `initialize`, comma-separated --
+# is answered with only the COMPACT_TOOLS; every other client gets every tool.
+# An empty list turns it off. Codex sends "codex-mcp-client": in code mode it
+# repeats the full definition of every tool an agent looks up, and cuts a lookup
+# at about 40,000 characters, which all of CPersona's tools exceed.
+COMPACT_TOOL_CLIENTS = frozenset(
+    name.strip() for name in os.environ.get("CPERSONA_COMPACT_TOOL_CLIENTS", "codex-mcp-client").split(",") if name.strip()
+)
+COMPACT_TOOLS = frozenset(
+    name.strip()
+    for name in os.environ.get("CPERSONA_COMPACT_TOOLS", "reconstruct,store,get_contents,archive_episode,update_memory,lock_memory,unlock_memory,pause_persistence,resume_persistence").split(",")
+    if name.strip()
+)
+
+
 # Transport. Unlike everything above this is read at CALL time, not at import:
 # `main()` reads it after the ACL file, the preflight and the embedding client
 # are already up, and the tests that cover those paths set it with

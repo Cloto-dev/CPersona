@@ -29,7 +29,7 @@ from typing import NamedTuple
 from urllib.parse import urlparse
 
 from mcp.server.stdio import stdio_server
-from mcp.types import ToolAnnotations
+from mcp.types import ListToolsRequest, ServerResult, ToolAnnotations
 from pydantic import AnyHttpUrl, ValidationError
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
@@ -2639,6 +2639,54 @@ ALWAYS_LOADED_TOOLS = ("reconstruct", "store", "archive_episode")
 for _tool in registry._tools:
     if _tool.name in ALWAYS_LOADED_TOOLS:
         _tool.meta = {**(_tool.meta or {}), "anthropic/alwaysLoad": True}
+
+
+# The compact tool list. Some clients print the full definition of every tool an
+# agent looks up, every time it looks: Codex in code mode does this through
+# ALL_TOOLS, and an agent there looks CPersona's tools up several times a session.
+# Codex also cuts a lookup at about 40,000 characters, and all of CPersona's tools
+# take about 75,000, so a broad lookup came back cut at the cap every time and
+# shorter descriptions only let more tools fit under it. A client named in
+# config.COMPACT_TOOL_CLIENTS is therefore answered with config.COMPACT_TOOLS, the
+# tools a session uses, which fit under the cap; every other client gets them all.
+# The SDK keeps one tool cache per process and validates every call against it, and
+# one HTTP process serves several clients, so the full list is still built and only
+# the answer to that client is narrowed.
+def _client_name() -> str:
+    """The name of the client asking: its `clientInfo.name`, or over HTTP the product
+    in its User-Agent; "" outside a request."""
+    try:
+        context = registry.server.request_context
+    except LookupError:
+        return ""
+    info = getattr(getattr(context.session, "client_params", None), "clientInfo", None)
+    name = getattr(info, "name", "") or ""
+    if name:
+        return name
+    # The HTTP transport is stateless: every request gets a fresh session that never
+    # saw `initialize`, so there is no clientInfo by the time tools/list arrives.
+    # The User-Agent arrives with every request; Codex sends
+    # "codex-mcp-client/<version>", the same name as its clientInfo.
+    request = getattr(context, "request", None)
+    agent = request.headers.get("user-agent", "") if request is not None else ""
+    return agent.split("/", 1)[0].strip()
+
+
+_list_every_tool = registry.server.request_handlers[ListToolsRequest]
+
+
+async def _list_tools_for_the_client(req):
+    result = await _list_every_tool(req)
+    if _client_name() not in config.COMPACT_TOOL_CLIENTS:
+        return result
+    listed = result.root
+    return ServerResult(listed.model_copy(update={"tools": [t for t in listed.tools if t.name in config.COMPACT_TOOLS]}))
+
+
+registry.server.request_handlers[ListToolsRequest] = _list_tools_for_the_client
+_unknown_compact = sorted(config.COMPACT_TOOLS - {t.name for t in registry._tools})
+if _unknown_compact:
+    logger.warning("CPERSONA_COMPACT_TOOLS names tools this server does not have: %s", ", ".join(_unknown_compact))
 
 
 # =============================================================================
