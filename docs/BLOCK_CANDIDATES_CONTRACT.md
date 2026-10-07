@@ -1,8 +1,7 @@
 # Block Candidate Generation — contract
 
-Status: the contract, its conformance data, and a Go implementation checked
-against that data are on `master`. Nothing in the server calls the Go
-implementation yet, and no release ships it. Recall's answers do not change.
+Status: the contract and its conformance data are on `master`. Nothing reads
+the block rows any other way yet. Recall's answers do not change.
 
 ## 0. What this is
 
@@ -16,18 +15,17 @@ has two halves:
 2. **Re-rank.** Read the stored vectors of those few rows and order them by
    cosine.
 
-The first half returns integers and identifiers and nothing else, so an
-implementation in another language can be held to returning exactly the same
-rows in exactly the same order. This page states that half as a contract,
-records how an implementation of it is checked, and records where such an
-implementation runs and how it is shipped.
+The first half returns integers and identifiers and nothing else, so a faster
+implementation of it can be held to returning exactly the same rows in exactly
+the same order as the one recall runs today. This page states that half as a
+contract, records how an implementation is checked against it, and records the
+decision on what the faster implementation is.
 
-**Why the block population comes first.** Over 100,000 memories of real length
-the store holds 3,480,069 blocks, 34.8 per record
-([the corpus](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-realistic-corpus.md)).
-Blocks therefore reach a million rows at about 29,000 records, long before
-records themselves do. Candidate generation is not what decides recall's time
-today; the keyword arm is (section 4). The reason for this step is scale.
+**Why it needs a faster implementation.** Today the first half reads its rows
+out of SQLite on every call. Over 100,000 memories of real length the store
+holds 3,480,069 blocks, 34.8 per record
+([the corpus](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-realistic-corpus.md)),
+and on an Intel N150 that read alone takes 360 to 375 ms (section 3.1).
 
 ## 1. The contract
 
@@ -73,12 +71,10 @@ returns different rows.
 **Output.** For each row returned: kind, parent id, block index and distance.
 No text, no metadata, no floating-point score.
 
-**What stays in the server.** The re-rank by stored vectors stays in the Python
-server, and so does what follows it. A cosine summed in another order is a
-different float, and recall's order depends on those floats, so the re-rank
-cannot be held to the server's answer exactly in another language. When a
-returned row has no stored vector yet (a deployment part-way through building
-them), the server answers that call by its own path, as it does today.
+**What stays as it is.** The re-rank by stored vectors, and what follows it, are
+not part of this contract. When a returned row has no stored vector yet (a
+deployment part-way through building them), the arm answers by its own path, as
+it does today.
 
 ## 2. Conformance
 
@@ -96,56 +92,33 @@ refuses inside a record (no bits, another model's label) beside rows of other
 widths, narrower and wider; every reading of the three axes; fewer measured
 rows than the depth; and empty answers.
 
-**Two tests on the Python side.** `tests/test_block_candidates_golden.py` fails
-when the file no longer says what the code returns, and when a case stops
-exercising a rule this page names (for example, when no case's cut falls inside
-a tie any more). Breaking the server's code (the tie order, the per-record cap
-by one, admitting rows without bits, loosening the width check) makes the
-first test fail.
-
-**The Go side.** `go/blockcand` reads the same file:
-
-- its implementation returns every case's rows in order;
-- an implementation that returns nothing fails exactly the cases that expect
-  rows, so the verifier reports a missing answer;
-- each of a set of deliberately broken implementations (each cap off by one in
-  either direction, either tie order changed, rows without bits admitted, rows
-  of another width refused, labels or agents ignored, each axis read too
-  widely or too narrowly, the share counted over every row) fails at least one
-  case.
-
-A golden regenerated from a broken server makes the Go test fail, so a change
-to the server's candidate generation cannot reach the golden without every
-other implementation having to follow it.
+**What holds it.** `tests/test_block_candidates_golden.py` fails when the file
+no longer says what the code returns, and when a case stops exercising a rule
+this page names (for example, when no case's cut falls inside a tie any more).
+Breaking the server's code (the tie order, the per-record cap by one, admitting
+rows without bits, loosening the width check) makes the first test fail. An
+implementation that reads the rows another way is held to the same file: it
+passes when it returns every case's rows in order.
 
 ## 3. Decisions
 
-### 3.1 A separate process, not a library in the server
+### 3.1 The rows are read from a contiguous file, not SQLite
 
-The Go implementation will run as a sidecar process the server asks over a
-local socket, not as a shared library loaded into the Python process.
+The faster implementation reads the block bits from a contiguous file the
+server writes, not from the SQLite database.
 
-- The PyPI package stays pure Python, with no platform-specific wheels to build
-  and keep building.
-- The server already works this way with the embedding server, and an absent
-  derived index already has a path: the server answers from its own store. An
-  absent or failing sidecar takes the same path.
-- If the server itself later moves to Go, the boundary merges into one process
-  and nothing written for it is thrown away.
+Measured on the 100,000-memory corpus (exploratory, not registered): the
+250,000 rows recall examines, read by the server's own examined read, against
+the same rows read from a file. The Intel N150 had an 8 GB virtual machine
+running beside the measurement.
 
-The cost is one local round trip per call.
+| Read of the 250,000 examined rows | Apple M-series laptop | Intel N150 |
+| --- | ---: | ---: |
+| SQLite, as recall reads them today | 127–140 ms (762 ms cold) | 360–375 ms (1,384 ms cold) |
+| A contiguous file | 1.2 ms | 6.1 ms |
 
-### 3.2 It reads a contiguous file of block bits, not SQLite
-
-The sidecar will read the block bits from a contiguous file the server writes,
-not from the SQLite database.
-
-On an Intel N150 with 100,000 memories of real length, an unregistered
-breakdown with stand-in query vectors put the block arm at 654 ms: 468 ms
-reading the examined rows out of SQLite, 128 ms measuring them, 23 ms reading
-the re-rank vectors. An implementation that reads the same rows from SQLite in
-another language keeps most of that cost. The file follows the coarse index of
-records ([Binary coarse search §3](BINARY_COARSE_SEARCH_DESIGN.md#3-the-coarse-index)):
+The file follows the coarse index of records
+([Binary coarse search §3](BINARY_COARSE_SEARCH_DESIGN.md#3-the-coarse-index)):
 written by the server, validated when it is opened, with a watermark past which
 rows are read from the store.
 
@@ -155,46 +128,49 @@ every row in it: an episode's block sorts before every memory's. The rows past
 the watermark have to be merged into key order before either cap applies,
 because the caps truncate in key order.
 
-**What it buys, stated plainly.** Read through numpy, the same file removes
-most of the SQLite cost without Go. At today's caps, the Go reader's own gain is
-small; it is a gain at scale. The examined cap (250,000 rows) already binds
-over 100,000 memories, where one call looks at about 7% of the blocks, the first
-ones in key order. Lifting that cap would change which records the arm can
-reach, and is a separate decision measured on answer quality, not part of this
-contract.
+### 3.2 The distances are taken in the server's process, with a SIMD library
 
-### 3.3 No cgo
+The Hamming distances and the nearest rows are computed in the Python process,
+by a library that uses the CPU's vector instructions, not by a separate process
+in another language.
 
-The module builds with `CGO_ENABLED=0`, so one machine can build every target:
-linux/amd64 (with `GOAMD64=v2`), linux/arm64, darwin/arm64 and windows/amd64.
-This is also why the sidecar does not read SQLite through a C driver.
+Measured on the same rows (exploratory, not registered), the median over 25
+queries whose bits are blocks of the corpus. Every implementation returned the
+same rows in the same order as the server's code for all 25 queries.
 
-### 3.4 Shipping
+| Hamming distance and the nearest 200 rows | Apple M-series laptop | Intel N150 |
+| --- | ---: | ---: |
+| The server's code today, over row tuples | 34.0 ms | 169.7 ms |
+| The same lookup table, over an array | 23.1 ms | 96.3 ms |
+| NumPy `bitwise_count` | 4.0 ms | 13.1 ms |
+| FAISS `IndexBinaryFlat`, one thread | 1.1 ms | 6.6 ms |
+| SimSIMD | 1.9 ms | 4.9 ms |
+| Go, as a separate program over the same file | 1.3 ms | 3.6 ms |
 
-- The Go module lives in this repository, under `go/`. A change to the
-  contract, the golden and both implementations lands in one pull request,
-  rather than being kept in step across repositories.
-- Binaries will be attached to GitHub Releases.
-- The PyPI package stays pure Python and never requires the binary. Without it,
-  recall answers as it does today.
-- A separate package that carries the binary through `pip` may follow if
-  deployments ask for one.
+A separate process in Go was the plan before this measurement. It saves about
+1 ms over a SIMD library on the N150 at today's caps, and it would have brought
+a second kind of release artifact, a binary per platform beside the PyPI
+package. Almost all of the gain comes from not reading SQLite (section 3.1).
+Which library is used, and whether it is required or optional, is decided with
+the implementation.
 
-### 3.5 Off by default, answers unchanged
+### 3.3 Off by default, answers unchanged
 
-When the sidecar ships it is opted into. An absent sidecar, a damaged file or a
-different dimension sends the call to the server's own path. It is held to
-returning the same rows in the same order as that path, by this contract and
+When the file reader ships it is opted into. A missing file, a damaged file or
+a different dimension sends the call to the SQLite read. It is held to
+returning the same rows in the same order as that read, by this contract and
 its golden, rather than to a bound on how much worse its answers may be.
 
 ## 4. Not in this step
 
-- **The file format, the sidecar's protocol and its fallback, and the release
-  binaries.** The next step.
-- **Lifting the examined cap.** A change to answers; measured on its own.
+- **The file format, its build, the merge of rows past the watermark, and the
+  reader.** The next step.
+- **Lifting the examined cap.** Over 100,000 memories the cap (250,000 rows)
+  already binds, and one call looks at about 7% of the blocks, the first ones in
+  key order. Lifting it would change which records the arm can reach, so it is
+  a change to answers, measured on its own.
 - **The coarse search of records.** The same mechanism over another
-  population, when the record count makes it worth it.
-- **The re-rank.** Not planned, for the reason in section 1.
-- **The keyword arm.** In the same breakdown, recall's slowest arm is the
-  keyword arm: the full-text ranking inside SQLite, which this step does not
-  touch.
+  population.
+- **The re-rank.** Not part of this contract.
+- **The keyword arm.** On the N150, recall's slowest arm is the keyword arm:
+  the full-text ranking inside SQLite, which this step does not touch.

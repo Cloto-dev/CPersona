@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:dc3f70bfd89413c6adafafe0ce1b746be0f67daf -->
+<!-- i18n-source: docs/index.md@blob:6fd8e854f3e88f205757a7f7d5bf3ab9e9b6b7c3 -->
 
 # CPersona ドキュメント
 
@@ -179,9 +179,9 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 - [1 ビット粗探索](BINARY_COARSE_SEARCH_DESIGN.md) — 全レコードの 1 ビット索引を
   Hamming 距離で走査し、保存済みのベクトルで並べ直すことで、走査窓を広げずに、
   窓の外のレコードを答えの横に別枠で置き、時間の手がかりの期間を丸ごと探せるようにすること。
-- [Block の候補生成の約束](BLOCK_CANDIDATES_CONTRACT.md) — Block の腕の候補生成を、別の実装が
-  同じ行を同じ順で返せる形で書いた約束と、それを守らせる golden、そして Go の sidecar が
-  SQLite でなく Block のビット列の連続ファイルを読む理由。
+- [Block の候補生成の約束](BLOCK_CANDIDATES_CONTRACT.md) — Block の腕の候補生成を、速い実装が
+  同じ行を同じ順で返せる形で書いた約束と、それを守らせる golden、そしてその実装が SQLite でなく
+  連続ファイルを SIMD のライブラリで読む理由。
 - [溢れ分の tree](OVERFLOW_TREE_DESIGN.md) — 長いレコードを埋め込みの窓に収まる区間に分け、
   recall が返すものを変えずに、返されたレコードを関連する部分で引用できるようにすること。
 - [連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md) — entity・別名・関係の宣言されたグラフ。

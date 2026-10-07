@@ -8,8 +8,8 @@ The golden file, `tests/golden/block_candidates.json`, holds block rows, a
 query, the caps, and the rows recall's candidate generation returns for them.
 The answers are observed from the functions recall runs (see
 `tests/block_candidates_cases.py`); nobody writes them down. An implementation
-in another language passes when it returns every case's rows in the same order
-(`docs/BLOCK_CANDIDATES_CONTRACT.md`).
+that reads the rows another way passes when it returns every case's rows in the
+same order (`docs/BLOCK_CANDIDATES_CONTRACT.md`).
 
 Regenerating is legitimate when a case is added or an intended change to the
 candidate generation lands. In both cases the diff is the review surface: a

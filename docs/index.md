@@ -191,9 +191,9 @@ guides disagree, the guides win.
   vectors, so records past the scan window can be held beside the answer
   and a time cue's period can be searched whole, without widening the window.
 - [Block candidate contract](BLOCK_CANDIDATES_CONTRACT.md) — the block arm's
-  candidate generation stated so another implementation returns the same rows
-  in the same order, the golden that holds it there, and why the Go sidecar
-  reads a contiguous file of block bits rather than SQLite.
+  candidate generation stated so a faster implementation returns the same rows
+  in the same order, the golden that holds it there, and why that
+  implementation reads a contiguous file with a SIMD library rather than SQLite.
 - [Overflow tree](OVERFLOW_TREE_DESIGN.md) — dividing a long record into
   spans that each fit the embedding window, so a returned record can be quoted
   by the part that matters, without changing what recall returns.
