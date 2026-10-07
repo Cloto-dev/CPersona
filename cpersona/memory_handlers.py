@@ -3806,19 +3806,26 @@ COMMON_PHRASE_BOUND = _BM25_IDF_FLOOR * (_BM25_K1 + 1)
 # Room for the rounding between a score summed over every phrase and one summed over
 # some of them: far below the bound, and added to it rather than trusted to be zero.
 _BM25_SUM_ROUNDING = 1e-9
-_VOCAB_TABLE = "cpersona_memories_fts_rows"
+# How many indexed rows hold one phrase: the n_i of FTS5's own idf.
+_PHRASE_ROWS_SQL = "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH ?"
 
 
 async def _common_phrases(db, phrases: list[str]) -> set[str]:
     """The phrases FTS5's bm25 weighs at its idf floor, among those it can prove it for.
 
-    Only a phrase that is one trigram is classified: its row count is then the trigram's
-    row count in the index's vocabulary, exactly, with no phrase match to run. That
-    covers a three-letter word ("the", "was", "you") and every phrase of a Japanese or
-    Chinese query, which the query builder cuts into trigrams. An ASCII phrase is looked
-    up in lower case, as the trigram tokenizer folds it; any other script is left
-    unclassified, because a case fold here could name a different trigram than the
-    tokenizer's. An unclassified phrase stays in the ranking, which is always safe.
+    Only a phrase that is one trigram is classified, as it always was. That covers a
+    three-letter word ("the", "was", "you") and every phrase of a Japanese or Chinese
+    query, which the query builder cuts into trigrams. An ASCII phrase is counted in
+    lower case, as the trigram tokenizer folds it, so "The" and "the" are counted once;
+    any other script is left unclassified. An unclassified phrase stays in the ranking,
+    which is always safe.
+
+    The rows holding a phrase are counted with the phrase itself, one count per trigram,
+    which is the n_i FTS5's bm25 counts. They were read from an fts5vocab table before,
+    which gives the same numbers, but SQLite 3.40.1 (the version Debian 12's Python
+    links) walks every position of a term to report how many rows hold it, whether or
+    not the occurrence count is asked for: on 100,000 memories of real length that
+    lookup took 66 ms where the counts take 20 ms.
     """
     candidates: dict[str, str] = {}
     for phrase in phrases:
@@ -3831,15 +3838,13 @@ async def _common_phrases(db, phrases: list[str]) -> set[str]:
             candidates[phrase] = word
     if not candidates:
         return set()
-    # A temp table belongs to this connection and is gone with it; the database file
-    # is not written.
-    await db.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS temp.{_VOCAB_TABLE} USING fts5vocab(main, memories_fts, row)")
     n_rows = (await db.execute_fetchall("SELECT count(*) FROM memories_fts_docsize"))[0][0]
     if not n_rows:
         return set()
-    terms = sorted(set(candidates.values()))
-    marks = ", ".join("?" for _ in terms)
-    held = dict(await db.execute_fetchall(f"SELECT term, doc FROM temp.{_VOCAB_TABLE} WHERE term IN ({marks})", terms))
+    held: dict[str, int] = {}
+    for term in sorted(set(candidates.values())):
+        quoted = '"' + term.replace('"', '""') + '"'
+        held[term] = (await db.execute_fetchall(_PHRASE_ROWS_SQL, (quoted,)))[0][0]
     return {
         phrase
         for phrase, term in candidates.items()
