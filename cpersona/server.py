@@ -2653,13 +2653,23 @@ for _tool in registry._tools:
 # one HTTP process serves several clients, so the full list is still built and only
 # the answer to that client is narrowed.
 def _client_name() -> str:
-    """The `clientInfo.name` of the session asking, or "" outside a request."""
+    """The name of the client asking: its `clientInfo.name`, or over HTTP the product
+    in its User-Agent; "" outside a request."""
     try:
-        params = registry.server.request_context.session.client_params
+        context = registry.server.request_context
     except LookupError:
         return ""
-    info = getattr(params, "clientInfo", None)
-    return getattr(info, "name", "") or ""
+    info = getattr(getattr(context.session, "client_params", None), "clientInfo", None)
+    name = getattr(info, "name", "") or ""
+    if name:
+        return name
+    # The HTTP transport is stateless: every request gets a fresh session that never
+    # saw `initialize`, so there is no clientInfo by the time tools/list arrives.
+    # The User-Agent arrives with every request; Codex sends
+    # "codex-mcp-client/<version>", the same name as its clientInfo.
+    request = getattr(context, "request", None)
+    agent = request.headers.get("user-agent", "") if request is not None else ""
+    return agent.split("/", 1)[0].strip()
 
 
 _list_every_tool = registry.server.request_handlers[ListToolsRequest]

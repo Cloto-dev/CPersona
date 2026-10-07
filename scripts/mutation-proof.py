@@ -4103,9 +4103,9 @@ MUTATIONS += [
         tests=('tests/test_compact_tool_surface.py',),
         target="compact tool list — the client is read from the session's initialize",
         file='cpersona/server.py',
-        find='    return getattr(info, "name", "") or ""\n',
-        replace='    return ""\n',
-        breaks='no client is ever recognised, so the list is never narrowed',
+        find='    name = getattr(info, "name", "") or ""\n',
+        replace='    name = ""\n',
+        breaks="a client's initialize is never read, so a session that has one is not recognised",
         expect='test_compact_tool_surface.py::test_codex_is_answered_with_the_compact_list',
     ),
     Mutation(
@@ -4117,6 +4117,16 @@ MUTATIONS += [
         replace='    listed = result.root\n    registry.server._tool_cache.clear()\n',
         breaks='one compact answer empties the cache every client is validated against',
         expect='test_compact_tool_surface.py::test_the_sdk_tool_cache_keeps_every_tool_after_a_compact_answer',
+    ),
+    Mutation(
+        id='M401',
+        tests=('tests/test_compact_tool_surface.py',),
+        target='compact tool list — over stateless HTTP the client is named by its User-Agent',
+        file='cpersona/server.py',
+        find='    return agent.split("/", 1)[0].strip()\n',
+        replace='    return ""\n',
+        breaks='over the HTTP transport no session remembers initialize, so Codex is never recognised there',
+        expect='test_compact_tool_surface.py::test_codex_over_stateless_http_is_named_by_its_user_agent',
     ),
 ]
 
