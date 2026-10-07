@@ -156,11 +156,12 @@ Tools that accept `session_key`: `recall`, `recall_with_context`,
 
 **Implemented.** Every tool that consults the pause now knows its own key, so a
 session silences its own writes and nobody else's. `session_key` is threaded
-through the sixteen write tools that actually consult it (`store`,
+through the seventeen write tools that actually consult it (`store`,
 `archive_episode`, `update_memory`, `lock_memory`, `unlock_memory`,
 `delete_memory`, `delete_episode`, `delete_agent_data`, `update_profile`,
 `calibrate_threshold`, `set_recall_precision`, `migrate_channel_axis`,
-`import_memories`, `merge_memories`, `check_health`, `deep_check`).
+`import_memories`, `merge_memories`, `declare_associations`, `check_health`,
+`deep_check`).
 
 `export_memories` does **not** take the parameter. An earlier draft of this
 section listed it, but it consults no pause gate, so the key would have been a

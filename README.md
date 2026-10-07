@@ -152,8 +152,8 @@ fewer tokens than each of the other ten, the closest of them within one run's sa
 error. CPersona stores each conversation as it is and calls no model to store or
 recall.
 
-2.6.3a1 is the code of 2.6.3, the release a plain install gets; 2.6.4a1 is a
-pre-release. Each was run once, by this project. The comparison rows, the registered
+2.6.3a1 is the code of the 2.6.3 release, and 2.6.4a1 is a pre-release of
+2.6.4. Each was run once, by this project. The comparison rows, the registered
 rules and every departure from a clean run are in the
 [results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme.md).
 Retrieval-only measurements on LMEB (22 tasks) and the harness behind them:

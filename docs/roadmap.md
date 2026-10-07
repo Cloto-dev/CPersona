@@ -79,8 +79,8 @@ database opens under 2.5 and back.
 
 **What also landed here**, because each was additive and rollback-safe:
 per-client capabilities enforced server-side; OAuth as the identity layer over
-them; a server-served operating context; declared session identity; recorded
-access origin; the contiguous embedding index and chunked scan (the first two
+them; a server-served operating context; declared session identity; the
+contiguous embedding index and chunked scan (the first two
 rungs of the ladder below); opt-in reach beyond the scan window; size caps
 that warn before they reject; and update awareness, so the server can say a
 newer or withdrawn release exists.

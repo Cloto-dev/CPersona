@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/faq.md@blob:8125f8b4c20cbf3cca5622b6285443c85f1001bf -->
+<!-- i18n-source: docs/faq.md@blob:08c936946dea30dbd7e5b0077a38dfbd4177b322 -->
 
 # FAQ
 
@@ -97,9 +97,10 @@ env で窓を上げてください。それが想定された使い方で、ア�
 recall で負けることはあります。「失われては困る」なら lock、「常にコンテキストに
 あってほしい」なら決定的注入です。
 
-プロフィール (`update_profile`) が確実に浮上する経路になるのは、confidence
-scoring が on のときだけです。off (既定) ではプロフィール行はスコアを持たず、
-コーパスが埋まっていると `limit` で切られます。
+プロフィール (`update_profile`) は、いつも浮上する経路ではありません。確実に上位に
+出るのは、confidence scoring を on にして `CPERSONA_CONFIDENCE_ORDERING=legacy` に
+した時だけです。既定の並べ方ではスコアを持たずに最後に並び、コーパスが埋まっていると
+`limit` で切られます。行が 50 件未満のプールでは、プロフィール行はそもそも返りません。
 → [契約 §7](behavior-contracts.md#7-profile-rows-carry-no-score) /
 [§9](behavior-contracts.md#9-lock_memory-protects-it-does-not-boost)
 

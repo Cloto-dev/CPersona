@@ -192,18 +192,32 @@ def measured_calibrate_default() -> str:
     return m.group(1)
 
 
+# Every path that puts more than one text in a single /embed request, by the
+# constant that sizes it: the health check's re-embedding, the overflow-node
+# builder and the sentence-block builder. The embedding client sends what it is
+# given as one request, so the largest of these is the largest request.
+EMBED_BATCH_SOURCES = (
+    ("checks.py", r"^EMBED_BATCH_SIZE = (\d+)$"),
+    ("nodes.py", r"^_EMBED_BATCH = (\d+)$"),
+    ("blocks.py", r"^_EMBED_BATCH = (\d+)$"),
+)
+
+
 def measured_embed_batch() -> int:
     """The largest number of texts CPersona puts in one /embed request.
 
-    Read from the named constant rather than from a literal in a slice, so the
-    check keeps measuring the same thing if the batching loop is rewritten.
+    Read from the named constants rather than from a literal in a slice, so the
+    check keeps measuring the same thing if a batching loop is rewritten.
     """
-    text = (ROOT / "cpersona" / "checks.py").read_text()
-    m = re.search(r"^EMBED_BATCH_SIZE = (\d+)$", text, re.M)
-    if not m:
-        fail("checks.py: EMBED_BATCH_SIZE literal not found — update this script")
-        return -1
-    return int(m.group(1))
+    sizes = []
+    for name, pattern in EMBED_BATCH_SOURCES:
+        text = (ROOT / "cpersona" / name).read_text()
+        m = re.search(pattern, text, re.M)
+        if not m:
+            fail(f"{name}: embedding batch literal not found — update this script")
+            return -1
+        sizes.append(int(m.group(1)))
+    return max(sizes)
 
 
 def parsed_env_defaults() -> dict[str, str]:
@@ -569,7 +583,7 @@ def check_embed_batch(batch: int) -> None:
                 if int(m.group(1)) != batch:
                     fail(
                         f"{rel}: claims at most {m.group(1)} texts per /embed request, "
-                        f"but EMBED_BATCH_SIZE is {batch}"
+                        f"but the largest embedding batch is {batch}"
                     )
 
 

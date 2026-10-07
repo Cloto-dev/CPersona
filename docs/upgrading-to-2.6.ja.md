@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:f12354bbd10b17b20a0dc3759284b102105c5d8e -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:a50bb068b1bd7196a1612a7bafbf1ec615dd073f -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -20,11 +20,12 @@
 2. **埋め込みサーバーを確かめる。** すでに保存されている記録の溢れ分のノードを作るには、トークン数を
    報告するサーバー (CEmbedding 0.8.0 以降) が必要です。古いサーバーは `count: null` を返し、
    これはゼロではありません。
-3. **2.6.0 をインストールする。** 版を指定しない更新でも 2.6.0 になります。どの版を動かしているかが
-   分かるよう、版を固定してください:
+3. **2.6 系の最新版をインストールする。** 版を指定しない更新でもそれが入ります。2.6 系の中に
+   とどめ、どの版を動かしているかが分かるよう、入った版を確かめてください:
 
    ```sh
-   pip install 'cpersona==2.6.0'
+   pip install --upgrade 'cpersona>=2.6,<2.7'
+   pip show cpersona | grep Version
    ```
 
 ## 最初の起動で起きること { #what-the-first-start-does }

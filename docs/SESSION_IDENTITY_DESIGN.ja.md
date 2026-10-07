@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:6b5afbbde889577ccae1a966d85f99b8d1b2c007 -->
+<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:8c9e8e4b2798d9b192ea55b1a0afcab896b34762 -->
 
 # 申告型セッション同一性 (`session_key`)
 
@@ -150,11 +150,11 @@ global **かつ**セッション形状であるものは、以下の 2 つだけ
 
 **実装済み。** pause を参照する全ツールが自分の key を知るようになり、セッションは自分の
 write だけを止め、他のセッションには影響しません。`session_key` は、実際に pause を参照
-する write ツール 16 本に threading されています (`store` / `archive_episode` /
+する write ツール 17 本に threading されています (`store` / `archive_episode` /
 `update_memory` / `lock_memory` / `unlock_memory` / `delete_memory` /
 `delete_episode` / `delete_agent_data` / `update_profile` / `calibrate_threshold` /
 `set_recall_precision` / `migrate_channel_axis` / `import_memories` /
-`merge_memories` / `check_health` / `deep_check`)。
+`merge_memories` / `declare_associations` / `check_health` / `deep_check`)。
 
 `export_memories` は本パラメータを**受け取りません**。本節の以前の版はこれを列挙して
 いましたが、このツールは pause gate を参照しないため、key は「そのツールでは決して効かない

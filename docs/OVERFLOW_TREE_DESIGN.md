@@ -135,8 +135,9 @@ paths written after this design:
 Memory and episode ids are never reused (`AUTOINCREMENT`), so a node cannot
 come to point at a different record. A node whose `embedding_model` differs from
 the current model is treated as missing and rebuilt, as record embeddings are.
-Nodes are not exported: they are derived from text the export already carries,
-and an import rebuilds them. A node is read only through its parent, so it
+Nodes are not exported: they are derived from text the export already carries.
+An import does not queue them; the health check's `missing_nodes` repair
+builds them for imported records, as for any record written without them. A node is read only through its parent, so it
 inherits the parent's isolation axes and access control.
 
 ## 5. Invariants

@@ -224,9 +224,12 @@ costs nothing over prepending, and does not have the failure mode.
 
 The index is optional in the strongest sense: the scan it replaces is still
 there, still correct, and still the fallback. Three conditions return to it —
-the file is missing, the file fails its own integrity check (row count against
-file length, or fingerprint mismatch), or the query vector's dimension does not
-match the header's.
+the file is missing, the file fails its own integrity check (its magic, its
+format version, a header that states its dimension and row count, and a row
+count that matches the file length), or the query vector's dimension does not
+match the header's. The fingerprint is not compared: the embedding model's name
+in it is recorded for a person reading the file, and the dimension is the part
+that guards.
 
 A mid-flight model swap leaves a mixed-dimension corpus behind, and that is a
 fourth condition — one the *builder* refuses rather than the reader.
