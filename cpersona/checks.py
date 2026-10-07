@@ -1041,14 +1041,19 @@ async def check_null_episode_embedding(db, agent_id: str, fix: bool, embedding_c
 async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     """Content-level FTS5 index verification via the ``integrity-check`` command.
 
-    With the external-content flag (rank=1, SQLite >= 3.42) this catches both
-    ghost index rows and rows whose *indexed text* no longer matches the
-    content table — the bug-008 failure class. It supersedes the pre-v2.4.37
-    row-count comparison, which was structurally blind here: on an
-    external-content FTS5 table ``COUNT(*)`` proxies to the content table, so
-    the two counts could never differ (verified empirically). On older SQLite
-    the enhanced form is unavailable and we fall back to the internal-only
-    structural check. Fix rebuilds the index and re-verifies.
+    With the external-content flag (rank=1) this catches both ghost index rows
+    and rows whose *indexed text* no longer matches the content table — the
+    bug-008 failure class. It supersedes the pre-v2.4.37 row-count comparison,
+    which was structurally blind here: on an external-content FTS5 table
+    ``COUNT(*)`` proxies to the content table, so the two counts could never
+    differ (verified empirically). A build without the enhanced form falls back
+    to the internal-only structural check. Fix rebuilds the index and re-verifies.
+
+    On older SQLite this is the only health check that sees FTS5 damage. The
+    enhanced form ran, and reported overwritten index blocks, content rewritten
+    or deleted behind the index and rows never indexed, on 3.34.1, 3.40.1
+    (Debian 12's), 3.46.1 and 3.50.4. PRAGMA quick_check reported none of the
+    four on 3.34.1 or 3.40.1, and only the overwritten blocks on the later two.
     """
     if not FTS_ENABLED:
         return []
@@ -1122,8 +1127,8 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
                 # commit out from under (see FTS_TABLE_SQL in database.py).
                 await db.execute(FTS_TABLE_SQL[fts])
             await db.execute(rebuild)
-            # bug-069: mirror the detection fallback ladder. The enhanced rank=1 verify is
-            # unsupported on SQLite < 3.42 and raises OperationalError there; without this
+            # bug-069: mirror the detection fallback ladder. A build without the enhanced
+            # rank=1 verify raises OperationalError for it; without this
             # fallback it was caught as corruption below, falsely reporting fixed:False even
             # though the rebuild succeeded. Try enhanced → structural; only a genuine
             # DatabaseError (real corruption after rebuild) marks it unfixed.
