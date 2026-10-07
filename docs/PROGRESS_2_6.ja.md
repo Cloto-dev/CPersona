@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:2ff2c83603b372b0a236ba437adbd5020326982a -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:7a2df5773e29f21e9f6f301cd34c3107925aba0b -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,7 +10,7 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6 が続き、版を指定しない導入は 2.6.6 になります。
+2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6 が続き、版を指定しない導入は 2.6.6 になります。2.6.7a1 (2026-10-08) は pre-release で、版を指定したときだけ導入されます。
 pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -67,6 +67,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.5 | 2.6.5a3 の final で、コードの変更はなし: 版を指定しない導入でも、較正と起動時の block の見回りの後ろで検索が待たなくなり、Claude Code では `reconstruct`・`store`・`archive_episode` がセッションと一緒に読み込まれ、どのツールの説明文も 2,048 字に収まります。`reconstruct` の `lite=true` と、既定 off の `evidence`・`whole` の列も使えます。証拠の配分の設計の被覆の段は判定して採りませんでした ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-coverage.md))。2.6.5a3 を本番で 10 時間使い、再起動なし・エラーなしを確かめてから出しました |
 | 2.6.6a1 | pre-release。想起がブロックの表全体を読まなくなりました。ブロックの腕は、調べる行を窓関数で読んでいて、上限が効く前にエージェントの全ブロックを並べ替えていました。今はキーの順に読み、上限で止まります。並べ直しに使う 200 本のベクトルは行値の `IN` で読んでいて、SQLite 3.40.1 では保存された全ベクトルを走査していました。今はキーを結合して読みます。Intel N150 で、実際の長さの記憶 10 万件 (約 5,600 万トークン、ブロック 3,480,069 個) からの想起は、1 つ目の修正だけで中央値 7.20 秒 (修正なし 20.64 秒)、両方の修正を入れ、同じ機械のメモリを空けた状態で 1.94 秒でした ([1 つ目](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-realistic-corpus-bug504.md)、[両方](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-realistic-corpus-bug505.md))。返る答えは変わりません。 |
 | 2.6.6 | 2.6.6a1 の final で、追加の pre-release を挟まずに出しました。2.6.6a1 の後に入った変更が 3 つあります。融合のキーワードの腕は、ベクトルの腕が問いを埋め込んで走査する間に別の接続で走り、ブロックの腕は問いが埋め込まれた時点で始まります。`rrf` (既定) と cascade では、キーワードの腕を、FTS5 の bm25 が下限の重みしか与えない問いの語を外して並べ、外しても行が変わりえない時だけその行を採ります。`rsf` は式全体のままです。2.6.6a1 と同じ Intel N150 と 10 万件で、実行前に登録した規則により、想起の中央値は、腕を並べて走らせ、実行のたびに空回りしない埋め込みサーバー (CEmbedding 0.9.1 の既定) を使うと 1.94 秒から 1.25 秒に、さらにキーワードの並べ方で 1.27 秒と 1.31 秒から 1.06 秒と 1.05 秒に下がりました ([腕](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-concurrent-arms.md)、[キーワードの並べ方](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-rare-phrases.md))。返る答えは変わりません。`store` は `message` の中だけでなく最上位でも欄を受け付けます: その時 `source` の既定は書き込むエージェントになり、アクセス制御で書き込める先がちょうど 1 つのエージェントの接続では `agent_id` を省けて、`lock: true` で保存した行をロックします。定義は 6,790 字から 4,106 字になり、スキルの方針ブロックは v5 です | [#428](https://github.com/Cloto-dev/cpersona/pull/428), [#429](https://github.com/Cloto-dev/cpersona/pull/429), [#430](https://github.com/Cloto-dev/cpersona/pull/430) |
+| 2.6.7a1 | pre-release。`rrf` と cascade では、キーワードの腕が、ありふれた語を含む行の数を、その語自身での `count(*)` の一致 (FTS5 の bm25 が数える数) で数えます。以前は `fts5vocab` の表から読んでいて、SQLite 3.40.1 はそのために語のすべての出現位置をたどっていました。外す語と返る行は 2.6.6 と同じです。2.6.6a1 と同じ Intel N150 と 10 万件で、実行前に登録した規則により、想起の中央値は 2.6.6 の 1,017.70 ms と 1,044.55 ms に対して 991.45 ms と 1,006.51 ms でした。下がりましたが登録した 5% に届かないので、速さの変化は主張しません ([数え方](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-count-match.md))。コードとずれていた文書の記述 14 か所を直しました | [#437](https://github.com/Cloto-dev/cpersona/pull/437), [#438](https://github.com/Cloto-dev/cpersona/pull/438) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
