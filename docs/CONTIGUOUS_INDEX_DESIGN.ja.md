@@ -1,12 +1,13 @@
-<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:fd934b808ec81f4c71ba9750ccf6341686ee3f64 -->
+<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:10c52a25a463c79306f2d7301e8ee2beefad95dd -->
 
 # 連続配置埋め込み索引
 
 > **翻訳について**: 正本は英語版です。日本語版が古い場合は英語版を参照してください。
 
-ステータス: 2.5.x ラインへの提案。`SCHEMA_VERSION` は 13 のまま、新しいランタイム
-依存も増えません。返る答えは現行スキャンが既に返しているものと**ビット単位で同一**です
-(同スコア行の順序を含みます)。
+ステータス: 2.5.9 で出荷済み (最初は 2.5.9a1)。スキーマの版も新しいランタイム依存も
+増やしていません。返る答えはスキャンが返すものと**ビット単位で同一**です
+(同スコア行の順序を含みます)。索引を作るのは運用者のコマンドで、サーバーは読むだけです
+([運用](operations.md#the-contiguous-vector-index))。
 
 ## 1. 何が変わり、何が変わらないか { #1-what-changes-and-what-does-not }
 

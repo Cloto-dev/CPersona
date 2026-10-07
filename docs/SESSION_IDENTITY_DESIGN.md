@@ -1,7 +1,9 @@
 # Declared Session Identity (`session_key`)
 
-Status: proposed for the 2.5.7b1 line. Additive and behaviour-preserving: a
-caller that sends nothing keeps today's behaviour byte for byte.
+Status: shipped. Stage 1 (section 5) landed in the 2.5.7 beta series, first in
+2.5.7b3: additive, and a caller that sends nothing keeps its behaviour byte for
+byte. Stage 2 changed default behaviour, so it took its own pre-release ladder,
+first in 2.5.8a1 and final in 2.5.8 (section 9).
 
 ## 1. The problem: a process is not a session
 

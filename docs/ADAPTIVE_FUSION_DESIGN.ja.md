@@ -1,11 +1,12 @@
-<!-- i18n-source: docs/ADAPTIVE_FUSION_DESIGN.md@blob:81ab56dd7af1c3326073b35793b0f735989f9f14 -->
+<!-- i18n-source: docs/ADAPTIVE_FUSION_DESIGN.md@blob:d68d0b953841647c452a55c697a9e6ed06d82946 -->
 
 # 適応的融合 — 設計 { #adaptive-fusion-design }
 
-Status: 2.6 ラインの設計であり、挙動ではない。以下のすべてはモード切替の後ろに
+Status: 2.6 ラインの設計であり、挙動ではない。以下の適応モードはモード切替の後ろに
 default-off で出荷される。出荷済みの融合は、本ドキュメントが事前登録する計測で
 [2.6 設計ページ](RELIABLE_RECALL_2_6.md#5-adaptive-fusion)の成功条件が満たされるまで
-触られない。
+触られない。第 1 節の構造的な修正 D1・D2 は、第 4 節が既定オンで先に出すとしているが、まだ
+出荷されていない: recall は今も、D2 が置き換えるプールの大きさによる門を使っている。
 
 本設計が拠って立つ事実は、2 本の研究ノートにある。
 [凍結段リプレイ](research/frozen-stage-replay-2026-09.md) はベンチマークの損失を段ごとに

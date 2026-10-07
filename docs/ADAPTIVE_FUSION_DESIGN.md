@@ -1,10 +1,12 @@
 # Adaptive Fusion — design
 
-Status: design for the 2.6 line, not behaviour. Everything below ships
+Status: design for the 2.6 line, not behaviour. The adaptive mode below ships
 default-off behind a mode switch. The shipped fusion is untouched until the
 success condition of the
 [2.6 design page](RELIABLE_RECALL_2_6.md#5-adaptive-fusion) is met on the
-measurement this document pre-registers.
+measurement this document pre-registers. The structural fixes D1 and D2
+(section 1), which section 4 ships first and default-on, have not shipped yet:
+recall still uses the pool-size gate that D2 replaces.
 
 The facts this design rests on are in two research notes: the
 [frozen-stage replay](research/frozen-stage-replay-2026-09.md), which located

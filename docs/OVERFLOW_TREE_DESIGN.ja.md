@@ -1,8 +1,8 @@
-<!-- i18n-source: docs/OVERFLOW_TREE_DESIGN.md@blob:9779ca46c5a88be4af04e57b8349878537e740e9 -->
+<!-- i18n-source: docs/OVERFLOW_TREE_DESIGN.md@blob:4860a33bcb4e34dc593dac4b79af022796754cd6 -->
 
 # 溢れ分の tree — 設計 { #overflow-tree-design }
 
-Status: 2.6 ラインの設計であり、挙動ではない。本ページは、長いレコードを先頭の数百字ではなく
+Status: 2.6.0 で出荷済み (最初は 2.6.0a3)。別に決めることにしたものは第 7 節にあります。本ページは、長いレコードを先頭の数百字ではなく
 関連する部分で引用できるようにするための保存層を決めます。最初の用途は
 [再構成想起](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit)の抜粋選択です。
 recall がどのレコードをどの順で返すかは変えません。
