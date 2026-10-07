@@ -4078,6 +4078,16 @@ MUTATIONS += [
         breaks="the block keeps telling agents pause_persistence(ttl_seconds=1800) after the tool stopped taking it",
         expect='test_policy_block_call_shapes.py::test_every_argument_a_shape_names_is_declared',
     ),
+    Mutation(
+        id='M403',
+        tests=('tests/test_bug439_quick_check_stale_fts_cache.py',),
+        target="check_fts_integrity — the enhanced integrity-check failing marks the index corrupt",
+        file='cpersona/checks.py',
+        find='            except sqlite3.DatabaseError:\n                corrupt = True\n            await _release_probe_transaction()',
+        replace='            except sqlite3.DatabaseError:\n                corrupt = False\n            await _release_probe_transaction()',
+        breaks="overwritten index blocks go unreported on SQLite whose quick_check does not inspect FTS5",
+        expect='test_bug439_quick_check_stale_fts_cache.py::test_a_damaged_index_is_reported_by_the_fts_check_whatever_quick_check_sees',
+    ),
 ]
 
 
