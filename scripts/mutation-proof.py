@@ -4068,6 +4068,16 @@ MUTATIONS += [
         breaks='id-based dedup silently stops working',
         expect='test_store_flat_form.py::test_top_level_fields_are_stored_with_this_agent_as_the_source',
     ),
+    Mutation(
+        id='M402',
+        tests=('tests/test_policy_block_call_shapes.py',),
+        target="policy block call shapes — an argument the block names is one the tool declares",
+        file='cpersona/server.py',
+        find='            "ttl_seconds": {\n                "type": "integer",\n                "description": "TTL until automatic resume.',
+        replace='            "ttl": {\n                "type": "integer",\n                "description": "TTL until automatic resume.',
+        breaks="the block keeps telling agents pause_persistence(ttl_seconds=1800) after the tool stopped taking it",
+        expect='test_policy_block_call_shapes.py::test_every_argument_a_shape_names_is_declared',
+    ),
 ]
 
 
