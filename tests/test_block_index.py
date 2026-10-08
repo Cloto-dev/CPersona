@@ -468,7 +468,8 @@ async def test_the_log_numbers_from_its_own_clock(on):
 
 
 @pytest.mark.asyncio
-async def test_startup_stops_the_log_when_the_file_is_off():
+async def test_startup_stops_the_log_when_the_file_is_off(monkeypatch):
+    monkeypatch.setattr(config, "BLOCK_INDEX_ENABLED", False)
     async with _database() as db:
         await db.execute("UPDATE block_log_clock SET logging = 1 WHERE id = 0")
         await db.execute(INSERT, ("mem", 1, 0, "a", "", "", b"\x00" * WIDTH, "m"))

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:801cae03e580084a82dd8fdc63e19ca828448b82 -->
+<!-- i18n-source: docs/architecture.md@blob:8b8975f36ac3da6cc7fc738dd0392c3ebe590d04 -->
 
 # アーキテクチャ
 
@@ -58,7 +58,7 @@ WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在�
 Block の腕の Hamming パスが最上位に並べたものを再順位付けします。`record_blocks` の
 トリガーが、Block と一緒にその Block のベクトルを削除します。小さな 2 つのテーブル
 `block_log_clock` と `record_block_changes` は、どの記録の Block が変わったかの記録で、
-Block の索引ファイル (`CPERSONA_BLOCK_INDEX`、既定は off) を使っている間だけトリガーが
+Block の索引ファイル (`CPERSONA_BLOCK_INDEX`、既定は on) を使っている間だけトリガーが
 付けます。想起はその記録を SQLite から、それ以外の記録の Block をファイルから読みます
 ([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))。
 
@@ -243,7 +243,7 @@ CPersona は生成モデルを呼びません。要約も抽出も書き換え�
 コーパスは有界な run の連なりとして構築され、再起動しても最初からではなく前回が止まった
 あたりから再開します。
 
-3 つ目は `block_index_build` で、`CPERSONA_BLOCK_INDEX` が on の配備でだけ走ります。
+3 つ目は `block_index_build` で、`CPERSONA_BLOCK_INDEX` が off の配備では走りません。
 Block の腕が SQLite の代わりに読む Block の索引ファイルを書きます
 ([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))。ファイルが無い・使えない・変更記録から
 遅れすぎている時に、起動時と、Block の構築や sweep の後に積まれ、同時に 1 つだけ存在します。

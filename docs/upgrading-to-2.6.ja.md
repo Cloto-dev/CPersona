@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:bf4b2e2ddd87bb4a5aadcaea3f29840b1d2100fb -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:be0921fe28dc07ba7fd024d60cff4d7c4faef344 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -41,7 +41,7 @@
 | 16 | 2.6.0a5 | `record_blocks`: Block による到達 | **自動で作られます**: すでに保存されている記録の Block。Block による到達を off にした場合を除く ([下記](#block-reach-is-on-by-default)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block と一緒に作られます |
 | 18 | 2.6.3a1 | `memories` と `episodes` の `embedding_model`: 各ベクトルを作ったモデルのラベル。保存済みの行は空のラベル (不明) になります | なし: ベクトルは次に書かれるときにラベルが付きます |
-| 19 | 2.6.7a2 | `block_log_clock`、`record_block_changes`: どの記録の Block が変わったかの記録。Block の索引ファイルが on の間だけ付けます ([約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | なし: ファイルは `CPERSONA_BLOCK_INDEX` が on の配備でだけ、キューで作られます |
+| 19 | 2.6.7a2 | `block_log_clock`、`record_block_changes`: どの記録の Block が変わったかの記録。Block の索引ファイルが on の間だけ付けます ([約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **自動で作ります**: キューで作ります。ファイルを off にした場合を除きます ([下](#the-block-index-file-is-on-by-default)) |
 
 2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2、2.6.5a3、2.6.5、2.6.6a1、2.6.6、2.6.7a1 はスキーマを変えていません。
 
@@ -97,6 +97,24 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 2.6.0a5 で Block の構築を on にしていた場合、その Block の集合はベクトルを持たないので、同じ
 バックフィルが作り直します。
 
+### Block の索引ファイルは既定で on です { #the-block-index-file-is-on-by-default }
+
+2.6.7 から、Block の腕は調べる行を SQLite でなくデータベースの横のファイルから読みます。答えは同じです
+([運用](operations.md#the-block-index-file))。
+
+- **最初の起動でファイルを作ります**。キューで、収める Block ができた時点で作ります。10 万件の記憶と
+  3,480,069 個の Block のストアでは 431,528,748 バイトで、Intel N150 で作るのに 11〜14 秒かかりました。
+  作り終わるまで、想起は SQLite を読みます。
+- **想起が速くなります**。そのストアとマシンで、実行前に登録した規則のもとで、想起の中央値は 960 ms から
+  798 ms、931 ms から 844 ms に、Block の腕は約 575 ms から 64 ms に下がり、どの想起も同じ行を同じ順で
+  返しました ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md))。
+- **書き込みに少し費用がかかります**。サーバーは書いた・消した Block の行ごとに約 16 バイトの記録を付け、
+  そこでは Block の構築に足した費用は 1% 未満でした。ファイルは、作った後の記録が 35,000 件を超えると
+  作り直されます。
+- **Windows ではファイルをメモリに読み込みます** (マップしません)。
+- **off にするには** `CPERSONA_BLOCK_INDEX=false` を設定します。サーバーは起動時に記録を止め、想起は
+  SQLite を読みます。
+
 ## 変わった挙動 { #behaviour-that-changed }
 
 配備が頼っているものと照らし合わせてください。特に断りのない限り、どれも off か、2.5 と同じです。
@@ -104,6 +122,8 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 - **Block による到達は既定で on です** (2.6.0)。store は記録の Block をキューに入れてそう伝え
   (`blocks: {"status": "queued"}`)、recall は `limit` を最大 2 行超える予約の行を返すことがあり、
   `reconstruct` は一致した Block を引用します。off にする方法は[上](#block-reach-is-on-by-default)です。
+- **Block の索引ファイルは既定で on です** (2.6.7)。最初の起動でデータベースの横にファイルを作り、想起は
+  Block の腕の行をそこから読みます。答えは同じです。off にする方法は[上](#the-block-index-file-is-on-by-default)です。
 - **`count` を省略した `reconstruct` は 10 項目を返します** (2.6.0。以前は 1)。Block による到達が on
   の状態で、これが 2.6.0 の推奨する、記憶から答えるための構成です。1 項目を前提にしていた配備は
   `CPERSONA_RECONSTRUCT_DEFAULT_COUNT=1` を設定してください。`CPERSONA_RECONSTRUCT_MAX_COUNT` だけを

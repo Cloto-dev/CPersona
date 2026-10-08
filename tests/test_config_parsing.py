@@ -120,6 +120,19 @@ def test_block_reach_is_on_by_default(monkeypatch):
         importlib.reload(config)
 
 
+def test_block_index_file_is_on_by_default(monkeypatch):
+    """On unless a deployment says false: a registered run found recall faster
+    with every answer unchanged (results-recall-latency-block-index-file.md)."""
+    try:
+        with monkeypatch.context() as env:
+            env.delenv("CPERSONA_BLOCK_INDEX", raising=False)
+            assert _reload_with(env).BLOCK_INDEX_ENABLED is True
+            env.setenv("CPERSONA_BLOCK_INDEX", "false")
+            assert importlib.reload(config).BLOCK_INDEX_ENABLED is False
+    finally:
+        importlib.reload(config)
+
+
 def test_turning_construction_off_alone_turns_the_reader_off_too(monkeypatch):
     """The one switch a deployment reaches for to skip the backfill must not
     become a startup error because the reader it did not set defaults to on."""
