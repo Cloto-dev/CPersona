@@ -760,6 +760,14 @@ BLOCK_RETRIEVAL_ENABLED = (
 )
 
 
+# 2.6.7: the block arm reads its rows from a file beside the database instead of
+# SQLite (docs/BLOCK_CANDIDATES_CONTRACT.md §3, cpersona/block_index.py). Off by
+# default: on, the server keeps a change log of the block rows and builds the
+# file on its queue, and a recall that the file cannot answer exactly reads
+# SQLite as before. The answer is the same either way; only the time differs.
+BLOCK_INDEX_ENABLED = os.environ.get("CPERSONA_BLOCK_INDEX", "false").lower() == "true"
+
+
 def validate_block_gates() -> None:
     """Refuse retrieval without construction (docs/BLOCK_REACH_DESIGN.md §7).
 

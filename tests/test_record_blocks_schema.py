@@ -213,7 +213,10 @@ async def _objects_outside_blocks(db) -> dict[str, str]:
         "WHERE name != 'record_blocks' AND name NOT LIKE 'record_blocks_%' "
         "AND name NOT LIKE 'record_block_vectors%' "
         "AND name NOT LIKE 'idx_record_blocks%' "
-        "AND name NOT LIKE 'sqlite_autoindex_record_blocks%'"
+        "AND name NOT LIKE 'sqlite_autoindex_record_blocks%' "
+        # v19: the change log the block index file is read through.
+        "AND name NOT LIKE 'record_block_log_%' "
+        "AND name NOT IN ('block_log_clock', 'record_block_changes')"
     )
     return {r[0]: r[1] for r in rows}
 
@@ -222,13 +225,16 @@ async def _objects_outside_blocks(db) -> dict[str, str]:
 async def test_v15_database_migrates_forward_without_touching_other_objects():
     async with _TempDB():
         # A v15 database: this build's schema minus everything v16 and later
-        # added, stamped 15. Dropping record_blocks takes the v17 trigger on it.
+        # added, stamped 15. Dropping record_blocks takes the v17 trigger on it,
+        # and the v19 logging triggers.
         db = await database.get_db()
         for trigger in _BLOCK_TRIGGERS:
             await db.execute(f"DROP TRIGGER {trigger}")
         await db.execute("DROP INDEX idx_record_blocks_axes")
         await db.execute("DROP TABLE record_blocks")
         await db.execute("DROP TABLE record_block_vectors")
+        await db.execute("DROP TABLE block_log_clock")
+        await db.execute("DROP TABLE record_block_changes")
         await db.execute("DELETE FROM schema_version")
         await db.execute("INSERT INTO schema_version (version) VALUES (15)")
         await db.commit()

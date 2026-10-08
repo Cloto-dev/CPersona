@@ -773,13 +773,16 @@ def _purge_local_vector_index(counts: dict) -> list:
     Non-DB side effect — call AFTER the delete transaction commits, like the
     calibration and remote-namespace purges beside it.
     """
-    from cpersona import coarse_index
+    from cpersona import block_index, coarse_index
 
     removed = []
     # The coarse index carries the same identifiers and a one-bit form of the same
     # vectors, so it is residue in exactly the same sense and goes with the table.
     stale = [(table, vector_index.index_path(table)) for table in vector_index.INDEXED_TABLES]
     stale += [(table, coarse_index.index_path(table)) for table in coarse_index.COARSE_TABLES]
+    # So does the block index file: it holds the bits of both kinds' blocks, and
+    # goes when either table lost rows (the second entry finds it already gone).
+    stale += [(table, block_index.index_path()) for table in ("memories", "episodes")]
     for table, path in stale:
         if not counts.get(f"deleted_{table}", 1):
             continue

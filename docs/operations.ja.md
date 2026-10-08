@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:02039bf741e47ab707d55ab74a98fa70014ab241 -->
+<!-- i18n-source: docs/operations.md@blob:2d39f7fb0f273387001949f7c0c3e1d15c109bfd -->
 
 # 運用 Runbook
 
@@ -376,6 +376,33 @@ exit 0 を返すのは両方を作れた時だけです。`status` は粗探索�
 
 索引の設定項目はありません。パスは `CPERSONA_DB_PATH` から導出され、索引が担う
 走査窓は、走査と同じ `CPERSONA_MAX_MEMORIES` です。
+
+## Block の索引ファイル { #the-block-index-file }
+
+`CPERSONA_BLOCK_INDEX=true` にすると、Block の腕は想起のたびに SQLite から最大 25 万行を読む代わりに、
+3 つ目の派生ファイル `<database>.blocks.blockindex` から行を読みます。答えはどちらでも同じで
+([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))、違うのは時間だけです。ほかの 2 つのファイルと
+同じく、バックアップせず、修復せず、消してかまわず、削除 (purge) の時はそれが持っていた行と一緒に
+消されます。
+
+手で作る必要はありません。設定が on の間、サーバーは Block が変わった記録の記録 (変更記録) を付け、
+ファイルが無い・使えない・その記録から遅れすぎている時に、起動時と Block を書いた後にキューがファイルを
+作ります。作り直しは同時に 1 つだけ積まれます。作り終わるまで、想起は SQLite を読みます。タスクキューを
+無効にしている時や、今すぐ作りたい時は次を使います:
+
+```bash
+python -m cpersona.block_index --db /path/to/cpersona.db build
+python -m cpersona.block_index --db /path/to/cpersona.db status
+```
+
+`status` は、今の想起がファイルを読めるか (`current`) と、作った後に変更記録がどれだけ進んだか
+(`changes_since_build`) を報告します。ファイルが無ければ 1、あっても使えなければ 2 で終了します。
+
+設定が on の間、`check_health` は `block_index_absent`、`block_index_unusable`、`block_index_behind` を
+観察 (info) として報告します。どの想起も SQLite から答えを得ているためです。設定が off の時に出るのは
+`block_log_without_index` だけで、(たとえばコマンドラインから作ったために) 変更記録が動いたままになり、
+読む者のいない行を Block の書き込みごとに足している状態です。`check_health(checks=["block_index"], fix=true)`
+で止まり、設定を off にしてサーバーを起動しても止まります。
 
 ## メンテナンスの頻度 { #maintenance-cadence }
 

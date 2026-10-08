@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:c1f8eeae34b961069a9e424a30ba25ed0040fc05 -->
+<!-- i18n-source: docs/architecture.md@blob:801cae03e580084a82dd8fdc63e19ca828448b82 -->
 
 # アーキテクチャ
 
@@ -41,7 +41,7 @@ flowchart TB
 ## ストレージ { #storage }
 
 WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在の
-**schema v18** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
+**schema v19** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
 `memories` / `episodes` / `profiles` / `pending_memory_tasks` の 4 つです。加えて
 記録用の `schema_version` テーブルと、トリガーで同期される FTS5 仮想テーブルが
 2 つあります。5 つ目のテーブル `record_nodes` は、長い記憶とエピソードの本文への
@@ -56,7 +56,11 @@ WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在�
 本文が変われば Block を削除し、記録が retag されれば分離軸の写しを更新します。その隣で
 `record_block_vectors` が各 Block について次元ごとに 1 バイトを保持し、主キーで読み出して
 Block の腕の Hamming パスが最上位に並べたものを再順位付けします。`record_blocks` の
-トリガーが、Block と一緒にその Block のベクトルを削除します。
+トリガーが、Block と一緒にその Block のベクトルを削除します。小さな 2 つのテーブル
+`block_log_clock` と `record_block_changes` は、どの記録の Block が変わったかの記録で、
+Block の索引ファイル (`CPERSONA_BLOCK_INDEX`、既定は off) を使っている間だけトリガーが
+付けます。想起はその記録を SQLite から、それ以外の記録の Block をファイルから読みます
+([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))。
 
 FTS5 索引は **trigram** トークナイザを使います。これが、CPersona が日本語や
 その他の分かち書きしない文字体系で機能する理由です。単語境界ベースの
@@ -220,7 +224,7 @@ CPersona は生成モデルを呼びません。要約も抽出も書き換え�
 これを掃き出し、固定間隔 (`CPERSONA_TASK_RETRY_DELAY`) で再試行します。メモリ上
 ではなくデータベースにあるため、クラッシュや再起動でも作業は失われず再開されます。
 
-**ここに投入される仕事は 2 種類あります。** `store`・
+**ここに投入される仕事は 3 種類あります。** `store`・
 `archive_episode`・`update_memory` が埋め込み窓を超える本文を書くと、応答に
 `nodes: {"status": "queued"}` が付き、`build_nodes` タスクが記録を分割して区間ごとに
 埋め込みます ([overflow tree](OVERFLOW_TREE_DESIGN.md))。書き込み自体はこれを待ちません。
@@ -238,6 +242,13 @@ CPersona は生成モデルを呼びません。要約も抽出も書き換え�
 文字数・埋め込み呼び出し数・経過時間のいずれかの上限で止まり、自分の継続をキューへ積むので、
 コーパスは有界な run の連なりとして構築され、再起動しても最初からではなく前回が止まった
 あたりから再開します。
+
+3 つ目は `block_index_build` で、`CPERSONA_BLOCK_INDEX` が on の配備でだけ走ります。
+Block の腕が SQLite の代わりに読む Block の索引ファイルを書きます
+([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))。ファイルが無い・使えない・変更記録から
+遅れすぎている時に、起動時と、Block の構築や sweep の後に積まれ、同時に 1 つだけ存在します。
+想起がこれを積むことはありません。ファイルが作り直されるまで、想起は SQLite を読み、同じ答えを
+返します。
 
 このキューはもともとサーバー側でのエピソード要約生成のために存在しましたが、その機能は
 v2.4.10 より前に削除されました。`archive_episode` は今も事前計算された要約を要求して

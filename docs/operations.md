@@ -393,6 +393,38 @@ There is no configuration for the index. Its path is derived from
 `CPERSONA_DB_PATH`, and the scan window it serves is the same
 `CPERSONA_MAX_MEMORIES` the scan uses.
 
+## The block index file
+
+With `CPERSONA_BLOCK_INDEX=true` the block arm reads its rows from a third
+derived file, `<database>.blocks.blockindex`, instead of reading up to 250,000
+rows out of SQLite on every recall. The answer is the same either way
+([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)); only the time
+differs. Like the other two files it is never backed up, never repaired, safe to
+delete, and removed by a purge along with the rows it held.
+
+You do not build it by hand. While the setting is on, the server keeps a log of
+the records whose blocks change, and its queue builds the file at startup and
+after it writes blocks, whenever the file is absent, unusable or too far behind
+that log; one build is queued at a time. Until a build finishes, recalls read
+SQLite. With the task queue disabled, or to build it now:
+
+```bash
+python -m cpersona.block_index --db /path/to/cpersona.db build
+python -m cpersona.block_index --db /path/to/cpersona.db status
+```
+
+`status` says whether a recall can read the file now (`current`) and how far the
+log has moved since the build (`changes_since_build`). It exits 1 when there is
+no file, and 2 when the file exists but cannot be used.
+
+`check_health` reports `block_index_absent`, `block_index_unusable` and
+`block_index_behind` as observations while the setting is on: every recall
+still gets its answer, from SQLite. With the setting off, the one finding is
+`block_log_without_index`, a log left running (for instance by a build from the
+command line) that adds a row to every block write with nothing to read it;
+`check_health(checks=["block_index"], fix=true)` stops it, and so does starting
+the server with the setting off.
+
 ## Maintenance cadence
 
 - **Monthly**: `check_health(agent_id, fix=true)` for deterministic integrity

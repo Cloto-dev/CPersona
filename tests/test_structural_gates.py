@@ -1376,7 +1376,7 @@ def _collect_enqueue_calls(tree):
 #: The modules allowed to enqueue, which is what the architecture page names:
 #: the overflow tree's node construction (docs/OVERFLOW_TREE_DESIGN.md §3) and,
 #: when a deployment opts in, block construction (docs/BLOCK_REACH_DESIGN.md §6).
-_QUEUE_PRODUCERS = {"nodes.py", "blocks.py"}
+_QUEUE_PRODUCERS = {"nodes.py", "blocks.py", "block_index.py"}
 
 
 def test_background_queue_has_only_the_documented_producers():

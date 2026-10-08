@@ -322,6 +322,8 @@ EXPECTED_REPAIRABLE = {
     "missing_blocks": 1,
     # the one file a rebuild writes (checks.check_coarse_index)
     "coarse_index": 1,
+    # the one change log the repair stops (checks.check_block_index)
+    "block_index": 1,
 }
 
 
@@ -390,6 +392,20 @@ async def _s_coarse_index(conn):
         path = coarse_index.index_path("memories")
         if os.path.exists(path):
             os.unlink(path)
+
+
+@seeder("block_index")
+async def _s_block_index(conn):
+    # Not a row: the block change log left running while the block index file is
+    # off (the default), which the repair stops. Put back whichever way it ends.
+    await conn.execute("UPDATE block_log_clock SET logging = 1 WHERE id = 0")
+    await conn.commit()
+    try:
+        yield conn
+    finally:
+        await conn.execute("UPDATE block_log_clock SET logging = 0 WHERE id = 0")
+        await conn.execute("DELETE FROM record_block_changes")
+        await conn.commit()
 
 
 def _fix_capable_names() -> set:
