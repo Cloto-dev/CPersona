@@ -607,3 +607,48 @@ async def test_a_purge_that_removed_nothing_keeps_the_block_index(on):
         result = await admin_handlers.do_delete_agent_data(agent_id="agent.nobody")
         assert result["ok"] and result["deleted_memories"] == 0, result
         assert Path(block_index.index_path()).read_bytes() == before
+
+
+# --------------------------------------------------------------------------------------
+# a traced recall says which read served the block arm
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_traced_recall_says_which_read_served_the_block_arm(monkeypatch, fake_embedding_client):
+    from cpersona import admin_handlers, memory_handlers, nodes, session, tasks
+
+    monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", True)
+    monkeypatch.setattr(config, "BLOCK_INDEX_ENABLED", False)
+    session.reset_pauses_for_tests()
+    queue = tasks.MemoryTaskQueue()
+    queue._running = True
+    monkeypatch.setattr(tasks, "_task_queue", queue)
+    agent, query = "agent.traced", "zzarquon nebulite flimsy"
+    async with _database() as db:
+        for text in ("filler " * 300 + "\n\n" + query + " was decided against", query, "an unrelated note"):
+            await memory_handlers.do_store(agent, {"content": text})
+        await queue._drain(admin_handlers, memory_handlers, nodes)
+        assert (await db.execute_fetchall("SELECT COUNT(*) FROM record_blocks"))[0][0] > 0
+
+        async def traced():
+            out = await memory_handlers.do_recall(agent, query, limit=3, trace=True)
+            return [m["ref"] for m in out["messages"]], out["trace"]["block_source"]
+
+        rows_off, source = await traced()
+        assert source == {"source": "sqlite", "reason": "off"} and rows_off
+
+        monkeypatch.setattr(config, "BLOCK_INDEX_ENABLED", True)
+        rows, source = await traced()
+        assert source == {"source": "sqlite", "reason": "no_file"} and rows == rows_off
+
+        assert (await block_index.build_block_index())["built"]
+        rows, source = await traced()
+        assert source == {"source": "file", "changed_records": 0, "live_rows": 0} and rows == rows_off
+
+        assert await block_index.stop_logging(db)
+        await db.commit()
+        rows, source = await traced()
+        assert source == {"source": "sqlite", "reason": "logging_off"} and rows == rows_off
+    session.reset_pauses_for_tests()

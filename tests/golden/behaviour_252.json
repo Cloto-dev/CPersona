@@ -12685,6 +12685,10 @@
           "fired": false,
           "kept": 14
         },
+        "block_source": {
+          "reason": "off",
+          "source": "sqlite"
+        },
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
@@ -13593,6 +13597,10 @@
           "dropped": [],
           "fired": false,
           "kept": 12
+        },
+        "block_source": {
+          "reason": "off",
+          "source": "sqlite"
         },
         "config": {
           "autocut_enabled": true,
@@ -14856,6 +14864,10 @@
           "fired": false,
           "kept": 2
         },
+        "block_source": {
+          "reason": "off",
+          "source": "sqlite"
+        },
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
@@ -15605,6 +15617,10 @@
           "dropped": [],
           "fired": false,
           "kept": 12
+        },
+        "block_source": {
+          "reason": "off",
+          "source": "sqlite"
         },
         "config": {
           "autocut_enabled": true,
@@ -16778,6 +16794,10 @@
           "fired": false,
           "kept": 5
         },
+        "block_source": {
+          "reason": "off",
+          "source": "sqlite"
+        },
         "config": {
           "autocut_enabled": true,
           "embedding_mode": "none",
@@ -17442,6 +17462,10 @@
           "dropped": [],
           "fired": false,
           "kept": 5
+        },
+        "block_source": {
+          "reason": "off",
+          "source": "sqlite"
         },
         "config": {
           "autocut_enabled": true,
@@ -18131,6 +18155,10 @@
           "dropped": [],
           "fired": false,
           "kept": 5
+        },
+        "block_source": {
+          "reason": "off",
+          "source": "sqlite"
         },
         "config": {
           "autocut_enabled": true,
@@ -18848,6 +18876,10 @@
           "dropped": [],
           "fired": false,
           "kept": 12
+        },
+        "block_source": {
+          "reason": "off",
+          "source": "sqlite"
         },
         "config": {
           "autocut_enabled": true,
@@ -19720,6 +19752,10 @@
             "dropped": [],
             "fired": false,
             "kept": 14
+          },
+          "block_source": {
+            "reason": "off",
+            "source": "sqlite"
           },
           "config": {
             "autocut_enabled": true,
@@ -20623,6 +20659,10 @@
             "dropped": [],
             "fired": false,
             "kept": 14
+          },
+          "block_source": {
+            "reason": "off",
+            "source": "sqlite"
           },
           "config": {
             "autocut_enabled": true,
@@ -21679,6 +21719,10 @@
             "dropped": [],
             "fired": false,
             "kept": 14
+          },
+          "block_source": {
+            "reason": "off",
+            "source": "sqlite"
           },
           "config": {
             "autocut_enabled": true,

@@ -140,6 +140,13 @@ class TraceRecorder:
             for i, r in enumerate(rows)
         ]
 
+    def block_source(self, source: str, **fields) -> None:
+        """Where the block arm's examined rows came from: ``file`` (the block index
+        file, with how many changed records and rows were read live beside it) or
+        ``sqlite`` (with the ``reason`` the file was not read). The answer is the same
+        either way; this says which read produced it."""
+        self.data["block_source"] = {"source": source, **fields}
+
     def fusion(self, rows: list[dict], score_key: str, votes: dict | None = None) -> None:
         """The fused list, with each arm's contribution where the fusion computed one."""
         self.data["fusion"] = [

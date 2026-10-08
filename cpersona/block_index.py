@@ -55,6 +55,7 @@ import numpy as np
 from cpersona import blocks
 from cpersona import config
 from cpersona import fileperms
+from cpersona import recall_trace
 from cpersona import vector_index
 from cpersona.isolation import isolation_where
 from cpersona.vector_index import IndexUnusable
@@ -576,6 +577,18 @@ def _live_statement(iso) -> str:
     )
 
 
+def _note(source: str, **fields) -> None:
+    """Say on a traced recall where the examined rows came from (`recall_trace`)."""
+    rec = recall_trace.current()
+    if rec is not None:
+        rec.block_source(source, **fields)
+
+
+def _refuse(reason: str) -> None:
+    """Read SQLite instead, and say why on a traced recall."""
+    _note("sqlite", reason=reason)
+
+
 def _codes(table: tuple, values) -> np.ndarray:
     return np.array([i for i, v in enumerate(table) if v in values], dtype=np.int64)
 
@@ -593,42 +606,47 @@ async def examined(
         index = cached_block_index()
     except IndexUnusable as exc:
         logger.warning("Block index unusable, reading SQLite: %s", exc)
-        return None
-    if index is None or index.width != width:
-        return None
+        return _refuse("unusable")
+    if index is None:
+        return _refuse("no_file")
+    if index.width != width:
+        return _refuse("width")
 
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="b")
     rows = await db.execute_fetchall(
         _live_statement(iso), (index.built_seq, *keys, *iso.params, LIVE_ROW_BOUND + 1)
     )
     if not rows:
-        return None
+        return _refuse("no_log")
     logging_on, generation, head, pruned_through, cookie = rows[0][:5]
-    if (
-        logging_on != 1
-        or generation != index.generation
-        or index.built_seq > head  # a file newer than this snapshot
-        or pruned_through > index.built_seq  # changes it would need are gone
-        or cookie != index.schema_cookie  # a trigger dropped and recreated could have missed writes
-    ):
-        return None
+    if logging_on != 1:
+        return _refuse("logging_off")
+    if generation != index.generation:
+        return _refuse("generation")
+    if index.built_seq > head:
+        return _refuse("newer_than_snapshot")
+    if pruned_through > index.built_seq:
+        return _refuse("pruned")  # changes it would need are gone
+    if cookie != index.schema_cookie:
+        return _refuse("schema_changed")  # a trigger dropped and recreated could have missed writes
     live = [r[5:] for r in rows if r[5] is not None]
     if len(live) > LIVE_ROW_BOUND:
-        return None
+        return _refuse("live_bound")
 
     changed: tuple[set, set] = (set(), set())
     admitted = []
     for kind, parent_id, block_index, bits in live:
         if type(kind) is not str or kind not in _KIND_CODE or type(parent_id) is not int:
-            return None
+            return _refuse("unholdable_value")
         changed[_KIND_CODE[kind]].add(parent_id)
         if block_index is None:
             continue
         if type(block_index) is not int or not _INT32_MIN <= block_index <= _INT32_MAX or type(bits) is not bytes:
-            return None
+            return _refuse("unholdable_value")
         admitted.append((_KIND_CODE[kind], parent_id, block_index, bits))
     admitted.sort(key=lambda r: r[:3])
 
+    _note("file", changed_records=len(changed[0]) + len(changed[1]), live_rows=len(admitted))
     return _merge(index, admitted, changed, keys, agent_id=agent_id, project_id=project_id, channel=channel)
 
 

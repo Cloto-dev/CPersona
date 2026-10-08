@@ -415,7 +415,10 @@ python -m cpersona.block_index --db /path/to/cpersona.db status
 
 `status` says whether a recall can read the file now (`current`) and how far the
 log has moved since the build (`changes_since_build`). It exits 1 when there is
-no file, and 2 when the file exists but cannot be used.
+no file, and 2 when the file exists but cannot be used. To see which read served
+a particular recall, ask for its trace (`trace=true`): `block_source` says `file`,
+or `sqlite` with the reason the file was not read
+([recall trace](RECALL_PROCESS_DESIGN.md#12-shape-trace_version-1)).
 
 `check_health` reports `block_index_absent`, `block_index_unusable` and
 `block_index_behind` as observations while the setting is on: every recall
