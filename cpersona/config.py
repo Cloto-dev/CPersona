@@ -605,6 +605,13 @@ FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 # comparison: it sends the memory arm to its LIKE fallback instead.
 LEXICAL_ENGINE = _parse_choice("CPERSONA_LEXICAL_ENGINE", "fts5", ("fts5", "off"))
 
+# Keyword seats: places held, like the block arm's reservation, for rows only the
+# keyword arms found and the answer does not hold. Under rrf the gate keys a row
+# without a cosine on its fused score, and one arm's vote is at most 1/(K+1), so
+# no such row can clear a calibrated gate: the refusal is the scale's, not a
+# judgement of the row. 0 (the default) holds no place; at most 10.
+KEYWORD_SEATS = max(0, min(_parse_int("CPERSONA_KEYWORD_SEATS", 0), 10))
+
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the
 # generic key shared across Cloto MCP servers (matches the CScheduler convention
 # and the marketplace catalog, which sets EMBEDDING_MODE / EMBEDDING_HTTP_URL).

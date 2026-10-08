@@ -749,10 +749,13 @@ async def _recall_rrf(
                 votes.setdefault(f"mem:{row['id']}", {})["memory_keyword"] = 1.0 / (k + rank + 1)
 
     sorted_rids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)
+    vector_rids = {row.get("_rid", ("mem", row["id"])) for row in (*vector_results, *far_results)}
     results = []
     for rid in sorted_rids:
         row = doc_map[rid]
         row["_rrf_score"] = rrf_scores[rid]
+        # Found by the keyword arms alone: what the keyword seats may hold.
+        row["_lexical_only"] = rid not in vector_rids
         results.append(row)
     if rec is not None:
         rec.arm("vector_near", vector_results, "_cosine")
@@ -901,6 +904,7 @@ async def _recall_rsf(
     for rid in sorted(fused, key=fused.get, reverse=True):
         row = doc_map[rid]
         row["_rsf_score"] = fused[rid] / n_active
+        row["_lexical_only"] = rid not in vec_raw and rid not in far_raw
         results.append(row)
     if rec is not None:
         rec.arm("vector_near", near_rows, "_cosine")
@@ -2765,6 +2769,32 @@ async def _do_recall(
         if trace_rec is not None:
             trace_rec.reservation(reserved[: blocks.BLOCK_RESERVATION], "block")
 
+    # The keyword seats: config.KEYWORD_SEATS places after the block reservation,
+    # filled in fused order with rows only the keyword arms found that the answer
+    # does not hold. The other seats refuse a row the gate refused, and so do these,
+    # with one exception the scale forces: a row the gate keyed on its rrf score.
+    # One arm's reciprocal-rank vote is at most 1/(K+1), below any calibrated rrf
+    # gate, so that refusal says nothing about the row -- the block arm's case
+    # (docs/BLOCK_REACH_DESIGN.md section 5). A row refused on rsf, confidence or
+    # cosine was judged on a scale that can pass it and stays out; one the gate
+    # admitted and the count cut is eligible, as for the far and cue seats. They
+    # displace nothing, the gate is not consulted for them, they are not credited
+    # to the recall count (bug-453), and none follow a gate rescue.
+    if config.KEYWORD_SEATS > 0 and not gate_fallback:
+        present = {_rid_of(r) for r in results}
+        passed_gate = {_rid_of(r) for r in admitted}
+        eligible = [
+            r for r in pre_gate
+            if r.get("_lexical_only") and _rid_of(r) not in present
+            and (_rid_of(r) in passed_gate or _gate_score(r)[1] == "rrf")
+        ]
+        seated = eligible[: config.KEYWORD_SEATS]
+        for place, r in enumerate(seated, 1):
+            r["_keyword_seat"] = place
+        results.extend(seated)
+        if trace_rec is not None:
+            trace_rec.reservation(seated, "keyword")
+
     # The far seats (docs/BINARY_COARSE_SEARCH_DESIGN.md §5): two places after the
     # block reservation, filled in cosine order with far records the answer does
     # not already hold. As with the cue's seats, a record an ordinary arm reached
@@ -2835,7 +2865,7 @@ async def _do_recall(
 
     providers.check_recall_count(
         len(results), limit, cue.MAX_SEATS + (propagation.SEATS if propagation_seat else 0),
-        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0),
+        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0) + config.KEYWORD_SEATS,
     )
     # The one hypothesis a recall evaluates today: the order its stages produced.
     ledger.spend(budget.ITERATION)
@@ -2916,6 +2946,14 @@ async def _do_recall(
             # before the gate branches: a cue-arm row may carry a cosine, but no gate
             # read it, so it must not be reported as having passed one.
             msg["match_reason"] = {"signal": "cue", "admission": "reservation", "cue_rank": r["_cue_rank"]}
+        elif r.get("_keyword_seat"):
+            # A keyword seat: the row's fused score is shown, and `admission` says it
+            # held a place rather than passing the gate on that score.
+            msg["match_reason"] = {"signal": "keyword", "admission": "reservation", "seat": r["_keyword_seat"]}
+            if r.get("_rrf_score") is not None:
+                msg["match_reason"]["rrf"] = r["_rrf_score"]
+            if r.get("_rsf_score") is not None:
+                msg["match_reason"]["rsf"] = r["_rsf_score"]
         elif r.get("_propagation_seat"):
             # The propagation seat (cpersona/propagation.py). Its row passed the gate
             # on the deeper ranking, not on this one's count, so it says which places
@@ -2973,6 +3011,8 @@ async def _do_recall(
         r.pop("_shown_cosine", None)
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
+        r.pop("_lexical_only", None)
+        r.pop("_keyword_seat", None)
         r.pop("_rsf_score", None)
         r.pop("_prior", None)
         r.pop("_resolved", None)

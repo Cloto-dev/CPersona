@@ -1747,7 +1747,8 @@ async def do_reconstruct(
     held_returned = sum(1 for item in items if item.get("admission") == "reservation")
     providers.check_reconstruct_count(
         len(items), held_returned, effective_count,
-        blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0),
+        blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
+        + config.KEYWORD_SEATS,
     )
     if held_returned:
         # Beside the window, not in it: returned_count may exceed effective_count by this.
