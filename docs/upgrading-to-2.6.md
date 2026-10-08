@@ -45,7 +45,7 @@ recorded as done, so it is retried on the next start.
 | 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
 | 19 | 2.6.7a2 | `block_log_clock`, `record_block_changes`: the log of which records' blocks changed, kept only while the block index file is on ([contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **Built for you** on the queue, unless you turn the file off ([below](#the-block-index-file-is-on-by-default)) |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6 and 2.6.7a1 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6, 2.6.7a1 and 2.6.7 changed no schema.
 
 ## After the first start
 
