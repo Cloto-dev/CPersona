@@ -1395,6 +1395,7 @@ async def _measured_from_file(db, keys: tuple[str, str], axes: tuple, query_bits
     from cpersona import block_index
 
     if not block_index.enabled():
+        block_index._refuse("off")
         return None
     agent_id, project_id, channel = axes
     try:
@@ -1403,6 +1404,7 @@ async def _measured_from_file(db, keys: tuple[str, str], axes: tuple, query_bits
         )
     except Exception:  # noqa: BLE001 — fail open, deliberately
         logger.warning("Block index read raised, reading SQLite", exc_info=True)
+        block_index._refuse("error")
         return None
     return None if rows is None else rows.measured(query_bits)
 
