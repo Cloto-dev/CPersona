@@ -1,0 +1,176 @@
+# Block Candidate Generation — contract
+
+Status: the contract and its conformance data are on `master`. Nothing reads
+the block rows any other way yet. Recall's answers do not change.
+
+## 0. What this is
+
+The block arm ([Block reach](BLOCK_REACH_DESIGN.md)) searches clause-sized
+blocks of every record by Hamming distance on one bit per dimension. Its search
+has two halves:
+
+1. **Candidate generation.** Read the block rows a call may look at, measure
+   each one's Hamming distance to the query, and keep the nearest few in a
+   written-down order.
+2. **Re-rank.** Read the stored vectors of those few rows and order them by
+   cosine.
+
+The first half returns integers and identifiers and nothing else, so a faster
+implementation of it can be held to returning exactly the same rows in exactly
+the same order as the one recall runs today. This page states that half as a
+contract, records how an implementation is checked against it, and records the
+decision on what the faster implementation is.
+
+**Why it needs a faster implementation.** Today the first half reads its rows
+out of SQLite on every call. Over 100,000 memories of real length the store
+holds 3,480,069 blocks, 34.8 per record
+([the corpus](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-realistic-corpus.md)),
+and on an Intel N150 that read alone takes 360 to 375 ms (section 3.1).
+
+## 1. The contract
+
+**Input.**
+
+- **Rows**, in key order: kind (byte order), then parent id, then block index.
+  Each row carries its kind, parent id and block index; its record's agent id,
+  project id and channel; the label of the model that produced its bits; and
+  the bits, or nothing when the row has none yet.
+- **The query**: its bits; an agent id; a project id, which is either absent,
+  empty, or a name; a channel, which is either empty or a name; and two model
+  labels.
+- **Three caps**: how many rows may be examined, how many of them one record
+  may take, and how many rows are returned (the depth). None of the three is
+  derived from how many results the caller asked to receive.
+
+**Procedure.** This is normative; an implementation that differs in any step
+returns different rows.
+
+1. **Admit.** A row is admitted when it has bits, its label equals one of the
+   two model labels, its agent id equals the query's (an empty agent id is the
+   bucket of rows owned by no named agent, not a wildcard), and the two axes
+   below allow it. A row that is not admitted spends neither cap.
+   - **Project.** Absent reads every project. Empty reads the global pool alone:
+     rows whose project id is empty. A name reads that project and the global
+     pool.
+   - **Channel.** Empty reads every channel. A name reads that channel and the
+     channel-global rows: rows whose channel is empty.
+2. **Examine.** Walk the admitted rows in key order. A record's share is its
+   first rows in block order, up to the per-record cap; its later rows are
+   skipped. Stop when the examined cap is full. The share is counted over
+   admitted rows, so a row without bits or under another label does not use
+   up a record's share.
+3. **Measure.** An examined row whose bits are a different length from the
+   query's has no distance: it spent its share and a place under the examined
+   cap, and it is not ranked. A different width is a different dimension, and
+   a distance between the two would be a number without meaning. Every other
+   examined row gets its Hamming distance to the query.
+4. **Order.** Sort the measured rows by distance, then kind, then parent id,
+   then block index, ascending. The key is unique, so no two rows tie. Return
+   the first rows up to the depth.
+
+**Output.** For each row returned: kind, parent id, block index and distance.
+No text, no metadata, no floating-point score.
+
+**What stays as it is.** The re-rank by stored vectors, and what follows it, are
+not part of this contract. When a returned row has no stored vector yet (a
+deployment part-way through building them), the arm answers by its own path, as
+it does today.
+
+## 2. Conformance
+
+**The golden.** `tests/golden/block_candidates.json` holds cases: rows in key
+order, a query, the caps, and the rows expected back. It is written by
+`scripts/capture-block-candidates.py`, which runs the functions recall runs
+(`blocks._examined`, `blocks._measured` and `blocks._order`) over a real
+database. Nobody writes an expected row by hand. The rows are inserted out of
+order, so the answer depends on the table's key and not on arrival order.
+
+**What the cases cover.** The width of a 768-dimension model with recall's own
+caps; a depth cut that falls inside a run of equal distances, so only the
+written-down order decides; each cap binding, and both at once; rows the filter
+refuses inside a record (no bits, another model's label) beside rows of other
+widths, narrower and wider; every reading of the three axes; fewer measured
+rows than the depth; and empty answers.
+
+**What holds it.** `tests/test_block_candidates_golden.py` fails when the file
+no longer says what the code returns, and when a case stops exercising a rule
+this page names (for example, when no case's cut falls inside a tie any more).
+Breaking the server's code (the tie order, the per-record cap by one, admitting
+rows without bits, loosening the width check) makes the first test fail. An
+implementation that reads the rows another way is held to the same file: it
+passes when it returns every case's rows in order.
+
+## 3. Decisions
+
+### 3.1 The rows are read from a contiguous file, not SQLite
+
+The faster implementation reads the block bits from a contiguous file the
+server writes, not from the SQLite database.
+
+Measured on the 100,000-memory corpus (exploratory, not registered): the
+250,000 rows recall examines, read by the server's own examined read, against
+the same rows read from a file. The Intel N150 had an 8 GB virtual machine
+running beside the measurement.
+
+| Read of the 250,000 examined rows | Apple M-series laptop | Intel N150 |
+| --- | ---: | ---: |
+| SQLite, as recall reads them today | 127–140 ms (762 ms cold) | 360–375 ms (1,384 ms cold) |
+| A contiguous file | 1.2 ms | 6.1 ms |
+
+The file follows the coarse index of records
+([Binary coarse search §3](BINARY_COARSE_SEARCH_DESIGN.md#3-the-coarse-index)):
+written by the server, validated when it is opened, with a watermark past which
+rows are read from the store.
+
+One difference from records has to be designed for. The key starts with the
+kind, so a block written after the file was built does not always sort after
+every row in it: an episode's block sorts before every memory's. The rows past
+the watermark have to be merged into key order before either cap applies,
+because the caps truncate in key order.
+
+### 3.2 The distances are taken in the server's process, with a SIMD library
+
+The Hamming distances and the nearest rows are computed in the Python process,
+by a library that uses the CPU's vector instructions, not by a separate process
+in another language.
+
+Measured on the same rows (exploratory, not registered), the median over 25
+queries whose bits are blocks of the corpus. Every implementation returned the
+same rows in the same order as the server's code for all 25 queries.
+
+| Hamming distance and the nearest 200 rows | Apple M-series laptop | Intel N150 |
+| --- | ---: | ---: |
+| The server's code today, over row tuples | 34.0 ms | 169.7 ms |
+| The same lookup table, over an array | 23.1 ms | 96.3 ms |
+| NumPy `bitwise_count` | 4.0 ms | 13.1 ms |
+| FAISS `IndexBinaryFlat`, one thread | 1.1 ms | 6.6 ms |
+| SimSIMD | 1.9 ms | 4.9 ms |
+| Go, as a separate program over the same file | 1.3 ms | 3.6 ms |
+
+A separate process in Go was the plan before this measurement. It saves about
+1 ms over a SIMD library on the N150 at today's caps, and it would have brought
+a second kind of release artifact, a binary per platform beside the PyPI
+package. Almost all of the gain comes from not reading SQLite (section 3.1).
+Which library is used, and whether it is required or optional, is decided with
+the implementation.
+
+### 3.3 Off by default, answers unchanged
+
+When the file reader ships it is opted into. A missing file, a damaged file or
+a different dimension sends the call to the SQLite read. It is held to
+returning the same rows in the same order as that read, by this contract and
+its golden, rather than to a bound on how much worse its answers may be.
+
+## 4. Not in this step
+
+- **The file format, its build, the merge of rows past the watermark, and the
+  reader.** The next step.
+- **Lifting the examined cap.** Over 100,000 memories the cap (250,000 rows)
+  already binds, and one call looks at about 7% of the blocks, the first ones in
+  key order. Lifting it would change which records the arm can reach, so it is
+  a change to answers, measured on its own.
+- **The coarse search of records.** The same mechanism over another
+  population.
+- **The re-rank.** Not part of this contract.
+- **The keyword arm.** On the N150, recall's slowest arm is the keyword arm:
+  the full-text ranking inside SQLite, which this step does not touch.
