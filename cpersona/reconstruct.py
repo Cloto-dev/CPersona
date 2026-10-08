@@ -325,6 +325,13 @@ def _message_key(c: _Candidate) -> tuple[str, str] | None:
     return c.context[0], c.msg_id
 
 
+def _recall_mode() -> str:
+    """The fusion the recall underneath runs with, read where that recall reads it."""
+    from . import memory_handlers  # module scope would make the pair mutually importable
+
+    return memory_handlers.RECALL_MODE
+
+
 def resolve_count(requested: int | None) -> tuple[int, dict]:
     """The Reconstruction Window (section 7).
 
@@ -1748,7 +1755,7 @@ async def do_reconstruct(
     providers.check_reconstruct_count(
         len(items), held_returned, effective_count,
         blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
-        + config.KEYWORD_SEATS,
+        + config.keyword_seats(_recall_mode()),
     )
     if held_returned:
         # Beside the window, not in it: returned_count may exceed effective_count by this.

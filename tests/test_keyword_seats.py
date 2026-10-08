@@ -165,9 +165,60 @@ async def test_a_seated_row_is_not_credited(monkeypatch):
     assert counts[strong] >= 1 and counts[weak] == 0, counts
 
 
-def test_the_seats_are_off_by_default():
+def test_unset_the_seats_follow_the_fusion(monkeypatch):
     assert "CPERSONA_KEYWORD_SEATS" not in __import__("os").environ
-    assert config.KEYWORD_SEATS == 0
+    assert config.KEYWORD_SEATS is None
+    assert config.keyword_seats("rrf") == 2
+    assert config.keyword_seats("rsf") == 0
+    assert config.keyword_seats("cascade") == 0
+
+
+def test_a_set_number_applies_to_every_fusion(monkeypatch):
+    for seats in (0, 3):
+        monkeypatch.setattr(config, "KEYWORD_SEATS", seats)
+        assert config.keyword_seats("rrf") == seats
+        assert config.keyword_seats("rsf") == seats
+
+
+@pytest.mark.asyncio
+async def test_unset_rrf_seats_the_keyword_only_row(monkeypatch):
+    await _seed()
+    _gate("rrf", 0.05)
+    _, rows = await _recall(monkeypatch, "rrf", None)
+    seat = rows[KEYWORD_ONLY]["match_reason"]
+    assert seat["signal"] == "keyword" and seat["admission"] == "reservation" and seat["seat"] == 1
+
+
+@pytest.mark.asyncio
+async def test_no_seat_when_the_gate_admitted_nothing(monkeypatch):
+    # behavior-contracts.md section 8: a recall with nothing above the gate returns
+    # nothing. A gate above the vector hit's scale too leaves only keyword-only rows.
+    await _seed()
+    _gate("rrf", 0.05)
+    _, with_gate = await _recall(monkeypatch, "rrf", 2)
+    assert KEYWORD_ONLY in with_gate, "fixture is vacuous: no seat to withhold"
+    monkeypatch.setattr(M, "_adaptive_min_score", lambda count: 5.0)
+    _gate("rrf", 5.0)
+    out, rows = await _recall(monkeypatch, "rrf", 2)
+    assert out["messages"] == [], [m["content"] for m in out["messages"]]
+
+
+@pytest.mark.asyncio
+async def test_unset_rsf_holds_no_seat(monkeypatch):
+    # The count-cut fixture below: under rsf, two seats would take the keyword-only row
+    # the count cut. Unset must hold none, as 0 does.
+    await _seed()
+    _gate("rsf", 0.0)
+
+    async def contents(seats):
+        monkeypatch.setattr(M, "RECALL_MODE", "rsf")
+        monkeypatch.setattr(config, "KEYWORD_SEATS", seats)
+        out = await M.do_recall(AGENT, "zzz apples", limit=1)
+        return [m["content"] for m in out["messages"]]
+
+    two, unset, none = await contents(2), await contents(None), await contents(0)
+    assert KEYWORD_ONLY in two, "fixture is vacuous: two seats took nothing under rsf"
+    assert unset == none and KEYWORD_ONLY not in unset
 
 
 @pytest.mark.asyncio

@@ -140,6 +140,9 @@ async def test_the_seat_adds_one_row_and_changes_none_of_the_window(fake_embeddi
 
 @pytest.mark.asyncio
 async def test_the_seat_is_the_best_candidate_of_the_deeper_order(fake_embedding_client, monkeypatch):
+    # The keyword seats (2 under rrf by default) hold rows the gate refused; this test
+    # counts or orders the rows of another feature, so it runs without them.
+    monkeypatch.setattr(config, "KEYWORD_SEATS", 0)
     await _seed(CORPUS)
     on = await memory_handlers.do_recall(AGENT, QUERY, limit=3, propagation_seat=True, trace=True)
     note = on["trace"]["propagation"]
@@ -177,7 +180,10 @@ async def test_no_candidate_below_the_cut_leaves_the_place_empty(fake_embedding_
 
 
 @pytest.mark.asyncio
-async def test_off_the_ledger_and_the_trace_do_not_grow(fake_embedding_client):
+async def test_off_the_ledger_and_the_trace_do_not_grow(fake_embedding_client, monkeypatch):
+    # The keyword seats (2 under rrf by default) hold rows the gate refused; this test
+    # counts or orders the rows of another feature, so it runs without them.
+    monkeypatch.setattr(config, "KEYWORD_SEATS", 0)
     assert config.RECALL_PROPAGATION_SEAT is False
     await _seed(CORPUS)
     off = await memory_handlers.do_recall(AGENT, QUERY, limit=3, trace=True)
@@ -283,6 +289,9 @@ async def test_the_deeper_ranking_leaves_the_trace_to_the_answer(fake_embedding_
 
 @pytest.mark.asyncio
 async def test_the_count_allows_both_held_seats_at_once(fake_embedding_client, monkeypatch):
+    # The keyword seats (2 under rrf by default) hold rows the gate refused; this test
+    # counts or orders the rows of another feature, so it runs without them.
+    monkeypatch.setattr(config, "KEYWORD_SEATS", 0)
     from test_providers import SEAT_CORPUS, _period
 
     from cpersona import blocks

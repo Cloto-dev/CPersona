@@ -59,7 +59,10 @@ async def test_a_requested_trace_changes_nothing_in_the_messages(fake_embedding_
     plain = await memory_handlers.do_recall(AGENT, QUERY, limit=3)
     traced = await memory_handlers.do_recall(AGENT, QUERY, limit=3, trace=True)
     assert "trace" not in plain
-    assert len(plain["messages"]) == 3
+    # The answer fills the count; rows held beside it (the keyword seats under rrf, by
+    # default) are not part of it, and the trace must leave them unchanged too.
+    answer = [m for m in plain["messages"] if (m.get("match_reason") or {}).get("admission") != "reservation"]
+    assert len(answer) == 3
     assert traced["messages"] == plain["messages"]
     assert {k for k in traced if k != "trace"} == set(plain)
 
@@ -81,12 +84,23 @@ async def test_the_trace_accounts_for_every_returned_row(fake_embedding_client, 
     assert tr["request"]["depth"] >= 3 and "depth" not in tr
     assert tr["gate"]["origin"] in {"calibrated", "heuristic"}
     returned = [m["ref"] for m in out["messages"]]
-    # Returned rows are the first `limit` of the recorded order (recall reverses it).
-    assert [row["ref"] for row in tr["order"]["before_cut"][:3]] == list(reversed(returned))
-    # Every fused candidate has a gate decision, and every returned row passed it.
+    # Rows held beside the answer (block reservation, keyword seats -- on by default
+    # under rrf) are recorded as reservations; the rest are the answer.
+    held = [r["ref"] for r in tr["reservation"]]
+    assert set(held) <= set(returned)
+    answer = [ref for ref in returned if ref not in held]
+    # The answer is the first `limit` of the recorded order (recall reverses it).
+    assert [row["ref"] for row in tr["order"]["before_cut"][:3]] == list(reversed(answer))
+    # Every fused candidate has a gate decision, and every row of the answer passed it.
     decided = {d["ref"]: d for d in tr["gate"]["decisions"]}
     assert {row["ref"] for row in tr["fusion"]} <= set(decided)
-    assert all(decided[ref]["passed"] for ref in returned)
+    assert all(decided[ref]["passed"] for ref in answer)
+    # A keyword seat holds a row the gate refused on rrf, or one it admitted and the count cut.
+    for r in tr["reservation"]:
+        if r["kind"] == "keyword":
+            assert r["ref"] in decided and (not decided[r["ref"]]["passed"] or r["ref"] not in answer)
+    if mode == "rrf":
+        assert [r for r in tr["reservation"] if r["kind"] == "keyword"], "fixture is vacuous: no keyword seat under rrf"
     # Every fused candidate came from at least one arm, with the votes that made its score.
     arm_refs = {row["ref"] for rows in tr["arms"].values() for row in rows}
     for row in tr["fusion"]:

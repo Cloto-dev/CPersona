@@ -2770,7 +2770,7 @@ async def _do_recall(
         if trace_rec is not None:
             trace_rec.reservation(reserved[: blocks.BLOCK_RESERVATION], "block")
 
-    # The keyword seats: config.KEYWORD_SEATS places after the block reservation,
+    # The keyword seats: config.keyword_seats() places after the block reservation,
     # filled in fused order with rows only the keyword arms found that the answer
     # does not hold. The other seats refuse a row the gate refused, and so do these,
     # with one exception the scale forces: a row the gate keyed on its rrf score.
@@ -2780,8 +2780,12 @@ async def _do_recall(
     # cosine was judged on a scale that can pass it and stays out; one the gate
     # admitted and the count cut is eligible, as for the far and cue seats. They
     # displace nothing, the gate is not consulted for them, they are not credited
-    # to the recall count (bug-453), and none follow a gate rescue.
-    if config.KEYWORD_SEATS > 0 and not gate_fallback:
+    # to the recall count (bug-453), and none follow a gate rescue. Nor are they held
+    # when the gate admitted nothing: a recall with nothing above the gate returns
+    # nothing (docs/behavior-contracts.md section 8), and that held for every question
+    # the seats were measured on, so the measured gain does not depend on it.
+    keyword_seats = config.keyword_seats(RECALL_MODE)
+    if keyword_seats > 0 and admitted and not gate_fallback:
         present = {_rid_of(r) for r in results}
         passed_gate = {_rid_of(r) for r in admitted}
         eligible = [
@@ -2789,7 +2793,7 @@ async def _do_recall(
             if r.get("_lexical_only") and _rid_of(r) not in present
             and (_rid_of(r) in passed_gate or _gate_score(r)[1] == "rrf")
         ]
-        seated = eligible[: config.KEYWORD_SEATS]
+        seated = eligible[:keyword_seats]
         for place, r in enumerate(seated, 1):
             r["_keyword_seat"] = place
         results.extend(seated)
@@ -2866,7 +2870,7 @@ async def _do_recall(
 
     providers.check_recall_count(
         len(results), limit, cue.MAX_SEATS + (propagation.SEATS if propagation_seat else 0),
-        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0) + config.KEYWORD_SEATS,
+        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0) + keyword_seats,
     )
     # The one hypothesis a recall evaluates today: the order its stages produced.
     ledger.spend(budget.ITERATION)

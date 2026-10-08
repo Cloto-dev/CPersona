@@ -617,8 +617,23 @@ QUERY_SEGMENTER = _parse_choice("CPERSONA_QUERY_SEGMENTER", "trigram", ("trigram
 # keyword arms found and the answer does not hold. Under rrf the gate keys a row
 # without a cosine on its fused score, and one arm's vote is at most 1/(K+1), so
 # no such row can clear a calibrated gate: the refusal is the scale's, not a
-# judgement of the row. 0 (the default) holds no place; at most 10.
-KEYWORD_SEATS = max(0, min(_parse_int("CPERSONA_KEYWORD_SEATS", 0), 10))
+# judgement of the row. Unset, the number follows the fusion: 2 under rrf, where
+# two seats were measured to bring more evidence into a response, and 0 under any
+# other fusion, which can pass such a row on its own scale and where the seats added
+# text and no evidence (benchmarks/measurements/results-keyword-seats.md). Set, it
+# applies to every fusion; 0 holds no place, at most 10.
+_keyword_seats_raw = os.environ.get("CPERSONA_KEYWORD_SEATS")
+KEYWORD_SEATS = (
+    max(0, min(_parse_int("CPERSONA_KEYWORD_SEATS", 0), 10)) if _keyword_seats_raw not in (None, "") else None
+)
+KEYWORD_SEATS_UNDER_RRF = 2
+
+
+def keyword_seats(recall_mode: str) -> int:
+    """The keyword seats a recall fused by ``recall_mode`` holds (CPERSONA_KEYWORD_SEATS)."""
+    if KEYWORD_SEATS is not None:
+        return KEYWORD_SEATS
+    return KEYWORD_SEATS_UNDER_RRF if recall_mode == "rrf" else 0
 
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the
 # generic key shared across Cloto MCP servers (matches the CScheduler convention

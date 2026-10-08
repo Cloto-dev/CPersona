@@ -265,6 +265,9 @@ async def test_reconstruct_reads_the_cue_through_the_installed_interpreter(fake_
 
 @pytest.mark.asyncio
 async def test_a_request_keeps_the_set_it_started_with(fake_embedding_client, monkeypatch, installed):
+    # The keyword seats (2 under rrf by default) hold rows the gate refused; this test
+    # counts or orders the rows of another feature, so it runs without them.
+    monkeypatch.setattr(config, "KEYWORD_SEATS", 0)
     await _seed(CORPUS)
 
     async def failing(self, *a, **kw):
@@ -307,7 +310,10 @@ async def test_a_seated_request_keeps_the_set_it_started_with(fake_embedding_cli
 
 
 @pytest.mark.asyncio
-async def test_the_set_is_read_before_the_cue_and_kept_after_it(fake_embedding_client, installed):
+async def test_the_set_is_read_before_the_cue_and_kept_after_it(fake_embedding_client, installed, monkeypatch):
+    # The keyword seats (2 under rrf by default) hold rows the gate refused; this test
+    # counts or orders the rows of another feature, so it runs without them.
+    monkeypatch.setattr(config, "KEYWORD_SEATS", 0)
     await _seed(CORPUS)
 
     async def failing(self, *a, **kw):

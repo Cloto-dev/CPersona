@@ -601,6 +601,9 @@ async def test_the_cue_arm_searches_to_its_own_depth_whatever_the_count(fake_emb
 async def test_reconstruct_returns_every_cue_seat_beside_its_window(fake_embedding_client, monkeypatch):
     """The count contract of reconstruct allows as many held items as recall can hold
     places: with no block places, the three sure seats are three items after the window."""
+    # The keyword seats (2 under rrf by default) hold rows the gate refused; this test
+    # counts or orders the rows of another feature, so it runs without them.
+    monkeypatch.setattr(config, "KEYWORD_SEATS", 0)
     from cpersona import blocks, reconstruct
 
     await _seed(CORPUS)
@@ -743,6 +746,9 @@ async def test_a_seated_row_shows_the_confidence_of_its_own_history(fake_embeddi
 async def test_a_plain_recall_builds_no_seat_bookkeeping(fake_embedding_client, monkeypatch):
     """bug-492: every recall built the sets the seats read -- the reached rows, the
     admitted rows -- with no cue and no propagation seat to read them."""
+    # The keyword seats (2 under rrf by default) read these sets on every recall; this
+    # test is about a recall with no seat on, so it runs without them.
+    monkeypatch.setattr(config, "KEYWORD_SEATS", 0)
     await _seed(CORPUS)
     calls = []
     real = memory_handlers._row_rid

@@ -5095,6 +5095,27 @@
       "messages": [
         {
           "confidence": {
+            "age_hours": 408.0,
+            "cosine": 0.4127,
+            "score": 0.4842
+          },
+          "content": "apples spelled +00:00",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0158730159,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:3",
+          "source": {
+            "id": "u",
+            "name": "n",
+            "type": "User"
+          },
+          "timestamp": "2026-12-15T00:00:00+00:00"
+        },
+        {
+          "confidence": {
             "age_hours": 168.0,
             "cosine": 0.4589,
             "score": 0.6095
@@ -7571,6 +7592,22 @@
       },
       "recalled": {
         "messages": [
+          {
+            "content": "apples, another finite vector",
+            "match_reason": {
+              "admission": "reservation",
+              "rrf": 0.0151515152,
+              "seat": 1,
+              "signal": "keyword"
+            },
+            "ref": "mem:106",
+            "source": {
+              "id": "u",
+              "name": "n",
+              "type": "User"
+            },
+            "timestamp": "2026-01-01T00:00:06Z"
+          },
           {
             "content": "apples, every element +inf",
             "match_reason": {
@@ -14771,6 +14808,21 @@
           "timestamp": "2026-09-23T00:00:00Z"
         },
         {
+          "content": "harbor lighthouse keeper logbook 1",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-12-31T00:00:00Z"
+        },
+        {
           "content": "harbor lighthouse keeper logbook 5",
           "match_reason": {
             "cosine": 0.913182199,
@@ -14980,6 +15032,10 @@
           }
         },
         "reservation": [
+          {
+            "kind": "keyword",
+            "ref": "mem:1"
+          },
           {
             "kind": "cue",
             "ref": "mem:7"
@@ -15266,6 +15322,34 @@
     "raised": null,
     "result": {
       "messages": [
+        {
+          "content": "[Episode] harbor lighthouse keeper review far outside the period",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0161290323,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-06-15T00:00:00Z"
+        },
+        {
+          "content": "[Episode] harbor lighthouse keeper review inside the period",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-11-02T00:00:00Z"
+        },
         {
           "content": "harbor lighthouse keeper logbook entry 8",
           "match_reason": {
@@ -15961,7 +16045,16 @@
             "confidence": "sure"
           }
         },
-        "reservation": [],
+        "reservation": [
+          {
+            "kind": "keyword",
+            "ref": "ep:1"
+          },
+          {
+            "kind": "keyword",
+            "ref": "ep:2"
+          }
+        ],
         "scope": {
           "agent_id": "m1",
           "channel": "",
@@ -16635,6 +16728,35 @@
     "result": {
       "messages": [
         {
+          "content": "harbor lighthouse keeper logbook entry 0",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-12-31T00:00:00Z"
+        },
+        {
+          "content": "[Episode] harbor lighthouse keeper review inside the period",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-11-02T00:00:00Z"
+        },
+        {
           "content": "harbor lighthouse keeper logbook entry 9",
           "match_reason": {
             "cosine": 0.7993612885,
@@ -17031,7 +17153,16 @@
             "confidence": "sure"
           }
         },
-        "reservation": [],
+        "reservation": [
+          {
+            "kind": "keyword",
+            "ref": "ep:1"
+          },
+          {
+            "kind": "keyword",
+            "ref": "mem:1"
+          }
+        ],
         "scope": {
           "agent_id": "m1",
           "channel": "",
@@ -17299,6 +17430,35 @@
     "raised": null,
     "result": {
       "messages": [
+        {
+          "content": "harbor lighthouse keeper logbook entry 0",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-12-31T00:00:00Z"
+        },
+        {
+          "content": "[Episode] harbor lighthouse keeper review inside the period",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-11-02T00:00:00Z"
+        },
         {
           "content": "harbor lighthouse keeper logbook entry 9",
           "match_reason": {
@@ -17700,7 +17860,16 @@
             "confidence": "vague"
           }
         },
-        "reservation": [],
+        "reservation": [
+          {
+            "kind": "keyword",
+            "ref": "ep:1"
+          },
+          {
+            "kind": "keyword",
+            "ref": "mem:1"
+          }
+        ],
         "scope": {
           "agent_id": "m1",
           "channel": "",
@@ -17980,6 +18149,35 @@
     "raised": null,
     "result": {
       "messages": [
+        {
+          "content": "harbor lighthouse keeper logbook entry 0",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-12-31T00:00:00Z"
+        },
+        {
+          "content": "[Episode] harbor lighthouse keeper review inside the period",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-11-02T00:00:00Z"
+        },
         {
           "content": "harbor lighthouse keeper logbook entry 9",
           "match_reason": {
@@ -18393,7 +18591,16 @@
             "confidence": "sure"
           }
         },
-        "reservation": [],
+        "reservation": [
+          {
+            "kind": "keyword",
+            "ref": "ep:1"
+          },
+          {
+            "kind": "keyword",
+            "ref": "mem:1"
+          }
+        ],
         "scope": {
           "agent_id": "m1",
           "channel": "",
@@ -18685,6 +18892,34 @@
     "result": {
       "depth": 12,
       "messages": [
+        {
+          "content": "[Episode] harbor lighthouse keeper review far outside the period",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0161290323,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "ep:2",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-06-15T00:00:00Z"
+        },
+        {
+          "content": "[Episode] harbor lighthouse keeper review inside the period",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-11-02T00:00:00Z"
+        },
         {
           "content": "harbor lighthouse keeper logbook entry 5",
           "match_reason": {
@@ -19183,7 +19418,16 @@
             "far_weight": 1.0
           }
         },
-        "reservation": [],
+        "reservation": [
+          {
+            "kind": "keyword",
+            "ref": "ep:1"
+          },
+          {
+            "kind": "keyword",
+            "ref": "ep:2"
+          }
+        ],
         "scope": {
           "agent_id": "m1",
           "channel": "",
@@ -23366,6 +23610,38 @@
         {
           "confidence": {
             "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
             "cosine": 0.3979,
             "score": 0.3285
           },
@@ -23688,6 +23964,38 @@
     "raised": null,
     "result": {
       "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 1.0
+          },
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 1.0
+          },
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
+        },
         {
           "confidence": {
             "age_hours": 8760.0,
@@ -24149,6 +24457,38 @@
     "raised": null,
     "result": {
       "messages": [
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "confidence": {
+            "age_hours": 8760.0,
+            "score": 0.5477
+          },
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
+        },
         {
           "confidence": {
             "age_hours": 8760.0,
@@ -24654,6 +24994,30 @@
             "System": "episode"
           },
           "timestamp": "2026-01-01T00:00:07Z"
+        },
+        {
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
         }
       ]
     },
@@ -24892,6 +25256,30 @@
             "System": "episode"
           },
           "timestamp": "2026-01-01T00:00:07Z"
+        },
+        {
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
         }
       ]
     },
@@ -25162,6 +25550,30 @@
             "System": "episode"
           },
           "timestamp": "2026-01-01T00:00:07Z"
+        },
+        {
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
         }
       ]
     },
@@ -25431,6 +25843,30 @@
             "type": "Agent"
           },
           "timestamp": "2025-12-31T19:00:07-05:00"
+        },
+        {
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
         }
       ]
     },
@@ -25719,6 +26155,30 @@
             "System": "episode"
           },
           "timestamp": "2026-01-01T00:00:07Z"
+        },
+        {
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
         }
       ]
     },
@@ -25981,6 +26441,30 @@
             "System": "episode"
           },
           "timestamp": "2026-01-01T00:00:07Z"
+        },
+        {
+          "content": "apples with a ragged vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0153846154,
+            "seat": 2,
+            "signal": "keyword"
+          },
+          "ref": "mem:6",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:08Z"
+        },
+        {
+          "content": "apples with no vector",
+          "match_reason": {
+            "admission": "reservation",
+            "rrf": 0.0163934426,
+            "seat": 1,
+            "signal": "keyword"
+          },
+          "ref": "mem:7",
+          "source": {},
+          "timestamp": "2026-01-01T00:00:09Z"
         }
       ]
     },
