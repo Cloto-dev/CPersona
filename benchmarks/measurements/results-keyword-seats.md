@@ -64,3 +64,34 @@ the seats added nothing on the private pack.
 Whether two seats become the default is not decided by these rules. The gain on
 the private pack is 5 entries of 196 for about a ninth more text in every
 response.
+
+## After the test: the same number of rows by rank (exploratory)
+
+Run after both rules were applied, outside the registration, to separate two
+readings of the gain: that the seats bring rows only the keyword arms found, or
+that they bring two more rows of any kind. The control asks `reconstruct` for
+count 12 with no seat, which sends the same number of rows as count 10 with two
+seats (14, block reach included). The server's maximum count is 10
+(`CPERSONA_RECONSTRUCT_MAX_COUNT`), so the control ran with the maximum raised to
+12; a first attempt without it was clamped to 10 and equalled the run with no
+seat on every question. Same commit, prepared databases and settings as above.
+Nothing was chosen on these runs.
+
+Evidence entries reached on the private pack:
+
+| Questions | Fusion | No seat, count 10 | Two seats, count 10 | No seat, count 12 | Shown characters, seats / count 12 |
+| --- | --- | --- | --- | --- | --- |
+| Test (150, 196 entries) | `rrf` | 168 | 173 | 168 | 6,381 / 6,353 |
+| Test | rsf + confidence | 162 | 162 | 167 | 6,237 / 6,377 |
+| Development (150, 193 entries) | `rrf` | 157 | 167 | 157 | 6,397 / 6,380 |
+| Development | rsf + confidence | 153 | 153 | 155 | 6,294 / 6,384 |
+
+- Under `rrf` the two more rows by rank reached no more evidence than count 10,
+  on either question set, at about the same text. The seats' gain over that
+  control on the test questions: +5, +0.033 per question, two-sided 95% t
+  interval +0.0043 to +0.0624, no question fewer. Under the default fusion the
+  gain is the rows only the keyword arms found, not the number of rows.
+- Under rsf with confidence the result is the other way: the seats added
+  nothing, and two more rows by rank added 5 (test; +0.033 per question, 95%
+  −0.0012 to +0.0679) and 2 (development). Under that fusion the gate already
+  passes a keyword-only row, and the seats cost text without adding evidence.
