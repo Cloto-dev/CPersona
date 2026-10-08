@@ -196,10 +196,12 @@ rest of this section is what keeps it complete, and what the reader refuses.
   bookkeeping table may be edited or cleared and would then hand out a number
   the file already claims to include.
 - **Only while a file is in use.** The triggers write nothing unless the log is
-  on. A build turns it on, and a server started with the file off turns it off,
-  so a deployment that did not opt in pays nothing on its writes. Each time the
-  log is turned on its generation rises, and a file from before a gap is
-  refused.
+  on. A build turns it on, and a server started with the file off turns it off.
+  With the log off the triggers still check, for each block row written, whether
+  it is on: on the reference machine that added 0.37 ms to rewriting a record's
+  blocks, against 0.61 ms with the log on, each under 0.02% of a block build
+  ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md)). Each time the log is turned on its generation rises, and a
+  file from before a gap is refused.
 - **The build.** It turns the log on, then reads the clock, the schema version
   and every row in one snapshot, and refuses to write a file unless every
   logging trigger exists as the schema defines it: a check made later only
