@@ -53,6 +53,7 @@ from cpersona.config import (
     EPISODE_DECAY_RATE,
     EPISODE_PENALTY_ENABLED,
     FTS_ENABLED,
+    LEXICAL_ENGINE,
     MAX_MEMORIES,
     MAX_METADATA_LENGTH,
     PRIOR_AGE_ANCHOR,
@@ -3911,6 +3912,8 @@ async def _search_episodes_fts(
     exact-match filter on the episode's channel — empty means no channel
     filter (all channels), mirroring the memory search paths.
     """
+    if LEXICAL_ENGINE == "off":
+        return []
     fts_query = _build_fts_recall_query(query, extra_terms)
     if not fts_query:
         return []
@@ -4005,6 +4008,10 @@ async def _search_memories_keyword(
             (*iso.params, *src_params_bare, limit),
         )
         return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows]
+
+    if LEXICAL_ENGINE == "off":
+        # Not the LIKE fallback either: the arm is absent, not degraded.
+        return []
 
     if FTS_ENABLED:
         fts_query = _build_fts_recall_query(query, extra_terms)

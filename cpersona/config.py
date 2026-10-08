@@ -597,6 +597,14 @@ FUTURE_TIMESTAMP_MODE = _parse_choice(
 
 FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 
+# Which engine answers the two keyword arms (memories and episodes). `fts5` is
+# SQLite FTS5, as it always was. `off` makes both arms return nothing for a
+# query with text, in every path that reads them (the fused arms, the cascade and
+# the time cue's), so a measurement can compare a store with the keyword arms
+# against the same store without them. CPERSONA_FTS_ENABLED=false is not that
+# comparison: it sends the memory arm to its LIKE fallback instead.
+LEXICAL_ENGINE = _parse_choice("CPERSONA_LEXICAL_ENGINE", "fts5", ("fts5", "off"))
+
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the
 # generic key shared across Cloto MCP servers (matches the CScheduler convention
 # and the marketplace catalog, which sets EMBEDDING_MODE / EMBEDDING_HTTP_URL).
