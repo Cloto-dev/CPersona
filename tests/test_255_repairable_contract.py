@@ -397,12 +397,16 @@ async def _s_coarse_index(conn):
 @seeder("block_index")
 async def _s_block_index(conn):
     # Not a row: the block change log left running while the block index file is
-    # off (the default), which the repair stops. Put back whichever way it ends.
+    # off, which the repair stops. The file is on by default, so the seeder turns
+    # it off. Put back whichever way it ends.
+    before = config.BLOCK_INDEX_ENABLED
+    config.BLOCK_INDEX_ENABLED = False
     await conn.execute("UPDATE block_log_clock SET logging = 1 WHERE id = 0")
     await conn.commit()
     try:
         yield conn
     finally:
+        config.BLOCK_INDEX_ENABLED = before
         await conn.execute("UPDATE block_log_clock SET logging = 0 WHERE id = 0")
         await conn.execute("DELETE FROM record_block_changes")
         await conn.commit()

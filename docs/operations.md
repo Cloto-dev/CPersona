@@ -395,12 +395,19 @@ There is no configuration for the index. Its path is derived from
 
 ## The block index file
 
-With `CPERSONA_BLOCK_INDEX=true` the block arm reads its rows from a third
+Unless `CPERSONA_BLOCK_INDEX=false`, the block arm reads its rows from a third
 derived file, `<database>.blocks.blockindex`, instead of reading up to 250,000
 rows out of SQLite on every recall. The answer is the same either way
 ([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)); only the time
 differs. Like the other two files it is never backed up, never repaired, safe to
 delete, and removed by a purge along with the rows it held.
+
+The file takes 28 bytes per block row plus one bit per dimension of the model:
+124 bytes with a 768-dimension model, 156 with a 1,024-dimension one. On Linux
+and macOS it is mapped, so the operating system pages in what a recall reads; on
+Windows it is read into memory whole. To go without it, set
+`CPERSONA_BLOCK_INDEX=false` and restart: the server stops the log at startup,
+recalls read SQLite, and the file can be deleted.
 
 You do not build it by hand. While the setting is on, the server keeps a log of
 the records whose blocks change, and its queue builds the file at startup and

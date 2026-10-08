@@ -2,7 +2,7 @@
 
 Status: the contract and its conformance data are on `master`, and so is a
 second implementation of the read: from a file beside the database, when
-`CPERSONA_BLOCK_INDEX` is on (off by default). Recall's answers do not change.
+`CPERSONA_BLOCK_INDEX` is on (the default from 2.6.7). Recall's answers do not change.
 
 ## 0. What this is
 
@@ -153,9 +153,13 @@ package. Almost all of the gain comes from not reading SQLite (section 3.1).
 Which library is used, and whether it is required or optional, is decided with
 the implementation.
 
-### 3.3 Off by default, answers unchanged
+### 3.3 On by default, answers unchanged
 
-The file reader is opted into with `CPERSONA_BLOCK_INDEX=true`. Any state in
+The file reader is on unless `CPERSONA_BLOCK_INDEX=false`. It was opt-in when
+2.6.7a2 introduced it, and was turned on by default after a registered run over
+100,000 memories on the reference machine found recall faster, every answer
+unchanged and the change log adding under 1% to a block build
+([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md)). Any state in
 which the file cannot answer exactly sends the call to the SQLite read (section
 3.4). It is held to returning the same rows in the same order as that read,
 rather than to a bound on how much worse its answers may be: by this contract's

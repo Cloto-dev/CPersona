@@ -43,7 +43,7 @@ recorded as done, so it is retried on the next start.
 | 16 | 2.6.0a5 | `record_blocks`: block reach | **Built for you**: blocks for the records already stored, unless you turn block reach off ([below](#block-reach-is-on-by-default)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
 | 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
-| 19 | 2.6.7a2 | `block_log_clock`, `record_block_changes`: the log of which records' blocks changed, kept only while the block index file is on ([contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | No: the file is built on the queue only where `CPERSONA_BLOCK_INDEX` is on |
+| 19 | 2.6.7a2 | `block_log_clock`, `record_block_changes`: the log of which records' blocks changed, kept only while the block index file is on ([contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **Built for you** on the queue, unless you turn the file off ([below](#the-block-index-file-is-on-by-default)) |
 
 2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6 and 2.6.7a1 changed no schema.
 
@@ -110,6 +110,27 @@ block that matched ([design](BLOCK_REACH_DESIGN.md)).
 If you ran 2.6.0a5 with block construction on, its block sets have no vectors
 and are rebuilt by the same backfill.
 
+### The block index file is on by default
+
+From 2.6.7, the block arm reads the rows it examines from a file beside the
+database instead of from SQLite, with the same answer
+([operations](operations.md#the-block-index-file)).
+
+- **The first start builds the file** on the queue, once there are blocks to
+  hold. On a store of 100,000 memories with 3,480,069 blocks, it was 431,528,748
+  bytes and took 11 to 14 s to build on an Intel N150. Until it is built,
+  recalls read SQLite.
+- **Recall gets faster.** On that store and machine, against rules registered
+  before the run, the median recall fell from 960 to 798 ms and from 931 to
+  844 ms, the block arm from about 575 ms to 64 ms, and every recall returned
+  the same rows in the same order ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md)).
+- **Writes pay a little.** The server logs each block row written or deleted,
+  about 16 bytes per entry, which added under 1% to a block build there. The
+  file is rebuilt once the log has more than 35,000 entries since it was built.
+- **On Windows the file is read into memory** rather than mapped.
+- **To turn it off**, set `CPERSONA_BLOCK_INDEX=false`: the server stops the
+  log at startup and recalls read SQLite.
+
 ## Behaviour that changed
 
 Check these against what your deployment relies on. Each is off, or equal to
@@ -119,6 +140,10 @@ Check these against what your deployment relies on. Each is off, or equal to
   blocks and says so (`blocks: {"status": "queued"}`), recall can return up to
   2 reserved rows beyond `limit`, and `reconstruct` quotes the block that
   matched. [Above](#block-reach-is-on-by-default) is how to turn it off.
+- **The block index file is on by default** (2.6.7). The first start builds a
+  file beside the database, and recalls read the block arm's rows from it with
+  the same answer. [Above](#the-block-index-file-is-on-by-default) is how to
+  turn it off.
 - **`reconstruct` returns 10 items when `count` is omitted** (2.6.0; it
   returned 1). With block reach on, this is the configuration 2.6.0 recommends
   for answering from memory. A deployment that relied on one item sets

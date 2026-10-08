@@ -58,7 +58,7 @@ primary key to re-rank what the block arm's Hamming pass ranks highest; a
 trigger on `record_blocks` deletes a block's vector with the block. Two small
 tables, `block_log_clock` and `record_block_changes`, are a log of which records'
 blocks changed, kept by triggers only while the block index file
-(`CPERSONA_BLOCK_INDEX`, off by default) is in use: a recall reads those records
+(`CPERSONA_BLOCK_INDEX`, on by default) is in use: a recall reads those records
 from SQLite and every other record's blocks from the file
 ([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)).
 
@@ -255,7 +255,7 @@ calls or elapsed time and queues its own continuation, so a corpus is built over
 a series of bounded runs and a restart resumes near where the last one stopped
 rather than starting again.
 
-The third is `block_index_build`, only where `CPERSONA_BLOCK_INDEX` is on: it
+The third is `block_index_build`, unless `CPERSONA_BLOCK_INDEX` is off: it
 writes the block index file the block arm reads instead of SQLite
 ([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)). It is queued at startup
 and after a block build or sweep, when the file is absent, unusable or too far

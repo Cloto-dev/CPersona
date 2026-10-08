@@ -1,11 +1,11 @@
-<!-- i18n-source: docs/BLOCK_CANDIDATES_CONTRACT.md@blob:044a96230fc6d11ea1f00e81cdb6813af39f1dcc -->
+<!-- i18n-source: docs/BLOCK_CANDIDATES_CONTRACT.md@blob:21f524a8fe6340309b2bd773b928ca6a9def104d -->
 
 # Block の候補生成 — 約束 { #block-candidate-generation-contract }
 
 > **翻訳について**: 正本は英語版です。日本語版が古い場合は英語版を参照してください。
 
 Status: 約束とその適合検査のデータが `master` にあります。もう 1 つの読み方 (`CPERSONA_BLOCK_INDEX` が on の時に、
-データベースの横のファイルから読むもの。既定は off) も `master` にあります。想起の答えは変わりません。
+データベースの横のファイルから読むもの。2.6.7 から既定で on) も `master` にあります。想起の答えは変わりません。
 
 ## 0. これは何か { #0-what-this-is }
 
@@ -124,9 +124,12 @@ Hamming 距離と近い行の選び出しは、別の言語の別のプロセス
 配布物を増やすことになります。利得のほとんどは SQLite を読まないことから来ます (第 3.1 節)。
 どのライブラリを使い、それを必須にするか任意にするかは、実装と一緒に決めます。
 
-### 3.3 既定は off、答えは変わらない { #33-off-by-default-answers-unchanged }
+### 3.3 既定は on、答えは変わらない { #33-on-by-default-answers-unchanged }
 
-ファイルから読む実装は、`CPERSONA_BLOCK_INDEX=true` で明示して有効にします。ファイルが正確に答えられない
+ファイルから読む実装は、`CPERSONA_BLOCK_INDEX=false` にしない限り on です。2.6.7a2 で入った時は明示して
+有効にするものでしたが、基準機で 10 万件に対して実行前に登録した計測で、想起が速くなり、答えはすべて
+変わらず、変更記録が Block の構築に足す費用が 1% 未満だったので、既定で on にしました
+([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md))。ファイルが正確に答えられない
 状態では、呼び出しを SQLite の読み出しに送ります (第 3.4 節)。その読み出しと同じ行を同じ順で返すことを、
 「答えがどこまで悪くなってよいか」の上限ではなく、次のもので求めます: この約束の golden をファイル経由で
 読むこと。作った後の無作為な書き込み (新しい記録、作り直し・削除・付け替え・別のキーへの移動、幅の違う行) の

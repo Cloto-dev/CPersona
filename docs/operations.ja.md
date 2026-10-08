@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:a9bc4e600db2ddb2e81f218aeff8f432c75ae085 -->
+<!-- i18n-source: docs/operations.md@blob:5a4127b1a14a9a1215bbc88f2c853d07005f75a9 -->
 
 # 運用 Runbook
 
@@ -379,11 +379,16 @@ exit 0 を返すのは両方を作れた時だけです。`status` は粗探索�
 
 ## Block の索引ファイル { #the-block-index-file }
 
-`CPERSONA_BLOCK_INDEX=true` にすると、Block の腕は想起のたびに SQLite から最大 25 万行を読む代わりに、
+`CPERSONA_BLOCK_INDEX=false` にしない限り、Block の腕は想起のたびに SQLite から最大 25 万行を読む代わりに、
 3 つ目の派生ファイル `<database>.blocks.blockindex` から行を読みます。答えはどちらでも同じで
 ([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))、違うのは時間だけです。ほかの 2 つのファイルと
 同じく、バックアップせず、修復せず、消してかまわず、削除 (purge) の時はそれが持っていた行と一緒に
 消されます。
+
+ファイルの大きさは、Block の行ごとに 28 バイトと、モデルの次元ごとに 1 ビットです。768 次元のモデルで
+124 バイト、1,024 次元で 156 バイトになります。Linux と macOS ではマップするので、想起が読む部分だけを
+OS が読み込みます。Windows ではファイル全体をメモリに読みます。使わない場合は `CPERSONA_BLOCK_INDEX=false`
+にして再起動します。サーバーは起動時に変更記録を止め、想起は SQLite を読み、ファイルは消してかまいません。
 
 手で作る必要はありません。設定が on の間、サーバーは Block が変わった記録の記録 (変更記録) を付け、
 ファイルが無い・使えない・その記録から遅れすぎている時に、起動時と Block を書いた後にキューがファイルを
