@@ -915,6 +915,11 @@ def main(argv: list | None = None) -> int:
     async def run() -> int:
         from cpersona import database
 
+        if args.db:
+            # The database module took its path when it was first imported, which
+            # this module's own imports did before the argument was read.
+            database.DB_PATH = args.db
+
         # An operator tool does not migrate (a database before schema 19 has no
         # change log, and the build says so).
         skip_before = database.SKIP_BOOT_MIGRATIONS
