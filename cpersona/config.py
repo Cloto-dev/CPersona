@@ -605,6 +605,14 @@ FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 # comparison: it sends the memory arm to its LIKE fallback instead.
 LEXICAL_ENGINE = _parse_choice("CPERSONA_LEXICAL_ENGINE", "fts5", ("fts5", "off"))
 
+# How the keyword arms cut a query's Japanese and Chinese runs into FTS5 phrases.
+# `trigram` is the builder as it always was: every overlapping three-character
+# piece of a run. `morph` and `morph_overlap` are measurement variants that leave
+# out the pieces made of function words, so that the wording of a request does not
+# outvote what it asks about; they need SudachiPy installed (cpersona/query_segment.py).
+# ASCII terms are built the same way by all three.
+QUERY_SEGMENTER = _parse_choice("CPERSONA_QUERY_SEGMENTER", "trigram", ("trigram", "morph", "morph_overlap"))
+
 # Keyword seats: places held, like the block arm's reservation, for rows only the
 # keyword arms found and the answer does not hold. Under rrf the gate keys a row
 # without a cosine on its fused score, and one arm's vote is at most 1/(K+1), so

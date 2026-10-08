@@ -36,6 +36,7 @@ from cpersona import generation
 from cpersona import health
 from cpersona import nodes
 from cpersona import propagation
+from cpersona import query_segment
 from cpersona import providers
 from cpersona import scope_stats
 from cpersona import recall_trace
@@ -3802,12 +3803,18 @@ def _build_fts_query(query: str) -> str:
     return " OR ".join(_fts_phrases(query))
 
 
-def _fts_phrases(query: str) -> list[str]:
-    """The quoted phrases ``_build_fts_query`` ORs together, in its order."""
+def _fts_phrases(query: str, segmenter: str = "trigram") -> list[str]:
+    """The quoted phrases ``_build_fts_query`` ORs together, in its order.
+
+    ``segmenter`` other than ``trigram`` cuts the Japanese and Chinese runs by
+    ``query_segment`` (CPERSONA_QUERY_SEGMENTER); only the recall builder passes it.
+    """
     terms: list[str] = []
     for tok in _TOKEN_RE.findall(query):
         if _CJK_RE.match(tok):
-            if len(tok) >= 3:
+            if segmenter != "trigram":
+                terms.extend(query_segment.cjk_terms(tok, segmenter))
+            elif len(tok) >= 3:
                 terms.extend(tok[i : i + 3] for i in range(len(tok) - 2))
             # shorter CJK runs (e.g. 'パン') can't match a trigram index -> LIKE
         elif len(tok) >= 3:
@@ -3832,7 +3839,7 @@ def _fts_recall_phrases(query: str, extra_terms: list[str] | None = None) -> lis
     """The quoted phrases ``_build_fts_recall_query`` ORs together, in its order."""
     normalized = " ".join(token.strip("\"'`.,;:!?()[]{}") for token in query.split())
     phrases = ['"' + t.replace('"', '""') + '"' for t in dict.fromkeys(extra_terms or ()) if len(t) >= 3]
-    return _fts_phrases(normalized) + phrases
+    return _fts_phrases(normalized, config.QUERY_SEGMENTER) + phrases
 
 
 # FTS5's bm25 (ext/fts5/fts5_aux.c, the same in SQLite 3.40 and 3.50) gives phrase i the
