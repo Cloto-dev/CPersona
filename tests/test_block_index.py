@@ -549,6 +549,10 @@ async def test_the_command_line_builds_and_reports(on, capsys, tmp_path):
         await db.commit()
         await database.close_db()
         database._db = None
+        # The paths go back to where they were, so the command has to set them
+        # from --db itself: a test that left them pointing here would pass with a
+        # command that never reads the argument.
+        database.DB_PATH, config.DB_PATH = saved[1], saved[2]
         block_index._cache.clear()
         # main() runs its own event loop, so it runs in a thread beside this one.
         assert await asyncio.to_thread(block_index.main, ["--db", path, "build"]) == 0
