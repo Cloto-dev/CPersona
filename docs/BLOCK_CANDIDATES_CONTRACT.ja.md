@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/BLOCK_CANDIDATES_CONTRACT.md@blob:21f524a8fe6340309b2bd773b928ca6a9def104d -->
+<!-- i18n-source: docs/BLOCK_CANDIDATES_CONTRACT.md@blob:128b914aa41a5013638fced9a17f132f8d16251e -->
 
 # Block の候補生成 — 約束 { #block-candidate-generation-contract }
 
@@ -156,7 +156,9 @@ Block が変わった記録の行を SQLite から読み、それ以外の記録
   `AUTOINCREMENT` は使いません。その管理表は編集や消去ができ、そうされるとファイルがすでに含むと称する
   番号を再び配るためです。
 - **ファイルを使っている間だけ。** 変更記録が off の間、トリガーは何も書きません。作る処理が on にし、
-  ファイルを off にして起動したサーバーが off にするので、有効にしていない配備は書き込みで何も払いません。
+  ファイルを off にして起動したサーバーが off にします。記録が off でも、トリガーは Block の行を書くたびに
+  記録が on かを確かめます。基準機では、記録の Block を書き直す時間に off で 0.37 ms、on で 0.61 ms を
+  足し、どちらも Block の構築の 0.02% 未満でした ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md))。
   on にするたびに世代が上がり、記録の空白より前に作ったファイルは拒まれます。
 - **作る処理。** 変更記録を on にしてから、時計・スキーマの版・すべての行を 1 つのスナップショットで読み、
   記録用のトリガーがすべてスキーマの定義どおりに存在しなければファイルを書きません。後でする確認は作った
