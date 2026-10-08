@@ -7,10 +7,18 @@ every query twice in alternating order: once with the stand-in vector and once
 through a real `EmbeddingClient` pointed at an embedding server. The difference
 is what embedding the query costs under the same machine state.
 
-Registrations: prereg-recall-latency-with-embedding.md (the synthetic corpus) and
+Registrations: prereg-recall-latency-with-embedding.md (the synthetic corpus),
 prereg-recall-latency-realistic-corpus.md (`--corpus-db`: a corpus of real text
 built through the store path by build_realistic_corpus.py, with its blocks and
-nodes, timed with real questions from `--queries-file`).
+nodes, timed with real questions from `--queries-file`) and
+prereg-recall-latency-block-index-file.md (`--block-index` / `--touch-rows`: the
+block arm reading its rows from the block index file, and how it fares as rows
+change after the file is built).
+
+Every recall's returned refs and the time its block arm took are recorded, so
+two runs that differ only in where the block arm reads its rows can be compared
+row for row. The stand-in vector is derived from Python's string hash: runs that
+are compared that way need the same PYTHONHASHSEED.
 
 Every query text is used once per client, so the client's cache never answers a
 timed query. The script refuses to run when the model's output width differs
@@ -28,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import json
 import math
 import os
@@ -68,8 +77,102 @@ def top_processes() -> list[str]:
         return [f"unavailable: {exc!r}"]
 
 
+class BlockArmProbe:
+    """Times the block arm and counts where it read its rows, per recall.
+
+    Wraps `blocks.search` (the block arm's one entry, reached through the module
+    attribute) and `block_index._note` (where every read says whether the file or
+    SQLite served it). Both wrappers run in every arm, so they cost every arm alike.
+    """
+
+    def __init__(self) -> None:
+        from cpersona import block_index, blocks
+
+        self.calls: list[float] = []
+        self.sources: collections.Counter = collections.Counter()
+        search, note = blocks.search, block_index._note
+
+        async def timed_search(*a, **k):
+            t0 = time.perf_counter()
+            try:
+                return await search(*a, **k)
+            finally:
+                self.calls.append((time.perf_counter() - t0) * 1000)
+
+        def counted_note(source, **fields):
+            self.sources[source if source == "file" else f"{source}:{fields.get('reason')}"] += 1
+            note(source, **fields)
+
+        blocks.search = timed_search
+        block_index._note = counted_note
+
+    def take(self) -> tuple[float, int]:
+        """The block arm's time in the recall just made, and how many calls it took."""
+        total, n = sum(self.calls), len(self.calls)
+        self.calls.clear()
+        return total, n
+
+    def take_sources(self) -> dict:
+        out = dict(sorted(self.sources.items()))
+        self.sources.clear()
+        return out
+
+
+def refs_of(res) -> list[str] | None:
+    if not isinstance(res, dict):
+        return None
+    return [m.get("ref") for m in res.get("messages", [])]
+
+
+async def touch_newest(target_rows: int, already: set) -> dict:
+    """Mark the block rows of the newest memories as changed, up to ``target_rows`` in all.
+
+    Rewrites one column of each row to its own value, which fires the change log's
+    update trigger once per row when the log is on and leaves the rows as they were,
+    so a recall's answer cannot move. Memories are taken newest first, skipping
+    those an earlier call took, while the rows taken stay within the target.
+    """
+    from cpersona.block_index import _clock
+    from cpersona.database import connection, transaction
+
+    chosen, rows = [], sum(n for _, n in already)
+    taken_ids = {i for i, _ in already}
+    async with connection() as db:
+        ids = await db.execute_fetchall("SELECT id FROM memories ORDER BY id DESC")
+        for (mid,) in ids:
+            if mid in taken_ids:
+                continue
+            n = (await db.execute_fetchall(
+                "SELECT COUNT(*) FROM record_blocks WHERE parent_kind = 'mem' AND parent_id = ?", (mid,)
+            ))[0][0]
+            if not n:
+                continue
+            if rows + n > target_rows:
+                break
+            chosen.append((mid, n))
+            rows += n
+    async with transaction(scope_stats_neutral=True) as db:
+        for start in range(0, len(chosen), 500):
+            part = [mid for mid, _ in chosen[start : start + 500]]
+            marks = ",".join("?" * len(part))
+            await db.execute(
+                "UPDATE record_blocks SET start_char = start_char"
+                f" WHERE parent_kind = 'mem' AND parent_id IN ({marks})",
+                part,
+            )
+    already.update(chosen)
+    async with connection() as db:
+        clock = await _clock(db)
+    return {
+        "target_rows": target_rows,
+        "records_touched": len(already),
+        "rows_touched": sum(n for _, n in already),
+        "log": None if clock is None else dict(zip(("logging", "generation", "head", "pruned_through"), clock)),
+    }
+
+
 async def run(args) -> dict:
-    from cpersona import config, vector, vector_index
+    from cpersona import block_index, config, vector, vector_index
     from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
     from cpersona.database import close_db, connection, init_db
     import cpersona.server as server_mod
@@ -79,6 +182,12 @@ async def run(args) -> dict:
         # anything opens it, so the run never writes to the file it was given.
         shutil.copyfile(args.corpus_db, os.environ["CPERSONA_DB_PATH"])
     await init_db()
+    if args.block_index != block_index.enabled():
+        # An arm must be what its name says: the reader follows the setting, not the flag.
+        raise SystemExit(
+            f"--block-index is {args.block_index} but the block index is "
+            f"{'on' if block_index.enabled() else 'off'} (CPERSONA_BLOCK_INDEX)"
+        )
     stub = perf.LocalEmbeddingClient(args.dim)
     real = EmbeddingClient(
         mode="http",
@@ -150,11 +259,27 @@ async def run(args) -> dict:
             raise SystemExit(f"index build declined: {build.get('reason')}")
         result["index"] = {k: build[k] for k in ("count", "dim", "watermark", "bytes")}
 
+    result["pythonhashseed"] = os.environ.get("PYTHONHASHSEED")
+    result["block_index"] = {"enabled": block_index.enabled()}
+    if args.block_index:
+        t0 = time.perf_counter()
+        built = await block_index.build_block_index()
+        result["block_index"]["build"] = built
+        result["block_index"]["build_seconds"] = round(time.perf_counter() - t0, 3)
+        if not built.get("built"):
+            raise SystemExit(f"block index build declined: {built.get('reason')}")
+        result["block_index"]["status_before"] = await block_index.status()
+    probe_arm = BlockArmProbe()
+
+    async with connection() as db:
+
         # Warm-up texts are never reused below.
         for text in warm_texts:
             for client in (stub, real):
                 use(client)
                 await server_mod.do_recall(agent_id=agent, query=text, limit=args.limit)
+        probe_arm.take()
+        result["block_sources_warmup"] = probe_arm.take_sources()
 
         if args.settle_load is not None:
             # Wait for the machine to come to rest before the timed loop, rather
@@ -172,6 +297,7 @@ async def run(args) -> dict:
         result["top_before"] = top_processes()
 
         stub_ms, real_ms, rows_stub, rows_real = [], [], [], []
+        block_stub, block_real, refs_stub, refs_real, block_calls = [], [], [], [], []
         for i, text in enumerate(timed_texts):
             order = (stub, real) if i % 2 == 0 else (real, stub)
             for client in order:
@@ -179,13 +305,20 @@ async def run(args) -> dict:
                 t0 = time.perf_counter()
                 res = await server_mod.do_recall(agent_id=agent, query=text, limit=args.limit)
                 elapsed = (time.perf_counter() - t0) * 1000
+                block_ms, calls = probe_arm.take()
+                block_calls.append(calls)
                 returned = len(res.get("messages", [])) if isinstance(res, dict) else None
                 if client is stub:
                     stub_ms.append(elapsed)
                     rows_stub.append(returned)
+                    block_stub.append(block_ms)
+                    refs_stub.append(refs_of(res))
                 else:
                     real_ms.append(elapsed)
                     rows_real.append(returned)
+                    block_real.append(block_ms)
+                    refs_real.append(refs_of(res))
+        result["block_sources"] = probe_arm.take_sources()
 
         embed_ms = []
         for i, text in enumerate(embed_texts):
@@ -197,11 +330,45 @@ async def run(args) -> dict:
 
         result["load_after"] = os.getloadavg()
 
+    # After the registered loop, so nothing here can touch its figures: the same
+    # timed texts again with the stand-in vector, each time more rows have changed
+    # since the block index file was built. Run in every arm, so an arm with the
+    # file off rewrites the same rows.
+    phases = []
+    touched: set = set()
+    for target in args.touch_rows:
+        phase = await touch_newest(target, touched)
+        if args.settle_load is not None:
+            waited, deadline = 0.0, time.monotonic() + args.settle_timeout
+            while os.getloadavg()[0] >= args.settle_load and time.monotonic() < deadline:
+                time.sleep(15)
+                waited += 15
+            phase["settle_waited_s"] = waited
+        use(stub)
+        ms, block_ms, refs = [], [], []
+        for text in timed_texts:
+            t0 = time.perf_counter()
+            res = await server_mod.do_recall(agent_id=agent, query=text, limit=args.limit)
+            ms.append((time.perf_counter() - t0) * 1000)
+            block_ms.append(probe_arm.take()[0])
+            refs.append(refs_of(res))
+        phase["do_recall_stub_ms"] = summary(ms)
+        phase["block_arm_stub_ms"] = summary(block_ms)
+        phase["refs_stub"] = refs
+        phase["block_sources"] = probe_arm.take_sources()
+        phases.append(phase)
+    result["touch_phases"] = phases
+    if args.block_index:
+        result["block_index"]["status_after"] = await block_index.status()
+
     await close_db()
 
     result["do_recall_stub_ms"] = summary(stub_ms)
     result["do_recall_real_ms"] = summary(real_ms)
     result["paired_difference_ms"] = summary([r - s for r, s in zip(real_ms, stub_ms)])
+    result["block_arm_ms"] = {"stub": summary(block_stub), "real": summary(block_real)}
+    result["block_arm_calls"] = block_calls
+    result["refs"] = {"stub": refs_stub, "real": refs_real}
     result["embed_only_ms"] = summary(embed_ms)
     result["rows_returned"] = {"stub": rows_stub, "real": rows_real}
     # Every timed text was new to the real client, so each should have left one entry.
@@ -225,7 +392,19 @@ def main() -> int:
     ap.add_argument("--settle-load", type=float, default=None, help="wait for the 1-minute load to fall below this")
     ap.add_argument("--settle-timeout", type=float, default=900.0)
     ap.add_argument("--embed-server-note", default="", help="recorded as given, e.g. ONNX_INTRA_OP_THREADS=1")
+    ap.add_argument(
+        "--block-index", action="store_true",
+        help="build the block index file before the warm-up (needs CPERSONA_BLOCK_INDEX=true; refused otherwise)",
+    )
+    ap.add_argument(
+        "--touch-rows", default="",
+        help="comma-separated row totals: after the timed loop, mark that many block rows changed, "
+        "newest memories first, and recall the timed texts again with the stand-in vector",
+    )
     args = ap.parse_args()
+    args.touch_rows = [int(x) for x in args.touch_rows.split(",") if x.strip()]
+    if args.touch_rows != sorted(args.touch_rows):
+        ap.error("--touch-rows totals are cumulative and must rise")
 
     result = asyncio.run(run(args))
     print(json.dumps(result, indent=2, sort_keys=True))
