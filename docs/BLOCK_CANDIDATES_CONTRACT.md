@@ -1,7 +1,8 @@
 # Block Candidate Generation — contract
 
-Status: the contract and its conformance data are on `master`. Nothing reads
-the block rows any other way yet. Recall's answers do not change.
+Status: the contract and its conformance data are on `master`, and so is a
+second implementation of the read: from a file beside the database, when
+`CPERSONA_BLOCK_INDEX` is on (off by default). Recall's answers do not change.
 
 ## 0. What this is
 
@@ -119,14 +120,12 @@ running beside the measurement.
 
 The file follows the coarse index of records
 ([Binary coarse search §3](BINARY_COARSE_SEARCH_DESIGN.md#3-the-coarse-index)):
-written by the server, validated when it is opened, with a watermark past which
-rows are read from the store.
-
-One difference from records has to be designed for. The key starts with the
-kind, so a block written after the file was built does not always sort after
-every row in it: an episode's block sorts before every memory's. The rows past
-the watermark have to be merged into key order before either cap applies,
-because the caps truncate in key order.
+written by the server, validated when it is opened, never repaired, safe to
+delete. Unlike that index it is not read up to a watermark. The key starts with
+the kind, so a block written after the build does not sort after every row in
+the file, and block rows are deleted and moved as well as added, which a
+watermark does not see. The file is read through a log of the records whose
+blocks changed since the build instead (section 3.4).
 
 ### 3.2 The distances are taken in the server's process, with a SIMD library
 
@@ -156,15 +155,89 @@ the implementation.
 
 ### 3.3 Off by default, answers unchanged
 
-When the file reader ships it is opted into. A missing file, a damaged file or
-a different dimension sends the call to the SQLite read. It is held to
-returning the same rows in the same order as that read, by this contract and
-its golden, rather than to a bound on how much worse its answers may be.
+The file reader is opted into with `CPERSONA_BLOCK_INDEX=true`. Any state in
+which the file cannot answer exactly sends the call to the SQLite read (section
+3.4). It is held to returning the same rows in the same order as that read,
+rather than to a bound on how much worse its answers may be: by this contract's
+golden, read through the file; by random writes after a build (new records,
+records rebuilt, deleted, retagged, moved to another key, and rows of another
+width), compared with the SQLite read row for row under caps that bind and do
+not, with the file read in pieces small enough that records run across their
+edges; and by hand-made mutations of the rules in section 3.4, each of which
+turns those tests red. Two rules are not mutated, because a test in one process
+cannot watch them fail: that the read is one statement, and that pruning is one
+transaction.
+
+The distances follow section 3.2 without a new dependency: NumPy's
+`bitwise_count` where NumPy is 2.0 or later, and the existing lookup table
+otherwise. Both give the same numbers, and a test holds them together.
+
+### 3.4 How the file stays exact
+
+The file holds every block row with bits, in key order, as it was at the build.
+A recall reads the rows of the records whose blocks changed since then from
+SQLite, takes every other record's rows from the file, merges the two in key
+order, and only then applies both caps. A record either changed or did not, so
+the two parts never hold the same record, and the merged sequence is the one
+the SQLite read produces as long as the set of changed records is complete. The
+rest of this section is what keeps it complete, and what the reader refuses.
+
+- **The log.** Triggers on the block table write one row per row event: the
+  record a row was inserted into, deleted from or updated in, and on an update
+  that moves a row to another record, that record too. Triggers rather than
+  calls in the writers, so a write from an older build or the SQLite shell is
+  logged as well.
+- **Its numbers.** Each log row takes the next number from a clock of the
+  server's own (`block_log_clock.head`), not from `AUTOINCREMENT`, whose
+  bookkeeping table may be edited or cleared and would then hand out a number
+  the file already claims to include.
+- **Only while a file is in use.** The triggers write nothing unless the log is
+  on. A build turns it on, and a server started with the file off turns it off,
+  so a deployment that did not opt in pays nothing on its writes. Each time the
+  log is turned on its generation rises, and a file from before a gap is
+  refused.
+- **The build.** It turns the log on, then reads the clock, the schema version
+  and every row in one snapshot, and refuses to write a file unless every
+  logging trigger exists as the schema defines it: a check made later only
+  notices a change after the build, not a build that began without complete
+  logging. A value the file cannot hold (a kind other than `ep` or `mem`, a key
+  that is not an integer, a block index outside 32 bits, bits that are not a
+  blob) declines the build.
+- **Pruning.** After a build, the log rows the file now holds are deleted and a
+  mark (`pruned_through`) is raised past them, in one transaction, and the mark
+  only rises: a slower build that finishes second does not lower it.
+- **The read.** One statement returns the changed records' current rows, the
+  clock and the schema version, so they come from one state of the database.
+  The admission filter sits in the join, so a changed record with no rows left
+  that the filter admits still comes back, and its rows in the file are still
+  dropped.
+- **What is refused.** No file, a damaged one, or another width; the log off,
+  or a generation other than the file's; a file newer than the snapshot (its
+  `built_seq` above the clock); changes it would need already pruned; a schema
+  change since the build (a trigger dropped and recreated could have missed
+  writes); more than 35,000 rows of changed records, a bound set well below the
+  250,000 rows the SQLite read examines; and a changed row the file could not
+  hold. Each sends the call to the SQLite read.
+- **Rows of another width.** A row whose bits are not the file's width is in
+  the file with its bits zeroed and a mark that it cannot be measured. It keeps
+  its place in both caps, as it does in the SQLite read, and is never measured.
+
+The file is rebuilt on the server's queue: at startup, and after the queue
+writes blocks, when the file is absent, unusable or too far behind the log. A
+recall never queues it. `python -m cpersona.block_index build` builds it by
+hand, and `status` reports whether a recall can read it now.
+
+Not defended, and documented here instead: an `INSERT OR REPLACE` from another
+program that replaces a row of a different record by its rowid while SQLite's
+recursive triggers are off (SQLite runs no delete trigger for it), a temporary
+trigger in another connection that stops the logging triggers, and editing the
+clock or the log by hand.
 
 ## 4. Not in this step
 
-- **The file format, its build, the merge of rows past the watermark, and the
-  reader.** The next step.
+- **The time a recall saves.** The read above is measured on the 100,000-memory
+  corpus before a figure is claimed for recall as a whole; the keyword arm
+  below stays the slowest part either way.
 - **Lifting the examined cap.** Over 100,000 memories the cap (250,000 rows)
   already binds, and one call looks at about 7% of the blocks, the first ones in
   key order. Lifting it would change which records the arm can reach, so it is

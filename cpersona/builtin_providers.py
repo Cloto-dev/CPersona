@@ -86,6 +86,7 @@ class BlockCandidates:
             db,
             query_vec,
             mh.isolation_where(agent_id=agent_id, project_id=project_id, channel=channel),
+            axes=(agent_id, project_id, channel),
         )
         # Enough to survive every one of them already being in the result: the
         # reservation is a fixed number of places and is not derived from the

@@ -35,6 +35,7 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 from cpersona import acl
 from cpersona import associations as associations_module
+from cpersona import block_index
 from cpersona import blocks
 from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
@@ -3856,6 +3857,9 @@ async def main():
             await blocks.queue_backfill()
         else:
             logger.info("Task queue disabled")
+        # Stops the block change log when the block index file is off, and queues
+        # the file's build when it is on and due (docs/BLOCK_CANDIDATES_CONTRACT.md §3).
+        await block_index.on_startup()
 
         transport = config.transport()
         if transport == "stdio":

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:98f443bfc2d3c015aa5ddd84fa99f726bf781d33 -->
+<!-- i18n-source: docs/configuration.md@blob:5d988a5f0f5d0b386a05b49f0e0cfd881f392aec -->
 
 # 設定リファレンス
 
@@ -27,6 +27,7 @@
 | `CPERSONA_CONFIDENCE_ORDERING` | `fusion` | `fusion`: confidence は各行の横に返されるだけで、他には何もしません。`legacy`: 2.6.0a7 より前の挙動 — confidence on のとき結果を confidence スコアで並べ直し、品質ゲートもそれを見るので、`CPERSONA_RECALL_MODE` は返却順を決めなくなります |
 | `CPERSONA_AUTO_CALIBRATE` | `false` | 起動時に自動較正する |
 | `CPERSONA_BLOCK_BUILD_ENABLED` | `true` | 各レコードを節に相当する Block へ分け、Block ごとに符号量子化ベクトルを 1 本保存する ([Block による到達](BLOCK_REACH_DESIGN.md))。2.6.0 から既定で on で、on の間は、すでに保存されているレコードに対する有界な backfill が Block を作る。`false` は「作るが読まない」ではなく、埋め込み呼び出しも行もキューの仕事も無いという意味で、下の読む側を明示していなければ、それも一緒に off にする |
+| `CPERSONA_BLOCK_INDEX` | `false` | Block の腕の行を、SQLite でなくデータベースの横のファイルから読む。答えは同じ ([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)、[運用](operations.md#the-block-index-file))。on の間、サーバーは Block が変わった記録の記録を付け、キューが起動時と Block を書いた後にファイルを作る。想起は変わった記録を SQLite から、それ以外の記録をファイルから読み、ファイルが正確に答えられない状態では今までどおり SQLite を読む。off なら、サーバーは起動時にその記録を止め、そのための書き込みをしない。`CPERSONA_BLOCK_RETRIEVAL_ENABLED` が必要。タスクキューが無い時は `python -m cpersona.block_index build` でファイルを作る |
 | `CPERSONA_BLOCK_RETRIEVAL_ENABLED` | `CPERSONA_BLOCK_BUILD_ENABLED` に従う | recall のときに Block 索引を読む ([Block による到達](BLOCK_REACH_DESIGN.md)) — Block の腕と、`reconstruct` が返す引用の両方。引用は一致した Block から取られ、それを支配する連続文脈を伴うか、不完全であると報告される。到達したレコードは**予約**で通す — 品質 gate の後に確保された少数の別枠で、その別枠について gate は参照されず、他のどの位置の gate も変わらない。したがって応答は要求された `limit` を**超えて**その別枠の行数まで行を運び、直前のリリースが返した行はすべてそのまま返る。`CPERSONA_BLOCK_BUILD_ENABLED=true` が必要 — 何も入っていない索引を読む設定は静かな no-op ではなく起動時エラー。ベクトル検索が remote の構成では効かない (この腕はローカル検索が埋め込んだクエリベクトルで順位付けするが、remote 検索はそれを作らない) |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | バックグラウンドタスクキュー (DB 永続・クラッシュ復帰可能) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | 直近に想起された記憶へのペナルティ |

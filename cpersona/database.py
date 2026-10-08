@@ -14,7 +14,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -766,6 +766,78 @@ CREATE TRIGGER IF NOT EXISTS record_block_vectors_ad AFTER DELETE ON record_bloc
 END;
 """
 
+# v19: the change log the block index file is read through
+# (docs/BLOCK_CANDIDATES_CONTRACT.md §3.1, cpersona/block_index.py). The file
+# holds the block rows as they were at its build; a recall takes the records
+# changed since then from SQLite, and every other record from the file. This is
+# how it knows which records changed.
+#
+# Every write to record_blocks is per record (write_blocks replaces a record's
+# set, and the triggers above delete or retag one record's rows), so a log of
+# (kind, parent) is enough. Triggers rather than calls in the writers, so a write
+# from an older build or the sqlite3 shell is logged too.
+#
+# The numbers come from a clock of our own, not AUTOINCREMENT: sqlite_sequence
+# may be edited or cleared, after which AUTOINCREMENT hands out a number a file
+# already claims to include, and that change is never seen. `head` is also the
+# high-water mark a reader checks a file against; MAX(seq) over a pruned log is
+# not one. An UPDATE logs the record a row leaves, and the one it moves to when
+# the key changes: the server never moves a row's key, but another writer could.
+#
+# Nothing is logged unless `logging` is 1, which a build sets and a deployment
+# that turns the file off clears. The file is off by default, and a log nobody
+# reads would charge every write a row and grow without anything to prune it.
+# `generation` is raised each time logging is turned on, so a file built before
+# a gap in the log is refused rather than trusted.
+#
+# Run on every boot (bug-118). check_schema_objects watches the four triggers.
+BLOCK_LOG_SQL = """
+CREATE TABLE IF NOT EXISTS block_log_clock (
+    id             INTEGER PRIMARY KEY CHECK (id = 0),
+    logging        INTEGER NOT NULL DEFAULT 0,
+    generation     INTEGER NOT NULL DEFAULT 0,
+    head           INTEGER NOT NULL DEFAULT 0,
+    pruned_through INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT OR IGNORE INTO block_log_clock (id) VALUES (0);
+
+CREATE TABLE IF NOT EXISTS record_block_changes (
+    seq         INTEGER PRIMARY KEY,
+    parent_kind TEXT    NOT NULL,
+    parent_id   INTEGER NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS record_block_log_ai AFTER INSERT ON record_blocks
+WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1 BEGIN
+    UPDATE block_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_block_changes (seq, parent_kind, parent_id)
+    VALUES ((SELECT head FROM block_log_clock WHERE id = 0), new.parent_kind, new.parent_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_block_log_ad AFTER DELETE ON record_blocks
+WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1 BEGIN
+    UPDATE block_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_block_changes (seq, parent_kind, parent_id)
+    VALUES ((SELECT head FROM block_log_clock WHERE id = 0), old.parent_kind, old.parent_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_block_log_au AFTER UPDATE ON record_blocks
+WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1 BEGIN
+    UPDATE block_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_block_changes (seq, parent_kind, parent_id)
+    VALUES ((SELECT head FROM block_log_clock WHERE id = 0), old.parent_kind, old.parent_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS record_block_log_ak AFTER UPDATE OF parent_kind, parent_id ON record_blocks
+WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1
+ AND (new.parent_kind IS NOT old.parent_kind OR new.parent_id IS NOT old.parent_id) BEGIN
+    UPDATE block_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_block_changes (seq, parent_kind, parent_id)
+    VALUES ((SELECT head FROM block_log_clock WHERE id = 0), new.parent_kind, new.parent_id);
+END;
+"""
+
 # v15: the declared graph of docs/ASSOCIATIVE_MEMORY_DESIGN.md §1 — entities
 # with aliases, the records that mention them, and subject–predicate–object
 # relations. Nothing in `memories` or `episodes` changes, and nothing here is
@@ -1143,6 +1215,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
     await db.executescript(RECORD_NODES_SQL)
     await db.executescript(RECORD_BLOCKS_SQL)
     await db.executescript(RECORD_BLOCK_VECTORS_SQL)
+    await db.executescript(BLOCK_LOG_SQL)
     await db.executescript(ASSOCIATIONS_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on

@@ -39,7 +39,7 @@ Two things follow from this shape:
 ## Storage
 
 One SQLite database in WAL mode (`CPERSONA_DB_PATH`), currently
-**schema v18**, migrated forward automatically on startup. It holds four data tables —
+**schema v19**, migrated forward automatically on startup. It holds four data tables —
 `memories`, `episodes`, `profiles`, `pending_memory_tasks` — plus a
 `schema_version` bookkeeping table and two FTS5 virtual tables that triggers
 keep in step. A fifth table, `record_nodes`, holds only offsets into the text of
@@ -55,7 +55,12 @@ on by default from 2.6.0, and its triggers both drop a record's blocks when its 
 move their copy of the isolation axes when the record is retagged. Beside it,
 `record_block_vectors` keeps one byte per dimension for each block, read by
 primary key to re-rank what the block arm's Hamming pass ranks highest; a
-trigger on `record_blocks` deletes a block's vector with the block.
+trigger on `record_blocks` deletes a block's vector with the block. Two small
+tables, `block_log_clock` and `record_block_changes`, are a log of which records'
+blocks changed, kept by triggers only while the block index file
+(`CPERSONA_BLOCK_INDEX`, off by default) is in use: a recall reads those records
+from SQLite and every other record's blocks from the file
+([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)).
 
 The FTS5 indexes use the **trigram** tokenizer. That is what makes CPersona
 work on Japanese and other space-less scripts at all. A word-boundary
@@ -227,7 +232,7 @@ worker that drains it at startup and retries failed tasks on a fixed delay
 (`CPERSONA_TASK_RETRY_DELAY`). Because it lives in the database rather than in
 memory, a crash or a restart resumes the work instead of losing it.
 
-**Two kinds of work are enqueued onto it.** When `store`,
+**Three kinds of work are enqueued onto it.** When `store`,
 `archive_episode` or `update_memory` writes a text that runs past the embedding
 window, the response carries `nodes: {"status": "queued"}` and a `build_nodes`
 task divides the record and embeds each span
@@ -249,6 +254,13 @@ sweep exists at a time. It stops at a bound on records, characters, embedding
 calls or elapsed time and queues its own continuation, so a corpus is built over
 a series of bounded runs and a restart resumes near where the last one stopped
 rather than starting again.
+
+The third is `block_index_build`, only where `CPERSONA_BLOCK_INDEX` is on: it
+writes the block index file the block arm reads instead of SQLite
+([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)). It is queued at startup
+and after a block build or sweep, when the file is absent, unusable or too far
+behind the change log, and one exists at a time. A recall never queues it: until
+the file is built again, recalls read SQLite and get the same answer.
 
 The queue first existed for server-side episode summarisation, which was
 removed before v2.4.10; `archive_episode` still requires a pre-computed summary

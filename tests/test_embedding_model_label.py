@@ -316,7 +316,7 @@ async def test_a_v17_database_gains_the_column_with_unknown_labels(tmp_path):
         db = await database.get_db()
 
         assert (await db.execute_fetchall("SELECT MAX(version) FROM schema_version")) == [(database.SCHEMA_VERSION,)]
-        assert database.SCHEMA_VERSION == 18
+        assert database.SCHEMA_VERSION == 19
         assert await db.execute_fetchall("SELECT id, content, embedding FROM memories") == before
         assert await db.execute_fetchall("SELECT embedding_model FROM memories") == [("",)]
         assert await db.execute_fetchall("SELECT embedding_model FROM episodes") == [("",)]

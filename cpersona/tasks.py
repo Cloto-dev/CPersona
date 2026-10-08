@@ -219,11 +219,14 @@ class MemoryTaskQueue:
         # for _task_queue. Both are resolved here, once (bug-488 -- blocks was imported
         # inside each of its branches). `nodes` stays a parameter so a caller can hand
         # in the module it patched.
-        from cpersona import blocks
+        from cpersona import block_index, blocks
 
         if nodes is None:
             from cpersona import nodes
         derived = {nodes.TASK_TYPE, blocks.TASK_TYPE, blocks.BACKFILL_TASK_TYPE}
+        # The block index file is derived work as well: its retries wait behind
+        # other work like the builds above (bug-463).
+        derived.add(block_index.TASK_TYPE)
         try:
             while self._running:
                 task = await self._fetch_next()
@@ -319,6 +322,9 @@ class MemoryTaskQueue:
                         outcome = await blocks.build_blocks(payload)
                         logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
                         await self._delete_task(task_id)
+                        # A write of blocks is when the block index file falls
+                        # behind; a no-op unless that file is turned on.
+                        await block_index.queue_build_if_needed()
                     elif task_type == blocks.BACKFILL_TASK_TYPE:
                         # The sweep that gives an opted-in deployment the corpus it
                         # already had. It is bounded, and it queues its own
@@ -327,6 +333,14 @@ class MemoryTaskQueue:
                         # that moment. Harmless: they hold different cursors, and a
                         # sweep passes over a record whose blocks are current.
                         outcome = await blocks.backfill(payload)
+                        logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
+                        await self._delete_task(task_id)
+                        await block_index.queue_build_if_needed()
+                    elif task_type == block_index.TASK_TYPE:
+                        # The block index file (docs/BLOCK_CANDIDATES_CONTRACT.md §3).
+                        # Idempotent: a build replaces the file whole, and one that
+                        # runs twice writes the same bytes.
+                        outcome = await block_index.build_task(payload)
                         logger.info("MemoryTaskQueue: task %d: %s", task_id, outcome)
                         await self._delete_task(task_id)
                     else:

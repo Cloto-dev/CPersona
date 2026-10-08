@@ -32,7 +32,7 @@ reachable by exact version.
 ## What the first start does
 
 On its first start, 2.6 migrates the database from schema version 13 (every
-2.5.x release) to schema version 18 (17 for 2.6.0 to 2.6.2), one step at a time. **No
+2.5.x release) to schema version 19 (18 for 2.6.3 to 2.6.7a1, 17 for 2.6.0 to 2.6.2), one step at a time. **No
 stored row is rewritten**: each step adds tables and triggers, or one column. A step that fails is not
 recorded as done, so it is retried on the next start.
 
@@ -43,6 +43,7 @@ recorded as done, so it is retried on the next start.
 | 16 | 2.6.0a5 | `record_blocks`: block reach | **Built for you**: blocks for the records already stored, unless you turn block reach off ([below](#block-reach-is-on-by-default)) |
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
 | 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
+| 19 | 2.6.7 | `block_log_clock`, `record_block_changes`: the log of which records' blocks changed, kept only while the block index file is on ([contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | No: the file is built on the queue only where `CPERSONA_BLOCK_INDEX` is on |
 
 2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6 and 2.6.7a1 changed no schema.
 

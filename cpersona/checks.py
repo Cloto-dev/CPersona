@@ -1339,6 +1339,48 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "sql": "CREATE INDEX idx_record_blocks_axes "
         "ON record_blocks(agent_id, project_id, channel)",
     },
+    # v19 (see BLOCK_LOG_SQL in database.py). Warn, not critical: a block index
+    # file is not built while one of these is missing or different
+    # (block_index.build_block_index compares them with these definitions), and
+    # a file built before one was dropped is refused because the schema changed,
+    # so a missing trigger costs a recall the file's speed and never its answer.
+    "record_block_log_ai": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER record_block_log_ai AFTER INSERT ON record_blocks "
+        "WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1 BEGIN "
+        "UPDATE block_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_block_changes (seq, parent_kind, parent_id) "
+        "VALUES ((SELECT head FROM block_log_clock WHERE id = 0), new.parent_kind, new.parent_id); END",
+    },
+    "record_block_log_ad": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER record_block_log_ad AFTER DELETE ON record_blocks "
+        "WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1 BEGIN "
+        "UPDATE block_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_block_changes (seq, parent_kind, parent_id) "
+        "VALUES ((SELECT head FROM block_log_clock WHERE id = 0), old.parent_kind, old.parent_id); END",
+    },
+    "record_block_log_au": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER record_block_log_au AFTER UPDATE ON record_blocks "
+        "WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1 BEGIN "
+        "UPDATE block_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_block_changes (seq, parent_kind, parent_id) "
+        "VALUES ((SELECT head FROM block_log_clock WHERE id = 0), old.parent_kind, old.parent_id); END",
+    },
+    "record_block_log_ak": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER record_block_log_ak AFTER UPDATE OF parent_kind, parent_id ON record_blocks "
+        "WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1 "
+        "AND (new.parent_kind IS NOT old.parent_kind OR new.parent_id IS NOT old.parent_id) BEGIN "
+        "UPDATE block_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_block_changes (seq, parent_kind, parent_id) "
+        "VALUES ((SELECT head FROM block_log_clock WHERE id = 0), new.parent_kind, new.parent_id); END",
+    },
     # v15 (see ASSOCIATIONS_SQL in database.py). Critical: without one of these
     # a deleted entity or record leaves aliases, mentions and relations that
     # point at rows which no longer exist (design invariant 8), and a walk
@@ -3025,6 +3067,69 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
     return [issue]
 
 
+async def check_block_index(db, agent_id: str = "", fix: bool = False) -> list[dict]:
+    """The block index file (docs/BLOCK_CANDIDATES_CONTRACT.md §3): whether recall can read it.
+
+    Off, the one finding is a change log still running (a build from the command
+    line turns it on), which charges every block write a row for a file nothing
+    reads and grows with nothing to prune it. The repair stops it.
+
+    On, a file that is absent, unusable or behind is reported, and not built here:
+    a build reads every block row in a snapshot of its own and commits twice,
+    which cannot happen inside the transaction a repair run holds. Info: every
+    recall still gets its answer, from SQLite, at the price the file removes.
+    """
+    from cpersona import block_index, vector_index
+
+    clock = await block_index._clock(db)
+    if clock is None:
+        return []
+    if not block_index.enabled():
+        if clock[0] != 1:
+            return []
+        issue = {
+            "type": "block_log_without_index",
+            "repairable": 1,
+            "hint": (
+                "the block change log is on while CPERSONA_BLOCK_INDEX is off, so every block "
+                "write adds a row nothing reads; check_health(checks=['block_index'], fix=true) stops it"
+            ),
+        }
+        if fix:
+            issue["fixed"] = await block_index.stop_logging(db)
+        return [issue]
+
+    # Deliberately global: the file holds every agent's blocks.
+    iso = isolation_where(agent_id=None)
+    if not await db.execute_fetchall(
+        f"SELECT 1 FROM record_blocks WHERE embedding_bits IS NOT NULL{iso.and_clause} LIMIT 1", iso.params
+    ):
+        return []
+    hint = (
+        "the server's queue builds it at startup and after it writes blocks; "
+        "or python -m cpersona.block_index --db <path> build"
+    )
+    try:
+        index = block_index.cached_block_index()
+    except vector_index.IndexUnusable as exc:
+        return [{"type": "block_index_unusable", "detail": str(exc), "repairable": 0, "hint": hint}]
+    if index is None:
+        return [{
+            "type": "block_index_absent",
+            "repairable": 0,
+            "hint": f"every recall reads the block rows from SQLite; {hint}",
+        }]
+    cookie = (await db.execute_fetchall("PRAGMA schema_version"))[0][0]
+    if block_index._current(index, clock) and cookie == index.schema_cookie:
+        return []
+    return [{
+        "type": "block_index_behind",
+        "changes_since_build": max(0, clock[2] - index.built_seq),
+        "repairable": 0,
+        "hint": f"recalls read the block rows from SQLite until the file is built again; {hint}",
+    }]
+
+
 # Group and other. The owner's own bits are not a finding: a file this package
 # placed is meant to be readable by the account running the server.
 _OTHERS_MASK = stat.S_IRWXG | stat.S_IRWXO
@@ -3414,6 +3519,8 @@ HEALTH_CHECKS: list[Check] = [
     Check("vector_index", "info", False, check_vector_index),
     # cross_agent_fix: its repair writes one file holding every agent's records.
     Check("coarse_index", "info", True, check_coarse_index, cross_agent_fix=True),
+    # cross_agent_fix: its repair stops a change log that every agent's writes feed.
+    Check("block_index", "info", True, check_block_index, cross_agent_fix=True),
     Check("operating_context_parse", "warn", False, check_operating_context_parse),
     Check("operating_context_size", "info", False, check_operating_context_size),
     Check("file_permissions", "warn", True, check_file_permissions),

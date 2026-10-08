@@ -4108,6 +4108,70 @@ MUTATIONS += [
         breaks="a three-character word holding a quote is matched as query syntax and the classification fails",
         expect='test_keyword_rare_phrases.py::test_the_counts_classify_each_phrase_as_the_index_vocabulary_does',
     ),
+    # ---------------------------------------------------------------------------
+    # The block index file (docs/BLOCK_CANDIDATES_CONTRACT.md §3.4): the rows read
+    # through it are the rows the SQLite read returns.
+    # ---------------------------------------------------------------------------
+    Mutation(
+        id='M406',
+        tests=('tests/test_block_index.py',),
+        target="block index — a changed record's rows in the file are dropped",
+        file='cpersona/block_index.py',
+        find="                mask &= ~((kind == code) & np.isin(index.parent_id[sl], ids))\n",
+        replace="                mask &= mask\n",
+        breaks="a record rebuilt, deleted or retagged since the build is read twice, or as it was",
+        expect='test_block_index.py::test_random_writes_after_a_build_read_the_same_rows',
+    ),
+    Mutation(
+        id='M407',
+        tests=('tests/test_block_index.py',),
+        target="block index — a record's count runs on across the pieces the file is read in",
+        file='cpersona/block_index.py',
+        find="            place[:run] += last_count\n",
+        replace="            place[:run] += 0\n",
+        breaks="a record that runs across a piece's edge takes more than its share of the examined cap",
+        expect='test_block_index.py::test_the_golden_through_the_file',
+    ),
+    Mutation(
+        id='M408',
+        tests=('tests/test_block_index.py',),
+        target="block index — the admission filter sits in the join",
+        file='cpersona/block_index.py',
+        find='        f" AND b.embedding_bits IS NOT NULL AND b.embedding_model IN (?, ?){iso.and_clause}"\n',
+        replace='        f" WHERE b.embedding_bits IS NOT NULL AND b.embedding_model IN (?, ?){iso.and_clause}"\n',
+        breaks="a changed record left with no admitted rows vanishes from the read, and its old rows in the file are kept",
+        expect='test_block_index.py::test_random_writes_after_a_build_read_the_same_rows',
+    ),
+    Mutation(
+        id='M409',
+        tests=('tests/test_block_index.py',),
+        target="block index — a file newer than the snapshot is refused",
+        file='cpersona/block_index.py',
+        find="        or index.built_seq > head  # a file newer than this snapshot\n",
+        replace="        or False  # a file newer than this snapshot\n",
+        breaks="an old snapshot read with a newer file passes every other guard and returns rows the snapshot does not hold",
+        expect='test_block_index.py::test_a_file_newer_than_the_snapshot_is_refused',
+    ),
+    Mutation(
+        id='M410',
+        tests=('tests/test_block_index.py',),
+        target="block index — the pruning mark only rises",
+        file='cpersona/block_index.py',
+        find='            "UPDATE block_log_clock SET pruned_through = max(pruned_through, ?) WHERE id = 0",\n',
+        replace='            "UPDATE block_log_clock SET pruned_through = ? WHERE id = 0",\n',
+        breaks="a slower, older build finishing second lowers the mark, and a file whose changes were pruned reads as current",
+        expect='test_block_index.py::test_pruning_never_lowers_the_mark',
+    ),
+    Mutation(
+        id='M411',
+        tests=('tests/test_block_index.py',),
+        target="block index — a build without every logging trigger is declined",
+        file='cpersona/block_index.py',
+        find="    differ = await _log_triggers_differ(snap)\n    if differ:\n",
+        replace="    differ = await _log_triggers_differ(snap)\n    if False:\n",
+        breaks="a file is built while writes go unlogged, and the cookie compared later cannot see that it began incomplete",
+        expect='test_block_index.py::test_a_build_without_every_logging_trigger_declines',
+    ),
 ]
 
 

@@ -551,9 +551,9 @@ async def test_the_arm_ranks_against_the_vector_the_search_embedded(reading, lex
     seen: list = []
     original = blocks.search
 
-    async def spy(db, embedding, iso):
+    async def spy(db, embedding, iso, **kwargs):
         seen.append(embedding)
-        return await original(db, embedding, iso)
+        return await original(db, embedding, iso, **kwargs)
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(blocks, "search", spy)

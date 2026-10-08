@@ -1103,9 +1103,9 @@ BLOCK_RERANK_DEPTH = 200
 BLOCK_RESERVATION = 2
 
 #: Population count of every byte value, built once and kept. uint16 so a row's
-#: sum cannot wrap. `numpy.bitwise_count` would say the same thing and arrived
-#: in numpy 2.0, which this project does not require; one implementation that
-#: works on both is better than two that have to agree.
+#: sum cannot wrap. The distance on numpy below 2.0, which this project does not
+#: require; `hamming_matrix` uses `numpy.bitwise_count` where it exists, and a
+#: test holds the two to the same numbers.
 #:
 #: Built on first use rather than at import, because numpy is imported inside
 #: the functions that need it everywhere else in this package and a module-level
@@ -1237,7 +1237,14 @@ def hamming_matrix(packed, query):
     """
     import numpy as np
 
-    return _popcount_table()[np.bitwise_xor(packed, query)].sum(axis=1)
+    differing = np.bitwise_xor(packed, query)
+    if hasattr(np, "bitwise_count"):
+        # numpy 2.0's per-byte population count, which uses the CPU's vector
+        # instructions where the table lookup does not: 13 ms against 96 ms for
+        # the 250,000 rows recall examines, on an Intel N150. The same numbers,
+        # held together by a test; numpy below 2.0 keeps the table.
+        return np.bitwise_count(differing).sum(axis=1, dtype=np.uint64)
+    return _popcount_table()[differing].sum(axis=1)
 
 
 def _measured(rows: list[tuple], query_bits: bytes) -> tuple[list[tuple], object]:
@@ -1377,7 +1384,30 @@ def _rerank(
     return sorted(best.values(), key=lambda h: (-h.cosine, h.kind, h.parent_id, h.block_index))
 
 
-async def search(db, embedding: object, iso) -> list[BlockHit]:
+async def _measured_from_file(db, keys: tuple[str, str], axes: tuple, query_bits: bytes):
+    """`_measured` over the examined rows read from the block index file, or None
+    when the file is off or cannot answer exactly and SQLite is read instead.
+
+    Any exception is a fallback too, for the reason the coarse index gives: the
+    SQLite read is always correct, so a broken derived file costs time and nothing
+    else.
+    """
+    from cpersona import block_index
+
+    if not block_index.enabled():
+        return None
+    agent_id, project_id, channel = axes
+    try:
+        rows = await block_index.examined(
+            db, keys, agent_id=agent_id, project_id=project_id, channel=channel, width=len(query_bits)
+        )
+    except Exception:  # noqa: BLE001 — fail open, deliberately
+        logger.warning("Block index read raised, reading SQLite", exc_info=True)
+        return None
+    return None if rows is None else rows.measured(query_bits)
+
+
+async def search(db, embedding: object, iso, *, axes: tuple | None = None) -> list[BlockHit]:
     """Every record the block index reaches for this query, best block first.
 
     Best by the stored vector of the rows the Hamming pass ranked highest (§4b),
@@ -1390,6 +1420,11 @@ async def search(db, embedding: object, iso) -> list[BlockHit]:
     predicate fail-closed — but filtering here is what keeps the cap from being
     spent on rows that will be dropped.
 
+    ``axes`` is the (agent_id, project_id, channel) ``iso`` was built from. With
+    it, and the block index file turned on, the examined rows are read from the
+    file (`block_index`), which returns the rows the SQLite read would; without
+    it, or whenever the file cannot answer exactly, they are read from SQLite.
+
     Returns an empty list rather than raising when the query cannot be
     quantised: a recall whose other arms answered must not fail because a
     derived one could not.
@@ -1401,10 +1436,13 @@ async def search(db, embedding: object, iso) -> list[BlockHit]:
         # nothing, and the deployment that turned this on would read the second.
         logger.warning("block arm: the query vector could not be quantised, skipping")
         return []
-    rows = await _examined(db, iso, generation.block_keys())
+    keys = generation.block_keys()
     # Measured once: the re-rank's depth cut and the Hamming fallback read the same
     # distances, which were taken twice over the whole examined set (bug-481).
-    measured = _measured(rows, query_bits)
+    measured = await _measured_from_file(db, keys, axes, query_bits) if axes is not None else None
+    if measured is None:
+        rows = await _examined(db, iso, keys)
+        measured = _measured(rows, query_bits)
     near = _order(*measured)
     stored = await _stored_vectors(db, [(row[0], row[1], row[2]) for row, _ in near])
     reranked = _rerank(near, stored, embedding)
