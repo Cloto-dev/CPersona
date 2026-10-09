@@ -120,7 +120,7 @@ def _stem(words: list[str]) -> list[str]:
     return [(_STEMMER.analyze(w) or [w])[0] for w in words]
 
 
-def _ascii_terms(tok: str, mode: str) -> list[str]:
+def _ascii_terms(tok: str, mode: str, query: bool = False) -> list[str]:
     tok = tok.strip(_EDGE).lower()
     if not tok:
         return []
@@ -131,7 +131,12 @@ def _ascii_terms(tok: str, mode: str) -> list[str]:
         words = _stem(words)
     # A token with inner punctuation (bug-183, CVE-2024-3094) is also kept whole, so an
     # identifier is one rare term and not only its common parts.
-    return words + ([tok] if len(words) > 1 or (words and words[0] != tok) else [])
+    whole = [tok] if len(words) > 1 or (words and words[0] != tok) else []
+    # wi: a query sends such a token whole only, so its common parts ("bug") do not vote
+    # against the identifier; the record keeps both, as under w.
+    if mode == "wi" and query and whole:
+        return whole
+    return words + whole
 
 
 def _ngrams(run: str, n: int) -> list[str]:
@@ -167,7 +172,7 @@ def terms(text: str, *, query: bool = False) -> list[str]:
         if _CJK_RE.match(tok):
             out.extend(_cjk_terms(tok, cjk, query))
         else:
-            out.extend(_ascii_terms(tok, ascii_))
+            out.extend(_ascii_terms(tok, ascii_, query))
     return out
 
 

@@ -609,9 +609,10 @@ LEXICAL_ENGINE = _parse_choice("CPERSONA_LEXICAL_ENGINE", "fts5", ("fts5", "off"
 # How the tantivy engine cuts text into terms, for a record and a query alike:
 # Japanese and Chinese runs as trigrams (k3), bigrams (k2) or morphemes (km), and the
 # rest as words with any token holding inner punctuation also kept whole (w), the
-# same stemmed (ws), or trigrams (t). Measurement variants, read only by that engine.
+# same stemmed (ws), or trigrams (t); wi is w with a query sending a punctuated token
+# whole only. Measurement variants, read only by that engine.
 TANTIVY_CJK = _parse_choice("CPERSONA_TANTIVY_CJK", "k3", ("k3", "k2", "km"))
-TANTIVY_ASCII = _parse_choice("CPERSONA_TANTIVY_ASCII", "w", ("w", "ws", "t"))
+TANTIVY_ASCII = _parse_choice("CPERSONA_TANTIVY_ASCII", "w", ("w", "wi", "ws", "t"))
 
 # How the keyword arms cut a query's Japanese and Chinese runs into FTS5 phrases.
 # `trigram` is the builder as it always was: every overlapping three-character

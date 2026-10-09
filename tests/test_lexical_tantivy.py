@@ -179,6 +179,11 @@ def test_terms_keep_an_identifier_whole_and_cut_japanese(monkeypatch):
     monkeypatch.setattr(config, "QUERY_SEGMENTER", "trigram")
     assert lexical_tantivy.terms("CVE-2024-3094 の影響") == ["cve", "2024", "3094", "cve-2024-3094", "の影響"]
     assert lexical_tantivy.terms("plain words.") == ["plain", "words"]
+    assert lexical_tantivy.terms("bug-191 fix", query=True) == ["bug", "191", "bug-191", "fix"]
+    monkeypatch.setattr(config, "TANTIVY_ASCII", "wi")
+    assert lexical_tantivy.terms("bug-191 fix", query=True) == ["bug-191", "fix"]
+    assert lexical_tantivy.terms("bug-191 fix") == ["bug", "191", "bug-191", "fix"]
+    monkeypatch.setattr(config, "TANTIVY_ASCII", "w")
     monkeypatch.setattr(config, "TANTIVY_CJK", "k2")
     assert lexical_tantivy.terms("の影響") == ["の影", "影響"]
     monkeypatch.setattr(config, "TANTIVY_ASCII", "t")
