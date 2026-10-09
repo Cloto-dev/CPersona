@@ -77,6 +77,14 @@ dependencies = [
     # without it `pip install -U cpersona` leaves a vulnerable PyJWT in place.
     # The ceiling is the usual bet on a major that does not exist yet.
     "pyjwt[crypto]>=2.14.0,<3",
+    # reconstruct's modes cap the cl100k_base tokens of the JSON they return
+    # (cpersona/tokens.py). A cap that holds only when an optional package
+    # happens to be installed is not a cap, so the tokenizer is required. The
+    # vocabulary ships in cpersona/vocab/, so nothing is fetched at run time.
+    # The floor is the first release whose cl100k_base split pattern is the one
+    # tokens.py carries (unchanged through 0.14.0) and the first with wheels
+    # for Python 3.13; the ceiling is the usual bet on a major.
+    "tiktoken>=0.8.0,<1",
 ]
 
 [project.urls]
