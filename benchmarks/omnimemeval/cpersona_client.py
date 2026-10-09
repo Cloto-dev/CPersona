@@ -79,6 +79,8 @@ class CpersonaClient:
             when = next((c.get("as_of") for c in claims if c.get("ref") == item.get("head_ref")), None)
             if when is None and claims:
                 when = claims[0].get("as_of")
+            if when is None:
+                when = item.get("as_of")  # a lite item carries its lone claim's time on the item itself
             parts = [item.get("content") or ""]
             parts += [x.get("content", "") for x in item.get("excerpts", []) if isinstance(x, dict)]
             body = "\n…\n".join(p for p in parts if p)
