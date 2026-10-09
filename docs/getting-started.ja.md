@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:34f494e3cf7732891ff3d2b575e62420c362008c -->
+<!-- i18n-source: docs/getting-started.md@blob:dec805c459d0706f7250eae2896b3fd78c61e3cf -->
 
 # はじめに
 
@@ -285,12 +285,14 @@ stdin を開いたままにしてください。サービスマネージャの�
 ```
 
 **Claude Code** — 1 コマンド:
+{ #register-claude-code }
 
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
 
 **Codex CLI** — 1 コマンド。その後に示す TOML を `~/.codex/config.toml` に書き込みます:
+{ #register-codex }
 
 ```bash
 codex mcp add cpersona --env CPERSONA_DB_PATH=/home/you/.claude/cpersona.db --env EMBEDDING_MODE=http --env EMBEDDING_HTTP_URL=http://127.0.0.1:8401/embed -- uvx cpersona
