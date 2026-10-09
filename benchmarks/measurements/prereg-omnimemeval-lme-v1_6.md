@@ -113,6 +113,51 @@ Added to this file by a later commit, before any test search:
 4. **The cap holds** on every development response, counted outside the
    server.
 
+### Recorded before the test
+
+Added by a later commit, before any test question was searched with a mode.
+
+- **The implementation**: commit `01ea99e` (branch `feat/reconstruct-modes`,
+  pull request #453). The checks below ran at it. Later commits on that branch
+  change the mutation proof (`scripts/mutation-proof.py`) and not `cpersona/`.
+- **The interpreter**: Python 3.11.15, the interpreter of the recorded 2.6.7
+  runs. From Python 3.12, `sum()` rounds a sum of floats correctly, and an
+  exact tie in the evidence order then resolves the other way: on one of the
+  private real-use pack's 150 development questions, a record's two passages
+  came in the other order. The test runs on 3.11, so that Lite can be compared
+  with the recorded 2.6.7 contexts. The tie is a defect of its own, to be
+  fixed after this test.
+- **The scripts**: [`v1_6_build.py`](../omnimemeval/v1_6_build.py) writes the
+  answer inputs and [`v1_6_analyze.py`](../omnimemeval/v1_6_analyze.py) applies
+  the rules. The adapter ([`cpersona_client.py`](../omnimemeval/cpersona_client.py))
+  passes the mode and count named by `CPERSONA_SEARCH_MODE` and
+  `CPERSONA_SEARCH_COUNT`; without them its call is unchanged. The cap is read
+  from a second search of the same questions through the same client, which
+  keeps each raw response.
+- **Check 2**: at the implementation, the default search gave the published
+  arm B context for 400 of the 400 test questions (500 of 500 in all), and no
+  default response carried a mode field.
+- **Check 3**: on the 100 development questions, Lite's context was 2.6.7
+  `lite: true`'s for 100. Pro's was the prototype's at cap 5,000 for 49; the
+  other 51 returned the same items in the same order, 50 of them with less
+  quoted text (a median of 110 characters, at most 803) and one with the same
+  amount. The prototype's responses sat at the cap (4,978 tokens on average),
+  which fits the `mode`, `cap` and `used_tokens` fields taking tokens its
+  response did not carry.
+
+  | | Every answer session shown | Evidence-turn characters quoted |
+  | --- | --- | --- |
+  | Lite (implementation / 2.6.7) | 87 / 87 | 0.521 / 0.521 |
+  | Pro (implementation / prototype) | 99 / 99 | 0.708 / 0.708 |
+
+  Neither stop condition was met. On the private real-use pack's 150
+  development questions, Lite's items were 2.6.7's for all 150 (104 of 193
+  evidence quotes shown, against 104), and Pro's were the prototype's for 112
+  (138 shown, against 140).
+- **Check 4**: every development response of both modes, on both packs, was
+  within its cap and equal to its `used_tokens` (on LongMemEval-S, Lite at
+  most 1,312 tokens and Pro at most 5,000).
+
 ## Test
 
 - **The 400 test questions** of the evidence-allocation tests, and only those.
