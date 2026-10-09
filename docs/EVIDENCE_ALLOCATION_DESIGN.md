@@ -95,6 +95,19 @@ reported as today. `count` keeps
 its meaning, a ceiling on items. The trace records the sequence, and for each
 passage its ranks (and, once section 5 is implemented, the parts it covered).
 
+**Excerpts follow every passage (2.6.8).** Until 2.6.8 the excerpts were not in
+this sequence: they took what the passages left of the budget. A larger budget
+that took one more passage left less, so it could take an excerpt away, which
+invariant 9 forbids (measured on a development question: from 5,623 to 5,700
+characters, one quote grew by 151 characters and a later item's excerpts were
+omitted). The sequence is now every passage, then the excerpts in the order of
+section 7 (each item's first in item order, then each item's second), so an
+excerpt is carried only once every passage is, and the budget again only
+chooses a prefix. Under `lite=true` this changes a response only where an item
+carried an excerpt while a passage was left out: at most 6 of LongMemEval-S's
+500 questions (the ones whose `lite=true` response in 2.6.7 carried an excerpt
+at all), and none of the private real-use pack's 300.
+
 ### A floor by record length (2.6.5a3) { #a-floor-by-record-length }
 
 On the private real-use pack's development questions, the order of section 3
@@ -168,7 +181,8 @@ answer sessions about as often as `whole` (95.5% against 95.7%). At the same
 characters, today's sequence, `whole` and `coverage` were within a few quotes
 of each other on the real-use pack: once short records are protected, ordering
 the window's passages by the question's words does not move the evidence shown
-much. `whole` stays the sequence of `lite=true`.
+much. `whole` stays the sequence of `lite=true`, and from 2.6.8 of both
+`reconstruct` modes.
 
 ## 6. What does not change
 

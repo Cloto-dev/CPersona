@@ -466,23 +466,42 @@ effective_budget = min(budget_base, max_budget)
   excerpt; an item whose excerpts were cut states `excerpts_omitted`. A caller
   can therefore tell whether breadth or depth was cut, and a response the budget
   never touched says nothing about it.
-- **`lite=true`** (2.6.5a3) is a preset for a question one or two records can
-  answer. The budget is 2,800 characters unless the caller names one (an
-  operator-forced budget still wins), and the sequence is `whole`
-  ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))
-  whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says. The response leaves out what a
-  reader of such an answer does not act on: items lose `ranges`, an item whose
-  only claim repeats its head carries that claim's `as_of` instead of `claims`,
-  and the envelope loses `bounds`, `effective_budget`, `used_budget` and
-  `reserved_omitted`. `effective_count`, `returned_count` and a shortfall
-  reason are still stated, a claim that says more than its head is kept, and
-  the response says `lite: true`. `trace=true` returns every field. Both
-  registered tests of `whole` were measured at this budget
-  ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)):
-  on LongMemEval-S it answered no worse than the evidence sequence with about
-  half the retrieved text of every item, and on the private real-use pack it
-  showed fewer evidence quotes than the default sequence at its full budget,
-  which is why it is a choice and not the default.
+- **`mode`** (2.6.8) names an answer size and caps the `cl100k_base` tokens of
+  the whole JSON the tool returns, counted as the MCP layer sends it, notices
+  and the tool boundary's own fields included; the response states `cap` and
+  `used_tokens`. The vocabulary ships with the package, so the count needs no
+  network. Under a mode the response is the longest prefix of the payload
+  sequence whose serialized form fits the cap, so a larger cap never removes an
+  item or an excerpt; a cap the first passage alone exceeds answers
+  `error: "cap_below_minimum"`. A call that names no mode is unchanged.
+  - `mode: "lite"` is the preset 2.6.5a3 introduced as `lite=true`, which
+    remains its other name (the two together are refused). The budget is 2,800
+    characters unless the caller names one (an operator-forced budget still
+    wins), the sequence is `whole`
+    ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))
+    whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says, and the cap is 3,000, above
+    every lite response measured while the modes were developed.
+  - `mode: "pro"` reads 15 items when `count` is omitted, whatever the
+    configured maximum, has no character budget unless one is named, and quotes
+    as much of the `whole` sequence as its cap of 5,000 holds. Only its first 10
+    items join the floor of records shown whole: on a store of short records, a
+    floor of every item spent the cap on the short records of the last items.
+    Whether `pro` ships in a release is decided by a test registered before it
+    was built.
+  - Both leave out what a reader of a sized answer does not act on: items lose
+    `ranges`, an item whose only claim repeats its head carries that claim's
+    `as_of` instead of `claims`, and the envelope loses `bounds`,
+    `effective_budget`, `used_budget` and `reserved_omitted`.
+    `effective_count`, `returned_count` and a shortfall reason are still
+    stated, a claim that says more than its head is kept, and the response
+    names its `mode`. `trace=true` returns every field and is not held to the
+    cap; its `used_tokens` is what the same call returns without the trace.
+  - Both registered tests of `whole` were measured at the lite budget
+    ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)):
+    on LongMemEval-S it answered no worse than the evidence sequence with about
+    half the retrieved text of every item, and on the private real-use pack it
+    showed fewer evidence quotes than the default sequence at its full budget,
+    which is why it is a choice and not the default.
 
 The window sits fourth in a series this server already has: the embedding
 window (what gets indexed; a split is reported), the scan window (what gets
@@ -577,7 +596,7 @@ appear when declared relations do. A reader ignores a role it does not know.
    items, and the response is the longest prefix of a sequence the budget does
    not shape. The test: raise the budget alone and no item or excerpt
    disappears; change it alone and the candidate id set, the clusters and the
-   item order are unchanged.
+   item order are unchanged. Under a `mode` the same holds for its token cap.
 
 **What is deferred.** An adaptive default, per-query maxima, per-agent count
 and budget policy, a budget counted in the reader's tokens, model-assisted

@@ -52,7 +52,8 @@ async def test_lite_through_do_reconstruct(fake_embedding_client, monkeypatch):
     )
 
     # The shape.
-    assert lite["lite"] is True and "lite" not in plain
+    # 2.6.8: `lite=true` is `mode: "lite"`, and the response names its mode.
+    assert lite["mode"] == "lite" and "lite" not in lite and "mode" not in plain
     assert {"effective_count", "returned_count"} <= set(lite), "the counts are always stated"
     assert lite.get("shortfall_reason") == whole.get("shortfall_reason"), "a short return still says why"
     assert not set(reconstruct._LITE_ENVELOPE) & set(lite), "the envelope a small budget makes routine is left out"
