@@ -287,6 +287,7 @@ is right — please report it.
 ```
 
 **Claude Code** — one command:
+{ #register-claude-code }
 
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
@@ -294,6 +295,7 @@ claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"
 
 **Codex CLI** — one command; it writes the TOML shown after it into
 `~/.codex/config.toml`:
+{ #register-codex }
 
 ```bash
 codex mcp add cpersona --env CPERSONA_DB_PATH=/home/you/.claude/cpersona.db --env EMBEDDING_MODE=http --env EMBEDDING_HTTP_URL=http://127.0.0.1:8401/embed -- uvx cpersona
