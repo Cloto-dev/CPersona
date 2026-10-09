@@ -602,8 +602,16 @@ FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 # query with text, in every path that reads them (the fused arms, the cascade and
 # the time cue's), so a measurement can compare a store with the keyword arms
 # against the same store without them. CPERSONA_FTS_ENABLED=false is not that
-# comparison: it sends the memory arm to its LIKE fallback instead.
-LEXICAL_ENGINE = _parse_choice("CPERSONA_LEXICAL_ENGINE", "fts5", ("fts5", "off"))
+# comparison: it sends the memory arm to its LIKE fallback instead. `tantivy` is a
+# measurement path (cpersona/lexical_tantivy.py): the same two arms answered from a
+# Tantivy index derived from SQLite, which needs the tantivy package installed.
+LEXICAL_ENGINE = _parse_choice("CPERSONA_LEXICAL_ENGINE", "fts5", ("fts5", "off", "tantivy"))
+# How the tantivy engine cuts text into terms, for a record and a query alike:
+# Japanese and Chinese runs as trigrams (k3), bigrams (k2) or morphemes (km), and the
+# rest as words with any token holding inner punctuation also kept whole (w), the
+# same stemmed (ws), or trigrams (t). Measurement variants, read only by that engine.
+TANTIVY_CJK = _parse_choice("CPERSONA_TANTIVY_CJK", "k3", ("k3", "k2", "km"))
+TANTIVY_ASCII = _parse_choice("CPERSONA_TANTIVY_ASCII", "w", ("w", "ws", "t"))
 
 # How the keyword arms cut a query's Japanese and Chinese runs into FTS5 phrases.
 # `trigram` is the builder as it always was: every overlapping three-character

@@ -35,6 +35,7 @@ from cpersona import far_seats
 from cpersona import generation
 from cpersona import health
 from cpersona import nodes
+from cpersona import lexical_tantivy
 from cpersona import propagation
 from cpersona import query_segment
 from cpersona import providers
@@ -3965,6 +3966,12 @@ async def _search_episodes_fts(
     """
     if LEXICAL_ENGINE == "off":
         return []
+    if LEXICAL_ENGINE == "tantivy":
+        tantivy_rows = await lexical_tantivy.search_episodes(
+            db, agent_id, query, limit, channel, project_id, extra_terms, window, _EPISODE_IN_WINDOW
+        )
+        if tantivy_rows is not None:
+            return [_episode_fts_row(row) for row in tantivy_rows]
     fts_query = _build_fts_recall_query(query, extra_terms)
     if not fts_query:
         return []
@@ -3985,20 +3992,22 @@ async def _search_episodes_fts(
         (fts_query, *iso.params, *(window or ()), limit),
     )
 
-    return [
-        {
-            "id": row[0],
-            "content": f"[Episode] {row[1]}",
-            "source": {"System": "episode"},
-            # bug-213: start_time is nullable; created_at is not. This is the path
-            # bug-207 measured — it is what passed "" for two thirds of the episodes.
-            "timestamp": episode_timestamp(row[2], row[5]),
-            "_rid": ("ep", row[0]),
-            "_resolved": bool(row[3]),
-            "_bm25": row[4],
-        }
-        for row in rows
-    ]
+    return [_episode_fts_row(row) for row in rows]
+
+
+def _episode_fts_row(row) -> dict:
+    """An episode arm row from (id, summary, start_time, resolved, bm25, created_at)."""
+    return {
+        "id": row[0],
+        "content": f"[Episode] {row[1]}",
+        "source": {"System": "episode"},
+        # bug-213: start_time is nullable; created_at is not. This is the path
+        # bug-207 measured — it is what passed "" for two thirds of the episodes.
+        "timestamp": episode_timestamp(row[2], row[5]),
+        "_rid": ("ep", row[0]),
+        "_resolved": bool(row[3]),
+        "_bm25": row[4],
+    }
 
 
 async def _search_memories_keyword(
@@ -4064,7 +4073,18 @@ async def _search_memories_keyword(
         # Not the LIKE fallback either: the arm is absent, not degraded.
         return []
 
-    if FTS_ENABLED:
+    tantivy_answered = False
+    if FTS_ENABLED and LEXICAL_ENGINE == "tantivy":
+        tantivy_rows = await lexical_tantivy.search_memories(
+            db, agent_id, query, limit, channel, project_id, source_id, extra_terms, window
+        )
+        if tantivy_rows:
+            return tantivy_rows
+        # [] is "nothing matched": the LIKE fallback below answers, as after FTS5. None is
+        # "no index on this database" (the boot did not select the engine): FTS5 answers.
+        tantivy_answered = tantivy_rows is not None
+
+    if FTS_ENABLED and not tantivy_answered:
         fts_query = _build_fts_recall_query(query, extra_terms)
         if fts_query:
             keyword_sql = f"""SELECT m.id, m.msg_id, m.content, m.source, m.timestamp, bm25(memories_fts)

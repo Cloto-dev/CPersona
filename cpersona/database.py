@@ -1217,6 +1217,11 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
     await db.executescript(RECORD_BLOCK_VECTORS_SQL)
     await db.executescript(BLOCK_LOG_SQL)
     await db.executescript(ASSOCIATIONS_SQL)
+    # The tantivy keyword engine's change log: created and on only while that engine is
+    # selected, off and emptied otherwise (cpersona/lexical_tantivy.py).
+    from cpersona import lexical_tantivy
+
+    await lexical_tantivy.install(db)
 
     # bug-026: detect whether the FTS index is being created for the first time on
     # THIS boot (a DB originally created with CPERSONA_FTS_ENABLED=false, now
