@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:4bf41fb888c9888e8813c7092dd782259de9cf22 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:75c0ce01f7c2e7db71bbc261fd58d3ed16c37291 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,7 +10,7 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6、2026-10-08 に 2.6.7 が続き、版を指定しない導入は 2.6.7 になります。
+2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6、2026-10-08 に 2.6.7 が続き、版を指定しない導入は 2.6.7 になります。2.6.8a1 (2026-10-10) は pre-release で、版を指定したときだけ導入されます。
 pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -70,6 +70,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.7a1 | pre-release。`rrf` と cascade では、キーワードの腕が、ありふれた語を含む行の数を、その語自身での `count(*)` の一致 (FTS5 の bm25 が数える数) で数えます。以前は `fts5vocab` の表から読んでいて、SQLite 3.40.1 はそのために語のすべての出現位置をたどっていました。外す語と返る行は 2.6.6 と同じです。2.6.6a1 と同じ Intel N150 と 10 万件で、実行前に登録した規則により、想起の中央値は 2.6.6 の 1,017.70 ms と 1,044.55 ms に対して 991.45 ms と 1,006.51 ms でした。下がりましたが登録した 5% に届かないので、速さの変化は主張しません ([数え方](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-count-match.md))。コードとずれていた文書の記述 14 か所を直しました | [#437](https://github.com/Cloto-dev/cpersona/pull/437), [#438](https://github.com/Cloto-dev/cpersona/pull/438) |
 | 2.6.7a2 | pre-release。`CPERSONA_BLOCK_INDEX=true` (既定は off) にすると、Block の腕は調べる行を、SQLite から最大 25 万行を読む代わりにデータベースの横のファイルから読みます。ファイルを作った後に Block が変わった記録の記録 (schema 19) を通して読み、同じ行を同じ順で返します ([約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact))。trace を求めた想起は、どちらから読んだかを示します (`block_source`)。速さの変化は主張しません。想起全体が短くなる時間は、登録した計測でまだ測っていません | [#440](https://github.com/Cloto-dev/cpersona/pull/440), [#442](https://github.com/Cloto-dev/cpersona/pull/442), [#443](https://github.com/Cloto-dev/cpersona/pull/443) |
 | 2.6.7 | 2.6.7a2 の final で、追加の pre-release を挟まずに出しました。2.6.7a2 の後に入った変更が 2 つあります。Block の索引ファイルは既定で on になり、`CPERSONA_BLOCK_INDEX=false` で off にできます。2.6.6a1 と同じ Intel N150 と 10 万件で、実行前に登録した規則により、ファイルを on にすると想起の中央値は 960.16 ms から 797.95 ms、930.88 ms から 844.46 ms に下がり、どの想起も同じ行を同じ順で返し、ファイルを読むための変更記録が Block の構築に足す費用は off でも on でも 1% 未満でした ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md))。`python -m cpersona.block_index --db` は指定したデータベースを読みます。2.6.7a2 をファイル on で本番に 8 時間置き、再起動もエラーもなく、trace を求めた想起で Block の腕がファイルから読んでいることを確かめてから出しました | [#445](https://github.com/Cloto-dev/cpersona/pull/445), [#446](https://github.com/Cloto-dev/cpersona/pull/446), [#447](https://github.com/Cloto-dev/cpersona/pull/447) |
+| 2.6.8a1 | pre-release。`reconstruct` が `mode: "lite"` と `mode: "pro"` を受け付けます。mode を指定すると、ツールが返す JSON 全体の `cl100k_base` のトークン数 (MCP の層が送る形で数えます) に上限が付きます: `lite` は 3,000、`pro` は 5,000 です。応答は `cap` と `used_tokens` を示し、その列のうち上限に収まる最も長い先頭になるので、上限を上げて item や抜粋が消えることはありません。`lite` は 2.6.5 の `whole` の列を、予算を指定しなければ 10 件・2,800 字で切ります。`pro` は設定の上限を超えて最大 15 件を返し、予算を指定しなければ字数の予算はなく、短い記録を丸ごと見せる床に入るのは先頭の 10 件だけです。`lite: true` は `mode: "lite"` の意味になります: 上限が付き、応答は `lite` の代わりに mode を示し、`lite` と `mode` を一緒に渡すと拒否します。既定 off の `whole` と `evidence` の列では、抜粋がすべての passage の後に並ぶようになり、予算を上げて抜粋が消えることはなくなりました。トークンはネットなしで数えます: `tiktoken` が必須の依存になり、`cl100k_base` の語彙をパッケージに同梱します。mode を指定しない呼び出しは 2.6.7 と同じものを返します。どちらの mode がより多くの問いに正答するかは、テストを走らせる前に登録した規則で判定中で、どちらの mode の精度もまだ主張しません | [#453](https://github.com/Cloto-dev/cpersona/pull/453) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
