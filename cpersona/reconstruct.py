@@ -197,6 +197,10 @@ _LITE_ENVELOPE = ("bounds", "effective_budget", "used_budget", "reserved_omitted
 MODE_LITE = "lite"
 MODE_PRO = "pro"
 MODE_CAPS = {MODE_LITE: 3000, MODE_PRO: 5000}
+# A mode asks its candidate recall for one keyword seat (memory_handlers._do_recall): the
+# row only the keyword arms found that holds the most of the question's parts. Without a
+# mode, reconstruct asks for none, and the recall tool never does.
+MODE_KEYWORD_SEATS = 1
 PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10
 #: error of a mode call whose smallest possible response exceeds the cap.
@@ -1553,6 +1557,7 @@ async def do_reconstruct(
         agent_id,
         query,
         effective_top_k,  # the candidate depth — NOT `count` (invariant 7)
+        **({"keyword_seats": MODE_KEYWORD_SEATS} if mode else {}),
         deep=deep,
         channel=channel,
         project_id=project_id,
@@ -1880,7 +1885,8 @@ async def do_reconstruct(
         held_returned = sum(1 for item in items if item.get("admission") == "reservation")
         providers.check_reconstruct_count(
             len(items), held_returned, effective_count,
-            blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0),
+            blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
+            + (MODE_KEYWORD_SEATS if mode else 0),
         )
         if held_returned:
             # Beside the window, not in it: returned_count may exceed effective_count by this.
