@@ -4309,8 +4309,8 @@ MUTATIONS += [
         file='cpersona/memory_handlers.py',
         find='if r.get("_lexical_only") and _rid_of(r) not in present',
         replace='if _rid_of(r) not in present',
-        breaks="a row the vector arm found and the gate refused on cosine re-enters through a keyword seat",
-        expect='test_keyword_seats.py::test_a_row_refused_on_the_rsf_scale_takes_no_seat',
+        breaks="a row the vector arm found, admitted and cut by the count takes a keyword seat",
+        expect='test_keyword_seats.py::test_a_row_the_vector_arm_found_takes_no_seat',
     ),
     Mutation(
         id='M426',

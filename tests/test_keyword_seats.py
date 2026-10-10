@@ -228,3 +228,21 @@ async def test_reconstruct_without_a_mode_holds_no_seat(monkeypatch):
     assert KEYWORD_ONLY not in [it["content"] for it in out["items"]], out["items"]
     lite = await R.do_reconstruct(AGENT, "apples orchard", count=5, mode="lite")
     assert [it["content"] for it in lite["items"] if it.get("admission") == "reservation"] == [KEYWORD_ONLY]
+
+
+@pytest.mark.asyncio
+async def test_a_row_the_vector_arm_found_takes_no_seat(monkeypatch):
+    # A depth floor above the count lets the vector arm bring two admitted rows that the
+    # count of 1 cuts to one. The cut row was found by the vector arm, so it is not the
+    # keyword seats' to hold, even though the gate admitted it.
+    await _insert(STRONG, _pack_of(STRONG), "2026-01-01T00:00:00Z")
+    near = "apples orchard harvest notes again"
+    await _insert(near, _pack_of(near), "2026-01-01T00:00:01Z")
+    _gate("rrf", 0.05)
+    monkeypatch.setattr(M, "RECALL_MODE", "rrf")
+    monkeypatch.setattr(config, "RECALL_DEPTH_FLOOR", 5)
+    out = await M.do_recall(AGENT, "apples orchard", limit=1, keyword_seats=1, trace=True)
+    cut = out["trace"]["order"]["cut_by_count"]
+    assert len(cut) == 1, f"fixture is vacuous: the count cut {cut}"
+    seated = [m["content"] for m in out["messages"] if m["match_reason"].get("signal") == "keyword"]
+    assert seated == [], seated
