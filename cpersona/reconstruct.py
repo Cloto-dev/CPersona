@@ -65,7 +65,7 @@ import logging
 
 import numpy as np
 
-from . import associations, blocks, config, coverage, excerpts, far_seats, generation, nodes, vector
+from . import associations, blocks, config, coverage, excerpts, far_seats, generation, nodes, tokens, vector
 from .database import connection
 from .utils import _parse_timestamp_utc, error_response
 
@@ -179,6 +179,29 @@ _DEFAULT_WHY = "seed"
 LITE_BUDGET = 2800
 _LITE_ENVELOPE = ("bounds", "effective_budget", "used_budget", "reserved_omitted")
 
+# `mode` (2.6.8): a named answer size with a cap on the `cl100k_base` tokens of the
+# whole JSON the tool returns (cpersona/tokens.py), counted after the response is
+# final, notices and the boundary's own fields included. Both take the lite shape.
+#
+# * "lite" is `lite=true`: the whole sequence at LITE_BUDGET characters. Its cap is
+#   a ceiling, not a target: lite's own budget lands under it on both benchmark packs.
+# * "pro" widens the window to PRO_COUNT items and quotes as much of the whole
+#   sequence as the cap holds, with no character budget unless the caller names one.
+#   Only the first PRO_WHOLE_FLOOR_ITEMS items may join the floor of records shown
+#   whole: on a store of short records a floor of every item spent the cap on the
+#   short records of the last items (development curves of 2026-10-09).
+#
+# The response is the longest prefix of the sequence whose serialized form fits the
+# cap, so a larger cap never removes an item or an excerpt (invariant 9 in tokens).
+# Neither mode changes the response of a call that names neither.
+MODE_LITE = "lite"
+MODE_PRO = "pro"
+MODE_CAPS = {MODE_LITE: 3000, MODE_PRO: 5000}
+PRO_COUNT = 15
+PRO_WHOLE_FLOOR_ITEMS = 10
+#: error of a mode call whose smallest possible response exceeds the cap.
+CAP_BELOW_MINIMUM = "cap_below_minimum"
+
 
 def _compact_item(item: dict) -> dict:
     """An item without the fields :func:`_compact` leaves to the trace (see above)."""
@@ -207,7 +230,7 @@ def _lite_item(item: dict) -> dict:
     return out
 
 
-def _compact(response: dict, *, bound_lowered: bool = False, lite: bool = False) -> dict:
+def _compact(response: dict, *, bound_lowered: bool = False, lite: bool = False, mode: str | None = None) -> dict:
     out = dict(response)
     count_policy, budget_policy = out["count_policy"], out["budget_policy"]
     if not count_policy["clamped"] and count_policy["source"] in _ASKED:
@@ -227,11 +250,14 @@ def _compact(response: dict, *, bound_lowered: bool = False, lite: bool = False)
     if excluded:
         out["reconstruction"] = {"excluded_without_provenance": excluded}
     out["items"] = [_compact_item(item) for item in out["items"]]
-    if lite:
+    if lite or mode:
         for key in _LITE_ENVELOPE:
             out.pop(key, None)
         out["items"] = [_lite_item(item) for item in out["items"]]
-        out["lite"] = True
+        if mode:
+            out["mode"] = mode
+        else:
+            out["lite"] = True
     return out
 
 
@@ -325,7 +351,7 @@ def _message_key(c: _Candidate) -> tuple[str, str] | None:
     return c.context[0], c.msg_id
 
 
-def resolve_count(requested: int | None) -> tuple[int, dict]:
+def resolve_count(requested: int | None, *, mode: str | None = None) -> tuple[int, dict]:
     """The Reconstruction Window (section 7).
 
         base      = forced_count ?? requested_count ?? default_count
@@ -336,15 +362,21 @@ def resolve_count(requested: int | None) -> tuple[int, dict]:
     not a search depth. Returns `(effective, count_policy)`; the policy says
     where the base came from and whether the maximum cut it, so a caller can see
     what the server did with the request.
+
+    `mode="pro"` defaults the window to PRO_COUNT and lets it reach PRO_COUNT
+    whatever the configured maximum: its cap bounds the payload in tokens.
     """
     maximum = config.RECONSTRUCT_MAX_COUNT
+    default = config.RECONSTRUCT_DEFAULT_COUNT
+    if mode == MODE_PRO:
+        maximum, default = max(maximum, PRO_COUNT), PRO_COUNT
     forced = config.RECONSTRUCT_FORCED_COUNT
     if forced is not None:
         base, source, reason = forced, "operator_forced", "forced_count_set"
     elif requested is not None:
         base, source, reason = requested, "caller", "count_requested"
     else:
-        base, source, reason = config.RECONSTRUCT_DEFAULT_COUNT, "server_default", "count_omitted"
+        base, source, reason = default, "server_default", "count_omitted"
     base = max(0, int(base))
     effective = min(base, maximum)
     return effective, {"source": source, "clamped": effective < base, "reason": reason}
@@ -1353,6 +1385,48 @@ def cut_sequence(
     return taken, used
 
 
+def sequence_costs(order: list[tuple], records: list[list[tuple]]) -> list[int]:
+    """What each step of ``order`` adds to the quotes, as ``cut_sequence`` counts it.
+
+    A passage's cost depends only on the passages of its record before it in the
+    order, so the costs do not depend on the budget: ``cut_sequence`` at a budget
+    takes the longest prefix whose running sum fits (the first always).
+    """
+    shown: dict[int, list[tuple[int, int]]] = {}
+    costs = []
+    for i, j, _ in order:
+        start, end = records[i][j][:2]
+        before = shown.get(i, [])
+        costs.append(_quoted_length(before + [(start, end)]) - _quoted_length(before))
+        shown[i] = before + [(start, end)]
+    return costs
+
+
+def excerpt_costs(others: list[list[dict]]) -> list[int]:
+    """The excerpts' place in the payload sequence: each item's first excerpt in item
+    order, then each item's second, and so on (``allocate``), as character costs."""
+    costs = []
+    for r in range(max((len(o) for o in others), default=0)):
+        costs.extend(len(o[r]["content"]) for o in others if r < len(o))
+    return costs
+
+
+def _settle_tokens(out: dict) -> int:
+    """Set ``out["used_tokens"]`` to the tokens of ``out`` itself, that field included.
+
+    The count of a number's own digits is part of the count, so the value is found by
+    iterating: a JSON integer below 1,000 is one token here and one up to 999,999 is two,
+    so the count moves by at most one step and settles within three passes.
+    """
+    out["used_tokens"] = 0
+    for _ in range(4):
+        n = tokens.count_json(out)
+        if n == out["used_tokens"]:
+            return n
+        out["used_tokens"] = n
+    raise RuntimeError("reconstruct: used_tokens did not settle")  # pragma: no cover
+
+
 def sequence_quote(claim: _Candidate, text: str, basis: str, passages: list[tuple], taken: list[int]) -> dict:
     """A head quote made of the passages the sequence took, in text order (2.6.5a1).
 
@@ -1396,6 +1470,8 @@ async def do_reconstruct(
     budget: int | None = None,
     time_cue: dict | None = None,
     lite: bool = False,
+    mode: str | None = None,
+    envelope: dict | None = None,
 ) -> dict:
     """Assemble recall items from the candidate pool the recall process produced.
 
@@ -1403,6 +1479,10 @@ async def do_reconstruct(
     `max_hops`, `max_evidence` — are declared separately and are never derived
     from it (invariant 7): `top_k` is handed to the retrieval as its response
     count, so changing `count` alone leaves the candidate id set untouched.
+
+    `mode` ("lite" or "pro", see MODE_CAPS) caps the tokens of the returned JSON;
+    `lite=True` is `mode="lite"`. `envelope` holds the fields the tool boundary adds
+    to the response after this returns, so that the cap counts them too.
     """
     # Imported here rather than at module scope: memory_handlers imports the
     # config and database modules this one uses, and a top-level import would
@@ -1412,6 +1492,15 @@ async def do_reconstruct(
     from . import providers
     from .memory_handlers import RECALL_LIBRARY_MAX_LIMIT
 
+    if mode is not None and (lite or mode not in MODE_CAPS):
+        message = (
+            "pass mode or lite, not both: lite=true is mode \"lite\""
+            if lite
+            else f"mode must be one of {sorted(MODE_CAPS)}"
+        )
+        return error_response(message, items=[], returned_count=0)
+    if lite:
+        mode = MODE_LITE
     # The providers this reconstruction runs with, read once (cpersona/providers.py).
     p = providers.active()
     # The time cue (docs/RECALL_PROCESS_DESIGN.md §2) is the candidate recall's: it
@@ -1421,10 +1510,13 @@ async def do_reconstruct(
         parsed_cue = p.cue_interpreter.parse(time_cue)
     except _time_cue.TimeCueError as exc:
         return error_response(str(exc), items=[], returned_count=0)
-    effective_count, count_policy = resolve_count(count)
-    if lite and budget is None:
+    effective_count, count_policy = resolve_count(count, mode=mode)
+    if mode == MODE_LITE and budget is None:
         budget = LITE_BUDGET
-    sequence = SEQUENCE_WHOLE if lite else config.RECONSTRUCT_SEQUENCE
+    # Pro names no character budget: its cap bounds the payload. A budget the caller
+    # or an operator names still applies, under the cap.
+    uncapped = mode == MODE_PRO and budget is None and config.RECONSTRUCT_FORCED_BUDGET is None
+    sequence = SEQUENCE_WHOLE if mode else config.RECONSTRUCT_SEQUENCE
     effective_budget, budget_policy = resolve_budget(budget, effective_count)
     bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))
     # bug-437: report the effective retrieval bound, not only the larger request.
@@ -1438,6 +1530,16 @@ async def do_reconstruct(
     bounds_max_hops = min(requested_hops, associations.TRAVERSE_MAX_HOPS)
     hops_lowered = bounds_max_hops < requested_hops
     bounds_max_evidence = config.RECONSTRUCT_MAX_EVIDENCE if max_evidence is None else max(1, int(max_evidence))
+
+    def _shaped(response: dict) -> dict:
+        """The response as the caller receives it without the trace: compact, and under a
+        mode its cap fields. The trace is an audit and is not held to the cap."""
+        out = _compact({k: v for k, v in response.items() if k != "trace"}, bound_lowered=hops_lowered, mode=mode)
+        if mode:
+            out.update(envelope or {})
+            out["cap"] = MODE_CAPS[mode]
+            _settle_tokens(out)
+        return out
 
     # Stage 1: the declared names and aliases of the entities the query mentions go
     # to the lexical arm only. With none, retrieval is called exactly as before.
@@ -1524,7 +1626,12 @@ async def do_reconstruct(
                 else SHORTFALL_NO_RELEVANT_EVIDENCE
             )
         )
-        return response if trace else _compact(response, bound_lowered=hops_lowered, lite=lite)
+        if trace:
+            if mode:
+                shaped = _shaped(response)
+                response.update(mode=mode, cap=shaped["cap"], used_tokens=shaped["used_tokens"])
+            return response
+        return _shaped(response)
 
     spans = await _read_candidates(agent_id, candidates)
 
@@ -1564,7 +1671,7 @@ async def do_reconstruct(
         else []
     )
     chosen = window + held
-    if held:
+    if held and not uncapped:
         # The default budget fits one head per item of the window; the held places
         # are items too, so the default is taken for both. A budget the caller or an
         # operator named is not widened (resolve_budget takes it as given) -- it
@@ -1638,138 +1745,222 @@ async def do_reconstruct(
     )
     query_grams = _trigrams(query)
     cap = config.RECALL_PREVIEW_CHARS
-    entries = []
     # Unmeasured facts stay in the trace until an answer-reader evaluation shows a
     # reader uses them: the order the nodes of each quoted record ranked in (the best
     # few indices only -- the fused values are not calibrated across records), so the runner-up
     # is a place to read next, not a confidence.
-    node_orders: dict[str, list[int]] | None = {} if trace else None
-    # Which of entries_claims the quoted entries are: all of them, unless the evidence
-    # sequence (2.6.5a1) left an item with no passage inside the budget.
-    positions = list(range(len(entries_claims)))
-    sequence_heads: dict[int, dict] = {}
-    if head_cap > 0 and sequence in (SEQUENCE_EVIDENCE, SEQUENCE_WHOLE):
+    # Kept per entry, so the trace lists the entries a response quotes, as it always has.
+    entry_orders: list[dict | None] = [({} if trace else None) for _ in entries_claims]
+
+    # What the budget does not shape is quoted once: every item's other claims, and,
+    # outside the evidence sequences, every head. Which of them a response carries is
+    # the only thing the budget chooses (invariant 9).
+    in_sequence = head_cap > 0 and sequence in (SEQUENCE_EVIDENCE, SEQUENCE_WHOLE)
+    head_quotes: list[dict | None] = [None] * len(entries_claims)
+    other_quotes: list[list[dict]] = []
+    for position, (_, head, others) in enumerate(entries_claims):
+        if not in_sequence:
+            head_quotes[position] = (
+                _filled_quote(
+                    head, block_sets.get(head.ref), query_bits, query_grams, _head_cap_at(position), query_vec
+                )
+                if head_cap > 0
+                else _quote(
+                    head, node_sets, query_vec, query_grams, cap, not_current, entry_orders[position],
+                    block_sets, query_bits,
+                )
+            )
+        other_quotes.append(
+            [
+                {
+                    "ref": c.ref,
+                    **_quote(
+                        c, node_sets, query_vec, query_grams, cap, not_current, entry_orders[position],
+                        block_sets, query_bits,
+                    ),
+                }
+                for c in others
+            ]
+        )
+    if in_sequence:
         records = [
             record_passages(head, block_sets.get(head.ref), query_bits, query_grams, query_vec, head_cap)
             for _, head, _ in entries_claims
         ]
         record_sets = [passages for _, _, passages in records]
         if sequence == SEQUENCE_WHOLE:
-            order = whole_order(record_sets, [basis == "whole" for _, basis, _ in records])
+            floor_items = PRO_WHOLE_FLOOR_ITEMS if mode == MODE_PRO else len(records)
+            order = whole_order(
+                record_sets, [basis == "whole" and i < floor_items for i, (_, basis, _) in enumerate(records)]
+            )
         else:
             order = evidence_order(record_sets)
-        taken, _ = cut_sequence(order, record_sets, effective_budget)
-        positions = sorted(taken)
-        for i in positions:
-            text, basis, passages = records[i]
-            sequence_heads[i] = sequence_quote(entries_claims[i][1], text, basis, passages, taken[i])
+        # The payload sequence: every passage in `order`, then the excerpts. An excerpt
+        # follows every passage (bug fixed in 2.6.8): when the excerpts took what the
+        # passages left of the budget, a larger budget that took one more passage
+        # could take an excerpt away, against invariant 9.
+        steps = sequence_costs(order, record_sets) + excerpt_costs(other_quotes)
+    else:
+        steps = [len(q["content"]) for q in head_quotes] + excerpt_costs(other_quotes)
+    breakpoints = []
+    for step in steps:
+        breakpoints.append((breakpoints[-1] if breakpoints else 0) + step)
+    if uncapped:
+        # Everything the sequence holds; the cap decides how much of it is returned.
+        effective_budget = breakpoints[-1] if breakpoints else 0
+        budget_policy = {"source": "server_default", "clamped": False, "reason": "bounded_by_the_cap"}
+        response["effective_budget"], response["budget_policy"] = effective_budget, budget_policy
+
+    def assemble(budget_chars: int) -> tuple[dict, list[int]]:
+        """The response at a character budget, the longest prefix of the sequence that fits,
+        and which entries it quoted."""
+        out = dict(response)
+        out["bounds"] = {k: (list(v) if isinstance(v, list) else v) for k, v in bounds.items()}
+        out["reconstruction"] = dict(response["reconstruction"])
+        out["effective_budget"] = budget_chars
         if trace:
-            chosen = {(i, j) for i, js in taken.items() for j in js}
-            response["trace"]["sequence"] = {
-                "mode": sequence,
-                "candidates": len(order),
-                "taken": [
-                    {
-                        "ref": entries_claims[i][1].ref,
-                        "span": list(records[i][2][j][:2]),
-                        "ranks": {"record": ranks[0], "inside": ranks[1], "cosine": ranks[2]},
-                    }
-                    for i, j, ranks in order
-                    if (i, j) in chosen
-                ],
-            }
-    for position in positions:
-        item, head, others = entries_claims[position]
-        head_quote = (
-            sequence_heads[position]
-            if position in sequence_heads
-            else _filled_quote(
-                head, block_sets.get(head.ref), query_bits, query_grams, _head_cap_at(position), query_vec
+            out["trace"] = dict(response["trace"])
+        # Which of entries_claims the quoted entries are: all of them, unless the evidence
+        # sequence (2.6.5a1) left an item with no passage inside the budget.
+        positions = list(range(len(entries_claims)))
+        allowance = budget_chars
+        entries = []
+        if in_sequence:
+            taken, used_passages = cut_sequence(order, record_sets, budget_chars)
+            positions = sorted(taken)
+            if sum(len(js) for js in taken.values()) < len(order):
+                # Excerpts follow every passage, so none is carried while one is left out.
+                allowance = used_passages
+            for i in positions:
+                text, basis, passages = records[i]
+                head_quote = sequence_quote(entries_claims[i][1], text, basis, passages, taken[i])
+                entries.append((entries_claims[i][0], head_quote, other_quotes[i]))
+            if trace:
+                picked = {(i, j) for i, js in taken.items() for j in js}
+                out["trace"]["sequence"] = {
+                    "mode": sequence,
+                    "candidates": len(order),
+                    "taken": [
+                        {
+                            "ref": entries_claims[i][1].ref,
+                            "span": list(records[i][2][j][:2]),
+                            "ranks": {"record": ranks[0], "inside": ranks[1], "cosine": ranks[2]},
+                        }
+                        for i, j, ranks in order
+                        if (i, j) in picked
+                    ],
+                }
+        else:
+            entries = [(item, head_quotes[i], other_quotes[i]) for i, (item, _, _) in enumerate(entries_claims)]
+        items, used_budget, budget_cut = p.reconstructor.allocate(entries, allowance)
+        providers.check_allocation(entries, items, used_budget, allowance, budget_cut)
+        out["used_budget"] = used_budget
+
+        # Only items that are returned count: a cut inside an item the window or the
+        # budget left out is not something this response withheld from its reader.
+        returned_cuts = returned_walk_cuts(walk_cuts, positions, len(items))
+        omitted = [
+            name
+            for name, cut in (
+                (BOUND_EVIDENCE, any("claims_omitted" in item for item in items)),
+                (BOUND_HOPS, BOUND_HOPS in returned_cuts),
             )
-            if head_cap > 0
-            else _quote(
-                head, node_sets, query_vec, query_grams, cap, not_current, node_orders,
-                block_sets, query_bits,
-            )
-        )
-        other_quotes = [
-            {
-                "ref": c.ref,
-                **_quote(
-                    c, node_sets, query_vec, query_grams, cap, not_current, node_orders,
-                    block_sets, query_bits,
-                ),
-            }
-            for c in others
+            if cut
         ]
-        entries.append((item, head_quote, other_quotes))
-    items, used_budget, budget_cut = p.reconstructor.allocate(entries, effective_budget)
-    providers.check_allocation(entries, items, used_budget, effective_budget, budget_cut)
-    if node_orders:
-        response["trace"]["node_order"] = node_orders
-    response["used_budget"] = used_budget
+        if omitted:
+            out["bounds"]["omitted"] = omitted
+        # The graph read holds a bounded number of records per reached entity. When
+        # one had more, the evidence bound was met without knowing what lay beyond.
+        if BOUND_EVIDENCE in returned_cuts and BOUND_EVIDENCE not in out["bounds"].get("reached", []):
+            out["bounds"].setdefault("reached", []).append(BOUND_EVIDENCE)
 
-    # Only items that are returned count: a cut inside an item the window or the
-    # budget left out is not something this response withheld from its reader.
-    returned_cuts = returned_walk_cuts(walk_cuts, positions, len(items))
-    omitted = [
-        name
-        for name, cut in (
-            (BOUND_EVIDENCE, any("claims_omitted" in item for item in items)),
-            (BOUND_HOPS, BOUND_HOPS in returned_cuts),
+        out["items"] = items
+        out["returned_count"] = len(items)
+        out["reconstruction"]["selected_count"] = len(items)
+        held_returned = sum(1 for item in items if item.get("admission") == "reservation")
+        providers.check_reconstruct_count(
+            len(items), held_returned, effective_count,
+            blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0),
         )
-        if cut
-    ]
-    if omitted:
-        bounds["omitted"] = omitted
-    # The graph read holds a bounded number of records per reached entity. When
-    # one had more, the evidence bound was met without knowing what lay beyond.
-    if BOUND_EVIDENCE in returned_cuts and BOUND_EVIDENCE not in bounds.get("reached", []):
-        bounds.setdefault("reached", []).append(BOUND_EVIDENCE)
+        if held_returned:
+            # Beside the window, not in it: returned_count may exceed effective_count by this.
+            out["reserved_count"] = held_returned
+        if len(held) > held_returned:
+            # Held items come last, so a budget that cuts anything cuts them first. Not a
+            # short window, but a bound dropped them, and invariant 4 says which bound.
+            out["reserved_omitted"] = len(held) - held_returned
+        if effective_count == 0:
+            out["shortfall_reason"] = "count_zero"
+        # A held item does not fill the window, so a short window is judged without them.
+        if len(items) - held_returned < effective_count:
+            # bug-464: `budget_cut` is true when allocate cut any head, a held one
+            # included, and a held item cut by the budget is already reported as
+            # reserved_omitted. The budget made the window short only when it cut one of
+            # the window's own items.
+            window_cut = len(items) - held_returned < len(window)
+            out["shortfall_reason"] = (
+                SHORTFALL_BUDGET_EXHAUSTED
+                if window_cut
+                else SHORTFALL_BELOW_QUALITY_THRESHOLD
+                if recall_result.get("gate_fallback")
+                else SHORTFALL_EXHAUSTED_CANDIDATES
+            )
+        return out, positions
 
-    response["items"] = items
-    response["returned_count"] = len(items)
+    final, quoted = assemble(effective_budget)
+    shaped = None
+    if mode:
+        # The cap: the longest prefix of the payload sequence whose returned JSON fits.
+        # A prefix is named by the budget that ends at it, so the search runs over
+        # those budgets, from the one the character budget allows down to the first
+        # step, which is always taken.
+        limit = MODE_CAPS[mode]
+        ends = [b for b in breakpoints if b <= effective_budget] or breakpoints[:1] or [effective_budget]
+        shaped = _shaped(final)
+        if shaped["used_tokens"] > limit:
+            # `final` is the prefix of the last end: a budget past it adds no step.
+            fits: tuple[dict, list[int], dict] | None = None
+            low, high = 0, len(ends) - 2
+            while low <= high:
+                middle = (low + high) // 2
+                attempt, attempt_quoted = assemble(ends[middle])
+                attempt_shaped = _shaped(attempt)
+                if attempt_shaped["used_tokens"] <= limit:
+                    fits, low = (attempt, attempt_quoted, attempt_shaped), middle + 1
+                else:
+                    high = middle - 1
+            if fits is None:
+                return error_response(
+                    CAP_BELOW_MINIMUM,
+                    detail=f"the first passage alone does not fit mode {mode!r}'s cap of {limit} tokens",
+                    items=[],
+                    returned_count=0,
+                    mode=mode,
+                    cap=limit,
+                )
+            final, quoted, shaped = fits
     if trace:
+        node_orders: dict[str, list[int]] = {}
+        for position in quoted:
+            node_orders.update(entry_orders[position] or {})
+        if node_orders:
+            final["trace"]["node_order"] = node_orders
         # The coverage ledger over the records the items cite (docs/RECALL_PROCESS_DESIGN.md
         # §1.5). Recorded only; a ledger that cannot be built is reported, never raised.
         cited = [
             ref
-            for item in items
+            for item in final["items"]
             for ref in (item.get("head_ref"), *(c.get("ref") for c in item.get("claims", [])),
                         *(x.get("ref") for x in item.get("excerpts", []) if isinstance(x, dict)))
         ]
         try:
-            response["trace"]["coverage"] = await coverage.for_refs(agent_id, query, cited)
+            final["trace"]["coverage"] = await coverage.for_refs(agent_id, query, cited)
         except Exception as exc:  # noqa: BLE001
             logger.warning("reconstruct trace: coverage ledger not built: %s", type(exc).__name__)
-            response["trace"]["coverage"] = {"error": type(exc).__name__}
-    response["reconstruction"]["selected_count"] = len(items)
-    held_returned = sum(1 for item in items if item.get("admission") == "reservation")
-    providers.check_reconstruct_count(
-        len(items), held_returned, effective_count,
-        blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0),
-    )
-    if held_returned:
-        # Beside the window, not in it: returned_count may exceed effective_count by this.
-        response["reserved_count"] = held_returned
-    if len(held) > held_returned:
-        # Held items come last, so a budget that cuts anything cuts them first. Not a
-        # short window, but a bound dropped them, and invariant 4 says which bound.
-        response["reserved_omitted"] = len(held) - held_returned
-    if effective_count == 0:
-        response["shortfall_reason"] = "count_zero"
-    # A held item does not fill the window, so a short window is judged without them.
-    if len(items) - held_returned < effective_count:
-        # bug-464: `budget_cut` is true when allocate cut any head, a held one
-        # included, and a held item cut by the budget is already reported as
-        # reserved_omitted. The budget made the window short only when it cut one of
-        # the window's own items.
-        window_cut = len(items) - held_returned < len(window)
-        response["shortfall_reason"] = (
-            SHORTFALL_BUDGET_EXHAUSTED
-            if window_cut
-            else SHORTFALL_BELOW_QUALITY_THRESHOLD
-            if recall_result.get("gate_fallback")
-            else SHORTFALL_EXHAUSTED_CANDIDATES
-        )
-    return response if trace else _compact(response, bound_lowered=hops_lowered, lite=lite)
+            final["trace"]["coverage"] = {"error": type(exc).__name__}
+        if mode:
+            # Every field, and not held to the cap: `used_tokens` is what the same call
+            # returns without the trace.
+            final.update(mode=mode, cap=shaped["cap"], used_tokens=shaped["used_tokens"])
+        return final
+    return shaped if mode else _shaped(final)

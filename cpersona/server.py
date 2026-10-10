@@ -591,6 +591,7 @@ async def do_reconstruct_boundary(
     budget: int | None = None,
     time_cue: dict | None = None,
     lite: bool = False,
+    mode: str | None = None,
 ) -> dict:
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
@@ -613,6 +614,9 @@ async def do_reconstruct_boundary(
         trace=trace,
         budget=budget,
         lite=lite,
+        mode=mode,
+        # What _oc_annotate adds below, so that a mode's token cap counts it too.
+        envelope=_oc_annotate({}, project_id, pid, warning),
         **({"time_cue": time_cue} if time_cue else {}),
     )
     # bug-485: no preview cut here. Heads are already cut where they are quoted --
@@ -1676,7 +1680,7 @@ registry.auto_tool(
     "BUDGET bounds the characters of quoted text (`content` plus `excerpts`), where "
     "count bounds items: excerpts are omitted before items, and raising the budget "
     "never removes an item or an excerpt. Omit it for the server default. "
-    "`lite=true` answers smaller and cheaper (see its parameter). "
+    "`mode` (lite / pro) caps the tokens returned (see it). "
     "READ FURTHER IN STEPS, smallest first: an item's `expand`, then the neighbouring "
     "nodes ({ref, node: [index - 1, index + 1]}), and the bare ref, the whole record, "
     "only when the parts did not answer. "
@@ -1784,17 +1788,26 @@ registry.auto_tool(
                     "reconstruction reads. The response carries time_cue when one was applied."
                 ),
             },
+            "mode": {
+                "type": "string",
+                "enum": ["lite", "pro"],
+                "description": (
+                    "A named answer size whose returned JSON is at most `cap` cl100k_base tokens, "
+                    "counted as sent (`used_tokens` says how many). \"lite\" (cap 3,000) is for a "
+                    "question one or two records can answer: up to 2,800 characters unless `budget` "
+                    "is given, short records whole first, then the best-ranked passages of longer "
+                    "ones. \"pro\" (cap 5,000) reads 15 items by default and quotes as much as the "
+                    "cap holds. Both leave out `ranges`, `bounds` and the budget fields; an item whose "
+                    "only claim is its head carries that claim's `as_of` instead of `claims`. A larger "
+                    "cap never removes an item or an excerpt. Omit it for the default response, "
+                    "which has no cap. `trace=true` returns every field and is not held to the cap."
+                ),
+            },
             "lite": {
                 "type": "boolean",
                 "description": (
-                    "A smaller, cheaper response, for a question one or two records can answer. "
-                    "Quotes at most 2,800 characters unless `budget` is given, short records "
-                    "whole first and then the best-ranked passages of longer ones. Leaves out "
-                    "`ranges`, `bounds` and the budget fields; an item whose only claim is its "
-                    "head carries that claim's `as_of` instead of `claims`. The response says "
-                    "`lite: true`. It can miss evidence the default finds: use the default when "
-                    "the question needs several records or a lite answer was incomplete. "
-                    "`trace=true` returns every field. Default false."
+                    "The same as `mode: \"lite\"`, which is the name to use; kept so that older "
+                    "callers keep working. Not together with `mode`. Default false."
                 ),
             },
         },
@@ -1817,6 +1830,7 @@ registry.auto_tool(
         ("budget", int, None),
         ("time_cue", dict, None),
         ("lite", bool, False),
+        ("mode", str, None),
     ],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
