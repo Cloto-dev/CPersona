@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:d0d22f8eb822992c0359caa21a41cc73081e6ee2 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:6624e78a48681933d87040a3e191aed80286c0ca -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -43,7 +43,7 @@
 | 18 | 2.6.3a1 | `memories` と `episodes` の `embedding_model`: 各ベクトルを作ったモデルのラベル。保存済みの行は空のラベル (不明) になります | なし: ベクトルは次に書かれるときにラベルが付きます |
 | 19 | 2.6.7a2 | `block_log_clock`、`record_block_changes`: どの記録の Block が変わったかの記録。Block の索引ファイルが on の間だけ付けます ([約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **自動で作ります**: キューで作ります。ファイルを off にした場合を除きます ([下](#the-block-index-file-is-on-by-default)) |
 
-2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2、2.6.5a3、2.6.5、2.6.6a1、2.6.6、2.6.7a1、2.6.7 はスキーマを変えていません。
+2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2、2.6.5a3、2.6.5、2.6.6a1、2.6.6、2.6.7a1、2.6.7、2.6.8a1 はスキーマを変えていません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
