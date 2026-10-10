@@ -488,6 +488,17 @@ effective_budget = min(budget_base, max_budget)
     floor of every item spent the cap on the short records of the last items.
     Whether `pro` ships in a release is decided by a test registered before it
     was built.
+  - Both ask their candidate recall for one **keyword seat** (2.6.9): a place
+    held, like the block arm's reservation, for a row only the keyword arms
+    found that the answer does not hold and that the quality gate either
+    refused on its rrf score or admitted before the count cut. Under rrf such a
+    row can never clear a calibrated gate, since one arm's reciprocal-rank vote
+    is at most 1/(K+1), so the refusal says nothing about the row. Of the
+    eligible rows, the one whose text holds the most of the question's parts
+    (the coverage ledger's) takes the seat, ties in the gate's order. In recall
+    the seat displaces nothing; in the answer it is an item beside the window,
+    marked as a reservation, inside the mode's cap. A call that names no mode,
+    and the recall tool, hold no seat.
   - Both leave out what a reader of a sized answer does not act on: items lose
     `ranges`, an item whose only claim repeats its head carries that claim's
     `as_of` instead of `claims`, and the envelope loses `bounds`,
