@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:6b5f66162dc3e03e727ebcd1d9fc4c6c6046991b -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:4f40b0ed1515072ad83db50426a535d9fe4e3c56 -->
 
 # Reliable Recall — 2.6 系
 
@@ -408,6 +408,13 @@ effective_budget = min(budget_base, max_budget)
     上限 5,000 に収まるだけ `whole` の列を引用します。丸ごと見せる記録の床に入るのは最初の 10 件だけです:
     短い記録のストアでは、全件の床が上限を最後の方の item の短い記録に使っていました。`pro` を
     リリースに入れるかは、作る前に登録した判定で決めます。
+  - どちらも、候補の recall に **キーワードの席** を 1 つ頼みます (2.6.9)。block の腕の予約と同じく場所を
+    取っておく席で、キーワードの経路だけが見つけ、答えにまだ無く、品質ゲートが rrf の点で拒んだか、
+    通したうえで件数で切った行が座れます。rrf では、1 つの経路の逆順位の票は最大 1/(K+1) なので、そうした行は
+    較正したゲートを決して通れず、その拒否は行について何も述べていません。座れる行のうち、本文が問いの部分
+    (被覆台帳のもの) を最も多く含む行が席を取り、同点はゲートの順です。recall では席は何も押し出さず、
+    答えでは窓の横の item として予約の印を付け、mode の上限の中に入ります。mode を指定しない呼び出しと
+    recall の道具は席を持ちません。
   - どちらも、大きさを選んだ答えの読み手が使わないものを省きます: item から `ranges` を除き、唯一の claim が
     先頭を繰り返すだけの item は `claims` の代わりにその claim の `as_of` を持ち、外枠から `bounds`、
     `effective_budget`、`used_budget`、`reserved_omitted` を除きます。`effective_count`、`returned_count`、
