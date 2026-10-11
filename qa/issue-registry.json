@@ -7500,6 +7500,21 @@
       "fix_note": "The keys are joined as a table (a CTE of VALUES joined to record_block_vectors on all three key columns), which SQLite 3.40.1 plans as a search of the primary key per key: 6.1 ms against 4,277.6 ms for the same 200 keys on the same database. Rejected: reading by parent with parent_id IN (...), which the old library also indexes but which reads every block of each listed parent; and one point query per key, which costs two hundred round trips. A query plan cannot pin this in CI, whose SQLite searches the key for both forms, so the test pins the statement's form and a second test pins that only the listed keys come back.",
       "note": "Found while profiling recall after bug-504 on the reference machine, where the CI-tested library hid it. The row-value IN in _stored_vectors was the only one in the package. Lands in the first release after 2.6.5a3.",
       "fixed_in": "2.6.6a1"
+    },
+    {
+      "id": "bug-506",
+      "summary": "(MEDIUM) The evidence order of reconstruct depended on the Python version, so the determinism invariant held on one interpreter and not across them. `evidence_order` fuses three ranks (the record's place, the passage's place inside it, the block cosine's place) with sum(1/(k+1+rank)). Two passages whose ranks are the same three numbers in another order, (0, 0, 1) and (0, 1, 0), have equal scores and the tie rule should put the earlier text first. Python 3.11's sum() adds left to right, so (a + a) + b and (a + b) + a can round one unit apart: at the default k = 60 they came out 0.04891591750396616 and 0.048915917503966164 and the later passage went first. Python 3.12 made sum() of floats compensated, which keeps the tie, so the same store and question returned a different quote under 3.11 and 3.12+ (1 of 150 development questions). The whole sequence calls the same order. The two-list fusions of nodes and blocks add two terms, which round the same in any order.",
+      "severity": "MEDIUM",
+      "discovered": "2026-10-09T00:00:00Z",
+      "version": "2.6.5a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "fused = \\[math\\.fsum\\(1\\.0 / \\(k \\+ 1 \\+ ranks\\[n\\]\\) for ranks in lists\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "determinism",
+      "fix_note": "The fused score is math.fsum of the terms, which is correctly rounded and so independent of the order they are added in, on every Python version: equal terms give an equal score and the tie rule decides. This matches what 3.12+ already returned; only 3.11's output changes, on ties of this kind. Rejected: comparing the scores as exact fractions, which also fixes it but changes more code for no difference in the order; and fixing the order of addition, which keeps 3.11 and 3.12 apart. The tests pin the case found on the development questions and the same tie at every k from 1 to 399; adding left to right (functools.reduce) turns them red on 3.11 and 3.13, and plain sum() on 3.11.",
+      "note": "Found during the 2.6.8 development acceptance run, which used Python 3.11. Left unfixed until 2.6.8's test had been judged, so the baseline did not move during it. Lands in 2.6.10a1.",
+      "fixed_in": "2.6.10a1"
     }
   ]
 }
