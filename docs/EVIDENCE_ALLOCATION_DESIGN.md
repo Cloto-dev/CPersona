@@ -4,7 +4,7 @@ Status: design, for 2.6.5. The first pre-release (2.6.5a1) ships the payload
 sequence ordered across records (sections 3 and 4) as
 `CPERSONA_RECONSTRUCT_SEQUENCE=evidence`, off by default. 2.6.5a3 adds the same
 order behind a floor drawn by record length (`whole`, the end of section 4), also
-off by default, and `lite=true` on `reconstruct`, which uses it at 2,800 characters. The coverage step of section 5 was
+off by default, and `lite=true` on `reconstruct`, which used it at 2,800 characters (3,600 since 2.6.10a3). The coverage step of section 5 was
 built on top of `whole`, judged on both packs' test questions, and set aside.
 Each step is measured against a rule registered before any answer call
 (section 7). `SCHEMA_VERSION` does not change: everything below

@@ -175,9 +175,18 @@ _DEFAULT_WHY = "seed"
 #
 # `lite: true` says the shape was chosen, and `trace=true` returns every field. On the
 # private real-use pack's test questions the shape is about 11% smaller than the compact
-# one at the same budget (cl100k tokens of the JSON), and LITE_BUDGET is the budget both packs' registered tests
-# of `whole` were measured at (benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md).
-LITE_BUDGET = 2800
+# one at the same budget (cl100k tokens of the JSON). LITE_BUDGET was 2,800 until
+# 2.6.10a3, the budget both packs' registered tests of `whole` were measured at
+# (benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md). Characters are not
+# tokens: at 2,800, lite averaged about 970 tokens on LongMemEval-S's English and about
+# 2,100 on a private pack of mostly Japanese agent memories, so in English a third of the
+# cap went unused and in Japanese the window often ended before its tenth item. On
+# development questions 3,600 showed every answer session on 4 more of 100 LongMemEval-S
+# questions and fewer on none, for about 20% more answer-stage tokens (994 to 1,197, below
+# the 1,787 of a call that names no mode), and every evidence record on more of the
+# private pack's questions, for about 26% more tokens; past 3,600 English gained no
+# session for its tokens.
+LITE_BUDGET = 3600
 _LITE_ENVELOPE = ("bounds", "effective_budget", "used_budget", "reserved_omitted")
 
 # `mode` (2.6.8): a named answer size with a cap on the `cl100k_base` tokens of the
@@ -185,7 +194,9 @@ _LITE_ENVELOPE = ("bounds", "effective_budget", "used_budget", "reserved_omitted
 # final, notices and the boundary's own fields included. Both take the lite shape.
 #
 # * "lite" is `lite=true`: the whole sequence at LITE_BUDGET characters. Its cap is
-#   a ceiling, not a target: lite's own budget lands under it on both benchmark packs.
+#   a ceiling, not a target. In English the budget lands well under it; on the private
+#   pack of mostly Japanese memories about one lite response in eight comes within 50
+#   tokens of it, and there the cap, not the budget, ends the answer.
 # * "pro" widens the window to PRO_COUNT items and quotes as much of the whole
 #   sequence as the cap holds, with no character budget unless the caller names one.
 #   Only the first PRO_WHOLE_FLOOR_ITEMS items may join the floor of records shown
@@ -207,6 +218,14 @@ MODE_KEYWORD_SEATS = 1
 # agent memories, four places put more of the evidence inside Pro's cap and none
 # outside it, while Lite's 3,000 tokens had no room for them. Lite asks for none.
 MODE_EXTRA_BLOCK_SEATS = {MODE_PRO: 2}
+# Both also ask for extra keyword places (memory_handlers._do_recall) for rows only the
+# keyword arms found that the gate refused on their rrf score, after every other held
+# place. On development questions of the private pack, under rrf, eight places put 44 more
+# evidence records inside Pro's cap than 2.6.10a2 and 3 fewer, and 10, 12 or 15 gained
+# nothing measurable over eight; at Lite's 3,600 characters one place showed every evidence
+# record on 14 more questions and on 4 fewer. Where no row is keyed on rrf they hold
+# nothing, so under rsf or confidence a mode's answer is unchanged.
+MODE_EXTRA_KEYWORD_SEATS = {MODE_PRO: 8, MODE_LITE: 1}
 PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10
 #: error of a mode call whose smallest possible response exceeds the cap.
@@ -1568,6 +1587,7 @@ async def do_reconstruct(
         effective_top_k,  # the candidate depth — NOT `count` (invariant 7)
         **({"keyword_seats": MODE_KEYWORD_SEATS} if mode else {}),
         **({"extra_block_seats": MODE_EXTRA_BLOCK_SEATS[mode]} if mode in MODE_EXTRA_BLOCK_SEATS else {}),
+        **({"extra_keyword_seats": MODE_EXTRA_KEYWORD_SEATS[mode]} if mode in MODE_EXTRA_KEYWORD_SEATS else {}),
         deep=deep,
         channel=channel,
         project_id=project_id,
@@ -1896,7 +1916,8 @@ async def do_reconstruct(
         providers.check_reconstruct_count(
             len(items), held_returned, effective_count,
             blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
-            + (MODE_KEYWORD_SEATS if mode else 0) + MODE_EXTRA_BLOCK_SEATS.get(mode, 0),
+            + (MODE_KEYWORD_SEATS if mode else 0) + MODE_EXTRA_BLOCK_SEATS.get(mode, 0)
+            + MODE_EXTRA_KEYWORD_SEATS.get(mode, 0),
         )
         if held_returned:
             # Beside the window, not in it: returned_count may exceed effective_count by this.
