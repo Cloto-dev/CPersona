@@ -61,6 +61,17 @@ is claimed from it.
 - The scripts that build the answer inputs and apply the rules are added by a
   later commit, before any test search, and named here then.
 
+### Recorded before the test
+
+Added by a later commit, before any test question was searched at the
+candidate commit.
+
+- **The scripts**: [`v2_6_9_build.py`](../omnimemeval/v2_6_9_build.py) writes
+  the answer inputs of each mode's changed questions, and
+  [`v2_6_9_analyze.py`](../omnimemeval/v2_6_9_analyze.py) applies the rules.
+  2.6.8's answers are read as the Lite and Pro test recorded them.
+- **The interpreter**: Python 3.11.15, as in the Lite and Pro test.
+
 ## What may be said
 
 - **Lite** answers at least 320 of the 400 questions (at most three fewer than
