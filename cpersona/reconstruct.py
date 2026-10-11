@@ -62,6 +62,7 @@ Invariants this module holds (section 7, numbered as the doc numbers them):
 from __future__ import annotations
 
 import logging
+import math
 
 import numpy as np
 
@@ -1330,7 +1331,10 @@ def evidence_order(records: list[list[tuple]]) -> list[tuple[int, int, tuple[int
         cosine_ranks = _shared_ranks([p[2] if p[2] is not None else float("-inf") for _, _, p in flat])
         lists.append(cosine_ranks)
     k = config.RRF_K
-    fused = [sum(1.0 / (k + 1 + ranks[n]) for ranks in lists) for n in range(len(flat))]
+    # fsum, not sum: equal terms in another order must give an equal score on every
+    # Python. 3.11's sum() adds left to right and rounds them a unit apart; 3.12's
+    # compensated sum() does not, so the tie rule decided on one and not the other.
+    fused = [math.fsum(1.0 / (k + 1 + ranks[n]) for ranks in lists) for n in range(len(flat))]
     order = sorted(range(len(flat)), key=lambda n: (-fused[n], flat[n][0], flat[n][2][0]))
     return [(flat[n][0], flat[n][1], (record_ranks[n], inside_ranks[n], cosine_ranks[n])) for n in order]
 

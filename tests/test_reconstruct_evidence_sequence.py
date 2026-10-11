@@ -154,6 +154,26 @@ def test_ties_go_to_the_earlier_record_then_the_earlier_text(rrf60):
     assert [i for i, _, _ in tied][0] == 0
 
 
+def _swapped_ranks(k):
+    """Two passages of one record whose ranks are (record, inside, cosine) = (0, 0, 1)
+    and (0, 1, 0): the same three terms in another order, so their fused scores are equal
+    and the earlier text must come first. Adding the terms left to right rounds
+    (a + a) + b and (a + b) + a apart for some k, which is how Python 3.11's sum() put
+    the later passage first while 3.12's compensated sum() kept the tie."""
+    config.RRF_K = k
+    return [j for _, j, _ in reconstruct.evidence_order([[_p(0, 535, 0.5), _p(535, 722, 0.9)]])]
+
+
+def test_a_tie_whose_terms_come_in_another_order_goes_to_the_earlier_text(rrf60):
+    assert _swapped_ranks(60) == [0, 1], "the case found on the development questions"
+
+
+def test_the_tie_holds_for_every_rrf_k_on_every_python(monkeypatch):
+    monkeypatch.setattr(config, "RRF_K", 60)
+    broken = [k for k in range(1, 400) if _swapped_ranks(k) != [0, 1]]
+    assert broken == [], f"order depends on how the terms were added at k={broken[:5]}"
+
+
 # --- the budget cuts the order ----------------------------------------------------------
 
 
