@@ -13,7 +13,7 @@ SRC = Path(__file__).resolve().parents[1] / "benchmarks" / "omnimemeval" / "cper
 
 
 @pytest.fixture
-def render(monkeypatch):
+def adapter(monkeypatch):
     pkg = types.ModuleType("omnimemeval_stub")
     pkg.__path__ = []
     base = types.ModuleType("omnimemeval_stub.base_client")
@@ -30,7 +30,17 @@ def render(monkeypatch):
     spec = importlib.util.spec_from_file_location("omnimemeval_stub.cpersona_client", SRC)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.CpersonaClient.render
+    return module.CpersonaClient
+
+
+@pytest.fixture
+def render(adapter):
+    return adapter.render
+
+
+@pytest.fixture
+def search_args(adapter):
+    return adapter.search_args
 
 
 def test_default_item_takes_the_head_claims_time(render):
@@ -52,3 +62,13 @@ def test_claims_win_over_the_items_own_time(render):
 def test_no_time_anywhere_renders_the_text_alone(render):
     excerpt = {"ref": "mem:5", "content": "more"}
     assert render({"items": [{"content": "only", "excerpts": [excerpt]}]}) == ["only\n…\nmore\n"]
+
+
+def test_search_without_a_mode_is_the_servers_defaults(search_args):
+    assert search_args("q", "u", env={}) == {"agent_id": "u", "query": "q"}
+    assert search_args("q", "u", env={"CPERSONA_SEARCH_MODE": " ", "CPERSONA_SEARCH_COUNT": ""}) == {"agent_id": "u", "query": "q"}
+
+
+def test_search_passes_the_mode_and_count_the_environment_names(search_args):
+    env = {"CPERSONA_SEARCH_MODE": "pro", "CPERSONA_SEARCH_COUNT": "15"}
+    assert search_args("q", "u", env=env) == {"agent_id": "u", "query": "q", "mode": "pro", "count": 15}
