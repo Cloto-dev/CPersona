@@ -499,6 +499,15 @@ effective_budget = min(budget_base, max_budget)
     the seat displaces nothing; in the answer it is an item beside the window,
     marked as a reservation, inside the mode's cap. A call that names no mode,
     and the recall tool, hold no seat.
+  - `pro` also asks for two **block places** (2.6.10a2) beyond the block arm's
+    reservation of two. They hold, in the reservation's order, records only the
+    block arm reached that the reservation did not seat, and they come after
+    every other held place, so a cap that cuts held items from the end cuts them
+    first. `lite`, a call that names no mode, and the recall tool hold the
+    reservation's two. On development questions of a private pack of real agent
+    memories, four places put more evidence records inside Pro's cap and none
+    outside it; under `lite` the same four took room its 3,000 tokens did not
+    have and cost evidence, which is why `lite` keeps two.
   - Both leave out what a reader of a sized answer does not act on: items lose
     `ranges`, an item whose only claim repeats its head carries that claim's
     `as_of` instead of `claims`, and the envelope loses `bounds`,

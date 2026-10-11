@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:4f40b0ed1515072ad83db50426a535d9fe4e3c56 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d2e1215a70d0c733c1fe7926708ff9872204ffbf -->
 
 # Reliable Recall — 2.6 系
 
@@ -415,6 +415,12 @@ effective_budget = min(budget_base, max_budget)
     (被覆台帳のもの) を最も多く含む行が席を取り、同点はゲートの順です。recall では席は何も押し出さず、
     答えでは窓の横の item として予約の印を付け、mode の上限の中に入ります。mode を指定しない呼び出しと
     recall の道具は席を持ちません。
+  - `pro` はさらに、block の腕の予約 2 つに加えて **block の場所** を 2 つ頼みます (2.6.10a2)。予約が座らせ
+    なかった、block の腕だけが届いた記録を予約と同じ順で入れ、ほかのどの席よりも後ろに置くので、席の item を
+    後ろから切る上限はこれを先に切ります。`lite`、mode を指定しない呼び出し、recall の道具は予約の 2 つのままです。
+    実際のエージェントの記憶から作った非公開のパックの開発用の問いでは、4 つの場所は Pro の上限の中に入る根拠の
+    記録を増やし、上限の外に出したものはありませんでした。`lite` では同じ 4 つが 3,000 トークンに無い場所を取って
+    根拠を失わせたので、`lite` は 2 つのままです。
   - どちらも、大きさを選んだ答えの読み手が使わないものを省きます: item から `ranges` を除き、唯一の claim が
     先頭を繰り返すだけの item は `claims` の代わりにその claim の `as_of` を持ち、外枠から `bounds`、
     `effective_budget`、`used_budget`、`reserved_omitted` を除きます。`effective_count`、`returned_count`、
