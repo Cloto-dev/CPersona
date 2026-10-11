@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:dec805c459d0706f7250eae2896b3fd78c61e3cf -->
+<!-- i18n-source: docs/getting-started.md@blob:fe69c45e6f603334b74ff96c4bd8150a0d31ebfc -->
 
 # はじめに
 
@@ -287,12 +287,16 @@ stdin を開いたままにしてください。サービスマネージャの�
 **Claude Code** — 1 コマンド:
 { #register-claude-code }
 
+`/home/you` は自分のホームディレクトリに書き換えてください (Windows では `C:/Users/you`)。埋め込みサーバーをまだ用意していない場合は ([手順 2](#2-set-up-an-embedding-server-recommended))、`"EMBEDDING_MODE":"http"` を `"EMBEDDING_MODE":"none"` に変えてください。
+
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
 
 **Codex CLI** — 1 コマンド。その後に示す TOML を `~/.codex/config.toml` に書き込みます:
 { #register-codex }
+
+`/home/you` は自分のホームディレクトリに書き換えてください (Windows では `C:/Users/you`)。埋め込みサーバーをまだ用意していない場合は ([手順 2](#2-set-up-an-embedding-server-recommended))、`EMBEDDING_MODE=http` を `EMBEDDING_MODE=none` に変えてください。
 
 ```bash
 codex mcp add cpersona --env CPERSONA_DB_PATH=/home/you/.claude/cpersona.db --env EMBEDDING_MODE=http --env EMBEDDING_HTTP_URL=http://127.0.0.1:8401/embed -- uvx cpersona

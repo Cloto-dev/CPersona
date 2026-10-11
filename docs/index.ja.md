@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:6fd8e854f3e88f205757a7f7d5bf3ab9e9b6b7c3 -->
+<!-- i18n-source: docs/index.md@blob:4107f1f838070c1283c9b1168b754b959d88d5c5 -->
 
 # CPersona ドキュメント
 
@@ -129,7 +129,8 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 **これからの方向。** [ロードマップ](roadmap.md) は、各リリースラインが何のためにあり、
 何を破ってよく、計画中の機能がどの実測された問題に答えるかを記録します。軸は 3 つ
 (リリースライン・ランタイムとスケール・サポート tier) です。これは意図の記述であって
-納期の約束ではありません。実際に出荷されたものはリリースノートと SUPPORT.md にあります。
+納期の約束ではありません。実際に出荷されたものは[リリースノート](https://github.com/Cloto-dev/cpersona/releases)と
+[SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) にあります。
 
 2.6 系には専用ページ [Reliable Recall](RELIABLE_RECALL_2_6.md) があります。1 回の
 呼び出しの中で反復する想起ループ、手がかりの契約、prior 関数、再構成の出口とその
