@@ -12,13 +12,16 @@ CPersona calls no model when it stores or recalls, so ``Memory service model`` d
 - ``delete_all`` purges the user's data.
 
 Environment: ``CPERSONA_MCP_URL`` (for example ``http://127.0.0.1:8501/mcp``) and
-``CPERSONA_AUTH_TOKEN`` (the server's bearer token).
+``CPERSONA_AUTH_TOKEN`` (the server's bearer token). ``CPERSONA_SEARCH_MODE`` (``lite`` or
+``pro``) and ``CPERSONA_SEARCH_COUNT`` name ``reconstruct``'s ``mode`` and ``count``; unset, the
+call is the server's defaults, as above.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 
 import httpx2
@@ -87,8 +90,20 @@ class CpersonaClient:
             blocks.append(f"[{when}]\n{body}\n" if when else f"{body}\n")
         return blocks
 
+    @staticmethod
+    def search_args(query: str, user_id: str, env=os.environ) -> dict:
+        """``reconstruct``'s arguments: the server's defaults, or the mode and count the environment names."""
+        args = {"agent_id": user_id, "query": query}
+        mode = env.get("CPERSONA_SEARCH_MODE", "").strip()
+        if mode:
+            args["mode"] = mode
+        count = env.get("CPERSONA_SEARCH_COUNT", "").strip()
+        if count:
+            args["count"] = int(count)
+        return args
+
     def search(self, query, user_id, top_k):
-        return self.render(self.call("reconstruct", {"agent_id": user_id, "query": query}))
+        return self.render(self.call("reconstruct", self.search_args(query, user_id)))
 
     def delete_all(self, user_id):
         return self.call("delete_agent_data", {"agent_id": user_id})
