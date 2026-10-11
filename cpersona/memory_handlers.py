@@ -2187,6 +2187,7 @@ async def do_recall(
     propagation_seat: bool = False,
     keyword_seats: int = 0,
     extra_block_seats: int = 0,
+    extra_keyword_seats: int = 0,
     providers_: providers.Providers | None = None,
     query_vec_out: list | None = None,
 ) -> dict:
@@ -2244,6 +2245,7 @@ async def do_recall(
         **({"propagation_seat": True} if propagation_seat else {}),
         **({"keyword_seats": keyword_seats} if keyword_seats else {}),
         **({"extra_block_seats": extra_block_seats} if extra_block_seats else {}),
+        **({"extra_keyword_seats": extra_keyword_seats} if extra_keyword_seats else {}),
         **({"query_vec_out_": query_vec_out} if query_vec_out is not None else {}),
     )
     if not trace:
@@ -2270,6 +2272,7 @@ async def do_recall(
         **({"propagation_seat": True} if propagation_seat else {}),
         **({"keyword_seats": keyword_seats} if keyword_seats else {}),
         **({"extra_block_seats": extra_block_seats} if extra_block_seats else {}),
+        **({"extra_keyword_seats": extra_keyword_seats} if extra_keyword_seats else {}),
     })
     # A traced recall names the model that produced its vectors as the backend reports
     # it. Asking is bounded by generation's refresh interval and only a traced call asks.
@@ -2317,6 +2320,7 @@ async def _do_recall(
     propagation_seat: bool = False,
     keyword_seats: int = 0,
     extra_block_seats: int = 0,
+    extra_keyword_seats: int = 0,
     query_vec_out_: list | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
@@ -2902,9 +2906,44 @@ async def _do_recall(
         if trace_rec is not None:
             trace_rec.reservation(extra, "block")
 
+    # The extra keyword places: `extra_keyword_seats` more places for rows only the
+    # keyword arms found, held only when a caller asks for them (reconstruct does under
+    # a mode; the recall tool never does). Unlike the keyword seats they hold only rows
+    # the gate refused on their rrf score -- the scale no such row can pass -- and never
+    # one the gate admitted and the count cut, so where no row is keyed on rrf (rsf,
+    # confidence) they hold nothing. A row the vector arm returned is not keyword-only
+    # and stays out even when its backend gave it no score, which leaves the gate keying
+    # it on rrf. The rows that hold more of the question's parts sit first, ties in the
+    # gate's order, as for the keyword seats, and their seat numbers follow those seats'.
+    # They come after every other held place, the extra block places included, so a
+    # reader's budget that cuts held rows from the end cuts these first. They displace
+    # nothing, are not credited (bug-453), and none follow a gate rescue.
+    if extra_keyword_seats > 0 and not gate_fallback:
+        present = {_rid_of(r) for r in results}
+        passed_gate = {_rid_of(r) for r in admitted}
+        refused = [
+            r for r in pre_gate
+            if r.get("_lexical_only") and _rid_of(r) not in present
+            and _rid_of(r) not in passed_gate and _gate_score(r)[1] == "rrf"
+        ]
+        if refused:
+            normalized = coverage.normalize(query)
+            wanted = [normalized[a:b] for a, b, _ in coverage.parts(normalized)[: coverage.MAX_PARTS]]
+            refused = sorted(
+                refused,
+                key=lambda row: -sum(1 for part in wanted if part in coverage.normalize(row.get("content") or "")),
+            )
+        seated = refused[:extra_keyword_seats]
+        for place, r in enumerate(seated, 1):
+            r["_keyword_seat"] = keyword_seats + place
+        results.extend(seated)
+        if trace_rec is not None:
+            trace_rec.reservation(seated, "keyword")
+
     providers.check_recall_count(
         len(results), limit, cue.MAX_SEATS + (propagation.SEATS if propagation_seat else 0),
-        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0) + keyword_seats + extra_block_seats,
+        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0) + keyword_seats + extra_block_seats
+        + extra_keyword_seats,
     )
     # The one hypothesis a recall evaluates today: the order its stages produced.
     ledger.spend(budget.ITERATION)
