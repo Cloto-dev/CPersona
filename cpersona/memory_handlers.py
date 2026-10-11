@@ -2186,6 +2186,7 @@ async def do_recall(
     iteration_budget: int | None = None,
     propagation_seat: bool = False,
     keyword_seats: int = 0,
+    extra_block_seats: int = 0,
     providers_: providers.Providers | None = None,
     query_vec_out: list | None = None,
 ) -> dict:
@@ -2242,6 +2243,7 @@ async def do_recall(
         ledger_=ledger,
         **({"propagation_seat": True} if propagation_seat else {}),
         **({"keyword_seats": keyword_seats} if keyword_seats else {}),
+        **({"extra_block_seats": extra_block_seats} if extra_block_seats else {}),
         **({"query_vec_out_": query_vec_out} if query_vec_out is not None else {}),
     )
     if not trace:
@@ -2267,6 +2269,7 @@ async def do_recall(
         **({"time_cue": parsed_cue.echo()} if parsed_cue is not None else {}),
         **({"propagation_seat": True} if propagation_seat else {}),
         **({"keyword_seats": keyword_seats} if keyword_seats else {}),
+        **({"extra_block_seats": extra_block_seats} if extra_block_seats else {}),
     })
     # A traced recall names the model that produced its vectors as the backend reports
     # it. Asking is bounded by generation's refresh interval and only a traced call asks.
@@ -2313,6 +2316,7 @@ async def _do_recall(
     ledger_: budget.Ledger | None = None,
     propagation_seat: bool = False,
     keyword_seats: int = 0,
+    extra_block_seats: int = 0,
     query_vec_out_: list | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
@@ -2431,7 +2435,9 @@ async def _do_recall(
                     channel=channel,
                     source_id=source_id,
                     exclude_set=exclude_set,
-                    limit=limit,
+                    # The provider reads `limit` + the reservation's worth of hits; the extra
+                    # places a caller asked for need that many more.
+                    limit=limit + extra_block_seats,
                 )
 
             block_arm = _Beside(_once_embedded, query_vec_out, _block_arm)
@@ -2765,10 +2771,12 @@ async def _do_recall(
     # reservation that cannot be filled leaves the result shorter rather than
     # padding it. A record the gate already admitted is not reserved for -- it is
     # in the answer, which is the outcome the reservation exists to produce.
+    block_spare: list[dict] = []
     if block_rows:
         present = {_row_rid(r) for r in results}
         reserved = [row for row in block_rows if row["_rid"] not in present]
         results.extend(reserved[: blocks.BLOCK_RESERVATION])
+        block_spare = reserved[blocks.BLOCK_RESERVATION:]
         if trace_rec is not None:
             trace_rec.reservation(reserved[: blocks.BLOCK_RESERVATION], "block")
 
@@ -2881,9 +2889,22 @@ async def _do_recall(
             trace_rec.set("propagation", propagation_note)
             trace_rec.mark("propagation")
 
+    # The extra block places: `extra_block_seats` more places for records the block arm
+    # reached, held only when a caller asks for them (reconstruct does under mode "pro";
+    # the recall tool never does), filled in the reservation's order with the rows it
+    # did not seat. They come after every other held place, so a reader's budget that
+    # cuts the held rows from the end cuts these before the keyword, far and cue seats.
+    # Like the reservation they displace nothing and are not credited (bug-453).
+    if extra_block_seats > 0 and block_spare:
+        present = {_rid_of(r) for r in results}
+        extra = [row for row in block_spare if row["_rid"] not in present][:extra_block_seats]
+        results.extend(extra)
+        if trace_rec is not None:
+            trace_rec.reservation(extra, "block")
+
     providers.check_recall_count(
         len(results), limit, cue.MAX_SEATS + (propagation.SEATS if propagation_seat else 0),
-        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0) + keyword_seats,
+        blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0) + keyword_seats + extra_block_seats,
     )
     # The one hypothesis a recall evaluates today: the order its stages produced.
     ledger.spend(budget.ITERATION)
