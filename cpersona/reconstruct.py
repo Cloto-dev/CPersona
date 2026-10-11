@@ -202,6 +202,11 @@ MODE_CAPS = {MODE_LITE: 3000, MODE_PRO: 5000}
 # row only the keyword arms found that holds the most of the question's parts. Without a
 # mode, reconstruct asks for none, and the recall tool never does.
 MODE_KEYWORD_SEATS = 1
+# Pro also asks for two block places beyond the block arm's reservation of two
+# (memory_handlers._do_recall): on development questions of a private pack of real
+# agent memories, four places put more of the evidence inside Pro's cap and none
+# outside it, while Lite's 3,000 tokens had no room for them. Lite asks for none.
+MODE_EXTRA_BLOCK_SEATS = {MODE_PRO: 2}
 PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10
 #: error of a mode call whose smallest possible response exceeds the cap.
@@ -1562,6 +1567,7 @@ async def do_reconstruct(
         query,
         effective_top_k,  # the candidate depth — NOT `count` (invariant 7)
         **({"keyword_seats": MODE_KEYWORD_SEATS} if mode else {}),
+        **({"extra_block_seats": MODE_EXTRA_BLOCK_SEATS[mode]} if mode in MODE_EXTRA_BLOCK_SEATS else {}),
         deep=deep,
         channel=channel,
         project_id=project_id,
@@ -1670,8 +1676,8 @@ async def do_reconstruct(
     # §5): beside the window, after it, up to the same fixed bound, displacing
     # nothing. A cluster the window left out that holds a reserved row is eligible
     # for those places too, because the row is there only for the reservation. The
-    # bound is recall's: it reserved at most blocks.BLOCK_RESERVATION rows, and a
-    # held cluster holds at least one of them.
+    # bound is recall's: it reserved at most blocks.BLOCK_RESERVATION rows (and the
+    # extra block places a mode asked for), and a held cluster holds at least one of them.
     window = [group for group in ordered if any(not candidates[i].reserved for i in group)][:effective_count]
     in_window = {id(group) for group in window}
     held = (
@@ -1890,7 +1896,7 @@ async def do_reconstruct(
         providers.check_reconstruct_count(
             len(items), held_returned, effective_count,
             blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
-            + (MODE_KEYWORD_SEATS if mode else 0),
+            + (MODE_KEYWORD_SEATS if mode else 0) + MODE_EXTRA_BLOCK_SEATS.get(mode, 0),
         )
         if held_returned:
             # Beside the window, not in it: returned_count may exceed effective_count by this.
