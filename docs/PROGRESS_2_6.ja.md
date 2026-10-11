@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:53f24fb526f93cdbef8e23b728120ecb6df992f9 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:664a56a4bfd71b37c42fd7829b686e345b104f06 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -10,7 +10,7 @@
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
-2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6、2026-10-08 に 2.6.7、2026-10-11 に 2.6.8 が続き、版を指定しない導入は 2.6.8 になります。
+2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6、2026-10-08 に 2.6.7、2026-10-11 に 2.6.8 が続き、版を指定しない導入は 2.6.8 になります。2.6.9a1 (2026-10-11) は pre-release で、版を指定したときだけ導入されます。
 pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -72,6 +72,7 @@ pre-release は `2.6.0aN` と `2.6.0bN` として PyPI にあります。2.5 系
 | 2.6.7 | 2.6.7a2 の final で、追加の pre-release を挟まずに出しました。2.6.7a2 の後に入った変更が 2 つあります。Block の索引ファイルは既定で on になり、`CPERSONA_BLOCK_INDEX=false` で off にできます。2.6.6a1 と同じ Intel N150 と 10 万件で、実行前に登録した規則により、ファイルを on にすると想起の中央値は 960.16 ms から 797.95 ms、930.88 ms から 844.46 ms に下がり、どの想起も同じ行を同じ順で返し、ファイルを読むための変更記録が Block の構築に足す費用は off でも on でも 1% 未満でした ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md))。`python -m cpersona.block_index --db` は指定したデータベースを読みます。2.6.7a2 をファイル on で本番に 8 時間置き、再起動もエラーもなく、trace を求めた想起で Block の腕がファイルから読んでいることを確かめてから出しました | [#445](https://github.com/Cloto-dev/cpersona/pull/445), [#446](https://github.com/Cloto-dev/cpersona/pull/446), [#447](https://github.com/Cloto-dev/cpersona/pull/447) |
 | 2.6.8a1 | pre-release。`reconstruct` が `mode: "lite"` と `mode: "pro"` を受け付けます。mode を指定すると、ツールが返す JSON 全体の `cl100k_base` のトークン数 (MCP の層が送る形で数えます) に上限が付きます: `lite` は 3,000、`pro` は 5,000 です。応答は `cap` と `used_tokens` を示し、その列のうち上限に収まる最も長い先頭になるので、上限を上げて item や抜粋が消えることはありません。`lite` は 2.6.5 の `whole` の列を、予算を指定しなければ 10 件・2,800 字で切ります。`pro` は設定の上限を超えて最大 15 件を返し、予算を指定しなければ字数の予算はなく、短い記録を丸ごと見せる床に入るのは先頭の 10 件だけです。`lite: true` は `mode: "lite"` の意味になります: 上限が付き、応答は `lite` の代わりに mode を示し、`lite` と `mode` を一緒に渡すと拒否します。既定 off の `whole` と `evidence` の列では、抜粋がすべての passage の後に並ぶようになり、予算を上げて抜粋が消えることはなくなりました。トークンはネットなしで数えます: `tiktoken` が必須の依存になり、`cl100k_base` の語彙をパッケージに同梱します。mode を指定しない呼び出しは 2.6.7 と同じものを返します。どちらの mode がより多くの問いに正答するかは、テストを走らせる前に登録した規則で判定中で、どちらの mode の精度もまだ主張しません | [#453](https://github.com/Cloto-dev/cpersona/pull/453) |
 | 2.6.8 | 2.6.8a1 の final で、追加の pre-release を挟まず、2.6.8a1 からパッケージのコードは変わっていません。テストを走らせる前に登録した規則により、LongMemEval-S の test 400 問で `mode: "lite"` は 2.6.7 の `lite: true` と同じ 323 問に正答し、`mode: "pro"` は 353 問で Lite より 7.50 ポイント多く正答しました (95% 区間 +3.75〜+11.25)。同じように登録した非公開のパック 2 つでも、Pro は Lite を上回り、Lite は合格線を満たしました。どちらの mode でも、上限を超えた応答や `used_tokens` と食い違う応答はありませんでした ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_6.md))。Pro は Lite のおよそ 4 倍の文脈を送り、mode を指定しない呼び出しとの比較はどの規則にも含まれていません。2.6.8a1 を本番に約 22 時間置き、再起動もエラーもなく、本番での `mode: "lite"` の呼び出しが上限内で返ることを確かめてから出しました | [#456](https://github.com/Cloto-dev/cpersona/pull/456) |
+| 2.6.9a1 | pre-release。`mode: "lite"` か `mode: "pro"` を指定すると、`reconstruct` は候補の想起にキーワードの席を 1 つ求めます: Block の腕の予約と同じように、キーワードの腕だけが見つけ、答えにまだ無い行のために取っておく場所です。`rrf` では 1 つの腕の票だけで較正済みのゲートを越えることはないので、ゲートが拒んだことはその行について何も語りません。越えうる尺度 (rsf、confidence、cosine) で拒まれた行は入りません。候補のうち、問いの部分を本文に最も多く含む行が席を取ります。答えでは窓の横の item として `admission: "reservation"` の印が付き、mode の上限の内側に収まります。mode を指定しない呼び出しと `recall` ツールは席を持たず、変わりません。規則は開発用の計測で選びました。精度は、実行前に登録し、その計測が見ていない問いで走らせるテストまで主張しません | [#455](https://github.com/Cloto-dev/cpersona/pull/455) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
