@@ -601,7 +601,52 @@ async def _once_embedded(slot: _QueryVectorSlot, run):
     return await run(slot[0])
 
 
+# The keyword arms' reads within one recall that holds depth places (do_recall sets it,
+# _lexical_arms fills it). The depth places rank the recall a second time, deeper, and on
+# a large store the keyword arms are most of a ranking's time: an FTS query scores every
+# matching row before it orders them, so reading 100 costs about what reading 20 does.
+# Within such a recall the arms are therefore read once, at the deeper depth, and each
+# ranking takes the first `depth` rows of that read, in a fresh copy (the fusions write
+# their scores onto the rows). The first `depth` rows of a deeper read are the rows a read
+# at `depth` returns, in the same order: the queries order by bm25 and stop at the limit
+# (the order-only ranking takes the rare phrases' order only when it equals the whole
+# expression's), and rsf normalizes after the cut. None outside such a recall.
+_keyword_reads: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "cpersona_keyword_reads", default=None
+)
+
+
 async def _lexical_arms(
+    db,
+    agent_id: str,
+    query: str,
+    depth: int,
+    channel: str,
+    project_id: str | None,
+    source_id: str,
+    lexical_terms: list[str] | None,
+    rank_only: bool = False,
+) -> tuple[list[dict], list[dict]]:
+    """The two FTS arms of a fusion: read once per recall when the recall holds depth
+    places (``_keyword_reads``), otherwise as ``_lexical_arms_read`` reads them."""
+    reads = _keyword_reads.get()
+    if reads is None:
+        return await _lexical_arms_read(
+            db, agent_id, query, depth, channel, project_id, source_id, lexical_terms, rank_only
+        )
+    key = (agent_id, query, channel, project_id, source_id, tuple(lexical_terms or ()), rank_only)
+    held = reads.get(key)
+    if held is None or held[0] < depth:
+        read_depth = max(depth, reads["depth"])
+        held = (read_depth, await _lexical_arms_read(
+            db, agent_id, query, read_depth, channel, project_id, source_id, lexical_terms, rank_only
+        ))
+        reads[key] = held
+    episodes, memories = held[1]
+    return [dict(r) for r in episodes[:depth]], [dict(r) for r in memories[:depth]]
+
+
+async def _lexical_arms_read(
     db,
     agent_id: str,
     query: str,
@@ -2297,7 +2342,7 @@ async def do_recall(
         **({"query_vec_out_": query_vec_out} if query_vec_out is not None else {}),
     )
     if not trace:
-        return await _do_recall(agent_id, query, limit, **kwargs)
+        return await _recall_reading_keywords_once(agent_id, query, limit, **kwargs)
     from cpersona import __version__
     from cpersona import utils as _utils
 
@@ -2333,7 +2378,7 @@ async def do_recall(
     })
     token = rec.activate()
     try:
-        result = await _do_recall(agent_id, query, limit, **kwargs)
+        result = await _recall_reading_keywords_once(agent_id, query, limit, **kwargs)
     finally:
         rec.deactivate(token)
     # The coverage ledger (docs/RECALL_PROCESS_DESIGN.md §1.5): which parts of the
@@ -2349,6 +2394,17 @@ async def do_recall(
     rec.coverage(cov, (time.perf_counter() - started) * 1000)
     result["trace"] = rec.finish()
     return result
+
+
+async def _recall_reading_keywords_once(agent_id: str, query: str, limit: int, **kwargs) -> dict:
+    """_do_recall, with the keyword arms read once when it holds depth places (``_keyword_reads``)."""
+    if not _depth_places_apply(kwargs.get("depth_seats", 0), query):
+        return await _do_recall(agent_id, query, limit, **kwargs)
+    token = _keyword_reads.set({"depth": propagation.DEPTH})
+    try:
+        return await _do_recall(agent_id, query, limit, **kwargs)
+    finally:
+        _keyword_reads.reset(token)
 
 
 async def _do_recall(

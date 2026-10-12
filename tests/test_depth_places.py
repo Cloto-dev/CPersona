@@ -28,6 +28,7 @@ from cpersona.database import get_db
 
 AGENT = kw.AGENT
 QUERY = "apples orchard"
+FAR = "completely different unrelated content xxxx"  # the vector of kw._seed's keyword-only row
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -199,3 +200,60 @@ async def test_the_reconstruct_bound_counts_the_depth_places(monkeypatch):
     monkeypatch.setattr(R, "MODE_EXTRA_KEYWORD_SEATS", {})
     out = await R.do_reconstruct(AGENT, QUERY, count=1, mode="pro")
     assert len(_held_items(out)) == 8, out["items"]
+
+
+async def _seed_keywords():
+    """Rows the keyword arms find: the keyword-seat fixture, rows on the topic holding the
+    question's words, and the vector-only rows of _seed_near."""
+    await kw._seed()
+    for i in range(6):
+        text = f"apples orchard ledger {i} kk"
+        await kw._insert(text, kw._pack_of(text), f"2026-03-01T{i:02d}:00:00Z")
+    # A strong keyword-only row: both words twice, a vector no arm returns, so it can sit
+    # in the window on its keyword score alone and is read by both rankings.
+    await kw._insert("apples orchard apples orchard zq", kw._pack_of(FAR), "2026-03-02T00:00:00Z")
+    await kw._insert("apples orchard apples zr", kw._pack_of(FAR), "2026-03-02T01:00:00Z")
+    await _seed_near(4)
+    kw._gate("rrf", 0.05)
+
+
+@pytest.mark.asyncio
+async def test_a_recall_with_depth_places_reads_the_keyword_arms_once(monkeypatch):
+    await _seed_keywords()
+    reads = []
+    original = M._lexical_arms_read
+
+    async def counted(*args, **kwargs):
+        reads.append(args[3])  # the depth it read at
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(M, "_lexical_arms_read", counted)
+    await M.do_recall(AGENT, QUERY, limit=2)
+    assert reads == [2], reads
+    reads.clear()
+    out = await M.do_recall(AGENT, QUERY, limit=2, depth_seats=3)
+    assert _depth_rows(out), "fixture is vacuous: no depth place was held"
+    assert reads == [100], reads
+
+
+@pytest.mark.parametrize("mode,confidence", [("rrf", False), ("rsf", False), ("rsf", True)])
+@pytest.mark.asyncio
+async def test_reading_the_keyword_arms_once_changes_no_answer(monkeypatch, mode, confidence):
+    # rsf with confidence is the production setting: there the deeper ranking scores its
+    # own rows, so rows shared with the window would carry the deeper ranking's scores.
+    await _seed_keywords()
+    monkeypatch.setattr(M, "RECALL_MODE", mode)
+    monkeypatch.setattr(M, "CONFIDENCE_ENABLED", confidence)
+    if mode == "rsf":
+        kw._gate("rsf", 0.3)
+    once = await M.do_recall(AGENT, QUERY, limit=5, depth_seats=3, keyword_seats=1, extra_keyword_seats=2)
+    # A recall credits what it returned, and confidence reads the count: start the second
+    # call from the same counts.
+    db = await get_db()
+    await db.execute("UPDATE memories SET recall_count = 0, last_recalled_at = NULL")
+    await db.commit()
+    # Each ranking reads the arms itself, as the separate rankings did.
+    monkeypatch.setattr(M, "_lexical_arms", M._lexical_arms_read)
+    twice = await M.do_recall(AGENT, QUERY, limit=5, depth_seats=3, keyword_seats=1, extra_keyword_seats=2)
+    assert _depth_rows(once), "fixture is vacuous: no depth place was held"
+    assert once["messages"] == twice["messages"]
