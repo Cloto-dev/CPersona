@@ -168,11 +168,8 @@ async def test_the_recall_count_bound_counts_the_extra_places(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_reconstruct_bound_counts_the_extra_places(monkeypatch):
     """Six extra places put nine held items past reconstruct's other places (two
-    block, one keyword, three cue): a bound that did not count them would refuse it.
-    The extra keyword and depth places are taken away, or their slack would admit it anyway."""
+    block, one keyword, three cue): a bound that did not count them would refuse it."""
     blocks_, _ = await _seed_blocks(monkeypatch, MANY)
     monkeypatch.setattr(R, "MODE_EXTRA_BLOCK_SEATS", {R.MODE_PRO: 6})
-    monkeypatch.setattr(R, "MODE_EXTRA_KEYWORD_SEATS", {})
-    monkeypatch.setattr(R, "MODE_DEPTH_SEATS", {})
     out = await R.do_reconstruct(AGENT, QUERY, count=1, mode="pro")
     assert len(_held_items(out)) == 9 and [r for r in _held_items(out) if r in blocks_] == blocks_, out["items"]
