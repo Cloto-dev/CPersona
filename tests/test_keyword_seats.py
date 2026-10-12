@@ -209,8 +209,6 @@ async def test_reconstruct_holds_the_seat_beside_its_window(monkeypatch):
     await _seed()
     _gate("rrf", 0.05)
     monkeypatch.setattr(M, "RECALL_MODE", "rrf")
-    # The extra keyword places would hold the same refused row; without them only the seat can.
-    monkeypatch.setattr(R, "MODE_EXTRA_KEYWORD_SEATS", {})
     out = await R.do_reconstruct(AGENT, "apples orchard", count=5, mode="pro")
     held = [it for it in out["items"] if it.get("admission") == "reservation"]
     assert [it["content"] for it in held] == [KEYWORD_ONLY], out["items"]
