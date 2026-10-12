@@ -27,6 +27,7 @@
 #}
 {% block extrahead %}
   {{ super() }}
+  <script>{% include "partials/search-language.js" %}</script>
   {%- set alternates = {} -%}
   {%- for alt in config.extra.alternate | default([], true) -%}
     {%- set _ = alternates.update({alt.lang: alt.link | url}) -%}

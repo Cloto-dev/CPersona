@@ -49,6 +49,28 @@
   }
 }
 
+/* On a phone the header holds the menu, the name, the colour scheme, the
+ * version, the language and search. At the theme's spacing the name was cut to
+ * "CPerso..." at 375 px (73 px left for 78) and to two letters at 320 px.
+ * Tighter margins give it room down to 360 px; below that the colour scheme
+ * switch goes, since the scheme already follows the system setting. */
+@media screen and (max-width: 44.984375em) {
+  .md-header__title {
+    margin-left: 0.4rem;
+    margin-right: 0.2rem;
+  }
+  .md-header__option > .md-header__button,
+  .md-header__inner > .md-header__button[for="__search"] {
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
+@media screen and (max-width: 22.484375em) {
+  form.md-header__option[data-md-component="palette"] {
+    display: none;
+  }
+}
+
 /* Headings in the text's own colour and a weight that reads as a heading. */
 .md-typeset h1 {
   color: var(--md-default-fg-color);

@@ -174,6 +174,7 @@ hooks:
   - scripts/docs_version.py
   - scripts/docs_search_rank.py
   - scripts/docs_ja_lines.py
+  - scripts/docs_by_language.py
 
 # Sidebar sub-category labels only. Kept as a stylesheet rather than an
 # override so that the theme keeps owning the markup — this file changes one
