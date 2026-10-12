@@ -1,32 +1,29 @@
 {% extends "base.html" %}
 
 {#
-  Language routing for a statically hosted site.
+  The language of a page is the language of its address.
 
-  GitHub Pages cannot negotiate on Accept-Language — there is no server to read
-  it — so a reader arriving from the README's links lands on whichever tree the
-  link named, English, whatever they read. The hreflang alternates the i18n
-  plugin already emits fix that for search engines; they do nothing for someone
-  who followed a link.
+  A link to /ja/... opens the Japanese page and a link to an English page opens
+  the English one, whatever the browser prefers. This used to be the other way
+  round: the head script below redirected to the browser's language, so a reader
+  whose browser listed English first was moved off every Japanese link,
+  including the ones the project's home page gives Japanese readers (measured
+  2026-10-12: /ja/getting-started/ landed on /getting-started/ for both en-US,en
+  and en-US,ja). The home page settled on the address deciding; the two sites
+  now behave the same.
 
-  So the routing happens here, in the head, before the body paints, and it obeys
-  two rules that matter more than the detection itself:
+  What the browser's language still does: a reader whose first Japanese-or-
+  English language is not the page's is told, in that language, that the page
+  exists in it too -- a small note in the corner linking to the other address.
+  It does not move the page or take the focus. It goes after a few seconds
+  (not while the pointer or the focus is on it), comes back on the next page,
+  and stops for good once the reader closes it or picks a language, either from
+  the note or from the language selector.
 
-    * An explicit choice wins, forever. Clicking English in the language
-      selector is a decision; a site that bounces that reader back to Japanese
-      on the next page is broken in a way that cannot be worked around.
-    * Redirect with location.replace, never assign. A redirect in the history
-      stack turns the back button into a trap: back, redirect, back, redirect.
-
-  Detection itself is deliberately dumb — the first entry in navigator.languages
-  that is either Japanese or English decides, so a reader whose list is
-  ['en-US', 'ja'] gets English and one whose list is ['ja', 'en'] gets Japanese.
-
-  The destination URLs are rendered from the same per-page alternates the plugin
-  builds the language selector from, rather than assembled here by string
-  surgery on the path. That keeps this template from carrying a second, private
-  theory of what the Japanese URL of a page is — the kind of duplicate that goes
-  wrong silently the first time the URL layout changes.
+  The note's destinations are rendered from the same per-page alternates the
+  plugin builds the language selector from, rather than assembled here by
+  string surgery on the path. That keeps this template from carrying a second,
+  private theory of what the Japanese URL of a page is.
 #}
 {% block extrahead %}
   {{ super() }}
@@ -39,40 +36,74 @@
   {%- endif %}
   <script>
     (function () {
-      // Language routing must never be the reason a page fails to render, so
-      // everything below is inside one try: a storage-denied browser (Safari in
-      // private mode throws on localStorage) reads the site in whatever
-      // language the link named, which is exactly today's behaviour.
+      // Nothing here may stop a page from rendering, so everything is inside one
+      // try, and storage is read and written through guards: a browser that
+      // denies storage (Safari in private mode throws) gets the note on every
+      // page and can still close it for this one.
       try {
         var KEY = "cpersona-doc-lang";
+        var CLOSED = "cpersona-doc-lang-note-closed";
         var ALTERNATES = {{ alternates | tojson }};
         var here = (document.documentElement.getAttribute("lang") || "en").slice(0, 2);
+        var read = function (key) { try { return localStorage.getItem(key); } catch (e) { return null; } };
+        var keep = function (key, value) { try { localStorage.setItem(key, value); } catch (e) {} };
 
-        // Using the selector is a decision. Recorded in the capture phase so the
-        // write lands before the browser starts the navigation.
+        // Using the selector, or the note below, is a decision. Recorded in the
+        // capture phase so the write lands before the browser starts the navigation.
         document.addEventListener("click", function (event) {
-          var link = event.target && event.target.closest && event.target.closest(".md-select__link");
-          if (link && link.hreflang) {
-            try { localStorage.setItem(KEY, link.hreflang.slice(0, 2)); } catch (e) {}
-          }
+          var link = event.target && event.target.closest && event.target.closest(".md-select__link, .cp-lang-note-go");
+          if (link && link.hreflang) keep(KEY, link.hreflang.slice(0, 2));
         }, true);
 
-        var go = function (lang) {
-          var target = ALTERNATES[lang];
-          if (!target || lang === here) return;
-          location.replace(target + location.search + location.hash);
+        var NOTE = {
+          ja: { go: "このページの日本語版があります", close: "閉じる" },
+          en: { go: "This page is also in English", close: "Close" }
+        };
+        var CROSS = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+
+        var preferred = function () {
+          var preferences = navigator.languages || [navigator.language || ""];
+          for (var i = 0; i < preferences.length; i++) {
+            var tag = String(preferences[i]).toLowerCase();
+            if (tag.indexOf("ja") === 0) return "ja";
+            if (tag.indexOf("en") === 0) return "en";
+          }
+          return null;
         };
 
-        var chosen = null;
-        try { chosen = localStorage.getItem(KEY); } catch (e) {}
-        if (chosen) { go(chosen); return; }
+        var offer = function () {
+          var want = preferred();
+          if (!want || want === here || !ALTERNATES[want] || read(KEY) || read(CLOSED) === want) return;
+          var note = document.createElement("div");
+          note.className = "cp-lang-note";
+          note.lang = want;
+          var go = document.createElement("a");
+          go.className = "cp-lang-note-go";
+          go.hreflang = want;
+          go.href = ALTERNATES[want] + location.search;
+          go.textContent = NOTE[want].go;
+          // The section in view when it is followed.
+          go.addEventListener("click", function () { go.href = ALTERNATES[want] + location.search + location.hash; });
+          var close = document.createElement("button");
+          close.type = "button";
+          close.className = "cp-lang-note-x";
+          close.setAttribute("aria-label", NOTE[want].close);
+          close.innerHTML = CROSS;
+          var timer = 0;
+          var wait = function (ms) {
+            timer = setTimeout(function () {
+              if (note.matches(":hover, :focus-within")) wait(2000); else note.remove();
+            }, ms);
+          };
+          close.addEventListener("click", function () { clearTimeout(timer); keep(CLOSED, want); note.remove(); });
+          note.appendChild(go);
+          note.appendChild(close);
+          document.body.appendChild(note);
+          wait(8000);
+        };
 
-        var preferences = navigator.languages || [navigator.language || ""];
-        for (var i = 0; i < preferences.length; i++) {
-          var tag = String(preferences[i]).toLowerCase();
-          if (tag.indexOf("ja") === 0) { go("ja"); return; }
-          if (tag.indexOf("en") === 0) { go("en"); return; }
-        }
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", offer);
+        else offer();
       } catch (e) {}
     })();
   </script>
