@@ -67,6 +67,17 @@ Pro 354.
 - The scripts that build the answer inputs and apply the rules are added by a
   later commit, before any test search, and named here then.
 
+### Recorded before the test
+
+Added by a later commit, before any test question was searched at the
+candidate commit.
+
+- **The scripts**:
+  - [`v2_6_10_build.py`](../omnimemeval/v2_6_10_build.py) writes the answer inputs of each mode's changed questions.
+  - [`v2_6_10_analyze.py`](../omnimemeval/v2_6_10_analyze.py) applies the rules.
+  - 2.6.9's answers are read as its own check recorded them. Read that way, they total 324 for Lite and 354 for Pro, the published figures.
+- **The interpreter**: Python 3.11.15, as in the Lite and Pro test.
+
 ## What may be said
 
 - **Neither mode answers worse.** Among a mode's changed questions, count those 2.6.9 answered right and 2.6.10a4 wrong (L) and the reverse (W).
