@@ -219,6 +219,9 @@ extra_css:
 # on a page that has an equation.
 extra_javascript:
   - javascripts/mathjax.js
+  # A notice from the project, fetched from the website, which counts the page view (the documentation has
+  # no analytics of its own). It runs only on the published site.
+  - javascripts/notice.js
 
 markdown_extensions:
   - admonition
