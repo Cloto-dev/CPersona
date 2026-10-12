@@ -31,6 +31,13 @@ theme:
   # bundled JS, so none of them is an Insiders-only name that would be read and
   # silently ignored.
   features:
+    # One tab per reader's purpose. The sidebar then lists the active tab's
+    # pages only, so a reader in the guides is not scrolling past thirty design
+    # records to find Configuration (measured 2026-10-12: 30 of the 42 pages,
+    # and 75% of the text, are design, standards and research pages).
+    - navigation.tabs
+    # A section's index.md is its overview: the tab or section label opens it.
+    - navigation.indexes
     - navigation.sections
     - navigation.top
     # Breadcrumbs. The nav groups pages three levels deep, and until now a
@@ -90,8 +97,10 @@ plugins:
             Configuration: 設定リファレンス
             FAQ: FAQ
             Quality Assurance: 品質保証
-            Using CPersona: 使い方
-            Operating: 運用
+            Guide: 手引き
+            Reference: リファレンス
+            Operations: 運用
+            Design and research: 設計と研究
             Project standards: プロジェクト標準
             Sponsorship: 支援について
             Design notes: 設計ノート
@@ -143,6 +152,7 @@ plugins:
 # what makes that red, because nothing in a build can notice it.
 hooks:
   - scripts/docs_version.py
+  - scripts/docs_search_rank.py
 
 # Sidebar sub-category labels only. Kept as a stylesheet rather than an
 # override so that the theme keeps owning the markup — this file changes one
@@ -238,61 +248,70 @@ markdown_extensions:
 # Grouping is free of all of that: it is a nav-only change.
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
-  - Architecture: architecture.md
-  - Roadmap: roadmap.md
-  - Reliable Recall (2.6): RELIABLE_RECALL_2_6.md
-  - Memory Intelligence (2.7): MEMORY_INTELLIGENCE_2_7.md
-  - Progress of 2.6: PROGRESS_2_6.md
-  - Using CPersona:
+  # Installing it, and what it is.
+  - Guide:
+      - Getting Started: getting-started.md
+      - Architecture: architecture.md
+      - Upgrading to 2.6: upgrading-to-2.6.md
+      - FAQ: faq.md
+  # What it does, looked up while using it.
+  - Reference:
       - Tools: tools.md
       - Configuration: configuration.md
       - Behavior Contracts: behavior-contracts.md
-      - FAQ: faq.md
-  - Operating:
+  # Keeping a running install healthy, and how a release is gated.
+  - Operations:
       - Operations Runbook: operations.md
-      - Upgrading to 2.6: upgrading-to-2.6.md
       - Quality Assurance: quality-assurance.md
-  # Normative: these say what a release, an audit report or a policy block MUST
-  # look like, and other repositories adopt them. Kept apart from Design notes,
-  # which only explain how this server arrived at one of its own behaviors.
-  - Project standards:
-      - Release lifecycle standard: RELEASE_LIFECYCLE_STANDARD.md
-      - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
-      - Policy block standard: CLAUDE_MD_POLICY_STANDARD.md
-  # Point-in-time design records, subdivided by subject because the group grows
-  # by roughly a page a month and a flat list of ten stops being an index.
-  - Design notes:
-      - Access and identity:
-          - Per-client capabilities (ACL): ACL_DESIGN.md
-          - OAuth support: OAUTH_DESIGN.md
-          - Server-served operating context: OPERATING_CONTEXT_DESIGN.md
-          - Declared session identity: SESSION_IDENTITY_DESIGN.md
-          - Recorded access origin: MEMORY_ORIGIN_DESIGN.md
-      - Retrieval and storage:
-          - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
-          - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
-          - Reach and recency in the scan window: SCAN_WINDOW_REACH_DESIGN.md
-          - Reach, recency and the far vote: REACH_AND_RECENCY_PLAN.md
-          - One prior function: PRIOR_FUNCTION_DESIGN.md
-          - The recall process, v0: RECALL_PROCESS_DESIGN.md
-          - Evidence allocation: EVIDENCE_ALLOCATION_DESIGN.md
-          - Adaptive fusion: ADAPTIVE_FUSION_DESIGN.md
-          - Overflow tree: OVERFLOW_TREE_DESIGN.md
-          - Block reach: BLOCK_REACH_DESIGN.md
-          - Binary coarse search: BINARY_COARSE_SEARCH_DESIGN.md
-          - Block candidate contract: BLOCK_CANDIDATES_CONTRACT.md
-          - Associative memory: ASSOCIATIVE_MEMORY_DESIGN.md
-      - Reliability:
-          - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md
-  # What the design pages rest on: derivations, measurements, refutations.
-  # A note never overrides a design page; a disagreement is the finding.
-  - Research notes:
-      - Overview: research/index.md
-      - Adaptive fusion, a derivation: research/adaptive-fusion-derivation.md
-      - Calibration and the admission floor: research/calibration-admission-floor-2026-09.md
-      - Where the loss is, a frozen-stage replay: research/frozen-stage-replay-2026-09.md
-      - Two arms, one decision: research/adaptive-fusion-identifiability.md
+  # How the server arrived at its behaviour and where it is going. Nobody
+  # needs these pages to install or use it, so they are one tab, opened by
+  # their own overview, instead of the half of the sidebar they used to be.
+  - Design and research:
+      - Overview: design/index.md
+      - Roadmap: roadmap.md
+      - Reliable Recall (2.6): RELIABLE_RECALL_2_6.md
+      - Memory Intelligence (2.7): MEMORY_INTELLIGENCE_2_7.md
+      - Progress of 2.6: PROGRESS_2_6.md
+      # Normative: these say what a release, an audit report or a policy block MUST
+      # look like, and other repositories adopt them. Kept apart from Design notes,
+      # which only explain how this server arrived at one of its own behaviors.
+      - Project standards:
+          - Release lifecycle standard: RELEASE_LIFECYCLE_STANDARD.md
+          - SuperAuditor standard: SUPERAUDITOR_STANDARD.md
+          - Policy block standard: CLAUDE_MD_POLICY_STANDARD.md
+      # Point-in-time design records, subdivided by subject because the group grows
+      # by roughly a page a month and a flat list of ten stops being an index.
+      - Design notes:
+          - Access and identity:
+              - Per-client capabilities (ACL): ACL_DESIGN.md
+              - OAuth support: OAUTH_DESIGN.md
+              - Server-served operating context: OPERATING_CONTEXT_DESIGN.md
+              - Declared session identity: SESSION_IDENTITY_DESIGN.md
+              - Recorded access origin: MEMORY_ORIGIN_DESIGN.md
+          - Retrieval and storage:
+              - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md
+              - Contiguous embedding index: CONTIGUOUS_INDEX_DESIGN.md
+              - Reach and recency in the scan window: SCAN_WINDOW_REACH_DESIGN.md
+              - Reach, recency and the far vote: REACH_AND_RECENCY_PLAN.md
+              - One prior function: PRIOR_FUNCTION_DESIGN.md
+              - The recall process, v0: RECALL_PROCESS_DESIGN.md
+              - Evidence allocation: EVIDENCE_ALLOCATION_DESIGN.md
+              - Adaptive fusion: ADAPTIVE_FUSION_DESIGN.md
+              - Overflow tree: OVERFLOW_TREE_DESIGN.md
+              - Block reach: BLOCK_REACH_DESIGN.md
+              - Binary coarse search: BINARY_COARSE_SEARCH_DESIGN.md
+              - Block candidate contract: BLOCK_CANDIDATES_CONTRACT.md
+              - Associative memory: ASSOCIATIVE_MEMORY_DESIGN.md
+          - Reliability:
+              - Embedding degradation advisory: DEGRADED_ADVISORY_DESIGN.md
+      # What the design pages rest on: derivations, measurements, refutations.
+      # A note never overrides a design page; a disagreement is the finding.
+      - Research notes:
+          - Overview: research/index.md
+          - Adaptive fusion, a derivation: research/adaptive-fusion-derivation.md
+          - Calibration and the admission floor: research/calibration-admission-floor-2026-09.md
+          - Where the loss is, a frozen-stage replay: research/frozen-stage-replay-2026-09.md
+          - Two arms, one decision: research/adaptive-fusion-identifiability.md
   # Last on purpose: it asks for something, and every page above answers
   # something. A reader looking for how the software works never has to
   # scroll past it.
