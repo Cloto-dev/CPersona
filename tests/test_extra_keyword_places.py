@@ -238,6 +238,7 @@ async def test_the_reconstruct_bound_counts_the_extra_places(monkeypatch):
     await _seed_refused(9)
     monkeypatch.setattr(R, "MODE_EXTRA_BLOCK_SEATS", {})
     monkeypatch.setattr(R, "MODE_EXTRA_KEYWORD_SEATS", {R.MODE_PRO: 8})
+    monkeypatch.setattr(R, "MODE_DEPTH_SEATS", {})  # their slack would admit it anyway
     out = await R.do_reconstruct(AGENT, QUERY, count=1, mode="pro")
     assert len(_held_items(out)) == 9, out["items"]
 
