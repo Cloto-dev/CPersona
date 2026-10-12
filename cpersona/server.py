@@ -1794,7 +1794,7 @@ registry.auto_tool(
                 "description": (
                     "A named answer size whose returned JSON is at most `cap` cl100k_base tokens, "
                     "counted as sent (`used_tokens` says how many). \"lite\" (cap 3,000) is for a "
-                    "question one or two records can answer: up to 3,600 characters unless `budget` "
+                    "question one or two records can answer: up to 2,800 characters unless `budget` "
                     "is given, short records whole first, then the best-ranked passages of longer "
                     "ones. \"pro\" (cap 5,000) reads 15 items by default and quotes as much as the "
                     "cap holds. Both leave out `ranges`, `bounds` and the budget fields; an item whose "

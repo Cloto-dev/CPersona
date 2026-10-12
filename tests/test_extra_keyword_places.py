@@ -2,7 +2,7 @@
 
 The keyword seat holds one place for such a row, or for one the gate admitted and the
 count cut. Under a mode reconstruct also asks its candidate recall for extra keyword
-places -- eight under "pro", one under "lite" -- which hold only the rows the gate
+places -- eight under "pro", none under "lite" -- which hold only the rows the gate
 refused on their rrf score, the scale no keyword-only row can pass. They come after
 every other held place, the extra block places included, in the keyword seat's order
 (more of the question's parts first), and their seat numbers follow the keyword
@@ -218,14 +218,14 @@ def _held_items(out):
 
 
 @pytest.mark.asyncio
-async def test_pro_asks_for_eight_lite_for_one_and_no_mode_for_none(monkeypatch):
+async def test_pro_asks_for_eight_and_lite_and_no_mode_for_none(monkeypatch):
     ids = await _seed_refused(9)
     pro, seen = await pb._reconstruct_kwargs(monkeypatch, mode="pro")
     assert seen.get("extra_keyword_seats") == 8
     assert len(_held_items(pro)) == 9 and set(_held_items(pro)) <= {kw.KEYWORD_ONLY, *ids}, pro["items"]
     lite, seen = await pb._reconstruct_kwargs(monkeypatch, mode="lite")
-    assert seen.get("extra_keyword_seats") == 1
-    assert len(_held_items(lite)) == 2, lite["items"]
+    assert "extra_keyword_seats" not in seen
+    assert len(_held_items(lite)) == 1, lite["items"]  # the keyword seat alone
     plain, seen = await pb._reconstruct_kwargs(monkeypatch)
     assert "extra_keyword_seats" not in seen and _held_items(plain) == [], plain["items"]
 
@@ -244,7 +244,7 @@ async def test_the_reconstruct_bound_counts_the_extra_places(monkeypatch):
 
 
 def test_lite_budget_is_the_documented_one():
-    assert R.LITE_BUDGET == 3600
+    assert R.LITE_BUDGET == 2800
     schemas = {t.name: t.inputSchema for t in server.registry._tools}
     mode = schemas["reconstruct"]["properties"]["mode"]["description"]
     assert f"up to {R.LITE_BUDGET:,} characters" in mode, mode

@@ -175,18 +175,9 @@ _DEFAULT_WHY = "seed"
 #
 # `lite: true` says the shape was chosen, and `trace=true` returns every field. On the
 # private real-use pack's test questions the shape is about 11% smaller than the compact
-# one at the same budget (cl100k tokens of the JSON). LITE_BUDGET was 2,800 until
-# 2.6.10a3, the budget both packs' registered tests of `whole` were measured at
-# (benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md). Characters are not
-# tokens: at 2,800, lite averaged about 970 tokens on LongMemEval-S's English and about
-# 2,100 on a private pack of mostly Japanese agent memories, so in English a third of the
-# cap went unused and in Japanese the window often ended before its tenth item. On
-# development questions 3,600 showed every answer session on 4 more of 100 LongMemEval-S
-# questions and fewer on none, for about 20% more answer-stage tokens (994 to 1,197, below
-# the 1,787 of a call that names no mode), and every evidence record on more of the
-# private pack's questions, for about 26% more tokens; past 3,600 English gained no
-# session for its tokens.
-LITE_BUDGET = 3600
+# one at the same budget (cl100k tokens of the JSON), and LITE_BUDGET is the budget both packs' registered tests
+# of `whole` were measured at (benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md).
+LITE_BUDGET = 2800
 _LITE_ENVELOPE = ("bounds", "effective_budget", "used_budget", "reserved_omitted")
 
 # `mode` (2.6.8): a named answer size with a cap on the `cl100k_base` tokens of the
@@ -194,9 +185,7 @@ _LITE_ENVELOPE = ("bounds", "effective_budget", "used_budget", "reserved_omitted
 # final, notices and the boundary's own fields included. Both take the lite shape.
 #
 # * "lite" is `lite=true`: the whole sequence at LITE_BUDGET characters. Its cap is
-#   a ceiling, not a target. In English the budget lands well under it; on the private
-#   pack of mostly Japanese memories about one lite response in eight comes within 50
-#   tokens of it, and there the cap, not the budget, ends the answer.
+#   a ceiling, not a target: lite's own budget lands under it on both benchmark packs.
 # * "pro" widens the window to PRO_COUNT items and quotes as much of the whole
 #   sequence as the cap holds, with no character budget unless the caller names one.
 #   Only the first PRO_WHOLE_FLOOR_ITEMS items may join the floor of records shown
@@ -218,14 +207,15 @@ MODE_KEYWORD_SEATS = 1
 # agent memories, four places put more of the evidence inside Pro's cap and none
 # outside it, while Lite's 3,000 tokens had no room for them. Lite asks for none.
 MODE_EXTRA_BLOCK_SEATS = {MODE_PRO: 2}
-# Both also ask for extra keyword places (memory_handlers._do_recall) for rows only the
-# keyword arms found that the gate refused on their rrf score, after every held place
-# but the depth places. On development questions of the private pack, under rrf, eight places put 44 more
-# evidence records inside Pro's cap than 2.6.10a2 and 3 fewer, and 10, 12 or 15 gained
-# nothing measurable over eight; at Lite's 3,600 characters one place showed every evidence
-# record on 14 more questions and on 4 fewer. Where no row is keyed on rrf they hold
-# nothing, so under rsf or confidence a mode's answer is unchanged.
-MODE_EXTRA_KEYWORD_SEATS = {MODE_PRO: 8, MODE_LITE: 1}
+# Pro also asks for eight extra keyword places (memory_handlers._do_recall) for rows only
+# the keyword arms found that the gate refused on their rrf score, after every held place
+# but the depth places. On development questions of the private pack, under rrf, eight
+# places put 44 more evidence records inside Pro's cap than 2.6.10a2 and 3 fewer, and 10,
+# 12 or 15 gained nothing measurable over eight. Where no row is keyed on rrf they hold
+# nothing, so under rsf or confidence Pro's answer is unchanged. Lite asks for none: with
+# one place and a 3,600-character budget it answered 317 of LongMemEval-S's 400 test
+# questions against 324 (benchmarks/measurements/results-omnimemeval-lme-2_6_10.md).
+MODE_EXTRA_KEYWORD_SEATS = {MODE_PRO: 8}
 # Pro also asks for eight depth places (memory_handlers._do_recall): rows a deeper ranking
 # of the same recall admits that the candidate depth left out, after every other held
 # place. On development questions of the private pack, most evidence Pro still missed
@@ -238,6 +228,19 @@ MODE_EXTRA_KEYWORD_SEATS = {MODE_PRO: 8, MODE_LITE: 1}
 # 1.36 s, about 1.13 to 1.17 times. Lite asks for none: one place gained little there
 # (+0.27 and +0.70 points) for a second ranking of its own.
 MODE_DEPTH_SEATS = {MODE_PRO: 8}
+# Pro's held items whose record is longer than PRO_HELD_LONG_RECORD_CHARS stored
+# characters take their places after every other passage of the sequence instead of in
+# the fused order (held_long_last). A held item quotes one or two passages: of a record of
+# a few thousand characters that is much of it, of a long conversation it seldom reaches
+# the evidence and takes the cap from the window's own quotes. On development questions
+# the held places of the private pack, whose held records' median was about 1,950
+# characters, carried evidence the window did not show; on LongMemEval-S, whose held
+# records' median was 11,875, they quoted no evidence-turn character and lowered the
+# share of evidence-turn characters Pro quoted from 70.0% to 68.3%. With this rule at
+# 6,000 the private pack kept nearly all of the places' gain (48 questions up and 3 down
+# under rrf against 2.6.10's places) and the share rose to 71.7%; 8,000 measured the same,
+# and 4,000 or less lost much of the private pack's gain.
+PRO_HELD_LONG_RECORD_CHARS = 6000
 PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10
 #: error of a mode call whose smallest possible response exceeds the cap.
@@ -1398,6 +1401,24 @@ def whole_order(records: list[list[tuple]], whole: list[bool]) -> list[tuple[int
     return firsts + [entry for entry in order if not whole[entry[0]]]
 
 
+def held_long_last(
+    order: list[tuple], n_window: int, records: list[tuple], limit: int = PRO_HELD_LONG_RECORD_CHARS
+) -> list[tuple]:
+    """Pro's payload sequence with the passages of held items whose record is longer than
+    ``limit`` stored characters moved after every other passage, each part in its own order.
+
+    ``order`` holds ``(item, passage, cost)`` entries; items below ``n_window`` are the
+    window's and the rest are held. ``records[i][0]`` is item ``i``'s stored text. The
+    result depends on the stored texts and the fused order only, never on the budget, so
+    the response is still the longest prefix of a sequence the budget does not shape
+    (invariant 9).
+    """
+    later = {k for k, (i, _, _) in enumerate(order) if i >= n_window and len(records[i][0]) > limit}
+    if not later:
+        return order
+    return [e for k, e in enumerate(order) if k not in later] + [e for k, e in enumerate(order) if k in later]
+
+
 def _quoted_length(ranges: list[tuple[int, int]]) -> int:
     """Characters of a quote showing ``ranges`` of one record: touching ranges as one,
     the rest joined by the separator (excerpts.fill)."""
@@ -1843,6 +1864,8 @@ async def do_reconstruct(
             )
         else:
             order = evidence_order(record_sets)
+        if mode == MODE_PRO:
+            order = held_long_last(order, len(window), records)
         # The payload sequence: every passage in `order`, then the excerpts. An excerpt
         # follows every passage (bug fixed in 2.6.8): when the excerpts took what the
         # passages left of the budget, a larger budget that took one more passage
