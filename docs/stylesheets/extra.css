@@ -262,3 +262,41 @@
   .cp-lang-note { animation: cp-lang-note-in 0.382s ease-out; }
   @keyframes cp-lang-note-in { from { opacity: 0; } }
 }
+
+/* A notice from the CPersona project (javascripts/notice.js), drawn like the website's notice tiles: a grey
+ * ground, square corners, no colour of its own. It sits under the table of contents or at the end of the page. */
+.cp-notice {
+  margin: 1.6rem 0 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--md-code-bg-color);
+  color: var(--md-default-fg-color);
+  font-size: 0.64rem;
+  line-height: 1.5;
+}
+.md-sidebar .cp-notice {
+  margin: 1.2rem 0.6rem 0;
+}
+.cp-notice p,
+.md-typeset .cp-notice p {
+  margin: 0 0 0.3rem;
+}
+.cp-notice-label {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.6rem;
+}
+.cp-notice-heading {
+  font-weight: 650;
+}
+.cp-notice-note,
+.md-typeset .cp-notice p.cp-notice-note {
+  margin: 0.5rem 0 0;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.56rem;
+}
+.cp-notice-link,
+.md-typeset .cp-notice-link {
+  color: var(--md-typeset-a-color);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
