@@ -15,14 +15,26 @@ edit_uri: edit/master/docs/
 theme:
   name: material
   custom_dir: overrides
+  # The project's look, as the website (cpersona.cloto.dev) has it: the same
+  # mark, Hanken Grotesk served from this site instead of Roboto from Google
+  # Fonts, a black header, and type in black and white with no accent colour.
+  # The colours and the type are set in stylesheets/extra.css; "custom" tells
+  # the theme to take them from there.
+  logo: assets/cpersona/logo.svg
+  favicon: assets/cpersona/favicon.svg
+  font: false
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -110,6 +122,7 @@ plugins:
             Design and research: 設計と研究
             Project standards: プロジェクト標準
             Sponsorship: 支援について
+            Website: 公式サイト
             Design notes: 設計ノート
             Research notes: 研究ノート
             Overview: 概要
@@ -324,3 +337,6 @@ nav:
   # something. A reader looking for how the software works never has to
   # scroll past it.
   - Sponsorship: sponsorship.md
+  # The website: what CPersona is, the measured results and the one-prompt
+  # setup. A reader who came here from PyPI or a search result had no way to it.
+  - Website: https://cpersona.cloto.dev/
