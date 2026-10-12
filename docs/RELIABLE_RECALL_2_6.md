@@ -475,12 +475,23 @@ effective_budget = min(budget_base, max_budget)
   item or an excerpt; a cap the first passage alone exceeds answers
   `error: "cap_below_minimum"`. A call that names no mode is unchanged.
   - `mode: "lite"` is the preset 2.6.5a3 introduced as `lite=true`, which
-    remains its other name (the two together are refused). The budget is 2,800
+    remains its other name (the two together are refused). The budget is 3,600
     characters unless the caller names one (an operator-forced budget still
     wins), the sequence is `whole`
     ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))
-    whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says, and the cap is 3,000, above
-    every lite response measured while the modes were developed.
+    whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says, and the cap is 3,000.
+    Until 2.6.10a3 the budget was 2,800, and every lite response measured while
+    the modes were developed fell under the cap. Characters are not tokens: at
+    2,800, lite averaged about 970 tokens in LongMemEval-S's English, a third of
+    its cap, and about 2,100 on a private pack of mostly Japanese agent
+    memories, where the window often ended before its tenth item. On
+    development questions, 3,600 showed every answer session on 4 more of 100
+    LongMemEval-S questions and on none fewer, for about 20% more answer-stage
+    tokens (994 to 1,197, still below the 1,787 of a call that names no mode);
+    larger budgets gained no session there. On the private pack it showed every
+    evidence record on more questions and on none fewer, for about 26% more
+    tokens, and about one lite response in eight there now comes within 50
+    tokens of the cap, which then ends the answer instead of the budget.
   - `mode: "pro"` reads 15 items when `count` is omitted, whatever the
     configured maximum, has no character budget unless one is named, and quotes
     as much of the `whole` sequence as its cap of 5,000 holds. Only its first 10
@@ -502,12 +513,49 @@ effective_budget = min(budget_base, max_budget)
   - `pro` also asks for two **block places** (2.6.10a2) beyond the block arm's
     reservation of two. They hold, in the reservation's order, records only the
     block arm reached that the reservation did not seat, and they come after
-    every other held place, so a cap that cuts held items from the end cuts them
-    first. `lite`, a call that names no mode, and the recall tool hold the
+    the keyword, far and cue seats, so a cap that cuts held items from the end
+    cuts them before those (the extra keyword places and the depth places come
+    after them). `lite`, a call that names no mode, and the recall tool hold the
     reservation's two. On development questions of a private pack of real agent
     memories, four places put more evidence records inside Pro's cap and none
     outside it; under `lite` the same four took room its 3,000 tokens did not
     have and cost evidence, which is why `lite` keeps two.
+  - Both also ask for **extra keyword places** (2.6.10a3): `pro` eight, `lite`
+    one. They hold, in the keyword seat's order, more rows only the keyword
+    arms found, but only rows the quality gate refused on their rrf score,
+    never one it admitted and the count cut, and they come after every held
+    place but the depth places, the block places included. Their seat numbers follow the
+    keyword seat's. Where no row is keyed on rrf, as under rsf or confidence,
+    they hold nothing and a mode's answer is unchanged; a row the vector arm
+    returned is not keyword-only and stays out even when its backend gave it no
+    score. On development questions of the private pack under rrf, eight
+    places put 44 more evidence records inside Pro's cap than 2.6.10a2 and 3
+    fewer, with nothing measurable gained by ten, twelve or fifteen; at lite's
+    3,600 characters one place showed every evidence record on 14 more
+    questions and on 4 fewer, because `whole` puts a short seated record ahead
+    of longer records' passages.
+  - `pro` also asks for eight **depth places** (2.6.10a4). Most evidence Pro still
+    missed on development questions lay past the candidate depth, and
+    simply ranking the window deeper broke the fused order. So the recall is
+    ranked a second time at the propagation seat's depth (100) -- the same arms,
+    scoring, gate, autocut and prior -- and the rows of that order the gate
+    admitted and the answer does not hold are eligible: those holding more of
+    the question's parts first, ties in the deeper order. They come after every
+    other held place, so a cap that cuts held items from the end cuts them
+    first, and the window keeps every row and place it had. Each carries
+    `match_reason.signal: "depth"` with its seat and its rank among the eligible
+    rows; the deeper ranking is one more fetch on the recall's ledger. They work
+    under rsf with confidence too: on development questions of the private pack,
+    eight places showed every evidence record on more Pro answers than
+    2.6.10a3, by 2.07 points under rrf (22 questions up, 1 down) and 2.59 under
+    rsf with confidence (39 up, none down), against four places or the deeper
+    order alone. The keyword arms, most of a ranking's time on a large store,
+    are read once for both rankings, so the second one adds the vector arm's
+    read and the fusion: on 100,000 records on an Intel N150, Pro's median rose
+    from 1.20 to 1.36 seconds, about 1.13 to 1.17 times, against 1.7 times when
+    both rankings read every arm. `lite` asks for none: one place gained 0.27
+    and 0.70 points for a second ranking of its own. A call that names no mode,
+    and the recall tool, hold no depth place.
   - Both leave out what a reader of a sized answer does not act on: items lose
     `ranges`, an item whose only claim repeats its head carries that claim's
     `as_of` instead of `claims`, and the envelope loses `bounds`,
@@ -516,7 +564,8 @@ effective_budget = min(budget_base, max_budget)
     stated, a claim that says more than its head is kept, and the response
     names its `mode`. `trace=true` returns every field and is not held to the
     cap; its `used_tokens` is what the same call returns without the trace.
-  - Both registered tests of `whole` were measured at the lite budget
+  - Both registered tests of `whole` were measured at the lite budget of the
+    time, 2,800
     ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)):
     on LongMemEval-S it answered no worse than the evidence sequence with about
     half the retrieved text of every item, and on the private real-use pack it
