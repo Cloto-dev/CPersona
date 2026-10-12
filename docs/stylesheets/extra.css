@@ -1,3 +1,100 @@
+/* The project's look, as the website (cpersona.cloto.dev) states it in its
+ * design record: a black header, a white ground, Hanken Grotesk for Latin text
+ * and the reader's system face for Japanese, and type, rules and links in black
+ * and white with no accent colour. The theme's defaults (indigo, Roboto from
+ * Google Fonts, a light grey 300-weight title) made the documentation look like
+ * a different product from the page that links to it.
+ *
+ * mkdocs.yml sets primary and accent to "custom"; the values come from here.
+ * The dark scheme keeps the theme's slate ground and takes the same black
+ * header, with light links.
+ */
+@font-face {
+  font-family: "Hanken Grotesk";
+  src: url("../assets/cpersona/fonts/HankenGrotesk-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --md-text-font: "Hanken Grotesk";
+}
+
+:root > * {
+  --md-primary-fg-color: #000;
+  --md-primary-fg-color--light: #1d1d1f;
+  --md-primary-fg-color--dark: #000;
+  --md-primary-bg-color: #fff;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.72);
+  --md-accent-fg-color: #000;
+  --md-accent-fg-color--transparent: rgba(0, 0, 0, 0.08);
+  --md-accent-bg-color: #fff;
+  --md-typeset-a-color: #1d1d1f;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-accent-fg-color: #fff;
+  --md-accent-fg-color--transparent: rgba(255, 255, 255, 0.12);
+  --md-typeset-a-color: #f4f4f4;
+}
+
+/* The theme darkens the search field against the header colour, which on
+ * black leaves no field at all; lighten it instead. */
+@media screen and (min-width: 60em) {
+  .md-search__input {
+    background-color: rgba(255, 255, 255, 0.14);
+  }
+  .md-search__input:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
+}
+
+/* Headings in the text's own colour and a weight that reads as a heading. */
+.md-typeset h1 {
+  color: var(--md-default-fg-color);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.md-typeset h2,
+.md-typeset h3 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* With no accent colour, a link in running text is told apart by its underline. */
+.md-typeset a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: var(--md-default-fg-color--lighter);
+}
+.md-typeset a:hover,
+.md-typeset a:focus {
+  text-decoration-color: currentColor;
+}
+.md-typeset .headerlink {
+  text-decoration: none;
+}
+.md-nav__link--active {
+  font-weight: 600;
+}
+
+/* Square corners, like the website's tiles. */
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid > .card {
+  border-radius: 0;
+}
+
+/* Between 60em and 76.25em the theme hides the left sidebar and lets the text
+ * run the whole remaining width: 977 px, 105 to 110 characters a line (measured
+ * 2026-10-12). Hold it to the width it has beside both sidebars. */
+@media screen and (min-width: 60em) and (max-width: 76.234375em) {
+  .md-content {
+    max-width: 38rem;
+    margin-inline: auto;
+  }
+}
+
 /* Sidebar sub-category labels, one step dimmer than the theme's default.
  *
  * The nav groups pages by what the reader came to do, so the group labels are
