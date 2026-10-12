@@ -1,9 +1,8 @@
-<!-- i18n-source: docs/index.md@blob:8085a81d14533f1a037a1f16081263904de98768 -->
+<!-- i18n-source: docs/index.md@blob:1bfa89a190aba83cca763ba9e36abbcd76adfe17 -->
 
 # CPersona ドキュメント
 
-CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude を
-はじめとする MCP 対応エージェントに、**セッションをまたいで残る記憶**を与えます。
+CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude Code、Codex をはじめとする MCP クライアントに、**セッションをまたいで残る記憶**を与えます。
 
 > **対象: CPersona {{ version_line }}。** このサイトが正式ドキュメントです。README や
 > 同梱 skill の記述とこのサイトが食い違う場合はサイトが優先で、その食い違い自体が

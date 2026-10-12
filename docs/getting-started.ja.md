@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:fe69c45e6f603334b74ff96c4bd8150a0d31ebfc -->
+<!-- i18n-source: docs/getting-started.md@blob:62dca2624d7940e1e17c63baf272dc7e8c2c1fdc -->
 
 # はじめに
 
@@ -12,19 +12,27 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。イン
 MCP クライアントを向ければ、クライアントのエージェントはセッションをまたいで
 生き残る `store` / `recall` ツールを得ます。それ以外のスタックは何も変わりません。
 
+## エージェントに任せる { #let-your-agent-set-it-up }
+
+Claude Code か Codex に、[公式サイト](https://cpersona.cloto.dev/ja/#setup)のセットアップ用プロンプトを貼り付けてください。プロンプトはエージェントにこのガイドを読ませ、各手順を先に見せ、コマンドの実行・インストール・ファイルの変更の前にあなたの承認を待つよう指示します。始めるのに必要なのはエージェントだけです。下の手順に要るもの (Python 3.11 以上や uv など) はエージェントが提案し、承認するまで何もインストールしません。
+
+このページの残りは、同じセットアップを自分で進めるための手順です。
+
 ## 前提条件 { #prerequisites }
+
+自分で進める場合:
 
 - **Python 3.11 以上**
 - ワンコマンド経路を使うなら **[uv](https://docs.astral.sh/uv/)** (任意 — `pip` でも可)
 - MCP クライアント: Claude Desktop、Claude Code、Codex CLI、Cursor、VS Code、
   またはその他の MCP ホスト — 手順 3 に各クライアントのエントリがあります
 
-## エージェントに任せる (Claude Code) { #let-the-agent-do-it-claude-code }
+## Agent Skill を入れる (Claude Code) { #let-the-agent-do-it-claude-code }
 
 このリポジトリと、公開されている wheel の両方に
 [Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
 が同梱されています。この skill は Claude Code にインストール手順を案内し、その後
-*いつ* store / recall / archive すべきかを教えます。これが最短経路です:
+*いつ* store / recall / archive すべきかを教えます。インストールするには:
 
 ```bash
 # PyPI からインストール済みなら、skill は wheel の中にあります (clone 不要):
