@@ -233,8 +233,10 @@ MODE_EXTRA_KEYWORD_SEATS = {MODE_PRO: 8, MODE_LITE: 1}
 # held places showed every evidence record on more Pro answers under rrf (+2.07 points
 # against 2.6.10a3, 22 questions up and 1 down) and under rsf with confidence (+2.59, 39
 # up and none down), against 4 places or the deeper order alone. The deeper ranking is a
-# second fetch, about 1.3 to 1.5 times Pro's time on that pack. Lite asks for none: one
-# place gained little there (+0.27 and +0.70 points) for the same added time.
+# second fetch of the vector arm (the keyword arms are read once, memory_handlers
+# _keyword_reads): on 100,000 records on an Intel N150, Pro's median rose from 1.20 to
+# 1.36 s, about 1.13 to 1.17 times. Lite asks for none: one place gained little there
+# (+0.27 and +0.70 points) for a second ranking of its own.
 MODE_DEPTH_SEATS = {MODE_PRO: 8}
 PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10

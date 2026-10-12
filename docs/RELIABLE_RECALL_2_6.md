@@ -549,10 +549,13 @@ effective_budget = min(budget_base, max_budget)
     eight places showed every evidence record on more Pro answers than
     2.6.10a3, by 2.07 points under rrf (22 questions up, 1 down) and 2.59 under
     rsf with confidence (39 up, none down), against four places or the deeper
-    order alone. The second ranking made Pro about 1.3 to 1.5 times slower on
-    that pack. `lite` asks for none: one place gained 0.27 and 0.70 points for
-    the same added time. A call that names no mode, and the recall tool, hold no
-    depth place.
+    order alone. The keyword arms, most of a ranking's time on a large store,
+    are read once for both rankings, so the second one adds the vector arm's
+    read and the fusion: on 100,000 records on an Intel N150, Pro's median rose
+    from 1.20 to 1.36 seconds, about 1.13 to 1.17 times, against 1.7 times when
+    both rankings read every arm. `lite` asks for none: one place gained 0.27
+    and 0.70 points for a second ranking of its own. A call that names no mode,
+    and the recall tool, hold no depth place.
   - Both leave out what a reader of a sized answer does not act on: items lose
     `ranges`, an item whose only claim repeats its head carries that claim's
     `as_of` instead of `claims`, and the envelope loses `bounds`,

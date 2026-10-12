@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:bed3459a580f3944d87d57b51380e197bc8ba21e -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:3798cd47577bf3233359689b4f39802e2885b8b4 -->
 
 # Reliable Recall — 2.6 系
 
@@ -446,9 +446,11 @@ effective_budget = min(budget_base, max_budget)
     `match_reason.signal: "depth"` と席の番号、座れる行の中での順位を持ち、深い並べ直しは recall の帳簿で 1 回の
     取得に数えます。rsf と confidence でも効きます: 非公開のパックの開発用の問いでは、8 つの場所で Pro が根拠の
     記録をすべて見せる問が 2.6.10a3 より増え、rrf で +2.07 ポイント (22 問増えて 1 問減り)、rsf と confidence で
-    +2.59 ポイント (39 問増えて減りなし) でした。4 つの場所や深い順位の順より多く、2 回目の並べ直しでそのパックの
-    Pro は約 1.3〜1.5 倍遅くなりました。`lite` は頼みません: 1 つの場所は同じだけ時間を足して +0.27 と +0.70 ポイント
-    でした。mode を指定しない呼び出しと recall の道具は深い場所を持ちません。
+    +2.59 ポイント (39 問増えて減りなし) でした。4 つの場所や深い順位の順より多い値です。大きなストアで並べ直しの
+    時間の大半を占めるキーワードの腕は 2 つの並べ方で 1 回だけ読むので、2 回目が足すのはベクトルの腕の読み取りと
+    融合です: Intel N150 の 10 万件では Pro の中央値が 1.20 秒から 1.36 秒 (約 1.13〜1.17 倍) になりました。すべての
+    腕を 2 回読んだ時は 1.7 倍でした。`lite` は頼みません: 1 つの場所は自分の 2 回目の並べ直しを足して +0.27 と
+    +0.70 ポイントでした。mode を指定しない呼び出しと recall の道具は深い場所を持ちません。
   - どちらも、大きさを選んだ答えの読み手が使わないものを省きます: item から `ranges` を除き、唯一の claim が
     先頭を繰り返すだけの item は `claims` の代わりにその claim の `as_of` を持ち、外枠から `bounds`、
     `effective_budget`、`used_budget`、`reserved_omitted` を除きます。`effective_count`、`returned_count`、
