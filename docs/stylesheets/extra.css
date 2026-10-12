@@ -55,11 +55,12 @@
  * Tighter margins give it room down to 360 px; below that the colour scheme
  * switch goes, since the scheme already follows the system setting. */
 @media screen and (max-width: 44.984375em) {
-  .md-header__title {
+  /* [dir] matches the theme's own [dir=ltr] rule, which would otherwise win. */
+  [dir] .md-header__title {
     margin-left: 0.4rem;
     margin-right: 0.2rem;
   }
-  .md-header__option > .md-header__button,
+  .md-header__option .md-header__button,
   .md-header__inner > .md-header__button[for="__search"] {
     margin-left: 0;
     margin-right: 0;
