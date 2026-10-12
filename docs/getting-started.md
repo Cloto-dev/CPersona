@@ -20,7 +20,7 @@ tools that survive across sessions. Nothing else in your stack changes.
 ## Let the agent do it (Claude Code)
 
 The repository and the published wheel both ship an
-[Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
+[Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory).
 It walks Claude Code through the installation, and then teaches it *when* to
 store, recall, and archive. Installing the skill is the shortest path:
 
@@ -289,6 +289,11 @@ is right — please report it.
 **Claude Code** — one command:
 { #register-claude-code }
 
+Replace `/home/you` with your home directory (on Windows, `C:/Users/you`).
+If you have not set up an embedding server
+([step 2](#2-set-up-an-embedding-server-recommended)), change
+`"EMBEDDING_MODE":"http"` to `"EMBEDDING_MODE":"none"`.
+
 ```bash
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
 ```
@@ -296,6 +301,11 @@ claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"
 **Codex CLI** — one command; it writes the TOML shown after it into
 `~/.codex/config.toml`:
 { #register-codex }
+
+Replace `/home/you` with your home directory (on Windows, `C:/Users/you`).
+If you have not set up an embedding server
+([step 2](#2-set-up-an-embedding-server-recommended)), change
+`EMBEDDING_MODE=http` to `EMBEDDING_MODE=none`.
 
 ```bash
 codex mcp add cpersona --env CPERSONA_DB_PATH=/home/you/.claude/cpersona.db --env EMBEDDING_MODE=http --env EMBEDDING_HTTP_URL=http://127.0.0.1:8401/embed -- uvx cpersona

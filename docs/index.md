@@ -6,8 +6,8 @@ Claude — or any MCP-capable agent — **memory that survives across sessions**
 Memories are kept in one local SQLite file. Recall searches them three ways
 (vector, FTS5, keyword) and fuses the results by rank or by relative score.
 
-The server has **zero LLM dependency**: it never calls a generative model. Two
-things that does not mean:
+The server has **zero LLM dependency**: it never calls a generative model. That
+does not mean it is free, or that it behaves the same everywhere:
 
 - **It is not always free.** `EMBEDDING_MODE=api` bills every embedding request
   against an endpoint that defaults to OpenAI's. `http` mode, pointed at an
@@ -129,7 +129,8 @@ policy block must look like. Other projects can adopt them.
 line is for, what it may break, and which measured problem each planned
 feature answers. It covers three axes: release lines, runtime and scale,
 support tiers. It describes intent, not delivery dates. What has shipped is in
-the release notes and SUPPORT.md.
+the [release notes](https://github.com/Cloto-dev/cpersona/releases) and
+[SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
 
 The 2.6 line has its own page, [Reliable Recall](RELIABLE_RECALL_2_6.md): the
 recall loop that iterates inside a single call, the cue contract, the prior
