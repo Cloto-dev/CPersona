@@ -475,23 +475,12 @@ effective_budget = min(budget_base, max_budget)
   item or an excerpt; a cap the first passage alone exceeds answers
   `error: "cap_below_minimum"`. A call that names no mode is unchanged.
   - `mode: "lite"` is the preset 2.6.5a3 introduced as `lite=true`, which
-    remains its other name (the two together are refused). The budget is 3,600
+    remains its other name (the two together are refused). The budget is 2,800
     characters unless the caller names one (an operator-forced budget still
     wins), the sequence is `whole`
     ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))
-    whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says, and the cap is 3,000.
-    Until 2.6.10a3 the budget was 2,800, and every lite response measured while
-    the modes were developed fell under the cap. Characters are not tokens: at
-    2,800, lite averaged about 970 tokens in LongMemEval-S's English, a third of
-    its cap, and about 2,100 on a private pack of mostly Japanese agent
-    memories, where the window often ended before its tenth item. On
-    development questions, 3,600 showed every answer session on 4 more of 100
-    LongMemEval-S questions and on none fewer, for about 20% more answer-stage
-    tokens (994 to 1,197, still below the 1,787 of a call that names no mode);
-    larger budgets gained no session there. On the private pack it showed every
-    evidence record on more questions and on none fewer, for about 26% more
-    tokens, and about one lite response in eight there now comes within 50
-    tokens of the cap, which then ends the answer instead of the budget.
+    whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says, and the cap is 3,000, above
+    every lite response measured while the modes were developed.
   - `mode: "pro"` reads 15 items when `count` is omitted, whatever the
     configured maximum, has no character budget unless one is named, and quotes
     as much of the `whole` sequence as its cap of 5,000 holds. Only its first 10
@@ -520,20 +509,20 @@ effective_budget = min(budget_base, max_budget)
     memories, four places put more evidence records inside Pro's cap and none
     outside it; under `lite` the same four took room its 3,000 tokens did not
     have and cost evidence, which is why `lite` keeps two.
-  - Both also ask for **extra keyword places** (2.6.10a3): `pro` eight, `lite`
-    one. They hold, in the keyword seat's order, more rows only the keyword
-    arms found, but only rows the quality gate refused on their rrf score,
-    never one it admitted and the count cut, and they come after every held
-    place but the depth places, the block places included. Their seat numbers follow the
-    keyword seat's. Where no row is keyed on rrf, as under rsf or confidence,
-    they hold nothing and a mode's answer is unchanged; a row the vector arm
-    returned is not keyword-only and stays out even when its backend gave it no
-    score. On development questions of the private pack under rrf, eight
-    places put 44 more evidence records inside Pro's cap than 2.6.10a2 and 3
-    fewer, with nothing measurable gained by ten, twelve or fifteen; at lite's
-    3,600 characters one place showed every evidence record on 14 more
-    questions and on 4 fewer, because `whole` puts a short seated record ahead
-    of longer records' passages.
+  - `pro` also asks for eight **extra keyword places** (2.6.10a3). They hold,
+    in the keyword seat's order, more rows only the keyword arms found, but only
+    rows the quality gate refused on their rrf score, never one it admitted and
+    the count cut, and they come after every held place but the depth places,
+    the block places included. Their seat numbers follow the keyword seat's.
+    Where no row is keyed on rrf, as under rsf or confidence, they hold nothing
+    and `pro`'s answer is unchanged; a row the vector arm returned is not
+    keyword-only and stays out even when its backend gave it no score. On
+    development questions of the private pack under rrf, eight places put 44
+    more evidence records inside Pro's cap than 2.6.10a2 and 3 fewer, with
+    nothing measurable gained by ten, twelve or fifteen. `lite` asks for none:
+    with one place and a budget of 3,600 characters it answered 317 of
+    LongMemEval-S's 400 test questions against 2.6.9's 324
+    ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-2_6_10.md)).
   - `pro` also asks for eight **depth places** (2.6.10a4). Most evidence Pro still
     missed on development questions lay past the candidate depth, and
     simply ranking the window deeper broke the fused order. So the recall is
@@ -556,6 +545,24 @@ effective_budget = min(budget_base, max_budget)
     both rankings read every arm. `lite` asks for none: one place gained 0.27
     and 0.70 points for a second ranking of its own. A call that names no mode,
     and the recall tool, hold no depth place.
+  - `pro` quotes the passages of a held item whose record is longer than
+    6,000 stored characters after every other passage of its sequence (2.6.11),
+    the window's and the other held items' alike; each part keeps its own order.
+    A held item quotes one or two passages. Of a record of a few thousand
+    characters that is much of it, but of a long conversation it seldom reaches
+    the evidence and takes the cap from the window's own quotes: with the held
+    places of 2.6.10a4, Pro answered 343 of LongMemEval-S's 400 test questions
+    against 354 without them. On development questions the held records of the
+    private pack, a median of about 1,950 characters, carried evidence the
+    window did not show, while on LongMemEval-S, a median of 11,875, they quoted
+    no evidence-turn character and lowered the share of evidence-turn
+    characters Pro quoted from 70.0% to 68.3%. At 6,000 the private pack kept
+    nearly all of what the places gained (48 questions up and 3 down under rrf
+    against 2.6.10's places) and the share rose to 71.7%; 8,000 measured the
+    same and 4,000 or less lost much of the private pack's gain. The rule
+    reads only the stored texts and the fused order, never the budget, so the
+    response is still the longest prefix of a sequence the budget does not
+    shape. `lite` and a call that names no mode keep the fused order.
   - Both leave out what a reader of a sized answer does not act on: items lose
     `ranges`, an item whose only claim repeats its head carries that claim's
     `as_of` instead of `claims`, and the envelope loses `bounds`,
@@ -564,8 +571,7 @@ effective_budget = min(budget_base, max_budget)
     stated, a claim that says more than its head is kept, and the response
     names its `mode`. `trace=true` returns every field and is not held to the
     cap; its `used_tokens` is what the same call returns without the trace.
-  - Both registered tests of `whole` were measured at the lite budget of the
-    time, 2,800
+  - Both registered tests of `whole` were measured at the lite budget
     ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)):
     on LongMemEval-S it answered no worse than the evidence sequence with about
     half the retrieved text of every item, and on the private real-use pack it

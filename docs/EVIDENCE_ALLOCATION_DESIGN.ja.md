@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/EVIDENCE_ALLOCATION_DESIGN.md@blob:93ce4d27675674b2560089821436566d5a822b17 -->
+<!-- i18n-source: docs/EVIDENCE_ALLOCATION_DESIGN.md@blob:519ccdbc22fc2d9c1250b69291c4f974842c7e3d -->
 
 # 証拠の配分 — 設計 { #evidence-allocation-design }
 
@@ -7,7 +7,7 @@
 Status: 2.6.5 に向けた設計です。最初の pre-release (2.6.5a1) は、レコードをまたいで並べた引用の列
 (第 3 節と第 4 節) を `CPERSONA_RECONSTRUCT_SEQUENCE=evidence` として既定 off で出荷しました。
 2.6.5a3 は、同じ順序にレコードの長さで引いた床を付けた列 (`whole`、第 4 節の末尾) を、
-これも既定 off で足し、それを 2,800 字 (2.6.10a3 から 3,600 字) で使う `reconstruct` の `lite=true` を加えます。第 5 節の被覆の段は
+これも既定 off で足し、それを 2,800 字で使う `reconstruct` の `lite=true` を加えます。第 5 節の被覆の段は
 `whole` の上に作り、両パックの判定用の問いで判定して、採りませんでした。どの段も、回答の呼び出しより前に
 登録した判定則で測ります (第 7 節)。`SCHEMA_VERSION` は変わりません。以下はすべて、ストアが
 すでに持っている Block と Block ごとの int8 ベクトルを読みます。
