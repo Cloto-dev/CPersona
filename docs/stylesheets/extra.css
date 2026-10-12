@@ -91,3 +91,54 @@
 .cp-version .md-select__link[aria-current="true"] {
   font-weight: 700;
 }
+
+/* The note that tells a reader this page is also in their language
+ * (overrides/main.html). Drawn like the one on the project's home page: white
+ * (or the slate ground) with a thin rule, in the corner, never dimming the page.
+ * The colours come from the theme, so the dark scheme carries along.
+ */
+.cp-lang-note {
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: 1rem;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  max-width: min(16rem, calc(100vw - 2rem));
+  padding: 0.2rem 0.2rem 0.2rem 0;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.6rem;
+  background: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+.cp-lang-note-go {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0.3rem 0.4rem 0.7rem;
+  color: inherit;
+}
+.md-typeset .cp-lang-note-go, .cp-lang-note-go:visited { color: inherit; }
+.cp-lang-note-go:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+.cp-lang-note-x {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.3rem;
+  background: none;
+  color: var(--md-default-fg-color--light);
+  cursor: pointer;
+}
+.cp-lang-note-x:hover { color: var(--md-default-fg-color); }
+.cp-lang-note-x svg { display: block; width: 0.8rem; height: 0.8rem; }
+.cp-lang-note :focus-visible { outline: 2px solid var(--md-accent-fg-color); outline-offset: 2px; }
+@media (prefers-reduced-motion: no-preference) {
+  .cp-lang-note { animation: cp-lang-note-in 0.382s ease-out; }
+  @keyframes cp-lang-note-in { from { opacity: 0; } }
+}

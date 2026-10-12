@@ -1,29 +1,28 @@
-// Blocking check: does the built site still route a reader to their language?
+// Blocking check: does the built site keep a reader on the language of the address,
+// and tell them when the page exists in their own?
 //
-// GitHub Pages cannot negotiate on Accept-Language, so `overrides/main.html`
-// puts the decision in the page head: an explicit choice from the language
-// selector wins and is remembered, otherwise the first Japanese-or-English entry
-// in navigator.languages decides, and the move is a location.replace so the back
-// button does not become a trap.
+// The language of a page is the language of its address (overrides/main.html).
+// The head script never redirects; a reader whose browser prefers the other
+// language gets a small note linking to the other address, until they close it
+// or pick a language. It used to redirect to the browser's language, which moved
+// English-first browsers off every Japanese link, including the ones the
+// project's home page gives Japanese readers.
 //
 // None of that is visible to `mkdocs build --strict`. The template can render a
 // script that is syntactically perfect and points at the wrong pages, which is
-// exactly what happened while it was being written: the destinations were read
-// from `config.extra.alternate` without the `url` filter Material applies, so
-// every page except the site root offered a Japanese URL relative to the wrong
-// place. The build was green, the home page worked, and every other page would
-// have redirected into a 404.
+// exactly what happened while the first version was being written: the
+// destinations were read from `config.extra.alternate` without the `url` filter
+// Material applies, so every page except the site root offered a Japanese URL
+// relative to the wrong place.
 //
 // So this runs against the built site, the way check-doc-anchors.py does, and
 // checks two different things:
 //
 //   * Structure, on every page — the script is there, and the destinations it
 //     carries are the same ones Material put in that page's own hreflang links.
-//     Agreement with the theme is the property; a private second theory of what
-//     the Japanese URL of a page is would be the defect.
 //   * Behaviour, once — the script is executed against a stubbed DOM for each
-//     case the routing exists to get right, including the ones that are only
-//     wrong later: the redirect loop, the overridden choice, private mode.
+//     case: that nothing ever redirects, which language the note offers and
+//     where it goes, and that a choice or a closed note silences it.
 //
 // Usage: node scripts/check-lang-routing.js [site_dir]   (default: ./site)
 // Exit 1 on any failure.
@@ -74,7 +73,7 @@ function checkPage(file) {
 
   const script = routingScript(html);
   if (!script) {
-    fail(rel, "carries hreflang alternates but no language-routing script — a reader who follows a link here stays in whatever language the link named");
+    fail(rel, "carries hreflang alternates but no language script — a reader whose browser prefers the other language is never told this page exists in it");
     return;
   }
 
@@ -110,38 +109,63 @@ function checkPage(file) {
 
 // --- behaviour -------------------------------------------------------------
 
-function execute(script, { pageLang, languages, stored, storageThrows, search, hash }) {
-  let replaced = null;
-  const storage = stored ? { "cpersona-doc-lang": stored } : {};
+function element(tag) {
+  const el = {
+    tag, children: [], attrs: {}, listeners: {}, removed: false, hovered: false,
+    appendChild(child) { this.children.push(child); },
+    setAttribute(k, v) { this.attrs[k] = v; },
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+    remove() { this.removed = true; },
+    matches() { return this.hovered; },
+  };
+  return el;
+}
+
+function execute(script, { pageLang, languages, stored, closed, storageThrows, search, hash }) {
+  const redirects = [];
+  const storage = {};
+  if (stored) storage["cpersona-doc-lang"] = stored;
+  if (closed) storage["cpersona-doc-lang-note-closed"] = closed;
   const listeners = [];
+  const timers = [];
+  const body = element("body");
   const context = {
     document: {
+      readyState: "loading",
       documentElement: { getAttribute: (a) => (a === "lang" ? pageLang : null) },
       addEventListener: (type, fn, capture) => listeners.push({ type, fn, capture }),
+      createElement: element,
+      body,
     },
     navigator: { languages, language: languages[0] },
     location: {
       search: search || "",
       hash: hash || "",
-      replace: (u) => { replaced = u; },
-      assign: () => { throw new Error("used location.assign; a redirect in the history stack traps the back button"); },
+      replace: (u) => redirects.push(u),
+      assign: (u) => redirects.push(u),
       href: "",
     },
     localStorage: {
       getItem(k) { if (storageThrows) throw new Error("denied"); return k in storage ? storage[k] : null; },
       setItem(k, v) { if (storageThrows) throw new Error("denied"); storage[k] = v; },
     },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: () => {},
   };
   vm.createContext(context);
   vm.runInContext(script, context);
-  return { replaced, storage, listeners };
+  for (const l of listeners.filter((l) => l.type === "DOMContentLoaded")) l.fn();
+  const note = body.children.find((c) => c.className === "cp-lang-note") || null;
+  const go = note && note.children.find((c) => c.className === "cp-lang-note-go");
+  const close = note && note.children.find((c) => c.className === "cp-lang-note-x");
+  return { redirects, storage, listeners, timers, note, go, close, context };
 }
 
 function checkBehaviour(enFile, jaFile) {
   const en = routingScript(fs.readFileSync(enFile, "utf8"));
   const ja = routingScript(fs.readFileSync(jaFile, "utf8"));
   if (!en || !ja) {
-    fail("behaviour", "could not find the routing script on the sample pages");
+    fail("behaviour", "could not find the language script on the sample pages");
     return;
   }
   const enHtml = fs.readFileSync(enFile, "utf8");
@@ -149,32 +173,32 @@ function checkBehaviour(enFile, jaFile) {
   const enLinks = {}; for (const m of enHtml.matchAll(LINK)) enLinks[m[2]] = m[1];
   const jaLinks = {}; for (const m of jaHtml.matchAll(LINK)) jaLinks[m[2]] = m[1];
 
+  // [name, [script, options], expected note: null or [language, href]]
   const cases = [
-    ["a Japanese browser on an English page is routed to Japanese",
-      [en, { pageLang: "en", languages: ["ja"] }], enLinks.ja],
-    ["a Japanese browser already on the Japanese page stays (no redirect loop)",
+    ["a Japanese browser on an English page stays, and is offered Japanese",
+      [en, { pageLang: "en", languages: ["ja"] }], ["ja", enLinks.ja]],
+    ["an English browser on a Japanese page stays (the link named Japanese), and is offered English",
+      [ja, { pageLang: "ja", languages: ["en-GB"] }], ["en", jaLinks.en]],
+    ["a Japanese browser on the Japanese page is offered nothing",
       [ja, { pageLang: "ja", languages: ["ja"] }], null],
-    ["an English browser on an English page stays",
+    ["an English browser on an English page is offered nothing",
       [en, { pageLang: "en", languages: ["en-US"] }], null],
-    ["an English browser following a shared Japanese link is routed to English",
-      [ja, { pageLang: "ja", languages: ["en-GB"] }], jaLinks.en],
-    ["an explicit English choice survives a Japanese browser",
+    ["a language picked earlier silences the note (English picked, Japanese browser)",
       [en, { pageLang: "en", languages: ["ja"], stored: "en" }], null],
-    ["an explicit Japanese choice is honoured on an English page",
-      [en, { pageLang: "en", languages: ["en"], stored: "ja" }], enLinks.ja],
-    ["a stored choice does not loop on its own page",
-      [ja, { pageLang: "ja", languages: ["en"], stored: "ja" }], null],
+    ["a language picked earlier silences the note (Japanese picked, on an English page)",
+      [en, { pageLang: "en", languages: ["en"], stored: "ja" }], null],
+    ["a note closed for Japanese stays closed",
+      [en, { pageLang: "en", languages: ["ja"], closed: "ja" }], null],
     ["the first matching entry wins: en before ja",
       [en, { pageLang: "en", languages: ["en-US", "ja"] }], null],
     ["the first matching entry wins: ja before en",
-      [en, { pageLang: "en", languages: ["ja-JP", "en-US"] }], enLinks.ja],
-    ["a language that is neither moves nobody",
+      [en, { pageLang: "en", languages: ["ja-JP", "en-US"] }], ["ja", enLinks.ja]],
+    ["a language that is neither is offered nothing",
       [en, { pageLang: "en", languages: ["fr-FR"] }], null],
-    ["query and fragment survive the redirect",
-      [en, { pageLang: "en", languages: ["ja"], search: "?q=recall", hash: "#storage" }],
-      `${enLinks.ja}?q=recall#storage`],
-    ["storage denied (private browsing) neither throws nor redirects",
-      [en, { pageLang: "en", languages: ["en"], storageThrows: true }], null],
+    ["the query survives in the note's link",
+      [en, { pageLang: "en", languages: ["ja"], search: "?q=recall" }], ["ja", `${enLinks.ja}?q=recall`]],
+    ["storage denied (private browsing) neither throws nor redirects, and still offers the note",
+      [en, { pageLang: "en", languages: ["ja"], storageThrows: true }], ["ja", enLinks.ja]],
   ];
 
   for (const [name, [script, options], expected] of cases) {
@@ -185,26 +209,64 @@ function checkBehaviour(enFile, jaFile) {
       fail("behaviour", `${name} — threw: ${e.message}`);
       continue;
     }
-    if (result.replaced !== expected) {
-      fail("behaviour", `${name} — went to ${JSON.stringify(result.replaced)}, expected ${JSON.stringify(expected)}`);
+    if (result.redirects.length) {
+      fail("behaviour", `${name} — redirected to ${JSON.stringify(result.redirects)}; the address decides the language, nothing may move the reader`);
+    }
+    const got = result.note ? [result.note.lang, result.go && result.go.href] : null;
+    if (JSON.stringify(got) !== JSON.stringify(expected)) {
+      fail("behaviour", `${name} — offered ${JSON.stringify(got)}, expected ${JSON.stringify(expected)}`);
     }
   }
 
-  // The selector click is what makes an explicit choice explicit; without it the
-  // "choice wins" cases above are unreachable in a real browser.
-  const run = execute(en, { pageLang: "en", languages: ["en"] });
-  const click = run.listeners.find((l) => l.type === "click");
+  // The note's own controls: following it is a choice, and keeps the section in view;
+  // closing it is remembered for that language; it goes after a while unless hovered.
+  const run = execute(en, { pageLang: "en", languages: ["ja"], hash: "#storage" });
+  if (!run.note || !run.go || !run.close) {
+    fail("behaviour", "the note was not built with a link and a close button");
+  } else {
+    if (run.note.lang !== "ja" || !/日本語/.test(run.go.textContent || "")) {
+      fail("behaviour", `the note offering Japanese is not written in Japanese: ${JSON.stringify(run.go.textContent)}`);
+    }
+    if (!run.close.attrs["aria-label"]) fail("behaviour", "the close button has no accessible name");
+    (run.go.listeners.click || []).forEach((fn) => fn());
+    if (run.go.href !== `${enLinks.ja}#storage`) {
+      fail("behaviour", `following the note goes to ${JSON.stringify(run.go.href)}, expected the section in view (${enLinks.ja}#storage)`);
+    }
+    const capture = run.listeners.find((l) => l.type === "click");
+    if (capture) {
+      capture.fn({ target: { closest: (sel) => (sel.includes(".cp-lang-note-go") ? { hreflang: "ja" } : null) } });
+      if (run.storage["cpersona-doc-lang"] !== "ja") fail("behaviour", "following the note does not record the choice");
+    }
+    const timer = run.timers[0];
+    if (!timer || timer.ms < 3000) fail("behaviour", "the note does not wait a few seconds before it goes");
+    else {
+      run.note.hovered = true; timer.fn();
+      if (run.note.removed) fail("behaviour", "the note went while the pointer was on it");
+      run.note.hovered = false; run.timers[run.timers.length - 1].fn();
+      if (!run.note.removed) fail("behaviour", "the note never goes on its own");
+    }
+  }
+  const closing = execute(en, { pageLang: "en", languages: ["ja"] });
+  if (closing.close) {
+    (closing.close.listeners.click || []).forEach((fn) => fn());
+    if (!closing.note.removed) fail("behaviour", "closing the note leaves it on the page");
+    if (closing.storage["cpersona-doc-lang-note-closed"] !== "ja") fail("behaviour", "closing the note is not remembered for its language");
+  }
+
+  // The selector click is what makes a choice a choice.
+  const sel = execute(en, { pageLang: "en", languages: ["en"] });
+  const click = sel.listeners.find((l) => l.type === "click");
   if (!click) fail("behaviour", "no click listener is registered, so using the language selector records nothing");
   else {
     if (click.capture !== true) {
       fail("behaviour", "the click listener is not in the capture phase, so the choice may not be stored before the browser navigates away");
     }
-    click.fn({ target: { closest: (sel) => (sel === ".md-select__link" ? { hreflang: "ja" } : null) } });
-    if (run.storage["cpersona-doc-lang"] !== "ja") {
-      fail("behaviour", `clicking the language selector stored ${JSON.stringify(run.storage["cpersona-doc-lang"])}, expected "ja"`);
+    click.fn({ target: { closest: (s) => (s.includes(".md-select__link") ? { hreflang: "ja" } : null) } });
+    if (sel.storage["cpersona-doc-lang"] !== "ja") {
+      fail("behaviour", `clicking the language selector stored ${JSON.stringify(sel.storage["cpersona-doc-lang"])}, expected "ja"`);
     }
     click.fn({ target: { closest: () => null } });
-    if (run.storage["cpersona-doc-lang"] !== "ja") {
+    if (sel.storage["cpersona-doc-lang"] !== "ja") {
       fail("behaviour", "a click outside the selector changed the stored choice");
     }
   }
@@ -243,4 +305,4 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log(`language routing: OK (${pages.length} pages checked, behaviour matrix green)`);
+console.log(`language routing: OK (${pages.length} pages checked, behaviour matrix green; nothing redirects)`);
