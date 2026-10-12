@@ -88,3 +88,20 @@ def test_the_check_fails_when_the_landing_point_breaks(break_it):
     assert broken != text, "the mutation no longer applies; update it to the current page"
     with pytest.raises(AssertionError):
         _check(broken, "register-codex", EDITS["register-codex"])
+
+
+@pytest.mark.parametrize(
+    "page, website",
+    [("docs/getting-started.md", "https://cpersona.cloto.dev/#setup"), ("docs/getting-started.ja.md", "https://cpersona.cloto.dev/ja/#setup")],
+)
+def test_the_guide_opens_with_the_agent_route(page, website):
+    """The website starts readers with one prompt for Claude Code or Codex; the guide it points to says the same first.
+
+    Before this, the guide listed Python 3.11+ and uv as prerequisites and its only agent route was a Claude Code
+    skill, while the website said Claude Code or Codex was all a reader needed.
+    """
+    text = (ROOT / page).read_text(encoding="utf-8")
+    first = text[text.index("\n## ") :].split("\n## ", 2)[1]
+    assert first.startswith(("Let your agent set it up", "エージェントに任せる { #let-your-agent-set-it-up }")), first[:60]
+    assert f"]({website})" in first, f"{page}: the first section does not link the website's setup prompt"
+    assert "Claude Code" in first and "Codex" in first, f"{page}: the first section must name both agents"

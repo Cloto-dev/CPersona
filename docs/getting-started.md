@@ -9,7 +9,20 @@ CPersona is an [MCP](https://modelcontextprotocol.io/) server. You install it,
 point an MCP client at it, and the client's agent gains `store` / `recall`
 tools that survive across sessions. Nothing else in your stack changes.
 
+## Let your agent set it up
+
+In Claude Code or Codex, paste the setup prompt from the
+[website](https://cpersona.cloto.dev/#setup). It asks the agent to read this
+guide, show you each step first, and wait for your approval before it runs
+commands, installs anything or changes files. The agent is all you need to
+start: it proposes whatever the steps below require, such as Python 3.11+ and
+uv, and installs nothing until you approve.
+
+The rest of this page is the same setup, step by step, for doing it yourself.
+
 ## Prerequisites
+
+For doing the setup yourself:
 
 - **Python 3.11+**
 - **[uv](https://docs.astral.sh/uv/)** for the one-command path (optional —
@@ -17,12 +30,12 @@ tools that survive across sessions. Nothing else in your stack changes.
 - An MCP client: Claude Desktop, Claude Code, Codex CLI, Cursor, VS Code, or
   any other MCP host — step 3 has the entry for each
 
-## Let the agent do it (Claude Code)
+## Install the agent skill (Claude Code) { #let-the-agent-do-it-claude-code }
 
 The repository and the published wheel both ship an
 [Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory).
 It walks Claude Code through the installation, and then teaches it *when* to
-store, recall, and archive. Installing the skill is the shortest path:
+store, recall, and archive. To install it:
 
 ```bash
 # Installed from PyPI? The skill ships inside the wheel — no clone needed:

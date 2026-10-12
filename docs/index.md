@@ -1,7 +1,7 @@
 # CPersona Documentation
 
 CPersona is an [MCP](https://modelcontextprotocol.io/) server. It gives
-Claude — or any MCP-capable agent — **memory that survives across sessions**.
+Claude Code, Codex or any other MCP client **memory that survives across sessions**.
 
 > **Applies to: CPersona {{ version_line }}.** This site is the canonical documentation.
 > If the README or the bundled skill disagrees with a page here, this site

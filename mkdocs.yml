@@ -1,7 +1,8 @@
 site_name: CPersona
 site_description: >-
-  MCP memory server — persistent, searchable memory for Claude and any MCP
-  host. Single SQLite file, 3-layer hybrid search, zero LLM dependency.
+  MCP memory server that runs on your own computer: persistent, searchable
+  memory for Claude Code, Codex and any other MCP client. Single SQLite file,
+  3-layer hybrid search, zero LLM dependency.
 # The assembler builds this tree more than once -- under its own version path,
 # and again at the root when this is the line served there -- and only site_url
 # differs between those builds. It is what canonical links and sitemap.xml are
