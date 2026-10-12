@@ -5,9 +5,10 @@ The site has three indexes over the same set of pages, written for three
 different readers, and all three are maintained by hand:
 
   mkdocs.yml `nav:`   the sidebar — what a reader scans while already on a page
-  docs/index.md       the home page — cards for the guides, and the only place
-                      a design note's one-line description is written for a
-                      person rather than for a machine
+  docs/index.md       the home page — cards for the guides — together with the
+                      overview page a nav section may open with (its index.md),
+                      which is where a design note's one-line description is
+                      written for a person rather than for a machine
   docs/llms.txt       the machine index — what an agent fetches to find out
                       which pages exist before it fetches any of them
 
@@ -31,9 +32,13 @@ What is checked, in both directions:
   * every `docs/*.md` appears in `nav:` exactly once (mkdocs logs unlisted
     pages at INFO, which `--strict` does not promote — it is not a detector)
   * every `nav:` entry points at a file that exists
-  * every page in `nav:` has a link in `llms.txt` and in `index.md`
+  * every page in `nav:` has a link in `llms.txt`
+  * every page in `nav:` is linked from `index.md`, or from the overview of a
+    nav section it sits in, which `index.md` (or an enclosing overview) must in
+    turn link -- so every page is still reachable from the home page
   * every site link in `llms.txt` points at a page that is in `nav:`
-  * every page link in `index.md` points at a page that is in `nav:`
+  * every page link in `index.md` or in a section overview points at a page
+    that is in `nav:`
   * those links use this site's `site_url` and the directory form mkdocs
     publishes (`.../page/`), so a rename of the site does not leave absolute
     links pointing into the old one
@@ -42,6 +47,15 @@ What is checked, in both directions:
     It names the same page. Whether that line's tree actually serves it is
     `check-site-urls.py`'s question, which resolves against the assembled site
 
+Why section overviews count (2026-10-12): the home page used to carry all
+thirty design, standards and research descriptions under the guide cards, so a
+reader who came to install CPersona scrolled past them on every visit, and on
+a phone the first guide was over a screen down. Those descriptions now live on
+the "Design and research" overview, one link from the home page. A page is
+still reported when no overview on its own path links it: being linked from an
+unrelated section's overview does not count, because that is not where a
+reader of its section looks.
+
 Exit 0 when the three lists agree; exit 1 with one line per violation.
 Run from the repository root: `python3 scripts/check-docs-index.py`.
 """
@@ -49,6 +63,7 @@ Run from the repository root: `python3 scripts/check-docs-index.py`.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -78,6 +93,7 @@ SITE_URL_ENV = re.compile(
     r"^site_url:\s*!ENV\s*\[\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"
     r"[\"'](?P<url>[^\"']+)[\"']\s*\]\s*$"
 )
+NAV_SECTION = re.compile(r"^\s*-\s+[^:]+:\s*$")
 MD_LINK = re.compile(r"\[(?P<label>[^\]]+)\]\((?P<url>[^)\s]+)\)")
 
 # The site root. `llms.txt` opens by describing the site itself, which is what
@@ -109,6 +125,54 @@ def site_url() -> str:
             return m.group("url").rstrip("/")
     fail("mkdocs.yml: no `site_url:` — llms.txt links cannot be checked against it")
     return ""
+
+
+def nav_entries() -> list[tuple[int, str | None]]:
+    """(indent, page path or None for a section) for each line of `nav:`, in order."""
+    lines = MKDOCS.read_text().splitlines()
+    entries: list[tuple[int, str | None]] = []
+    start = -1
+    for i, line in enumerate(lines):
+        if line.startswith("nav:"):
+            start = i
+            continue
+        if start < 0:
+            continue
+        if line and not line[0].isspace():
+            break
+        m = NAV_LEAF.match(line)
+        if m:
+            entries.append((len(line) - len(line.lstrip()), m.group("path").strip()))
+        elif NAV_SECTION.match(line):
+            entries.append((len(line) - len(line.lstrip()), None))
+    return entries
+
+
+def section_overviews() -> dict[str, list[str]]:
+    """For each page in nav, the overview pages of the sections enclosing it.
+
+    A section's overview is its first child page named index.md, which is how
+    mkdocs-material's navigation.indexes picks the page a section label opens.
+    Innermost first. A page is never its own overview.
+    """
+    entries = nav_entries()
+    stack: list[tuple[int, str | None]] = []  # (indent of the section line, its overview)
+    owners: dict[str, list[str]] = {}
+    for n, (indent, page) in enumerate(entries):
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        if page is None:
+            overview = None
+            for child_indent, child in entries[n + 1 :]:
+                if child_indent <= indent:
+                    break
+                if child is not None and child.rsplit("/", 1)[-1] == "index.md":
+                    overview = child
+                    break
+            stack.append((indent, overview))
+            continue
+        owners[page] = [ov for _, ov in reversed(stack) if ov and ov != page]
+    return owners
 
 
 def nav_pages() -> list[str]:
@@ -190,15 +254,30 @@ def llms_links(base: str) -> dict[str, str]:
     return found
 
 
-def home_links() -> set[str]:
-    """Sibling pages docs/index.md links to, by path."""
-    text = (DOCS / HOME).read_text()
+def page_links(index: str = HOME) -> set[str]:
+    """Pages docs/<index> links to, by path relative to docs/.
+
+    An overview one directory down links its siblings as `../PAGE.md`; the link
+    is resolved against the overview's own directory, the way mkdocs resolves it.
+    """
+    text = (DOCS / index).read_text()
+    here = posixpath.dirname(index)
     found: set[str] = set()
     for m in MD_LINK.finditer(text):
-        hit = HOME_LINK.match(m.group("url"))
-        if hit:
+        url = m.group("url")
+        if "://" in url or url.startswith(("#", "mailto:")):
+            continue
+        path = url.split("#", 1)[0]
+        resolved = posixpath.normpath(posixpath.join(here, path)) if here else posixpath.normpath(path)
+        hit = HOME_LINK.match(resolved)
+        if hit and not resolved.startswith("../"):
             found.add(hit.group("page"))
     return found
+
+
+def home_links() -> set[str]:
+    """Sibling pages docs/index.md links to, by path."""
+    return page_links(HOME)
 
 
 def main() -> int:
@@ -249,21 +328,29 @@ def main() -> int:
             )
 
     if (DOCS / HOME).exists():
-        linked = home_links()
+        owners = section_overviews()
+        links = {HOME: home_links()}
+        for overviews in owners.values():
+            for overview in overviews:
+                if overview not in links and (DOCS / overview).exists():
+                    links[overview] = page_links(overview)
         for page in nav:
             if page == HOME:
                 continue
-            if page not in linked:
+            indexes = [HOME, *owners.get(page, [])]
+            if not any(page in links.get(index, set()) for index in indexes):
+                where = " or ".join(f"docs/{index}" for index in indexes)
                 fail(
-                    f"docs/{HOME} does not link docs/{page}. The home page is the only "
-                    "index a person reads — a page missing from it exists for an agent "
-                    "reading llms.txt and for nobody else."
+                    f"{where} does not link docs/{page}. The home page and the overview of "
+                    "the section a page sits in are the indexes a person reads — a page "
+                    "missing from them exists for an agent reading llms.txt and for nobody else."
                 )
-        for page in sorted(linked - seen):
-            fail(
-                f"docs/{HOME} links {page}, which is not in mkdocs.yml `nav:` "
-                "(renamed or removed)."
-            )
+        for index, linked in links.items():
+            for page in sorted(linked - seen):
+                fail(
+                    f"docs/{index} links {page}, which is not in mkdocs.yml `nav:` "
+                    "(renamed or removed)."
+                )
     else:
         fail(f"docs/{HOME} is missing — the home page is one of the three indexes.")
 
@@ -277,7 +364,7 @@ def main() -> int:
     print(
         f"docs index: OK ({len(nav)} pages in nav, "
         f"{len(nav) - len(LLMS_EXEMPT)} in llms.txt, "
-        f"{len(nav) - 1} linked from {HOME})"
+        f"{len(nav) - 1} linked from {HOME} or a section overview)"
     )
     return 0
 
