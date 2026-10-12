@@ -513,8 +513,9 @@ effective_budget = min(budget_base, max_budget)
   - `pro` also asks for two **block places** (2.6.10a2) beyond the block arm's
     reservation of two. They hold, in the reservation's order, records only the
     block arm reached that the reservation did not seat, and they come after
-    every other held place, so a cap that cuts held items from the end cuts them
-    first. `lite`, a call that names no mode, and the recall tool hold the
+    the keyword, far and cue seats, so a cap that cuts held items from the end
+    cuts them before those (the extra keyword places and the depth places come
+    after them). `lite`, a call that names no mode, and the recall tool hold the
     reservation's two. On development questions of a private pack of real agent
     memories, four places put more evidence records inside Pro's cap and none
     outside it; under `lite` the same four took room its 3,000 tokens did not
@@ -522,8 +523,8 @@ effective_budget = min(budget_base, max_budget)
   - Both also ask for **extra keyword places** (2.6.10a3): `pro` eight, `lite`
     one. They hold, in the keyword seat's order, more rows only the keyword
     arms found, but only rows the quality gate refused on their rrf score,
-    never one it admitted and the count cut, and they come after every other
-    held place, the block places included. Their seat numbers follow the
+    never one it admitted and the count cut, and they come after every held
+    place but the depth places, the block places included. Their seat numbers follow the
     keyword seat's. Where no row is keyed on rrf, as under rsf or confidence,
     they hold nothing and a mode's answer is unchanged; a row the vector arm
     returned is not keyword-only and stays out even when its backend gave it no
@@ -533,6 +534,28 @@ effective_budget = min(budget_base, max_budget)
     3,600 characters one place showed every evidence record on 14 more
     questions and on 4 fewer, because `whole` puts a short seated record ahead
     of longer records' passages.
+  - `pro` also asks for eight **depth places** (2.6.10a4). Most evidence Pro still
+    missed on development questions lay past the candidate depth, and
+    simply ranking the window deeper broke the fused order. So the recall is
+    ranked a second time at the propagation seat's depth (100) -- the same arms,
+    scoring, gate, autocut and prior -- and the rows of that order the gate
+    admitted and the answer does not hold are eligible: those holding more of
+    the question's parts first, ties in the deeper order. They come after every
+    other held place, so a cap that cuts held items from the end cuts them
+    first, and the window keeps every row and place it had. Each carries
+    `match_reason.signal: "depth"` with its seat and its rank among the eligible
+    rows; the deeper ranking is one more fetch on the recall's ledger. They work
+    under rsf with confidence too: on development questions of the private pack,
+    eight places showed every evidence record on more Pro answers than
+    2.6.10a3, by 2.07 points under rrf (22 questions up, 1 down) and 2.59 under
+    rsf with confidence (39 up, none down), against four places or the deeper
+    order alone. The keyword arms, most of a ranking's time on a large store,
+    are read once for both rankings, so the second one adds the vector arm's
+    read and the fusion: on 100,000 records on an Intel N150, Pro's median rose
+    from 1.20 to 1.36 seconds, about 1.13 to 1.17 times, against 1.7 times when
+    both rankings read every arm. `lite` asks for none: one place gained 0.27
+    and 0.70 points for a second ranking of its own. A call that names no mode,
+    and the recall tool, hold no depth place.
   - Both leave out what a reader of a sized answer does not act on: items lose
     `ranges`, an item whose only claim repeats its head carries that claim's
     `as_of` instead of `claims`, and the envelope loses `bounds`,

@@ -219,13 +219,25 @@ MODE_KEYWORD_SEATS = 1
 # outside it, while Lite's 3,000 tokens had no room for them. Lite asks for none.
 MODE_EXTRA_BLOCK_SEATS = {MODE_PRO: 2}
 # Both also ask for extra keyword places (memory_handlers._do_recall) for rows only the
-# keyword arms found that the gate refused on their rrf score, after every other held
-# place. On development questions of the private pack, under rrf, eight places put 44 more
+# keyword arms found that the gate refused on their rrf score, after every held place
+# but the depth places. On development questions of the private pack, under rrf, eight places put 44 more
 # evidence records inside Pro's cap than 2.6.10a2 and 3 fewer, and 10, 12 or 15 gained
 # nothing measurable over eight; at Lite's 3,600 characters one place showed every evidence
 # record on 14 more questions and on 4 fewer. Where no row is keyed on rrf they hold
 # nothing, so under rsf or confidence a mode's answer is unchanged.
 MODE_EXTRA_KEYWORD_SEATS = {MODE_PRO: 8, MODE_LITE: 1}
+# Pro also asks for eight depth places (memory_handlers._do_recall): rows a deeper ranking
+# of the same recall admits that the candidate depth left out, after every other held
+# place. On development questions of the private pack, most evidence Pro still missed
+# lay past the candidate depth, and ranking the window deeper broke the fused order; eight
+# held places showed every evidence record on more Pro answers under rrf (+2.07 points
+# against 2.6.10a3, 22 questions up and 1 down) and under rsf with confidence (+2.59, 39
+# up and none down), against 4 places or the deeper order alone. The deeper ranking is a
+# second fetch of the vector arm (the keyword arms are read once, memory_handlers
+# _keyword_reads): on 100,000 records on an Intel N150, Pro's median rose from 1.20 to
+# 1.36 s, about 1.13 to 1.17 times. Lite asks for none: one place gained little there
+# (+0.27 and +0.70 points) for a second ranking of its own.
+MODE_DEPTH_SEATS = {MODE_PRO: 8}
 PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10
 #: error of a mode call whose smallest possible response exceeds the cap.
@@ -1588,6 +1600,7 @@ async def do_reconstruct(
         **({"keyword_seats": MODE_KEYWORD_SEATS} if mode else {}),
         **({"extra_block_seats": MODE_EXTRA_BLOCK_SEATS[mode]} if mode in MODE_EXTRA_BLOCK_SEATS else {}),
         **({"extra_keyword_seats": MODE_EXTRA_KEYWORD_SEATS[mode]} if mode in MODE_EXTRA_KEYWORD_SEATS else {}),
+        **({"depth_seats": MODE_DEPTH_SEATS[mode]} if mode in MODE_DEPTH_SEATS else {}),
         deep=deep,
         channel=channel,
         project_id=project_id,
@@ -1917,7 +1930,7 @@ async def do_reconstruct(
             len(items), held_returned, effective_count,
             blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
             + (MODE_KEYWORD_SEATS if mode else 0) + MODE_EXTRA_BLOCK_SEATS.get(mode, 0)
-            + MODE_EXTRA_KEYWORD_SEATS.get(mode, 0),
+            + MODE_EXTRA_KEYWORD_SEATS.get(mode, 0) + MODE_DEPTH_SEATS.get(mode, 0),
         )
         if held_returned:
             # Beside the window, not in it: returned_count may exceed effective_count by this.

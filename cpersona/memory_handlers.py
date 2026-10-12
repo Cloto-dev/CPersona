@@ -601,7 +601,52 @@ async def _once_embedded(slot: _QueryVectorSlot, run):
     return await run(slot[0])
 
 
+# The keyword arms' reads within one recall that holds depth places (do_recall sets it,
+# _lexical_arms fills it). The depth places rank the recall a second time, deeper, and on
+# a large store the keyword arms are most of a ranking's time: an FTS query scores every
+# matching row before it orders them, so reading 100 costs about what reading 20 does.
+# Within such a recall the arms are therefore read once, at the deeper depth, and each
+# ranking takes the first `depth` rows of that read, in a fresh copy (the fusions write
+# their scores onto the rows). The first `depth` rows of a deeper read are the rows a read
+# at `depth` returns, in the same order: the queries order by bm25 and stop at the limit
+# (the order-only ranking takes the rare phrases' order only when it equals the whole
+# expression's), and rsf normalizes after the cut. None outside such a recall.
+_keyword_reads: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "cpersona_keyword_reads", default=None
+)
+
+
 async def _lexical_arms(
+    db,
+    agent_id: str,
+    query: str,
+    depth: int,
+    channel: str,
+    project_id: str | None,
+    source_id: str,
+    lexical_terms: list[str] | None,
+    rank_only: bool = False,
+) -> tuple[list[dict], list[dict]]:
+    """The two FTS arms of a fusion: read once per recall when the recall holds depth
+    places (``_keyword_reads``), otherwise as ``_lexical_arms_read`` reads them."""
+    reads = _keyword_reads.get()
+    if reads is None:
+        return await _lexical_arms_read(
+            db, agent_id, query, depth, channel, project_id, source_id, lexical_terms, rank_only
+        )
+    key = (agent_id, query, channel, project_id, source_id, tuple(lexical_terms or ()), rank_only)
+    held = reads.get(key)
+    if held is None or held[0] < depth:
+        read_depth = max(depth, reads["depth"])
+        held = (read_depth, await _lexical_arms_read(
+            db, agent_id, query, read_depth, channel, project_id, source_id, lexical_terms, rank_only
+        ))
+        reads[key] = held
+    episodes, memories = held[1]
+    return [dict(r) for r in episodes[:depth]], [dict(r) for r in memories[:depth]]
+
+
+async def _lexical_arms_read(
     db,
     agent_id: str,
     query: str,
@@ -1716,6 +1761,15 @@ def _propagation_applies(requested: bool, query: str) -> bool:
     return bool(requested) and RECALL_MODE in {"rrf", "rsf"} and bool(query.strip())
 
 
+def _depth_places_apply(seats: int, query: str) -> bool:
+    """Whether a recall holds depth places: asked for, a fusion mode, a real query.
+
+    The same conditions as the propagation seat's, for the same reasons: the cascade
+    fuses nothing, so it has no deeper order, and an empty query is a recency listing.
+    """
+    return seats > 0 and RECALL_MODE in {"rrf", "rsf"} and bool(query.strip())
+
+
 def _far_seats_apply(query: str) -> bool:
     """Whether a recall runs the far scan: switched on, and a query to rank by meaning.
 
@@ -1736,6 +1790,52 @@ def _vector_arm_floor(agent_id: str) -> float:
     """
     threshold = vector._get_vector_threshold(agent_id)
     return threshold * RRF_THRESHOLD_FACTOR if RECALL_MODE in {"rrf", "rsf"} else threshold
+
+
+async def _deeper_order(
+    db,
+    p,
+    *,
+    agent_id: str,
+    query: str,
+    depth: int,
+    limit: int,
+    deep: bool,
+    channel: str,
+    exclude_set: set[str],
+    project_id: str | None,
+    source_id: str,
+    lexical_terms: list[str] | None,
+    gate,
+    gate_signal,
+    effective_min: float,
+    memory_count: int,
+    pure_recency: bool,
+    prior_span,
+) -> list[dict]:
+    """The same recall ranked again at `depth`: the ordinary arms, the scoring, the gate,
+    autocut and the prior, exactly as the window was. The caller suspends the trace, so
+    the trace's arms, fusion and gate stay the answer's. Used by the propagation seat and
+    the depth places.
+    """
+    order = await p.fusion.retrieve(
+        db, agent_id=agent_id, query=query, depth=depth, limit=limit, deep=deep,
+        channel=channel, exclude_set=exclude_set, project_id=project_id,
+        source_id=source_id, query_vec_out=[], lexical_terms=lexical_terms,
+    )
+    order, *_ = await p.scoring.score(
+        db, agent_id, order, deep, project_id=project_id, channel=channel, query=query
+    )
+    order = _apply_quality_gate(
+        order, effective_min, memory_count, gate=gate, gate_signal=gate_signal,
+        pure_recency=pure_recency,
+    )
+    if AUTOCUT_ENABLED:
+        order = _autocut(order)
+    admitted = list(order)
+    order = p.prior.apply(order, prior_span, datetime.now(timezone.utc))
+    providers.check_reorder("prior.apply", admitted, order)
+    return order
 
 
 async def _propagation_seat_rows(
@@ -1781,23 +1881,13 @@ async def _propagation_seat_rows(
         return [], note
     with recall_trace.suspended():
         async with connection() as db:
-            order = await p.fusion.retrieve(
-                db, agent_id=agent_id, query=query, depth=deeper, limit=limit, deep=deep,
+            order = await _deeper_order(
+                db, p, agent_id=agent_id, query=query, depth=deeper, limit=limit, deep=deep,
                 channel=channel, exclude_set=exclude_set, project_id=project_id,
-                source_id=source_id, query_vec_out=[], lexical_terms=lexical_terms,
+                source_id=source_id, lexical_terms=lexical_terms, gate=gate,
+                gate_signal=gate_signal, effective_min=effective_min,
+                memory_count=memory_count, pure_recency=pure_recency, prior_span=prior_span,
             )
-            order, *_ = await p.scoring.score(
-                db, agent_id, order, deep, project_id=project_id, channel=channel, query=query
-            )
-            order = _apply_quality_gate(
-                order, effective_min, memory_count, gate=gate, gate_signal=gate_signal,
-                pure_recency=pure_recency,
-            )
-            if AUTOCUT_ENABLED:
-                order = _autocut(order)
-            admitted = list(order)
-            order = p.prior.apply(order, prior_span, datetime.now(timezone.utc))
-            providers.check_reorder("prior.apply", admitted, order)
             candidates = [
                 r for r in order
                 if isinstance(r.get("id"), int) and r["id"] > 0 and rid_of(r) not in present
@@ -2188,6 +2278,7 @@ async def do_recall(
     keyword_seats: int = 0,
     extra_block_seats: int = 0,
     extra_keyword_seats: int = 0,
+    depth_seats: int = 0,
     providers_: providers.Providers | None = None,
     query_vec_out: list | None = None,
 ) -> dict:
@@ -2222,7 +2313,8 @@ async def do_recall(
     propagation_seat = _propagation_applies(propagation_seat, query)
     try:
         ledger = budget.Ledger.for_recall(
-            iteration_budget, propagation=propagation_seat, far=_far_seats_apply(query)
+            iteration_budget, propagation=propagation_seat, far=_far_seats_apply(query),
+            depth=_depth_places_apply(depth_seats, query),
         )
     except ValueError as exc:
         return error_response(str(exc), messages=[])
@@ -2246,10 +2338,11 @@ async def do_recall(
         **({"keyword_seats": keyword_seats} if keyword_seats else {}),
         **({"extra_block_seats": extra_block_seats} if extra_block_seats else {}),
         **({"extra_keyword_seats": extra_keyword_seats} if extra_keyword_seats else {}),
+        **({"depth_seats": depth_seats} if depth_seats else {}),
         **({"query_vec_out_": query_vec_out} if query_vec_out is not None else {}),
     )
     if not trace:
-        return await _do_recall(agent_id, query, limit, **kwargs)
+        return await _recall_reading_keywords_once(agent_id, query, limit, **kwargs)
     from cpersona import __version__
     from cpersona import utils as _utils
 
@@ -2273,6 +2366,7 @@ async def do_recall(
         **({"keyword_seats": keyword_seats} if keyword_seats else {}),
         **({"extra_block_seats": extra_block_seats} if extra_block_seats else {}),
         **({"extra_keyword_seats": extra_keyword_seats} if extra_keyword_seats else {}),
+        **({"depth_seats": depth_seats} if depth_seats else {}),
     })
     # A traced recall names the model that produced its vectors as the backend reports
     # it. Asking is bounded by generation's refresh interval and only a traced call asks.
@@ -2284,7 +2378,7 @@ async def do_recall(
     })
     token = rec.activate()
     try:
-        result = await _do_recall(agent_id, query, limit, **kwargs)
+        result = await _recall_reading_keywords_once(agent_id, query, limit, **kwargs)
     finally:
         rec.deactivate(token)
     # The coverage ledger (docs/RECALL_PROCESS_DESIGN.md §1.5): which parts of the
@@ -2300,6 +2394,17 @@ async def do_recall(
     rec.coverage(cov, (time.perf_counter() - started) * 1000)
     result["trace"] = rec.finish()
     return result
+
+
+async def _recall_reading_keywords_once(agent_id: str, query: str, limit: int, **kwargs) -> dict:
+    """_do_recall, with the keyword arms read once when it holds depth places (``_keyword_reads``)."""
+    if not _depth_places_apply(kwargs.get("depth_seats", 0), query):
+        return await _do_recall(agent_id, query, limit, **kwargs)
+    token = _keyword_reads.set({"depth": propagation.DEPTH})
+    try:
+        return await _do_recall(agent_id, query, limit, **kwargs)
+    finally:
+        _keyword_reads.reset(token)
 
 
 async def _do_recall(
@@ -2321,6 +2426,7 @@ async def _do_recall(
     keyword_seats: int = 0,
     extra_block_seats: int = 0,
     extra_keyword_seats: int = 0,
+    depth_seats: int = 0,
     query_vec_out_: list | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
@@ -2379,7 +2485,9 @@ async def _do_recall(
     # What this recall may spend, declared before it spends any (cpersona/budget.py).
     ledger = (
         ledger_ if ledger_ is not None
-        else budget.Ledger.for_recall(propagation=propagation_seat, far=far_on)
+        else budget.Ledger.for_recall(
+            propagation=propagation_seat, far=far_on, depth=_depth_places_apply(depth_seats, query)
+        )
     )
     # Each stage's input is recorded on a traced recall (recall_trace.stage_input).
     trace_rec = recall_trace.current()
@@ -2896,8 +3004,9 @@ async def _do_recall(
     # The extra block places: `extra_block_seats` more places for records the block arm
     # reached, held only when a caller asks for them (reconstruct does under mode "pro";
     # the recall tool never does), filled in the reservation's order with the rows it
-    # did not seat. They come after every other held place, so a reader's budget that
-    # cuts the held rows from the end cuts these before the keyword, far and cue seats.
+    # did not seat. They come after the keyword, far, cue and propagation seats, so a reader's
+    # budget that cuts the held rows from the end cuts these before those seats (and after
+    # the extra keyword places and the depth places, which follow).
     # Like the reservation they displace nothing and are not credited (bug-453).
     if extra_block_seats > 0 and block_spare:
         present = {_rid_of(r) for r in results}
@@ -2915,9 +3024,9 @@ async def _do_recall(
     # and stays out even when its backend gave it no score, which leaves the gate keying
     # it on rrf. The rows that hold more of the question's parts sit first, ties in the
     # gate's order, as for the keyword seats, and their seat numbers follow those seats'.
-    # They come after every other held place, the extra block places included, so a
-    # reader's budget that cuts held rows from the end cuts these first. They displace
-    # nothing, are not credited (bug-453), and none follow a gate rescue.
+    # They come after every held place but the depth places, the extra block places
+    # included, so a reader's budget that cuts held rows from the end cuts these before
+    # those. They displace nothing, are not credited (bug-453), and none follow a gate rescue.
     if extra_keyword_seats > 0 and not gate_fallback:
         present = {_rid_of(r) for r in results}
         passed_gate = {_rid_of(r) for r in admitted}
@@ -2940,10 +3049,56 @@ async def _do_recall(
         if trace_rec is not None:
             trace_rec.reservation(seated, "keyword")
 
+    # The depth places: `depth_seats` places for rows a deeper ranking of the same recall
+    # admits, held only when a caller asks for them (reconstruct does under mode "pro"; the
+    # recall tool never does). The recall is ranked again at the propagation seat's depth
+    # (propagation.DEPTH) -- the arms, the scoring, the gate, autocut and the prior as the
+    # window was -- and the rows of that order the answer does not hold are eligible: rows
+    # the gate admitted that the candidate depth left out, which the window's own order
+    # never sees. Of these, the rows that hold more of the question's parts sit first, ties
+    # in the deeper order, as for the keyword places. They come after every other held
+    # place, so a reader's budget that cuts held rows from the end cuts these first, and
+    # the window keeps every row and place it had. They are not credited (bug-453), none
+    # follow a gate rescue, and the deeper ranking is one more fetch on the ledger.
+    if _depth_places_apply(depth_seats, query) and not gate_fallback:
+        ledger.spend(budget.DEPTH_FETCH)
+        present = {_rid_of(r) for r in results}
+        deeper = _clamp_limit(max(propagation.DEPTH, depth), RECALL_LIBRARY_MAX_LIMIT)
+        with recall_trace.suspended():
+            async with connection() as db:
+                order = await _deeper_order(
+                    db, p, agent_id=agent_id, query=query, depth=deeper, limit=limit, deep=deep,
+                    channel=channel, exclude_set=exclude_set, project_id=project_id,
+                    source_id=source_id, lexical_terms=lexical_terms, gate=gate,
+                    gate_signal=gate_signal, effective_min=effective_min,
+                    memory_count=memory_count, pure_recency=pure_recency, prior_span=prior_span,
+                )
+        deeper_rows = [
+            r for r in order if isinstance(r.get("id"), int) and r["id"] > 0 and _rid_of(r) not in present
+        ]
+        for rank, r in enumerate(deeper_rows, 1):
+            r["_depth_rank"] = rank
+        if deeper_rows:
+            normalized = coverage.normalize(query)
+            wanted = [normalized[a:b] for a, b, _ in coverage.parts(normalized)[: coverage.MAX_PARTS]]
+            deeper_rows = sorted(
+                deeper_rows,
+                key=lambda row: -sum(1 for part in wanted if part in coverage.normalize(row.get("content") or "")),
+            )
+        seated = deeper_rows[:depth_seats]
+        for place, r in enumerate(seated, 1):
+            r["_depth_seat"] = place
+        results.extend(seated)
+        if trace_rec is not None:
+            trace_rec.reservation(seated, "depth")
+            trace_rec.set("depth_places", {"depth": deeper, "candidates": len(deeper_rows),
+                                           "seated": [recall_trace.ref_of(r) for r in seated]})
+            trace_rec.mark("depth_places")
+
     providers.check_recall_count(
         len(results), limit, cue.MAX_SEATS + (propagation.SEATS if propagation_seat else 0),
         blocks.BLOCK_RESERVATION + (far_seats.SEATS if far_on else 0) + keyword_seats + extra_block_seats
-        + extra_keyword_seats,
+        + extra_keyword_seats + depth_seats,
     )
     # The one hypothesis a recall evaluates today: the order its stages produced.
     ledger.spend(budget.ITERATION)
@@ -3032,6 +3187,13 @@ async def _do_recall(
                 msg["match_reason"]["rrf"] = r["_rrf_score"]
             if r.get("_rsf_score") is not None:
                 msg["match_reason"]["rsf"] = r["_rsf_score"]
+        elif r.get("_depth_seat"):
+            # A depth place. Its row passed the gate on the deeper ranking, not on this
+            # one's candidate depth, so it says where that ranking put it among the rows
+            # the answer did not hold.
+            msg["match_reason"] = {
+                "signal": "depth", "admission": "reservation", "seat": r["_depth_seat"], "depth_rank": r["_depth_rank"],
+            }
         elif r.get("_propagation_seat"):
             # The propagation seat (cpersona/propagation.py). Its row passed the gate
             # on the deeper ranking, not on this one's count, so it says which places
@@ -3091,6 +3253,8 @@ async def _do_recall(
         r.pop("_rrf_score", None)
         r.pop("_lexical_only", None)
         r.pop("_keyword_seat", None)
+        r.pop("_depth_seat", None)
+        r.pop("_depth_rank", None)
         r.pop("_rsf_score", None)
         r.pop("_prior", None)
         r.pop("_resolved", None)
