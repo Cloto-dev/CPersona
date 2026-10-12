@@ -69,7 +69,14 @@ theme:
   # first, and extending that check to cover the instant path.
 
 plugins:
-  - search
+  - search:
+      # Splits a query where the script changes: kanji or kana next to katakana,
+      # and Japanese next to Latin letters or digits. The index already segments
+      # Japanese text into words; a query is only split on the separator, so
+      # "埋め込みサーバー" was one term that matched nothing while
+      # "埋め込み サーバー" found 39 pages (measured 2026-10-12). The first
+      # alternative is the default the site used before.
+      separator: '[\s\-]+|(?<=[\u3040-\u309f\u4e00-\u9fff])(?=[\u30a0-\u30ff])|(?<=[\u30a0-\u30ff])(?=[\u3040-\u309f\u4e00-\u9fff])|(?<=[\u3040-\u30ff\u4e00-\u9fff])(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])(?=[\u3040-\u30ff\u4e00-\u9fff])'
   - i18n:
       docs_structure: suffix
       fallback_to_default: true
@@ -153,6 +160,7 @@ plugins:
 hooks:
   - scripts/docs_version.py
   - scripts/docs_search_rank.py
+  - scripts/docs_ja_lines.py
 
 # Sidebar sub-category labels only. Kept as a stylesheet rather than an
 # override so that the theme keeps owning the markup — this file changes one
@@ -192,10 +200,10 @@ extra_css:
 
 # Equations in the research notes. MathJax is fetched from unpkg at view time,
 # like mermaid below, and degrades to the raw TeX when it fails — readable,
-# unlike a diagram that does not render.
+# unlike a diagram that does not render. javascripts/mathjax.js fetches it only
+# on a page that has an equation.
 extra_javascript:
   - javascripts/mathjax.js
-  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 markdown_extensions:
   - admonition
