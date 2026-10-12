@@ -287,6 +287,12 @@
 .cp-notice-heading {
   font-weight: 650;
 }
+.cp-notice-note,
+.md-typeset .cp-notice p.cp-notice-note {
+  margin: 0.5rem 0 0;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.56rem;
+}
 .cp-notice-link,
 .md-typeset .cp-notice-link {
   color: var(--md-typeset-a-color);

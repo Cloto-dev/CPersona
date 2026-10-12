@@ -94,6 +94,7 @@ def test_wide_screens_put_it_under_the_contents_and_narrow_ones_at_the_end():
         "Support CPersona's development",
         "CPersona is free, open-source software.",
         "Sponsor on GitHub",
+        "This notice is loaded from cpersona.cloto.dev, which counts page views and stores nothing about you.",
     ]
     assert wide["box"]["parts"][3]["href"] == "https://github.com/sponsors/Cloto-dev"
     assert wide["box"]["aria"] == "From the CPersona project"
@@ -121,3 +122,12 @@ def test_the_theme_loads_the_script():
     text = (REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8")
     block = text[text.index("\nextra_javascript:\n") :].split("\n\n", 1)[0]
     assert "  - javascripts/notice.js" in block
+
+
+def test_every_notice_says_that_it_counts_the_view_in_the_page_language():
+    """Showing the notice is what counts the view, so the notice itself says so."""
+    ja = _run(path="/CPersona/ja/faq/", lang="ja")["box"]["parts"][-1]
+    en = _run()["box"]["parts"][-1]
+    assert ja["cls"] == en["cls"] == "cp-notice-note"
+    assert "cpersona.cloto.dev" in ja["text"] and "表示回数" in ja["text"] and "保存しません" in ja["text"]
+    assert "cpersona.cloto.dev" in en["text"] and "counts page views" in en["text"] and "nothing about you" in en["text"]

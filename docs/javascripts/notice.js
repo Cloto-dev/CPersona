@@ -7,6 +7,11 @@
   var ENDPOINT = "https://cpersona.cloto.dev/api/notice";
   var HOST = "cloto-dev.github.io";
   var WIDE = "(min-width: 60em)";
+  // Said under every notice, since showing it is what counts the view.
+  var NOTE = {
+    en: "This notice is loaded from cpersona.cloto.dev, which counts page views and stores nothing about you.",
+    ja: "このお知らせは cpersona.cloto.dev から読み込み、ページの表示回数だけを数えています。あなたに関する情報は保存しません。"
+  };
   if (location.hostname !== HOST || !window.fetch || !window.matchMedia) return;
   var lang = (document.documentElement.getAttribute("lang") || "").slice(0, 2) === "ja" ? "ja" : "en";
 
@@ -37,6 +42,7 @@
     box.appendChild(part("p", "cp-notice-heading", n.heading));
     box.appendChild(part("p", "cp-notice-text", String(n.text || "")));
     box.appendChild(link);
+    box.appendChild(part("p", "cp-notice-note", NOTE[lang]));
     place(box);
     var wide = window.matchMedia(WIDE);
     if (wide.addEventListener) wide.addEventListener("change", function () { place(box); });
