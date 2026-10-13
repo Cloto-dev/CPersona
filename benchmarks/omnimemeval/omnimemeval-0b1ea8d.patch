@@ -12,6 +12,38 @@ index c8b9f16..c7aaf50 100644
  }
  
  SUPPORTED_LIBS = list(_LIB_CLIENT_REGISTRY.keys())
+diff --git a/scripts/locomo/locomo_ingestion.py b/scripts/locomo/locomo_ingestion.py
+index 9d17d10..f8ee2ab 100644
+--- a/scripts/locomo/locomo_ingestion.py
++++ b/scripts/locomo/locomo_ingestion.py
+@@ -185,6 +185,14 @@ def ingest_session(client, session, frame, metadata):
+         client.add(speaker_a_messages, speaker_a_user_id,
+                     session_key=session_key)
+ 
++    # ── CPersona: one store per conversation ─────────────────────────────
++    # The record id must be unique across conversations and versions: a store
++    # with an id already present is skipped as a duplicate.
++    elif frame in ("cpersona", "cpersona263"):
++        inject_time(speaker_a_messages, dt, frame)
++        client.add(speaker_a_messages, speaker_a_user_id,
++                   session_key=f"{speaker_a_user_id}:{session_key}")
++
+     # ── Default: dual-speaker with inject_time ───────────────────────────
+     else:
+         inject_time(speaker_a_messages, dt, frame)
+diff --git a/scripts/locomo/locomo_search.py b/scripts/locomo/locomo_search.py
+index 0fcbe55..fb841ce 100644
+--- a/scripts/locomo/locomo_search.py
++++ b/scripts/locomo/locomo_search.py
+@@ -267,6 +267,8 @@ def search_query(client, query, metadata, frame, top_k=20):
+         "memorylake": generic_text_search,
+         "backboard": backboard_search,
+         "mem9": generic_text_search,
++        "cpersona": shared_conv_search,
++        "cpersona263": shared_conv_search,
+     }
+     search_fn = _search_dispatch.get(frame)
+     if search_fn is None:
 diff --git a/scripts/utils/ingest_helpers.py b/scripts/utils/ingest_helpers.py
 index 7d5365b..3cedf44 100644
 --- a/scripts/utils/ingest_helpers.py
