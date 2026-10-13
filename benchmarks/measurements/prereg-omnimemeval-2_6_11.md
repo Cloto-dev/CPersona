@@ -130,6 +130,25 @@ search, this registration is amended first.
   A pass therefore says the candidate is not clearly worse here. It does not
   say the candidate is not worse.
 
+### Recorded before the LongMemEval-S test
+
+Added by a later commit, before any test question was searched at the
+candidate commit.
+
+- **The scripts**:
+  - [`v2_6_11_lme_build.py`](../omnimemeval/v2_6_11_lme_build.py) writes the
+    answer inputs: the questions whose context at `73d6bca` differs from
+    2.6.10a2's recorded one, and the candidate's changed questions.
+  - [`v2_6_11_lme_analyze.py`](../omnimemeval/v2_6_11_lme_analyze.py) applies
+    the net and the cap. It also checks that every context the answers stand
+    on is the context the two searches returned.
+  - 2.6.10a2's recorded answers are read as the exploration recorded them.
+    Read that way, they total 354, the published figure.
+- **A dry run on recorded data.** With 2.6.9 in place of 2.6.10 and
+  2.6.10a2's exploration run in place of the candidate, the analysis gives
+  354 against 354, 8 lost and 8 gained: the published exploration.
+- **The interpreter**: Python 3.11.15, as in the 2.6.10 check.
+
 ## LoCoMo
 
 - **Data**: `locomo10.json` (sha256
