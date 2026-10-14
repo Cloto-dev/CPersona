@@ -259,6 +259,28 @@ def current_principal() -> Principal | None:
     return _current_principal.get()
 
 
+def caller_holds_every_agent(required: int = PERM_WRITE) -> bool:
+    """Whether the current caller may change state every agent shares.
+
+    For a handler whose own call is authorised on one agent but whose side
+    effect could reach a file holding every agent's records: it asks this
+    before touching that file, so the narrow grant that admitted the call does
+    not also authorise the shared change. With no ACL there is no narrower
+    grant (the process serves one operator), so the answer is yes. A
+    per-subject client is never admitted to an all-agents demand by the guard,
+    so it never holds every agent here either. No principal is a wiring
+    regression the guard already fails closed on; this fails closed too.
+    """
+    config = _active_config
+    if config is None:
+        return True
+    principal = _current_principal.get()
+    if principal is None or principal.client_id in config.per_subject_clients:
+        return False
+    grants = config.grants_by_client.get(principal.client_id, {})
+    return effective_permission(grants, WILDCARD) >= required
+
+
 # The alias ledger (docs/OAUTH_DESIGN.md §12), active only when some client row
 # declared per_subject. Process-wide like the config above, and activated next
 # to it at startup — a per_subject boundary with no ledger to resolve against
@@ -406,7 +428,11 @@ def _file_io_demands(key: str, file_demands: Demands) -> Demands:
 
 
 def _selected_cross_agent_fixes(args: dict) -> list[str]:
-    """Which of the health checks this call will run repair rows outside its agent.
+    """Which of the health checks this call will run repair beyond its agent.
+
+    A repair reaches beyond it when it writes another agent's rows or changes
+    state every agent shares: a file holding all of them, or the mode of the
+    database the operator chose for the whole deployment.
 
     ``checks`` absent or empty means the whole registry, which is how the
     unqualified ``check_health(fix=True)`` reaches the cross-agent repair.
@@ -444,7 +470,7 @@ def _health_demands(args: dict) -> list[tuple[str, int]]:
 
 
 _health_demands._sweep_cause = lambda args: (  # type: ignore[attr-defined]
-    "this call runs a repair that writes rows under every agent ("
+    "this call runs a repair whose effect reaches every agent ("
     + ", ".join(_selected_cross_agent_fixes(args))
     + "), so no agent_id narrows it — naming the checks you want in `checks` does"
     if _selected_cross_agent_fixes(args)

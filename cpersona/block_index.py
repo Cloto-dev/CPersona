@@ -255,6 +255,9 @@ async def build_block_index(path: str | None = None, width: int | None = None) -
     from cpersona.database import read_snapshot
 
     out = path or index_path()
+    # Before the snapshot is opened: a purge that drops the file after this may
+    # have committed after the snapshot, and the rows it removed are in it.
+    purges_at_start = vector_index.purges()
     generation = await start_logging()
     if generation is None:
         return {
@@ -271,6 +274,9 @@ async def build_block_index(path: str | None = None, width: int | None = None) -
         bits_tmp = fileperms.temp_beside(out, ".bits.tmp")
         async with read_snapshot() as snap:
             header = await _write_rows(snap, tmp, bits_tmp, width)
+        if vector_index.purged_since(purges_at_start):
+            # The temp files go in the `finally` below.
+            return {"built": False, "reason": vector_index.SUPERSEDED_REASON}
         os.replace(tmp, out)
     except _Declined as exc:
         return {"built": False, "reason": str(exc)}
@@ -869,7 +875,10 @@ async def build_task(payload: dict) -> str:
         return "block index is off; nothing built"
     result = await build_block_index()
     if not result["built"]:
-        _declined_until = time.monotonic() + _RETRY_AFTER_DECLINE_SECONDS
+        # A build discarded because a purge overtook it is not declined: the next
+        # one reads the database as the purge left it, so the queue need not wait.
+        if result["reason"] != vector_index.SUPERSEDED_REASON:
+            _declined_until = time.monotonic() + _RETRY_AFTER_DECLINE_SECONDS
         return f"block index not built: {result['reason']}"
     return (
         f"block index built: {result['count']} rows of width {result['width']}, "

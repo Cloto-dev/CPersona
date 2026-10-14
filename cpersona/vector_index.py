@@ -83,6 +83,41 @@ def index_path(table: str = "memories") -> str:
     return f"{config.DB_PATH}.{table}.vecindex"
 
 
+# How many agent purges have dropped the index files in this process. A build
+# reads its rows on a snapshot and publishes them afterwards; a purge that commits
+# and drops the files in between would otherwise be undone on disk, the build
+# putting the purged agent's identifiers and vectors back where the purge had just
+# removed them (bug-515). Every index file's build checks this before publishing.
+_purges = 0
+
+
+def purges() -> int:
+    """The purge count a build reads before it reads any row."""
+    return _purges
+
+
+def note_purge() -> None:
+    """Called by a purge before it drops the index files, so in-flight builds discard theirs."""
+    global _purges
+    _purges += 1
+
+
+def purged_since(purges_at_start: int) -> bool:
+    """Whether a purge dropped the index files since a build read ``purges_at_start``.
+
+    A build asks this immediately before its ``os.replace``, with no await between
+    the two, so on the event loop the purge (which counts and unlinks without
+    awaiting either) lands wholly before or wholly after. A build that answers yes
+    discards its file: the rows it holds may include a purged agent's, and the
+    next build reads the database as the purge left it.
+    """
+    return _purges != purges_at_start
+
+
+#: What a build that was discarded by a purge answers instead of a file.
+SUPERSEDED_REASON = "an agent purge dropped the index files while this build read its rows; build again"
+
+
 @dataclass(frozen=True)
 class VectorIndex:
     """A validated index file, memory-mapped (read into memory on Windows, see _maps_files)."""
@@ -329,6 +364,9 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     spelled the way the isolation gate requires one to be spelled.
     """
     out = path or index_path(table)
+    # Read before any row: a purge counted after this may have committed after the
+    # rows below were read, and its files must not come back with them.
+    purges_at_start = purges()
     plan = await plan_rows(db, table)
     if isinstance(plan, dict):
         return plan
@@ -393,6 +431,9 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
             os.unlink(tmp)
         raise
 
+    if purged_since(purges_at_start):
+        os.unlink(tmp)
+        return {"built": False, "reason": SUPERSEDED_REASON}
     os.replace(tmp, out)
     return {
         "built": True,

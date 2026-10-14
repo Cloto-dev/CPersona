@@ -304,6 +304,16 @@ index is a projection of it and is treated the way a cache is treated: not
 backed up, never repaired, safe to delete at any time. If anything about it
 looks wrong, delete the file and build again.
 
+`delete_agent_data` removes it along with the rows it held, but only when the
+caller's grant covers every agent (always, with no ACL): the file holds every
+agent's rows, so a grant on one agent does not reach it. After a purge under
+a grant on one agent the file stays until its next build, and the purged rows are not
+served from it in the meantime, because recall reads every candidate back from
+the database. A build the server was running when a purge removed the file
+discards its output rather than put the purged rows back. The `build` command
+runs in a process of its own and is not ordered against a purge, so run it
+again if a purge happened while it ran.
+
 **Building it** is an operator action. Nothing in the running server builds or
 refreshes the index. The entry point is a command, made for a cron job or a
 systemd timer:
@@ -344,7 +354,7 @@ described in [Binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md): the far
 seats, when turned on, and a time cue's search of its period past the scan
 window, which since 2.6.4 uses the file by default when it exists. It is
 handled like the contiguous index: never backed up, never repaired, safe to
-delete, and removed by a purge along with the rows it held. With both files,
+delete, and removed by a purge under the same rule. With both files,
 `build` exits 0 only when both were built. `status` reports the coarse index
 under `coarse` without changing its own exit code, because nothing reads the
 coarse index unless a setting asks for it.
@@ -410,7 +420,7 @@ derived file, `<database>.blocks.blockindex`, instead of reading up to 250,000
 rows out of SQLite on every recall. The answer is the same either way
 ([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)); only the time
 differs. Like the other two files it is never backed up, never repaired, safe to
-delete, and removed by a purge along with the rows it held.
+delete, and removed by a purge under the same rule.
 
 The file takes 28 bytes per block row plus one bit per dimension of the model:
 124 bytes with a 768-dimension model, 156 with a 1,024-dimension one. On Linux

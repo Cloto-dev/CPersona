@@ -144,6 +144,9 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
     if table not in COARSE_TABLES:
         return {"built": False, "reason": f"no coarse index is built for {table}"}
     out = path or index_path(table)
+    # Before any row is read, as for the contiguous index: a purge that drops the
+    # files after this must not see them republished from rows read before it.
+    purges_at_start = vector_index.purges()
     plan = await vector_index.plan_rows(db, table, extra_columns=(TIMESTAMP_EXPR,))
     if isinstance(plan, dict):
         return plan
@@ -224,6 +227,9 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
             os.unlink(tmp)
         raise
 
+    if vector_index.purged_since(purges_at_start):
+        os.unlink(tmp)
+        return {"built": False, "reason": vector_index.SUPERSEDED_REASON}
     os.replace(tmp, out)
     return {
         "built": True,

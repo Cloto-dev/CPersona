@@ -790,12 +790,20 @@ def _purge_local_vector_index(counts: dict) -> list:
     on a key this function does not recognise: the failure worth avoiding here
     is leaving residue behind, not dropping a file that is safe to drop.
 
+    Only for a caller whose grant covers every agent. Each file holds every
+    agent's rows, so dropping it moves every agent's recall onto the slower
+    read until the file is rebuilt -- a change to shared state that a grant on the
+    one agent being purged does not authorise, and one such a caller could
+    repeat at will (store a row, purge it). Under a narrower grant the files
+    stay: every reader hydrates its candidates from the database, so the purged
+    rows drop out of every answer, and the next build leaves them out of the
+    files as well.
+
     Non-DB side effect — call AFTER the delete transaction commits, like the
     calibration and remote-namespace purges beside it.
     """
-    from cpersona import block_index, coarse_index
+    from cpersona import acl, block_index, coarse_index
 
-    removed = []
     # The coarse index carries the same identifiers and a one-bit form of the same
     # vectors, so it is residue in exactly the same sense and goes with the table.
     stale = [(table, vector_index.index_path(table)) for table in vector_index.INDEXED_TABLES]
@@ -803,9 +811,23 @@ def _purge_local_vector_index(counts: dict) -> list:
     # So does the block index file: it holds the bits of both kinds' blocks, and
     # goes when either table lost rows (the second entry finds it already gone).
     stale += [(table, block_index.index_path()) for table in ("memories", "episodes")]
-    for table, path in stale:
-        if not counts.get(f"deleted_{table}", 1):
-            continue
+    stale = [(table, path) for table, path in stale if counts.get(f"deleted_{table}", 1)]
+    if not stale:
+        return []
+    if not acl.caller_holds_every_agent():
+        kept = sorted({path for _table, path in stale if os.path.exists(path)})
+        if kept:
+            logger.info(
+                "Kept the shared index files after a purge authorised on one agent; the "
+                "purged rows are no longer served and leave the files at their next build: %s",
+                ", ".join(kept),
+            )
+        return []
+    # Counted before the first unlink, so a build that read its rows before this
+    # purge committed discards its output instead of publishing it afterwards.
+    vector_index.note_purge()
+    removed = []
+    for _table, path in stale:
         try:
             os.unlink(path)
         except FileNotFoundError:

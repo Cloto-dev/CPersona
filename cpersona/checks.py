@@ -3679,11 +3679,12 @@ class Check:
         self.fix_capable = fix_capable
         self.runner = runner
         # Whether this check's repair writes rows outside the agent the call
-        # names. Almost none do; the guard that authorises `fix=true` needs to
-        # know which, because it can only demand a permission that matches the
-        # reach of the write (bug-310). Declared here, beside the runner, so a
-        # repair that widens its reach and a guard that authorises it cannot
-        # drift apart the way they did.
+        # names, or changes state every agent shares (a file holding all of
+        # them, the mode of the database). Almost none do; the guard that
+        # authorises `fix=true` needs to know which, because it can only
+        # demand a permission that matches the reach of the write (bug-310).
+        # Declared here, beside the runner, so a repair that widens its reach
+        # and a guard that authorises it cannot drift apart the way they did.
         self.cross_agent_fix = cross_agent_fix
 
 
@@ -3753,7 +3754,10 @@ HEALTH_CHECKS: list[Check] = [
     Check("block_index", "info", True, check_block_index, cross_agent_fix=True),
     Check("operating_context_parse", "warn", False, check_operating_context_parse),
     Check("operating_context_size", "info", False, check_operating_context_size),
-    Check("file_permissions", "warn", True, check_file_permissions),
+    # cross_agent_fix: its repair chmods the database, its sidecars and the index
+    # files, which hold every agent's records; their mode is the operator's choice
+    # for the whole deployment, not one agent's.
+    Check("file_permissions", "warn", True, check_file_permissions, cross_agent_fix=True),
     Check("missing_nodes", "info", True, check_missing_nodes),
     Check("missing_blocks", "info", True, check_missing_blocks),
 ]
