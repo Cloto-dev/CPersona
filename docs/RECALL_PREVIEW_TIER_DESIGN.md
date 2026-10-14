@@ -97,9 +97,12 @@ cut. So a row the preview cuts also carries the part that matched:
   is its start.
 - **Additive.** `content` is the same pure prefix it was, so `exclude_contents`
   and every consumer reading `content` see no change. The excerpt is absent
-  under `full_content=true` (every row is whole), on rows the preview shows
-  whole, and at the library layer: `do_recall` computes it only when the MCP
-  boundary asks.
+  on rows shown whole — every row under `full_content=true` that stays within
+  its budget, and rows the preview shows whole — and at the library layer:
+  `do_recall` computes it only when the MCP boundary asks. A `full_content=true`
+  row that the 200,000-character budget cuts back to the preview is a
+  preview-cut row and carries its excerpt, computed at the boundary for those
+  rows only.
 - **Deterministic.** No model is called; the query vector is the one the recall
   already embedded.
 

@@ -1096,8 +1096,26 @@ OAUTH_JWKS_URI = os.environ.get("CPERSONA_OAUTH_JWKS_URI", "")
 # `monkeypatch.setenv`. A module constant would freeze the import-time value and
 # make every one of them silently test the default.
 def transport() -> str:
-    """The configured transport name, unvalidated (``main`` rejects unknown ones)."""
+    """The configured transport name, unvalidated (``main`` rejects unknown ones
+    at startup, through :func:`validate_transport`)."""
     return os.environ.get("CPERSONA_TRANSPORT", "stdio")
+
+
+TRANSPORTS = ("stdio", "streamable-http")
+
+
+def validate_transport() -> None:
+    """Refuse an unknown transport name before anything expensive starts.
+
+    The name is all the check needs. Checked where it is used, at the end of
+    startup, a typo such as ``streamable_http`` first opened and migrated the
+    database, scheduled the calibration and the update check and started the
+    queue, and under ``Restart=always`` paid all of that on every restart to
+    reach a refusal an environment variable decides.
+    """
+    name = transport()
+    if name not in TRANSPORTS:
+        raise ValueError(f"Unknown transport: {name} (expected one of {', '.join(TRANSPORTS)})")
 
 
 def shared_transport() -> bool:

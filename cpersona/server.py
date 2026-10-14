@@ -37,6 +37,7 @@ from cpersona import acl
 from cpersona import associations as associations_module
 from cpersona import block_index
 from cpersona import blocks
+from cpersona import excerpts
 from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
 # Re-exported: benchmarks/benchmark_latency.py imports the client from here; the
@@ -198,9 +199,17 @@ def _oc_reject(error: str) -> dict:
     }
 
 
-def _store_refused(reason: str) -> dict:
-    """A store refused at the boundary, in the shape every store refusal takes."""
-    return {"ok": False, "result": "rejected", "reason": reason}
+def _store_refused(reason: str, lock: bool = False) -> dict:
+    """A store refused at the boundary, in the shape every store refusal takes.
+
+    Under lock:true the response promises `locked`, and these refusals return
+    before the lock rider can answer it; a refused store has no row, so the
+    answer is false, as it is for every other store that resolved to no row.
+    """
+    refused = {"ok": False, "result": "rejected", "reason": reason}
+    if lock:
+        refused["locked"] = False
+    return refused
 
 
 # What the registry hands do_store_boundary when a call sent no top-level
@@ -259,7 +268,8 @@ async def do_store_boundary(
     if message and flat_given:
         return _store_refused(
             "send content, id, source, timestamp and metadata either at the top level or inside "
-            "message, not both"
+            "message, not both",
+            lock,
         )
     if agent_id is None:
         # Under ACL the guard fills agent_id in before this runs when the connection
@@ -267,7 +277,8 @@ async def do_store_boundary(
         # arrives here had no such agent to stand for.
         return _store_refused(
             "agent_id is required: it can be omitted only on a connection whose ACL grants "
-            "write access to exactly one agent"
+            "write access to exactly one agent",
+            lock,
         )
     if message and message.get("timestamp") == "":
         # One tool, one reading of a field: the top-level form treats an empty
@@ -284,7 +295,7 @@ async def do_store_boundary(
         # speaks the same contract as the handler's own rejections — a caller
         # branches on `result` alone and never has to know the gate exists.
         # `error` is kept for the shape the other five gated tools share.
-        return {**_oc_reject(error), "result": "rejected", "reason": error}
+        return {**_oc_reject(error), **_store_refused(error, lock)}
     result = await do_store(
         agent_id, message, channel=channel, project_id=resolved, session_key=session_key
     )
@@ -351,7 +362,16 @@ async def do_declare_associations_boundary(
 ) -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
-        return {**_oc_reject(error), "entities": [], "mentions": 0, "relations": [], "dropped": []}
+        # `result` is on every other response this tool gives (declared, skipped),
+        # so the gate refusal carries it too, in the word store's refusal uses.
+        return {
+            **_oc_reject(error),
+            "result": "rejected",
+            "entities": [],
+            "mentions": 0,
+            "relations": [],
+            "dropped": [],
+        }
     key, _declared = resolve_session_key(session_key)
     if session.is_paused_for(key):
         return session.make_skipped_response(
@@ -498,7 +518,7 @@ def _apply_preview(result: dict) -> dict:
 RECALL_FULL_CONTENT_MAX_CHARS = 200_000
 
 
-def _apply_full_content_budget(result: dict) -> dict:
+def _apply_full_content_budget(result: dict, cut: dict[str, str] | None = None) -> dict:
     """Bound a full_content recall response in characters (bug-211).
 
     Mirrors the get_contents budget discipline, adapted to recall's contract:
@@ -526,6 +546,10 @@ def _apply_full_content_budget(result: dict) -> dict:
     before (additive). CPERSONA_RECALL_PREVIEW_CHARS=0 disables the preview
     tier wholesale; degradation to a disabled tier would silently drop content,
     so it disables this budget too (the operator opted out of trimming).
+
+    ``cut``, when given, is filled with ``ref -> whole text`` for every row this
+    cut to the preview, so the caller can give those rows the excerpt a
+    preview-cut row carries (see _full_content_with_budget).
     """
     cap = config.RECALL_PREVIEW_CHARS
     if cap <= 0:
@@ -550,9 +574,37 @@ def _apply_full_content_budget(result: dict) -> dict:
             m["content_len"] = len(content)
             m["content"] = content[:cap]
             m["content_truncated"] = True
+            if cut is not None:
+                cut[m["ref"]] = content
         used += len(m["content"])
     if over_budget:
         result["full_content_budget_chars"] = RECALL_FULL_CONTENT_MAX_CHARS
+    return result
+
+
+async def _full_content_with_budget(agent_id: str, query: str, result: dict, query_vec: list) -> dict:
+    """Apply the full_content budget, and give each row it cut its excerpt.
+
+    A full_content recall asks the library for no excerpts, because a row shown
+    whole needs none and the response rarely meets the budget. A row the budget
+    cuts back to the preview is a preview-cut row like any other, though, and the
+    contract gives such a row the part of the record that matched. It is computed
+    here, for those rows only, from the same inputs the library would have used:
+    the query vector the recall embedded (``query_vec``, filled through
+    do_recall's ``query_vec_out``) and the row's whole text.
+    """
+    cut: dict[str, str] = {}
+    result = _apply_full_content_budget(result, cut)
+    if not cut or config.RECALL_EXCERPT_CHARS <= 0 or not query.strip():
+        return result
+    found = await excerpts.for_refs(
+        agent_id, list(cut), query, query_vec[0] if query_vec else None,
+        config.RECALL_EXCERPT_CHARS, texts=cut,
+    )
+    for m in result.get("messages", []):
+        if m.get("content_truncated") and m.get("ref") in cut and m["ref"] in found:
+            m["excerpt"] = found[m["ref"]]["excerpt"]
+            m["excerpt_basis"] = found[m["ref"]]["basis"]
     return result
 
 
@@ -576,6 +628,7 @@ async def do_recall_boundary(
         # preview / get_contents workflow tells callers to read it), so the gate
         # refusal carries the empty collection rather than making one path KeyError.
         return {**_oc_reject(error), "messages": []}
+    query_vec: list = []
     result = await do_recall(
         agent_id,
         query,
@@ -586,15 +639,21 @@ async def do_recall_boundary(
         project_id=pid,
         source_id=source_id,
         session_key=session_key,
-        # A full_content response shows every row whole, so it needs no excerpt.
+        # A full_content response shows rows whole, so the library computes no
+        # excerpt for it; the rows its budget cuts get theirs below, from the
+        # query vector this call hands back.
         excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
+        **({"query_vec_out": query_vec} if full_content else {}),
         **({"trace": True} if trace else {}),
         **({"time_cue": time_cue} if time_cue is not None else {}),
         # The propagation seat is measured on this tool only (cpersona/propagation.py);
         # passed only when on, so a recall with it off is called exactly as before.
         **({"propagation_seat": True} if config.RECALL_PROPAGATION_SEAT else {}),
     )
-    result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
+    if full_content:
+        result = await _full_content_with_budget(agent_id, query, result, query_vec)
+    else:
+        result = _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
 
 
@@ -665,6 +724,7 @@ async def do_recall_with_context_boundary(
     pid, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
         return {**_oc_reject(error), "messages": []}  # bug-232
+    query_vec: list = []
     result = await do_recall_with_context(
         agent_id,
         query,
@@ -675,9 +735,15 @@ async def do_recall_with_context_boundary(
         project_id=pid,
         source_id=source_id,
         session_key=session_key,
+        # As in do_recall_boundary: the rows the full_content budget cuts get their
+        # excerpt below, from the query vector this call hands back.
         excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
+        **({"query_vec_out": query_vec} if full_content else {}),
     )
-    result = _apply_full_content_budget(result) if full_content else _apply_preview(result)
+    if full_content:
+        result = await _full_content_with_budget(agent_id, query, result, query_vec)
+    else:
+        result = _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
 
 
@@ -3607,6 +3673,12 @@ def _preflight_http_auth() -> None:
 # Entry point
 # =============================================================================
 
+#: How long startup waits for the embedding backend to say what it is before it
+#: opens the database and the transport without the answer. A /capabilities
+#: answer is a small JSON document, so a backend that is up gives it well inside
+#: this; the same three seconds bound the startup update check.
+STARTUP_IDENTITY_PROBE_SECONDS = 3.0
+
 
 def _schedule_startup_calibration() -> asyncio.Task:
     """Run the startup calibration guard as a background task (bug-258).
@@ -3768,6 +3840,7 @@ async def main():
     config.validate_reconstruct_counts()
     config.validate_block_gates()
     config.validate_content_caps()
+    config.validate_transport()
 
     # ACL mode (docs/ACL_DESIGN.md): load and validate the grant table before
     # anything expensive, failing closed on any defect — the server refuses to
@@ -3823,7 +3896,22 @@ async def main():
         # the first node or block written in this process carries the backend's
         # identity rather than this server's configured guess at it. A backend that
         # cannot say stays unknown and the write keys fall back to what they were.
-        await generation.refresh(vector._embedding_client)
+        #
+        # Bounded: the answer is optional, and a backend whose host drops packets
+        # would otherwise hold the database and the transport closed for the whole
+        # embedding timeout (30 s by default), long enough for a client to give up
+        # on the server. A probe cut off here learns nothing, so the first write
+        # path that needs the identity asks again (every one calls refresh).
+        try:
+            await asyncio.wait_for(
+                generation.refresh(vector._embedding_client), STARTUP_IDENTITY_PROBE_SECONDS
+            )
+        except asyncio.TimeoutError:
+            logger.info(
+                "Embedding backend identity: no answer within %.0f s at startup; "
+                "it is asked again when it is first needed",
+                STARTUP_IDENTITY_PROBE_SECONDS,
+            )
         if not local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
             # bug-180: state the trade at boot. In this configuration the local
             # cosine scan — the fallback for a remote /search outage — has no rows

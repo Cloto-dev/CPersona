@@ -3585,11 +3585,13 @@ async def do_recall_with_context(
     session_key: str = "",
     context_mode: str | None = None,
     excerpt_chars: int = 0,
+    query_vec_out: list | None = None,
 ) -> dict:
     """Recall memories and merge with external conversation context.
 
     project_id (v2.4.17): γ filter — passed through to do_recall.
     source_id (v2.4.20): per-user source filter — passed through to do_recall.
+    query_vec_out: passed through to do_recall (a library argument, not a tool one).
     """
     ctx = external_context or []
 
@@ -3627,6 +3629,7 @@ async def do_recall_with_context(
         source_id=source_id,
         session_key=session_key,
         excerpt_chars=excerpt_chars,
+        **({"query_vec_out": query_vec_out} if query_vec_out is not None else {}),
     )
     if recall_result.get("ok") is False:
         # A refused recall has no messages to merge, and answering with the
