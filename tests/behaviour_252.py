@@ -2782,6 +2782,10 @@ def _period(after_days: float, before_days: float, confidence: str) -> dict:
     return {"after": _m1_ts(after_days)[:10], "before": _m1_ts(before_days)[:10], "confidence": confidence}
 
 
+async def _no_keyword_search(*args, **kwargs) -> list:
+    return []
+
+
 @scenario("m1-recall-cue-sure-rrf-trace", _SEAM_M1,
           "recall rrf + a sure cue over the oldest records: bounded move, trace (stages, arms, gate, cue) without timing",
           seed=seed_m1)
@@ -2856,6 +2860,10 @@ async def _(ctx):
 async def _(ctx):
     install_local(ctx)
     ctx.patch(memory_handlers, "FTS_ENABLED", False)
+    # With FTS off the memory keyword search still answers through its LIKE
+    # fallback, in the fusion and in the cue arm alike. The vector-only cue arm
+    # this scenario records is the one with that search off as well.
+    ctx.patch(memory_handlers, "_search_memories_keyword", _no_keyword_search)
     out = await memory_handlers.do_recall(_M1, _M1_QUERY, 12, trace=True, time_cue=_period(125, 95, "sure"))
     return _without_volatile(out)
 

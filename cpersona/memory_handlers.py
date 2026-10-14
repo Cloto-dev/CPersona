@@ -585,7 +585,9 @@ async def _recall_cascade(
         )
         for row in fts_results:
             rid = ("ep", row["id"])
-            if rid not in seen_ids:
+            # The exclusion the vector stage applied to this episode applies here too,
+            # or which retriever reached it would decide whether it is excluded.
+            if rid not in seen_ids and not _content_excluded(row["content"], _excl):
                 results.append(row)
                 seen_ids.add(rid)
 
@@ -692,13 +694,15 @@ async def _lexical_arms(
     arms in line produced. Episodes lack per-user source tagging, so a per-user
     source_id filter normally suppresses them; a channel filter (v2.4.22) scopes
     episodes to one channel and is allowed even with source_id set (grounding
-    path)."""
+    path).
+
+    With FTS disabled the memories arm still runs: ``_search_memories_keyword``
+    then answers through its LIKE fallback, as it does for cascade, so the
+    keyword channel stays in the fusion. Episodes have no such fallback."""
     episodes: list[dict] = []
     memories: list[dict] = []
-    if not FTS_ENABLED:
-        return episodes, memories
     async with beside(db) as db:
-        if not source_id or channel:
+        if FTS_ENABLED and (not source_id or channel):
             episodes = await _search_episodes_fts(
                 db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
             )
@@ -846,6 +850,10 @@ async def _recall_rrf(
     fts_ep_results, fts_mem_results = await lexical.outcome()
     if fts_ep_results:
         for rank, row in enumerate(fts_ep_results):
+            # Excluded as the vector arm excludes it, so an excluded episode the
+            # vector arm skipped cannot come back on this arm's vote alone.
+            if _content_excluded(row.get("content", ""), _excl):
+                continue
             rid = ("ep", row["id"])
             if rid not in doc_map:
                 doc_map[rid] = row
@@ -991,6 +999,9 @@ async def _recall_rsf(
     ep_rows, mem_rows = await lexical.outcome()
     if ep_rows:
         for row in ep_rows:
+            # Excluded as the vector channel excludes it (see _recall_rrf).
+            if _content_excluded(row.get("content", ""), _excl):
+                continue
             rid = ("ep", row["id"])
             doc_map.setdefault(rid, row)
             bm = row.get("_bm25")
@@ -2064,7 +2075,9 @@ async def _block_reserved_rows(
                 }
             else:
                 episode = ep_rows.get(hit.parent_id)
-                if episode is None:
+                # The exclusion the memory branch applies, on the content recall shows
+                # for an episode ("[Episode] <summary>"), as every other arm reads it.
+                if episode is None or _content_excluded(episode["content"], exclude_set):
                     continue
                 built = dict(episode)
             # Why this row is here, carried on the row and rendered in the response.
@@ -2220,9 +2233,15 @@ async def _search_cue_arm(
                     note.update(mode=mode, supplier=supplier)
                     if left_out:
                         note["left_out"] = True
+            # The capped part and the remainder are two statements, and scan position
+            # is counted over the live table, so a write committed between them shifts
+            # every position and the capped part's last row comes back as the
+            # remainder's first -- one record, two votes in the fusion below. The capped
+            # part's entry is kept, as the far window defers to the near one (bug-334).
+            capped_ids = {mem_id for _, mem_id, _ in ranked}
             merged = sorted(
                 [(0, ordinal, mem_id, score) for ordinal, mem_id, score in ranked]
-                + [(1, hit.position, hit.id, hit.cosine) for hit in remainder],
+                + [(1, hit.position, hit.id, hit.cosine) for hit in remainder if hit.id not in capped_ids],
                 key=lambda s: (-s[3], s[0], s[1]),
             )
             ranked = [(position, mem_id, score) for _, position, mem_id, score in merged[:depth]]
@@ -2243,12 +2262,13 @@ async def _search_cue_arm(
 
     # An empty query has no ranking to offer, so the keyword half returns the period's
     # newest records by their own time, as the episodes below are ordered by theirs.
-    if FTS_ENABLED or not query.strip():
-        keyword = await _search_memories_keyword(
-            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
-            extra_terms=lexical_terms, window=(start, end),
-        )
-        lists.append([{**row, "_rid": ("mem", row["id"])} for row in keyword])
+    # With FTS disabled it runs as well, through the LIKE fallback, as the fusions'
+    # keyword arm does.
+    keyword = await _search_memories_keyword(
+        db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+        extra_terms=lexical_terms, window=(start, end),
+    )
+    lists.append([{**row, "_rid": ("mem", row["id"])} for row in keyword])
 
     if not source_id or channel:
         ep_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")

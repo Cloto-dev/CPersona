@@ -924,6 +924,13 @@ async def test_a_far_weight_of_zero_is_the_reach_turned_off(
     """
     monkeypatch.setattr(M, "RECALL_MODE", mode)
     monkeypatch.setattr(M, "FTS_ENABLED", False)
+
+    async def no_keyword_search(*args, **kwargs):
+        return []
+
+    # With FTS off the keyword search still answers through its LIKE fallback,
+    # and every row here holds the word "row": no lexical list means this too.
+    monkeypatch.setattr(M, "_search_memories_keyword", no_keyword_search)
     calls: list[int] = []
     real = vector._search_vector_far
 
